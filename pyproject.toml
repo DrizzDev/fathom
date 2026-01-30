@@ -104,8 +104,8 @@ ignore = [
     "UP037",  # remove quotes from type annotation (needed for forward refs in 3.8)
 
     "UP045",  # use X | None instead of Optional[X] (conflicts with Python 3.8)
-    "TCH001",  # move application import into TYPE_CHECKING block
-    "TCH002",  # move third-party import into TYPE_CHECKING block
+    "TC001",  # move application import into TYPE_CHECKING block
+    "TC002",  # move third-party import into TYPE_CHECKING block
     "ARG002", # unused argument (needed for mock interfaces)
 ]
 
