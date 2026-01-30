@@ -112,7 +112,9 @@ class ExplorationResult(BaseModel):
     total_transitions: int = Field(ge=0, description="Number of transitions executed")
     total_actions: int = Field(ge=0, description="Total actions executed")
     coverage_percentage: float = Field(ge=0.0, le=100.0, description="Estimated coverage")
-    discovered_activities: List[str] = Field(default_factory=list, description="Discovered activities")
+    discovered_activities: List[str] = Field(
+        default_factory=list, description="Discovered activities"
+    )
     screen_graph: Dict[str, Any] = Field(default_factory=dict, description="Graph representation")
 
     def to_dict(self) -> Dict[str, Any]:
