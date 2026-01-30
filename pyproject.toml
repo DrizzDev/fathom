@@ -1,0 +1,146 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fathom"
+version = "0.1.0"
+description = "Vision-driven agent orchestration framework for UI automation"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [
+    { name = "Drizz", email = "team@drizz.dev" },
+]
+keywords = [
+    "agent",
+    "automation",
+    "testing",
+    "ui",
+    "vision",
+    "llm",
+    "orchestration",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "aiohttp>=3.8.0",
+    "structlog>=23.0.0",
+]
+
+[project.optional-dependencies]
+gemini = [
+    "google-generativeai>=0.3.0",
+]
+temporal = [
+    "temporalio>=1.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.0.0",
+]
+all = [
+    "fathom[gemini,temporal,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/DrizzDev/fathom"
+Repository = "https://github.com/DrizzDev/fathom"
+Issues = "https://github.com/DrizzDev/fathom/issues"
+Documentation = "https://github.com/DrizzDev/fathom#readme"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fathom"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+]
+
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "RUF",    # ruff-specific
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "UP006",  # use list/dict instead of List/Dict (conflicts with Python 3.8)
+    "UP037",  # remove quotes from type annotation (needed for forward refs in 3.8)
+    "UP045",  # use X | None instead of Optional[X] (conflicts with Python 3.8)
+    "TC001",  # move application import into TYPE_CHECKING block
+    "TC002",  # move third-party import into TYPE_CHECKING block
+    "ARG002", # unused argument (needed for mock interfaces)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fathom"]
+
+[tool.mypy]
+python_version = "3.8"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src/fathom"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
