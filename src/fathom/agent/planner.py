@@ -250,7 +250,7 @@ class StepPlanner:
         import hashlib
 
         data = f"{capture.activity}:{len(capture.image)}".encode()
-        return hashlib.md5(data).hexdigest()[:16]
+        return hashlib.md5(data).hexdigest()[:16]  # nosec
 
     def prepare_execution(
         self,
