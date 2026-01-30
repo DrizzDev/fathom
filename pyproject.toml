@@ -102,9 +102,10 @@ ignore = [
     "B008",   # do not perform function calls in argument defaults
     "UP006",  # use list/dict instead of List/Dict (conflicts with Python 3.8)
     "UP037",  # remove quotes from type annotation (needed for forward refs in 3.8)
+
     "UP045",  # use X | None instead of Optional[X] (conflicts with Python 3.8)
-    "TC001",  # move application import into TYPE_CHECKING block
-    "TC002",  # move third-party import into TYPE_CHECKING block
+    "TCH001",  # move application import into TYPE_CHECKING block
+    "TCH002",  # move third-party import into TYPE_CHECKING block
     "ARG002", # unused argument (needed for mock interfaces)
 ]
 
