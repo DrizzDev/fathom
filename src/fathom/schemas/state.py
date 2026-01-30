@@ -1,5 +1,3 @@
-"""State schemas for Fathom workflows."""
-
 from __future__ import annotations
 
 from typing import Dict, List, Optional
@@ -59,14 +57,18 @@ class WorkflowState(BaseModel):
         self.__detect_stuck()
 
     def __detect_stuck(self) -> None:
-        """Detect if agent is stuck in a loop."""
+        """
+        Detect if agent is stuck in a loop.
+        """
         if len(self.recent_screens) >= 3:
             last_three = self.recent_screens[-3:]
             if len(set(last_three)) == 1:
                 self.is_stuck = True
 
     def checkpoint(self) -> Dict[str, object]:
-        """Return checkpoint data for Temporal persistence."""
+        """
+        Return checkpoint data for Temporal persistence.
+        """
         return self.model_dump(mode="json")
 
 
@@ -87,24 +89,32 @@ class ExecutionContext(BaseModel):
     clarifications: List[str] = Field(default_factory=list)
 
     def add_action(self, description: str) -> None:
-        """Add an action to recent history."""
+        """
+        Add an action to recent history.
+        """
         self.recent_actions.append(description)
         if len(self.recent_actions) > self.max_history:
             self.recent_actions = self.recent_actions[-self.max_history :]
         self.step_count += 1
 
     def add_screen(self, screen_hash: str) -> None:
-        """Add a screen hash to recent history."""
+        """
+        Add a screen hash to recent history.
+        """
         self.recent_screens.append(screen_hash)
         if len(self.recent_screens) > self.max_history:
             self.recent_screens = self.recent_screens[-self.max_history :]
 
     def add_failure(self, message: str) -> None:
-        """Record a failure for context."""
+        """
+        Record a failure for context.
+        """
         self.failures.append(message)
         if len(self.failures) > 5:
             self.failures = self.failures[-5:]
 
     def to_dict(self) -> Dict[str, object]:
-        """Serialize for passing to tools."""
+        """
+        Serialize for passing to tools.
+        """
         return self.model_dump(mode="json")

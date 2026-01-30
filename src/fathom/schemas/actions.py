@@ -1,5 +1,3 @@
-"""Action schemas for Fathom."""
-
 from __future__ import annotations
 
 from typing import Optional
@@ -25,12 +23,16 @@ class BoundingBox(BaseModel):
 
     @property
     def center_x(self) -> int:
-        """X coordinate of bounding box center."""
+        """
+        X coordinate of bounding box center.
+        """
         return self.x + self.width // 2
 
     @property
     def center_y(self) -> int:
-        """Y coordinate of bounding box center."""
+        """
+        Y coordinate of bounding box center.
+        """
         return self.y + self.height // 2
 
     def to_pixels(self, screen_width: int, screen_height: int) -> tuple[int, int, int, int]:
@@ -88,7 +90,9 @@ class Action(BaseModel):
     )
 
     def to_description(self) -> str:
-        """Generate human-readable description of this action."""
+        """
+        Generate human-readable description of this action.
+        """
         if self.action_type == ActionType.TAP:
             return f"Tap on {self.target}"
         elif self.action_type == ActionType.TYPE:

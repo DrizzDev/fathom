@@ -1,5 +1,3 @@
-"""ADB-based capture tool for real device screenshots."""
-
 from __future__ import annotations
 
 import asyncio
@@ -15,7 +13,9 @@ from fathom.tools.capture.hasher import FastHasher, HybridHasher
 
 @dataclass(frozen=True)
 class ADBCaptureConfig:
-    """Configuration for ADB capture tool."""
+    """
+    Configuration for ADB capture tool.
+    """
 
     device_serial: Optional[str] = None
     adb_path: str = "adb"

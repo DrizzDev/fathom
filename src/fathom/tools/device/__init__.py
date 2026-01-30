@@ -1,5 +1,3 @@
-"""Fathom device tools subpackage."""
-
 from __future__ import annotations
 
 from fathom.schemas.configuration import ADBConfig

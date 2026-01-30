@@ -1,5 +1,3 @@
-"""Base execution strategy protocol."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -18,7 +16,9 @@ class ExecutionStrategy(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Strategy name."""
+        """
+        Strategy name.
+        """
         raise NotImplementedError
 
     @abstractmethod

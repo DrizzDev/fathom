@@ -1,5 +1,3 @@
-"""Mock capture tool for testing."""
-
 from __future__ import annotations
 
 import hashlib
@@ -39,20 +37,28 @@ class MockCaptureTool(CaptureTool):
 
     @property
     def name(self) -> str:
-        """Tool name."""
+        """
+        Tool name.
+        """
         return "mock_capture"
 
     @property
     def capture_count(self) -> int:
-        """Number of captures made."""
+        """
+        Number of captures made.
+        """
         return self.__capture_count
 
     def set_activity(self, activity: str) -> None:
-        """Set mock activity."""
+        """
+        Set mock activity.
+        """
         self.__activity = activity
 
     async def capture(self) -> ScreenCapture:
-        """Return mock screen capture."""
+        """
+        Return mock screen capture.
+        """
         self.__capture_count += 1
         timestamp = int(time.time() * 1000)
 
@@ -71,11 +77,15 @@ class MockCaptureTool(CaptureTool):
         return capture
 
     async def capture_stable(self, timeout: int = 2000) -> ScreenCapture:
-        """Return mock stable capture (same as regular capture)."""
+        """
+        Return mock stable capture (same as regular capture).
+        """
         return await self.capture()
 
     def compute_state(self, capture: ScreenCapture) -> ScreenState:
-        """Compute mock screen state."""
+        """
+        Compute mock screen state.
+        """
         activity_hash = hashlib.md5(capture.activity.encode()).hexdigest()[:16]  # nosec
         structural_hash = hashlib.md5(capture.image[:50]).hexdigest()[:16]  # nosec
         visual_hash = hashlib.md5(capture.image).hexdigest()[:16]  # nosec
@@ -89,6 +99,8 @@ class MockCaptureTool(CaptureTool):
         )
 
     def reset(self) -> None:
-        """Reset capture state."""
+        """
+        Reset capture state.
+        """
         self.__capture_count = 0
         self.__captures.clear()

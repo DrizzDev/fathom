@@ -1,5 +1,3 @@
-"""Fathom agent strategies subpackage."""
-
 from __future__ import annotations
 
 from fathom.agent.strategies.base import ExecutionStrategy

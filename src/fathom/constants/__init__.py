@@ -1,12 +1,12 @@
-"""Fathom constants and enumerations."""
-
 from __future__ import annotations
 
 from enum import Enum
 
 
 class ActionType(str, Enum):
-    """Types of actions that can be executed on a device."""
+    """
+    Types of actions that can be executed on a device.
+    """
 
     TAP = "tap"
     TYPE = "type"
@@ -20,14 +20,18 @@ class ActionType(str, Enum):
 
 
 class FlowType(str, Enum):
-    """Type of execution flow."""
+    """
+    Type of execution flow.
+    """
 
     INTENT = "intent"
     EXPLORATION = "exploration"
 
 
 class WorkflowStatus(str, Enum):
-    """Status of workflow execution."""
+    """
+    Status of workflow execution.
+    """
 
     PENDING = "pending"
     RUNNING = "running"
@@ -38,7 +42,9 @@ class WorkflowStatus(str, Enum):
 
 
 class StrategyStatus(str, Enum):
-    """Status of strategy execution."""
+    """
+    Status of strategy execution.
+    """
 
     CONTINUE = "continue"
     COMPLETE = "complete"

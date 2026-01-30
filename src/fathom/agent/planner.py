@@ -1,5 +1,3 @@
-"""Step planning with coordinate conversion and execution preparation."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,7 +14,9 @@ from fathom.tools.vision import AnalysisResult, VisionTool
 
 @dataclass(frozen=True)
 class PlanResult:
-    """Result of step planning."""
+    """
+    Result of step planning.
+    """
 
     step: Optional[Step]
     is_complete: bool
@@ -208,7 +208,9 @@ class StepPlanner:
         state: AgentState,
         reasoner: Reasoner,
     ) -> Action:
-        """Select best action from analysis result."""
+        """
+        Select best action from analysis result.
+        """
         context = state.build_context()
         failures_raw = context.get("recent_failures", [])
         failures = failures_raw if isinstance(failures_raw, list) else []
@@ -228,7 +230,9 @@ class StepPlanner:
         *,
         is_recovery: bool = False,
     ) -> PlanResult:
-        """Build PlanResult from action."""
+        """
+        Build PlanResult from action.
+        """
         screen_hash = self.__compute_simple_hash(capture)
 
         step = Step(
@@ -246,7 +250,9 @@ class StepPlanner:
         )
 
     def __compute_simple_hash(self, capture: ScreenCapture) -> str:
-        """Compute simple hash for screen capture."""
+        """
+        Compute simple hash for screen capture.
+        """
         import hashlib
 
         data = f"{capture.activity}:{len(capture.image)}".encode()

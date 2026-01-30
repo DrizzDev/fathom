@@ -1,5 +1,3 @@
-"""Configuration schemas for Fathom."""
-
 from __future__ import annotations
 
 from typing import Optional, Tuple
@@ -8,7 +6,9 @@ from pydantic import BaseModel, Field
 
 
 class ADBConfig(BaseModel):
-    """Configuration for ADB device tool."""
+    """
+    Configuration for ADB device tool.
+    """
 
     model_config = {"frozen": True}
 
@@ -21,7 +21,9 @@ class ADBConfig(BaseModel):
 
 
 class GeminiConfig(BaseModel):
-    """Configuration for Gemini vision tool."""
+    """
+    Configuration for Gemini vision tool.
+    """
 
     model_config = {"frozen": True}
 
@@ -33,7 +35,9 @@ class GeminiConfig(BaseModel):
 
 
 class HasherConfig(BaseModel):
-    """Configuration for hybrid hasher."""
+    """
+    Configuration for hybrid hasher.
+    """
 
     model_config = {"frozen": True}
 
@@ -43,7 +47,9 @@ class HasherConfig(BaseModel):
 
 
 class WorkflowConfig(BaseModel):
-    """Configuration for workflow execution."""
+    """
+    Configuration for workflow execution.
+    """
 
     model_config = {"frozen": True}
 

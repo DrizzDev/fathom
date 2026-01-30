@@ -1,5 +1,3 @@
-"""Mock vision tool for testing."""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -40,17 +38,23 @@ class MockVisionTool(VisionTool):
 
     @property
     def name(self) -> str:
-        """Tool name."""
+        """
+        Tool name.
+        """
         return "mock_vision"
 
     @property
     def call_count(self) -> int:
-        """Number of analyze calls made."""
+        """
+        Number of analyze calls made.
+        """
         return self.__call_count
 
     @property
     def history(self) -> List[Dict[str, Any]]:
-        """History of analyze calls."""
+        """
+        History of analyze calls.
+        """
         return self.__history.copy()
 
     async def analyze(
@@ -113,6 +117,8 @@ class MockVisionTool(VisionTool):
         return self.__call_count >= self.__complete_after
 
     def reset(self) -> None:
-        """Reset mock state."""
+        """
+        Reset mock state.
+        """
         self.__call_count = 0
         self.__history.clear()

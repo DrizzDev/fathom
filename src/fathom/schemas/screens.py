@@ -1,5 +1,3 @@
-"""Screen-related schemas for Fathom."""
-
 from __future__ import annotations
 
 from typing import Optional
@@ -39,14 +37,18 @@ class ScreenState(BaseModel):
 
     @staticmethod
     def __hamming_distance(hash1: str, hash2: str) -> int:
-        """Calculate hamming distance between two hex hash strings."""
+        """
+        Calculate hamming distance between two hex hash strings.
+        """
         if len(hash1) != len(hash2):
             return 64
         return bin(int(hash1, 16) ^ int(hash2, 16)).count("1")
 
 
 class ScreenCapture(BaseModel):
-    """Screen capture with image data and metadata."""
+    """
+    Screen capture with image data and metadata.
+    """
 
     model_config = {"frozen": True}
 

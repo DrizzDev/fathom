@@ -1,5 +1,3 @@
-"""Agent state management with loop detection and context building."""
-
 from __future__ import annotations
 
 from collections import deque
@@ -27,7 +25,9 @@ class LoopDetector:
     __max_recovery: int = 3
 
     def record(self, screen_hash: str) -> None:
-        """Record a screen hash."""
+        """
+        Record a screen hash.
+        """
         self.__recent_hashes.append(screen_hash)
 
     def is_stuck(self) -> bool:
@@ -47,16 +47,22 @@ class LoopDetector:
         return False
 
     def can_recover(self) -> bool:
-        """Check if recovery is still possible."""
+        """
+        Check if recovery is still possible.
+        """
         return self.__recovery_attempts < self.__max_recovery
 
     def record_recovery_attempt(self) -> int:
-        """Record a recovery attempt and return the attempt number."""
+        """
+        Record a recovery attempt and return the attempt number.
+        """
         self.__recovery_attempts += 1
         return self.__recovery_attempts
 
     def reset(self) -> None:
-        """Reset loop detection state."""
+        """
+        Reset loop detection state.
+        """
         self.__recent_hashes.clear()
         self.__recovery_attempts = 0
 
@@ -76,7 +82,9 @@ class ActionHistory:
     __failure_count: int = 0
 
     def record_action(self, action: Action, success: bool) -> None:
-        """Record an action and its outcome."""
+        """
+        Record an action and its outcome.
+        """
         description = action.to_description()
         if success:
             self.__actions.append(f"✓ {description}")
@@ -87,15 +95,21 @@ class ActionHistory:
             self.__failure_count += 1
 
     def get_context(self) -> List[str]:
-        """Get recent actions as context for planning."""
+        """
+        Get recent actions as context for planning.
+        """
         return list(self.__actions)
 
     def get_failures(self) -> List[str]:
-        """Get recent failures for recovery planning."""
+        """
+        Get recent failures for recovery planning.
+        """
         return list(self.__failures)
 
     def get_stats(self) -> Dict[str, int]:
-        """Get action statistics."""
+        """
+        Get action statistics.
+        """
         return {
             "success": self.__success_count,
             "failure": self.__failure_count,
@@ -103,7 +117,9 @@ class ActionHistory:
         }
 
     def has_repeated_failure(self, action: Action) -> bool:
-        """Check if this action has failed recently."""
+        """
+        Check if this action has failed recently.
+        """
         description = action.to_description()
         return description in self.__failures
 
@@ -153,27 +169,37 @@ class AgentState:
 
     @property
     def intent(self) -> str:
-        """The goal being pursued."""
+        """
+        The goal being pursued.
+        """
         return self.__intent
 
     @property
     def step_count(self) -> int:
-        """Number of steps taken."""
+        """
+        Number of steps taken.
+        """
         return self.__step_count
 
     @property
     def is_complete(self) -> bool:
-        """Whether the intent has been achieved."""
+        """
+        Whether the intent has been achieved.
+        """
         return self.__is_complete
 
     @property
     def is_stuck(self) -> bool:
-        """Whether the agent is stuck in a loop."""
+        """
+        Whether the agent is stuck in a loop.
+        """
         return self.__loop_detector.is_stuck()
 
     @property
     def can_continue(self) -> bool:
-        """Whether the agent can continue execution."""
+        """
+        Whether the agent can continue execution.
+        """
         if self.__is_complete:
             return False
         if self.__step_count >= self.__max_steps:
@@ -182,7 +208,9 @@ class AgentState:
 
     @property
     def current_screen(self) -> Optional[ScreenState]:
-        """Current screen state."""
+        """
+        Current screen state.
+        """
         return self.__current_screen
 
     def update_screen(self, screen: ScreenState) -> bool:
@@ -314,7 +342,9 @@ class AgentState:
         completion_reason: Optional[str],
         screen_hashes: List[str],
     ) -> None:
-        """Restore internal state from checkpoint data."""
+        """
+        Restore internal state from checkpoint data.
+        """
         self.__step_count = step_count
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason

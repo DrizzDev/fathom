@@ -1,5 +1,3 @@
-"""Step executor for running individual steps with retry and error handling."""
-
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +16,9 @@ from fathom.tools.device import DeviceTool
 
 @dataclass(frozen=True)
 class ExecutionResult:
-    """Result of step execution attempt."""
+    """
+    Result of step execution attempt.
+    """
 
     success: bool
     duration: int
@@ -204,7 +204,9 @@ class StepExecutor:
         width: int,
         height: int,
     ) -> Dict[str, Any]:
-        """Build device request from action."""
+        """
+        Build device request from action.
+        """
         from fathom.schemas.actions import Action
 
         if not isinstance(action, Action):

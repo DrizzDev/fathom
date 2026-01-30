@@ -1,5 +1,3 @@
-"""Exploration workflow for app discovery."""
-
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -64,7 +62,9 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
 
     @property
     def name(self) -> str:
-        """Workflow type name."""
+        """
+        Workflow type name.
+        """
         return "exploration"
 
     async def execute(self) -> ExplorationResult:
@@ -103,7 +103,9 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         return self.__build_result()
 
     async def __should_continue(self) -> bool:
-        """Check if exploration should continue."""
+        """
+        Check if exploration should continue.
+        """
         if self.has_exceeded_timeout():
             return False
         if self.has_exceeded_steps():
@@ -113,11 +115,15 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         return await self.__strategy.should_continue()
 
     async def __save_checkpoint(self) -> None:
-        """Save checkpoint (placeholder for persistence)."""
+        """
+        Save checkpoint (placeholder for persistence).
+        """
         pass
 
     def __build_result(self) -> ExplorationResult:
-        """Build exploration result from strategy state."""
+        """
+        Build exploration result from strategy state.
+        """
         if self.__strategy is None:
             return ExplorationResult(
                 unique_screens=0,
@@ -129,10 +135,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         graph = self.__strategy.graph
         stats = graph.get_coverage_stats()
 
-        activities = list({
-            node.activity
-            for node in graph.nodes.values()
-        })
+        activities = list({node.activity for node in graph.nodes.values()})
 
         unexplored_raw = stats.get("unexplored_screens", 0)
         total_screens_raw = stats.get("unique_screens", 1)
@@ -151,10 +154,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
                 }
                 for h, n in graph.nodes.items()
             },
-            "edges": [
-                {"from": e[0], "action": e[1], "to": e[2]}
-                for e in graph.edges
-            ],
+            "edges": [{"from": e[0], "action": e[1], "to": e[2]} for e in graph.edges],
         }
 
         unique_raw = stats.get("unique_screens", 0)
@@ -163,7 +163,9 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
 
         return ExplorationResult(
             unique_screens=int(unique_raw) if isinstance(unique_raw, (int, float)) else 0,
-            total_transitions=int(transitions_raw) if isinstance(transitions_raw, (int, float)) else 0,
+            total_transitions=int(transitions_raw)
+            if isinstance(transitions_raw, (int, float))
+            else 0,
             total_actions=int(actions_raw) if isinstance(actions_raw, (int, float)) else 0,
             coverage_percentage=coverage,
             discovered_activities=activities,
@@ -171,7 +173,9 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         )
 
     def get_progress(self) -> Dict[str, Any]:
-        """Get current exploration progress."""
+        """
+        Get current exploration progress.
+        """
         progress: Dict[str, Any] = {
             "steps_executed": self.steps_executed,
             "max_steps": self.config.max_steps,

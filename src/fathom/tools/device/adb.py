@@ -1,5 +1,3 @@
-"""ADB device tool implementation for real Android device control."""
-
 from __future__ import annotations
 
 import asyncio
