@@ -1,5 +1,3 @@
-"""Vision tool base protocol."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -17,7 +15,9 @@ class VisionTool(Tool[AnalysisResult], ABC):
 
     @property
     def name(self) -> str:
-        """Tool name."""
+        """
+        Tool name.
+        """
         return "vision"
 
     @abstractmethod

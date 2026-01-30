@@ -1,5 +1,3 @@
-"""Workflow runner for synchronous execution."""
-
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +15,9 @@ from fathom.workflows.base import BaseWorkflow, WorkflowConfig
 
 @dataclass
 class RunnerConfig:
-    """Configuration for workflow runner."""
+    """
+    Configuration for workflow runner.
+    """
 
     enable_checkpoints: bool = True
     checkpoint_callback: Optional[Callable[[Dict[str, Any]], None]] = None
@@ -27,7 +27,9 @@ class RunnerConfig:
 
 @dataclass
 class RunnerResult:
-    """Result from workflow runner."""
+    """
+    Result from workflow runner.
+    """
 
     workflow_result: WorkflowResult
     execution_context: ExecutionContext
@@ -89,7 +91,9 @@ class WorkflowRunner:
 
     @property
     def has_active_workflow(self) -> bool:
-        """Check if a workflow is currently running."""
+        """
+        Check if a workflow is currently running.
+        """
         return self.__active_workflow is not None
 
     def run_intent(

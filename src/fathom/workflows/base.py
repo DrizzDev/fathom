@@ -44,32 +44,44 @@ class BaseWorkflow(ABC, Generic[T]):
 
     @property
     def workflow_id(self) -> str:
-        """Workflow identifier."""
+        """
+        Workflow identifier.
+        """
         return self.__workflow_id
 
     @property
     def config(self) -> WorkflowConfig:
-        """Workflow configuration."""
+        """
+        Workflow configuration.
+        """
         return self.__config
 
     @property
     def status(self) -> WorkflowStatus:
-        """Current workflow status."""
+        """
+        Current workflow status.
+        """
         return self.__status
 
     @property
     def steps_executed(self) -> int:
-        """Number of steps executed."""
+        """
+        Number of steps executed.
+        """
         return len(self.__step_results)
 
     @property
     def is_running(self) -> bool:
-        """Whether workflow is currently running."""
+        """
+        Whether workflow is currently running.
+        """
         return self.__status == WorkflowStatus.RUNNING
 
     @property
     def elapsed(self) -> float:
-        """Elapsed time in seconds."""
+        """
+        Elapsed time in seconds.
+        """
         if self.__start_time is None:
             return 0.0
         end = self.__end_time or time.time()
@@ -78,7 +90,9 @@ class BaseWorkflow(ABC, Generic[T]):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Workflow type name."""
+        """
+        Workflow type name.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -92,7 +106,9 @@ class BaseWorkflow(ABC, Generic[T]):
 
     @abstractmethod
     def get_progress(self) -> Dict[str, Any]:
-        """Get current progress information."""
+        """
+        Get current progress information.
+        """
         raise NotImplementedError
 
     async def run(self) -> WorkflowResult:
@@ -148,23 +164,33 @@ class BaseWorkflow(ABC, Generic[T]):
         self.__step_results.append(result)
 
     def cancel(self) -> None:
-        """Request workflow cancellation."""
+        """
+        Request workflow cancellation.
+        """
         self.__cancelled = True
 
     def is_cancelled(self) -> bool:
-        """Check if cancellation was requested."""
+        """
+        Check if cancellation was requested.
+        """
         return self.__cancelled
 
     def should_checkpoint(self) -> bool:
-        """Check if a checkpoint should be taken."""
+        """
+        Check if a checkpoint should be taken.
+        """
         return (self.steps_executed % self.__config.checkpoint_interval) == 0
 
     def has_exceeded_timeout(self) -> bool:
-        """Check if total timeout has been exceeded."""
+        """
+        Check if total timeout has been exceeded.
+        """
         return self.elapsed >= self.__config.total_timeout
 
     def has_exceeded_steps(self) -> bool:
-        """Check if max steps have been reached."""
+        """
+        Check if max steps have been reached.
+        """
         return self.steps_executed >= self.__config.max_steps
 
     def get_checkpoint(self) -> Dict[str, Any]:

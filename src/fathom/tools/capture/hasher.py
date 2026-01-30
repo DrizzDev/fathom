@@ -1,5 +1,3 @@
-"""Hybrid screen hasher for efficient screen comparison."""
-
 from __future__ import annotations
 
 import hashlib

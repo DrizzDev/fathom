@@ -1,5 +1,3 @@
-"""Step-related schemas for Fathom."""
-
 from __future__ import annotations
 
 from typing import Optional
@@ -31,7 +29,9 @@ class Step(BaseModel):
 
 
 class StepResult(BaseModel):
-    """Result of executing a step."""
+    """
+    Result of executing a step.
+    """
 
     model_config = {"frozen": True}
 
@@ -44,7 +44,9 @@ class StepResult(BaseModel):
     error: Optional[str] = Field(default=None, description="Error message if failed")
 
     def to_record(self) -> "StepRecord":
-        """Convert to a minimal record for serialization."""
+        """
+        Convert to a minimal record for serialization.
+        """
         return StepRecord(
             step_number=self.step.step_number,
             action_type=self.step.action.action_type.value,
@@ -57,7 +59,9 @@ class StepResult(BaseModel):
 
 
 class StepRecord(BaseModel):
-    """Minimal step record for serialization and checkpointing."""
+    """
+    Minimal step record for serialization and checkpointing.
+    """
 
     model_config = {"frozen": True}
 

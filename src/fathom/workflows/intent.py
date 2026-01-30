@@ -1,5 +1,3 @@
-"""Intent workflow for goal-directed automation."""
-
 from __future__ import annotations
 
 import contextlib
@@ -78,12 +76,16 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
 
     @property
     def name(self) -> str:
-        """Workflow type name."""
+        """
+        Workflow type name.
+        """
         return "intent"
 
     @property
     def intent(self) -> str:
-        """The goal being pursued."""
+        """
+        The goal being pursued.
+        """
         return self.__intent
 
     async def execute(self) -> IntentResult:
@@ -145,7 +147,9 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         )
 
     async def __should_continue(self) -> bool:
-        """Check if execution should continue."""
+        """
+        Check if execution should continue.
+        """
         if self.has_exceeded_timeout():
             return False
         if self.has_exceeded_steps():
@@ -155,11 +159,15 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         return await self.__strategy.should_continue()
 
     async def __save_checkpoint(self) -> None:
-        """Save checkpoint (placeholder for persistence)."""
+        """
+        Save checkpoint (placeholder for persistence).
+        """
         pass
 
     def get_progress(self) -> Dict[str, Any]:
-        """Get current progress information."""
+        """
+        Get current progress information.
+        """
         progress = {
             "intent": self.__intent,
             "steps_executed": self.steps_executed,

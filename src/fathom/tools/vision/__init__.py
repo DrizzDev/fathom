@@ -1,5 +1,3 @@
-"""Fathom tools vision subpackage."""
-
 from __future__ import annotations
 
 from fathom.schemas.configuration import GeminiConfig

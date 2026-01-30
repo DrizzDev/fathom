@@ -1,5 +1,3 @@
-"""Gemini vision tool for screen analysis."""
-
 from __future__ import annotations
 
 import base64

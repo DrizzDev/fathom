@@ -1,5 +1,3 @@
-"""Result schemas for Fathom operations."""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -13,7 +11,9 @@ from fathom.schemas.steps import StepResult
 
 
 class ActionResult(BaseModel):
-    """Result from device action execution."""
+    """
+    Result from device action execution.
+    """
 
     model_config = {"frozen": True}
 
@@ -24,7 +24,9 @@ class ActionResult(BaseModel):
 
 
 class AnalysisResult(BaseModel):
-    """Result from screen analysis."""
+    """
+    Result from screen analysis.
+    """
 
     model_config = {"frozen": True}
 
@@ -36,7 +38,9 @@ class AnalysisResult(BaseModel):
 
 
 class StrategyResult(BaseModel):
-    """Result from strategy execution."""
+    """
+    Result from strategy execution.
+    """
 
     model_config = {"frozen": True}
 
@@ -47,12 +51,16 @@ class StrategyResult(BaseModel):
 
     @property
     def is_terminal(self) -> bool:
-        """Whether this result ends execution."""
+        """
+        Whether this result ends execution.
+        """
         return self.status != StrategyStatus.CONTINUE
 
 
 class WorkflowResult(BaseModel):
-    """Result of workflow execution."""
+    """
+    Result of workflow execution.
+    """
 
     model_config = {"frozen": True}
 
@@ -66,11 +74,15 @@ class WorkflowResult(BaseModel):
 
     @property
     def success(self) -> bool:
-        """Whether workflow completed successfully."""
+        """
+        Whether workflow completed successfully.
+        """
         return self.status == WorkflowStatus.COMPLETED
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
+        """
+        Serialize to dictionary.
+        """
         return {
             "workflow_id": self.workflow_id,
             "status": self.status.value,
@@ -83,7 +95,9 @@ class WorkflowResult(BaseModel):
 
 
 class IntentResult(BaseModel):
-    """Result of intent workflow execution."""
+    """
+    Result of intent workflow execution.
+    """
 
     model_config = {"frozen": True}
 
@@ -94,7 +108,9 @@ class IntentResult(BaseModel):
     final_screen: Optional[ScreenCapture] = Field(default=None, description="Final screen capture")
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
+        """
+        Serialize to dictionary.
+        """
         return {
             "intent": self.intent,
             "success": self.success,
@@ -104,7 +120,9 @@ class IntentResult(BaseModel):
 
 
 class ExplorationResult(BaseModel):
-    """Result of exploration workflow execution."""
+    """
+    Result of exploration workflow execution.
+    """
 
     model_config = {"frozen": True}
 
@@ -118,7 +136,9 @@ class ExplorationResult(BaseModel):
     screen_graph: Dict[str, Any] = Field(default_factory=dict, description="Graph representation")
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
+        """
+        Serialize to dictionary.
+        """
         return {
             "unique_screens": self.unique_screens,
             "total_transitions": self.total_transitions,

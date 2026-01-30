@@ -1,5 +1,3 @@
-"""Intent reasoning and completion detection."""
-
 from __future__ import annotations
 
 import re
@@ -52,21 +50,29 @@ class CompletionSignal:
 
 
 class CompletionMatcher(ABC):
-    """Abstract matcher for completion detection."""
+    """
+    Abstract matcher for completion detection.
+    """
 
     @abstractmethod
     def matches(self, text: str) -> bool:
-        """Check if text matches completion criteria."""
+        """
+        Check if text matches completion criteria.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def get_evidence(self, text: str) -> str:
-        """Get evidence string if matched."""
+        """
+        Get evidence string if matched.
+        """
         raise NotImplementedError
 
 
 class KeywordMatcher(CompletionMatcher):
-    """Matches completion based on keywords in screen content."""
+    """
+    Matches completion based on keywords in screen content.
+    """
 
     def __init__(self, keywords: Set[str]) -> None:
         self.__keywords = {k.lower() for k in keywords}

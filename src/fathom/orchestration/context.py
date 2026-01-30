@@ -1,5 +1,3 @@
-"""Execution context for workflow and step tracking."""
-
 from __future__ import annotations
 
 import time
@@ -12,7 +10,9 @@ from fathom.schemas.steps import StepResult
 
 @dataclass
 class StepContext:
-    """Context for a single step execution."""
+    """
+    Context for a single step execution.
+    """
 
     step_id: str
     step_number: int
@@ -24,13 +24,17 @@ class StepContext:
 
     @property
     def duration(self) -> float:
-        """Step duration in seconds."""
+        """
+        Step duration in seconds.
+        """
         if self.end_time is None:
             return time.time() - self.start_time
         return self.end_time - self.start_time
 
     def complete(self, success: bool, error: Optional[str] = None) -> None:
-        """Mark step as complete."""
+        """
+        Mark step as complete.
+        """
         self.end_time = time.time()
         self.success = success
         self.error = error
@@ -60,23 +64,31 @@ class ExecutionContext:
 
     @property
     def elapsed(self) -> float:
-        """Elapsed time in seconds."""
+        """
+        Elapsed time in seconds.
+        """
         end = self.end_time or time.time()
         return end - self.start_time
 
     @property
     def steps_executed(self) -> int:
-        """Number of steps executed."""
+        """
+        Number of steps executed.
+        """
         return len(self.__steps)
 
     @property
     def successful_steps(self) -> int:
-        """Number of successful steps."""
+        """
+        Number of successful steps.
+        """
         return sum(1 for s in self.__steps if s.success)
 
     @property
     def failed_steps(self) -> int:
-        """Number of failed steps."""
+        """
+        Number of failed steps.
+        """
         return sum(1 for s in self.__steps if not s.success and s.end_time is not None)
 
     def start_step(self, step_number: int) -> StepContext:
@@ -112,7 +124,9 @@ class ExecutionContext:
         step.metadata["action"] = result.step.action.to_description()
 
     def finish(self) -> None:
-        """Mark execution as finished."""
+        """
+        Mark execution as finished.
+        """
         self.end_time = time.time()
 
     def get_step_history(self) -> List[Dict[str, Any]]:

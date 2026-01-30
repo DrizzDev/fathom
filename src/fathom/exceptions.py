@@ -1,5 +1,3 @@
-"""Fathom exception hierarchy."""
-
 from __future__ import annotations
 
 
@@ -24,7 +22,9 @@ class FathomError(Exception):
 
 
 class ToolError(FathomError):
-    """Base for tool-related errors."""
+    """
+    Base for tool-related errors.
+    """
 
     def __init__(
         self, message: str, *, tool_name: str = "unknown", retryable: bool = False
@@ -34,28 +34,36 @@ class ToolError(FathomError):
 
 
 class DeviceError(ToolError):
-    """Error during device interaction."""
+    """
+    Error during device interaction.
+    """
 
     def __init__(self, message: str, *, retryable: bool = False) -> None:
         super().__init__(message, tool_name="device", retryable=retryable)
 
 
 class VisionError(ToolError):
-    """Error during vision analysis."""
+    """
+    Error during vision analysis.
+    """
 
     def __init__(self, message: str, *, retryable: bool = False) -> None:
         super().__init__(message, tool_name="vision", retryable=retryable)
 
 
 class CaptureError(ToolError):
-    """Error during screen capture."""
+    """
+    Error during screen capture.
+    """
 
     def __init__(self, message: str, *, retryable: bool = False) -> None:
         super().__init__(message, tool_name="capture", retryable=retryable)
 
 
 class ToolTimeoutError(ToolError):
-    """Tool call timed out."""
+    """
+    Tool call timed out.
+    """
 
     def __init__(self, tool_name: str, timeout: float) -> None:
         message = f"Timed out after {timeout}s"
@@ -64,28 +72,36 @@ class ToolTimeoutError(ToolError):
 
 
 class ToolConnectionError(ToolError):
-    """Failed to connect to tool backend."""
+    """
+    Failed to connect to tool backend.
+    """
 
     def __init__(self, tool_name: str, message: str) -> None:
         super().__init__(message, tool_name=tool_name, retryable=True)
 
 
 class ToolExecutionError(ToolError):
-    """Tool execution failed."""
+    """
+    Tool execution failed.
+    """
 
     def __init__(self, tool_name: str, message: str) -> None:
         super().__init__(message, tool_name=tool_name, retryable=False)
 
 
 class ConfigurationError(FathomError):
-    """Error in configuration or setup."""
+    """
+    Error in configuration or setup.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__(message, retryable=False)
 
 
 class MissingDependencyError(ConfigurationError):
-    """Required optional dependency is not installed."""
+    """
+    Required optional dependency is not installed.
+    """
 
     def __init__(self, dependency: str, feature: str) -> None:
         message = f"Missing dependency '{dependency}' required for {feature}"
@@ -95,18 +111,24 @@ class MissingDependencyError(ConfigurationError):
 
 
 class AgentError(FathomError):
-    """Base for agent-related errors."""
+    """
+    Base for agent-related errors.
+    """
 
 
 class PlanningError(AgentError):
-    """Failed to plan next step."""
+    """
+    Failed to plan next step.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__(message, retryable=False)
 
 
 class StuckLoopError(AgentError):
-    """Agent is stuck in a loop."""
+    """
+    Agent is stuck in a loop.
+    """
 
     def __init__(self, iterations: int) -> None:
         message = f"Stuck in loop after {iterations} identical screens"
@@ -115,7 +137,9 @@ class StuckLoopError(AgentError):
 
 
 class MaxStepsExceededError(AgentError):
-    """Maximum step count exceeded."""
+    """
+    Maximum step count exceeded.
+    """
 
     def __init__(self, max_steps: int) -> None:
         message = f"Exceeded maximum of {max_steps} steps"
@@ -124,11 +148,15 @@ class MaxStepsExceededError(AgentError):
 
 
 class WorkflowError(FathomError):
-    """Base for workflow-related errors."""
+    """
+    Base for workflow-related errors.
+    """
 
 
 class WorkflowCancelledError(WorkflowError):
-    """Workflow was cancelled."""
+    """
+    Workflow was cancelled.
+    """
 
     def __init__(self, workflow_id: str) -> None:
         message = f"Workflow '{workflow_id}' was cancelled"
@@ -137,7 +165,9 @@ class WorkflowCancelledError(WorkflowError):
 
 
 class WorkflowTimeoutError(WorkflowError):
-    """Workflow timed out."""
+    """
+    Workflow timed out.
+    """
 
     def __init__(self, workflow_id: str, timeout: float) -> None:
         message = f"Workflow '{workflow_id}' timed out after {timeout}s"

@@ -1,5 +1,3 @@
-"""Fathom orchestration subpackage."""
-
 from __future__ import annotations
 
 from fathom.orchestration.context import ExecutionContext

@@ -1,5 +1,3 @@
-"""Fathom structured logging configuration."""
-
 from __future__ import annotations
 
 import logging
@@ -76,7 +74,9 @@ def get_logger(name: str, **initial_context: Any) -> structlog.stdlib.BoundLogge
 
 
 class LogContext:
-    """Context manager for scoped log context."""
+    """
+    Context manager for scoped log context.
+    """
 
     def __init__(self, **context: Any) -> None:
         self.__context = context
@@ -91,5 +91,7 @@ class LogContext:
             structlog.contextvars.unbind_contextvars(*self.__context.keys())
 
     def bind(self, **extra: Any) -> None:
-        """Add additional context within this scope."""
+        """
+        Add additional context within this scope.
+        """
         structlog.contextvars.bind_contextvars(**extra)

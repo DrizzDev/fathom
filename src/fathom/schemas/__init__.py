@@ -1,5 +1,3 @@
-"""Fathom schemas subpackage."""
-
 from __future__ import annotations
 
 from fathom.schemas.actions import Action, BoundingBox

@@ -1,5 +1,3 @@
-"""Intent execution strategy for goal-directed automation."""
-
 from __future__ import annotations
 
 import time
@@ -66,12 +64,16 @@ class IntentStrategy(ExecutionStrategy):
 
     @property
     def name(self) -> str:
-        """Strategy name."""
+        """
+        Strategy name.
+        """
         return "intent"
 
     @property
     def state(self) -> AgentState:
-        """Current agent state."""
+        """
+        Current agent state.
+        """
         return self.__state
 
     async def execute_step(self) -> StrategyResult:
@@ -172,24 +174,32 @@ class IntentStrategy(ExecutionStrategy):
         )
 
     async def __capture_with_timeout(self) -> Optional[ScreenCapture]:
-        """Capture screen with timeout handling."""
+        """
+        Capture screen with timeout handling.
+        """
         try:
             return await self.__capture.capture()
         except Exception:
             return None
 
     async def __execute_action(self, request: dict[str, object]) -> ActionResult:
-        """Execute action on device."""
+        """
+        Execute action on device.
+        """
         return await self.__device.execute(request)
 
     async def __wait_for_stability(self) -> None:
-        """Wait for screen to stabilize after action."""
+        """
+        Wait for screen to stabilize after action.
+        """
         import asyncio
 
         await asyncio.sleep(0.5)
 
     async def should_continue(self) -> bool:
-        """Check if execution should continue."""
+        """
+        Check if execution should continue.
+        """
         if self.__state.is_complete:
             return False
         if not self.__state.can_continue:
@@ -199,7 +209,9 @@ class IntentStrategy(ExecutionStrategy):
         return elapsed <= max_time
 
     def get_progress(self) -> dict[str, object]:
-        """Get current progress information."""
+        """
+        Get current progress information.
+        """
         return {
             "intent": self.__intent,
             "step_count": self.__state.step_count,
@@ -212,7 +224,9 @@ class IntentStrategy(ExecutionStrategy):
         }
 
     def get_checkpoint(self) -> dict[str, object]:
-        """Get checkpoint data for persistence."""
+        """
+        Get checkpoint data for persistence.
+        """
         return {
             "strategy": self.name,
             "intent": self.__intent,
