@@ -1,14 +1,18 @@
-from __future__ import annotations
-
 import asyncio
 import hashlib
+import io
 import time
 from dataclasses import dataclass
-from typing import Optional
+from logging import getLogger
+from typing import Optional, Union
+
+from PIL import Image
 
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.tools.capture.base import CaptureTool
 from fathom.tools.capture.hasher import FastHasher, HybridHasher
+
+logger = getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -17,14 +21,15 @@ class ADBCaptureConfig:
     Configuration for ADB capture tool.
     """
 
-    device_serial: Optional[str] = None
     adb_path: str = "adb"
     timeout: float = 10.0
     use_hybrid_hash: bool = True
+    device_serial: Optional[str] = None
 
 
 class ADBCaptureTool(CaptureTool):
-    """Capture tool using ADB for real device screenshots.
+    """
+    Capture tool using ADB for real device screenshots.
 
     Example:
         ```python
@@ -37,26 +42,31 @@ class ADBCaptureTool(CaptureTool):
     """
 
     def __init__(self, config: Optional[ADBCaptureConfig] = None) -> None:
-        """Initialize ADB capture tool.
+        """
+        Initialize ADB capture tool.
 
         Args:
             config: ADB capture configuration.
         """
+
         self.__config = config or ADBCaptureConfig()
 
         if self.__config.use_hybrid_hash:
-            self.__hasher: HybridHasher | FastHasher = HybridHasher()
+            self.__hasher: Union[HybridHasher, FastHasher] = HybridHasher()
         else:
             self.__hasher = FastHasher()
 
     async def capture(self) -> ScreenCapture:
-        """Capture screenshot from device.
+        """
+        Capture screenshot from device.
 
         Returns:
             ScreenCapture with image bytes and metadata.
         """
+
         image = await self.__capture_screenshot()
         activity = await self.__get_current_activity()
+
         timestamp = int(time.time() * 1000)
 
         # Get dimensions
@@ -67,20 +77,64 @@ class ADBCaptureTool(CaptureTool):
 
             with Image.open(io.BytesIO(image)) as img:
                 width, height = img.size
-        except ImportError:
-            # Fallback if PIL not available (though required for hasher)
+        except ImportError as exception:
             width, height = 1080, 1920
+            logger.warning(
+                "Pillow not installed, using fallback dimensions",
+                extra={"exception": str(exception)},
+            )
 
         return ScreenCapture(
             image=image,
-            activity=activity,
-            timestamp=timestamp,
             width=width,
             height=height,
+            activity=activity,
+            timestamp=timestamp,
         )
 
+    async def capture_stable(self, timeout: int = 2000) -> ScreenCapture:
+        """
+        Capture screen after waiting for stability.
+
+        Args:
+            timeout: Maximum wait time in milliseconds.
+
+        Returns:
+            Stable screen capture.
+        """
+
+        start_time = time.time()
+        timeout_sec = timeout / 1000.0
+
+        # Initial capture
+        last_capture = await self.capture()
+        last_state = self.compute_state(last_capture)
+
+        while (time.time() - start_time) < timeout_sec:
+            await asyncio.sleep(0.2)  # 200ms interval
+
+            try:
+                current_capture = await self.capture()
+                current_state = self.compute_state(current_capture)
+
+                if current_state.is_same_screen(last_state):
+                    return current_capture
+
+                last_capture = current_capture
+                last_state = current_state
+
+            except Exception as exception:
+                logger.warning(
+                    "Transient capture error during stability check",
+                    extra={"error": str(exception)},
+                )
+                continue
+
+        return last_capture
+
     def compute_state(self, capture: ScreenCapture) -> ScreenState:
-        """Compute state from screen capture.
+        """
+        Compute state from screen capture.
 
         Args:
             capture: Screen capture.
@@ -88,12 +142,9 @@ class ADBCaptureTool(CaptureTool):
         Returns:
             ScreenState with hashes and metadata.
         """
+
         if isinstance(self.__hasher, HybridHasher):
             try:
-                import io
-
-                from PIL import Image
-
                 with Image.open(io.BytesIO(capture.image)) as img:
                     img = img.convert("RGB")
                     visual_hash = self.__hasher.compute_phash(img)
@@ -110,18 +161,20 @@ class ADBCaptureTool(CaptureTool):
 
         return ScreenState(
             visual_hash=visual_hash,
-            structural_hash=structural_hash,
-            activity_hash=activity_hash,
-            timestamp=capture.timestamp,
             activity=capture.activity,
+            timestamp=capture.timestamp,
+            activity_hash=activity_hash,
+            structural_hash=structural_hash,
         )
 
     async def __capture_screenshot(self) -> bytes:
-        """Capture screenshot via ADB.
+        """
+        Capture screenshot via ADB.
 
         Returns:
             PNG image bytes.
         """
+
         args = self.__build_adb_args(["exec-out", "screencap", "-p"])
 
         try:
@@ -149,11 +202,13 @@ class ADBCaptureTool(CaptureTool):
             raise RuntimeError("Screenshot timed out") from err
 
     async def __get_current_activity(self) -> str:
-        """Get current activity name.
+        """
+        Get current activity name.
 
         Returns:
             Activity name or "unknown".
         """
+
         args = self.__build_adb_args(
             [
                 "shell",
@@ -187,7 +242,8 @@ class ADBCaptureTool(CaptureTool):
             return "unknown"
 
     def __build_adb_args(self, args: list[str]) -> list[str]:
-        """Build full ADB command arguments.
+        """
+        Build full ADB command arguments.
 
         Args:
             args: ADB subcommand and arguments.
@@ -195,8 +251,10 @@ class ADBCaptureTool(CaptureTool):
         Returns:
             Full command list.
         """
+
         cmd = [self.__config.adb_path]
         if self.__config.device_serial:
             cmd.extend(["-s", self.__config.device_serial])
+
         cmd.extend(args)
         return cmd

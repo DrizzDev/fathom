@@ -12,11 +12,12 @@ class ADBConfig(BaseModel):
 
     model_config = {"frozen": True}
 
-    device_serial: Optional[str] = Field(default=None, description="Target device serial")
     adb_path: str = Field(default="adb", description="Path to adb executable")
-    command_timeout: float = Field(default=30.0, description="Command timeout in seconds")
+    device_serial: Optional[str] = Field(default=None, description="Target device serial")
+
     tap_duration: int = Field(default=50, description="Tap duration in ms")
     swipe_duration: int = Field(default=300, description="Swipe duration in ms")
+    command_timeout: float = Field(default=30.0, description="Command timeout in seconds")
     long_press_duration: int = Field(default=1000, description="Long press duration in ms")
 
 
@@ -27,11 +28,17 @@ class GeminiConfig(BaseModel):
 
     model_config = {"frozen": True}
 
-    api_key: str = Field(description="Gemini API key")
-    model: str = Field(default="gemini-2.0-flash", description="Model name")
+    api_key: Optional[str] = Field(
+        default=None, description="Gemini API key (optional if using Vertex AI)"
+    )
+    project_id: Optional[str] = Field(default=None, description="GCP Project ID for Vertex AI")
+
+    model: str = Field(default="gemini-2.0-flash-exp", description="Model name")
+    location: str = Field(default="us-central1", description="Vertex AI location")
+
+    timeout: float = Field(default=30.0, description="API request timeout")
     temperature: float = Field(default=0.1, description="Model temperature")
     max_output_tokens: int = Field(default=2048, description="Max output tokens")
-    timeout: float = Field(default=30.0, description="API request timeout")
 
 
 class HasherConfig(BaseModel):
@@ -41,9 +48,9 @@ class HasherConfig(BaseModel):
 
     model_config = {"frozen": True}
 
-    thumbnail_size: Tuple[int, int] = Field(default=(8, 8), description="pHash thumbnail size")
     use_perceptual: bool = Field(default=True, description="Enable perceptual hashing")
     use_structural: bool = Field(default=True, description="Enable structural hashing")
+    thumbnail_size: Tuple[int, int] = Field(default=(8, 8), description="pHash thumbnail size")
 
 
 class WorkflowConfig(BaseModel):

@@ -12,20 +12,22 @@ from fathom.tools.vision import AnalysisResult
 
 @dataclass(frozen=True)
 class CompletionSignal:
-    """Signals that indicate intent completion.
-
+    """
+    Signals that indicate intent completion.
     Captures evidence that the goal has been achieved.
     """
 
-    keyword_match: bool = False
-    success_indicator: bool = False
-    expected_screen: bool = False
-    llm_confidence: float = 0.0
     evidence: str = ""
+    llm_confidence: float = 0.0
+
+    keyword_match: bool = False
+    expected_screen: bool = False
+    success_indicator: bool = False
 
     @property
     def is_complete(self) -> bool:
-        """Determine if signals indicate completion.
+        """
+        Determine if signals indicate completion.
 
         Uses weighted scoring:
         - LLM confidence > 0.8: high weight
@@ -33,7 +35,9 @@ class CompletionSignal:
         - Success indicator: medium weight
         - Expected screen: low weight (may be intermediate)
         """
+
         score = 0.0
+
         if self.llm_confidence >= 0.8:
             score += 0.5
         elif self.llm_confidence >= 0.5:
@@ -59,6 +63,7 @@ class CompletionMatcher(ABC):
         """
         Check if text matches completion criteria.
         """
+
         raise NotImplementedError
 
     @abstractmethod
@@ -66,6 +71,7 @@ class CompletionMatcher(ABC):
         """
         Get evidence string if matched.
         """
+
         raise NotImplementedError
 
 
@@ -82,18 +88,26 @@ class KeywordMatcher(CompletionMatcher):
         )
 
     def matches(self, text: str) -> bool:
+        """
+        Check if text matches completion criteria.
+        """
+
         return bool(self.__pattern.search(text))
 
     def get_evidence(self, text: str) -> str:
-        match = self.__pattern.search(text)
-        if match:
+        """
+        Get evidence string if matched.
+        """
+
+        if match := self.__pattern.search(text):
             return f"Found keyword: '{match.group(1)}'"
+
         return ""
 
 
 class IntentMatcher(CompletionMatcher):
-    """Matches completion based on intent-specific patterns.
-
+    """
+    Matches completion based on intent-specific patterns.
     Parses the intent to extract expected outcomes.
     """
 
@@ -119,17 +133,26 @@ class IntentMatcher(CompletionMatcher):
         )
 
     def matches(self, text: str) -> bool:
+        """
+        Check if text matches completion criteria.
+        """
+
         return bool(self.__pattern.search(text))
 
     def get_evidence(self, text: str) -> str:
-        match = self.__pattern.search(text)
-        if match:
+        """
+        Get evidence string if matched.
+        """
+
+        if match := self.__pattern.search(text):
             return f"Success pattern: '{match.group(0)}'"
+
         return ""
 
 
 class Reasoner:
-    """Intent reasoning and completion detection.
+    """
+    Intent reasoning and completion detection.
 
     Combines multiple signals to determine:
     - Whether the intent is complete
@@ -145,43 +168,49 @@ class Reasoner:
         *,
         custom_keywords: Optional[Set[str]] = None,
     ) -> None:
-        """Initialize reasoner.
+        """
+        Initialize reasoner.
 
         Args:
             intent: The goal being pursued.
             custom_keywords: Additional keywords to detect completion.
         """
+
         self.__intent = intent
         self.__keywords = self.__extract_keywords(intent)
+
         if custom_keywords:
             self.__keywords.update(custom_keywords)
 
         self.__keyword_matcher = KeywordMatcher(self.__keywords)
+
         self.__intent_matcher = IntentMatcher()
         self.__completion_evidence: List[str] = []
 
     def __extract_keywords(self, intent: str) -> Set[str]:
-        """Extract completion keywords from intent.
+        """
+        Extract completion keywords from intent.
 
         Parses intent to find expected outcomes.
         E.g., "Login with phone" -> looking for "logged in", "welcome"
         E.g., "Add to cart" -> looking for "added", "cart"
         """
+
         keywords: Set[str] = set()
         intent_lower = intent.lower()
 
         keyword_map = {
-            "login": {"logged in", "welcome", "sign in", "dashboard"},
+            "save": {"saved", "updated"},
+            "send": {"sent", "delivered"},
+            "search": {"results", "found"},
+            "delete": {"deleted", "removed"},
+            "submit": {"submitted", "received"},
+            "cancel": {"cancelled", "canceled"},
             "sign up": {"account created", "welcome", "verify"},
-            "register": {"registered", "account created", "verify"},
             "add to cart": {"added to cart", "cart", "item added"},
             "checkout": {"order placed", "payment", "confirmation"},
-            "search": {"results", "found"},
-            "send": {"sent", "delivered"},
-            "submit": {"submitted", "received"},
-            "save": {"saved", "updated"},
-            "delete": {"deleted", "removed"},
-            "cancel": {"cancelled", "canceled"},
+            "register": {"registered", "account created", "verify"},
+            "login": {"logged in", "welcome", "sign in", "dashboard"},
         }
 
         for trigger, words in keyword_map.items():
@@ -195,7 +224,8 @@ class Reasoner:
         analysis: AnalysisResult,
         screen_description: Optional[str] = None,
     ) -> CompletionSignal:
-        """Analyze whether the intent is complete.
+        """
+        Analyze whether the intent is complete.
 
         Args:
             analysis: Result from vision tool.
@@ -204,6 +234,7 @@ class Reasoner:
         Returns:
             CompletionSignal with detailed evidence.
         """
+
         keyword_match = False
         success_indicator = False
         evidence_parts: List[str] = []
@@ -215,8 +246,10 @@ class Reasoner:
             evidence_parts.append("COMPLETE action recommended")
 
         text_to_check = analysis.reasoning or ""
+
         if screen_description:
             text_to_check += " " + screen_description
+
         if analysis.screen_description:
             text_to_check += " " + analysis.screen_description
 
@@ -232,10 +265,10 @@ class Reasoner:
 
         return CompletionSignal(
             keyword_match=keyword_match,
-            success_indicator=success_indicator,
-            expected_screen=analysis.is_goal_complete,
             llm_confidence=llm_confidence,
             evidence="; ".join(evidence_parts),
+            success_indicator=success_indicator,
+            expected_screen=analysis.is_goal_complete,
         )
 
     def should_accept_action(
@@ -244,7 +277,8 @@ class Reasoner:
         *,
         has_failed_before: bool = False,
     ) -> bool:
-        """Determine if an action should be accepted.
+        """
+        Determine if an action should be accepted.
 
         Args:
             action: Proposed action.
@@ -253,6 +287,7 @@ class Reasoner:
         Returns:
             True if action should be executed.
         """
+
         if action.confidence < 0.3:
             return False
 
@@ -271,7 +306,8 @@ class Reasoner:
         *,
         failed_actions: Optional[Set[str]] = None,
     ) -> Action:
-        """Select the best action from candidates.
+        """
+        Select the best action from candidates.
 
         Args:
             primary: Primary recommended action.
@@ -281,6 +317,7 @@ class Reasoner:
         Returns:
             Best action to execute.
         """
+
         failed = failed_actions or set()
         primary_desc = primary.to_description()
 
@@ -293,42 +330,3 @@ class Reasoner:
                 return alt
 
         return primary
-
-    def build_prompt_context(
-        self,
-        recent_actions: List[str],
-        recent_failures: List[str],
-        step_count: int,
-        max_steps: int,
-    ) -> str:
-        """Build context string for LLM prompt.
-
-        Args:
-            recent_actions: Recent action history.
-            recent_failures: Recent failures.
-            step_count: Current step number.
-            max_steps: Maximum allowed steps.
-
-        Returns:
-            Formatted context string.
-        """
-        parts: List[str] = []
-
-        parts.append(f"Goal: {self.__intent}")
-        parts.append(f"Progress: Step {step_count}/{max_steps}")
-
-        if recent_actions:
-            parts.append("Recent actions:")
-            for action in recent_actions[-5:]:
-                parts.append(f"  - {action}")
-
-        if recent_failures:
-            parts.append("Recent failures (avoid repeating):")
-            for failure in recent_failures[-3:]:
-                parts.append(f"  - {failure}")
-
-        steps_remaining = max_steps - step_count
-        if steps_remaining <= 5:
-            parts.append(f"⚠ Only {steps_remaining} steps remaining - prioritize completion")
-
-        return "\n".join(parts)
