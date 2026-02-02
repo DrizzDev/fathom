@@ -4,12 +4,13 @@ from typing import Optional
 from fathom.auth.credentials import CredentialsManager
 from fathom.exceptions import FathomError
 from fathom.schemas.configuration import ADBConfig, GeminiConfig, WorkflowConfig
-from fathom.schemas.results import IntentResult
+from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.settings.env import FathomSettings
 from fathom.tools.capture import ADBCaptureConfig, ADBCaptureTool
 from fathom.tools.device import ADBDeviceTool
 from fathom.tools.vision import GeminiVisionTool
 from fathom.workflows import IntentWorkflow
+from fathom.workflows.exploration import ExplorationWorkflow
 
 logger = getLogger(__name__)
 
@@ -60,8 +61,8 @@ class FathomRunner:
 
         Args:
             intent: The goal to achieve.
-            device_serial: Optional device serial overrides settings.
             max_steps: Maximum steps allowed.
+            device_serial: Optional device serial overrides settings.
 
         Returns:
             IntentResult containing success status and step history.
@@ -99,4 +100,52 @@ class FathomRunner:
         )
 
         logger.info("Starting workflow execution", extra={"intent": intent})
+        return await workflow.execute()
+
+    async def run_exploration(
+        self,
+        max_steps: int = 50,
+        device_serial: Optional[str] = None,
+    ) -> ExplorationResult:
+        """
+        Run an exploration workflow to map the app.
+
+        Args:
+            max_steps: Maximum steps for exploration.
+            device_serial: Optional device serial overrides settings.
+
+        Returns:
+            ExplorationResult with graph and stats.
+        """
+
+        serial = device_serial or self.settings.android_serial
+        logger.info("Initializing exploration tools", extra={"serial": serial})
+
+        # Initialize Tools
+        device_tool = ADBDeviceTool(ADBConfig(device_serial=serial))
+
+        # Verify connectivity
+        if not await device_tool.wait_for_device(timeout=5.0):
+            raise FathomError(f"Device {serial or '(default)'} not found or offline.")
+
+        capture_tool = ADBCaptureTool(config=ADBCaptureConfig(device_serial=serial))
+
+        # Initialize Vision (Optional for exploration but good for OCR eventually)
+        vision_configuration = GeminiConfig(
+            model=self.settings.gemini_model,
+            api_key=self.settings.gemini_api_key,
+            location=self.settings.vertex_location,
+            project_id=self.settings.vertex_project_id,
+        )
+        vision_tool = GeminiVisionTool(vision_configuration)
+
+        workflow = ExplorationWorkflow(
+            vision=vision_tool,
+            device=device_tool,
+            capture=capture_tool,
+            workflow_id="runner-exploration",
+            config=WorkflowConfig(max_steps=max_steps),
+        )
+
+        logger.info("Starting exploration execution...")
         return await workflow.execute()

@@ -196,8 +196,8 @@ class StepPlanner:
             return PlanResult(
                 step=None,
                 is_complete=False,
-                reason=f"Action rejected: confidence {action.confidence:.2f}",
                 should_retry=True,
+                reason=f"Action rejected: confidence {action.confidence:.2f} ({action.reasoning})",
             )
 
         return self.__build_plan_result(action, capture, state.step_count)

@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Optional
+import io
+
+from PIL import Image
 
 from fathom.schemas.configuration import HasherConfig
 
-if TYPE_CHECKING:
-    from PIL import Image
-
 
 class HybridHasher:
-    """Hybrid screen hashing for efficient deduplication.
+    """
+    Hybrid screen hashing for efficient deduplication.
 
     Combines multiple hashing strategies:
     1. Perceptual hash (pHash) - robust to small changes
@@ -26,16 +26,19 @@ class HybridHasher:
         ```
     """
 
-    def __init__(self, config: Optional[HasherConfig] = None) -> None:
-        """Initialize hasher.
+    def __init__(self, config: HasherConfig | None = None) -> None:
+        """
+        Initialize hasher.
 
         Args:
             config: Hasher configuration.
         """
+
         self.__config = config or HasherConfig()
 
     def compute(self, image: bytes) -> str:
-        """Compute hybrid hash for image.
+        """
+        Compute hybrid hash for image.
 
         Args:
             image: Image bytes (PNG/JPEG).
@@ -43,11 +46,8 @@ class HybridHasher:
         Returns:
             Hexadecimal hash string.
         """
+
         try:
-            import io
-
-            from PIL import Image
-
             img_pil = Image.open(io.BytesIO(image))
             img = img_pil.convert("RGB")
 
@@ -58,8 +58,8 @@ class HybridHasher:
                 parts.append(phash)
 
             if self.__config.use_structural:
-                shash = self.compute_structural(img)
-                parts.append(shash)
+                structural_hash = self.compute_structural(img)
+                parts.append(structural_hash)
 
             content_hash = hashlib.md5(image).hexdigest()[:8]  # nosec
             parts.append(content_hash)
@@ -72,8 +72,9 @@ class HybridHasher:
         except Exception:
             return hashlib.md5(image).hexdigest()  # nosec
 
-    def compute_phash(self, img: "Image.Image") -> str:
-        """Compute perceptual hash.
+    def compute_phash(self, img: Image.Image) -> str:
+        """
+        Compute perceptual hash.
 
         Uses DCT-based perceptual hashing:
         1. Resize to small thumbnail
@@ -87,7 +88,6 @@ class HybridHasher:
         Returns:
             Hex hash string.
         """
-        from PIL import Image
 
         size = self.__config.thumbnail_size
         thumbnail = img.resize(size, Image.Resampling.LANCZOS)
@@ -101,8 +101,9 @@ class HybridHasher:
         hash_int = int(bits, 2)
         return format(hash_int, "016x")
 
-    def compute_structural(self, img: "Image.Image") -> str:
-        """Compute structural hash.
+    def compute_structural(self, img: Image.Image) -> str:
+        """
+        Compute structural hash.
 
         Divides image into grid and computes brightness per cell.
 
@@ -112,7 +113,6 @@ class HybridHasher:
         Returns:
             Hex hash string.
         """
-        from PIL import Image
 
         grid_size = (4, 4)
         thumbnail = img.resize(grid_size, Image.Resampling.LANCZOS)
@@ -126,7 +126,8 @@ class HybridHasher:
         return hex_str[:8]
 
     def similarity(self, hash1: str, hash2: str) -> float:
-        """Compute similarity between two hashes.
+        """
+        Compute similarity between two hashes.
 
         Args:
             hash1: First hash.
@@ -135,6 +136,7 @@ class HybridHasher:
         Returns:
             Similarity score 0.0 to 1.0.
         """
+
         if hash1 == hash2:
             return 1.0
 
@@ -146,14 +148,15 @@ class HybridHasher:
 
         similarities = []
 
-        for p1, p2 in zip(parts1, parts2):
+        for p1, p2 in zip(parts1, parts2, strict=False):
             sim = self.__hamming_similarity(p1, p2)
             similarities.append(sim)
 
         return sum(similarities) / len(similarities)
 
     def __hamming_similarity(self, hex1: str, hex2: str) -> float:
-        """Compute Hamming similarity between hex strings.
+        """
+        Compute Hamming similarity between hex strings.
 
         Args:
             hex1: First hex string.
@@ -162,6 +165,7 @@ class HybridHasher:
         Returns:
             Similarity 0.0 to 1.0.
         """
+
         if len(hex1) != len(hex2):
             return 0.0
 
@@ -184,7 +188,8 @@ class HybridHasher:
         hash2: str,
         threshold: float = 0.85,
     ) -> bool:
-        """Check if two hashes are similar.
+        """
+        Check if two hashes are similar.
 
         Args:
             hash1: First hash.
@@ -194,18 +199,19 @@ class HybridHasher:
         Returns:
             True if similarity >= threshold.
         """
+
         return self.similarity(hash1, hash2) >= threshold
 
 
 class FastHasher:
-    """Fast content-only hasher for simple deduplication.
-
-    Uses MD5 for exact matching without image processing.
-    Suitable when PIL is not available.
+    """
+    Fast content-only hasher for simple deduplication.
+    Uses MD5 for exact matching without image processing. Suitable when PIL is not available.
     """
 
     def compute(self, image: bytes) -> str:
-        """Compute MD5 hash of image.
+        """
+        Compute MD5 hash of image.
 
         Args:
             image: Image bytes.
@@ -213,10 +219,12 @@ class FastHasher:
         Returns:
             MD5 hex string.
         """
+
         return hashlib.md5(image).hexdigest()  # nosec
 
     def similarity(self, hash1: str, hash2: str) -> float:
-        """Check exact match.
+        """
+        Check exact match.
 
         Args:
             hash1: First hash.
@@ -225,6 +233,7 @@ class FastHasher:
         Returns:
             1.0 if equal, 0.0 otherwise.
         """
+
         return 1.0 if hash1 == hash2 else 0.0
 
     def is_similar(
@@ -233,7 +242,8 @@ class FastHasher:
         hash2: str,
         threshold: float = 0.85,
     ) -> bool:
-        """Check exact match.
+        """
+        Check exact match.
 
         Args:
             hash1: First hash.
@@ -243,4 +253,5 @@ class FastHasher:
         Returns:
             True if hashes are equal.
         """
+
         return hash1 == hash2

@@ -84,6 +84,50 @@ class FathomCLI:
             console.print(f"[bold red]Unexpected Error:[/bold red] {exception}")
             return 1
 
+    async def explore(
+        self,
+        max_steps: int = 50,
+        device_serial: Optional[str] = None,
+    ) -> int:
+        """
+        Run an exploration workflow with rich UI.
+        """
+
+        console.print(
+            Panel.fit(
+                "[bold blue]Fathom Explorer[/bold blue]\n[cyan]Goal:[/cyan] Map application structure",
+                border_style="blue",
+            )
+        )
+
+        try:
+            with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
+                result = await self.runner.run_exploration(
+                    max_steps=max_steps, device_serial=device_serial
+                )
+
+            # Results
+            table = Table(title="Exploration Results", border_style="green")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="magenta")
+
+            table.add_row("Unique Screens", str(result.unique_screens))
+            table.add_row("Total Actions", str(result.total_actions))
+            table.add_row("Total Transitions", str(result.total_transitions))
+            table.add_row("Coverage", f"{result.coverage_percentage:.1f}%")
+
+            console.print(table)
+            return 0
+
+        except FathomError as exception:
+            logger.error(f"Exploration Error: {exception}")
+            console.print(f"[bold red]Fathom Error:[/bold red] {exception}")
+            return 1
+        except Exception as exception:
+            logger.exception("Unexpected error")
+            console.print(f"[bold red]Unexpected Error:[/bold red] {exception}")
+            return 1
+
 
 def main() -> int:
     """
@@ -101,6 +145,14 @@ def main() -> int:
     run_parser.add_argument("--max-steps", type=int, default=20, help="Maximum steps allowed")
     run_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
 
+    # 'explore' command
+    explore_parser = subparsers.add_parser("explore", help="Run app exploration (crawling)")
+    explore_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
+    explore_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
+    explore_parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable verbose output"
+    )
+
     args = parser.parse_args()
 
     # Load settings
@@ -115,6 +167,13 @@ def main() -> int:
 
     BaseLogger.configure(settings)
 
+    # Silence noisy libraries
+    getLogger("PIL").setLevel("ERROR")
+    getLogger("urllib3").setLevel("ERROR")
+    getLogger("httpx").setLevel("WARNING")
+    getLogger("google").setLevel("WARNING")
+    getLogger("google.auth").setLevel("WARNING")
+
     try:
         cli = FathomCLI(settings)
     except FathomError as exception:
@@ -125,6 +184,13 @@ def main() -> int:
         return asyncio.run(
             cli.run(
                 intent=args.intent,
+                max_steps=args.max_steps,
+                device_serial=args.serial,
+            )
+        )
+    elif args.command == "explore":
+        return asyncio.run(
+            cli.explore(
                 max_steps=args.max_steps,
                 device_serial=args.serial,
             )

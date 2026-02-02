@@ -11,6 +11,8 @@ from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
 from fathom.workflows.base import BaseWorkflow, WorkflowConfig
+from fathom.workflows.exploration import ExplorationWorkflow
+from fathom.workflows.intent import IntentWorkflow
 
 
 @dataclass
@@ -19,10 +21,10 @@ class RunnerConfig:
     Configuration for workflow runner.
     """
 
-    enable_checkpoints: bool = True
-    checkpoint_callback: Optional[Callable[[Dict[str, Any]], None]] = None
-    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
     enable_logging: bool = True
+    enable_checkpoints: bool = True
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    checkpoint_callback: Optional[Callable[[Dict[str, Any]], None]] = None
 
 
 @dataclass
@@ -33,12 +35,14 @@ class RunnerResult:
 
     workflow_result: WorkflowResult
     execution_context: ExecutionContext
+
     checkpoints_saved: int = 0
     total_duration: float = 0.0
 
 
 class WorkflowRunner:
-    """Runs workflows synchronously with lifecycle management.
+    """
+    Runs workflows synchronously with lifecycle management.
 
     Provides:
     - Workflow instantiation from registry
@@ -72,7 +76,8 @@ class WorkflowRunner:
         runner_config: Optional[RunnerConfig] = None,
         workflow_config: Optional[WorkflowConfig] = None,
     ) -> None:
-        """Initialize workflow runner.
+        """
+        Initialize workflow runner.
 
         Args:
             device: Device tool for actions.
@@ -81,6 +86,7 @@ class WorkflowRunner:
             runner_config: Runner configuration.
             workflow_config: Default workflow configuration.
         """
+
         self.__device = device
         self.__capture = capture
         self.__vision = vision
@@ -94,6 +100,7 @@ class WorkflowRunner:
         """
         Check if a workflow is currently running.
         """
+
         return self.__active_workflow is not None
 
     def run_intent(
@@ -103,7 +110,8 @@ class WorkflowRunner:
         *,
         config: Optional[WorkflowConfig] = None,
     ) -> RunnerResult:
-        """Run an intent workflow.
+        """
+        Run an intent workflow.
 
         Args:
             intent: Goal to achieve.
@@ -113,17 +121,16 @@ class WorkflowRunner:
         Returns:
             RunnerResult with execution details.
         """
-        from fathom.workflows.intent import IntentWorkflow
 
         if self.__vision is None:
             raise ValueError("Vision tool required for intent workflows")
 
         workflow = IntentWorkflow(
-            workflow_id=workflow_id,
             intent=intent,
             vision=self.__vision,
             device=self.__device,
             capture=self.__capture,
+            workflow_id=workflow_id,
             config=config or self.__workflow_config,
         )
 
@@ -133,10 +140,11 @@ class WorkflowRunner:
         self,
         workflow_id: str,
         *,
-        config: Optional[WorkflowConfig] = None,
         seed: Optional[int] = None,
+        config: Optional[WorkflowConfig] = None,
     ) -> RunnerResult:
-        """Run an exploration workflow.
+        """
+        Run an exploration workflow.
 
         Args:
             workflow_id: Unique workflow identifier.
@@ -146,25 +154,26 @@ class WorkflowRunner:
         Returns:
             RunnerResult with execution details.
         """
-        from fathom.workflows.exploration import ExplorationWorkflow
 
         workflow = ExplorationWorkflow(
-            workflow_id=workflow_id,
-            device=self.__device,
-            capture=self.__capture,
-            vision=self.__vision,
-            config=config or self.__workflow_config,
             seed=seed,
+            device=self.__device,
+            vision=self.__vision,
+            capture=self.__capture,
+            workflow_id=workflow_id,
+            config=config or self.__workflow_config,
         )
 
         return self.__run_workflow(workflow)
 
     def cancel_active(self) -> bool:
-        """Cancel the currently active workflow.
+        """
+        Cancel the currently active workflow.
 
         Returns:
             True if a workflow was cancelled.
         """
+
         if self.__active_workflow is None:
             return False
 
@@ -175,7 +184,8 @@ class WorkflowRunner:
         self,
         workflow: BaseWorkflow[Any],
     ) -> RunnerResult:
-        """Run a workflow with full lifecycle.
+        """
+        Run a workflow with full lifecycle.
 
         Args:
             workflow: Workflow to run.
@@ -183,9 +193,8 @@ class WorkflowRunner:
         Returns:
             RunnerResult with execution details.
         """
-        context = ExecutionContext(
-            workflow_id=workflow.workflow_id,
-        )
+
+        context = ExecutionContext(workflow_id=workflow.workflow_id)
 
         self.__active_workflow = workflow
         start_time = time.time()
@@ -220,19 +229,21 @@ class WorkflowRunner:
         workflow: BaseWorkflow[Any],
         context: ExecutionContext,
     ) -> None:
-        """Save workflow checkpoint.
+        """
+        Save workflow checkpoint.
 
         Args:
             workflow: Workflow to checkpoint.
             context: Execution context.
         """
+
         if not self.__runner_config.enable_checkpoints:
             return
 
         checkpoint = {
-            "workflow": workflow.get_checkpoint(),
-            "context": context.to_checkpoint(),
             "timestamp": time.time(),
+            "context": context.to_checkpoint(),
+            "workflow": workflow.get_checkpoint(),
         }
 
         if self.__runner_config.checkpoint_callback:
@@ -240,25 +251,27 @@ class WorkflowRunner:
 
     def __report_progress(
         self,
-        workflow: BaseWorkflow[Any],
         context: ExecutionContext,
+        workflow: BaseWorkflow[Any],
     ) -> None:
-        """Report workflow progress.
+        """
+        Report workflow progress.
 
         Args:
             workflow: Running workflow.
             context: Execution context.
         """
+
         if not self.__runner_config.progress_callback:
             return
 
         progress = {
-            "workflow_id": workflow.workflow_id,
             "workflow_type": workflow.name,
             "status": workflow.status.value,
-            "steps_executed": workflow.steps_executed,
+            "workflow_id": workflow.workflow_id,
             "elapsed_seconds": workflow.elapsed,
             "progress": workflow.get_progress(),
+            "steps_executed": workflow.steps_executed,
         }
 
         self.__runner_config.progress_callback(progress)

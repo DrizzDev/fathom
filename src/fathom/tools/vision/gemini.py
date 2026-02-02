@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
 import httpx
@@ -14,6 +15,8 @@ from fathom.schemas.actions import Action, BoundingBox
 from fathom.schemas.configuration import GeminiConfig
 from fathom.schemas.results import AnalysisResult
 from fathom.tools.vision.base import VisionTool
+
+logger = getLogger(__name__)
 
 
 class GeminiVisionTool(VisionTool):
@@ -75,6 +78,8 @@ class GeminiVisionTool(VisionTool):
             return self.__parse_response(response)
 
         except Exception as exception:
+            logger.exception("Gemini analysis failed", stack_info=True)
+
             return AnalysisResult(
                 action=Action(
                     confidence=0.1,
