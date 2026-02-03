@@ -1,0 +1,194 @@
+{
+  "workflow_id": "default",
+  "history": [
+    {
+      "step_number": 0,
+      "action_type": "tap",
+      "target": "Amul Buttermilk past search chip",
+      "text": null,
+      "reasoning": "",
+      "success": true,
+      "screen_changed": true,
+      "duration": 23354,
+      "bbox": [
+        136,
+        114,
+        236,
+        214
+      ],
+      "center": [
+        249,
+        490
+      ],
+      "timestamp_ms": 1770065180806
+    },
+    {
+      "step_number": 1,
+      "action_type": "tap",
+      "target": "ADD button for the first product",
+      "text": null,
+      "reasoning": "",
+      "success": true,
+      "screen_changed": true,
+      "duration": 25195,
+      "bbox": [
+        24,
+        335,
+        124,
+        435
+      ],
+      "center": [
+        99,
+        1151
+      ],
+      "timestamp_ms": 1770065206004
+    },
+    {
+      "step_number": 0,
+      "action_type": "tap",
+      "target": "Search bar",
+      "text": null,
+      "reasoning": "",
+      "success": true,
+      "screen_changed": true,
+      "duration": 18842,
+      "bbox": [
+        110,
+        76,
+        210,
+        176
+      ],
+      "center": [
+        215,
+        376
+      ],
+      "timestamp_ms": 1770065770180
+    },
+    {
+      "step_number": 1,
+      "action_type": "tap",
+      "target": "Amul Buttermilk past search suggestion",
+      "text": null,
+      "reasoning": "",
+      "success": true,
+      "screen_changed": true,
+      "duration": 20225,
+      "bbox": [
+        136,
+        114,
+        236,
+        214
+      ],
+      "center": [
+        249,
+        490
+      ],
+      "timestamp_ms": 1770065790407
+    },
+    {
+      "step_number": 2,
+      "action_type": "tap",
+      "target": "ADD button for the first product card",
+      "text": null,
+      "reasoning": "",
+      "success": true,
+      "screen_changed": true,
+      "duration": 44912,
+      "bbox": [
+        24,
+        335,
+        124,
+        435
+      ],
+      "center": [
+        99,
+        1151
+      ],
+      "timestamp_ms": 1770065835322
+    },
+    {
+      "step_number": 3,
+      "action_type": "tap",
+      "target": "Close product detail modal",
+      "text": null,
+      "reasoning": "",
+      "success": true,
+      "screen_changed": true,
+      "duration": 23998,
+      "bbox": [
+        60,
+        46,
+        160,
+        146
+      ],
+      "center": [
+        147,
+        287
+      ],
+      "timestamp_ms": 1770065859322
+    },
+    {
+      "step_number": 4,
+      "action_type": "tap",
+      "target": "Clear search text button (X)",
+      "text": null,
+      "reasoning": "",
+      "success": true,
+      "screen_changed": true,
+      "duration": 21848,
+      "bbox": [
+        764,
+        14,
+        864,
+        114
+      ],
+      "center": [
+        1094,
+        191
+      ],
+      "timestamp_ms": 1770065881172
+    },
+    {
+      "step_number": 5,
+      "action_type": "type",
+      "target": "Search bar",
+      "text": "Diet coke",
+      "reasoning": "",
+      "success": true,
+      "screen_changed": true,
+      "duration": 33307,
+      "bbox": [
+        446,
+        14,
+        546,
+        114
+      ],
+      "center": [
+        666,
+        191
+      ],
+      "timestamp_ms": 1770065914481
+    },
+    {
+      "step_number": 6,
+      "action_type": "tap",
+      "target": "Diet Coke search suggestion",
+      "text": null,
+      "reasoning": "",
+      "success": true,
+      "screen_changed": true,
+      "duration": 23093,
+      "bbox": [
+        463,
+        77,
+        563,
+        177
+      ],
+      "center": [
+        689,
+        379
+      ],
+      "timestamp_ms": 1770065937576
+    }
+  ]
+}

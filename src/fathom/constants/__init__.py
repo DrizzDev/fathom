@@ -10,13 +10,14 @@ class ActionType(str, Enum):
 
     TAP = "tap"
     TYPE = "type"
-    SWIPE = "swipe"
-    SCROLL = "scroll"
-    LONG_PRESS = "long_press"
+    TEXT = "type"
     BACK = "back"
     HOME = "home"
     WAIT = "wait"
+    SWIPE = "swipe"
+    SCROLL = "scroll"
     COMPLETE = "complete"
+    LONG_PRESS = "long_press"
 
 
 class FlowType(str, Enum):
@@ -46,8 +47,8 @@ class StrategyStatus(str, Enum):
     Status of strategy execution.
     """
 
+    STUCK = "stuck"
+    ERROR = "error"
+    TIMEOUT = "timeout"
     CONTINUE = "continue"
     COMPLETE = "complete"
-    STUCK = "stuck"
-    TIMEOUT = "timeout"
-    ERROR = "error"

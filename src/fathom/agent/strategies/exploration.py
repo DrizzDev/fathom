@@ -10,12 +10,13 @@ from typing import ClassVar, Dict, List, Optional, Set, Tuple
 from fathom.agent.strategies.base import ExecutionStrategy
 from fathom.constants import ActionType, StrategyStatus
 from fathom.schemas.actions import Action, BoundingBox
-from fathom.schemas.results import StrategyResult
+from fathom.schemas.results import ActionResult, StrategyResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
+from fathom.utils.coordinates import CoordinateConverter
 
 
 @dataclass
@@ -75,19 +76,19 @@ class ExplorationGraph:
 
     def record_transition(
         self,
-        from_hash: str,
         to_hash: str,
-        action_desc: str,
+        from_hash: str,
+        action_description: str,
     ) -> None:
         """
         Record a transition between screens.
         """
 
         if from_hash in self.nodes:
-            self.nodes[from_hash].actions_tried.add(action_desc)
-            self.nodes[from_hash].transitions[action_desc] = to_hash
+            self.nodes[from_hash].actions_tried.add(action_description)
+            self.nodes[from_hash].transitions[action_description] = to_hash
 
-        self.edges.append((from_hash, action_desc, to_hash))
+        self.edges.append((from_hash, action_description, to_hash))
 
     def get_unexplored_count(self) -> int:
         """
@@ -310,9 +311,9 @@ class ExplorationStrategy(ExecutionStrategy):
 
         if self.__last_action and self.__current_screen:
             self.__graph.record_transition(
-                self.__current_screen.visual_hash,
-                pre_hash,
-                self.__last_action.to_description(),
+                to_hash=pre_hash,
+                from_hash=self.__current_screen.visual_hash,
+                action_description=self.__last_action.to_description(),
             )
 
         self.__current_screen = screen_state
@@ -330,8 +331,7 @@ class ExplorationStrategy(ExecutionStrategy):
             step_number=self.__step_count,
         )
 
-        execution_request = self.__prepare_execution(action, screen_size)
-        result = await self.__device.execute(execution_request)
+        result = await self.__execute_action(action)
 
         if not result.success:
             self.__generator.record_failure(action.to_description())
@@ -365,36 +365,40 @@ class ExplorationStrategy(ExecutionStrategy):
             message=f"Explored: {action.to_description()}",
         )
 
-    def __prepare_execution(
-        self,
-        action: Action,
-        screen_size: Tuple[int, int],
-    ) -> Dict[str, object]:
+    async def __execute_action(self, action: Action) -> ActionResult:
         """
-        Prepare action for device execution.
+        Execute exploration action using typed device methods.
         """
 
+        screen_size = await self.__device.get_screen_size()
         width, height = screen_size
+        converter = CoordinateConverter(width, height)
 
-        if action.action_type == ActionType.TAP and action.bbox:
-            x = action.bbox.center_x * width // 1000
-            y = action.bbox.center_y * height // 1000
-            return {"action": "tap", "x": x, "y": y}
+        if action.action_type == ActionType.TAP:
+            if action.bbox:
+                x, y = converter.center_to_pixels(action.bbox)
+            else:
+                x, y = width // 2, height // 2
+            return await self.__device.tap(x, y)
 
         if action.action_type == ActionType.SCROLL:
             cx, cy = width // 2, height // 2
-            return {
-                "x1": cx,
-                "y1": cy + 400,
-                "x2": cx,
-                "y2": cy - 400,
-                "action": "swipe",
-            }
+            return await self.__device.swipe(x1=cx, y1=cy + 400, x2=cx, y2=cy - 400, duration=500)
 
         if action.action_type == ActionType.BACK:
-            return {"action": "back"}
+            return await self.__device.back()
 
-        return {"action": "tap", "x": width // 2, "y": height // 2}
+        if action.action_type == ActionType.SWIPE:
+            if action.bbox:
+                x1, y1, x2, y2 = converter.swipe_coordinates(action.bbox, "up")
+            else:
+                cx, cy = width // 2, height // 2
+                x1, y1 = cx, cy + 300
+                x2, y2 = cx, cy - 300
+            return await self.__device.swipe(x1, y1, x2, y2)
+
+        # Fallback default tap if nothing matches
+        return await self.__device.tap(width // 2, height // 2)
 
     async def should_continue(self) -> bool:
         """

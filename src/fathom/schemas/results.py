@@ -106,6 +106,9 @@ class IntentResult(BaseModel):
     steps_taken: int = Field(ge=0, description="Steps executed")
     completion_reason: str = Field(description="Reason for completion/failure")
     final_screen: Optional[ScreenCapture] = Field(default=None, description="Final screen capture")
+    metrics: Dict[str, Dict[str, float]] = Field(
+        default_factory=dict, description="Execution metrics (e.g., timings)"
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """

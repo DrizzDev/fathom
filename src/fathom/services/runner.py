@@ -54,6 +54,7 @@ class FathomRunner:
         self,
         intent: str,
         max_steps: int = 20,
+        use_xml: bool = False,
         device_serial: Optional[str] = None,
     ) -> IntentResult:
         """
@@ -62,6 +63,7 @@ class FathomRunner:
         Args:
             intent: The goal to achieve.
             max_steps: Maximum steps allowed.
+            use_xml: Use XML hierarchy for bounding boxes.
             device_serial: Optional device serial overrides settings.
 
         Returns:
@@ -86,17 +88,18 @@ class FathomRunner:
             api_key=self.settings.gemini_api_key,
             location=self.settings.vertex_location,
             project_id=self.settings.vertex_project_id,
+            credentials_path=self.settings.google_application_credentials,
         )
         vision_tool = GeminiVisionTool(vision_configuration)
 
         # Initialize Workflow
         workflow = IntentWorkflow(
-            workflow_id="runner-intent",
             intent=intent,
             vision=vision_tool,
             device=device_tool,
             capture=capture_tool,
-            config=WorkflowConfig(max_steps=max_steps),
+            workflow_id="runner-intent",
+            config=WorkflowConfig(max_steps=max_steps, use_xml_bounding_boxes=use_xml),
         )
 
         logger.info("Starting workflow execution", extra={"intent": intent})

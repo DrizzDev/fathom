@@ -1,0 +1,80 @@
+Step 1:
+  Command: Tap on Amul Buttermilk past search chip
+  Action: tap
+  Target: Amul Buttermilk past search chip
+  BBox: [136, 114, 236, 214] (normalized)
+  Center: [249, 490] (absolute)
+  Success: True
+  Duration: 23354ms
+
+Step 2:
+  Command: Tap on ADD button for the first product
+  Action: tap
+  Target: ADD button for the first product
+  BBox: [24, 335, 124, 435] (normalized)
+  Center: [99, 1151] (absolute)
+  Success: True
+  Duration: 25195ms
+
+Step 3:
+  Command: Tap on Search bar
+  Action: tap
+  Target: Search bar
+  BBox: [110, 76, 210, 176] (normalized)
+  Center: [215, 376] (absolute)
+  Success: True
+  Duration: 18842ms
+
+Step 4:
+  Command: Tap on Amul Buttermilk past search suggestion
+  Action: tap
+  Target: Amul Buttermilk past search suggestion
+  BBox: [136, 114, 236, 214] (normalized)
+  Center: [249, 490] (absolute)
+  Success: True
+  Duration: 20225ms
+
+Step 5:
+  Command: Tap on ADD button for the first product card
+  Action: tap
+  Target: ADD button for the first product card
+  BBox: [24, 335, 124, 435] (normalized)
+  Center: [99, 1151] (absolute)
+  Success: True
+  Duration: 44912ms
+
+Step 6:
+  Command: Tap on Close product detail modal
+  Action: tap
+  Target: Close product detail modal
+  BBox: [60, 46, 160, 146] (normalized)
+  Center: [147, 287] (absolute)
+  Success: True
+  Duration: 23998ms
+
+Step 7:
+  Command: Tap on Clear search text button (X)
+  Action: tap
+  Target: Clear search text button (X)
+  BBox: [764, 14, 864, 114] (normalized)
+  Center: [1094, 191] (absolute)
+  Success: True
+  Duration: 21848ms
+
+Step 8:
+  Command: Type 'Diet coke' in Search bar
+  Action: type
+  Target: Search bar
+  BBox: [446, 14, 546, 114] (normalized)
+  Center: [666, 191] (absolute)
+  Success: True
+  Duration: 33307ms
+
+Step 9:
+  Command: Tap on Diet Coke search suggestion
+  Action: tap
+  Target: Diet Coke search suggestion
+  BBox: [463, 77, 563, 177] (normalized)
+  Center: [689, 379] (absolute)
+  Success: True
+  Duration: 23093ms

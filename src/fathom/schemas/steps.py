@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -43,18 +43,27 @@ class StepResult(BaseModel):
     duration: int = Field(ge=0, description="Execution duration in milliseconds")
     error: Optional[str] = Field(default=None, description="Error message if failed")
 
-    def to_record(self) -> "StepRecord":
+    def to_record(self, absolute_center: Optional[List[int]] = None) -> "StepRecord":
         """
         Convert to a minimal record for serialization.
         """
+        bbox_list = None
+        if self.step.action.bbox:
+            # Format as [x1, y1, x2, y2] normalized
+            box = self.step.action.bbox
+            bbox_list = [box.x, box.y, box.x + box.width, box.y + box.height]
+
         return StepRecord(
             step_number=self.step.step_number,
             action_type=self.step.action.action_type.value,
             target=self.step.action.target,
             text=self.step.action.text,
+            reasoning=self.step.action.reasoning,
             success=self.success,
             screen_changed=self.screen_changed,
             duration=self.duration,
+            bbox=bbox_list,
+            center=absolute_center,
         )
 
 
@@ -69,6 +78,9 @@ class StepRecord(BaseModel):
     action_type: str = Field(min_length=1)
     target: str = Field(min_length=1)
     text: Optional[str] = Field(default=None)
+    reasoning: Optional[str] = Field(default=None)
     success: bool
     screen_changed: bool
     duration: int = Field(ge=0, description="Duration in milliseconds")
+    bbox: Optional[List[int]] = Field(default=None, description="Normalized [x1, y1, x2, y2]")
+    center: Optional[List[int]] = Field(default=None, description="Absolute [x, y]")

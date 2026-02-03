@@ -23,19 +23,22 @@ class VisionTool(Tool[AnalysisResult], ABC):
     @abstractmethod
     async def analyze(
         self,
-        screen: bytes,
         intent: str,
+        screen: bytes,
         *,
+        use_xml: bool = False,
         context: Optional[List[str]] = None,
         failures: Optional[List[str]] = None,
     ) -> AnalysisResult:
-        """Analyze screen and plan next action.
+        """
+        Analyze screen and plan next action.
 
         Args:
             screen: PNG image bytes.
             intent: User intent to achieve.
-            context: Recent action history for context.
             failures: Recent failures for recovery.
+            context: Recent action history for context.
+            use_xml: Whether to use XML-based labeling.
 
         Returns:
             Analysis result with recommended action.
@@ -44,15 +47,17 @@ class VisionTool(Tool[AnalysisResult], ABC):
             ToolTimeoutError: If analysis times out.
             ToolExecutionError: If analysis fails.
         """
+
         raise NotImplementedError
 
     @abstractmethod
     async def check_completion(
         self,
-        screen: bytes,
         intent: str,
+        screen: bytes,
     ) -> bool:
-        """Check if intent is complete on current screen.
+        """
+        Check if intent is complete on current screen.
 
         Args:
             screen: PNG image bytes.
@@ -61,10 +66,12 @@ class VisionTool(Tool[AnalysisResult], ABC):
         Returns:
             True if intent appears complete.
         """
+
         raise NotImplementedError
 
     async def execute(self, request: Dict[str, Any]) -> AnalysisResult:
-        """Execute via generic interface.
+        """
+        Execute via generic interface.
 
         Args:
             request: Dict with 'screen', 'intent', optional 'context', 'failures'.
@@ -72,6 +79,7 @@ class VisionTool(Tool[AnalysisResult], ABC):
         Returns:
             Analysis result.
         """
+
         return await self.analyze(
             screen=request["screen"],
             intent=request["intent"],

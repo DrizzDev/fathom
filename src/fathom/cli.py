@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import sys
 from logging import getLogger
-from typing import Optional
+from typing import Any, Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -35,6 +35,7 @@ class FathomCLI:
         intent: str,
         max_steps: int = 20,
         device_serial: Optional[str] = None,
+        **kwargs: Any,
     ) -> int:
         """
         Run an intent workflow with rich UI.
@@ -52,7 +53,10 @@ class FathomCLI:
             # Execution with Spinner
             with console.status("[bold green]Agent working...[/bold green]", spinner="dots"):
                 result = await self.runner.run_intent(
-                    intent=intent, device_serial=device_serial, max_steps=max_steps
+                    intent=intent,
+                    max_steps=max_steps,
+                    device_serial=device_serial,
+                    use_xml=kwargs.get("use_xml", False),
                 )
 
             # Results Table
@@ -69,6 +73,19 @@ class FathomCLI:
             table.add_row("Steps Taken", str(result.steps_taken))
 
             console.print(table)
+
+            # Timing Audit Table
+            if result.metrics:
+                audit_table = Table(title="Timing Audit", border_style="blue")
+                audit_table.add_column("Operation", style="cyan")
+                audit_table.add_column("Total Time (s)", style="magenta", justify="right")
+                audit_table.add_column("Avg/Step (s)", style="yellow", justify="right")
+
+                for operation, data in result.metrics.items():
+                    # Align with headers: Operation, Total, Avg
+                    audit_table.add_row(operation, f"{data['total']:.2f}s", f"{data['avg']:.2f}s")
+
+                console.print(audit_table)
 
             if not result.success:
                 console.print(f"[bold red]Failure Reason:[/bold red] {result.completion_reason}")
@@ -144,6 +161,7 @@ def main() -> int:
     run_parser.add_argument("--api-key", "-k", type=str, help="Gemini API Key (overrides env)")
     run_parser.add_argument("--max-steps", type=int, default=20, help="Maximum steps allowed")
     run_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    run_parser.add_argument("--use-xml", "-x", action="store_true", help="Use XML bounding boxes")
 
     # 'explore' command
     explore_parser = subparsers.add_parser("explore", help="Run app exploration (crawling)")
@@ -184,6 +202,7 @@ def main() -> int:
         return asyncio.run(
             cli.run(
                 intent=args.intent,
+                use_xml=args.use_xml,
                 max_steps=args.max_steps,
                 device_serial=args.serial,
             )

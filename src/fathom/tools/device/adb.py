@@ -231,8 +231,8 @@ class ADBDeviceTool(DeviceTool):
         try:
             process = await asyncio.create_subprocess_exec(
                 *args,
-                stdout=asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
+                stdout=(asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL),
             )
 
             stdout, stderr = await asyncio.wait_for(
@@ -385,3 +385,31 @@ class ADBDeviceTool(DeviceTool):
 
         except Exception:
             return None
+
+    async def dump_hierarchy(self) -> Optional[str]:
+        """
+        Dump UI hierarchy to XML string.
+        """
+
+        await asyncio.sleep(0.5)
+
+        # 1. Dump to device temp
+        temp_path = "/data/local/tmp/window_dump.xml"
+        dump_cmd = f"uiautomator dump {temp_path}"
+        result = await self.__shell(dump_cmd)
+
+        if not result.success:
+            # Fallback for some devices/versions
+            dump_cmd = f"uiautomator dump --compressed {temp_path}"
+            result = await self.__shell(dump_cmd)
+            if not result.success:
+                return None
+
+        # 2. Cat the file
+        cat_cmd = f"cat {temp_path}"
+        result = await self.__shell(cat_cmd, capture_output=True)
+
+        if result.success and result.output:
+            return result.output
+
+        return None

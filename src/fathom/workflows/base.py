@@ -11,7 +11,8 @@ T = TypeVar("T")
 
 
 class BaseWorkflow(ABC, Generic[T]):
-    """Abstract base for all workflows.
+    """
+    Abstract base for all workflows.
 
     Workflows encapsulate:
     - Execution logic for a specific automation type
@@ -27,26 +28,31 @@ class BaseWorkflow(ABC, Generic[T]):
         workflow_id: str,
         config: Optional[WorkflowConfig] = None,
     ) -> None:
-        """Initialize workflow.
+        """
+        Initialize workflow.
 
         Args:
             workflow_id: Unique identifier for this workflow run.
             config: Workflow configuration.
         """
+
         self.__workflow_id = workflow_id
         self.__config = config or WorkflowConfig()
+
         self.__status = WorkflowStatus.PENDING
-        self.__start_time: Optional[float] = None
         self.__end_time: Optional[float] = None
-        self.__step_results: List[StepResult] = []
-        self.__error: Optional[str] = None
+        self.__start_time: Optional[float] = None
+
         self.__cancelled = False
+        self.__error: Optional[str] = None
+        self.__step_results: List[StepResult] = []
 
     @property
     def workflow_id(self) -> str:
         """
         Workflow identifier.
         """
+
         return self.__workflow_id
 
     @property
@@ -54,6 +60,7 @@ class BaseWorkflow(ABC, Generic[T]):
         """
         Workflow configuration.
         """
+
         return self.__config
 
     @property
@@ -61,6 +68,7 @@ class BaseWorkflow(ABC, Generic[T]):
         """
         Current workflow status.
         """
+
         return self.__status
 
     @property
@@ -68,6 +76,7 @@ class BaseWorkflow(ABC, Generic[T]):
         """
         Number of steps executed.
         """
+
         return len(self.__step_results)
 
     @property
@@ -75,6 +84,7 @@ class BaseWorkflow(ABC, Generic[T]):
         """
         Whether workflow is currently running.
         """
+
         return self.__status == WorkflowStatus.RUNNING
 
     @property
@@ -82,8 +92,10 @@ class BaseWorkflow(ABC, Generic[T]):
         """
         Elapsed time in seconds.
         """
+
         if self.__start_time is None:
             return 0.0
+
         end = self.__end_time or time.time()
         return end - self.__start_time
 
@@ -93,15 +105,18 @@ class BaseWorkflow(ABC, Generic[T]):
         """
         Workflow type name.
         """
+
         raise NotImplementedError
 
     @abstractmethod
     async def execute(self) -> T:
-        """Execute the workflow.
+        """
+        Execute the workflow.
 
         Returns:
             Workflow-specific result type.
         """
+
         raise NotImplementedError
 
     @abstractmethod
@@ -109,10 +124,12 @@ class BaseWorkflow(ABC, Generic[T]):
         """
         Get current progress information.
         """
+
         raise NotImplementedError
 
     async def run(self) -> WorkflowResult:
-        """Run the workflow with lifecycle management.
+        """
+        Run the workflow with lifecycle management.
 
         Handles:
         - Status transitions
@@ -123,6 +140,7 @@ class BaseWorkflow(ABC, Generic[T]):
         Returns:
             WorkflowResult with execution details.
         """
+
         self.__start_time = time.time()
         self.__status = WorkflowStatus.RUNNING
 
@@ -146,65 +164,74 @@ class BaseWorkflow(ABC, Generic[T]):
             self.__end_time = time.time()
 
         return WorkflowResult(
-            workflow_id=self.__workflow_id,
-            status=self.__status,
-            steps_executed=self.steps_executed,
-            duration=self.elapsed,
             error=self.__error,
+            status=self.__status,
+            duration=self.elapsed,
             metadata=self.get_progress(),
+            workflow_id=self.__workflow_id,
+            steps_executed=self.steps_executed,
             step_results=self.__step_results.copy(),
         )
 
     def record_step(self, result: StepResult) -> None:
-        """Record a completed step.
+        """
+        Record a completed step.
 
         Args:
             result: Step execution result.
         """
+
         self.__step_results.append(result)
 
     def cancel(self) -> None:
         """
         Request workflow cancellation.
         """
+
         self.__cancelled = True
 
     def is_cancelled(self) -> bool:
         """
         Check if cancellation was requested.
         """
+
         return self.__cancelled
 
     def should_checkpoint(self) -> bool:
         """
         Check if a checkpoint should be taken.
         """
+
         return (self.steps_executed % self.__config.checkpoint_interval) == 0
 
     def has_exceeded_timeout(self) -> bool:
         """
         Check if total timeout has been exceeded.
         """
+
         return self.elapsed >= self.__config.total_timeout
 
     def has_exceeded_steps(self) -> bool:
         """
         Check if max steps have been reached.
         """
+
         return self.steps_executed >= self.__config.max_steps
 
     def get_checkpoint(self) -> Dict[str, Any]:
-        """Get checkpoint data for persistence.
+        """
+        Get checkpoint data for persistence.
 
         Returns:
             Serializable checkpoint dictionary.
         """
+
         return {
-            "workflow_id": self.__workflow_id,
             "workflow_type": self.name,
             "status": self.__status.value,
-            "steps_executed": self.steps_executed,
-            "elapsed_seconds": self.elapsed,
-            "config": self.__config.model_dump(),
             "progress": self.get_progress(),
+            "elapsed_seconds": self.elapsed,
+            "workflow_id": self.__workflow_id,
+            "config": self.__config.model_dump(),
+            "steps_executed": self.steps_executed,
         }

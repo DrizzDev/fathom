@@ -108,6 +108,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             self.__capture,
             max_steps=self.config.max_steps,
             step_timeout=self.config.step_timeout,
+            use_xml=self.config.use_xml_bounding_boxes,
         )
 
         while await self.__should_continue():
@@ -138,12 +139,17 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         with contextlib.suppress(Exception):
             self.__final_screen = await self.__capture.capture()
 
+        # Success is determined by the strategy's internal state
+        success = self.__strategy.state.is_complete if self.__strategy else self.__state.is_complete
+        metrics = self.__strategy.metrics if self.__strategy else {}
+
         return IntentResult(
             intent=self.__intent,
-            success=self.__state.is_complete,
+            success=success,
             steps_taken=self.steps_executed,
             completion_reason=self.__completion_reason,
             final_screen=self.__final_screen,
+            metrics=metrics,
         )
 
     async def __should_continue(self) -> bool:

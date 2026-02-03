@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Calculate project root from this file's location
@@ -17,9 +17,9 @@ class FathomSettings(BaseSettings):
 
     # Gemini settings
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
-    gemini_model: str = Field(default="gemini-2.0-flash-exp", alias="GEMINI_MODEL")
+    gemini_model: str = Field(default="gemini-3-pro-preview", alias="GEMINI_MODEL")
 
-    vertex_location: str = Field(default="us-central1", alias="VERTEX_LOCATION")
+    vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
     vertex_project_id: Optional[str] = Field(default=None, alias="VERTEX_PROJECT_ID")
 
     google_application_credentials: Optional[str] = Field(
@@ -34,8 +34,8 @@ class FathomSettings(BaseSettings):
     adb_path: str = Field(default="adb", alias="ADB_PATH")
 
     # Logging settings
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     log_json: bool = Field(default=False, alias="LOG_JSON")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     # Workflow default limits
     max_steps: int = Field(default=20, alias="MAX_STEPS")
@@ -46,3 +46,19 @@ class FathomSettings(BaseSettings):
         env_file_encoding="utf-8",
         env_file=[".env", str(PROJECT_ROOT / ".env")],
     )
+
+    @field_validator("google_application_credentials")
+    @classmethod
+    def resolve_credentials_path(cls, value: Optional[str]) -> Optional[str]:
+        """
+        Resolve credentials path relative to project root.
+        """
+
+        if not value:
+            return None
+
+        path = Path(value)
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+
+        return str(path)
