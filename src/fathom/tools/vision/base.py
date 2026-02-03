@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from fathom.schemas.results import AnalysisResult
+from fathom.schemas.screens import ScreenCapture
 from fathom.tools.base import Tool
 
 
@@ -24,43 +25,35 @@ class VisionTool(Tool[AnalysisResult], ABC):
     async def analyze(
         self,
         intent: str,
-        screen: bytes,
+        capture: ScreenCapture,
         *,
         use_xml: bool = False,
         context: Optional[List[str]] = None,
         failures: Optional[List[str]] = None,
     ) -> AnalysisResult:
         """
-        Analyze screen and plan next action.
-
-        Args:
-            screen: PNG image bytes.
-            intent: User intent to achieve.
-            failures: Recent failures for recovery.
-            context: Recent action history for context.
-            use_xml: Whether to use XML-based labeling.
-
-        Returns:
-            Analysis result with recommended action.
-
-        Raises:
-            ToolTimeoutError: If analysis times out.
-            ToolExecutionError: If analysis fails.
+        Analyze screen and recommend action.
         """
 
         raise NotImplementedError
+
+    async def cleanup(self) -> None:
+        """
+        Perform any necessary cleanup (e.g., closing connections, deleting caches).
+        """
+        pass
 
     @abstractmethod
     async def check_completion(
         self,
         intent: str,
-        screen: bytes,
+        capture: ScreenCapture,
     ) -> bool:
         """
         Check if intent is complete on current screen.
 
         Args:
-            screen: PNG image bytes.
+            capture: Screen capture object.
             intent: Intent to check completion for.
 
         Returns:
@@ -74,14 +67,14 @@ class VisionTool(Tool[AnalysisResult], ABC):
         Execute via generic interface.
 
         Args:
-            request: Dict with 'screen', 'intent', optional 'context', 'failures'.
+            request: Dict with 'capture' (ScreenCapture), 'intent', optional 'context', 'failures'.
 
         Returns:
             Analysis result.
         """
 
         return await self.analyze(
-            screen=request["screen"],
+            capture=request["capture"],
             intent=request["intent"],
             context=request.get("context"),
             failures=request.get("failures"),

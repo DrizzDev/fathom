@@ -1,40 +1,47 @@
 from __future__ import annotations
 
 from typing import Dict
-from pydantic import BaseModel
+
+from pydantic import BaseModel, Field
 
 
 class OperationMetric(BaseModel):
     """
-    Tracks duration and count for a specific operation.
+    Performance metrics for a specific system operation.
     """
-    total_duration: float = 0.0
-    call_count: int = 0
+
+    total_duration: float = Field(default=0.0, description="Cumulative time spent in seconds")
+    call_count: int = Field(default=0, description="Total number of times operation was invoked")
 
     @property
     def average(self) -> float:
         """
-        Calculates the average duration.
+        Calculates the average duration per call.
         """
+
         if self.call_count == 0:
             return 0.0
+
         return self.total_duration / self.call_count
 
 
 class ExecutionMetrics(BaseModel):
     """
-    Schema for tracking execution performance with precise counters.
+    Aggregated performance audit for an entire workflow.
     """
-    screenshot: OperationMetric = OperationMetric()
-    hierarchy_dump: OperationMetric = OperationMetric()
-    hierarchy_processing: OperationMetric = OperationMetric()
-    analysis: OperationMetric = OperationMetric()
-    action: OperationMetric = OperationMetric()
+
+    screenshot: OperationMetric = Field(default_factory=OperationMetric)
+    hierarchy_dump: OperationMetric = Field(default_factory=OperationMetric)
+    hierarchy_processing: OperationMetric = Field(default_factory=OperationMetric)
+
+    analysis: OperationMetric = Field(default_factory=OperationMetric)
+    action: OperationMetric = Field(default_factory=OperationMetric)
 
     def record(self, operation: str, duration: float) -> None:
         """
-        Records a single operation duration.
+        Registers a new timing data point for a specific operation.
         """
+
         metric = getattr(self, operation, None)
         if metric and isinstance(metric, OperationMetric):
             metric.total_duration += duration
@@ -42,12 +49,19 @@ class ExecutionMetrics(BaseModel):
 
     def to_report_dict(self) -> Dict[str, Dict[str, float]]:
         """
-        Returns a dictionary suitable for reporting.
+        Converts internal metrics into a reporting-optimized dictionary structure.
         """
+
         return {
             "Screenshot": {"total": self.screenshot.total_duration, "avg": self.screenshot.average},
-            "Hierarchy Dump": {"total": self.hierarchy_dump.total_duration, "avg": self.hierarchy_dump.average},
-            "Hierarchy Processing": {"total": self.hierarchy_processing.total_duration, "avg": self.hierarchy_processing.average},
-            "Analysis": {"total": self.analysis.total_duration, "avg": self.analysis.average},
-            "Action": {"total": self.action.total_duration, "avg": self.action.average},
+            "Hierarchy Dump": {
+                "avg": self.hierarchy_dump.average,
+                "total": self.hierarchy_dump.total_duration,
+            },
+            "Hierarchy Processing": {
+                "avg": self.hierarchy_processing.average,
+                "total": self.hierarchy_processing.total_duration,
+            },
+            "Action": {"avg": self.action.average, "total": self.action.total_duration},
+            "Analysis": {"avg": self.analysis.average, "total": self.analysis.total_duration},
         }

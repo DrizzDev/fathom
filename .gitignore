@@ -199,5 +199,7 @@ marimo/_lsp/
 __marimo__/
 
 # Custom
+*.db
+assets/
 secrets/
 documents/

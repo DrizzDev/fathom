@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-import contextlib
+from logging import getLogger
 from typing import Any, Dict, Optional
 
 from fathom.agent.planner import StepPlanner
 from fathom.agent.reasoner import Reasoner
 from fathom.agent.state import AgentState
 from fathom.agent.strategies.intent import IntentStrategy
+from fathom.interfaces import IMemoryProvider
 from fathom.schemas.results import IntentResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
 from fathom.workflows.base import BaseWorkflow, WorkflowConfig
+
+logger = getLogger(__name__)
 
 
 class IntentWorkflow(BaseWorkflow[IntentResult]):
@@ -22,19 +25,6 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
     1. Initialize agent state and strategy
     2. Execute steps until completion, failure, or timeout
     3. Return structured result
-
-    Example:
-        ```python
-        workflow = IntentWorkflow(
-            workflow_id="login-001",
-            intent="Login with phone number",
-            vision=vision_tool,
-            device=device_tool,
-            capture=capture_tool,
-        )
-        result = await workflow.run()
-        print(f"Success: {result.success}")
-        ```
     """
 
     def __init__(
@@ -44,6 +34,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         vision: VisionTool,
         device: DeviceTool,
         capture: CaptureTool,
+        memory: IMemoryProvider,
         *,
         config: Optional[WorkflowConfig] = None,
     ) -> None:
@@ -55,6 +46,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             vision: Vision tool for screen analysis.
             device: Device tool for action execution.
             capture: Capture tool for screenshots.
+            memory: Persistent memory provider.
             config: Optional workflow configuration.
         """
         super().__init__(workflow_id, config)
@@ -62,6 +54,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         self.__vision = vision
         self.__device = device
         self.__capture = capture
+        self.__memory = memory
 
         self.__planner = StepPlanner(vision)
         self.__reasoner = Reasoner(intent)
@@ -106,9 +99,11 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             self.__planner,
             self.__device,
             self.__capture,
+            self.__memory,
             max_steps=self.config.max_steps,
             step_timeout=self.config.step_timeout,
             use_xml=self.config.use_xml_bounding_boxes,
+            workflow_id=self.workflow_id,
         )
 
         while await self.__should_continue():
@@ -128,20 +123,24 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             if self.should_checkpoint():
                 await self.__save_checkpoint()
 
+        # Success is determined by the strategy's internal state
+        success = self.__strategy.state.is_complete if self.__strategy else self.__state.is_complete
+        metrics = self.__strategy.metrics if self.__strategy else {}
+
         if not self.__completion_reason:
-            if self.has_exceeded_timeout():
+            if success:
+                self.__completion_reason = "Goal successfully achieved"
+            elif self.has_exceeded_timeout():
                 self.__completion_reason = "Workflow timeout exceeded"
             elif self.has_exceeded_steps():
                 self.__completion_reason = f"Max steps ({self.config.max_steps}) exceeded"
             else:
-                self.__completion_reason = "Execution completed"
+                self.__completion_reason = "Execution terminated unexpectedly"
 
-        with contextlib.suppress(Exception):
-            self.__final_screen = await self.__capture.capture()
-
-        # Success is determined by the strategy's internal state
-        success = self.__strategy.state.is_complete if self.__strategy else self.__state.is_complete
-        metrics = self.__strategy.metrics if self.__strategy else {}
+        if success:
+            logger.info(f"Goal Achieved: {self.__completion_reason}")
+        else:
+            logger.warning(f"Workflow Ended: {self.__completion_reason}")
 
         return IntentResult(
             intent=self.__intent,

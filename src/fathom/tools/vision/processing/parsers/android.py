@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List
 
 if TYPE_CHECKING:
     import xml.etree.ElementTree as ET  # nosec
@@ -113,12 +113,14 @@ class AndroidParser(PlatformParser):
         """
         Check if the platform matches.
         """
+
         return bool(root.get("package")) or root.find(".//*[@package]") is not None
 
     def get_scale_factor(self, root: ET.Element, screenshot_width: int) -> float:
         """
         Calculate the scale factor for the platform.
         """
+
         return 1.0
 
     def __is_practically_interactive(
@@ -127,10 +129,8 @@ class AndroidParser(PlatformParser):
         """
         Checks if an element is large enough to be interactive.
         """
-        if (
-            width < self.__MIN_INTERACTIVE_DIMENSION
-            or height < self.__MIN_INTERACTIVE_DIMENSION
-        ):
+
+        if width < self.__MIN_INTERACTIVE_DIMENSION or height < self.__MIN_INTERACTIVE_DIMENSION:
             has_text_content = bool(str(attributes.get("text", "")).strip())
             has_description_content = bool(str(attributes.get("content-desc", "")).strip())
 
@@ -143,6 +143,7 @@ class AndroidParser(PlatformParser):
         """
         Checks if an element is a meaningless container.
         """
+
         element_class_name = attributes.get("class", "")
         has_text_content = bool(str(attributes.get("text", "")).strip())
         is_enabled_flag = str(attributes.get("enabled", "true")).lower() == "true"
@@ -169,6 +170,7 @@ class AndroidParser(PlatformParser):
         """
         Checks if an element is tappable based on its attributes or class.
         """
+
         attributes = element.attributes
         class_name = attributes.get("class")
 
@@ -182,6 +184,7 @@ class AndroidParser(PlatformParser):
         """
         Checks if an element is typeable based on its class.
         """
+
         attributes = element.attributes
         class_name = attributes.get("class")
 
@@ -197,6 +200,7 @@ class AndroidParser(PlatformParser):
         """
         Checks if an element is swipeable based on its attributes or class.
         """
+
         attributes = element.attributes
         class_name = attributes.get("class")
 
@@ -205,18 +209,16 @@ class AndroidParser(PlatformParser):
             or class_name in self.__SWIPEABLE_CLASSES | self.__DRAGGABLE_CLASSES
         )
 
-    def find_all_elements(
-        self, root: ET.Element, **kwargs: Any
-    ) -> List[LabeledElement]:
+    def find_all_elements(self, root: ET.Element, **kwargs: Any) -> List[LabeledElement]:
         """
         STAGE 1: Find all elements with valid size, position, and visibility.
         """
-        should_skip_displayed_check = kwargs.get("skip_displayed_attr", True)
+
         detected_elements = []
+        should_skip_displayed_check = kwargs.get("skip_displayed_attr", True)
+
         screen_width = int(str(kwargs.get("screenshot_width", root.get("width", "0"))))
-        screen_height = int(
-            str(kwargs.get("screenshot_height", root.get("height", "0")))
-        )
+        screen_height = int(str(kwargs.get("screenshot_height", root.get("height", "0"))))
 
         logger.info(f"Screen size: {screen_width}x{screen_height}")
 
@@ -235,10 +237,7 @@ class AndroidParser(PlatformParser):
                     continue
 
                 bounds_parts = (
-                    bounds_string.replace("][", ",")
-                    .replace("[", "")
-                    .replace("]", "")
-                    .split(",")
+                    bounds_string.replace("][", ",").replace("[", "").replace("]", "").split(",")
                 )
 
                 if len(bounds_parts) != 4:
@@ -264,8 +263,10 @@ class AndroidParser(PlatformParser):
                         skip_reason_counts["visibility"] += 1
                         continue
 
-                if screen_width > 0 and screen_height > 0 and (
-                    x2 <= 0 or x1 >= screen_width or y2 <= 0 or y1 >= screen_height
+                if (
+                    screen_width > 0
+                    and screen_height > 0
+                    and (x2 <= 0 or x1 >= screen_width or y2 <= 0 or y1 >= screen_height)
                 ):
                     skip_reason_counts["off_screen"] += 1
                     continue
@@ -305,22 +306,20 @@ class AndroidParser(PlatformParser):
         """
         Orchestrates the complete, corrected filtering pipeline.
         """
+
         pruned_elements = self.__prune_containers(elements)
         suppressed_elements = self.__suppress_overlaps_nms(
             pruned_elements, iou_threshold=iou_threshold
         )
 
         meaningful_elements = self.__filter_for_meaningfulness(suppressed_elements)
-        return sorted(
-            meaningful_elements, key=lambda element: element.bounds.area, reverse=True
-        )
+        return sorted(meaningful_elements, key=lambda element: element.bounds.area, reverse=True)
 
-    def filter_by_action(
-        self, elements: List[LabeledElement], action: Any
-    ) -> List[LabeledElement]:
+    def filter_by_action(self, elements: List[LabeledElement], action: Any) -> List[LabeledElement]:
         """
         Filters elements relevant to a specific action.
         """
+
         if action == ActionType.TAP:
             return [element for element in elements if self.__is_tappable(element)]
 
@@ -340,12 +339,14 @@ class AndroidParser(PlatformParser):
         """
         Scores an element based on its class, attributes, and size.
         """
+
         score_value = 0.0
         attributes = element.attributes
         class_name = attributes.get("class")
 
         if self.__is_swipeable(element):
             score_value += 150
+
         elif self.__is_tappable(element):
             score_value += 100
 
@@ -361,12 +362,11 @@ class AndroidParser(PlatformParser):
         score_value -= element.bounds.area / 50000.0
         return score_value
 
-    def __prune_containers(
-        self, elements: List[LabeledElement]
-    ) -> List[LabeledElement]:
+    def __prune_containers(self, elements: List[LabeledElement]) -> List[LabeledElement]:
         """
         Prunes containers that are mere wrappers for other elements.
         """
+
         elements_to_retain = []
 
         for index, parent in enumerate(elements):
@@ -406,16 +406,13 @@ class AndroidParser(PlatformParser):
         """
         STAGE 3: Uses a more nuanced Non-Maximum Suppression.
         """
+
         if not elements:
             return []
 
         kept_elements_list = []
-        scored_elements_list = [
-            (self.__score_element(element), element) for element in elements
-        ]
-        sorted_elements_list = sorted(
-            scored_elements_list, key=lambda item: item[0], reverse=True
-        )
+        scored_elements_list = [(self.__score_element(element), element) for element in elements]
+        sorted_elements_list = sorted(scored_elements_list, key=lambda item: item[0], reverse=True)
 
         while sorted_elements_list:
             _, best_element = sorted_elements_list.pop(0)
@@ -439,9 +436,7 @@ class AndroidParser(PlatformParser):
                         pass
                     elif GeometryUtils.is_box_contained(
                         current_element.bounds, best_element.bounds
-                    ):
-                        remaining_scored_elements.append((score, current_element))
-                    elif GeometryUtils.is_box_contained(
+                    ) or GeometryUtils.is_box_contained(
                         best_element.bounds, current_element.bounds
                     ):
                         remaining_scored_elements.append((score, current_element))
@@ -454,9 +449,7 @@ class AndroidParser(PlatformParser):
 
         return kept_elements_list
 
-    def __filter_for_meaningfulness(
-        self, elements: List[LabeledElement]
-    ) -> List[LabeledElement]:
+    def __filter_for_meaningfulness(self, elements: List[LabeledElement]) -> List[LabeledElement]:
         """
         Final pipeline stage to remove purely decorative or structural elements.
         """
@@ -473,4 +466,5 @@ class AndroidParser(PlatformParser):
                 )
             ):
                 meaningful_elements_list.append(element)
+
         return meaningful_elements_list

@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action, BoundingBox
 from fathom.schemas.results import AnalysisResult
+from fathom.schemas.screens import ScreenCapture
 from fathom.tools.vision.base import VisionTool
 
 
@@ -32,6 +33,7 @@ class MockVisionTool(VisionTool):
             confidence=0.9,
             target="mock element",
             action_type=ActionType.TAP,
+            rationale="Mock default action",
             bbox=BoundingBox(x=500, y=500, width=100, height=100),
         )
         self.__call_count = 0
@@ -65,7 +67,7 @@ class MockVisionTool(VisionTool):
     async def analyze(
         self,
         intent: str,
-        screen: bytes,
+        capture: ScreenCapture,
         *,
         use_xml: bool = False,
         context: Optional[List[str]] = None,
@@ -75,7 +77,7 @@ class MockVisionTool(VisionTool):
         Return mock analysis result.
 
         Args:
-            screen: Ignored in mock.
+            capture: Ignored in mock.
             intent: Recorded for history.
             context: Recorded for history.
             failures: If present, returns different action.
@@ -92,7 +94,7 @@ class MockVisionTool(VisionTool):
                 "context": context,
                 "use_xml": use_xml,
                 "failures": failures,
-                "screen_size": len(screen),
+                "screen_size": len(capture.image),
             }
         )
 
@@ -103,6 +105,7 @@ class MockVisionTool(VisionTool):
                 confidence=1.0,
                 target="Goal achieved",
                 action_type=ActionType.COMPLETE,
+                rationale="Goal completion threshold reached",
             )
         else:
             action = self.__default_action
@@ -112,12 +115,13 @@ class MockVisionTool(VisionTool):
             is_goal_complete=is_complete,
             screen_description="Mock screen",
             reasoning=f"Mock reasoning for step {self.__call_count}",
+            metrics={"memory_retrieval": 0.01, "llm_analysis": 0.05},
         )
 
     async def check_completion(
         self,
         intent: str,
-        screen: bytes,
+        capture: ScreenCapture,
     ) -> bool:
         """
         Check if mock should report completion.

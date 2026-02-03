@@ -5,13 +5,18 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+try:
+    import yaml  # type: ignore
+except ImportError:
+    yaml = None
+
 from fathom.schemas.steps import StepResult
 
 
 class HistoryService:
     """
     Service responsible for persisting execution history.
-    Generates structured JSON logs and a readable command sequence.
+    Generates structured JSON logs and YAML test scripts.
     """
 
     def __init__(self, workflow_id: str) -> None:
@@ -19,102 +24,120 @@ class HistoryService:
         self.__base_dir = Path("assets/history")
         self.__base_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_step(
-        self,
-        result: StepResult,
-        absolute_center: Optional[List[int]] = None,
-    ) -> None:
+    def save_step(self, result: StepResult, absolute_center: Optional[List[int]] = None) -> None:
         """
-        Saves a single step result to the workflow history file.
+        Saves a single step result to the workflow history files.
         """
-        history_file = self.__base_dir / f"{self.__workflow_id}.json"
+        history = self.__load_history()
 
+        record = result.to_record(absolute_center=absolute_center).model_dump()
+        record["timestamp"] = int(time.time() * 1000)
+
+        history["history"].append(record)
+
+        self.__save_json(history)
+        self.__save_yaml(history["history"])
+
+    def __load_history(self) -> Dict[str, Any]:
+        """
+        Loads existing history from disk.
+        """
+        path = self.__base_dir / f"{self.__workflow_id}.json"
         data: Dict[str, Any] = {"workflow_id": self.__workflow_id, "history": []}
 
-        if history_file.exists():
+        if path.exists():
             try:
-                with history_file.open("r") as f:
-                    data = json.load(f)
-            except Exception:
+                with path.open("r") as handle:
+                    data = json.load(handle)
+            except Exception:  # nosec
                 pass
+        return data
 
-        step_record = result.to_record(absolute_center=absolute_center).model_dump()
-        step_record["timestamp_ms"] = int(time.time() * 1000)
-
-        history_list = data.get("history")
-        if isinstance(history_list, list):
-            history_list.append(step_record)
-
-        with history_file.open("w") as f:
-            json.dump(data, f, indent=2)
-
-        # Also generate the structured command sequence (no extension)
-        self.__save_command_sequence(data["history"])
-
-    def __save_command_sequence(self, history: List[Dict[str, Any]]) -> None:
+    def __save_json(self, data: Dict[str, Any]) -> None:
         """
-        Generates a structured command sequence file without an extension.
-        Format:
-        Step [Index]:
-          Command: [Description]
-          Action: [Type]
-          Target: [Element]
-          BBox: [x1, y1, x2, y2] (normalized)
-          Center: [x, y] (absolute)
-          Metadata: { ... }
+        Writes the history data to JSON.
         """
-        # File name with no extension
-        sequence_file = self.__base_dir / f"{self.__workflow_id}"
+        path = self.__base_dir / f"{self.__workflow_id}.json"
+        with path.open("w") as handle:
+            json.dump(data, handle, indent=2)
+
+    def __save_yaml(self, history: List[Dict[str, Any]]) -> None:
+        """
+        Orchestrates the YAML script generation.
+        """
+        path = self.__base_dir / f"{self.__workflow_id}.yaml"
+        steps = [self.__build_yaml_item(index, item) for index, item in enumerate(history, 1)]
+
+        if yaml:
+            with path.open("w") as handle:
+                yaml.dump(steps, handle, sort_keys=False, indent=2, default_flow_style=None)
+        else:
+            self.__write_manual_yaml(path, steps)
+
+    def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Constructs a structured dictionary for a YAML step.
+        """
+        return {
+            "step": index,
+            "command": self.__describe_command(record),
+            "action_type": record.get("action_type", "wait"),
+            "target": record.get("target", "element"),
+            "coordinates": {"bbox": record.get("bbox"), "center": record.get("center")},
+            "metadata": {
+                "timestamp": record.get("timestamp"),
+                "success": record.get("success"),
+                "duration": record.get("duration"),
+                "rationale": record.get("rationale"),
+            },
+        }
+
+    def __describe_command(self, record: Dict[str, Any]) -> str:
+        """
+        Generates a readable command description.
+        """
+        action = record.get("action_type", "wait")
+        target = record.get("target", "element")
+
+        if action == "type":
+            return f"Type '{record.get('text', '')}' in {target}"
+        if action == "tap":
+            return f"Tap on {target}"
+        if action == "swipe":
+            return f"Swipe on {target}"
+        if action == "scroll":
+            return f"Scroll {target}"
+        if action == "back":
+            return "Press back button"
+        if action == "home":
+            return "Press home button"
+        if action == "complete":
+            return "Goal completed"
+
+        return f"{action.capitalize()} on {target}"
+
+    def __write_manual_yaml(self, path: Path, steps: List[Dict[str, Any]]) -> None:
+        """
+        Fallback YAML writer if PyYAML is unavailable.
+        """
         lines = []
+        for step in steps:
+            lines.append(f"- step: {step['step']}")
+            lines.append(f'  command: "{step["command"]}"')
+            lines.append(f'  action_type: "{step["action_type"]}"')
+            lines.append(f'  target: "{step["target"]}"')
 
-        for index, step in enumerate(history, start=1):
-            action_type = step.get("action_type", "wait")
-            target = step.get("target", "element")
-            
-            # 1. Header
-            lines.append(f"Step {index}:")
-            
-            # 2. Command Description
-            if action_type == "type":
-                command = f"Type '{step.get('text', '')}' in {target}"
-            elif action_type == "tap":
-                command = f"Tap on {target}"
-            elif action_type == "swipe":
-                command = f"Swipe on {target}"
-            elif action_type == "scroll":
-                command = f"Scroll {target}"
-            elif action_type == "long_press":
-                command = f"Long press on {target}"
-            elif action_type == "back":
-                command = "Press back button"
-            elif action_type == "home":
-                command = "Press home button"
-            elif action_type == "wait":
-                command = f"Wait for {target}"
-            elif action_type == "complete":
-                command = "Goal completed"
-            else:
-                command = f"{action_type.capitalize()} on {target}"
-            
-            lines.append(f"  Command: {command}")
-            lines.append(f"  Action: {action_type}")
-            lines.append(f"  Target: {target}")
+            coords = step["coordinates"]
+            lines.append(
+                f"  coordinates:\n    bbox: {coords.get('bbox')}\n    center: {coords.get('center')}"
+            )
 
-            # 3. Metadata (BBox and Center)
-            bbox = step.get("bbox")
-            center = step.get("center")
-            
-            if bbox:
-                lines.append(f"  BBox: {bbox} (normalized)")
-            
-            if center:
-                lines.append(f"  Center: {center} (absolute)")
-            
-            # 4. Outcome
-            lines.append(f"  Success: {step.get('success')}")
-            lines.append(f"  Duration: {step.get('duration')}ms")
-            
-            lines.append("") # Empty line between steps
+            meta = step["metadata"]
+            rationale = str(meta.get("rationale", "")).replace('"', '\\"')
+            lines.append(
+                f'  metadata:\n    timestamp: {meta.get("timestamp")}\n    success: {str(meta.get("success")).lower()}\n    rationale: "{rationale}"'
+            )
+            lines.append("")
 
-        with sequence_file.open("w") as f:
-            f.write("\n".join(lines))
+        with path.open("w") as handle:
+            handle.write("\n".join(lines))

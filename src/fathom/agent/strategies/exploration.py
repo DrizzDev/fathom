@@ -63,10 +63,7 @@ class ExplorationGraph:
 
         key = state.visual_hash
         if key not in self.nodes:
-            self.nodes[key] = ScreenNode(
-                screen_hash=key,
-                activity=state.activity,
-            )
+            self.nodes[key] = ScreenNode(screen_hash=key, activity=state.activity)
 
         node = self.nodes[key]
         node.visit_count += 1
@@ -141,11 +138,7 @@ class ActionGenerator:
         self.__rng = random.Random(seed)  # nosec
         self.__failed_actions: Dict[str, int] = defaultdict(int)
 
-    def generate_random_tap(
-        self,
-        screen_width: int,
-        screen_height: int,
-    ) -> Action:
+    def generate_random_tap(self, screen_width: int, screen_height: int) -> Action:
         """
         Generate random tap action.
         """
@@ -156,7 +149,7 @@ class ActionGenerator:
         return Action(
             confidence=0.3,
             action_type=ActionType.TAP,
-            reasoning="Random exploration tap",
+            rationale="Random exploration tap",
             target=f"exploration tap at ({x}, {y})",
             bbox=BoundingBox(x=x, y=y, width=50, height=50),
         )
@@ -170,7 +163,7 @@ class ActionGenerator:
             confidence=0.4,
             action_type=ActionType.SCROLL,
             target=f"exploration scroll {direction}",
-            reasoning=f"Scroll {direction} to reveal content",
+            rationale=f"Scroll {direction} to reveal content",
         )
 
     def generate_back(self) -> Action:
@@ -182,7 +175,7 @@ class ActionGenerator:
             confidence=0.5,
             action_type=ActionType.BACK,
             target="exploration back navigation",
-            reasoning="Navigate back to explore different path",
+            rationale="Navigate back to explore different path",
         )
 
     def select_exploration_action(

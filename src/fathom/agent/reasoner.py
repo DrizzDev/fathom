@@ -3,11 +3,14 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from logging import getLogger
 from typing import ClassVar, List, Optional, Set
 
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action
 from fathom.tools.vision import AnalysisResult
+
+logger = getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -81,7 +84,7 @@ class KeywordMatcher(CompletionMatcher):
     """
 
     def __init__(self, keywords: Set[str]) -> None:
-        self.__keywords = {k.lower() for k in keywords}
+        self.__keywords = {k.lower() for k in keywords if k}
         self.__pattern = re.compile(
             r"\b(" + "|".join(re.escape(k) for k in self.__keywords) + r")\b",
             re.IGNORECASE,
@@ -324,9 +327,16 @@ class Reasoner:
         if primary_desc not in failed:
             return primary
 
+        logger.warning(
+            f"Primary action '{primary_desc}' has failed before. Searching alternatives."
+        )
+
+        # Filter alternatives by confidence and failure history
         for alt in alternatives:
             alt_desc = alt.to_description()
             if alt_desc not in failed and alt.confidence >= 0.4:
                 return alt
 
+        # If all alternatives also failed, but we must act,
+        # return the one with highest confidence or the primary as last resort
         return primary

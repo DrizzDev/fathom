@@ -105,8 +105,11 @@ class BoundingBoxGenerator:
                 y2=logical_bounds.y2 * scale_factor,
             )
 
+            # Use simple numeric labels for precision LLM grounding
+            label = str(index)
+
             # Set element properties
-            element.label = str(index)
+            element.label = label
             element.bounds = scaled_bounds  # Use scaled bounds for drawing
             element.color = cls._COLORS[(index - 1) % len(cls._COLORS)]
 

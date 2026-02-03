@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import time
 import xml.etree.ElementTree as ET  # nosec
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fathom.constants import ActionType
 from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.ui import LabeledElement
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision.processing.annotator import ImageAnnotator
 from fathom.tools.vision.processing.drawer import BoundingBoxGenerator
@@ -14,8 +15,8 @@ from fathom.tools.vision.processing.drawer import BoundingBoxGenerator
 
 class HierarchyService:
     """
-    Service responsible for UI hierarchy analysis and screenshot annotation.
-    Follows single responsibility principle for UI grounding.
+    Service responsible for UI hierarchy analysis.
+    Optimized for high-speed grounding.
     """
 
     def __init__(self, device: DeviceTool) -> None:
@@ -25,67 +26,95 @@ class HierarchyService:
     @property
     def label_map(self) -> Dict[str, Any]:
         """
-        Returns a copy of the current label mapping.
+        Returns label mapping.
         """
         return self.__label_map.copy()
 
-    async def process_screen(
-        self, screen: ScreenCapture, action_type: Optional[ActionType] = None
-    ) -> Tuple[Optional[ScreenCapture], float, float]:
+    async def process_xml_and_screen(
+        self, screen: ScreenCapture, xml: str, action_type: Optional[ActionType] = None
+    ) -> Tuple[Optional[ScreenCapture], Dict[str, Any]]:
         """
-        Dumps hierarchy, generates elements, and returns an annotated ScreenCapture.
-        Returns: (Annotated Capture, Dump Duration, Processing Duration)
+        Processes existing XML and screen data.
         """
-
-        start_timestamp = time.time()
-        xml_content = await self.__device.dump_hierarchy()
-        dump_duration = time.time() - start_timestamp
-
-        if not xml_content:
-            return None, dump_duration, 0.0
-
-        processing_start_timestamp = time.time()
         try:
-            timestamp = int(time.time() * 1000)
-            temporary_path = Path(f"assets/screenshot/temp_{timestamp}.png")
-            temporary_path.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = self.__save_screenshot(screen.image, timestamp)
 
-            with temporary_path.open("wb") as file_handle:
-                file_handle.write(screen.image)
+            # Persist raw XML in background
+            self.__save_xml(xml, timestamp)
 
-            # Sanitize XML
-            xml_start_index = xml_content.find("<")
-            xml_end_index = xml_content.rfind(">")
-            if xml_start_index != -1 and xml_end_index != -1:
-                xml_content = xml_content[xml_start_index : xml_end_index + 1]
-
-            root_element = ET.fromstring(xml_content)  # nosec
-            elements, self.__label_map = BoundingBoxGenerator.create_element(
-                root_element, str(temporary_path), action=action_type or ActionType.TAP
-            )
-
-            annotated_filename = f"assets/annotated/xml_annotated_{timestamp}.png"
-            annotated_path = ImageAnnotator.annotate(
-                str(temporary_path), annotated_filename, elements
-            )
+            elements = self.__parse_elements(xml, screenshot_path, action_type)
+            annotated_path = self.__annotate(screenshot_path, timestamp, elements)
 
             if not annotated_path:
-                return None, dump_duration, time.time() - processing_start_timestamp
+                return None, {}
 
-            with Path(annotated_path).open("rb") as file_handle:
-                annotated_capture = ScreenCapture(
-                    width=screen.width,
-                    height=screen.height,
-                    image=file_handle.read(),
-                    activity=screen.activity,
-                    timestamp=screen.timestamp,
-                )
-
-            return (
-                annotated_capture,
-                dump_duration,
-                time.time() - processing_start_timestamp,
-            )
+            capture = self.__build_capture(screen, annotated_path)
+            return capture, self.__label_map.copy()
 
         except Exception:  # nosec
-            return None, dump_duration, time.time() - processing_start_timestamp
+            return None, {}
+
+    def __save_xml(self, content: str, timestamp: str) -> Path:
+        """
+        Persists hierarchy.
+        """
+        directory = Path("assets/xmls")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{timestamp}.xml"
+        with path.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+        return path
+
+    def __save_screenshot(self, data: bytes, timestamp: str) -> Path:
+        """
+        Persists screenshot.
+        """
+        directory = Path("assets/screenshot")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{timestamp}.png"
+        with path.open("wb") as handle:
+            handle.write(data)
+        return path
+
+    def __parse_elements(
+        self, xml: str, image_path: Path, action: Optional[ActionType]
+    ) -> List[LabeledElement]:
+        """
+        Identifies elements.
+        """
+        start = xml.find("<")
+        end = xml.rfind(">")
+        if start != -1 and end != -1:
+            xml = xml[start : end + 1]
+
+        root = ET.fromstring(xml)  # nosec
+        elements, self.__label_map = BoundingBoxGenerator.create_element(
+            root, str(image_path), action=action or ActionType.TAP
+        )
+        return elements
+
+    def __annotate(
+        self, source: Path, timestamp: str, elements: List[LabeledElement]
+    ) -> Optional[Path]:
+        """
+        Annotates image.
+        """
+        directory = Path("assets/annotated")
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / f"{timestamp}.png"
+        path = ImageAnnotator.annotate(str(source), str(destination), elements)
+        return Path(path) if path else None
+
+    def __build_capture(self, original: ScreenCapture, path: Path) -> ScreenCapture:
+        """
+        Builds capture object.
+        """
+        with path.open("rb") as handle:
+            return ScreenCapture(
+                image=handle.read(),
+                width=original.width,
+                height=original.height,
+                activity=original.activity,
+                timestamp=original.timestamp,
+            )

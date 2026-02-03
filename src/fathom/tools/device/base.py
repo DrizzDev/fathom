@@ -100,13 +100,16 @@ class DeviceTool(Tool[ActionResult], ABC):
     @abstractmethod
     async def get_screen_size(self) -> Tuple[int, int]:
         """
-        Get device screen dimensions.
-
-        Returns:
-            Tuple of (width, height) in pixels.
+        Get device screen dimensions in pixels.
         """
 
         raise NotImplementedError
+
+    async def cleanup(self) -> None:
+        """
+        Clean up any device connections or background processes.
+        """
+        pass
 
     @abstractmethod
     async def screenshot(self) -> Optional[bytes]:

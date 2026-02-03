@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
+from fathom.interfaces import IMemoryProvider
 from fathom.orchestration.context import ExecutionContext
 from fathom.schemas.results import WorkflowResult
 from fathom.tools.capture import CaptureTool
@@ -43,28 +44,6 @@ class RunnerResult:
 class WorkflowRunner:
     """
     Runs workflows synchronously with lifecycle management.
-
-    Provides:
-    - Workflow instantiation from registry
-    - Execution with context tracking
-    - Checkpoint persistence hooks
-    - Progress reporting hooks
-    - Error handling and cleanup
-
-    Example:
-        ```python
-        runner = WorkflowRunner(
-            device=device_tool,
-            capture=capture_tool,
-            vision=vision_tool,
-        )
-
-        result = runner.run_intent(
-            intent="Login to app",
-            workflow_id="login-001",
-        )
-        print(f"Success: {result.workflow_result.success}")
-        ```
     """
 
     def __init__(
@@ -72,6 +51,7 @@ class WorkflowRunner:
         device: DeviceTool,
         capture: CaptureTool,
         vision: Optional[VisionTool] = None,
+        memory: Optional[IMemoryProvider] = None,
         *,
         runner_config: Optional[RunnerConfig] = None,
         workflow_config: Optional[WorkflowConfig] = None,
@@ -83,6 +63,7 @@ class WorkflowRunner:
             device: Device tool for actions.
             capture: Capture tool for screenshots.
             vision: Optional vision tool for analysis.
+            memory: Optional persistent memory provider.
             runner_config: Runner configuration.
             workflow_config: Default workflow configuration.
         """
@@ -90,6 +71,7 @@ class WorkflowRunner:
         self.__device = device
         self.__capture = capture
         self.__vision = vision
+        self.__memory = memory
         self.__runner_config = runner_config or RunnerConfig()
         self.__workflow_config = workflow_config or WorkflowConfig()
 
@@ -125,11 +107,17 @@ class WorkflowRunner:
         if self.__vision is None:
             raise ValueError("Vision tool required for intent workflows")
 
+        if self.__memory is None:
+            from fathom.infrastructure.memory import SQLiteMemoryProvider
+
+            self.__memory = SQLiteMemoryProvider()
+
         workflow = IntentWorkflow(
             intent=intent,
             vision=self.__vision,
             device=self.__device,
             capture=self.__capture,
+            memory=self.__memory,
             workflow_id=workflow_id,
             config=config or self.__workflow_config,
         )

@@ -30,25 +30,12 @@ class ADBCaptureConfig:
 class ADBCaptureTool(CaptureTool):
     """
     Capture tool using ADB for real device screenshots.
-
-    Example:
-        ```python
-        capture = ADBCaptureTool(ADBCaptureConfig(
-            device_serial="emulator-5554"
-        ))
-        screenshot = await capture.capture()
-        state = capture.compute_state(screenshot)
-        ```
     """
 
     def __init__(self, config: Optional[ADBCaptureConfig] = None) -> None:
         """
         Initialize ADB capture tool.
-
-        Args:
-            config: ADB capture configuration.
         """
-
         self.__config = config or ADBCaptureConfig()
 
         if self.__config.use_hybrid_hash:
@@ -59,11 +46,7 @@ class ADBCaptureTool(CaptureTool):
     async def capture(self) -> ScreenCapture:
         """
         Capture screenshot from device.
-
-        Returns:
-            ScreenCapture with image bytes and metadata.
         """
-
         image = await self.__capture_screenshot()
         activity = await self.__get_current_activity()
 
@@ -71,18 +54,11 @@ class ADBCaptureTool(CaptureTool):
 
         # Get dimensions
         try:
-            import io
-
-            from PIL import Image
-
             with Image.open(io.BytesIO(image)) as img:
                 width, height = img.size
-        except ImportError as exception:
+        except Exception as exception:
             width, height = 1080, 1920
-            logger.warning(
-                "Pillow not installed, using fallback dimensions",
-                extra={"exception": str(exception)},
-            )
+            logger.warning(f"Fallback dimensions used: {exception}")
 
         return ScreenCapture(
             image=image,
@@ -94,24 +70,16 @@ class ADBCaptureTool(CaptureTool):
 
     async def capture_stable(self, timeout: int = 2000) -> ScreenCapture:
         """
-        Capture screen after waiting for stability.
-
-        Args:
-            timeout: Maximum wait time in milliseconds.
-
-        Returns:
-            Stable screen capture.
+        Capture screen after waiting for stability with reduced overhead.
         """
-
         start_time = time.time()
         timeout_sec = timeout / 1000.0
 
-        # Initial capture
         last_capture = await self.capture()
         last_state = self.compute_state(last_capture)
 
         while (time.time() - start_time) < timeout_sec:
-            await asyncio.sleep(0.2)  # 200ms interval
+            await asyncio.sleep(0.2)
 
             try:
                 current_capture = await self.capture()
@@ -124,10 +92,7 @@ class ADBCaptureTool(CaptureTool):
                 last_state = current_state
 
             except Exception as exception:
-                logger.warning(
-                    "Transient capture error during stability check",
-                    extra={"error": str(exception)},
-                )
+                logger.debug(f"Stability check error: {exception}")
                 continue
 
         return last_capture
@@ -135,29 +100,23 @@ class ADBCaptureTool(CaptureTool):
     def compute_state(self, capture: ScreenCapture) -> ScreenState:
         """
         Compute state from screen capture.
-
-        Args:
-            capture: Screen capture.
-
-        Returns:
-            ScreenState with hashes and metadata.
         """
-
         if isinstance(self.__hasher, HybridHasher):
             try:
                 with Image.open(io.BytesIO(capture.image)) as img:
                     img = img.convert("RGB")
                     visual_hash = self.__hasher.compute_phash(img)
                     structural_hash = self.__hasher.compute_structural(img)
-            except ImportError:
+            except Exception:
                 visual_hash = "0" * 16
                 structural_hash = "0" * 8
         else:
-            # FastHasher fallback
             visual_hash = "0" * 16
             structural_hash = "0" * 8
 
-        activity_hash = hashlib.md5(capture.activity.encode()).hexdigest()[:8]  # nosec
+        activity_hash = hashlib.md5(capture.activity.encode(), usedforsecurity=False).hexdigest()[
+            :8
+        ]
 
         return ScreenState(
             visual_hash=visual_hash,
@@ -169,12 +128,8 @@ class ADBCaptureTool(CaptureTool):
 
     async def __capture_screenshot(self) -> bytes:
         """
-        Capture screenshot via ADB.
-
-        Returns:
-            PNG image bytes.
+        Capture screenshot via ADB exec-out.
         """
-
         args = self.__build_adb_args(["exec-out", "screencap", "-p"])
 
         try:
@@ -190,11 +145,7 @@ class ADBCaptureTool(CaptureTool):
             )
 
             if process.returncode != 0:
-                error = stderr.decode().strip() if stderr else "Screenshot failed"
-                raise RuntimeError(f"ADB screenshot failed: {error}")
-
-            if not stdout:
-                raise RuntimeError("Empty screenshot from ADB")
+                raise RuntimeError(f"ADB screenshot failed: {stderr.decode()}")
 
             return stdout
 
@@ -203,18 +154,11 @@ class ADBCaptureTool(CaptureTool):
 
     async def __get_current_activity(self) -> str:
         """
-        Get current activity name.
-
-        Returns:
-            Activity name or "unknown".
+        Get current activity name using robust multi-fallback detection.
         """
-
-        args = self.__build_adb_args(
-            [
-                "shell",
-                "dumpsys activity activities | grep mResumedActivity",
-            ]
-        )
+        # Combined command to reduce round-trips
+        cmd = "dumpsys activity activities | grep -E 'mResumedActivity' || dumpsys window | grep -E 'mCurrentFocus'"
+        args = self.__build_adb_args(["shell", cmd])
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -225,33 +169,38 @@ class ADBCaptureTool(CaptureTool):
 
             stdout, _ = await asyncio.wait_for(
                 process.communicate(),
-                timeout=5.0,
+                timeout=3.0,
             )
 
             if stdout:
                 output = stdout.decode()
                 import re
 
-                match = re.search(r"(\S+/\S+)", output)
+                # Try ActivityRecord pattern
+                match = re.search(r"ActivityRecord\{.*?\s(\S+)\s+t\d+\}", output)
                 if match:
                     return match.group(1)
 
+                # Try mCurrentFocus pattern
+                match = re.search(r"mCurrentFocus=Window\{.*?\s(\S+)\}", output)
+                if match:
+                    val = match.group(1)
+                    if "/" in val:
+                        pkg, cls = val.split("/", 1)
+                        if cls.startswith(pkg):
+                            return f"{pkg}/.{cls[len(pkg) + 1 :]}"
+                    return val
+
             return "unknown"
 
-        except Exception:
+        except Exception as exception:
+            logger.debug(f"Activity detection failed: {exception}")
             return "unknown"
 
     def __build_adb_args(self, args: list[str]) -> list[str]:
         """
         Build full ADB command arguments.
-
-        Args:
-            args: ADB subcommand and arguments.
-
-        Returns:
-            Full command list.
         """
-
         cmd = [self.__config.adb_path]
         if self.__config.device_serial:
             cmd.extend(["-s", self.__config.device_serial])

@@ -197,6 +197,80 @@ class ImageAnnotator:
         )
 
     @classmethod
+    def trace(
+        cls,
+        image_data: bytes,
+        output_path: str,
+        action_type: str,
+        coords: Tuple[int, ...],
+        label: str = "",
+    ) -> Optional[str]:
+        """
+        Draw action indicator on image for background verification.
+        coords: (x, y) for tap/type, or (x1, y1, x2, y2) for swipe/scroll.
+        """
+        try:
+            import io
+
+            image = Image.open(io.BytesIO(image_data)).convert("RGB")
+            draw = ImageDraw.Draw(image, "RGBA")
+
+            # Use red/orange for visibility
+            color = "#FF3B30"
+            alpha_fill = (255, 59, 48, 100)  # Semi-transparent
+
+            if action_type in ("tap", "type", "long_press"):
+                if len(coords) >= 2:
+                    x, y = coords[0], coords[1]
+                    # Draw a target circle
+                    r = 40
+                    draw.ellipse(
+                        [x - r, y - r, x + r, y + r], outline=color, width=5, fill=alpha_fill
+                    )
+                    draw.ellipse([x - 5, y - 5, x + 5, y + 5], fill=color)  # Center dot
+
+            elif (
+                action_type
+                in (
+                    "swipe",
+                    "scroll",
+                    "swipe_left",
+                    "swipe_right",
+                    "swipe_up",
+                    "swipe_down",
+                )
+                and len(coords) >= 4
+            ):
+                x1, y1, x2, y2 = coords[0], coords[1], coords[2], coords[3]
+                # Draw arrow line
+                draw.line([x1, y1, x2, y2], fill=color, width=10)
+                # Simple arrowhead (circle at start, cross at end)
+                draw.ellipse([x1 - 15, y1 - 15, x1 + 15, y1 + 15], fill=color)
+                draw.line([x2 - 20, y2 - 20, x2 + 20, y2 + 20], fill=color, width=10)
+                draw.line([x2 + 20, y2 - 20, x2 - 20, y2 + 20], fill=color, width=10)
+
+            # Add label if provided
+            if label:
+                font = ImageFont.load_default()
+                draw.text(
+                    (10, 10),
+                    f"Action: {label}",
+                    font=font,
+                    fill="white",
+                    stroke_width=2,
+                    stroke_fill="black",
+                )
+
+            out_path = Path(output_path)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            image.save(output_path)
+            return str(out_path)
+
+        except Exception as exception:
+            logger.warning(f"Verification annotation failed: {exception}")
+            return None
+
+    @classmethod
     def annotate(
         cls,
         image_path: str,

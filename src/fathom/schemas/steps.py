@@ -8,79 +8,75 @@ from fathom.schemas.actions import Action
 
 
 class Step(BaseModel):
-    """A planned step to execute.
-
-    Produced by the agent's planner and contains the action to perform.
+    """
+    A planned step containing an action and metadata.
     """
 
     model_config = {"frozen": True}
 
-    action: Action = Field(description="Action to execute")
-    screen_hash: str = Field(description="Hash of screen when step was planned")
-    step_number: int = Field(ge=0, description="Step index in sequence")
+    action: Action = Field(description="The action to be executed in this step")
+    screen_hash: str = Field(description="Visual hash of the screen state before the action")
+    step_number: int = Field(ge=0, description="The sequence number of this step")
     is_conditional: bool = Field(
-        default=False,
-        description="Whether this step is conditional (IF block)",
+        default=False, description="Whether this step is a recovery attempt"
     )
-    condition: Optional[str] = Field(
-        default=None,
-        description="Condition expression if is_conditional is True",
-    )
+    condition: Optional[str] = Field(default=None, description="Optional condition for the step")
 
 
 class StepResult(BaseModel):
     """
-    Result of executing a step.
+    The outcome of an executed step.
     """
 
     model_config = {"frozen": True}
 
-    step: Step = Field(description="The step that was executed")
-    success: bool = Field(description="Whether execution succeeded")
-    screen_changed: bool = Field(description="Whether screen changed after action")
-    pre_hash: str = Field(description="Screen hash before action")
-    post_hash: str = Field(description="Screen hash after action")
+    step: Step = Field(description="The original step definition")
+    success: bool = Field(description="Whether the device execution reported success")
+    screen_changed: bool = Field(description="Whether the screen visually changed after the action")
+    pre_hash: str = Field(description="Screen hash before execution")
+    post_hash: str = Field(description="Screen hash after execution")
     duration: int = Field(ge=0, description="Execution duration in milliseconds")
-    error: Optional[str] = Field(default=None, description="Error message if failed")
+    error: Optional[str] = Field(default=None, description="Error details if execution failed")
 
     def to_record(self, absolute_center: Optional[List[int]] = None) -> "StepRecord":
         """
-        Convert to a minimal record for serialization.
+        Converts the result into a serializable record for persistence.
         """
-        bbox_list = None
+        bbox = None
         if self.step.action.bbox:
-            # Format as [x1, y1, x2, y2] normalized
             box = self.step.action.bbox
-            bbox_list = [box.x, box.y, box.x + box.width, box.y + box.height]
+            bbox = [box.x, box.y, box.x + box.width, box.y + box.height]
 
         return StepRecord(
             step_number=self.step.step_number,
             action_type=self.step.action.action_type.value,
             target=self.step.action.target,
             text=self.step.action.text,
-            reasoning=self.step.action.reasoning,
+            rationale=self.step.action.rationale,
             success=self.success,
             screen_changed=self.screen_changed,
             duration=self.duration,
-            bbox=bbox_list,
+            bbox=bbox,
             center=absolute_center,
         )
 
 
 class StepRecord(BaseModel):
     """
-    Minimal step record for serialization and checkpointing.
+    Persistence-optimized representation of an executed step.
     """
 
     model_config = {"frozen": True}
 
-    step_number: int = Field(ge=0)
-    action_type: str = Field(min_length=1)
-    target: str = Field(min_length=1)
-    text: Optional[str] = Field(default=None)
-    reasoning: Optional[str] = Field(default=None)
-    success: bool
-    screen_changed: bool
+    step_number: int = Field(ge=0, description="Step index")
+    action_type: str = Field(min_length=1, description="Action category")
+    target: str = Field(min_length=1, description="Target element description")
+    text: Optional[str] = Field(default=None, description="Typed text content")
+    rationale: Optional[str] = Field(default=None, description="Reasoning for the action")
+    success: bool = Field(description="Execution status")
+    screen_changed: bool = Field(description="Visual transition status")
     duration: int = Field(ge=0, description="Duration in milliseconds")
-    bbox: Optional[List[int]] = Field(default=None, description="Normalized [x1, y1, x2, y2]")
-    center: Optional[List[int]] = Field(default=None, description="Absolute [x, y]")
+    bbox: Optional[List[int]] = Field(
+        default=None, description="Normalized [x1, y1, x2, y2] bounds"
+    )
+    center: Optional[List[int]] = Field(default=None, description="Absolute [x, y] coordinates")
