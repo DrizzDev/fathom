@@ -67,14 +67,23 @@ class ToolRegistry:
                                     "type": "STRING",
                                     "description": "Why this specific action is being taken.",
                                 },
+                                "target_name": {
+                                    "type": "STRING",
+                                    "description": "Descriptive name of the element (e.g., 'search bar', 'bathroom cleaning service option').",
+                                },
                                 "bbox": {
                                     "type": "OBJECT",
-                                    "description": "Bounding box for the action (tap target). Normalized coordinates (0-1000).",
+                                    "description": "Bounding box for the action (tap target). Use normalized coordinates (0-1000) whenever possible.",
                                     "properties": {
                                         "x": {"type": "INTEGER"},
                                         "y": {"type": "INTEGER"},
                                         "width": {"type": "INTEGER"},
                                         "height": {"type": "INTEGER"},
+                                        "coord_system": {
+                                            "type": "STRING",
+                                            "enum": ["normalized", "pixel"],
+                                            "description": "Coordinate system used. Defaults to normalized (0-1000).",
+                                        },
                                     },
                                 },
                                 "text_to_type": {

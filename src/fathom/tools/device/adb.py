@@ -114,34 +114,18 @@ class ADBDeviceTool(DeviceTool):
         """
         Dump UI hierarchy to XML string efficiently.
         """
-
-        # Try direct stdout dump first (fastest, no temp files)
-        arguments = self.__build_arguments(
-            parts=["shell", "uiautomator", "dump", "--compressed", "/dev/stdout"]
-        )
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *arguments,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            # Reduced timeout for speculative stdout dump
-            stdout, _ = await asyncio.wait_for(fut=process.communicate(), timeout=2.0)
-            if process.returncode == 0 and stdout:
-                output = stdout.decode("utf-8", errors="ignore")
-                # Clean up potential ADB status messages
-                if match := re.search(r"(<hierarchy.*</hierarchy>)", output, re.DOTALL):
-                    return match.group(1)
-        except Exception as exception:
-            logger.debug(f"Direct XML dump failed, falling back: {exception}")
-
-        # Fallback to temp file if stdout dump fails
         path = "/data/local/tmp/window_dump.xml"
-        dump_result = await self.__shell(command=f"uiautomator dump --compressed {path}")
+
+        # 1. Dump to file on device (reliable)
+        # using nohup or ignoring output can sometimes be faster, but we need to wait for finish
+        dump_command = f"uiautomator dump --compressed {path}"
+        dump_result = await self.__shell(command=dump_command)
+
         if not dump_result.success:
+            logger.warning("uiautomator dump failed")
             return None
 
-        # Use exec-out cat for slightly better performance than shell cat
+        # 2. Stream file content back (fast)
         cat_arguments = self.__build_arguments(parts=["exec-out", "cat", path])
         try:
             process = await asyncio.create_subprocess_exec(
@@ -149,10 +133,10 @@ class ADBDeviceTool(DeviceTool):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(fut=process.communicate(), timeout=3.0)
+            stdout, _ = await asyncio.wait_for(fut=process.communicate(), timeout=5.0)
             return stdout.decode("utf-8", errors="ignore") if stdout else None
         except Exception as exception:
-            logger.debug(f"Fallback cat failed: {exception}")
+            logger.error(f"Failed to retrieve hierarchy XML: {exception}")
             return None
 
     async def execute(self, request: dict[str, object]) -> ActionResult:

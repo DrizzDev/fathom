@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 import random
 from logging import getLogger
@@ -48,27 +47,43 @@ class GeminiLLMClient(IVisionProvider):
         location = self.__configuration.location or "global"
 
         if self.__configuration.credentials_path:
-            with contextlib.suppress(Exception):
-                path = Path(self.__configuration.credentials_path)
-                if path.exists():
-                    self.__credentials = service_account.Credentials.from_service_account_file(
-                        str(path),
-                        scopes=["https://www.googleapis.com/auth/cloud-platform"],
-                    )
-                    if not project:
-                        project = getattr(self.__credentials, "project_id", None)
+            path = Path(self.__configuration.credentials_path)
+            if path.exists():
+                self.__credentials = service_account.Credentials.from_service_account_file(
+                    str(path),
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                )
+                if not project:
+                    project = getattr(self.__credentials, "project_id", None)
+            else:
+                logger.warning(f"Credential file not found at: {path}")
 
         if not project:
             project = os.environ.get("GEMINI_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
 
+        # Ensure credentials are set even if using API key (for other services like GCS)
+        if not self.__credentials and self.__configuration.credentials_path:
+            path = Path(self.__configuration.credentials_path)
+            if path.exists():
+                self.__credentials = service_account.Credentials.from_service_account_file(
+                    str(path),
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                )
+
+        http_options = {"timeout": self.__configuration.timeout * 1000}  # ms
+
         try:
             if self.__configuration.api_key:
-                self.__client = genai.Client(api_key=self.__configuration.api_key)
+                self.__client = genai.Client(
+                    http_options=http_options,
+                    api_key=self.__configuration.api_key,
+                )
             else:
                 self.__client = genai.Client(
                     vertexai=True,
                     project=project,
                     location=location,
+                    http_options=http_options,
                     credentials=self.__credentials,
                 )
 
@@ -108,6 +123,8 @@ class GeminiLLMClient(IVisionProvider):
         parts = []
         for item in user_content:
             if isinstance(item, bytes):  # It's an image
+                if not item:
+                    raise VisionError("Received empty image data for analysis")
                 parts.append(types.Part.from_bytes(data=item, mime_type="image/jpeg"))
             elif isinstance(item, str):
                 parts.append({"text": item})

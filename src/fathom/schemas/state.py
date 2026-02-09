@@ -6,14 +6,15 @@ from typing import Any, Deque, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from fathom.schemas.actions import Action
+from fathom.schemas.screens import ScreenState
 
 
 class LoopDetector(BaseModel):
     """
     Detects when agent is stuck in a loop.
 
-    Uses a sliding window of screen hashes to detect repeated states.
-    Implements exponential backoff for recovery attempts.
+    Uses a sliding window of screen states to detect repeated states.
+    Implements fuzzy matching via Hamming distance.
     """
 
     threshold: int = Field(default=3, description="Screen repetition threshold")
@@ -21,15 +22,15 @@ class LoopDetector(BaseModel):
 
     __max_recovery: int = PrivateAttr(default=3)
     __recovery_attempts: int = PrivateAttr(default=0)
-    __recent_hashes: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=5))
     __recent_actions: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=5))
+    __recent_screens: Deque[ScreenState] = PrivateAttr(default_factory=lambda: deque(maxlen=5))
 
-    def record(self, screen_hash: str, action_description: Optional[str] = None) -> None:
+    def record(self, screen: ScreenState, action_description: Optional[str] = None) -> None:
         """
-        Record a screen hash and optionally an action description.
+        Record a screen state and optionally an action description.
         """
 
-        self.__recent_hashes.append(screen_hash)
+        self.__recent_screens.append(screen)
 
         if action_description:
             self.__recent_actions.append(action_description)
@@ -39,19 +40,24 @@ class LoopDetector(BaseModel):
         Check if agent appears stuck in a loop.
         """
 
-        if len(self.__recent_hashes) < self.threshold:
+        if len(self.__recent_screens) < self.threshold:
             return False
 
-        # Check for repeated screens
-        hash_counts: Dict[str, int] = {}
-        for screen_hash in self.__recent_hashes:
-            hash_counts[screen_hash] = hash_counts.get(screen_hash, 0) + 1
-            if hash_counts[screen_hash] >= self.threshold:
+        # Check for repeated screens using fuzzy matching
+        for index in range(len(self.__recent_screens)):
+            count = 1
+            current = self.__recent_screens[index]
+            for __next_index in range(index + 1, len(self.__recent_screens)):
+                if current.is_same_screen(self.__recent_screens[__next_index]):
+                    count += 1
+
+            if count >= self.threshold:
                 return True
 
-        # Check for repeated actions
+        # Check for repeated actions (exact match is fine for actions)
         if len(self.__recent_actions) >= self.threshold:
             action_counts: Dict[str, int] = {}
+
             for action_description in self.__recent_actions:
                 action_counts[action_description] = action_counts.get(action_description, 0) + 1
                 if action_counts[action_description] >= self.threshold:
@@ -79,7 +85,7 @@ class LoopDetector(BaseModel):
         Reset loop detection state.
         """
 
-        self.__recent_hashes.clear()
+        self.__recent_screens.clear()
         self.__recent_actions.clear()
 
         self.__recovery_attempts = 0

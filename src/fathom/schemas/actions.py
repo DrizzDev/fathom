@@ -9,22 +9,32 @@ from fathom.constants import ActionType
 
 class Bounds(BaseModel):
     """
-    Normalized bounds (0-1000 scale) for UI elements.
+    Bounds for UI elements.
+    Expected to be normalized (0-1000 scale) but supports raw pixels for robustness.
     """
 
-    x: int = Field(ge=0, le=1000, description="Top-left X coordinate (0-1000)")
-    y: int = Field(ge=0, le=1000, description="Top-left Y coordinate (0-1000)")
-    width: int = Field(ge=0, le=1000, description="Width of the element (0-1000)")
-    height: int = Field(ge=0, le=1000, description="Height of the element (0-1000)")
+    x: int = Field(ge=0, le=5000, description="Top-left X coordinate")
+    y: int = Field(ge=0, le=5000, description="Top-left Y coordinate")
+    width: int = Field(ge=0, le=5000, description="Width of the element")
+    height: int = Field(ge=0, le=5000, description="Height of the element")
     system: str = Field(
         default="normalized", description="Coordinate system used", alias="coord_system"
     )
+
+    @property
+    def is_normalized(self) -> bool:
+        """
+        Heuristic to check if coordinates are likely normalized (0-1000).
+        """
+
+        return self.x <= 1000 and self.y <= 1000 and self.width <= 1000 and self.height <= 1000
 
     @property
     def center_x(self) -> int:
         """
         Calculates the horizontal center.
         """
+
         return self.x + self.width // 2
 
     @property
@@ -32,17 +42,30 @@ class Bounds(BaseModel):
         """
         Calculates the vertical center.
         """
+
         return self.y + self.height // 2
 
     def to_pixels(self, screen_width: int, screen_height: int) -> tuple[int, int, int, int]:
         """
-        Converts normalized coordinates to absolute device pixels.
+        Converts coordinates to absolute device pixels.
+        Handles both normalized and already-pixel coordinates.
         """
-        x_pixel = int(self.x * screen_width / 1000)
-        y_pixel = int(self.y * screen_height / 1000)
-        width_pixel = int(self.width * screen_width / 1000)
-        height_pixel = int(self.height * screen_height / 1000)
-        return x_pixel, y_pixel, width_pixel, height_pixel
+
+        # If explicitly told it's pixels, don't normalize
+        if self.system == "pixel":
+            return self.x, self.y, self.width, self.height
+
+        # Use heuristic if system is normalized (default)
+        if self.is_normalized:
+            x_pixel = int(self.x * screen_width / 1000)
+            y_pixel = int(self.y * screen_height / 1000)
+            width_pixel = int(self.width * screen_width / 1000)
+            height_pixel = int(self.height * screen_height / 1000)
+
+            return x_pixel, y_pixel, width_pixel, height_pixel
+
+        # Fallback for large values that must be pixels
+        return self.x, self.y, self.width, self.height
 
 
 class Action(BaseModel):
@@ -51,18 +74,21 @@ class Action(BaseModel):
     """
 
     action_type: ActionType = Field(description="The type of interaction to perform")
+
     rationale: str = Field(description="The reasoning behind choosing this action")
     target: str = Field(default="element", description="Grounding label ID or technical target")
     natural_language_target: Optional[str] = Field(
-        default=None, description="Human-friendly name of the target element (e.g., 'Search Bar')"
+        default=None, description="Human-friendly name of the target element."
     )
-    label_id: Optional[str] = Field(default=None, description="Numeric label ID from XML grounding")
-    bounds: Optional[Bounds] = Field(default=None, description="Bounding box for the interaction")
+
     text: Optional[str] = Field(default=None, description="Text content for typing actions")
+    bounds: Optional[Bounds] = Field(default=None, description="Bounding box for the interaction")
+    label_id: Optional[str] = Field(default=None, description="Numeric label ID from XML grounding")
+
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
     wait_duration: Optional[int] = Field(
         default=None, description="Duration to wait in milliseconds"
     )
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
     memory_updates: Optional[Dict[str, str]] = Field(
         default=None, description="Key-value pairs to store in persistent memory"
     )
@@ -81,8 +107,10 @@ class Action(BaseModel):
             # Fallback to label ID or bounds if natural language target is generic/missing
             if self.label_id:
                 name = f"Element (Label {self.label_id})"
+
             elif self.bounds:
                 name = f"Element at [{self.bounds.x}, {self.bounds.y}]"
+
             else:
                 name = self.target or "UI Element"
 
@@ -92,11 +120,16 @@ class Action(BaseModel):
         if self.action_type == ActionType.TYPE:
             return f"Type '{self.text}' in {name}"
 
-        if self.action_type == ActionType.SWIPE:
-            return f"Swipe on {name}"
+        if "swipe" in self.action_type.value:
+            direction = (
+                self.action_type.value.split("_")[-1]
+                if "_" in self.action_type.value
+                else "content"
+            )
+            return f"Swipe {direction} on {name}"
 
         if self.action_type == ActionType.SCROLL:
-            return f"Scroll {name}"
+            return f"Scroll until you see {name}"
 
         if self.action_type == ActionType.LONG_PRESS:
             return f"Long press on {name}"

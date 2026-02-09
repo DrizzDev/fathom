@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from difflib import SequenceMatcher
 from logging import getLogger
-from typing import Optional
+from typing import List, Optional, Set
 
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action
@@ -80,9 +80,9 @@ class Reasoner:
     def select_best_action(
         self,
         primary: Action,
-        alternatives: list[Action],
+        alternatives: List[Action],
         *,
-        failed_actions: set[str],
+        failed_actions: Set[str],
     ) -> Action:
         """
         Fast selection logic.

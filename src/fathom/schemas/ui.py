@@ -81,4 +81,4 @@ class LabeledElement(BaseModel):
     bounds: UIBounds
     attributes: Dict[str, Any]
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=False)

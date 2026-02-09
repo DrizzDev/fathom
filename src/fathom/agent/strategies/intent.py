@@ -56,6 +56,7 @@ class IntentStrategy(ExecutionStrategy):
 
         self.__device = device
         self.__capture = capture
+
         self.__memory = memory
         self.__ledger: ILedger = Ledger()
 
@@ -225,22 +226,40 @@ class IntentStrategy(ExecutionStrategy):
         """
 
         if not (self.__use_xml and xml):
+            logger.debug("XML Grounding disabled or XML missing.")
             return screen, {}, 0.0
 
         start = time.time()
+        xml_size_kb = len(xml.encode("utf-8")) / 1024
+        logger.info(f"Hierarchy processing started. XML Size: {xml_size_kb:.2f} KB")
 
-        if len(xml) < 200:
+        if xml_size_kb < 0.2:  # Threshold for very likely invalid/empty XML
+            logger.warning("XML seems too small to be valid, waiting for UI stability...")
             await asyncio.sleep(1.0)
-            return None, {}, time.time() - start
+            return screen, {}, time.time() - start
 
-        annotated, mapping = await self.__hierarchy.process_xml_and_screen(screen=screen, xml=xml)
-        return (annotated if annotated else screen), mapping, time.time() - start
+        try:
+            annotated, mapping = await self.__hierarchy.process_xml_and_screen(
+                screen=screen, xml=xml, action_type=ActionType.TAP
+            )
+
+            duration = time.time() - start
+            if annotated and annotated.image != screen.image:
+                logger.info(f"Successfully annotated screen hierarchy in {duration:.2f}s")
+                return annotated, mapping, duration
+
+            logger.warning("Hierarchy processed but no annotation generated.")
+            return screen, mapping, duration
+
+        except Exception as exception:
+            logger.exception(f"Error during hierarchy processing: {exception}")
+            return screen, {}, time.time() - start
 
     async def __perform_analysis(
         self,
         state: ScreenState,
-        planning_screen: ScreenCapture,
         elements: Dict[str, Any],
+        planning_screen: ScreenCapture,
     ) -> Tuple[PlanResult, Dict[str, Any], float]:
         """
         Retrieves knowledge and plans next step.
@@ -301,10 +320,8 @@ class IntentStrategy(ExecutionStrategy):
 
         # Physical Action
         coordinates = await self.__get_action_coordinates(action=step.action)
-        asyncio.create_task(
-            coro=self.__trace_background(
-                action=step.action, image_data=screen.image, coordinates=coordinates
-            )
+        await self.__trace_background(
+            action=step.action, image_data=screen.image, coordinates=coordinates
         )
 
         result = await self.__execute(action=step.action)
@@ -394,16 +411,23 @@ class IntentStrategy(ExecutionStrategy):
                 normalized_x = int((element["center_x"] / size[0]) * 1000)
                 normalized_y = int((element["center_y"] / size[1]) * 1000)
 
-                action = step.action.model_copy(
-                    update={
-                        "bounds": Bounds(
-                            width=100,
-                            height=100,
-                            x=normalized_x - 50,
-                            y=normalized_y - 50,
-                        )
-                    }
-                )
+                # Resolve natural name from element text/description
+                element_name = element.get("text") or element.get("content-desc")
+
+                updates: Dict[str, Any] = {
+                    "bounds": Bounds(
+                        width=100,
+                        height=100,
+                        x=normalized_x - 50,
+                        y=normalized_y - 50,
+                    )
+                }
+
+                if element_name and str(element_name).strip():
+                    updates["target"] = str(element_name).strip()
+                    updates["natural_language_target"] = str(element_name).strip()
+
+                action = step.action.model_copy(update=updates)
                 return step.model_copy(update={"action": action})
 
         return step
@@ -426,9 +450,19 @@ class IntentStrategy(ExecutionStrategy):
 
             return (size[0] // 2, size[1] // 2)
 
-        if action.action_type in (ActionType.SWIPE, ActionType.SCROLL):
+        if action.action_type in (
+            ActionType.SWIPE,
+            ActionType.SCROLL,
+            ActionType.SWIPE_UP,
+            ActionType.SWIPE_DOWN,
+            ActionType.SWIPE_LEFT,
+            ActionType.SWIPE_RIGHT,
+        ):
             if action.bounds:
-                return converter.swipe_coordinates(bounds=action.bounds, direction="up")
+                direction = "up"
+                if "_" in action.action_type.value:
+                    direction = action.action_type.value.split("_")[1]
+                return converter.swipe_coordinates(bounds=action.bounds, direction=direction)
 
             return (size[0] // 2, size[1] * 3 // 4, size[0] // 2, size[1] // 4)
 
@@ -445,19 +479,25 @@ class IntentStrategy(ExecutionStrategy):
         """
 
         if not coordinates:
+            logger.debug("No coordinates for tracing, skipping.")
             return
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = f"step_{self.__state.step_count + 1}_{action.action_type.value}_{timestamp}.png"
+        filename = (
+            f"step__{self.__state.step_count + 1}__{action.action_type.value}__{timestamp}.png"
+        )
         path = f"assets/traces/{filename}"
 
-        ImageAnnotator.trace(
+        logger.info(f"Saving trace image: {path}")
+        result = ImageAnnotator.trace(
             output_path=path,
             coords=coordinates,
             image_data=image_data,
             label=action.to_description(),
             action_type=action.action_type.value,
         )
+        if not result:
+            logger.warning(f"Failed to save trace image to {path}")
 
     async def __execute(self, action: Action) -> ActionResult:
         """

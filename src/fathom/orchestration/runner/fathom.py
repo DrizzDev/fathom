@@ -12,7 +12,7 @@ from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.infrastructure.storage.local import LocalImageStorage
 from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.prompts.factory import PromptFactory
-from fathom.schemas.configuration import ADBConfig, GeminiConfig, WorkflowConfig
+from fathom.schemas.configuration import ADBCaptureConfig, ADBConfig, GeminiConfig, WorkflowConfig
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.settings.env import FathomSettings
 from fathom.tools.capture.adb import ADBCaptureTool
@@ -76,11 +76,11 @@ class FathomRunner:
         self.__current_workflow = IntentWorkflow(
             device=device,
             intent=intent,
-            capture=ADBCaptureTool(),
             memory=self.__memory_provider,
             vision=self.__vision_orchestrator,
             configuration=workflow_configuration,
             workflow_id=f"intent_{asyncio.get_event_loop().time()}",
+            capture=ADBCaptureTool(config=ADBCaptureConfig(device_serial=serial)),
         )
 
         # 4. Execution
@@ -116,7 +116,7 @@ class FathomRunner:
         # 3. Workflow Wiring
         workflow = ExplorationWorkflow(
             device=device,
-            capture=ADBCaptureTool(),
+            capture=ADBCaptureTool(config=ADBCaptureConfig(device_serial=serial)),
             vision=self.__vision_orchestrator,
             configuration=WorkflowConfig(max_steps=max_steps),
             workflow_id=f"explore_{asyncio.get_event_loop().time()}",
@@ -137,6 +137,9 @@ class FathomRunner:
         llm_configuration = GeminiConfig(
             model=self.__settings.gemini_model,
             api_key=self.__settings.gemini_api_key,
+            location=self.__settings.vertex_location,
+            project_id=self.__settings.vertex_project_id,
+            credentials_path=self.__settings.google_application_credentials,
         )
 
         client = GeminiLLMClient(configuration=llm_configuration)
@@ -149,7 +152,7 @@ class FathomRunner:
             local_storage=LocalImageStorage(),
             cloud_storage=GCSImageStorage(
                 configuration=llm_configuration,
-                credentials=self.__settings.google_application_credentials,
+                credentials=client.credentials,
             ),
         )
 

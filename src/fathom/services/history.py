@@ -120,23 +120,13 @@ class HistoryService:
         target = record.get("target")
         natural_language_target = record.get("natural_language_target")
 
-        # Prioritize natural language target if it's not generic
-        if natural_language_target and str(object=natural_language_target).lower() not in (
-            "ui element",
-            "element",
-            "none",
-            "label",
-        ):
-            return str(object=natural_language_target)
+        # Trust natural language target if present
+        if natural_language_target and str(natural_language_target).strip():
+            return str(natural_language_target).strip()
 
-        # Fallback to technical target if it's not generic
-        if target and str(object=target).lower() not in (
-            "ui element",
-            "element",
-            "none",
-            "label",
-        ):
-            return str(object=target)
+        # Fallback to technical target
+        if target and str(target).strip():
+            return str(target).strip()
 
         return "UI Element"
 
@@ -145,7 +135,7 @@ class HistoryService:
         Generates a readable command description.
         """
 
-        action_type = record.get("action_type", "wait")
+        action_type = str(object=record.get("action_type", "wait")).lower()
         target = self.__resolve_target_name(record=record)
 
         if action_type == "type":
@@ -154,11 +144,12 @@ class HistoryService:
         if action_type == "tap":
             return f"Tap on {target}"
 
-        if action_type == "swipe":
-            return f"Swipe on {target}"
-
         if action_type == "scroll":
-            return f"Scroll {target}"
+            return f"Scroll until you see {target}"
+
+        if "swipe" in action_type:
+            direction = action_type.split(sep="_")[-1] if "_" in action_type else "content"
+            return f"Swipe {direction} on {target}"
 
         if action_type == "back":
             return "Press back button"
@@ -169,7 +160,7 @@ class HistoryService:
         if action_type == "complete":
             return "Goal completed"
 
-        return f"{str(object=action_type).capitalize()} on {target}"
+        return f"{action_type.replace('_', ' ').capitalize()} on {target}"
 
     def __append_text_audit(self, record: Dict[str, Any]) -> None:
         """
@@ -200,9 +191,11 @@ class HistoryService:
 
             metadata = step["metadata"]
             rationale = str(object=metadata.get("rationale", "")).replace('"', '\\"')
-            lines.append(
-                f'  metadata:\n    timestamp: {metadata.get("timestamp")}\n    success: {str(object=metadata.get("success")).lower()}\n    rationale: "{rationale}"'
-            )
+            lines.append("  metadata:")
+            lines.append(f"    success: {str(object=metadata.get('success')).lower()}")
+            lines.append(f"    duration: {metadata.get('duration')}")
+            lines.append(f"    timestamp: {metadata.get('timestamp')}")
+            lines.append(f'    rationale: "{rationale}"')
             lines.append("")
 
         with path.open(mode="w") as handle:

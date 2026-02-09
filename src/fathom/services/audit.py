@@ -44,7 +44,7 @@ class AuditService:
         status_icon = "🆕" if is_new_screen else "🔄"
         audit.add_row(
             "Screen Status:",
-            f"{status_icon} {state.visual_hash[:8]} ({state.activity})",
+            f"{status_icon} {state.visual_hash[:12]} ({state.activity})",
         )
 
         if is_stuck:

@@ -1,0 +1,24 @@
+Tap on UI Element
+Tap on UI Element
+Tap on UI Element
+Tap on UI Element
+Press back button
+Scroll system: scroll
+Press home button
+Tap on UI Element
+Tap on UI Element
+Swipe_up on UI Element
+Press back button
+Scroll system: scroll
+Scroll until you see scroll_down
+Swipe up on Main content area
+Tap on Cleaning Dishes category
+Tap on Cleaning Dishes option
+Tap on Book Instant button
+Tap on Schedule for later button
+Tap on Schedule for later button
+Tap on 10:00 AM time slot
+Tap on Pay Now button
+Tap on Back button
+Tap on Back button
+Tap on Exit anyway button

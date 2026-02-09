@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action
@@ -53,7 +53,7 @@ class AgentState:
         )
         self.__action_history = ActionHistory(max_size=context_window)
 
-        self.__screen_hashes: Set[str] = set()
+        self.__seen_screens: List[ScreenState] = []
         self.__current_screen: Optional[ScreenState] = None
 
         self.__is_complete = False
@@ -113,6 +113,13 @@ class AgentState:
 
         return self.__current_screen
 
+    def __is_new_screen(self, screen: ScreenState) -> bool:
+        """
+        Check if screen is new.
+        """
+
+        return all(not seen.is_same_screen(screen) for seen in self.__seen_screens)
+
     def update_screen(self, screen: ScreenState) -> bool:
         """
         Update current screen state.
@@ -125,23 +132,26 @@ class AgentState:
         """
 
         self.__current_screen = screen
-        is_new_screen = screen.visual_hash not in self.__screen_hashes
+        # Fuzzy matching for seen screens
+        is_new_screen = self.__is_new_screen(screen)
 
         if is_new_screen:
-            self.__screen_hashes.add(screen.visual_hash)
+            self.__seen_screens.append(screen)
             logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
         else:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
 
-        self.__loop_detector.record(screen_hash=screen.visual_hash)
+        self.__loop_detector.record(screen=screen)
         return is_new_screen
 
     def record_step(self, result: StepResult) -> None:
-        """Record a completed step.
+        """
+        Record a completed step.
 
         Args:
             result: Result of the executed step.
         """
+
         self.__step_count += 1
 
         # Optimized record including activity context
@@ -185,22 +195,22 @@ class AgentState:
         if attempt_number == 1:
             return Action(
                 confidence=0.9,
-                action_type=ActionType.BACK,
                 target="system: back",
+                action_type=ActionType.BACK,
                 rationale="Loop detected (Screen repeating). Forcing BACK to break context.",
             )
         elif attempt_number == 2:
             return Action(
                 confidence=0.8,
-                action_type=ActionType.SCROLL,
                 target="system: scroll",
+                action_type=ActionType.SCROLL,
                 rationale="Loop detected (Screen repeating). Forcing SCROLL to reveal new state.",
             )
         else:
             return Action(
                 confidence=0.7,
-                action_type=ActionType.HOME,
                 target="system: home",
+                action_type=ActionType.HOME,
                 rationale="Loop detected (Screen repeating). Forcing HOME to reset agent.",
             )
 
@@ -216,7 +226,7 @@ class AgentState:
             "is_stuck": self.is_stuck,
             "max_steps": self.__max_steps,
             "step_count": self.__step_count,
-            "unique_screens_seen": len(self.__screen_hashes),
+            "unique_screens_seen": len(self.__seen_screens),
             "compact_history": self.__action_history.get_compact_history(),
             "relevant_failures": self.__action_history.get_activity_failures(
                 current_activity=current_activity
@@ -249,18 +259,18 @@ class AgentState:
             "max_steps": self.__max_steps,
             "step_count": self.__step_count,
             "is_complete": self.__is_complete,
-            "screen_hashes": list(self.__screen_hashes),
             "completion_reason": self.__completion_reason,
             "action_stats": self.__action_history.get_stats(),
             "action_context": self.__action_history.get_context(),
+            "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
         }
 
     def __restore_from_data(
         self,
         step_count: int,
         is_complete: bool,
-        screen_hashes: List[str],
         completion_reason: Optional[str],
+        seen_screens: List[Dict[str, Any]],
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -270,8 +280,8 @@ class AgentState:
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
 
-        for screen_hash in screen_hashes:
-            self.__screen_hashes.add(screen_hash)
+        for data in seen_screens:
+            self.__seen_screens.append(ScreenState(**data))
 
     @classmethod
     def from_checkpoint(cls, data: Dict[str, object]) -> "AgentState":
@@ -298,16 +308,16 @@ class AgentState:
         reason_value = data.get("completion_reason")
         completion_reason = str(reason_value) if reason_value else None
 
-        screen_hashes: List[str] = []
-        hashes_value = data.get("screen_hashes")
+        seen_screens: List[Dict[str, Any]] = []
+        screens_value = data.get("seen_screens")
 
-        if isinstance(hashes_value, list):
-            screen_hashes = [str(screen_hash) for screen_hash in hashes_value]
+        if isinstance(screens_value, list):
+            seen_screens = [dict(screen) for screen in screens_value]
 
         state.__restore_from_data(
             step_count=step_count,
             is_complete=is_complete,
-            screen_hashes=screen_hashes,
+            seen_screens=seen_screens,
             completion_reason=completion_reason,
         )
 

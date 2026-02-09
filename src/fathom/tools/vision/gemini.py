@@ -37,7 +37,6 @@ class GeminiVisionTool(VisionTool):
         local_storage: IImageStorage,
         version: str = "pro_xml",
     ) -> None:
-
         self.__model = model
         self.__version = version
 

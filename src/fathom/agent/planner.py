@@ -232,8 +232,8 @@ class StepPlanner:
         *,
         memories: int = 0,
         is_recovery: bool = False,
-        metrics: Optional[dict[str, float]] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        metrics: Optional[Dict[str, float]] = None,
     ) -> PlanResult:
         """
         Return a PlanResult with the given action and metadata.

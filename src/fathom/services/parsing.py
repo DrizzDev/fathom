@@ -148,6 +148,7 @@ class ToolResponseParser(IResponseParser):
                 y=int(serialization.get("y", 0)),
                 width=int(serialization.get("width", 0)),
                 height=int(serialization.get("height", 0)),
+                coord_system=serialization.get("coord_system", "normalized"),
             )
 
         try:
@@ -158,10 +159,12 @@ class ToolResponseParser(IResponseParser):
         updates = arguments.get("memory_updates")
         text = data.get("text") or data.get("text_to_type")
         wait = data.get("wait_duration") or data.get("wait_duration_ms")
+        target_name = data.get("target_name") or data.get("element_name") or "UI Element"
 
         action = Action(
             bounds=bounds,
-            target="UI Element",
+            target=target_name,
+            natural_language_target=target_name,
             memory_updates=updates,
             action_type=action_type,
             text=str(text) if text else None,
