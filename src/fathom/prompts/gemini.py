@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fathom.prompts.base import PromptBuilder
 from fathom.prompts.templates import COMMON_RULES, TOOL_GUIDANCE
@@ -72,7 +72,7 @@ class GeminiPromptBuilder(PromptBuilder):
 
         formatted += "\nMatch by text/labels AND visual characteristics. Select DIFFERENT element of SAME TYPE.\n"
         if elements:
-            formatted += f"Avoid: {', '.join([f'\"{t}\"' for t in elements[:5]])}\n"
+            formatted += f"""Avoid: {", ".join([f'"{t}"' for t in elements[:5]])}\n"""
 
         formatted += "=== END ===\n"
         return formatted
@@ -83,17 +83,18 @@ class GeminiPromptBuilder(PromptBuilder):
         """
 
         base = "You are a Mobile UI expert. Map user intent to screen actions using tools.\n"
-        
-        if hints:
-            if hints.get("use_xml"):
-                base += "Use NUMERIC LABELS from the XML hierarchy for grounding.\n"
-            
+
+        if hints and hints.get("use_xml"):
+            base += "Use NUMERIC LABELS from the XML hierarchy for grounding.\n"
+
         # Add dynamic instructions based on intent
         dynamic = []
 
         if "every" in intent.lower() or "all" in intent.lower():
-            dynamic.append("- REPEAT UNTIL ALL: Identify ALL matching elements. Select NEXT untapped element.")
-        
+            dynamic.append(
+                "- REPEAT UNTIL ALL: Identify ALL matching elements. Select NEXT untapped element."
+            )
+
         if any(kw in intent.lower() for kw in ["type", "enter", "input"]):
             dynamic.append("- SEQUENTIAL: For typing, tap field to focus, then type.")
 

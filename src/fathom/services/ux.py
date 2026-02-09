@@ -18,7 +18,7 @@ class UXService:
     def __init__(self, settings: Optional[FathomSettings] = None) -> None:
         self.__console = Console()
         self.__settings = settings or FathomSettings()
-        
+
         # Tool categories for visual grouping
         self.__categories = {
             "store_memory": "Memory",
@@ -34,7 +34,7 @@ class UXService:
         """
 
         category = self.__categories.get(tool_name, "Operation")
-        
+
         grid = Table.grid(padding=(0, 1))
 
         grid.add_column(style="cyan", justify="right")
@@ -53,9 +53,13 @@ class UXService:
 
         # Verification Details
         if "condition_met" in args:
-            status = "[bold green]YES[/bold green]" if args["condition_met"] else "[bold red]NO[/bold red]"
+            status = (
+                "[bold green]YES[/bold green]"
+                if args["condition_met"]
+                else "[bold red]NO[/bold red]"
+            )
             grid.add_row("Validated:", status)
-        
+
         if "evidence" in args:
             grid.add_row("Evidence:", str(args["evidence"]))
 

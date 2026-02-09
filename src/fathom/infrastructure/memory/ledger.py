@@ -78,5 +78,5 @@ class Ledger(ILedger):
         ):
             async for row in cursor:
                 result[row[0]] = row[1]
-        
+
         return result

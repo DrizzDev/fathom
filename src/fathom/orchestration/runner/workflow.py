@@ -10,12 +10,13 @@ from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
 from fathom.workflows.base import BaseWorkflow, WorkflowConfig
-from fathom.workflows.intent import IntentWorkflow
 from fathom.workflows.exploration import ExplorationWorkflow
+from fathom.workflows.intent import IntentWorkflow
 
 
 class WorkflowRunner:
-    """Runs workflows synchronously with lifecycle management.
+    """
+    Runs workflows synchronously with lifecycle management.
 
     Provides:
     - Workflow instantiation from registry
@@ -35,9 +36,13 @@ class WorkflowRunner:
         runner_configuration: Optional[RunnerConfig] = None,
         workflow_configuration: Optional[WorkflowConfig] = None,
     ) -> None:
-        """Initialize workflow runner."""
+        """
+        Initialize workflow runner.
+        """
+
         self.__device = device
         self.__capture = capture
+
         self.__memory = memory
         self.__vision = vision
         self.__runner_configuration = runner_configuration or RunnerConfig()
@@ -50,6 +55,7 @@ class WorkflowRunner:
         """
         Check if a workflow is currently running.
         """
+
         return self.__active_workflow is not None
 
     def run_intent(
@@ -59,17 +65,20 @@ class WorkflowRunner:
         *,
         configuration: Optional[WorkflowConfig] = None,
     ) -> RunnerResult:
-        """Run an intent workflow."""
+        """
+        Run an intent workflow.
+        """
+
         if self.__vision is None:
             raise ValueError("Vision tool required for intent workflows")
 
         workflow = IntentWorkflow(
-            workflow_id=workflow_id,
             intent=intent,
+            memory=self.__memory,
             vision=self.__vision,
             device=self.__device,
             capture=self.__capture,
-            memory=self.__memory,
+            workflow_id=workflow_id,
             config=configuration or self.__workflow_configuration,
         )
 
@@ -81,19 +90,25 @@ class WorkflowRunner:
         *,
         configuration: Optional[WorkflowConfig] = None,
     ) -> RunnerResult:
-        """Run an exploration workflow."""
+        """
+        Run an exploration workflow.
+        """
+
         workflow = ExplorationWorkflow(
-            workflow_id=workflow_id,
+            vision=self.__vision,
             device=self.__device,
             capture=self.__capture,
-            vision=self.__vision,
+            workflow_id=workflow_id,
             config=configuration or self.__workflow_configuration,
         )
 
         return self.__run_workflow(workflow=workflow)
 
     def cancel_active(self) -> bool:
-        """Cancel the currently active workflow."""
+        """
+        Cancel the currently active workflow.
+        """
+
         if self.__active_workflow is None:
             return False
 
@@ -104,10 +119,11 @@ class WorkflowRunner:
         self,
         workflow: BaseWorkflow[Any],
     ) -> RunnerResult:
-        """Run a workflow with full lifecycle."""
-        context = ExecutionContext(
-            workflow_id=workflow.workflow_id,
-        )
+        """
+        Run a workflow with full lifecycle.
+        """
+
+        context = ExecutionContext(workflow_id=workflow.workflow_id)
 
         self.__active_workflow = workflow
         start_time = time.time()
@@ -142,14 +158,17 @@ class WorkflowRunner:
         workflow: BaseWorkflow[Any],
         context: ExecutionContext,
     ) -> None:
-        """Save workflow checkpoint."""
+        """
+        Save workflow checkpoint.
+        """
+
         if not self.__runner_configuration.enable_checkpoints:
             return
 
         checkpoint = {
-            "workflow": workflow.get_checkpoint(),
-            "context": context.to_checkpoint(),
             "timestamp": time.time(),
+            "context": context.to_checkpoint(),
+            "workflow": workflow.get_checkpoint(),
         }
 
         if self.__runner_configuration.checkpoint_callback:

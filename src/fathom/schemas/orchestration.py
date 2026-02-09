@@ -6,8 +6,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fathom.schemas.steps import StepResult
 from fathom.schemas.results import WorkflowResult
+from fathom.schemas.steps import StepResult
 
 
 class StepContext(BaseModel):
@@ -71,14 +71,10 @@ class ExecutionContext(BaseModel):
     )
 
     parent_id: Optional[str] = Field(default=None, description="Parent execution ID if nested")
-    correlation_id: Optional[str] = Field(
-        default=None, description="Correlation ID for tracing"
-    )
+    correlation_id: Optional[str] = Field(default=None, description="Correlation ID for tracing")
 
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Execution-level metadata")
-    steps: List[StepContext] = Field(
-        default_factory=list, description="List of executed steps"
-    )
+    steps: List[StepContext] = Field(default_factory=list, description="List of executed steps")
 
     @property
     def elapsed(self) -> float:

@@ -6,10 +6,10 @@ from typing import Any, Optional
 
 from fathom.exceptions import FathomError
 from fathom.infrastructure.llm import GeminiLLMClient
+from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.infrastructure.storage.local import LocalImageStorage
-from fathom.infrastructure.memory.ledger import Ledger
 from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.schemas.configuration import ADBConfig, GeminiConfig
 from fathom.schemas.results import ExplorationResult, IntentResult
@@ -18,9 +18,8 @@ from fathom.settings.env import FathomSettings
 from fathom.tools.capture.adb import ADBCaptureTool
 from fathom.tools.device.adb import ADBDeviceTool
 from fathom.tools.vision.gemini import GeminiVisionTool
-from fathom.workflows.intent import IntentWorkflow
 from fathom.workflows.base import BaseWorkflow
-
+from fathom.workflows.intent import IntentWorkflow
 
 logger = getLogger(name=__name__)
 
@@ -89,15 +88,13 @@ class FathomRunner:
             await self.cleanup()
 
     async def run_exploration(
-        self, 
-        max_steps: int = 50, 
-        device_serial: Optional[str] = None
+        self, max_steps: int = 50, device_serial: Optional[str] = None
     ) -> ExplorationResult:
         """
         Run an application exploration workflow.
         """
-        from fathom.workflows.exploration import ExplorationWorkflow
         from fathom.workflows.base import WorkflowConfig
+        from fathom.workflows.exploration import ExplorationWorkflow
 
         # 1. Device Wiring
         serial = device_serial or self.__settings.android_serial
@@ -111,8 +108,7 @@ class FathomRunner:
         self.__ledger = Ledger()
         self.__vision_orchestrator = self.__build_vision_orchestrator(
             version=self.__prompts_service.select_version(
-                model_name=self.__settings.gemini_model, 
-                use_xml=False
+                model_name=self.__settings.gemini_model, use_xml=False
             )
         )
 

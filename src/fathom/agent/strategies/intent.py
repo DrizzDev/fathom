@@ -56,9 +56,10 @@ class IntentStrategy(ExecutionStrategy):
         self.__planner = planner
 
         self.__device = device
+        self.__capture = capture
+
         self.__memory = memory
         self.__ledger: ILedger = Ledger()
-        self.__capture = capture
 
         self.__use_xml = use_xml
         self.__max_steps = max_steps
@@ -66,9 +67,9 @@ class IntentStrategy(ExecutionStrategy):
         self.__reasoner = Reasoner(intent=intent)
         self.__state = AgentState(intent=intent, max_steps=max_steps)
 
+        self.__ux_service = UXService()
         self.__hierarchy = HierarchyService(device=device)
         self.__history = HistoryService(workflow_id=workflow_id)
-        self.__ux_service = UXService()
 
         self.__start_time = time.time()
         self.__metrics = ExecutionMetrics()
@@ -138,6 +139,7 @@ class IntentStrategy(ExecutionStrategy):
         if not plan.step:
             if plan.should_retry:
                 return StrategyResult(status=StrategyStatus.CONTINUE, message=plan.reason)
+
             self.__finalize_audit()
             return StrategyResult(status=StrategyStatus.ERROR, message=plan.reason)
 
@@ -157,21 +159,21 @@ class IntentStrategy(ExecutionStrategy):
         step_result = self.__record_result(
             step=step,
             result=result,
-            state_object=state_object,
             step_start=step_start,
             coordinates=coordinates,
+            state_object=state_object,
         )
 
         self.__audit_step(
             plan=plan,
+            result=result,
+            start_time=step_start,
+            state_object=state_object,
+            analysis=analysis_duration,
+            is_new_screen=is_new_screen,
+            execution=execution_duration,
             grounding=grounding_duration,
             hierarchy=hierarchy_duration,
-            analysis=analysis_duration,
-            execution=execution_duration,
-            start_time=step_start,
-            is_new_screen=is_new_screen,
-            result=result,
-            state_object=state_object,
         )
 
         return StrategyResult(step_result=step_result, status=StrategyStatus.CONTINUE, message="OK")
@@ -180,7 +182,9 @@ class IntentStrategy(ExecutionStrategy):
         """
         Captures screen and hierarchy.
         """
+
         start = time.time()
+
         if self.__use_xml:
             screen_task = self.__capture.capture_stable(timeout=2000)
             xml_task = self.__device.dump_hierarchy()
@@ -195,9 +199,12 @@ class IntentStrategy(ExecutionStrategy):
         """
         Updates agent state with new screen.
         """
+
         state_object = self.__capture.compute_state(capture=screen)
+
         screen = screen.model_copy(update={"state": state_object})
         is_new_screen = self.__state.update_screen(screen=state_object)
+
         return state_object, is_new_screen
 
     async def __process_hierarchy(
@@ -207,10 +214,12 @@ class IntentStrategy(ExecutionStrategy):
         Processes XML hierarchy if available.
         Returns (planning_screen, label_mapping, duration).
         """
+
         if not (self.__use_xml and xml):
             return screen, {}, 0.0
 
         start = time.time()
+
         if len(xml) < 200:
             logger.info(msg="Screen appears to be loading (small XML)...")
             await asyncio.sleep(delay=1.0)
@@ -230,6 +239,7 @@ class IntentStrategy(ExecutionStrategy):
         """
         Retrieves knowledge and plans the next step.
         """
+
         # Fetch knowledge
         knowledge = await self.__memory.retrieve_knowledge(visual_hash=state_object.visual_hash)
 
@@ -253,8 +263,10 @@ class IntentStrategy(ExecutionStrategy):
         """
         Renders the step UX.
         """
-        previous_actions = knowledge.get("previous_actions", [])
+
         memory_lines = []
+        previous_actions = knowledge.get("previous_actions", [])
+
         if previous_actions:
             memory_lines.append(
                 f"[bold cyan]Retrieved {len(previous_actions)} experiences for this screen:[/bold cyan]"
@@ -271,9 +283,9 @@ class IntentStrategy(ExecutionStrategy):
 
         if plan.metadata.get("tool_name"):
             self.__ux_service.render_tool_call(
-                tool_name=plan.metadata["tool_name"],
-                args=plan.metadata["tool_args"],
                 duration=duration,
+                args=plan.metadata["tool_args"],
+                tool_name=plan.metadata["tool_name"],
             )
         else:
             console.print(
@@ -293,6 +305,7 @@ class IntentStrategy(ExecutionStrategy):
         """
         Executes the planned action.
         """
+
         start = time.time()
 
         # Handle memory-only actions
@@ -300,6 +313,7 @@ class IntentStrategy(ExecutionStrategy):
             if step.action.memory_updates:
                 for key, value in step.action.memory_updates.items():
                     await self.__ledger.set(key=key, value=value)
+
             return ActionResult(success=True, duration=0), time.time() - start, None
 
         if step.action.action_type == ActionType.RETRIEVE_MEMORY:
@@ -338,14 +352,15 @@ class IntentStrategy(ExecutionStrategy):
     def __record_result(
         self,
         step: Step,
+        step_start: float,
         result: ActionResult,
         state_object: ScreenState,
-        step_start: float,
         coordinates: Optional[List[int]] = None,
     ) -> StepResult:
         """
         Records the step result to history and memory.
         """
+
         step_result = StepResult(
             step=step,
             post_hash="0",
@@ -381,6 +396,7 @@ class IntentStrategy(ExecutionStrategy):
         """
         Prints the step audit table.
         """
+
         audit = Table.grid(padding=(0, 2))
         audit.add_column(style="dim")
         audit.add_column(justify="right")

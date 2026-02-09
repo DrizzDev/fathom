@@ -23,45 +23,75 @@ class ScreenNode:
     """
 
     def __init__(self, fingerprint: str, activity: str) -> None:
-        self.__fingerprint = fingerprint
         self.__activity = activity
+        self.__fingerprint = fingerprint
+
         self.__visits = 0
+        self.__last = 0.0
         self.__actions: Set[str] = set()
         self.__transitions: Dict[str, str] = {}
-        self.__last = 0.0
 
     @property
     def fingerprint(self) -> str:
+        """
+        Unique identifier for this screen state.
+        """
+
         return self.__fingerprint
 
     @property
     def activity(self) -> str:
+        """
+        Activity name for this screen.
+        """
+
         return self.__activity
 
     @property
     def visits(self) -> int:
+        """
+        Number of times this screen has been visited.
+        """
+
         return self.__visits
 
     @property
     def actions(self) -> Set[str]:
+        """
+        Actions that can be performed from this screen.
+        """
+
         return self.__actions
 
     @property
     def transitions(self) -> Dict[str, str]:
+        """
+        Transitions from this screen to other screens.
+        """
+
         return self.__transitions
 
     def record_visit(self) -> None:
-        """Records a visit to this screen."""
+        """
+        Records a visit to this screen.
+        """
+
         self.__visits += 1
         self.__last = time.time()
 
     def record_action(self, description: str, destination: str) -> None:
-        """Records an action and its result."""
+        """
+        Records an action and its result.
+        """
+
         self.__actions.add(description)
         self.__transitions[description] = destination
 
     def should_explore(self, limit: int = 5) -> bool:
-        """Checks if exploration limit reached."""
+        """
+        Checks if exploration limit reached.
+        """
+
         return self.__visits < limit
 
 
@@ -76,40 +106,59 @@ class ExplorationGraph:
 
     @property
     def nodes(self) -> Dict[str, ScreenNode]:
+        """
+        All discovered screen nodes.
+        """
+
         return self.__nodes
 
     @property
     def edges(self) -> List[Tuple[str, str, str]]:
+        """
+        All transitions between screens.
+        """
+
         return self.__edges
 
     def add_screen(self, state: ScreenState) -> ScreenNode:
-        """Adds or updates a screen."""
+        """
+        Adds or updates a screen.
+        """
+
         key = state.visual_hash
         if key not in self.__nodes:
             self.__nodes[key] = ScreenNode(fingerprint=key, activity=state.activity)
 
         node = self.__nodes[key]
         node.record_visit()
+
         return node
 
     def record_transition(self, origin: str, destination: str, action: str) -> None:
-        """Records a transition."""
+        """
+        Records a transition.
+        """
+
         if origin in self.__nodes:
             self.__nodes[origin].record_action(description=action, destination=destination)
+
         self.__edges.append((origin, action, destination))
 
     def get_stats(self) -> Dict[str, Any]:
-        """Calculates coverage stats."""
+        """
+        Calculates coverage stats.
+        """
+
         total = sum(len(node.actions) for node in self.__nodes.values())
         unexplored = sum(1 for node in self.__nodes.values() if node.should_explore())
         activities = len({node.activity for node in self.__nodes.values()})
 
         return {
-            "unique_screens": len(self.__nodes),
-            "total_transitions": len(self.__edges),
             "total_actions": total,
             "unexplored": unexplored,
             "activities": activities,
+            "unique_screens": len(self.__nodes),
+            "total_transitions": len(self.__edges),
         }
 
 
@@ -123,7 +172,10 @@ class ActionGenerator:
         self.__failures: Dict[str, int] = defaultdict(int)
 
     def generate(self, node: ScreenNode, width: int, height: int) -> Action:
-        """Selects the best exploratory action."""
+        """
+        Selects the best exploratory action.
+        """
+
         if node.visits <= 2:
             return self.__tap(width=width, height=height)
 
@@ -133,33 +185,47 @@ class ActionGenerator:
         return self.__back()
 
     def __tap(self, width: int, height: int) -> Action:
-        """Random tap."""
+        """
+        Random tap.
+        """
+
+        _ = width
+        _ = height
+
         x = self.__rng.randint(50, 950)
         y = self.__rng.randint(100, 900)
+
         return Action(
+            confidence=0.3,
+            rationale="Exploratory tap",
             action_type=ActionType.TAP,
             target=f"random tap at ({x}, {y})",
             bounds=Bounds(x=x, y=y, width=50, height=50),
-            confidence=0.3,
-            rationale="Exploratory tap",
         )
 
     def __scroll(self) -> Action:
-        """Random scroll."""
+        """
+        Random scroll.
+        """
+
         direction = self.__rng.choice(["up", "down"])
+
         return Action(
-            action_type=ActionType.SCROLL,
-            target=f"exploration scroll {direction}",
             confidence=0.4,
+            action_type=ActionType.SCROLL,
             rationale=f"Scrolling {direction}",
+            target=f"exploration scroll {direction}",
         )
 
     def __back(self) -> Action:
-        """Back navigation."""
+        """
+        Back navigation.
+        """
+
         return Action(
-            action_type=ActionType.BACK,
-            target="back navigation",
             confidence=0.5,
+            target="back navigation",
+            action_type=ActionType.BACK,
             rationale="Exploring parent path",
         )
 
@@ -181,36 +247,52 @@ class ExplorationStrategy(ExecutionStrategy):
     ) -> None:
         self.__device = device
         self.__capture = capture
+
         self.__vision = vision
         self.__max_steps = max_steps
-        self.__timeout = timeout
+
         self.__steps = 0
+        self.__timeout = timeout
+
         self.__graph = ExplorationGraph()
         self.__generator = ActionGenerator(seed=seed)
+
         self.__start = time.time()
-        self.__current: Optional[ScreenState] = None
         self.__last: Optional[Action] = None
+        self.__current: Optional[ScreenState] = None
 
     @property
     def name(self) -> str:
+        """
+        Strategy name.
+        """
+
         return "exploration"
 
     @property
     def graph(self) -> ExplorationGraph:
+        """
+        Exploration graph.
+        """
+
         return self.__graph
 
     async def execute_step(self) -> StrategyResult:
-        """Executes one discovery step."""
+        """
+        Executes one discovery step.
+        """
+
         capture = await self.__capture.capture()
         state = self.__capture.compute_state(capture=capture)
+
         fingerprint = state.visual_hash
 
         node = self.__graph.add_screen(state=state)
 
         if self.__last and self.__current:
             self.__graph.record_transition(
-                origin=self.__current.visual_hash,
                 destination=fingerprint,
+                origin=self.__current.visual_hash,
                 action=self.__last.to_description(),
             )
 
@@ -238,31 +320,37 @@ class ExplorationStrategy(ExecutionStrategy):
 
         step_result = StepResult(
             step=step,
-            success=result.success,
-            screen_changed=fingerprint != post_state.visual_hash,
-            pre_hash=fingerprint,
-            post_hash=post_state.visual_hash,
-            duration=result.duration,
             error=result.error,
+            pre_hash=fingerprint,
+            success=result.success,
+            duration=result.duration,
+            post_hash=post_state.visual_hash,
+            screen_changed=fingerprint != post_state.visual_hash,
         )
 
         return StrategyResult(
-            status=StrategyStatus.CONTINUE,
             step_result=step_result,
+            status=StrategyStatus.CONTINUE,
             message=f"Explored: {action.to_description()}",
         )
 
     async def should_continue(self) -> bool:
-        """Stop conditions."""
+        """
+        Stop conditions.
+        """
+
         if self.__steps >= self.__max_steps:
             return False
 
         return (time.time() - self.__start) < self.__timeout
 
     def get_progress(self) -> Dict[str, Any]:
-        """Discovery metrics."""
+        """
+        Discovery metrics.
+        """
+
         return {
             "steps": self.__steps,
-            "elapsed": time.time() - self.__start,
             "stats": self.__graph.get_stats(),
+            "elapsed": time.time() - self.__start,
         }
