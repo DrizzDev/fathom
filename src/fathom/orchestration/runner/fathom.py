@@ -11,9 +11,9 @@ from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.infrastructure.storage.local import LocalImageStorage
 from fathom.interfaces import ILedger, IMemoryProvider
+from fathom.prompts.factory import PromptFactory
 from fathom.schemas.configuration import ADBConfig, GeminiConfig, WorkflowConfig
 from fathom.schemas.results import ExplorationResult, IntentResult
-from fathom.services.prompts import PromptsService
 from fathom.settings.env import FathomSettings
 from fathom.tools.capture.adb import ADBCaptureTool
 from fathom.tools.device.adb import ADBDeviceTool
@@ -38,7 +38,6 @@ class FathomRunner:
         self.__ledger: Optional[ILedger] = None
         self.__vision_orchestrator: Optional[GeminiVisionTool] = None
 
-        self.__prompts_service = PromptsService()
         self.__current_workflow: Optional[BaseWorkflow[Any]] = None
 
     async def run_intent(
@@ -64,23 +63,24 @@ class FathomRunner:
         self.__ledger = Ledger()
         self.__memory_provider = SQLiteMemoryProvider()
 
-        # Select prompt version dynamically based on model and XML requirement
-        model_name = self.__settings.gemini_model
-        actual_version = prompt_version or self.__prompts_service.select_version(
-            model_name=model_name, use_xml=use_xml
+        # Determine prompt version
+        actual_version = prompt_version or PromptFactory.resolve_version(
+            model_name=self.__settings.gemini_model, use_xml=use_xml
         )
 
         self.__vision_orchestrator = self.__build_vision_orchestrator(version=actual_version)
 
         # 3. Workflow Wiring
+        workflow_configuration = WorkflowConfig(max_steps=max_steps, use_xml_bounding_boxes=use_xml)
+
         self.__current_workflow = IntentWorkflow(
             device=device,
             intent=intent,
             capture=ADBCaptureTool(),
             memory=self.__memory_provider,
             vision=self.__vision_orchestrator,
+            configuration=workflow_configuration,
             workflow_id=f"intent_{asyncio.get_event_loop().time()}",
-            configuration=WorkflowConfig(max_steps=max_steps, use_xml_bounding_boxes=use_xml),
         )
 
         # 4. Execution
@@ -103,21 +103,23 @@ class FathomRunner:
         if not await device.wait_for_device(timeout=5.0):
             raise FathomError(f"Device {serial or '(default)'} offline.")
 
+        # 2. Infrastructure Wiring
         self.__ledger = Ledger()
         self.__memory_provider = SQLiteMemoryProvider()
-        self.__vision_orchestrator = self.__build_vision_orchestrator(
-            version=self.__prompts_service.select_version(
-                model_name=self.__settings.gemini_model, use_xml=False
-            )
+
+        actual_version = PromptFactory.resolve_version(
+            model_name=self.__settings.gemini_model, use_xml=False
         )
 
-        workflow_id = f"exploration@{asyncio.get_event_loop().time()}"
+        self.__vision_orchestrator = self.__build_vision_orchestrator(version=actual_version)
+
+        # 3. Workflow Wiring
         workflow = ExplorationWorkflow(
             device=device,
-            workflow_id=workflow_id,
             capture=ADBCaptureTool(),
             vision=self.__vision_orchestrator,
             configuration=WorkflowConfig(max_steps=max_steps),
+            workflow_id=f"explore_{asyncio.get_event_loop().time()}",
         )
         self.__current_workflow = workflow
 
@@ -144,7 +146,6 @@ class FathomRunner:
             version=version,
             ledger=self.__ledger,  # type: ignore[arg-type]
             memory=self.__memory_provider,  # type: ignore[arg-type]
-            prompts=self.__prompts_service,
             local_storage=LocalImageStorage(),
             cloud_storage=GCSImageStorage(
                 configuration=llm_configuration,

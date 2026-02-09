@@ -31,16 +31,6 @@ class ILedger(Protocol):
 
 
 @runtime_checkable
-class IPromptProvider(Protocol):
-    """
-    Contract for versioned prompt management.
-    """
-
-    def get_instruction(self, version_id: str) -> str: ...
-    def get_tools(self, version_id: str) -> List[Dict[str, Any]]: ...
-
-
-@runtime_checkable
 class IVisionProvider(Protocol):
     """
     Contract for VLM model interactions.

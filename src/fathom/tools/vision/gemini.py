@@ -11,7 +11,6 @@ from fathom.interfaces import (
     IImageStorage,
     ILedger,
     IMemoryProvider,
-    IPromptProvider,
     IVisionProvider,
 )
 from fathom.prompts.factory import PromptFactory
@@ -34,18 +33,20 @@ class GeminiVisionTool(VisionTool):
         model: IVisionProvider,
         memory: IMemoryProvider,
         ledger: ILedger,
-        prompts: IPromptProvider,
         cloud_storage: IImageStorage,
         local_storage: IImageStorage,
         version: str = "pro_xml",
     ) -> None:
+
         self.__model = model
+        self.__version = version
+
         self.__memory = memory
         self.__ledger = ledger
-        self.__prompts = prompts
+
         self.__cloud_storage = cloud_storage
         self.__local_storage = local_storage
-        self.__version = version
+
         self.__builder = PromptFactory.get_builder(model_name="gemini")
 
     @property
@@ -53,6 +54,7 @@ class GeminiVisionTool(VisionTool):
         """
         Returns current version.
         """
+
         return self.__version
 
     @property
@@ -60,6 +62,7 @@ class GeminiVisionTool(VisionTool):
         """
         Returns the underlying vision provider.
         """
+
         return self.__model
 
     async def analyze(
@@ -75,6 +78,7 @@ class GeminiVisionTool(VisionTool):
         """
         Coordinates the analysis flow using Native Tool Calling.
         """
+
         asyncio.create_task(coro=self.__persist(data=capture.image))
 
         # 1. BRAIN RETRIEVAL
@@ -92,8 +96,8 @@ class GeminiVisionTool(VisionTool):
         instruction = self.__builder.build(
             intent=intent,
             history=context,
-            memory=await self.__ledger.get_all(),
             hints={"use_xml": use_xml},
+            memory=await self.__ledger.get_all(),
         )
 
         allowed = ["execute_ui", "store_memory", "recall_memory"]
@@ -114,10 +118,10 @@ class GeminiVisionTool(VisionTool):
         payload = self.__build_payload(
             intent=intent,
             context=context,
+            manifest=manifest,
             failures=failures,
             knowledge=knowledge,
             screen=capture.image,
-            manifest=manifest,
         )
 
         # 4. EXECUTION
@@ -151,6 +155,7 @@ class GeminiVisionTool(VisionTool):
         """
         Delegates the actual LLM call to the underlying provider.
         """
+
         return await self.__model.analyze(
             system_instruction=instruction, user_content=payload, tools=tools
         )
@@ -159,12 +164,14 @@ class GeminiVisionTool(VisionTool):
         """
         Maps or enriches the provider's response if needed.
         """
+
         return analysis
 
     async def check_completion(self, intent: str, capture: ScreenCapture) -> bool:
         """
         Check if intent is complete.
         """
+
         result = await self.analyze(intent=intent, capture=capture)
         return result.is_goal_complete
 
@@ -188,8 +195,7 @@ class GeminiVisionTool(VisionTool):
         if knowledge.get("description"):
             payload.append(f"Screen Info: {knowledge['description']}")
 
-        history = knowledge.get("previous_actions", [])
-        if history:
+        if history := knowledge.get("previous_actions", []):
             payload.append(f"Past actions on this specific screen: {json.dumps(obj=history)}")
 
         # 2. Dynamic Session Context (Changes every step)
@@ -225,14 +231,17 @@ class GeminiVisionTool(VisionTool):
                 continue
 
             kind = str(object=information.get("class", "View")).split(sep=".")[-1]
+
+            value = f"[{label}] {kind}"
             text = information.get("text", "").strip()
             detail = information.get("content-desc", "").strip()
 
-            value = f"[{label}] {kind}"
             if text:
                 value += f" | text: '{text}'"
+
             if detail:
                 value += f" | description: '{detail}'"
+
             lines.append(value)
 
         return "\n".join(lines) if lines else "No interactive elements found."

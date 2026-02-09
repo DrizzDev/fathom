@@ -20,7 +20,7 @@ class PromptFactory:
         """
         Returns a concrete builder instance.
         """
-        # Default to Gemini if not specified
+
         kind = "gemini"
 
         if "gpt" in model_name.lower():
@@ -31,3 +31,16 @@ class PromptFactory:
 
         builder_class = cls.__builders.get(kind, GeminiPromptBuilder)
         return builder_class()
+
+    @staticmethod
+    def resolve_version(model_name: str, use_xml: bool) -> str:
+        """
+        Determines the optimal prompt version based on model capabilities.
+        """
+
+        is_flash = "flash" in model_name.lower()
+
+        tier = "flash" if is_flash else "pro"
+        strategy = "xml" if use_xml else "vision"
+
+        return f"{tier}_{strategy}"
