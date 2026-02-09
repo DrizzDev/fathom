@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from logging import getLogger
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -87,7 +88,9 @@ class MemoryService:
         """
         Stores a directional link between two screens via an action.
         """
+
         await self.__ensure_initialized()
+
         async with aiosqlite.connect(self.__database_path) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO transitions (source_hash, action_json, destination_hash) VALUES (?, ?, ?)",
@@ -99,8 +102,8 @@ class MemoryService:
         """
         Stores the outcome of an action on a specific screen.
         """
+
         await self.__ensure_initialized()
-        import time
 
         async with aiosqlite.connect(self.__database_path) as db:
             await db.execute(
@@ -119,7 +122,9 @@ class MemoryService:
         """
         Retrieves everything known about a specific screen.
         """
+
         await self.__ensure_initialized()
+
         knowledge: Dict[str, Any] = {
             "description": None,
             "previous_actions": [],
@@ -146,9 +151,9 @@ class MemoryService:
                     if isinstance(previous_actions, list):
                         previous_actions.append(
                             {
-                                "action": action_data.get("action_type"),
-                                "target": action_data.get("target"),
                                 "success": bool(row[1]),
+                                "target": action_data.get("target"),
+                                "action": action_data.get("action_type"),
                             }
                         )
 

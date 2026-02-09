@@ -18,14 +18,19 @@ class SQLiteMemoryProvider(IMemoryProvider):
     Handles raw database operations for the Knowledge Graph.
     """
 
-    def __init__(self, database_path: str = "assets/memory/knowledge_graph.db") -> None:
+    def __init__(self, database_path: str = "assets/memory/knowledge.db") -> None:
+        self.__initialized = False
         self.__path = Path(database_path)
         self.__path.parent.mkdir(parents=True, exist_ok=True)
-        self.__initialized = False
 
     async def __initialize(self) -> None:
+        """
+        Initializes the database schema if it doesn't exist.
+        """
+
         if self.__initialized:
             return
+
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
                 "CREATE TABLE IF NOT EXISTS screens (visual_hash TEXT PRIMARY KEY, activity TEXT, description TEXT, last_seen INTEGER)"
@@ -37,7 +42,12 @@ class SQLiteMemoryProvider(IMemoryProvider):
         self.__initialized = True
 
     async def store_observation(self, screen: ScreenState, description: Optional[str]) -> None:
+        """
+        Stores a screen observation in the database.
+        """
+
         await self.__initialize()
+
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO screens (visual_hash, activity, description, last_seen) VALUES (?, ?, ?, ?)",
@@ -46,7 +56,12 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.commit()
 
     async def store_experience(self, visual_hash: str, action: Action, success: bool) -> None:
+        """
+        Stores an action experience in the database.
+        """
+
         await self.__initialize()
+
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
                 "INSERT INTO experience (visual_hash, action_json, success, rationale, timestamp) VALUES (?, ?, ?, ?, ?)",
@@ -64,8 +79,10 @@ class SQLiteMemoryProvider(IMemoryProvider):
         """
         Retrieves everything known about a specific screen by its visual hash.
         """
+
         await self.__initialize()
         knowledge: Dict[str, Any] = {"description": None, "previous_actions": []}
+
         async with aiosqlite.connect(self.__path) as db:
             # 1. Get screen description
             async with db.execute(
@@ -92,12 +109,14 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         )
                     except (json.JSONDecodeError, AttributeError):
                         continue
+
         return knowledge
 
     async def get_all_knowledge(self) -> Dict[str, Any]:
         """
         Retrieves a summary of all stored knowledge for reporting.
         """
+
         await self.__initialize()
         summary: Dict[str, Any] = {"screens": [], "experience_count": 0}
 

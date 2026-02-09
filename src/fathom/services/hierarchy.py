@@ -49,7 +49,13 @@ class HierarchyService:
             if not annotated_path:
                 return None, {}
 
-            capture = self.__build_capture(screen, annotated_path)
+            capture = self.__build_capture(original=screen, path=annotated_path)
+
+            # Inject path into metadata
+            new_metadata = capture.metadata.copy()
+            new_metadata["path"] = str(annotated_path)
+            capture = capture.model_copy(update={"metadata": new_metadata})
+
             return capture, self.__label_map.copy()
 
         except Exception:  # nosec
@@ -117,4 +123,5 @@ class HierarchyService:
                 height=original.height,
                 activity=original.activity,
                 timestamp=original.timestamp,
+                metadata={"path": str(path)},
             )

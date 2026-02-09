@@ -16,6 +16,7 @@ class Step(BaseModel):
 
     action: Action = Field(description="The action to be executed in this step")
     screen_hash: str = Field(description="Visual hash of the screen state before the action")
+
     step_number: int = Field(ge=0, description="The sequence number of this step")
     is_conditional: bool = Field(
         default=False, description="Whether this step is a recovery attempt"
@@ -32,9 +33,11 @@ class StepResult(BaseModel):
 
     step: Step = Field(description="The original step definition")
     success: bool = Field(description="Whether the device execution reported success")
-    screen_changed: bool = Field(description="Whether the screen visually changed after the action")
+
     pre_hash: str = Field(description="Screen hash before execution")
     post_hash: str = Field(description="Screen hash after execution")
+    screen_changed: bool = Field(description="Whether the screen visually changed after the action")
+
     duration: int = Field(ge=0, description="Execution duration in milliseconds")
     error: Optional[str] = Field(default=None, description="Error details if execution failed")
 
@@ -42,22 +45,25 @@ class StepResult(BaseModel):
         """
         Converts the result into a serializable record for persistence.
         """
-        bbox = None
+
         if self.step.action.bbox:
             box = self.step.action.bbox
             bbox = [box.x, box.y, box.x + box.width, box.y + box.height]
+        else:
+            bbox = None
 
         return StepRecord(
-            step_number=self.step.step_number,
-            action_type=self.step.action.action_type.value,
-            target=self.step.action.target,
-            text=self.step.action.text,
-            rationale=self.step.action.rationale,
-            success=self.success,
-            screen_changed=self.screen_changed,
-            duration=self.duration,
             bbox=bbox,
+            success=self.success,
+            duration=self.duration,
             center=absolute_center,
+            text=self.step.action.text,
+            target=self.step.action.target,
+            step_number=self.step.step_number,
+            screen_changed=self.screen_changed,
+            rationale=self.step.action.rationale,
+            action_type=self.step.action.action_type.value,
+            natural_language_target=self.step.action.natural_language_target,
         )
 
 
@@ -71,11 +77,17 @@ class StepRecord(BaseModel):
     step_number: int = Field(ge=0, description="Step index")
     action_type: str = Field(min_length=1, description="Action category")
     target: str = Field(min_length=1, description="Target element description")
+
+    natural_language_target: Optional[str] = Field(
+        default=None, description="Human-friendly name of the target element"
+    )
     text: Optional[str] = Field(default=None, description="Typed text content")
     rationale: Optional[str] = Field(default=None, description="Reasoning for the action")
+
     success: bool = Field(description="Execution status")
     screen_changed: bool = Field(description="Visual transition status")
     duration: int = Field(ge=0, description="Duration in milliseconds")
+
     bbox: Optional[List[int]] = Field(
         default=None, description="Normalized [x1, y1, x2, y2] bounds"
     )

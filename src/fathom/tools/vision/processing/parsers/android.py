@@ -131,10 +131,11 @@ class AndroidParser(PlatformParser):
         """
 
         if width < self.__MIN_INTERACTIVE_DIMENSION or height < self.__MIN_INTERACTIVE_DIMENSION:
+            has_id = bool(attributes.get("resource-id"))
             has_text_content = bool(str(attributes.get("text", "")).strip())
             has_description_content = bool(str(attributes.get("content-desc", "")).strip())
 
-            if not has_text_content and not has_description_content:
+            if not has_text_content and not has_description_content and not has_id:
                 return False
 
         return True
@@ -175,9 +176,11 @@ class AndroidParser(PlatformParser):
         class_name = attributes.get("class")
 
         return (
-            str(attributes.get("clickable")).lower() == "true"
+            self.__is_typeable(element)
+            or bool(attributes.get("resource-id"))
             or class_name in self.__TAPPABLE_CLASSES
-            or self.__is_typeable(element)
+            or str(attributes.get("clickable")).lower() == "true"
+            or bool(str(attributes.get("content-desc", "")).strip())
         )
 
     def __is_typeable(self, element: LabeledElement) -> bool:

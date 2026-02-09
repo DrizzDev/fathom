@@ -31,12 +31,19 @@ class GeminiLLMClient(IVisionProvider):
     def __init__(self, configuration: GeminiConfig) -> None:
         self.__configuration = configuration
         self.__client: Optional[Any] = None
+
         self.__credentials: Optional[Any] = None
         self.__cache: Optional[CacheService] = None
+
         self.__parser = ToolResponseParser()
+
         self.__initialize()
 
     def __initialize(self) -> None:
+        """
+        Initialize client.
+        """
+
         project = self.__configuration.project_id
         location = self.__configuration.location or "global"
 
@@ -71,18 +78,30 @@ class GeminiLLMClient(IVisionProvider):
 
     @property
     def credentials(self) -> Any:
+        """
+        Returns credentials.
+        """
+
         return self.__credentials
 
     async def analyze(
-        self, system_instruction: str, user_content: List[Any], tools: Dict[str, Any]
+        self,
+        system_instruction: str,
+        user_content: List[Any],
+        tools: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
+        """
+        Main handler for LLM interaction.
+        """
+
         if not self.__client:
             raise VisionError("Client not ready")
 
         cache_name = None
         if self.__cache:
             cache_name = await self.__cache.get_cached_content(
-                system_instruction, tools.get("function_declarations")
+                system_instruction=system_instruction,
+                tools=tools.get("function_declarations") if tools else None,
             )
 
         # Wrap content parts correctly for SDK
@@ -102,8 +121,9 @@ class GeminiLLMClient(IVisionProvider):
 
         if not cache_name:
             config_args["system_instruction"] = [{"text": system_instruction}]
-            config_args["tools"] = [tools]
-            config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
+            if tools:
+                config_args["tools"] = [tools]
+                config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
         else:
             config_args["cached_content"] = cache_name
 
@@ -114,18 +134,23 @@ class GeminiLLMClient(IVisionProvider):
             try:
                 response = await self.__client.aio.models.generate_content(
                     config=config,
-                    contents=[types.Content(role="user", parts=parts)],
                     model=self.__configuration.model,
+                    contents=[types.Content(role="user", parts=parts)],
                 )
                 return self.__parser.parse(response)
             except Exception as exception:
                 if attempt == max_retries:
                     raise VisionError(f"LLM fail: {exception}") from exception
+
                 delay = (self.__configuration.retry_delay * (2**attempt)) + (random.random() * 0.5)  # nosec
                 await asyncio.sleep(delay)
 
         raise VisionError("Unreachable")
 
     async def cleanup(self) -> None:
+        """
+        Cleanup resources.
+        """
+
         if self.__cache:
             await self.__cache.delete_cache()

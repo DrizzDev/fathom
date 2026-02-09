@@ -9,17 +9,21 @@ from fathom.schemas.screens import ScreenState
 
 @runtime_checkable
 class IMemoryProvider(Protocol):
-    """Contract for persistent knowledge storage."""
+    """
+    Contract for persistent knowledge storage.
+    """
 
-    async def store_observation(self, screen: ScreenState, description: Optional[str]) -> None: ...
-    async def store_experience(self, visual_hash: str, action: Action, success: bool) -> None: ...
-    async def retrieve_knowledge(self, visual_hash: str) -> Dict[str, Any]: ...
     async def get_all_knowledge(self) -> Dict[str, Any]: ...
+    async def retrieve_knowledge(self, visual_hash: str) -> Dict[str, Any]: ...
+    async def store_experience(self, visual_hash: str, action: Action, success: bool) -> None: ...
+    async def store_observation(self, screen: ScreenState, description: Optional[str]) -> None: ...
 
 
 @runtime_checkable
 class IPromptProvider(Protocol):
-    """Contract for versioned prompt management."""
+    """
+    Contract for versioned prompt management.
+    """
 
     def get_instruction(self, version_id: str) -> str: ...
     def get_tools(self, version_id: str) -> List[Dict[str, Any]]: ...
@@ -27,23 +31,33 @@ class IPromptProvider(Protocol):
 
 @runtime_checkable
 class IVisionProvider(Protocol):
-    """Contract for VLM model interactions."""
+    """
+    Contract for VLM model interactions.
+    """
 
     async def analyze(
-        self, system_instruction: str, user_content: List[Any], tools: Dict[str, Any]
+        self,
+        system_instruction: str,
+        user_content: List[Any],
+        tools: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult: ...
+
     async def cleanup(self) -> None: ...
 
 
 @runtime_checkable
 class IImageStorage(Protocol):
-    """Contract for asset persistence."""
+    """
+    Contract for asset persistence.
+    """
 
     async def save(self, data: bytes) -> str: ...
 
 
 @runtime_checkable
 class IResponseParser(Protocol):
-    """Contract for parsing LLM outputs."""
+    """
+    Contract for parsing LLM outputs.
+    """
 
     def parse(self, response: Any) -> AnalysisResult: ...

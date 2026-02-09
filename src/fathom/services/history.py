@@ -21,123 +21,178 @@ class HistoryService:
 
     def __init__(self, workflow_id: str) -> None:
         self.__workflow_id = workflow_id
-        self.__base_dir = Path("assets/history")
-        self.__base_dir.mkdir(parents=True, exist_ok=True)
+        self.__base_directory = Path("assets/history")
+        self.__base_directory.mkdir(parents=True, exist_ok=True)
 
     def save_step(self, result: StepResult, absolute_center: Optional[List[int]] = None) -> None:
         """
         Saves a single step result to the workflow history files.
         """
-        history = self.__load_history()
+
+        history_data = self.__load_history()
 
         record = result.to_record(absolute_center=absolute_center).model_dump()
         record["timestamp"] = int(time.time() * 1000)
 
-        history["history"].append(record)
+        history_data["history"].append(record)
 
-        self.__save_json(history)
-        self.__save_yaml(history["history"])
+        self.__save_json(data=history_data)
+        self.__save_yaml(history=history_data["history"])
 
     def __load_history(self) -> Dict[str, Any]:
         """
         Loads existing history from disk.
         """
-        path = self.__base_dir / f"{self.__workflow_id}.json"
+
+        path = self.__base_directory / f"{self.__workflow_id}.json"
         data: Dict[str, Any] = {"workflow_id": self.__workflow_id, "history": []}
 
         if path.exists():
             try:
-                with path.open("r") as handle:
-                    data = json.load(handle)
+                with path.open(mode="r") as handle:
+                    data = json.load(fp=handle)
             except Exception:  # nosec
                 pass
+
         return data
 
     def __save_json(self, data: Dict[str, Any]) -> None:
         """
         Writes the history data to JSON.
         """
-        path = self.__base_dir / f"{self.__workflow_id}.json"
-        with path.open("w") as handle:
-            json.dump(data, handle, indent=2)
+
+        path = self.__base_directory / f"{self.__workflow_id}.json"
+        with path.open(mode="w") as handle:
+            json.dump(obj=data, fp=handle, indent=2)
 
     def __save_yaml(self, history: List[Dict[str, Any]]) -> None:
         """
         Orchestrates the YAML script generation.
         """
-        path = self.__base_dir / f"{self.__workflow_id}.yaml"
-        steps = [self.__build_yaml_item(index, item) for index, item in enumerate(history, 1)]
+
+        path = self.__base_directory / f"{self.__workflow_id}.yaml"
+        steps = [
+            self.__build_yaml_item(index=index, record=item)
+            for index, item in enumerate(iterable=history, start=1)
+        ]
 
         if yaml:
-            with path.open("w") as handle:
-                yaml.dump(steps, handle, sort_keys=False, indent=2, default_flow_style=None)
+            with path.open(mode="w") as handle:
+                yaml.dump(
+                    indent=2,
+                    data=steps,
+                    stream=handle,
+                    sort_keys=False,
+                    default_flow_style=None,
+                )
         else:
-            self.__write_manual_yaml(path, steps)
+            self.__write_manual_yaml(path=path, steps=steps)
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """
         Constructs a structured dictionary for a YAML step.
         """
+
+        # Improved target resolution for YAML
+        target = self.__resolve_target_name(record=record)
+
         return {
             "step": index,
-            "command": self.__describe_command(record),
+            "target": target,
+            "command": self.__describe_command(record=record),
             "action_type": record.get("action_type", "wait"),
-            "target": record.get("target", "element"),
             "coordinates": {"bbox": record.get("bbox"), "center": record.get("center")},
             "metadata": {
-                "timestamp": record.get("timestamp"),
                 "success": record.get("success"),
                 "duration": record.get("duration"),
+                "timestamp": record.get("timestamp"),
                 "rationale": record.get("rationale"),
             },
         }
+
+    def __resolve_target_name(self, record: Dict[str, Any]) -> str:
+        """
+        Resolves the best human-readable target name.
+        """
+
+        target = record.get("target")
+        natural_language_target = record.get("natural_language_target")
+
+        # Prioritize natural language target if it's not generic
+        if natural_language_target and str(object=natural_language_target).lower() not in (
+            "ui element",
+            "element",
+            "none",
+            "label",
+        ):
+            return str(object=natural_language_target)
+
+        # Fallback to technical target if it's not generic
+        if target and str(object=target).lower() not in (
+            "ui element",
+            "element",
+            "none",
+            "label",
+        ):
+            return str(object=target)
+
+        return "UI Element"
 
     def __describe_command(self, record: Dict[str, Any]) -> str:
         """
         Generates a readable command description.
         """
-        action = record.get("action_type", "wait")
-        target = record.get("target", "element")
 
-        if action == "type":
+        action_type = record.get("action_type", "wait")
+        target = self.__resolve_target_name(record=record)
+
+        if action_type == "type":
             return f"Type '{record.get('text', '')}' in {target}"
-        if action == "tap":
+
+        if action_type == "tap":
             return f"Tap on {target}"
-        if action == "swipe":
+
+        if action_type == "swipe":
             return f"Swipe on {target}"
-        if action == "scroll":
+
+        if action_type == "scroll":
             return f"Scroll {target}"
-        if action == "back":
+
+        if action_type == "back":
             return "Press back button"
-        if action == "home":
+
+        if action_type == "home":
             return "Press home button"
-        if action == "complete":
+
+        if action_type == "complete":
             return "Goal completed"
 
-        return f"{action.capitalize()} on {target}"
+        return f"{str(object=action_type).capitalize()} on {target}"
 
     def __write_manual_yaml(self, path: Path, steps: List[Dict[str, Any]]) -> None:
         """
         Fallback YAML writer if PyYAML is unavailable.
         """
+
         lines = []
+
         for step in steps:
             lines.append(f"- step: {step['step']}")
             lines.append(f'  command: "{step["command"]}"')
             lines.append(f'  action_type: "{step["action_type"]}"')
             lines.append(f'  target: "{step["target"]}"')
 
-            coords = step["coordinates"]
+            coordinates = step["coordinates"]
             lines.append(
-                f"  coordinates:\n    bbox: {coords.get('bbox')}\n    center: {coords.get('center')}"
+                f"  coordinates:\n    bbox: {coordinates.get('bbox')}\n    center: {coordinates.get('center')}"
             )
 
-            meta = step["metadata"]
-            rationale = str(meta.get("rationale", "")).replace('"', '\\"')
+            metadata = step["metadata"]
+            rationale = str(object=metadata.get("rationale", "")).replace('"', '\\"')
             lines.append(
-                f'  metadata:\n    timestamp: {meta.get("timestamp")}\n    success: {str(meta.get("success")).lower()}\n    rationale: "{rationale}"'
+                f'  metadata:\n    timestamp: {metadata.get("timestamp")}\n    success: {str(object=metadata.get("success")).lower()}\n    rationale: "{rationale}"'
             )
             lines.append("")
 
-        with path.open("w") as handle:
+        with path.open(mode="w") as handle:
             handle.write("\n".join(lines))

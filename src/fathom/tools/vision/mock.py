@@ -49,6 +49,14 @@ class MockVisionTool(VisionTool):
         return "mock_vision"
 
     @property
+    def provider(self) -> Any:
+        """
+        Returns a mock provider.
+        """
+
+        return None
+
+    @property
     def call_count(self) -> int:
         """
         Number of analyze calls made.
@@ -70,8 +78,9 @@ class MockVisionTool(VisionTool):
         capture: ScreenCapture,
         *,
         use_xml: bool = False,
-        context: Optional[List[str]] = None,
+        context: Optional[str] = None,
         failures: Optional[List[str]] = None,
+        elements: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
         """
         Return mock analysis result.
@@ -82,6 +91,7 @@ class MockVisionTool(VisionTool):
             context: Recorded for history.
             failures: If present, returns different action.
             use_xml: Whether using XML mode.
+            elements: Grounding elements.
 
         Returns:
             Configured mock result.
@@ -94,6 +104,7 @@ class MockVisionTool(VisionTool):
                 "context": context,
                 "use_xml": use_xml,
                 "failures": failures,
+                "elements": elements,
                 "screen_size": len(capture.image),
             }
         )

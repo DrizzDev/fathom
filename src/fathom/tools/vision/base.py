@@ -3,14 +3,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from fathom.interfaces import IVisionProvider
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.tools.base import Tool
 
 
 class VisionTool(Tool[AnalysisResult], ABC):
-    """Abstract base for vision/LLM tools.
-
+    """
+    Abstract base for vision/LLM tools.
     Vision tools analyze screens and plan actions.
     """
 
@@ -19,7 +20,17 @@ class VisionTool(Tool[AnalysisResult], ABC):
         """
         Tool name.
         """
+
         return "vision"
+
+    @property
+    @abstractmethod
+    def provider(self) -> IVisionProvider:
+        """
+        Returns the underlying vision provider.
+        """
+
+        raise NotImplementedError
 
     @abstractmethod
     async def analyze(
@@ -28,8 +39,9 @@ class VisionTool(Tool[AnalysisResult], ABC):
         capture: ScreenCapture,
         *,
         use_xml: bool = False,
-        context: Optional[List[str]] = None,
+        context: Optional[str] = None,
         failures: Optional[List[str]] = None,
+        elements: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
         """
         Analyze screen and recommend action.
@@ -41,6 +53,7 @@ class VisionTool(Tool[AnalysisResult], ABC):
         """
         Perform any necessary cleanup (e.g., closing connections, deleting caches).
         """
+
         pass
 
     @abstractmethod
@@ -74,8 +87,8 @@ class VisionTool(Tool[AnalysisResult], ABC):
         """
 
         return await self.analyze(
-            capture=request["capture"],
             intent=request["intent"],
+            capture=request["capture"],
             context=request.get("context"),
             failures=request.get("failures"),
         )
