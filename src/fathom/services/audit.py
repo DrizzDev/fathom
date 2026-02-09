@@ -50,37 +50,25 @@ class AuditService:
         if is_stuck:
             audit.add_row("[bold red]Loop Detected:[/bold red]", "YES")
 
-        audit.add_row(
-            "Grounding:", self.__format_time(milliseconds=grounding_duration * 1000)
-        )
+        audit.add_row("Grounding:", self.__format_time(milliseconds=grounding_duration * 1000))
 
         if hierarchy_duration > 0:
-            audit.add_row(
-                "Hierarchy:", self.__format_time(milliseconds=hierarchy_duration * 1000)
-            )
+            audit.add_row("Hierarchy:", self.__format_time(milliseconds=hierarchy_duration * 1000))
 
         if plan.metrics:
             if "memory_retrieval" in plan.metrics:
                 audit.add_row(
                     "Memory Retrieval:",
-                    self.__format_time(
-                        milliseconds=plan.metrics["memory_retrieval"] * 1000
-                    ),
+                    self.__format_time(milliseconds=plan.metrics["memory_retrieval"] * 1000),
                 )
             if "llm_analysis" in plan.metrics:
                 audit.add_row(
                     "LLM Core Analysis:",
-                    self.__format_time(
-                        milliseconds=plan.metrics["llm_analysis"] * 1000
-                    ),
+                    self.__format_time(milliseconds=plan.metrics["llm_analysis"] * 1000),
                 )
 
-        audit.add_row(
-            "Total Analysis:", self.__format_time(milliseconds=analysis_duration * 1000)
-        )
-        audit.add_row(
-            "ADB Execution:", self.__format_time(milliseconds=result.duration)
-        )
+        audit.add_row("Total Analysis:", self.__format_time(milliseconds=analysis_duration * 1000))
+        audit.add_row("ADB Execution:", self.__format_time(milliseconds=result.duration))
 
         overhead = (execution_duration * 1000) - result.duration
         audit.add_row("Overhead:", self.__format_time(milliseconds=overhead))
@@ -149,22 +137,16 @@ class AuditService:
 
             past = knowledge.get("previous_actions", [])
             knowledge_string += (
-                f"Past: {len(past)} actions retrieved"
-                if past
-                else "Past: No prior experience"
+                f"Past: {len(past)} actions retrieved" if past else "Past: No prior experience"
             )
 
             context = item["context"]
             failures = context.get("relevant_failures", [])
             context_string = f"History: {context.get('compact_history')}"
-            context_string += (
-                f"Failures Sent: {', '.join(failures) if failures else 'None'}"
-            )
+            context_string += f"Failures Sent: {', '.join(failures) if failures else 'None'}"
 
             status = (
-                "[bold green]OK[/bold green]"
-                if item["success"]
-                else "[bold red]FAIL[/bold red]"
+                "[bold green]OK[/bold green]" if item["success"] else "[bold red]FAIL[/bold red]"
             )
             action_string = f"{item['action']}\nStatus: {status}"
             table.add_row(str(item["step"]), knowledge_string, context_string, action_string)

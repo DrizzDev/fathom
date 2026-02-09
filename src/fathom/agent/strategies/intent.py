@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime
+from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple
+
+from rich.console import Console
 
 from fathom.agent.planner import StepPlanner
 from fathom.agent.reasoner import Reasoner
@@ -25,6 +28,9 @@ from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision.processing.annotator import ImageAnnotator
 from fathom.utils.coordinates import CoordinateConverter
+
+console = Console()
+logger = getLogger(name=__name__)
 
 
 class IntentStrategy(ExecutionStrategy):
@@ -174,17 +180,15 @@ class IntentStrategy(ExecutionStrategy):
             is_stuck=self.__state.is_stuck,
             step_count=self.__state.step_count,
             analysis_duration=analysis_duration,
-            execution_duration=execution_duration,
             grounding_duration=grounding_duration,
             hierarchy_duration=hierarchy_duration,
+            execution_duration=execution_duration,
             total_duration=time.time() - step_start,
         )
 
         return StrategyResult(step_result=step_result, status=StrategyStatus.CONTINUE, message="OK")
 
-    async def __perform_grounding(
-        self,
-    ) -> Tuple[Optional[ScreenCapture], Optional[str], float]:
+    async def __perform_grounding(self) -> Tuple[Optional[ScreenCapture], Optional[str], float]:
         """
         Captures screen and hierarchy.
         """
@@ -257,7 +261,7 @@ class IntentStrategy(ExecutionStrategy):
         )
         return plan, knowledge, time.time() - start
 
-    def __render_ux(self, plan: Any, step: Step, duration: float) -> None:
+    def __render_ux(self, plan: PlanResult, step: Step, duration: float) -> None:
         """
         Renders UX based on plan type.
         """
@@ -310,6 +314,8 @@ class IntentStrategy(ExecutionStrategy):
                 await self.__ledger.set(key=key, value=value)
 
         # Convert to list for storage
+        center = None
+
         if coordinates:
             coords_list = list(coordinates)
             if len(coords_list) == 2:
@@ -319,23 +325,21 @@ class IntentStrategy(ExecutionStrategy):
                     (coords_list[0] + coords_list[2]) // 2,
                     (coords_list[1] + coords_list[3]) // 2,
                 ]
-            else:
-                center = None
-        else:
-            center = None
 
         return result, time.time() - start, center
 
     def __record_result(
         self,
         step: Step,
-        result: ActionResult,
-        state: ScreenState,
         step_start: float,
+        state: ScreenState,
+        result: ActionResult,
         coordinates: Optional[List[int]] = None,
     ) -> StepResult:
         """
-        Records the step result."""
+        Records the step result.
+        """
+
         step_result = StepResult(
             step=step,
             post_hash="0",
@@ -348,20 +352,26 @@ class IntentStrategy(ExecutionStrategy):
 
         asyncio.create_task(
             coro=self.__memory.store_experience(
-                visual_hash=step_result.pre_hash,
                 action=step.action,
                 success=result.success,
+                visual_hash=step_result.pre_hash,
             )
         )
         self.__history.save_step(result=step_result, absolute_center=coordinates)
         return step_result
 
     async def should_continue(self) -> bool:
-        """Check stop conditions."""
+        """
+        Check stop conditions.
+        """
+
         return not self.__state.is_complete and self.__state.can_continue
 
     def get_progress(self) -> Dict[str, object]:
-        """Return workflow progress."""
+        """
+        Return workflow progress.
+        """
+
         return {
             "intent": self.__intent,
             "step_count": self.__state.step_count,
@@ -369,9 +379,12 @@ class IntentStrategy(ExecutionStrategy):
         }
 
     async def __resolve_coordinates(self, step: Step) -> Step:
-        """Resolves label to physical coordinates."""
-        mapping = self.__hierarchy.label_map
+        """
+        Resolves label to physical coordinates.
+        """
+
         label_id = step.action.label_id
+        mapping = self.__hierarchy.label_map
 
         if label_id and label_id in mapping:
             element = mapping[label_id]
@@ -384,10 +397,10 @@ class IntentStrategy(ExecutionStrategy):
                 action = step.action.model_copy(
                     update={
                         "bounds": Bounds(
-                            x=normalized_x - 50,
-                            y=normalized_y - 50,
                             width=100,
                             height=100,
+                            x=normalized_x - 50,
+                            y=normalized_y - 50,
                         )
                     }
                 )
@@ -396,7 +409,10 @@ class IntentStrategy(ExecutionStrategy):
         return step
 
     async def __get_action_coordinates(self, action: Action) -> Tuple[int, ...]:
-        """Converts bounds to pixels."""
+        """
+        Converts bounds to pixels.
+        """
+
         size = await self.__device.get_screen_size()
         converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
 
@@ -407,11 +423,13 @@ class IntentStrategy(ExecutionStrategy):
         ):
             if action.bounds:
                 return converter.center_to_pixels(bounds=action.bounds)
+
             return (size[0] // 2, size[1] // 2)
 
         if action.action_type in (ActionType.SWIPE, ActionType.SCROLL):
             if action.bounds:
                 return converter.swipe_coordinates(bounds=action.bounds, direction="up")
+
             return (size[0] // 2, size[1] * 3 // 4, size[0] // 2, size[1] // 4)
 
         return ()
@@ -422,7 +440,10 @@ class IntentStrategy(ExecutionStrategy):
         image_data: bytes,
         coordinates: Tuple[int, ...],
     ) -> None:
-        """Saves annotated trace."""
+        """
+        Saves annotated trace.
+        """
+
         if not coordinates:
             return
 
@@ -431,15 +452,18 @@ class IntentStrategy(ExecutionStrategy):
         path = f"assets/traces/{filename}"
 
         ImageAnnotator.trace(
-            image_data=image_data,
             output_path=path,
+            coords=coordinates,
+            image_data=image_data,
             label=action.to_description(),
             action_type=action.action_type.value,
-            coords=coordinates,
         )
 
     async def __execute(self, action: Action) -> ActionResult:
-        """Dispatches action to device."""
+        """
+        Dispatches action to device.
+        """
+
         size = await self.__device.get_screen_size()
         converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
 
@@ -469,6 +493,7 @@ class IntentStrategy(ExecutionStrategy):
 
         if action.action_type == ActionType.WAIT:
             duration = action.wait_duration or 1000
+
             await asyncio.sleep(delay=duration / 1000.0)
             return ActionResult(success=True, duration=duration)
 
