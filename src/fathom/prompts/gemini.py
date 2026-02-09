@@ -8,8 +8,7 @@ from fathom.prompts.templates import COMMON_RULES, TOOL_GUIDANCE
 
 class GeminiPromptBuilder(PromptBuilder):
     """
-    Constructs optimized prompts for Gemini model series.
-    Supports native tool calling and visual grounding.
+    Structured builder for Gemini system instructions.
     """
 
     def build(
@@ -20,34 +19,62 @@ class GeminiPromptBuilder(PromptBuilder):
         memory: Optional[Dict[str, str]] = None,
     ) -> str:
         """
-        Builds the complete system instruction for Gemini.
+        Assembles the final prompt using a high-density format.
         """
 
-        context = self.__format_history(history)
+        parts = [
+            self.__get_persona(),
+            self.__get_contextual_rules(intent=intent, hints=hints),
+            TOOL_GUIDANCE,
+            COMMON_RULES,
+            self.__get_ledger_segment(memory=memory),
+            self.__get_history_segment(history=history),
+            f"GOAL: {intent}\n\nExecute next step via tool.",
+        ]
 
-        if memory:
-            ledger = "\n=== PERSISTENT MEMORY ===\n"
-            for key, value in memory.items():
-                ledger += f"- {key}: {value}\n"
+        return "\n".join([part for part in parts if part])
 
-            ledger += "=== END MEMORY ===\n"
-            context = ledger + context
-
-        base = self.__get_base(intent, hints)
-        rules = COMMON_RULES
-
-        return (
-            f"{base}\n"
-            f"{TOOL_GUIDANCE}\n"
-            f"{rules}\n"
-            f"{context}\n"
-            f"User intent: {intent}\n\n"
-            f"Use the execute_ui function to respond."
-        )
-
-    def __format_history(self, history: Optional[Any], limit: int = 10) -> str:
+    def __get_persona(self) -> str:
         """
-        Formats interaction history into a readable block.
+        Core identity.
+        """
+
+        return "You are a Mobile UI Agent. Grounding via coordinates (0-1000)."
+
+    def __get_contextual_rules(self, intent: str, hints: Optional[Dict[str, Any]]) -> str:
+        """
+        Intent-specific guidance.
+        """
+
+        rules = []
+
+        if hints and hints.get("use_xml"):
+            rules.append("- XML Grounding enabled.")
+
+        if any(word in intent.lower() for word in ["every", "all"]):
+            rules.append("- LOOP: Iterate untried elements.")
+
+        if any(word in intent.lower() for word in ["type", "enter", "input"]):
+            rules.append("- SEQ: Tap to focus, then type.")
+
+        return "\nRULES:\n" + "\n".join(rules) if rules else ""
+
+    def __get_ledger_segment(self, memory: Optional[Dict[str, str]]) -> str:
+        """
+        High-density ledger memory.
+        """
+
+        if not memory:
+            return ""
+
+        # Format: [KEY:VAL]
+        items = [f"{key}:{value}" for key, value in memory.items()]
+        return f"\nLEDGER: [{', '.join(items)}]"
+
+    def __get_history_segment(self, history: Optional[Any]) -> str:
+        """
+        Symbolic history to minimize tokens.
+        Format: [ACTION:TARGET:RESULT]
         """
 
         if isinstance(history, str):
@@ -56,49 +83,14 @@ class GeminiPromptBuilder(PromptBuilder):
         if not history or not isinstance(history, list):
             return ""
 
-        recent = history[-limit:]
-        formatted = "\n\n=== INTERACTION HISTORY ===\n"
-        formatted += "Already interacted elements (avoid these):\n\n"
+        # Last 5 steps should be sufficient for loop detection and save tokens
+        steps = []
+        recent = history[-5:]
 
-        elements = []
+        for item in recent:
+            action = item.get("action_type", "tap").upper()[:3]
+            target = item.get("element_text") or "UI"
+            result = "✓" if item.get("success", True) else "✗"
+            steps.append(f"{action}:{target}:{result}")
 
-        for index, item in enumerate(recent, 1):
-            action = item.get("action_type", "tap")
-            text = item.get("element_text") or item.get("rationale", "unknown")
-
-            formatted += f"{index}. {text} ({action})\n"
-            if text and text != "unknown":
-                elements.append(text)
-
-        formatted += "\nMatch by text/labels AND visual characteristics. Select DIFFERENT element of SAME TYPE.\n"
-        if elements:
-            formatted += f"""Avoid: {", ".join([f'"{t}"' for t in elements[:5]])}\n"""
-
-        formatted += "=== END ===\n"
-        return formatted
-
-    def __get_base(self, intent: str, hints: Optional[Dict[str, Any]]) -> str:
-        """
-        Constructs the foundation of the prompt with dynamic hints.
-        """
-
-        base = "You are a Mobile UI expert. Map user intent to screen actions using tools.\n"
-
-        if hints and hints.get("use_xml"):
-            base += "Use NUMERIC LABELS from the XML hierarchy for grounding.\n"
-
-        # Add dynamic instructions based on intent
-        dynamic = []
-
-        if "every" in intent.lower() or "all" in intent.lower():
-            dynamic.append(
-                "- REPEAT UNTIL ALL: Identify ALL matching elements. Select NEXT untapped element."
-            )
-
-        if any(kw in intent.lower() for kw in ["type", "enter", "input"]):
-            dynamic.append("- SEQUENTIAL: For typing, tap field to focus, then type.")
-
-        if dynamic:
-            base += "\nCONTEXTUAL RULES:\n" + "\n".join(dynamic) + "\n"
-
-        return base
+        return f"\nTRACE: [{' | '.join(steps)}]"

@@ -99,6 +99,14 @@ class StepPlanner:
         self.__vision = vision_tool
         self.__min_confidence = min_confidence
 
+    @property
+    def vision_tool(self) -> VisionTool:
+        """
+        Returns the underlying vision tool.
+        """
+
+        return self.__vision
+
     async def plan_step(
         self,
         state: AgentState,

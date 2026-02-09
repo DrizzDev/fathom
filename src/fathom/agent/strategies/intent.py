@@ -3,12 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime
-from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple
-
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
 from fathom.agent.planner import StepPlanner
 from fathom.agent.reasoner import Reasoner
@@ -22,6 +17,7 @@ from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.results import ActionResult, PlanResult, StrategyResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
+from fathom.services.audit import AuditService
 from fathom.services.hierarchy import HierarchyService
 from fathom.services.history import HistoryService
 from fathom.services.ux import UXService
@@ -29,9 +25,6 @@ from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision.processing.annotator import ImageAnnotator
 from fathom.utils.coordinates import CoordinateConverter
-
-console = Console()
-logger = getLogger(name=__name__)
 
 
 class IntentStrategy(ExecutionStrategy):
@@ -57,7 +50,6 @@ class IntentStrategy(ExecutionStrategy):
 
         self.__device = device
         self.__capture = capture
-
         self.__memory = memory
         self.__ledger: ILedger = Ledger()
 
@@ -68,12 +60,13 @@ class IntentStrategy(ExecutionStrategy):
         self.__state = AgentState(intent=intent, max_steps=max_steps)
 
         self.__ux_service = UXService()
+        self.__audit_service = AuditService()
+
         self.__hierarchy = HierarchyService(device=device)
         self.__history = HistoryService(workflow_id=workflow_id)
 
         self.__start_time = time.time()
         self.__metrics = ExecutionMetrics()
-        self.__memory_audit_trail: List[Dict[str, Any]] = []
 
     @property
     def metrics(self) -> Dict[str, Dict[str, float]]:
@@ -101,7 +94,7 @@ class IntentStrategy(ExecutionStrategy):
 
     async def execute_step(self) -> StrategyResult:
         """
-        Executes one step with accurate metric tracking.
+        Executes a single step
         """
 
         step_start = time.time()
@@ -113,42 +106,42 @@ class IntentStrategy(ExecutionStrategy):
         if not screen:
             return StrategyResult(status=StrategyStatus.ERROR, message="Capture failed")
 
-        state_object, is_new_screen = self.__update_state(screen=screen)
+        state, is_new_screen = self.__update_state(screen=screen)
 
-        # 2. HIERARCHY PROCESSING
-        planning_screen, label_mapping, hierarchy_duration = await self.__process_hierarchy(
+        # 2. HIERARCHY
+        planning_screen, elements, hierarchy_duration = await self.__process_hierarchy(
             screen=screen, xml=xml
         )
         if hierarchy_duration > 0:
             self.__metrics.record(operation="hierarchy_processing", duration=hierarchy_duration)
 
-        # If loading detected during hierarchy processing
         if planning_screen is None:
             return StrategyResult(status=StrategyStatus.CONTINUE, message="Loading...")
 
-        # 3. ANALYSIS & PLANNING
+        # 3. ANALYSIS
         plan, knowledge, analysis_duration = await self.__perform_analysis(
-            state_object=state_object, planning_screen=planning_screen, label_mapping=label_mapping
+            state=state, planning_screen=planning_screen, elements=elements
         )
         self.__metrics.record(operation="analysis", duration=analysis_duration)
 
         if plan.is_complete:
-            self.__finalize_audit()
+            self.__audit_service.print_session_summary()
             return StrategyResult(status=StrategyStatus.COMPLETE, message=plan.reason)
 
-        if not plan.step:
+        step = plan.step
+
+        if not step:
             if plan.should_retry:
                 return StrategyResult(status=StrategyStatus.CONTINUE, message=plan.reason)
 
-            self.__finalize_audit()
+            self.__audit_service.print_session_summary()
             return StrategyResult(status=StrategyStatus.ERROR, message=plan.reason)
 
-        step = plan.step
         if self.__use_xml and step.action.label_id:
-            step = await self.__resolve(step=step)
+            step = await self.__resolve_coordinates(step=step)
 
         # 4. EXECUTION
-        self.__render_ux(plan=plan, knowledge=knowledge, step=step, duration=analysis_duration)
+        self.__render_ux(plan=plan, step=step, duration=analysis_duration)
 
         result, execution_duration, coordinates = await self.__execute_action_step(
             step=step, screen=screen
@@ -158,27 +151,40 @@ class IntentStrategy(ExecutionStrategy):
         # 5. RECORDING & AUDIT
         step_result = self.__record_result(
             step=step,
+            state=state,
             result=result,
             step_start=step_start,
             coordinates=coordinates,
-            state_object=state_object,
         )
 
-        self.__audit_step(
+        self.__audit_service.record_context(
+            knowledge=knowledge,
+            success=result.success,
+            visual_hash=state.visual_hash,
+            step_number=self.__state.step_count,
+            context=self.__state.build_context(),
+            action_description=step.action.to_description(),
+        )
+
+        self.__audit_service.log_step(
             plan=plan,
+            state=state,
             result=result,
-            start_time=step_start,
-            state_object=state_object,
-            analysis=analysis_duration,
             is_new_screen=is_new_screen,
-            execution=execution_duration,
-            grounding=grounding_duration,
-            hierarchy=hierarchy_duration,
+            is_stuck=self.__state.is_stuck,
+            step_count=self.__state.step_count,
+            analysis_duration=analysis_duration,
+            execution_duration=execution_duration,
+            grounding_duration=grounding_duration,
+            hierarchy_duration=hierarchy_duration,
+            total_duration=time.time() - step_start,
         )
 
         return StrategyResult(step_result=step_result, status=StrategyStatus.CONTINUE, message="OK")
 
-    async def __perform_grounding(self) -> Tuple[Optional[ScreenCapture], Optional[str], float]:
+    async def __perform_grounding(
+        self,
+    ) -> Tuple[Optional[ScreenCapture], Optional[str], float]:
         """
         Captures screen and hierarchy.
         """
@@ -197,22 +203,21 @@ class IntentStrategy(ExecutionStrategy):
 
     def __update_state(self, screen: ScreenCapture) -> Tuple[ScreenState, bool]:
         """
-        Updates agent state with new screen.
+        Updates agent state.
         """
 
-        state_object = self.__capture.compute_state(capture=screen)
+        state = self.__capture.compute_state(capture=screen)
 
-        screen = screen.model_copy(update={"state": state_object})
-        is_new_screen = self.__state.update_screen(screen=state_object)
+        screen = screen.model_copy(update={"state": state})
+        is_new = self.__state.update_screen(screen=state)
 
-        return state_object, is_new_screen
+        return state, is_new
 
     async def __process_hierarchy(
         self, screen: ScreenCapture, xml: Optional[str]
     ) -> Tuple[Optional[ScreenCapture], Dict[str, Any], float]:
         """
-        Processes XML hierarchy if available.
-        Returns (planning_screen, label_mapping, duration).
+        Processes XML hierarchy.
         """
 
         if not (self.__use_xml and xml):
@@ -221,30 +226,25 @@ class IntentStrategy(ExecutionStrategy):
         start = time.time()
 
         if len(xml) < 200:
-            logger.info(msg="Screen appears to be loading (small XML)...")
-            await asyncio.sleep(delay=1.0)
+            await asyncio.sleep(1.0)
             return None, {}, time.time() - start
 
-        annotated, label_mapping = await self.__hierarchy.process_xml_and_screen(
-            screen=screen, xml=xml
-        )
-        return (annotated if annotated else screen), label_mapping, time.time() - start
+        annotated, mapping = await self.__hierarchy.process_xml_and_screen(screen=screen, xml=xml)
+        return (annotated if annotated else screen), mapping, time.time() - start
 
     async def __perform_analysis(
         self,
-        state_object: ScreenState,
+        state: ScreenState,
         planning_screen: ScreenCapture,
-        label_mapping: Dict[str, Any],
+        elements: Dict[str, Any],
     ) -> Tuple[PlanResult, Dict[str, Any], float]:
         """
-        Retrieves knowledge and plans the next step.
+        Retrieves knowledge and plans next step.
         """
 
-        # Fetch knowledge
-        knowledge = await self.__memory.retrieve_knowledge(visual_hash=state_object.visual_hash)
-
-        # Inject ledger memory into knowledge for context
         entries = await self.__ledger.get_all()
+        knowledge = await self.__memory.retrieve_knowledge(visual_hash=state.visual_hash)
+
         knowledge["memory_store"] = entries
 
         start = time.time()
@@ -253,33 +253,14 @@ class IntentStrategy(ExecutionStrategy):
             use_xml=self.__use_xml,
             capture=planning_screen,
             reasoner=self.__reasoner,
-            elements=label_mapping if label_mapping else None,
+            elements=elements if elements else None,
         )
         return plan, knowledge, time.time() - start
 
-    def __render_ux(
-        self, plan: Any, knowledge: Dict[str, Any], step: Step, duration: float
-    ) -> None:
+    def __render_ux(self, plan: Any, step: Step, duration: float) -> None:
         """
-        Renders the step UX.
+        Renders UX based on plan type.
         """
-
-        memory_lines = []
-        previous_actions = knowledge.get("previous_actions", [])
-
-        if previous_actions:
-            memory_lines.append(
-                f"[bold cyan]Retrieved {len(previous_actions)} experiences for this screen:[/bold cyan]"
-            )
-            for index, experience in enumerate(iterable=previous_actions, start=1):
-                status = "✓" if experience.get("success") else "✗"
-                memory_lines.append(
-                    f"  {index}. {status} {experience.get('action')} on {experience.get('target')}"
-                )
-        else:
-            memory_lines.append("[dim]No prior experience for this screen hash.[/dim]")
-
-        memory_information = "\n".join(memory_lines) + "\n"
 
         if plan.metadata.get("tool_name"):
             self.__ux_service.render_tool_call(
@@ -288,27 +269,22 @@ class IntentStrategy(ExecutionStrategy):
                 tool_name=plan.metadata["tool_name"],
             )
         else:
-            console.print(
-                Panel(
-                    renderable=f"{memory_information}\n"
-                    f"[dim]Vision Target: None[/dim]\n"
-                    f"[cyan]Reasoning:[/cyan] {step.action.rationale}\n"
-                    f"[yellow]Action:[/yellow] {step.action.to_description()}",
-                    title=f"Step {self.__state.step_count + 1} Thinking",
-                    border_style="blue",
-                )
+            self.__ux_service.render_fallback(
+                reasoning=step.action.rationale,
+                action=step.action.to_description(),
+                step_number=self.__state.step_count + 1,
             )
 
     async def __execute_action_step(
         self, step: Step, screen: ScreenCapture
     ) -> Tuple[ActionResult, float, Optional[List[int]]]:
         """
-        Executes the planned action.
+        Executes the action.
         """
 
         start = time.time()
 
-        # Handle memory-only actions
+        # Handle memory actions
         if step.action.action_type == ActionType.SAVE_MEMORY:
             if step.action.memory_updates:
                 for key, value in step.action.memory_updates.items():
@@ -320,25 +296,22 @@ class IntentStrategy(ExecutionStrategy):
             return ActionResult(success=True, duration=0), time.time() - start, None
 
         # Physical Action
-        action_coordinates = await self.__get_action_coordinates(action=step.action)
+        coordinates = await self.__get_action_coordinates(action=step.action)
         asyncio.create_task(
             coro=self.__trace_background(
-                action=step.action, image_data=screen.image, coordinates=action_coordinates
+                action=step.action, image_data=screen.image, coordinates=coordinates
             )
         )
 
         result = await self.__execute(action=step.action)
 
-        # Side-effect memory updates
         if step.action.memory_updates:
             for key, value in step.action.memory_updates.items():
                 await self.__ledger.set(key=key, value=value)
 
-        # Convert coordinates to list for storage
-        coords_list = list(action_coordinates) if action_coordinates else None
-
-        center = None
-        if coords_list:
+        # Convert to list for storage
+        if coordinates:
+            coords_list = list(coordinates)
             if len(coords_list) == 2:
                 center = coords_list
             elif len(coords_list) == 4:
@@ -346,27 +319,29 @@ class IntentStrategy(ExecutionStrategy):
                     (coords_list[0] + coords_list[2]) // 2,
                     (coords_list[1] + coords_list[3]) // 2,
                 ]
+            else:
+                center = None
+        else:
+            center = None
 
         return result, time.time() - start, center
 
     def __record_result(
         self,
         step: Step,
-        step_start: float,
         result: ActionResult,
-        state_object: ScreenState,
+        state: ScreenState,
+        step_start: float,
         coordinates: Optional[List[int]] = None,
     ) -> StepResult:
         """
-        Records the step result to history and memory.
-        """
-
+        Records the step result."""
         step_result = StepResult(
             step=step,
             post_hash="0",
             screen_changed=True,
             success=result.success,
-            pre_hash=state_object.visual_hash,
+            pre_hash=state.visual_hash,
             duration=int((time.time() - step_start) * 1000),
         )
         self.__state.record_step(result=step_result)
@@ -381,162 +356,20 @@ class IntentStrategy(ExecutionStrategy):
         self.__history.save_step(result=step_result, absolute_center=coordinates)
         return step_result
 
-    def __audit_step(
-        self,
-        plan: PlanResult,
-        grounding: float,
-        hierarchy: float,
-        analysis: float,
-        execution: float,
-        start_time: float,
-        is_new_screen: bool,
-        result: ActionResult,
-        state_object: ScreenState,
-    ) -> None:
-        """
-        Prints the step audit table.
-        """
-
-        audit = Table.grid(padding=(0, 2))
-        audit.add_column(style="dim")
-        audit.add_column(justify="right")
-
-        status_icon = "🆕" if is_new_screen else "🔄"
-        audit.add_row(
-            "Screen Status:",
-            f"{status_icon} {state_object.visual_hash[:8]} ({state_object.activity})",
-        )
-
-        if self.__state.is_stuck:
-            audit.add_row("[bold red]Loop Detected:[/bold red]", "YES")
-
-        audit.add_row("Grounding:", self.__format_time(milliseconds=grounding * 1000))
-        if hierarchy > 0:
-            audit.add_row("Hierarchy:", self.__format_time(milliseconds=hierarchy * 1000))
-
-        if plan.metrics:
-            if "memory_retrieval" in plan.metrics:
-                audit.add_row(
-                    "Memory Retrieval:",
-                    self.__format_time(milliseconds=plan.metrics["memory_retrieval"] * 1000),
-                )
-            if "llm_analysis" in plan.metrics:
-                audit.add_row(
-                    "LLM Core Analysis:",
-                    self.__format_time(milliseconds=plan.metrics["llm_analysis"] * 1000),
-                )
-
-        audit.add_row("Total Analysis:", self.__format_time(milliseconds=analysis * 1000))
-        audit.add_row("ADB Execution:", self.__format_time(milliseconds=result.duration))
-        audit.add_row(
-            "Step Overhead:",
-            self.__format_time(milliseconds=(execution * 1000) - result.duration),
-        )
-
-        total = (time.time() - start_time) * 1000
-        audit.add_row(
-            "[bold white]Total Step Time:[/bold white]",
-            f"[bold cyan]{self.__format_time(milliseconds=total)}[/bold cyan]",
-        )
-
-        console.print(
-            Panel(
-                renderable=audit,
-                border_style="dim",
-                title_align="right",
-                title=f"Step {self.__state.step_count} Audit",
-            )
-        )
-
-    def __format_time(self, milliseconds: float) -> str:
-        """
-        Formats milliseconds to 'Xs [Yms]' format.
-        """
-
-        seconds = milliseconds / 1000.0
-        return f"{seconds:.2f}s [{milliseconds:.0f}ms]"
-
-    def __finalize_audit(self) -> None:
-        """
-        Prints final memory and context audit.
-        """
-
-        if not self.__memory_audit_trail:
-            return
-
-        audit_table = Table(
-            title="Execution Context & Memory Audit", show_lines=True, header_style="bold magenta"
-        )
-        audit_table.add_column(header="Step", justify="center")
-        audit_table.add_column(header="Hash / Knowledge (READ)", style="cyan")
-        audit_table.add_column(header="Session Context (SENT)", style="green")
-        audit_table.add_column(header="Action Result (WRITE)", style="yellow")
-
-        for item in self.__memory_audit_trail:
-            # Format knowledge
-            knowledge = item["knowledge_retrieved"]
-            knowledge_string = f"Hash: [dim]{item['visual_hash'][:12]}[/dim]\n"
-            knowledge_string += f"Desc: {knowledge.get('description', 'N/A')}\n"
-
-            past_actions = knowledge.get("previous_actions", [])
-
-            if past_actions:
-                knowledge_string += f"Past: {len(past_actions)} actions retrieved"
-            else:
-                knowledge_string += "Past: No prior experience"
-
-            # Format context
-            context = item["context_sent"]
-            failures = context.get("relevant_failures", [])
-            context_string = f"History: {context.get('compact_history')}\n"
-
-            if failures:
-                context_string += f"Failures Sent: {', '.join(failures)}"
-            else:
-                context_string += "Failures Sent: None"
-
-            # Format action
-            success_tag = (
-                "[bold green]OK[/bold green]" if item["success"] else "[bold red]FAIL[/bold red]"
-            )
-            action_string = f"{item['action_stored']}\nStatus: {success_tag}"
-
-            audit_table.add_row(
-                str(item["step"]),
-                knowledge_string,
-                context_string,
-                action_string,
-            )
-
-        console.print(renderable="\n")
-        console.print(renderable=audit_table)
-
     async def should_continue(self) -> bool:
-        """
-        Check stop conditions.
-        """
-
-        if self.__state.is_complete:
-            return False
-
-        return self.__state.can_continue
+        """Check stop conditions."""
+        return not self.__state.is_complete and self.__state.can_continue
 
     def get_progress(self) -> Dict[str, object]:
-        """
-        Return workflow progress.
-        """
-
+        """Return workflow progress."""
         return {
             "intent": self.__intent,
             "step_count": self.__state.step_count,
             "is_complete": self.__state.is_complete,
         }
 
-    async def __resolve(self, step: Step) -> Step:
-        """
-        Resolves label to physical coordinates.
-        """
-
+    async def __resolve_coordinates(self, step: Step) -> Step:
+        """Resolves label to physical coordinates."""
         mapping = self.__hierarchy.label_map
         label_id = step.action.label_id
 
@@ -545,48 +378,41 @@ class IntentStrategy(ExecutionStrategy):
             size = await self.__device.get_screen_size()
 
             if size[0] > 0 and size[1] > 0:
-                # Calculate normalized center (0-1000)
                 normalized_x = int((element["center_x"] / size[0]) * 1000)
                 normalized_y = int((element["center_y"] / size[1]) * 1000)
 
-                # Ensure we don't produce a bounding box that clamps to 0,0
-                # We use a 100x100 box centered at the element
-                bounding_box_x = max(0, normalized_x - 50)
-                bounding_box_y = max(0, normalized_y - 50)
-
                 action = step.action.model_copy(
                     update={
-                        "bounds": Bounds(x=bounding_box_x, y=bounding_box_y, width=100, height=100)
+                        "bounds": Bounds(
+                            x=normalized_x - 50,
+                            y=normalized_y - 50,
+                            width=100,
+                            height=100,
+                        )
                     }
                 )
                 return step.model_copy(update={"action": action})
 
-        if label_id:
-            logger.warning(msg=f"Failed to resolve coordinates for label ID: {label_id}")
-
         return step
 
     async def __get_action_coordinates(self, action: Action) -> Tuple[int, ...]:
-        """
-        Converts action bounding box to pixel coordinates for verification.
-        """
-
+        """Converts bounds to pixels."""
         size = await self.__device.get_screen_size()
         converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
 
-        if action.action_type in (ActionType.TAP, ActionType.TYPE, ActionType.LONG_PRESS):
+        if action.action_type in (
+            ActionType.TAP,
+            ActionType.TYPE,
+            ActionType.LONG_PRESS,
+        ):
             if action.bounds:
                 return converter.center_to_pixels(bounds=action.bounds)
-
             return (size[0] // 2, size[1] // 2)
 
         if action.action_type in (ActionType.SWIPE, ActionType.SCROLL):
-            # For simplicity, use a generic swipe if no bounding box
-            if not action.bounds:
-                return (size[0] // 2, size[1] * 3 // 4, size[0] // 2, size[1] // 4)
-
-            # Default to swipe up logic if no direction in simple Action schema
-            return converter.swipe_coordinates(bounds=action.bounds, direction="up")
+            if action.bounds:
+                return converter.swipe_coordinates(bounds=action.bounds, direction="up")
+            return (size[0] // 2, size[1] * 3 // 4, size[0] // 2, size[1] // 4)
 
         return ()
 
@@ -596,30 +422,24 @@ class IntentStrategy(ExecutionStrategy):
         image_data: bytes,
         coordinates: Tuple[int, ...],
     ) -> None:
-        """
-        Saves annotated action image to assets/traces.
-        """
-
+        """Saves annotated trace."""
         if not coordinates:
             return
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         filename = f"step_{self.__state.step_count + 1}_{action.action_type.value}_{timestamp}.png"
-        output_path = f"assets/traces/{filename}"
+        path = f"assets/traces/{filename}"
 
         ImageAnnotator.trace(
-            coords=coordinates,
             image_data=image_data,
-            output_path=output_path,
+            output_path=path,
             label=action.to_description(),
             action_type=action.action_type.value,
+            coords=coordinates,
         )
 
     async def __execute(self, action: Action) -> ActionResult:
-        """
-        Dispatches action to device.
-        """
-
+        """Dispatches action to device."""
         size = await self.__device.get_screen_size()
         converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
 
@@ -640,8 +460,6 @@ class IntentStrategy(ExecutionStrategy):
             ActionType.SWIPE_UP,
             ActionType.SWIPE_DOWN,
         ):
-            size = await self.__device.get_screen_size()
-            converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
             direction = action.action_type.value.split("_")[1]
             coords = converter.swipe_coordinates(
                 bounds=action.bounds or Bounds(x=200, y=200, width=600, height=600),
@@ -655,13 +473,3 @@ class IntentStrategy(ExecutionStrategy):
             return ActionResult(success=True, duration=duration)
 
         return await self.__device.execute(request=action.model_dump())
-
-    async def __capture_with_timeout(self) -> Optional[ScreenCapture]:
-        """
-        Safely capture screen.
-        """
-
-        try:
-            return await self.__capture.capture()
-        except Exception:
-            return None

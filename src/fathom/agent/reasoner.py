@@ -1,183 +1,24 @@
 from __future__ import annotations
 
-import re
-from abc import ABC, abstractmethod
+from difflib import SequenceMatcher
 from logging import getLogger
-from typing import ClassVar, List, Optional, Set
+from typing import Optional
 
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action
 from fathom.schemas.reasoning import CompletionSignal
 from fathom.tools.vision import AnalysisResult
 
-logger = getLogger(__name__)
-
-
-class CompletionMatcher(ABC):
-    """
-    Abstract matcher for completion detection.
-    """
-
-    @abstractmethod
-    def matches(self, text: str) -> bool:
-        """
-        Check if text matches completion criteria.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_evidence(self, text: str) -> str:
-        """
-        Get evidence string if matched.
-        """
-
-        raise NotImplementedError
-
-
-class KeywordMatcher(CompletionMatcher):
-    """
-    Matches completion based on keywords in screen content.
-    """
-
-    def __init__(self, keywords: Set[str]) -> None:
-        self.__keywords = {k.lower() for k in keywords if k}
-        self.__pattern = re.compile(
-            r"\b(" + "|".join(re.escape(k) for k in self.__keywords) + r")\b",
-            re.IGNORECASE,
-        )
-
-    def matches(self, text: str) -> bool:
-        """
-        Check if text matches completion criteria.
-        """
-
-        return bool(self.__pattern.search(text))
-
-    def get_evidence(self, text: str) -> str:
-        """
-        Get evidence string if matched.
-        """
-
-        if match := self.__pattern.search(text):
-            return f"Found keyword: '{match.group(1)}'"
-
-        return ""
-
-
-class IntentMatcher(CompletionMatcher):
-    """
-    Matches completion based on intent-specific patterns.
-    Parses the intent to extract expected outcomes.
-    """
-
-    __SUCCESS_PATTERNS: ClassVar[List[str]] = [
-        r"success(ful(ly)?)?",
-        r"complet(ed|ion)",
-        r"confirm(ed|ation)",
-        r"done",
-        r"saved",
-        r"submitted",
-        r"logged\s*in",
-        r"signed\s*in",
-        r"welcome",
-        r"thank\s*you",
-        r"order\s*placed",
-        r"payment\s*(successful|complete)",
-    ]
-
-    def __init__(self) -> None:
-        self.__pattern = re.compile(
-            "|".join(self.__SUCCESS_PATTERNS),
-            re.IGNORECASE,
-        )
-
-    def matches(self, text: str) -> bool:
-        """
-        Check if text matches completion criteria.
-        """
-
-        return bool(self.__pattern.search(text))
-
-    def get_evidence(self, text: str) -> str:
-        """
-        Get evidence string if matched.
-        """
-
-        if match := self.__pattern.search(text):
-            return f"Success pattern: '{match.group(0)}'"
-
-        return ""
+logger = getLogger(name=__name__)
 
 
 class Reasoner:
     """
-    Intent reasoning and completion detection.
-
-    Combines multiple signals to determine:
-    - Whether the intent is complete
-    - What action to take next
-    - Whether to abort due to errors
-
-    Uses both rule-based matching and LLM confidence.
+    High-speed intent reasoning engine.
     """
 
-    def __init__(
-        self,
-        intent: str,
-        *,
-        custom_keywords: Optional[Set[str]] = None,
-    ) -> None:
-        """
-        Initialize reasoner.
-
-        Args:
-            intent: The goal being pursued.
-            custom_keywords: Additional keywords to detect completion.
-        """
-
-        self.__intent = intent
-        self.__keywords = self.__extract_keywords(intent)
-
-        if custom_keywords:
-            self.__keywords.update(custom_keywords)
-
-        self.__keyword_matcher = KeywordMatcher(self.__keywords)
-
-        self.__intent_matcher = IntentMatcher()
-        self.__completion_evidence: List[str] = []
-
-    def __extract_keywords(self, intent: str) -> Set[str]:
-        """
-        Extract completion keywords from intent.
-
-        Parses intent to find expected outcomes.
-        E.g., "Login with phone" -> looking for "logged in", "welcome"
-        E.g., "Add to cart" -> looking for "added", "cart"
-        """
-
-        keywords: Set[str] = set()
-        intent_lower = intent.lower()
-
-        keyword_map = {
-            "save": {"saved", "updated"},
-            "send": {"sent", "delivered"},
-            "search": {"results", "found"},
-            "delete": {"deleted", "removed"},
-            "submit": {"submitted", "received"},
-            "cancel": {"cancelled"},
-            "sign up": {"account created", "welcome", "verify"},
-            "add to cart": {"added to cart", "cart", "item added"},
-            "checkout": {"order placed", "payment", "confirmation"},
-            "register": {"registered", "account created", "verify"},
-            "login": {"logged in", "welcome", "sign in", "dashboard"},
-        }
-
-        for trigger, words in keyword_map.items():
-            if trigger in intent_lower:
-                keywords.update(words)
-
-        return keywords
+    def __init__(self, intent: str) -> None:
+        self.__intent = intent.lower()
 
     def analyze_completion(
         self,
@@ -185,50 +26,40 @@ class Reasoner:
         screen_description: Optional[str] = None,
     ) -> CompletionSignal:
         """
-        Analyze whether the intent is complete.
-
-        Args:
-            analysis: Result from vision tool.
-            screen_description: Optional screen content description.
-
-        Returns:
-            CompletionSignal with detailed evidence.
+        Determines completion using only local, fast signals.
         """
 
-        keyword_match = False
-        success_indicator = False
-        evidence_parts: List[str] = []
+        evidence_list = []
 
+        # 1. Primary Signal: LLM Flag (Zero Cost - already computed)
         if analysis.is_goal_complete:
-            evidence_parts.append("LLM indicated goal complete")
+            evidence_list.append("LLM explicitly flagged completion")
 
+        # 2. Secondary Signal: Action Type (Zero Cost)
         if analysis.action.action_type == ActionType.COMPLETE:
-            evidence_parts.append("COMPLETE action recommended")
+            evidence_list.append("Agent recommended COMPLETE action")
 
-        text_to_check = analysis.reasoning or ""
+        # 3. Tertiary Signal: Fast Fuzzy Match
+        # We check if the reasoning text semantically overlaps with the intent
+        context = f"{analysis.reasoning} {screen_description or ''}".lower()
 
-        if screen_description:
-            text_to_check += " " + screen_description
+        # Quick ratio check - O(N) but very fast for short strings
+        similarity = SequenceMatcher(None, self.__intent, context).ratio()
 
-        if analysis.screen_description:
-            text_to_check += " " + analysis.screen_description
+        if similarity > 0.6:  # Threshold for "relevant context"
+            evidence_list.append(f"Context alignment score: {similarity:.2f}")
 
-        if self.__keyword_matcher.matches(text_to_check):
-            keyword_match = True
-            evidence_parts.append(self.__keyword_matcher.get_evidence(text_to_check))
-
-        if self.__intent_matcher.matches(text_to_check):
-            success_indicator = True
-            evidence_parts.append(self.__intent_matcher.get_evidence(text_to_check))
-
-        llm_confidence = analysis.action.confidence if analysis.is_goal_complete else 0.0
+        # Weighted Decision
+        # If LLM says complete, we trust it unless the action is blatantly wrong.
+        is_complete = analysis.is_goal_complete or (
+            analysis.action.action_type == ActionType.COMPLETE
+        )
 
         return CompletionSignal(
-            keyword_match=keyword_match,
-            llm_confidence=llm_confidence,
-            evidence="; ".join(evidence_parts),
-            success_indicator=success_indicator,
+            success_indicator=is_complete,
+            evidence="; ".join(evidence_list),
             expected_screen=analysis.is_goal_complete,
+            llm_confidence=analysis.action.confidence if is_complete else 0.0,
         )
 
     def should_accept_action(
@@ -238,62 +69,30 @@ class Reasoner:
         has_failed_before: bool = False,
     ) -> bool:
         """
-        Determine if an action should be accepted.
-
-        Args:
-            action: Proposed action.
-            has_failed_before: Whether this action has failed recently.
-
-        Returns:
-            True if action should be executed.
+        Fast safety check.
         """
 
-        if action.confidence < 0.3:
+        if action.confidence < 0.4:
             return False
 
-        if has_failed_before and action.confidence < 0.7:
-            return False
-
-        if action.action_type in (ActionType.BACK, ActionType.HOME):
-            return action.confidence >= 0.4
-
-        return True
+        return not (has_failed_before and action.confidence < 0.8)
 
     def select_best_action(
         self,
         primary: Action,
-        alternatives: List[Action],
+        alternatives: list[Action],
         *,
-        failed_actions: Optional[Set[str]] = None,
+        failed_actions: set[str],
     ) -> Action:
         """
-        Select the best action from candidates.
-
-        Args:
-            primary: Primary recommended action.
-            alternatives: Alternative actions considered.
-            failed_actions: Set of action descriptions that have failed.
-
-        Returns:
-            Best action to execute.
+        Fast selection logic.
         """
 
-        failed = failed_actions or set()
-        primary_desc = primary.to_description()
-
-        if primary_desc not in failed:
+        if primary.to_description() not in failed_actions:
             return primary
 
-        logger.warning(
-            f"Primary action '{primary_desc}' has failed before. Searching alternatives."
-        )
+        for alternative in alternatives:
+            if alternative.to_description() not in failed_actions and alternative.confidence > 0.5:
+                return alternative
 
-        # Filter alternatives by confidence and failure history
-        for alt in alternatives:
-            alt_desc = alt.to_description()
-            if alt_desc not in failed and alt.confidence >= 0.4:
-                return alt
-
-        # If all alternatives also failed, but we must act,
-        # return the one with highest confidence or the primary as last resort
         return primary

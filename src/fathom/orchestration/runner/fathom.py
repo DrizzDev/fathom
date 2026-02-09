@@ -11,7 +11,7 @@ from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.infrastructure.storage.local import LocalImageStorage
 from fathom.interfaces import ILedger, IMemoryProvider
-from fathom.schemas.configuration import ADBConfig, GeminiConfig
+from fathom.schemas.configuration import ADBConfig, GeminiConfig, WorkflowConfig
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.services.prompts import PromptsService
 from fathom.settings.env import FathomSettings
@@ -19,6 +19,7 @@ from fathom.tools.capture.adb import ADBCaptureTool
 from fathom.tools.device.adb import ADBDeviceTool
 from fathom.tools.vision.gemini import GeminiVisionTool
 from fathom.workflows.base import BaseWorkflow
+from fathom.workflows.exploration import ExplorationWorkflow
 from fathom.workflows.intent import IntentWorkflow
 
 logger = getLogger(name=__name__)
@@ -60,8 +61,8 @@ class FathomRunner:
             raise FathomError(f"Device {serial or '(default)'} offline.")
 
         # 2. Vision Infrastructure Wiring
-        self.__memory_provider = SQLiteMemoryProvider()
         self.__ledger = Ledger()
+        self.__memory_provider = SQLiteMemoryProvider()
 
         # Select prompt version dynamically based on model and XML requirement
         model_name = self.__settings.gemini_model
@@ -79,6 +80,7 @@ class FathomRunner:
             memory=self.__memory_provider,
             vision=self.__vision_orchestrator,
             workflow_id=f"intent_{asyncio.get_event_loop().time()}",
+            configuration=WorkflowConfig(max_steps=max_steps, use_xml_bounding_boxes=use_xml),
         )
 
         # 4. Execution
@@ -93,8 +95,6 @@ class FathomRunner:
         """
         Run an application exploration workflow.
         """
-        from fathom.workflows.base import WorkflowConfig
-        from fathom.workflows.exploration import ExplorationWorkflow
 
         # 1. Device Wiring
         serial = device_serial or self.__settings.android_serial
@@ -103,22 +103,21 @@ class FathomRunner:
         if not await device.wait_for_device(timeout=5.0):
             raise FathomError(f"Device {serial or '(default)'} offline.")
 
-        # 2. Infrastructure Wiring
-        self.__memory_provider = SQLiteMemoryProvider()
         self.__ledger = Ledger()
+        self.__memory_provider = SQLiteMemoryProvider()
         self.__vision_orchestrator = self.__build_vision_orchestrator(
             version=self.__prompts_service.select_version(
                 model_name=self.__settings.gemini_model, use_xml=False
             )
         )
 
-        # 3. Workflow Wiring
+        workflow_id = f"exploration@{asyncio.get_event_loop().time()}"
         workflow = ExplorationWorkflow(
-            workflow_id=f"explore_{asyncio.get_event_loop().time()}",
             device=device,
+            workflow_id=workflow_id,
             capture=ADBCaptureTool(),
             vision=self.__vision_orchestrator,
-            config=WorkflowConfig(max_steps=max_steps),
+            configuration=WorkflowConfig(max_steps=max_steps),
         )
         self.__current_workflow = workflow
 
@@ -143,8 +142,8 @@ class FathomRunner:
         return GeminiVisionTool(
             model=client,
             version=version,
-            memory=self.__memory_provider,  # type: ignore[arg-type]
             ledger=self.__ledger,  # type: ignore[arg-type]
+            memory=self.__memory_provider,  # type: ignore[arg-type]
             prompts=self.__prompts_service,
             local_storage=LocalImageStorage(),
             cloud_storage=GCSImageStorage(

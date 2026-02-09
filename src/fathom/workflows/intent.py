@@ -7,13 +7,14 @@ from fathom.agent.planner import StepPlanner
 from fathom.agent.state import AgentState
 from fathom.agent.strategies.intent import IntentStrategy
 from fathom.interfaces import IMemoryProvider
+from fathom.schemas.configuration import WorkflowConfig
 from fathom.schemas.results import IntentResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.services.decomposer import IntentDecomposer
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
-from fathom.workflows.base import BaseWorkflow, WorkflowConfig
+from fathom.workflows.base import BaseWorkflow
 
 logger = getLogger(__name__)
 
@@ -37,9 +38,13 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         capture: CaptureTool,
         memory: IMemoryProvider,
         *,
-        config: Optional[WorkflowConfig] = None,
+        configuration: Optional[WorkflowConfig] = None,
     ) -> None:
-        super().__init__(workflow_id=workflow_id, config=config)
+        """
+        Initialize intent workflow.
+        """
+
+        super().__init__(workflow_id=workflow_id, configuration=configuration)
 
         self.__vision = vision
         self.__device = device
@@ -51,7 +56,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         self.__planner = StepPlanner(vision_tool=vision)
         self.__state = AgentState(
             intent=intent,
-            max_steps=self.config.max_steps,
+            max_steps=self.configuration.max_steps,
         )
         self.__strategy: Optional[IntentStrategy] = None
 
@@ -102,9 +107,9 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
                 planner=self.__planner,
                 capture=self.__capture,
                 workflow_id=self.workflow_id,
-                step_timeout=self.config.step_timeout,
-                use_xml=self.config.use_xml_bounding_boxes,
-                max_steps=self.config.max_steps // len(self.__sub_intents) + 5,
+                step_timeout=self.configuration.step_timeout,
+                use_xml=self.configuration.use_xml_bounding_boxes,
+                max_steps=self.configuration.max_steps // len(self.__sub_intents) + 5,
             )
 
             # Internal loop for this sub-intent
@@ -128,8 +133,8 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
 
         # Finalize
         # Success is determined by whether the LAST sub-intent completed or state is marked complete
-        success = self.__strategy.state.is_complete if self.__strategy else False
         metrics = self.__strategy.metrics if self.__strategy else {}
+        success = self.__strategy.state.is_complete if self.__strategy else False
 
         if not self.__completion_reason:
             if success:
@@ -159,11 +164,11 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         """
 
         progress = {
-            "elapsed_seconds": self.elapsed,
+            "elapsed": self.elapsed,
             "intent": self.__original_intent,
             "sub_intents": self.__sub_intents,
-            "max_steps": self.config.max_steps,
             "steps_executed": self.steps_executed,
+            "max_steps": self.configuration.max_steps,
         }
         if self.__strategy:
             progress["current_sub_intent"] = self.__strategy.get_progress()

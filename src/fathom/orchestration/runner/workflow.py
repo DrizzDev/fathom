@@ -5,11 +5,12 @@ import time
 from typing import Any, Optional
 
 from fathom.interfaces import IMemoryProvider
+from fathom.schemas.configuration import WorkflowConfig
 from fathom.schemas.orchestration import ExecutionContext, RunnerConfig, RunnerResult
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
-from fathom.workflows.base import BaseWorkflow, WorkflowConfig
+from fathom.workflows.base import BaseWorkflow
 from fathom.workflows.exploration import ExplorationWorkflow
 from fathom.workflows.intent import IntentWorkflow
 
@@ -17,13 +18,6 @@ from fathom.workflows.intent import IntentWorkflow
 class WorkflowRunner:
     """
     Runs workflows synchronously with lifecycle management.
-
-    Provides:
-    - Workflow instantiation from registry
-    - Execution with context tracking
-    - Checkpoint persistence hooks
-    - Progress reporting hooks
-    - Error handling and cleanup
     """
 
     def __init__(
@@ -79,7 +73,7 @@ class WorkflowRunner:
             device=self.__device,
             capture=self.__capture,
             workflow_id=workflow_id,
-            config=configuration or self.__workflow_configuration,
+            configuration=configuration or self.__workflow_configuration,
         )
 
         return self.__run_workflow(workflow=workflow)
@@ -99,7 +93,7 @@ class WorkflowRunner:
             device=self.__device,
             capture=self.__capture,
             workflow_id=workflow_id,
-            config=configuration or self.__workflow_configuration,
+            configuration=configuration or self.__workflow_configuration,
         )
 
         return self.__run_workflow(workflow=workflow)

@@ -3,8 +3,8 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 from fathom.constants import WorkflowStatus
-from fathom.schemas.configuration import WorkflowConfig as WorkflowConfig
-from fathom.schemas.results import WorkflowResult as WorkflowResult
+from fathom.schemas.configuration import WorkflowConfig
+from fathom.schemas.results import WorkflowResult
 from fathom.schemas.steps import StepResult
 
 T = TypeVar("T")
@@ -26,18 +26,18 @@ class BaseWorkflow(ABC, Generic[T]):
     def __init__(
         self,
         workflow_id: str,
-        config: Optional[WorkflowConfig] = None,
+        configuration: Optional[WorkflowConfig] = None,
     ) -> None:
         """
         Initialize workflow.
 
         Args:
             workflow_id: Unique identifier for this workflow run.
-            config: Workflow configuration.
+            configuration: Workflow configuration.
         """
 
         self.__workflow_id = workflow_id
-        self.__config = config or WorkflowConfig()
+        self.__configuration = configuration or WorkflowConfig()
 
         self.__status = WorkflowStatus.PENDING
         self.__end_time: Optional[float] = None
@@ -56,12 +56,12 @@ class BaseWorkflow(ABC, Generic[T]):
         return self.__workflow_id
 
     @property
-    def config(self) -> WorkflowConfig:
+    def configuration(self) -> WorkflowConfig:
         """
         Workflow configuration.
         """
 
-        return self.__config
+        return self.__configuration
 
     @property
     def status(self) -> WorkflowStatus:
@@ -202,21 +202,21 @@ class BaseWorkflow(ABC, Generic[T]):
         Check if a checkpoint should be taken.
         """
 
-        return (self.steps_executed % self.__config.checkpoint_interval) == 0
+        return (self.steps_executed % self.__configuration.checkpoint_interval) == 0
 
     def has_exceeded_timeout(self) -> bool:
         """
         Check if total timeout has been exceeded.
         """
 
-        return self.elapsed >= self.__config.total_timeout
+        return self.elapsed >= self.__configuration.total_timeout
 
     def has_exceeded_steps(self) -> bool:
         """
         Check if max steps have been reached.
         """
 
-        return self.steps_executed >= self.__config.max_steps
+        return self.steps_executed >= self.__configuration.max_steps
 
     def get_checkpoint(self) -> Dict[str, Any]:
         """
@@ -232,6 +232,6 @@ class BaseWorkflow(ABC, Generic[T]):
             "progress": self.get_progress(),
             "elapsed_seconds": self.elapsed,
             "workflow_id": self.__workflow_id,
-            "config": self.__config.model_dump(),
             "steps_executed": self.steps_executed,
+            "configuration": self.__configuration.model_dump(),
         }
