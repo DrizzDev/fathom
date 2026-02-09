@@ -81,7 +81,10 @@ class SQLiteMemoryProvider(IMemoryProvider):
         """
 
         await self.__initialize()
-        knowledge: Dict[str, Any] = {"description": None, "previous_actions": []}
+        knowledge: Dict[str, Any] = {
+            "description": None,
+            "previous_actions": [],
+        }
 
         async with aiosqlite.connect(self.__path) as db:
             # 1. Get screen description

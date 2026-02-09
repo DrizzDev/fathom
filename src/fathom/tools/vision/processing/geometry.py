@@ -1,80 +1,82 @@
+from __future__ import annotations
+
 from typing import Tuple
 
-from fathom.schemas.ui import UIBoundingBox
+from fathom.schemas.ui import UIBounds
 
 
 class GeometryUtils:
     """
-    Utility class with methods for geometry related operations on bounding boxes.
+    Utility class for geometric operations.
     """
 
     @staticmethod
-    def calculate_iou(box_a: UIBoundingBox, box_b: UIBoundingBox) -> float:
+    def calculate_iou(bounds1: UIBounds, bounds2: UIBounds) -> float:
         """
-        Calculate the Intersection over Union (IoU) of two bounding boxes.
+        Calculate the Intersection over Union (IoU) of two bounds.
         """
 
-        x_left = max(box_a.x1, box_b.x1)
-        y_top = max(box_a.y1, box_b.y1)
-        x_right = min(box_a.x2, box_b.x2)
-        y_bottom = min(box_a.y2, box_b.y2)
+        left = max(bounds1.x1, bounds2.x1)
+        top = max(bounds1.y1, bounds2.y1)
+        right = min(bounds1.x2, bounds2.x2)
+        bottom = min(bounds1.y2, bounds2.y2)
 
-        if x_right < x_left or y_bottom < y_top:
+        if right < left or bottom < top:
             return 0.0
 
-        intersection_area = (x_right - x_left) * (y_bottom - y_top)
-        box_a_area = (box_a.x2 - box_a.x1) * (box_a.y2 - box_a.y1)
-        box_b_area = (box_b.x2 - box_b.x1) * (box_b.y2 - box_b.y1)
-        union_area = float(box_a_area + box_b_area - intersection_area)
+        intersection = (right - left) * (bottom - top)
+        area1 = (bounds1.x2 - bounds1.x1) * (bounds1.y2 - bounds1.y1)
+        area2 = (bounds2.x2 - bounds2.x1) * (bounds2.y2 - bounds2.y1)
+        union = float(area1 + area2 - intersection)
 
-        return 0.0 if union_area == 0 else intersection_area / union_area
+        return 0.0 if union == 0 else intersection / union
 
     @staticmethod
-    def is_box_contained(inner_box: UIBoundingBox, outer_box: UIBoundingBox) -> bool:
+    def is_box_contained(box1: UIBounds, box2: UIBounds) -> bool:
         """
-        Checks if inner_box is completely contained within outer_box.
+        Checks if box1 is completely contained within box2.
         """
 
         return (
-            outer_box.x1 <= inner_box.x1
-            and outer_box.y1 <= inner_box.y1
-            and outer_box.x2 >= inner_box.x2
-            and outer_box.y2 >= inner_box.y2
+            box2.x1 <= box1.x1 and box2.y1 <= box1.y1 and box2.x2 >= box1.x2 and box2.y2 >= box1.y2
         )
 
     @staticmethod
     def boxes_overlap(
-        box1: Tuple[float, float, float, float], box2: Tuple[float, float, float, float]
+        first: Tuple[float, float, float, float], second: Tuple[float, float, float, float]
     ) -> bool:
         """
-        Checks if two boxes (x1, y1, x2, y2) overlap.
+        Checks if two boxes overlap.
         """
 
         return not (
-            box1[2] <= box2[0] or box1[0] >= box2[2] or box1[3] <= box2[1] or box1[1] >= box2[3]
+            first[2] <= second[0]
+            or first[0] >= second[2]
+            or first[3] <= second[1]
+            or first[1] >= second[3]
         )
 
     @staticmethod
     def get_line_endpoints(
-        label_box: Tuple[float, float, float, float], element_box: Tuple[float, float, float, float]
+        label: Tuple[float, float, float, float], element: Tuple[float, float, float, float]
     ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
         """
         Calculates the optimal start and end points for a leader line.
         """
 
-        label_center = (
-            (label_box[0] + label_box[2]) / 2,
-            (label_box[1] + label_box[3]) / 2,
+        center = (
+            (label[0] + label[2]) / 2,
+            (label[1] + label[3]) / 2,
         )
 
-        point_on_element_box = (
-            max(element_box[0], min(label_center[0], element_box[2])),
-            max(element_box[1], min(label_center[1], element_box[3])),
+        point_on_element = (
+            max(element[0], min(center[0], element[2])),
+            max(element[1], min(center[1], element[3])),
         )
 
-        point_on_label_box = (
-            max(label_box[0], min(point_on_element_box[0], label_box[2])),
-            max(label_box[1], min(point_on_element_box[1], label_box[3])),
+        point_on_label = (
+            max(label[0], min(point_on_element[0], label[2])),
+            max(label[1], min(point_on_element[1], label[3])),
         )
 
-        return point_on_label_box, point_on_element_box
+        return point_on_label, point_on_element

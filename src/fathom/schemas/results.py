@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
-from fathom.schemas.steps import StepResult
+from fathom.schemas.steps import Step, StepResult
 
 
 class AnalysisResult(BaseModel):
@@ -28,6 +28,9 @@ class AnalysisResult(BaseModel):
     )
     metrics: Dict[str, float] = Field(
         default_factory=dict, description="Internal analysis timing metrics"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional context like raw tool calls"
     )
 
 
@@ -101,3 +104,36 @@ class ActionResult(BaseModel):
     duration: int = Field(ge=0, description="Duration in milliseconds")
     output: Optional[str] = Field(default=None, description="Command output")
     error: Optional[str] = Field(default=None, description="Error details")
+
+
+class ExecutionResult(BaseModel):
+    """
+    Result of step execution attempt.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    success: bool = Field(..., description="Whether the execution was successful")
+    duration: int = Field(..., description="Duration of execution in milliseconds")
+    pre_hash: str = Field(default="", description="Visual hash before execution")
+    post_hash: str = Field(default="", description="Visual hash after execution")
+    error: Optional[str] = Field(default=None, description="Error message if failed")
+    screen_changed: bool = Field(default=False, description="Whether the screen changed")
+
+
+class PlanResult(BaseModel):
+    """
+    Result of step planning.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    reason: str = Field(..., description="Explanation for the plan")
+    is_complete: bool = Field(..., description="Whether the intent is achieved")
+    step: Optional[Step] = Field(default=None, description="The planned step, if any")
+
+    memories: int = Field(default=0, description="Count of memories used")
+    should_retry: bool = Field(default=False, description="Whether to retry analysis")
+
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
+    metrics: Dict[str, float] = Field(default_factory=dict, description="Performance metrics")

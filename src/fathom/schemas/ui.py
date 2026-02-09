@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, Tuple, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
-class UIBoundingBox(BaseModel):
+class UIBounds(BaseModel):
     """
-    Represents a bounding box with top-left and bottom-right absolute pixel coordinates.
-    Distinct from the normalized BoundingBox used in actions.
+    Represents bounds with top-left and bottom-right absolute pixel coordinates.
+    Distinct from the normalized Bounds used in actions.
     """
 
     x1: Union[int, float]
@@ -16,9 +16,11 @@ class UIBoundingBox(BaseModel):
     x2: Union[int, float]
     y2: Union[int, float]
 
+    model_config = ConfigDict(frozen=True)
+
     def __hash__(self) -> int:
         """
-        Make BoundingBox hashable for use in sets.
+        Make bounds hashable for use in sets.
         """
 
         return hash((self.x1, self.y1, self.x2, self.y2))
@@ -28,7 +30,7 @@ class UIBoundingBox(BaseModel):
         Check equality with tolerance for floating point comparison.
         """
 
-        if not isinstance(other, UIBoundingBox):
+        if not isinstance(other, UIBounds):
             return False
 
         tolerance = 0.01
@@ -50,14 +52,14 @@ class UIBoundingBox(BaseModel):
     @property
     def area(self) -> float:
         """
-        Calculates the area of the bounding box.
+        Calculates the area.
         """
 
         return self.width * self.height
 
     def to_rectangle(self) -> Tuple[int, int, int, int]:
         """
-        Converts to integer rectangle coordinates (x1, y1, x2, y2).
+        Converts to integer rectangle coordinates.
         """
 
         return (
@@ -75,5 +77,8 @@ class LabeledElement(BaseModel):
 
     label: str
     color: str = "red"
-    bounds: UIBoundingBox
+
+    bounds: UIBounds
     attributes: Dict[str, Any]
+
+    model_config = ConfigDict(frozen=True)

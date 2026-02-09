@@ -1,9 +1,5 @@
-from fathom.tools.vision.processing.annotator import ImageAnnotator
-from fathom.tools.vision.processing.drawer import BoundingBoxGenerator
-from fathom.tools.vision.processing.geometry import GeometryUtils
+from __future__ import annotations
 
-__all__ = [
-    "GeometryUtils",
-    "ImageAnnotator",
-    "BoundingBoxGenerator",
-]
+from fathom.tools.vision.processing.drawer import BoundsGenerator
+
+__all__ = ["BoundsGenerator"]

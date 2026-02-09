@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
-    import yaml  # type: ignore
+    import yaml  # type: ignore[import-untyped]
 except ImportError:
     yaml = None
 
@@ -38,6 +38,7 @@ class HistoryService:
 
         self.__save_json(data=history_data)
         self.__save_yaml(history=history_data["history"])
+        self.__append_text_audit(record=record)
 
     def __load_history(self) -> Dict[str, Any]:
         """
@@ -98,10 +99,11 @@ class HistoryService:
 
         return {
             "step": index,
-            "target": target,
             "command": self.__describe_command(record=record),
             "action_type": record.get("action_type", "wait"),
-            "coordinates": {"bbox": record.get("bbox"), "center": record.get("center")},
+            "target": target,
+            "bounding_box": record.get("bounds"),
+            "center": record.get("center"),
             "metadata": {
                 "success": record.get("success"),
                 "duration": record.get("duration"),
@@ -169,6 +171,18 @@ class HistoryService:
 
         return f"{str(object=action_type).capitalize()} on {target}"
 
+    def __append_text_audit(self, record: Dict[str, Any]) -> None:
+        """
+        Appends a readable audit line to output.txt.
+        Format: Tap on [Target]
+        """
+        path = Path("output.txt")
+        line = self.__describe_command(record=record)
+
+        # Append to file
+        with path.open(mode="a") as handle:
+            handle.write(line + "\n")
+
     def __write_manual_yaml(self, path: Path, steps: List[Dict[str, Any]]) -> None:
         """
         Fallback YAML writer if PyYAML is unavailable.
@@ -181,11 +195,8 @@ class HistoryService:
             lines.append(f'  command: "{step["command"]}"')
             lines.append(f'  action_type: "{step["action_type"]}"')
             lines.append(f'  target: "{step["target"]}"')
-
-            coordinates = step["coordinates"]
-            lines.append(
-                f"  coordinates:\n    bbox: {coordinates.get('bbox')}\n    center: {coordinates.get('center')}"
-            )
+            lines.append(f"  bounding_box: {step.get('bounding_box')}")
+            lines.append(f"  center: {step.get('center')}")
 
             metadata = step["metadata"]
             rationale = str(object=metadata.get("rationale", "")).replace('"', '\\"')

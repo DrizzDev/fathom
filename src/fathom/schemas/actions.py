@@ -1,34 +1,36 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import ActionType
 
 
-class BoundingBox(BaseModel):
+class Bounds(BaseModel):
     """
-    Normalized bounding box (0-1000 scale) for UI elements.
+    Normalized bounds (0-1000 scale) for UI elements.
     """
 
     x: int = Field(ge=0, le=1000, description="Top-left X coordinate (0-1000)")
     y: int = Field(ge=0, le=1000, description="Top-left Y coordinate (0-1000)")
     width: int = Field(ge=0, le=1000, description="Width of the element (0-1000)")
     height: int = Field(ge=0, le=1000, description="Height of the element (0-1000)")
-    coord_system: str = Field(default="normalized", description="Coordinate system used")
+    system: str = Field(
+        default="normalized", description="Coordinate system used", alias="coord_system"
+    )
 
     @property
     def center_x(self) -> int:
         """
-        Calculates the horizontal center of the bounding box.
+        Calculates the horizontal center.
         """
         return self.x + self.width // 2
 
     @property
     def center_y(self) -> int:
         """
-        Calculates the vertical center of the bounding box.
+        Calculates the vertical center.
         """
         return self.y + self.height // 2
 
@@ -55,33 +57,32 @@ class Action(BaseModel):
         default=None, description="Human-friendly name of the target element (e.g., 'Search Bar')"
     )
     label_id: Optional[str] = Field(default=None, description="Numeric label ID from XML grounding")
-    bbox: Optional[BoundingBox] = Field(
-        default=None, description="Bounding box for the interaction"
-    )
+    bounds: Optional[Bounds] = Field(default=None, description="Bounding box for the interaction")
     text: Optional[str] = Field(default=None, description="Text content for typing actions")
     wait_duration: Optional[int] = Field(
         default=None, description="Duration to wait in milliseconds"
     )
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
+    memory_updates: Optional[Dict[str, str]] = Field(
+        default=None, description="Key-value pairs to store in persistent memory"
+    )
 
-    model_config = {"frozen": True, "populate_by_name": True}
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
 
     def to_description(self) -> str:
         """
         Generates a human-readable description of the action.
-        Prioritizes natural language names for test case compatibility.
         """
 
         # Resolve best target description.
-        # Strict Priority: natural_language_target -> fallback logic
         name = self.natural_language_target
 
         if not name or name.lower() in ("element", "ui element", "none", "label", "unknown"):
-            # Fallback to label ID or bbox if NL target is generic/missing
+            # Fallback to label ID or bounds if natural language target is generic/missing
             if self.label_id:
                 name = f"Element (Label {self.label_id})"
-            elif self.bbox:
-                name = f"Element at [{self.bbox.x}, {self.bbox.y}]"
+            elif self.bounds:
+                name = f"Element at [{self.bounds.x}, {self.bounds.y}]"
             else:
                 name = self.target or "UI Element"
 

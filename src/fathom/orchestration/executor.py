@@ -2,31 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass
 from typing import Optional
 
+from fathom.agent.planner import CoordinateConverter
 from fathom.constants import ActionType
 from fathom.exceptions import ToolError
-from fathom.orchestration.context import ExecutionContext
+from fathom.schemas.orchestration import ExecutionContext
+from fathom.schemas.results import ExecutionResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
-from fathom.utils.coordinates import CoordinateConverter
-
-
-@dataclass(frozen=True)
-class ExecutionResult:
-    """
-    Result of step execution attempt.
-    """
-
-    success: bool
-    duration: int
-    pre_hash: str = ""
-    post_hash: str = ""
-    error: Optional[str] = None
-    screen_changed: bool = False
 
 
 class StepExecutor:
@@ -87,22 +73,22 @@ class StepExecutor:
             StepResult with execution details.
         """
 
-        step_ctx = context.start_step(step.step_number)
+        step_ctx = context.start_step(step_number=step.step_number)
         start_time = time.time()
 
         try:
             if pre_capture is None:
                 pre_capture = await self.__capture.capture()
 
-            pre_state = self.__capture.compute_state(pre_capture)
+            pre_state = self.__capture.compute_state(capture=pre_capture)
             pre_hash = pre_state.visual_hash
 
-            result = await self.__execute_with_retry(step)
+            result = await self.__execute_with_retry(step=step)
 
-            await asyncio.sleep(self.__stability_wait)
+            await asyncio.sleep(delay=self.__stability_wait)
 
             post_capture = await self.__capture.capture()
-            post_state = self.__capture.compute_state(post_capture)
+            post_state = self.__capture.compute_state(capture=post_capture)
             post_hash = post_state.visual_hash
 
             screen_changed = pre_hash != post_hash
@@ -118,7 +104,7 @@ class StepExecutor:
                 screen_changed=screen_changed,
             )
 
-            context.complete_step(step_ctx, step_result)
+            context.complete_step(step=step_ctx, result=step_result)
             return step_result
 
         except Exception as exception:
@@ -129,10 +115,10 @@ class StepExecutor:
                 post_hash="",
                 success=False,
                 duration=duration,
-                error=str(exception),
+                error=str(object=exception),
                 screen_changed=False,
             )
-            context.complete_step(step_ctx, step_result)
+            context.complete_step(step=step_ctx, result=step_result)
             return step_result
 
     async def __execute_with_retry(self, step: Step) -> ExecutionResult:
@@ -150,21 +136,21 @@ class StepExecutor:
 
         for attempt in range(self.__max_retries + 1):
             try:
-                result = await self.__execute_action(step)
+                result = await self.__execute_action(step=step)
                 if result.success:
                     return result
                 last_error = result.error
 
             except ToolError as exception:
-                last_error = str(exception)
+                last_error = str(object=exception)
                 if not exception.retryable:
                     break
 
             except Exception as exception:
-                last_error = str(exception)
+                last_error = str(object=exception)
 
             if attempt < self.__max_retries:
-                await asyncio.sleep(0.5 * (attempt + 1))
+                await asyncio.sleep(delay=0.5 * (attempt + 1))
 
         return ExecutionResult(
             success=False,
@@ -188,11 +174,11 @@ class StepExecutor:
         screen_size = await self.__device.get_screen_size()
 
         width, height = screen_size
-        converter = CoordinateConverter(width, height)
+        converter = CoordinateConverter(screen_width=width, screen_height=height)
 
         # Handle special actions that don't need device interaction
         if action.action_type == ActionType.WAIT:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(delay=1.0)
             duration_ms = int((time.time() - start_time) * 1000)
             return ExecutionResult(success=True, duration=duration_ms)
 
@@ -205,23 +191,25 @@ class StepExecutor:
             device_result = None
 
             if action.action_type == ActionType.TAP:
-                if action.bbox:
-                    x, y = converter.center_to_pixels(action.bbox)
+                if action.bounds:
+                    x, y = converter.center_to_pixels(bounds=action.bounds)
                 else:
                     x, y = width // 2, height // 2
-                device_result = await self.__device.tap(x, y)
+                device_result = await self.__device.tap(x=x, y=y)
 
             elif action.action_type == ActionType.TYPE:
-                device_result = await self.__device.type_text(action.text or "")
+                device_result = await self.__device.type_text(text=action.text or "")
 
             elif action.action_type == ActionType.SWIPE:
-                if action.bbox:
-                    x1, y1, x2, y2 = converter.swipe_coordinates(action.bbox, "up")
+                if action.bounds:
+                    x1, y1, x2, y2 = converter.swipe_coordinates(
+                        bounds=action.bounds, direction="up"
+                    )
                 else:
                     cx, cy = width // 2, height // 2
                     x1, y1 = cx, cy + 300
                     x2, y2 = cx, cy - 300
-                device_result = await self.__device.swipe(x1, y1, x2, y2)
+                device_result = await self.__device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
 
             elif action.action_type == ActionType.SCROLL:
                 cx, cy = width // 2, height // 2
@@ -231,11 +219,11 @@ class StepExecutor:
                 )
 
             elif action.action_type == ActionType.LONG_PRESS:
-                if action.bbox:
-                    x, y = converter.center_to_pixels(action.bbox)
+                if action.bounds:
+                    x, y = converter.center_to_pixels(bounds=action.bounds)
                 else:
                     x, y = width // 2, height // 2
-                device_result = await self.__device.long_press(x, y)
+                device_result = await self.__device.long_press(x=x, y=y)
 
             elif action.action_type == ActionType.BACK:
                 device_result = await self.__device.back()
@@ -258,4 +246,4 @@ class StepExecutor:
             )
         except Exception as exception:
             duration = int((time.time() - start_time) * 1000)
-            return ExecutionResult(success=False, duration=duration, error=str(exception))
+            return ExecutionResult(success=False, duration=duration, error=str(object=exception))

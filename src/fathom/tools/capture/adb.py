@@ -4,29 +4,17 @@ import asyncio
 import hashlib
 import io
 import time
-from dataclasses import dataclass
 from logging import getLogger
 from typing import Optional, Union
 
 from PIL import Image
 
+from fathom.schemas.configuration import ADBCaptureConfig
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.tools.capture.base import CaptureTool
 from fathom.tools.capture.hasher import FastHasher, HybridHasher
 
 logger = getLogger(name=__name__)
-
-
-@dataclass(frozen=True)
-class ADBCaptureConfig:
-    """
-    Configuration for ADB capture tool.
-    """
-
-    adb_path: str = "adb"
-    timeout: float = 10.0
-    use_hybrid_hash: bool = True
-    device_serial: Optional[str] = None
 
 
 class ADBCaptureTool(CaptureTool):

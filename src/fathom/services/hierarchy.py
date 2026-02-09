@@ -10,7 +10,7 @@ from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision.processing.annotator import ImageAnnotator
-from fathom.tools.vision.processing.drawer import BoundingBoxGenerator
+from fathom.tools.vision.processing.drawer import BoundsGenerator
 
 
 class HierarchyService:
@@ -38,13 +38,17 @@ class HierarchyService:
         """
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            screenshot_path = self.__save_screenshot(screen.image, timestamp)
+            screenshot_path = self.__save_screenshot(data=screen.image, timestamp=timestamp)
 
             # Persist raw XML in background
-            self.__save_xml(xml, timestamp)
+            self.__save_xml(content=xml, timestamp=timestamp)
 
-            elements = self.__parse_elements(xml, screenshot_path, action_type)
-            annotated_path = self.__annotate(screenshot_path, timestamp, elements)
+            elements = self.__parse_elements(
+                xml=xml, image_path=screenshot_path, action=action_type
+            )
+            annotated_path = self.__annotate(
+                source=screenshot_path, timestamp=timestamp, elements=elements
+            )
 
             if not annotated_path:
                 return None, {}
@@ -95,8 +99,8 @@ class HierarchyService:
             xml = xml[start : end + 1]
 
         root = ET.fromstring(xml)  # nosec
-        elements, self.__label_map = BoundingBoxGenerator.create_element(
-            root, str(image_path), action=action or ActionType.TAP
+        elements, self.__label_map = BoundsGenerator.create_element(
+            root=root, image_path=str(image_path), action=action or ActionType.TAP
         )
         return elements
 
@@ -109,7 +113,9 @@ class HierarchyService:
         directory = Path("assets/annotated")
         directory.mkdir(parents=True, exist_ok=True)
         destination = directory / f"{timestamp}.png"
-        path = ImageAnnotator.annotate(str(source), str(destination), elements)
+        path = ImageAnnotator.annotate(
+            image_path=str(source), output_path=str(destination), elements=elements
+        )
         return Path(path) if path else None
 
     def __build_capture(self, original: ScreenCapture, path: Path) -> ScreenCapture:

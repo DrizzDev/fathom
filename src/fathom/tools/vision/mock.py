@@ -3,74 +3,20 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
-from fathom.schemas.actions import Action, BoundingBox
+from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.tools.vision.base import VisionTool
 
 
-class MockVisionTool(VisionTool):
+class MockGeminiVisionTool(VisionTool):
     """
-    Mock vision tool for testing.
-    Returns configurable responses for testing agent behavior.
+    Mock vision tool for testing without API calls.
     """
 
-    def __init__(
-        self,
-        *,
-        complete_after_steps: int = 5,
-        default_action: Optional[Action] = None,
-    ) -> None:
-        """
-        Initialize mock vision tool.
-
-        Args:
-            default_action: Default action to return. If None, uses tap.
-            complete_after_steps: Steps after which to return complete.
-        """
-
-        self.__default_action = default_action or Action(
-            confidence=0.9,
-            target="mock element",
-            action_type=ActionType.TAP,
-            rationale="Mock default action",
-            bbox=BoundingBox(x=500, y=500, width=100, height=100),
-        )
-        self.__call_count = 0
-        self.__history: List[Dict[str, Any]] = []
-        self.__complete_after = complete_after_steps
-
-    @property
-    def name(self) -> str:
-        """
-        Tool name.
-        """
-
-        return "mock_vision"
-
-    @property
-    def provider(self) -> Any:
-        """
-        Returns a mock provider.
-        """
-
-        return None
-
-    @property
-    def call_count(self) -> int:
-        """
-        Number of analyze calls made.
-        """
-
-        return self.__call_count
-
-    @property
-    def history(self) -> List[Dict[str, Any]]:
-        """
-        History of analyze calls.
-        """
-
-        return self.__history.copy()
+    def __init__(self, *, always_complete: bool = False) -> None:
+        self.__always_complete = always_complete
+        self.__count = 0
 
     async def analyze(
         self,
@@ -84,69 +30,49 @@ class MockVisionTool(VisionTool):
     ) -> AnalysisResult:
         """
         Return mock analysis result.
-
-        Args:
-            capture: Ignored in mock.
-            intent: Recorded for history.
-            context: Recorded for history.
-            failures: If present, returns different action.
-            use_xml: Whether using XML mode.
-            elements: Grounding elements.
-
-        Returns:
-            Configured mock result.
         """
+        self.__count += 1
 
-        self.__call_count += 1
-        self.__history.append(
-            {
-                "intent": intent,
-                "context": context,
-                "use_xml": use_xml,
-                "failures": failures,
-                "elements": elements,
-                "screen_size": len(capture.image),
-            }
-        )
-
-        is_complete = self.__call_count >= self.__complete_after
-
-        if is_complete:
-            action = Action(
-                confidence=1.0,
-                target="Goal achieved",
-                action_type=ActionType.COMPLETE,
-                rationale="Goal completion threshold reached",
+        if self.__always_complete or self.__count > 5:
+            return AnalysisResult(
+                action=Action(
+                    action_type=ActionType.COMPLETE,
+                    target="Goal achieved",
+                    confidence=0.95,
+                    rationale="Task completed successfully",
+                ),
+                alternatives=[],
+                reasoning="Goal appears complete",
+                screen_description="Success screen",
+                is_goal_complete=True,
             )
-        else:
-            action = self.__default_action
+
+        kind = [
+            ActionType.TAP,
+            ActionType.SCROLL,
+            ActionType.TAP,
+            ActionType.TYPE,
+            ActionType.TAP,
+        ][self.__count % 5]
 
         return AnalysisResult(
-            action=action,
-            is_goal_complete=is_complete,
+            action=Action(
+                action_type=kind,
+                target=f"Mock target for {intent}",
+                bounds=Bounds(x=400, y=400, width=200, height=100),
+                text="test" if kind == ActionType.TYPE else None,
+                confidence=0.8,
+                rationale=f"Mock reasoning step {self.__count}",
+            ),
+            alternatives=[],
+            reasoning=f"Mock analysis step {self.__count}",
             screen_description="Mock screen",
-            reasoning=f"Mock reasoning for step {self.__call_count}",
-            metrics={"memory_retrieval": 0.01, "llm_analysis": 0.05},
+            is_goal_complete=False,
         )
 
-    async def check_completion(
-        self,
-        intent: str,
-        capture: ScreenCapture,
-    ) -> bool:
+    async def check_completion(self, intent: str, capture: ScreenCapture) -> bool:
         """
-        Check if mock should report completion.
-
-        Returns:
-            True if call count exceeds complete_after_steps.
+        Check mock completion.
         """
-
-        return self.__call_count >= self.__complete_after
-
-    def reset(self) -> None:
-        """
-        Reset mock state.
-        """
-
-        self.__call_count = 0
-        self.__history.clear()
+        result = await self.analyze(intent=intent, capture=capture)
+        return result.is_goal_complete

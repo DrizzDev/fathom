@@ -2,58 +2,15 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from logging import getLogger
 from typing import ClassVar, List, Optional, Set
 
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action
+from fathom.schemas.reasoning import CompletionSignal
 from fathom.tools.vision import AnalysisResult
 
 logger = getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class CompletionSignal:
-    """
-    Signals that indicate intent completion.
-    Captures evidence that the goal has been achieved.
-    """
-
-    evidence: str = ""
-    llm_confidence: float = 0.0
-
-    keyword_match: bool = False
-    expected_screen: bool = False
-    success_indicator: bool = False
-
-    @property
-    def is_complete(self) -> bool:
-        """
-        Determine if signals indicate completion.
-
-        Uses weighted scoring:
-        - LLM confidence > 0.8: high weight
-        - Keyword match: medium weight
-        - Success indicator: medium weight
-        - Expected screen: low weight (may be intermediate)
-        """
-
-        score = 0.0
-
-        if self.llm_confidence >= 0.8:
-            score += 0.5
-        elif self.llm_confidence >= 0.5:
-            score += 0.25
-
-        if self.keyword_match:
-            score += 0.3
-        if self.success_indicator:
-            score += 0.15
-        if self.expected_screen:
-            score += 0.1
-
-        return score >= 0.5
 
 
 class CompletionMatcher(ABC):
@@ -208,7 +165,7 @@ class Reasoner:
             "search": {"results", "found"},
             "delete": {"deleted", "removed"},
             "submit": {"submitted", "received"},
-            "cancel": {"cancelled", "canceled"},
+            "cancel": {"cancelled"},
             "sign up": {"account created", "welcome", "verify"},
             "add to cart": {"added to cart", "cart", "item added"},
             "checkout": {"order placed", "payment", "confirmation"},

@@ -11,11 +11,11 @@ from rich.table import Table
 
 from fathom.base.logger import BaseLogger
 from fathom.exceptions import FathomError
-from fathom.services.runner import FathomRunner
+from fathom.orchestration.runner import FathomRunner
 from fathom.settings.env import FathomSettings
 
-logger = getLogger(__name__)
 console = Console()
+logger = getLogger(__name__)
 
 
 class FathomCLI:
@@ -27,6 +27,7 @@ class FathomCLI:
         """
         Initialize CLI with settings.
         """
+
         self.settings = settings
         self.runner = FathomRunner(settings)
 
@@ -35,18 +36,19 @@ class FathomCLI:
         Configure signal handlers for graceful shutdown.
         Must be called within an active event loop.
         """
+
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
                 loop = asyncio.get_running_loop()
                 loop.add_signal_handler(sig, self.__handle_interrupt)
             except (NotImplementedError, ValueError, RuntimeError):
-                # Fallback for systems without add_signal_handler or if loop isn't running
                 pass
 
     def __handle_interrupt(self) -> None:
         """
         Handler called when a signal is received.
         """
+
         console.print("\n[bold yellow]Stopping gracefully... Please wait.[/bold yellow]")
         self.runner.cancel()
 
@@ -60,6 +62,7 @@ class FathomCLI:
         """
         Run an intent workflow with rich UI.
         """
+
         self.__setup_signals()
 
         console.print(
@@ -76,7 +79,7 @@ class FathomCLI:
                     max_steps=max_steps,
                     device_serial=device_serial,
                     use_xml=kwargs.get("use_xml", False),
-                    prompt_version=kwargs.get("prompt_version", "v2_analytical"),
+                    prompt_version=kwargs.get("prompt_version"),
                 )
 
             # Execution Summary
@@ -102,6 +105,7 @@ class FathomCLI:
 
                 for operation, data in result.metrics.items():
                     audit_table.add_row(operation, f"{data['total']:.2f}s", f"{data['avg']:.2f}s")
+
                 console.print(audit_table)
 
             # Memory / Knowledge Graph Summary
@@ -148,6 +152,7 @@ class FathomCLI:
         """
         Run an exploration workflow with rich UI.
         """
+
         self.__setup_signals()
 
         console.print(
@@ -164,12 +169,15 @@ class FathomCLI:
                 )
 
             table = Table(title="Exploration Results", border_style="green")
+
             table.add_column("Metric", style="cyan")
             table.add_column("Value", style="magenta")
+
             table.add_row("Unique Screens", str(result.unique_screens))
             table.add_row("Total Actions", str(result.total_actions))
             table.add_row("Total Transitions", str(result.total_transitions))
             table.add_row("Coverage", f"{result.coverage_percentage:.1f}%")
+
             console.print(table)
             return 0
 
@@ -190,6 +198,7 @@ def main() -> int:
     """
     CLI entry point.
     """
+
     parser = argparse.ArgumentParser(description="Fathom: AI-powered mobile automation agent")
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
@@ -203,7 +212,7 @@ def main() -> int:
     run_parser.add_argument(
         "--prompt-version",
         type=str,
-        default="v2_analytical",
+        default=None,
         help="Version of prompt/toolset to use",
     )
 
@@ -219,6 +228,7 @@ def main() -> int:
 
     if hasattr(args, "api_key") and args.api_key:
         settings.gemini_api_key = args.api_key
+
     if hasattr(args, "verbose") and args.verbose:
         settings.log_level = "DEBUG"
 
@@ -242,9 +252,9 @@ def main() -> int:
                 cli.run(
                     intent=args.intent,
                     use_xml=args.use_xml,
-                    prompt_version=args.prompt_version,
                     max_steps=args.max_steps,
                     device_serial=args.serial,
+                    prompt_version=args.prompt_version,
                 )
             )
         elif args.command == "explore":

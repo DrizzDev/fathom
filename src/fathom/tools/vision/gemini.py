@@ -7,9 +7,17 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
-from fathom.interfaces import IImageStorage, IMemoryProvider, IPromptProvider, IVisionProvider
+from fathom.interfaces import (
+    IImageStorage,
+    ILedger,
+    IMemoryProvider,
+    IPromptProvider,
+    IVisionProvider,
+)
+from fathom.prompts.factory import PromptFactory
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.tools.definitions import ToolRegistry
 from fathom.tools.vision.base import VisionTool
 from fathom.utils.image import ImageProcessor
 
@@ -18,13 +26,14 @@ logger = getLogger(name=__name__)
 
 class GeminiVisionTool(VisionTool):
     """
-    SOLID Orchestrator for Vision Analysis.
+    SOLID Orchestrator for Vision Analysis using Native Tool Calling.
     """
 
     def __init__(
         self,
         model: IVisionProvider,
         memory: IMemoryProvider,
+        ledger: ILedger,
         prompts: IPromptProvider,
         cloud_storage: IImageStorage,
         local_storage: IImageStorage,
@@ -32,10 +41,12 @@ class GeminiVisionTool(VisionTool):
     ) -> None:
         self.__model = model
         self.__memory = memory
+        self.__ledger = ledger
         self.__prompts = prompts
         self.__cloud_storage = cloud_storage
         self.__local_storage = local_storage
         self.__version = version
+        self.__builder = PromptFactory.get_builder(model_name="gemini")
 
     @property
     def version_id(self) -> str:
@@ -62,58 +73,62 @@ class GeminiVisionTool(VisionTool):
         elements: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
         """
-        Coordinates the analysis flow using injected providers.
+        Coordinates the analysis flow using Native Tool Calling.
         """
         asyncio.create_task(coro=self.__persist(data=capture.image))
 
-        # Use the stable hash from state or fallback to MD5
-        visual_hash = (
+        # 1. BRAIN RETRIEVAL
+        fingerprint = (
             capture.state.visual_hash
             if capture.state
             else hashlib.md5(string=capture.image, usedforsecurity=False).hexdigest()[:16]
         )
 
-        memory_start_time = time.time()
-        knowledge = await self.__memory.retrieve_knowledge(visual_hash=visual_hash)
-        memory_duration = time.time() - memory_start_time
+        start = time.time()
+        knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
+        retrieval = time.time() - start
 
-        instruction_template = self.__prompts.get_instruction(version_id=self.__version)
-
-        # Prepare context strings for the template
-        context_string = context if context else "None"
-        failure_string = "\n".join(failures) if failures else "None"
-
-        # Format elements manifest for dual-channel grounding (Flash/XML)
-        elements_manifest = self.__format_elements(elements=elements)
-
-        instruction = instruction_template.format(
+        # 2. PROMPT & TOOL SCOPING
+        instruction = self.__builder.build(
             intent=intent,
-            context=context_string,
-            failures=failure_string,
-            elements=elements_manifest,
+            history=context,
+            memory=await self.__ledger.get_all(),
+            hints={"use_xml": use_xml},
         )
 
-        tools = {"function_declarations": self.__prompts.get_tools(version_id=self.__version)}
+        allowed = ["execute_ui", "store_memory", "recall_memory"]
+        if any(keyword in intent.lower() for keyword in ["verify", "check", "confirm", "validate"]):
+            allowed.extend(["validate_state", "verify_goal"])
 
-        user_content = self.__build_content(
+        definitions = ToolRegistry.get_all_definitions()
+        tools = {
+            "function_declarations": [
+                definition
+                for definition in definitions["function_declarations"]
+                if definition["name"] in allowed
+            ]
+        }
+
+        # 3. CONTENT ASSEMBLY
+        manifest = self.__format_elements(elements=elements)
+        payload = self.__build_payload(
             intent=intent,
             context=context,
             failures=failures,
             knowledge=knowledge,
             screen=capture.image,
-            elements_manifest=elements_manifest,
+            manifest=manifest,
         )
 
-        analysis_start_time = time.time()
-        analysis = await self.__model.analyze(
-            system_instruction=instruction, user_content=user_content, tools=tools
-        )
-        analysis_duration = time.time() - analysis_start_time
+        # 4. EXECUTION
+        commence = time.time()
+        analysis = await self.__call_api(instruction=instruction, payload=payload, tools=tools)
+        duration = time.time() - commence
 
-        # Populate memory count for decoupled UI reporting
+        # 5. METRICS & BRAIN UPDATE
         analysis.memories = len(knowledge.get("previous_actions", []))
-        analysis.metrics["llm_analysis"] = analysis_duration
-        analysis.metrics["memory_retrieval"] = memory_duration
+        analysis.metrics["llm_analysis"] = duration
+        analysis.metrics["memory_retrieval"] = retrieval
 
         await self.__memory.store_observation(
             screen=ScreenState(
@@ -122,29 +137,44 @@ class GeminiVisionTool(VisionTool):
                     string=capture.activity.encode(), usedforsecurity=False
                 ).hexdigest()[:8],
                 structural_hash="0",
-                visual_hash=visual_hash,
+                visual_hash=fingerprint,
                 timestamp=int(time.time() * 1000),
             ),
             description=analysis.screen_description,
         )
 
+        return self.__parse_response(analysis=analysis)
+
+    async def __call_api(
+        self, instruction: str, payload: List[Any], tools: Dict[str, Any]
+    ) -> AnalysisResult:
+        """
+        Delegates the actual LLM call to the underlying provider.
+        """
+        return await self.__model.analyze(
+            system_instruction=instruction, user_content=payload, tools=tools
+        )
+
+    def __parse_response(self, analysis: AnalysisResult) -> AnalysisResult:
+        """
+        Maps or enriches the provider's response if needed.
+        """
         return analysis
 
     async def check_completion(self, intent: str, capture: ScreenCapture) -> bool:
         """
         Check if intent is complete.
         """
-
         result = await self.analyze(intent=intent, capture=capture)
         return result.is_goal_complete
 
-    def __build_content(
+    def __build_payload(
         self,
         intent: str,
         screen: bytes,
         knowledge: Dict[str, Any],
         context: Optional[str] = None,
-        elements_manifest: str = "N/A",
+        manifest: str = "N/A",
         failures: Optional[List[str]] = None,
     ) -> List[Any]:
         """
@@ -152,32 +182,32 @@ class GeminiVisionTool(VisionTool):
         Stable intent at top, dynamic image/history at bottom for KV-cache.
         """
 
-        content: List[Any] = [f"Goal: {intent}"]
+        payload: List[Any] = [f"Goal: {intent}"]
 
         # 1. State Memory (Specific to this screen hash)
         if knowledge.get("description"):
-            content.append(f"Screen Info: {knowledge['description']}")
+            payload.append(f"Screen Info: {knowledge['description']}")
 
         history = knowledge.get("previous_actions", [])
         if history:
-            content.append(f"Past actions on this specific screen: {json.dumps(obj=history)}")
+            payload.append(f"Past actions on this specific screen: {json.dumps(obj=history)}")
 
         # 2. Dynamic Session Context (Changes every step)
         if context:
-            content.append(f"Recent turns (global): {context}")
+            payload.append(f"Recent turns (global): {context}")
 
         if failures:
-            content.append(f"Failures on this activity: {', '.join(failures)}")
+            payload.append(f"Failures on this activity: {', '.join(failures)}")
 
         # 3. Element Manifest (If present)
-        if elements_manifest != "N/A":
-            content.append(f"Element Manifest: {elements_manifest}")
+        if manifest != "N/A":
+            payload.append(f"Element Manifest: {manifest}")
 
         # 4. Image (Most dynamic, must be last)
         optimized = ImageProcessor.optimize_for_vision(image_data=screen)
-        content.append(optimized)
+        payload.append(optimized)
 
-        return content
+        return payload
 
     def __format_elements(self, elements: Optional[Dict[str, Any]]) -> str:
         """
@@ -190,19 +220,19 @@ class GeminiVisionTool(VisionTool):
 
         lines = []
 
-        for label_id, information in elements.items():
-            if label_id.startswith("__"):  # Skip internal scale factors
+        for label, information in elements.items():
+            if label.startswith("__"):  # Skip internal scale factors
                 continue
 
-            class_name = str(object=information.get("class", "View")).split(sep=".")[-1]
+            kind = str(object=information.get("class", "View")).split(sep=".")[-1]
             text = information.get("text", "").strip()
-            description = information.get("content-desc", "").strip()
+            detail = information.get("content-desc", "").strip()
 
-            value = f"[{label_id}] {class_name}"
+            value = f"[{label}] {kind}"
             if text:
                 value += f" | text: '{text}'"
-            if description:
-                value += f" | description: '{description}'"
+            if detail:
+                value += f" | description: '{detail}'"
             lines.append(value)
 
         return "\n".join(lines) if lines else "No interactive elements found."

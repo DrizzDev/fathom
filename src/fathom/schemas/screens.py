@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ScreenState(BaseModel):
@@ -11,7 +11,7 @@ class ScreenState(BaseModel):
     Uses a hybrid 3-layer hashing approach for efficient screen comparison.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
     activity: str = Field(description="Current activity/screen identifier")
     timestamp: int = Field(description="Capture timestamp in milliseconds")
@@ -55,7 +55,7 @@ class ScreenCapture(BaseModel):
     Screen capture with image data and metadata.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
     width: int = Field(gt=0, description="Screen width in pixels")
     height: int = Field(gt=0, description="Screen height in pixels")

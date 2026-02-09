@@ -30,7 +30,7 @@ class PromptsService(IPromptProvider):
         Retrieves system instruction template for a version.
         """
 
-        return self.__instructions.get(version_id, PRO_XML_PROMPT)
+        return str(self.__instructions.get(version_id, PRO_XML_PROMPT))
 
     def select_version(self, model_name: str, use_xml: bool) -> str:
         """

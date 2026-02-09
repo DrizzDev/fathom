@@ -1,120 +1,175 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from collections import deque
+from typing import Any, Deque, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from fathom.schemas.steps import StepRecord, StepResult
+from fathom.schemas.actions import Action
 
 
-class WorkflowState(BaseModel):
-    """Fully serializable workflow state for checkpointing.
+class LoopDetector(BaseModel):
+    """
+    Detects when agent is stuck in a loop.
 
-    This model is designed to be Temporal-compatible with all state
-    serializable via model_dump(mode='json').
+    Uses a sliding window of screen hashes to detect repeated states.
+    Implements exponential backoff for recovery attempts.
     """
 
-    workflow_id: str = Field(description="Unique workflow identifier")
-    intent: str = Field(description="Intent being executed")
-    step_count: int = Field(default=0, ge=0, description="Total steps executed")
+    threshold: int = Field(default=3, description="Screen repetition threshold")
+    window_size: int = Field(default=5, description="Size of the sliding window")
 
-    recent_screens: List[str] = Field(
-        default_factory=list,
-        description="Recent screen hashes (bounded)",
-    )
-    recent_actions: List[str] = Field(
-        default_factory=list,
-        description="Recent action descriptions (bounded)",
-    )
-    completed_steps: List[StepRecord] = Field(
-        default_factory=list,
-        description="All completed step records",
-    )
+    __max_recovery: int = PrivateAttr(default=3)
+    __recovery_attempts: int = PrivateAttr(default=0)
+    __recent_hashes: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=5))
+    __recent_actions: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=5))
 
-    is_complete: bool = Field(default=False)
-    is_stuck: bool = Field(default=False)
-    is_cancelled: bool = Field(default=False)
-    final_message: Optional[str] = Field(default=None)
-
-    max_history: int = Field(default=10, ge=1, le=100)
-
-    def record_step(self, result: StepResult) -> None:
-        """Record a completed step.
-
-        Args:
-            result: Result of the executed step.
+    def record(self, screen_hash: str, action_description: Optional[str] = None) -> None:
         """
-        self.step_count += 1
-        self.recent_screens.append(result.post_hash)
-        self.recent_actions.append(result.step.action.to_description())
-        self.completed_steps.append(result.to_record())
-
-        if len(self.recent_screens) > self.max_history:
-            self.recent_screens = self.recent_screens[-self.max_history :]
-        if len(self.recent_actions) > self.max_history:
-            self.recent_actions = self.recent_actions[-self.max_history :]
-
-        self.__detect_stuck()
-
-    def __detect_stuck(self) -> None:
+        Record a screen hash and optionally an action description.
         """
-        Detect if agent is stuck in a loop.
+
+        self.__recent_hashes.append(screen_hash)
+
+        if action_description:
+            self.__recent_actions.append(action_description)
+
+    def is_stuck(self) -> bool:
         """
-        if len(self.recent_screens) >= 3:
-            last_three = self.recent_screens[-3:]
-            if len(set(last_three)) == 1:
-                self.is_stuck = True
-
-    def checkpoint(self) -> Dict[str, object]:
+        Check if agent appears stuck in a loop.
         """
-        Return checkpoint data for Temporal persistence.
+
+        if len(self.__recent_hashes) < self.threshold:
+            return False
+
+        # Check for repeated screens
+        hash_counts: Dict[str, int] = {}
+        for screen_hash in self.__recent_hashes:
+            hash_counts[screen_hash] = hash_counts.get(screen_hash, 0) + 1
+            if hash_counts[screen_hash] >= self.threshold:
+                return True
+
+        # Check for repeated actions
+        if len(self.__recent_actions) >= self.threshold:
+            action_counts: Dict[str, int] = {}
+            for action_description in self.__recent_actions:
+                action_counts[action_description] = action_counts.get(action_description, 0) + 1
+                if action_counts[action_description] >= self.threshold:
+                    return True
+
+        return False
+
+    def can_recover(self) -> bool:
         """
-        return self.model_dump(mode="json")
+        Check if recovery is still possible.
+        """
+
+        return self.__recovery_attempts < self.__max_recovery
+
+    def record_recovery_attempt(self) -> int:
+        """
+        Record a recovery attempt and return the attempt number.
+        """
+
+        self.__recovery_attempts += 1
+        return self.__recovery_attempts
+
+    def reset(self) -> None:
+        """
+        Reset loop detection state.
+        """
+
+        self.__recent_hashes.clear()
+        self.__recent_actions.clear()
+
+        self.__recovery_attempts = 0
 
 
-class ExecutionContext(BaseModel):
-    """Execution context passed between steps.
-
-    Designed to be serializable for workflow checkpointing.
+class ActionHistory(BaseModel):
+    """
+    Tracks action history for context building with token optimization.
     """
 
-    workflow_id: str = Field(description="Parent workflow identifier")
-    intent: str = Field(description="Current intent")
-    step_count: int = Field(default=0, ge=0)
-    max_history: int = Field(default=10, ge=1, le=100)
+    max_size: int = Field(default=10, description="Maximum history size")
 
-    recent_actions: List[str] = Field(default_factory=list)
-    recent_screens: List[str] = Field(default_factory=list)
-    failures: List[str] = Field(default_factory=list)
-    clarifications: List[str] = Field(default_factory=list)
+    __failure_count: int = PrivateAttr(default=0)
+    __actions: Deque[Dict[str, Any]] = PrivateAttr(default_factory=lambda: deque(maxlen=10))
 
-    def add_action(self, description: str) -> None:
-        """
-        Add an action to recent history.
-        """
-        self.recent_actions.append(description)
-        if len(self.recent_actions) > self.max_history:
-            self.recent_actions = self.recent_actions[-self.max_history :]
-        self.step_count += 1
+    model_config = ConfigDict(frozen=True)
 
-    def add_screen(self, screen_hash: str) -> None:
-        """
-        Add a screen hash to recent history.
-        """
-        self.recent_screens.append(screen_hash)
-        if len(self.recent_screens) > self.max_history:
-            self.recent_screens = self.recent_screens[-self.max_history :]
+    def model_post_init(self, __context: Any) -> None:
+        object.__setattr__(self, "_ActionHistory__actions", deque(maxlen=self.max_size))
 
-    def add_failure(self, message: str) -> None:
+    def record_action(self, action: Action, success: bool, activity: str) -> None:
         """
-        Record a failure for context.
+        Record an action with its outcome and associated activity.
         """
-        self.failures.append(message)
-        if len(self.failures) > 5:
-            self.failures = self.failures[-5:]
 
-    def to_dict(self) -> Dict[str, object]:
+        self.__actions.append(
+            {
+                "success": success,
+                "activity": activity,
+                "type": action.action_type.value.upper(),
+                "full_description": action.to_description(),
+                "target": action.natural_language_target or action.label_id or "UI",
+            }
+        )
+        if not success:
+            object.__setattr__(self, "_ActionHistory__failure_count", self.__failure_count + 1)
+
+    def get_compact_history(self) -> str:
         """
-        Serialize for passing to tools.
+        Returns a token-optimized representation of history.
+        Format: TYPE:Target:Result
         """
-        return self.model_dump(mode="json")
+
+        parts = []
+
+        for action in self.__actions:
+            result_indicator = "✓" if action["success"] else "✗"
+            parts.append(f"{action['type']}:{action['target']}:{result_indicator}")
+
+        return " | ".join(parts) if parts else "None"
+
+    def get_context(self) -> List[str]:
+        """
+        Returns list of action descriptions.
+        """
+
+        return [action["full_description"] for action in self.__actions]
+
+    def get_activity_failures(self, current_activity: str) -> List[str]:
+        """
+        Returns only failures that occurred on the current activity.
+        """
+
+        return [
+            f"{action['type']} on {action['target']}"
+            for action in self.__actions
+            if not action["success"] and action["activity"] == current_activity
+        ]
+
+    def get_stats(self) -> Dict[str, int]:
+        """
+        Get statistics about action history.
+        """
+
+        total_count = len(self.__actions)
+
+        return {
+            "total": total_count,
+            "failure": self.__failure_count,
+            "success": total_count - self.__failure_count,
+        }
+
+    def has_repeated_failure(self, action: Action) -> bool:
+        """
+        Check if this exact action has failed recently.
+        """
+
+        description = action.to_description()
+
+        return any(
+            not historical["success"] and historical["full_description"] == description
+            for historical in self.__actions
+        )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ADBConfig(BaseModel):
@@ -10,7 +10,7 @@ class ADBConfig(BaseModel):
     Configuration for ADB device tool.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
     adb_path: str = Field(default="adb", description="Path to adb executable")
     device_serial: Optional[str] = Field(default=None, description="Target device serial")
@@ -21,12 +21,26 @@ class ADBConfig(BaseModel):
     long_press_duration: int = Field(default=1000, description="Long press duration in ms")
 
 
+class ADBCaptureConfig(BaseModel):
+    """
+    Configuration for ADB capture tool.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    adb_path: str = Field(default="adb", description="Path to the ADB executable")
+    timeout: float = Field(default=10.0, description="Timeout for capture operations in seconds")
+
+    use_hybrid_hash: bool = Field(default=True, description="Whether to use hybrid hashing")
+    device_serial: Optional[str] = Field(default=None, description="Specific device serial number")
+
+
 class GeminiConfig(BaseModel):
     """
     Configuration for Gemini vision tool.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
     api_key: Optional[str] = Field(
         default=None, description="Gemini API key (optional if using Vertex AI)"
@@ -55,7 +69,7 @@ class HasherConfig(BaseModel):
     Configuration for hybrid hasher.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
     use_perceptual: bool = Field(default=True, description="Enable perceptual hashing")
     use_structural: bool = Field(default=True, description="Enable structural hashing")
@@ -67,7 +81,7 @@ class WorkflowConfig(BaseModel):
     Configuration for workflow execution.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
     max_steps: int = Field(default=20, ge=1, le=1000, description="Maximum steps")
     step_timeout: float = Field(

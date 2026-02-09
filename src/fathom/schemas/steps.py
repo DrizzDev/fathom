@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.schemas.actions import Action
 
@@ -12,7 +12,7 @@ class Step(BaseModel):
     A planned step containing an action and metadata.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
     action: Action = Field(description="The action to be executed in this step")
     screen_hash: str = Field(description="Visual hash of the screen state before the action")
@@ -29,7 +29,7 @@ class StepResult(BaseModel):
     The outcome of an executed step.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
     step: Step = Field(description="The original step definition")
     success: bool = Field(description="Whether the device execution reported success")
@@ -46,14 +46,14 @@ class StepResult(BaseModel):
         Converts the result into a serializable record for persistence.
         """
 
-        if self.step.action.bbox:
-            box = self.step.action.bbox
-            bbox = [box.x, box.y, box.x + box.width, box.y + box.height]
+        if self.step.action.bounds:
+            box = self.step.action.bounds
+            bounds = [box.x, box.y, box.x + box.width, box.y + box.height]
         else:
-            bbox = None
+            bounds = None
 
         return StepRecord(
-            bbox=bbox,
+            bounds=bounds,
             success=self.success,
             duration=self.duration,
             center=absolute_center,
@@ -72,7 +72,7 @@ class StepRecord(BaseModel):
     Persistence-optimized representation of an executed step.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
     step_number: int = Field(ge=0, description="Step index")
     action_type: str = Field(min_length=1, description="Action category")
@@ -88,7 +88,7 @@ class StepRecord(BaseModel):
     screen_changed: bool = Field(description="Visual transition status")
     duration: int = Field(ge=0, description="Duration in milliseconds")
 
-    bbox: Optional[List[int]] = Field(
+    bounds: Optional[List[int]] = Field(
         default=None, description="Normalized [x1, y1, x2, y2] bounds"
     )
     center: Optional[List[int]] = Field(default=None, description="Absolute [x, y] coordinates")

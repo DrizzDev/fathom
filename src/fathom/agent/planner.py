@@ -1,33 +1,18 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
 from logging import getLogger
 from typing import Any, Dict, Optional, Tuple
 
 from fathom.agent.reasoner import Reasoner
 from fathom.agent.state import AgentState
-from fathom.schemas.actions import Action, BoundingBox
+from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
-from fathom.tools.vision import AnalysisResult, VisionTool
+from fathom.tools.vision import VisionTool
 
 logger = getLogger(name=__name__)
-
-
-@dataclass(frozen=True)
-class PlanResult:
-    """
-    Result of step planning.
-    """
-
-    reason: str
-    is_complete: bool
-    step: Optional[Step]
-
-    memories: int = 0
-    should_retry: bool = False
-    metrics: dict[str, float] = field(default_factory=dict)
 
 
 class CoordinateConverter:
@@ -39,31 +24,31 @@ class CoordinateConverter:
         self.__width = screen_width
         self.__height = screen_height
 
-    def to_pixels(self, bounding_box: BoundingBox) -> Tuple[int, int, int, int]:
+    def to_pixels(self, bounds: Bounds) -> Tuple[int, int, int, int]:
         """
         Convert a bounding box to pixel coordinates.
         """
 
-        return bounding_box.to_pixels(screen_width=self.__width, screen_height=self.__height)
+        return bounds.to_pixels(screen_width=self.__width, screen_height=self.__height)
 
-    def center_to_pixels(self, bounding_box: BoundingBox) -> Tuple[int, int]:
+    def center_to_pixels(self, bounds: Bounds) -> Tuple[int, int]:
         """
         Convert a bounding box to its center pixel coordinates.
         """
 
-        x, y, width, height = self.to_pixels(bounding_box=bounding_box)
+        x, y, width, height = self.to_pixels(bounds=bounds)
         return x + width // 2, y + height // 2
 
     def swipe_coordinates(
         self,
         direction: str,
-        bounding_box: BoundingBox,
+        bounds: Bounds,
     ) -> Tuple[int, int, int, int]:
         """
         Convert a bounding box and swipe direction to pixel coordinates.
         """
 
-        x, y, width, height = self.to_pixels(bounding_box=bounding_box)
+        x, y, width, height = self.to_pixels(bounds=bounds)
         center_x, center_y = x + width // 2, y + height // 2
 
         distance_x = int(width * 0.7)
@@ -169,6 +154,7 @@ class StepPlanner:
                 step=None,
                 is_complete=True,
                 metrics=analysis.metrics,
+                metadata=analysis.metadata,
                 reason=completion.evidence,
                 memories=analysis.memories,
             )
@@ -183,6 +169,7 @@ class StepPlanner:
                 is_complete=False,
                 should_retry=True,
                 metrics=analysis.metrics,
+                metadata=analysis.metadata,
                 memories=analysis.memories,
                 reason="Action recently failed on this screen",
             )
@@ -195,6 +182,7 @@ class StepPlanner:
                 is_complete=False,
                 should_retry=True,
                 metrics=analysis.metrics,
+                metadata=analysis.metadata,
                 memories=analysis.memories,
                 reason=f"Action rejected: {action.rationale}",
             )
@@ -203,6 +191,7 @@ class StepPlanner:
             action=action,
             capture=capture,
             metrics=analysis.metrics,
+            metadata=analysis.metadata,
             memories=analysis.memories,
             step_number=state.step_count,
         )
@@ -236,6 +225,7 @@ class StepPlanner:
         memories: int = 0,
         is_recovery: bool = False,
         metrics: Optional[dict[str, float]] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> PlanResult:
         """
         Return a PlanResult with the given action and metadata.
@@ -256,6 +246,7 @@ class StepPlanner:
             is_complete=False,
             memories=memories,
             metrics=metrics or {},
+            metadata=metadata or {},
             reason="Step planned" if not is_recovery else "Recovery step",
         )
 

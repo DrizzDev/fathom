@@ -20,6 +20,17 @@ class IMemoryProvider(Protocol):
 
 
 @runtime_checkable
+class ILedger(Protocol):
+    """
+    Contract for session-based key-value state storage.
+    """
+
+    async def set(self, key: str, value: str) -> None: ...
+    async def get(self, key: str) -> Optional[str]: ...
+    async def get_all(self) -> Dict[str, str]: ...
+
+
+@runtime_checkable
 class IPromptProvider(Protocol):
     """
     Contract for versioned prompt management.

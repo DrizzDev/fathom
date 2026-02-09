@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     import xml.etree.ElementTree as ET  # nosec
 
 from fathom.constants import ActionType
-from fathom.schemas.ui import LabeledElement, UIBoundingBox
+from fathom.schemas.ui import LabeledElement, UIBounds
 from fathom.tools.vision.processing.geometry import GeometryUtils
 from fathom.tools.vision.processing.parsers.base import PlatformParser
 
@@ -16,8 +16,7 @@ logger = getLogger(__name__)
 
 class AndroidParser(PlatformParser):
     """
-    An advanced Appium XML Parser for the Android platform that uses a multi-stage
-    filtering pipeline to accurately identify all meaningful visible elements.
+    An advanced XML Parser for the Android platform.
     """
 
     __MIN_INTERACTIVE_DIMENSION = 5
@@ -104,10 +103,6 @@ class AndroidParser(PlatformParser):
         "com.google.android.material.tabs.TabLayout",
     }
 
-    __INTERACTIVE_CLASSES = (
-        __TAPPABLE_CLASSES | __TYPEABLE_CLASSES | __SCROLLABLE_CLASSES | __DRAGGABLE_CLASSES
-    )
-
     @classmethod
     def is_platform_match(cls, root: ET.Element) -> bool:
         """
@@ -118,114 +113,114 @@ class AndroidParser(PlatformParser):
 
     def get_scale_factor(self, root: ET.Element, screenshot_width: int) -> float:
         """
-        Calculate the scale factor for the platform.
+        Calculate the scale factor.
         """
 
         return 1.0
 
     def __is_practically_interactive(
-        self, width: float, height: float, attributes: Dict[str, Any]
+        self, width: float, height: float, metadata: Dict[str, Any]
     ) -> bool:
         """
         Checks if an element is large enough to be interactive.
         """
 
         if width < self.__MIN_INTERACTIVE_DIMENSION or height < self.__MIN_INTERACTIVE_DIMENSION:
-            has_id = bool(attributes.get("resource-id"))
-            has_text_content = bool(str(attributes.get("text", "")).strip())
-            has_description_content = bool(str(attributes.get("content-desc", "")).strip())
+            has_id = bool(metadata.get("resource-id"))
+            has_text = bool(str(metadata.get("text", "")).strip())
+            has_description = bool(str(metadata.get("content-desc", "")).strip())
 
-            if not has_text_content and not has_description_content and not has_id:
+            if not has_text and not has_description and not has_id:
                 return False
 
         return True
 
-    def __is_meaningless_container(self, attributes: Dict[str, Any]) -> bool:
+    def __is_meaningless_container(self, metadata: Dict[str, Any]) -> bool:
         """
         Checks if an element is a meaningless container.
         """
 
-        element_class_name = attributes.get("class", "")
-        has_text_content = bool(str(attributes.get("text", "")).strip())
-        is_enabled_flag = str(attributes.get("enabled", "true")).lower() == "true"
+        kind = metadata.get("class", "")
+        has_text = bool(str(metadata.get("text", "")).strip())
+        is_enabled = str(metadata.get("enabled", "true")).lower() == "true"
 
-        has_resource_id_flag = bool(attributes.get("resource-id", ""))
-        has_content_description_flag = bool(str(attributes.get("content-desc", "")).strip())
+        has_id = bool(metadata.get("resource-id", ""))
+        has_description = bool(str(metadata.get("content-desc", "")).strip())
 
-        is_focusable_flag = str(attributes.get("focusable", "false")).lower() == "true"
-        is_clickable_flag = str(attributes.get("clickable", "false")).lower() == "true"
-        is_scrollable_flag = str(attributes.get("scrollable", "false")).lower() == "true"
+        is_focusable = str(metadata.get("focusable", "false")).lower() == "true"
+        is_clickable = str(metadata.get("clickable", "false")).lower() == "true"
+        is_scrollable = str(metadata.get("scrollable", "false")).lower() == "true"
 
         return (
-            element_class_name in self.__GENERIC_CONTAINER_CLASSES
-            and not has_text_content
-            and not is_enabled_flag
-            and not is_focusable_flag
-            and not is_clickable_flag
-            and not is_scrollable_flag
-            and not has_resource_id_flag
-            and not has_content_description_flag
+            kind in self.__GENERIC_CONTAINER_CLASSES
+            and not has_text
+            and not is_enabled
+            and not is_focusable
+            and not is_clickable
+            and not is_scrollable
+            and not has_id
+            and not has_description
         )
 
     def __is_tappable(self, element: LabeledElement) -> bool:
         """
-        Checks if an element is tappable based on its attributes or class.
+        Checks if an element is tappable.
         """
 
-        attributes = element.attributes
-        class_name = attributes.get("class")
+        metadata = element.attributes
+        kind = metadata.get("class")
 
         return (
-            self.__is_typeable(element)
-            or bool(attributes.get("resource-id"))
-            or class_name in self.__TAPPABLE_CLASSES
-            or str(attributes.get("clickable")).lower() == "true"
-            or bool(str(attributes.get("content-desc", "")).strip())
+            self.__is_typeable(element=element)
+            or bool(metadata.get("resource-id"))
+            or kind in self.__TAPPABLE_CLASSES
+            or str(metadata.get("clickable")).lower() == "true"
+            or bool(str(metadata.get("content-desc", "")).strip())
         )
 
     def __is_typeable(self, element: LabeledElement) -> bool:
         """
-        Checks if an element is typeable based on its class.
+        Checks if an element is typeable.
         """
 
-        attributes = element.attributes
-        class_name = attributes.get("class")
+        metadata = element.attributes
+        kind = metadata.get("class")
 
-        if class_name in self.__TYPEABLE_CLASSES:
+        if kind in self.__TYPEABLE_CLASSES:
             return True
 
-        if class_name in self.__GENERIC_CONTAINER_CLASSES and "enabled" in attributes:
-            return str(attributes.get("enabled", "")).lower() == "true"
+        if kind in self.__GENERIC_CONTAINER_CLASSES and "enabled" in metadata:
+            return str(metadata.get("enabled", "")).lower() == "true"
 
         return False
 
     def __is_swipeable(self, element: LabeledElement) -> bool:
         """
-        Checks if an element is swipeable based on its attributes or class.
+        Checks if an element is swipeable.
         """
 
-        attributes = element.attributes
-        class_name = attributes.get("class")
+        metadata = element.attributes
+        kind = metadata.get("class")
 
         return (
-            str(attributes.get("scrollable")).lower() == "true"
-            or class_name in self.__SWIPEABLE_CLASSES | self.__DRAGGABLE_CLASSES
+            str(metadata.get("scrollable")).lower() == "true"
+            or kind in self.__SWIPEABLE_CLASSES | self.__DRAGGABLE_CLASSES
         )
 
-    def find_all_elements(self, root: ET.Element, **kwargs: Any) -> List[LabeledElement]:
+    def find_all_elements(self, root: ET.Element, **extra: Any) -> List[LabeledElement]:
         """
-        STAGE 1: Find all elements with valid size, position, and visibility.
+        Finds all visible and interactive elements.
         """
 
-        detected_elements = []
-        should_skip_displayed_check = kwargs.get("skip_displayed_attr", True)
+        detected = []
+        skip_displayed = extra.get("skip_displayed_attr", True)
 
-        screen_width = int(str(kwargs.get("screenshot_width", root.get("width", "0"))))
-        screen_height = int(str(kwargs.get("screenshot_height", root.get("height", "0"))))
+        width = int(str(extra.get("screenshot_width", root.get("width", "0"))))
+        height = int(str(extra.get("screenshot_height", root.get("height", "0"))))
 
-        logger.info(f"Screen size: {screen_width}x{screen_height}")
+        logger.info(f"Screen size: {width}x{height}")
 
-        skip_reason_counts = {
+        skips = {
             "visibility": 0,
             "off_screen": 0,
             "meaningless": 0,
@@ -233,63 +228,59 @@ class AndroidParser(PlatformParser):
             "non_interactive": 0,
         }
 
-        for element in root.iter():
+        for node in root.iter():
             try:
-                bounds_string = element.get("bounds")
-                if not bounds_string:
+                serialization = node.get("bounds")
+                if not serialization:
                     continue
 
-                bounds_parts = (
-                    bounds_string.replace("][", ",").replace("[", "").replace("]", "").split(",")
+                parts = (
+                    serialization.replace("][", ",").replace("[", "").replace("]", "").split(",")
                 )
 
-                if len(bounds_parts) != 4:
-                    logger.warning(f"Invalid bounds format: {bounds_string}")
+                if len(parts) != 4:
+                    logger.warning(f"Invalid bounds format: {serialization}")
                     continue
 
-                x1, y1, x2, y2 = map(int, bounds_parts)
+                x1, y1, x2, y2 = map(int, parts)
 
-                width, height = x2 - x1, y2 - y1
-                attributes = {key: element.get(key, "") for key in element.attrib}
+                w, h = x2 - x1, y2 - y1
+                metadata = {key: node.get(key, "") for key in node.attrib}
 
-                if width <= 0 or height <= 0:
-                    skip_reason_counts["invalid_size"] += 1
+                if w <= 0 or h <= 0:
+                    skips["invalid_size"] += 1
                     continue
 
-                if not should_skip_displayed_check:
-                    displayed_status = element.get("displayed")
-                    visible_status = element.get("visible-to-user")
+                if not skip_displayed:
+                    displayed = node.get("displayed")
+                    visible = node.get("visible-to-user")
 
-                    if (displayed_status and str(displayed_status).lower() == "false") or (
-                        visible_status and str(visible_status).lower() == "false"
+                    if (displayed and str(displayed).lower() == "false") or (
+                        visible and str(visible).lower() == "false"
                     ):
-                        skip_reason_counts["visibility"] += 1
+                        skips["visibility"] += 1
                         continue
 
-                if (
-                    screen_width > 0
-                    and screen_height > 0
-                    and (x2 <= 0 or x1 >= screen_width or y2 <= 0 or y1 >= screen_height)
-                ):
-                    skip_reason_counts["off_screen"] += 1
+                if width > 0 and height > 0 and (x2 <= 0 or x1 >= width or y2 <= 0 or y1 >= height):
+                    skips["off_screen"] += 1
                     continue
 
                 if not self.__is_practically_interactive(
-                    width=float(width), height=float(height), attributes=attributes
+                    width=float(w), height=float(h), metadata=metadata
                 ):
-                    skip_reason_counts["non_interactive"] += 1
+                    skips["non_interactive"] += 1
                     continue
 
-                if self.__is_meaningless_container(attributes=attributes):
-                    skip_reason_counts["meaningless"] += 1
+                if self.__is_meaningless_container(metadata=metadata):
+                    skips["meaningless"] += 1
                     continue
 
-                detected_elements.append(
+                detected.append(
                     LabeledElement(
                         label="",
                         color="",
-                        attributes=attributes,
-                        bounds=UIBoundingBox(x1=x1, y1=y1, x2=x2, y2=y2),
+                        attributes=metadata,
+                        bounds=UIBounds(x1=x1, y1=y1, x2=x2, y2=y2),
                     )
                 )
 
@@ -297,26 +288,24 @@ class AndroidParser(PlatformParser):
                 logger.warning(f"Failed to process element: {exception}")
                 continue
 
-        logger.info(f"Found {len(detected_elements)} valid elements. Skips: {skip_reason_counts}")
-        return detected_elements
+        logger.info(f"Found {len(detected)} valid elements. Skips: {skips}")
+        return detected
 
     def filter_and_deduplicate(
         self,
         elements: List[LabeledElement],
-        iou_threshold: float = 0.4,
+        threshold: float = 0.4,
         action: Any = None,
     ) -> List[LabeledElement]:
         """
-        Orchestrates the complete, corrected filtering pipeline.
+        Orchestrates the filtering pipeline.
         """
 
-        pruned_elements = self.__prune_containers(elements)
-        suppressed_elements = self.__suppress_overlaps_nms(
-            pruned_elements, iou_threshold=iou_threshold
-        )
+        pruned = self.__prune_containers(elements=elements)
+        suppressed = self.__suppress_overlaps(elements=pruned, threshold=threshold)
 
-        meaningful_elements = self.__filter_for_meaningfulness(suppressed_elements)
-        return sorted(meaningful_elements, key=lambda element: element.bounds.area, reverse=True)
+        meaningful = self.__filter_for_meaningfulness(elements=suppressed)
+        return sorted(meaningful, key=lambda element: element.bounds.area, reverse=True)
 
     def filter_by_action(self, elements: List[LabeledElement], action: Any) -> List[LabeledElement]:
         """
@@ -324,58 +313,58 @@ class AndroidParser(PlatformParser):
         """
 
         if action == ActionType.TAP:
-            return [element for element in elements if self.__is_tappable(element)]
+            return [element for element in elements if self.__is_tappable(element=element)]
 
         if action == ActionType.TEXT or action == ActionType.TYPE:
             return [
                 element
                 for element in elements
-                if self.__is_typeable(element) or self.__is_tappable(element)
+                if self.__is_typeable(element=element) or self.__is_tappable(element=element)
             ]
 
         if action == ActionType.SWIPE:
-            return [element for element in elements if self.__is_swipeable(element)]
+            return [element for element in elements if self.__is_swipeable(element=element)]
 
         return elements
 
     def __score_element(self, element: LabeledElement) -> float:
         """
-        Scores an element based on its class, attributes, and size.
+        Scores an element.
         """
 
-        score_value = 0.0
-        attributes = element.attributes
-        class_name = attributes.get("class")
+        score = 0.0
+        metadata = element.attributes
+        kind = metadata.get("class")
 
-        if self.__is_swipeable(element):
-            score_value += 150
+        if self.__is_swipeable(element=element):
+            score += 150
 
-        elif self.__is_tappable(element):
-            score_value += 100
+        elif self.__is_tappable(element=element):
+            score += 100
 
-        if class_name in self.__CONTENT_CLASSES:
-            score_value += 20
+        if kind in self.__CONTENT_CLASSES:
+            score += 20
 
-        if attributes.get("text") or attributes.get("content-desc"):
-            score_value += 10
+        if metadata.get("text") or metadata.get("content-desc"):
+            score += 10
 
-        if class_name in self.__GENERIC_CONTAINER_CLASSES:
-            score_value += 1
+        if kind in self.__GENERIC_CONTAINER_CLASSES:
+            score += 1
 
-        score_value -= element.bounds.area / 50000.0
-        return score_value
+        score -= element.bounds.area / 50000.0
+        return score
 
     def __prune_containers(self, elements: List[LabeledElement]) -> List[LabeledElement]:
         """
-        Prunes containers that are mere wrappers for other elements.
+        Prunes containers that are mere wrappers.
         """
 
-        elements_to_retain = []
+        retained = []
 
-        for index, parent in enumerate(elements):
-            is_mere_container_flag = False
+        for index, parent in enumerate(iterable=elements):
+            is_mere_container = False
 
-            is_candidate_for_pruning_flag = (
+            is_candidate = (
                 not str(parent.attributes.get("text", "")).strip()
                 and not str(parent.attributes.get("content-desc", "")).strip()
                 and str(parent.attributes.get("clickable", "false")).lower() == "false"
@@ -383,8 +372,8 @@ class AndroidParser(PlatformParser):
                 and parent.attributes.get("class") in self.__GENERIC_CONTAINER_CLASSES
             )
 
-            if is_candidate_for_pruning_flag:
-                for next_index, child in enumerate(elements):
+            if is_candidate:
+                for next_index, child in enumerate(iterable=elements):
                     if index == next_index:
                         continue
 
@@ -393,81 +382,80 @@ class AndroidParser(PlatformParser):
                         and parent.bounds.y1 <= child.bounds.y1
                         and parent.bounds.x2 >= child.bounds.x2
                         and parent.bounds.y2 >= child.bounds.y2
-                        and self.__score_element(child) > self.__score_element(parent)
+                        and self.__score_element(element=child)
+                        > self.__score_element(element=parent)
                     ):
-                        is_mere_container_flag = True
+                        is_mere_container = True
                         break
 
-            if not is_mere_container_flag:
-                elements_to_retain.append(parent)
+            if not is_mere_container:
+                retained.append(parent)
 
-        return elements_to_retain
+        return retained
 
-    def __suppress_overlaps_nms(
-        self, elements: List[LabeledElement], iou_threshold: float = 0.4
+    def __suppress_overlaps(
+        self, elements: List[LabeledElement], threshold: float = 0.4
     ) -> List[LabeledElement]:
         """
-        STAGE 3: Uses a more nuanced Non-Maximum Suppression.
+        Non-Maximum Suppression for overlapping elements.
         """
 
         if not elements:
             return []
 
-        kept_elements_list = []
-        scored_elements_list = [(self.__score_element(element), element) for element in elements]
-        sorted_elements_list = sorted(scored_elements_list, key=lambda item: item[0], reverse=True)
+        kept = []
+        scored = [(self.__score_element(element=element), element) for element in elements]
+        sorted_elements = sorted(scored, key=lambda item: item[0], reverse=True)
 
-        while sorted_elements_list:
-            _, best_element = sorted_elements_list.pop(0)
-            kept_elements_list.append(best_element)
+        while sorted_elements:
+            _, best = sorted_elements.pop(0)
+            kept.append(best)
 
-            remaining_scored_elements = []
-            for score, current_element in sorted_elements_list:
-                intersection_over_union = GeometryUtils.calculate_iou(
-                    best_element.bounds, current_element.bounds
+            remaining = []
+            for score, current in sorted_elements:
+                intersection = GeometryUtils.calculate_iou(
+                    bounds1=best.bounds, bounds2=current.bounds
                 )
 
-                if intersection_over_union > iou_threshold:
-                    bounds_match = (
-                        best_element.bounds.x1 == current_element.bounds.x1
-                        and best_element.bounds.y1 == current_element.bounds.y1
-                        and best_element.bounds.x2 == current_element.bounds.x2
-                        and best_element.bounds.y2 == current_element.bounds.y2
+                if intersection > threshold:
+                    match = (
+                        best.bounds.x1 == current.bounds.x1
+                        and best.bounds.y1 == current.bounds.y1
+                        and best.bounds.x2 == current.bounds.x2
+                        and best.bounds.y2 == current.bounds.y2
                     )
 
-                    if bounds_match:
+                    if match:
                         pass
                     elif GeometryUtils.is_box_contained(
-                        current_element.bounds, best_element.bounds
-                    ) or GeometryUtils.is_box_contained(
-                        best_element.bounds, current_element.bounds
-                    ):
-                        remaining_scored_elements.append((score, current_element))
+                        box1=current.bounds, box2=best.bounds
+                    ) or GeometryUtils.is_box_contained(box1=best.bounds, box2=current.bounds):
+                        remaining.append((score, current))
                     else:
                         pass
                 else:
-                    remaining_scored_elements.append((score, current_element))
+                    remaining.append((score, current))
 
-            sorted_elements_list = remaining_scored_elements
+            sorted_elements = remaining
 
-        return kept_elements_list
+        return kept
 
     def __filter_for_meaningfulness(self, elements: List[LabeledElement]) -> List[LabeledElement]:
         """
-        Final pipeline stage to remove purely decorative or structural elements.
+        Removes decorative or structural elements.
         """
-        meaningful_elements_list = []
+        meaningful = []
         for element in elements:
-            attributes = element.attributes
+            metadata = element.attributes
             if (
-                self.__is_tappable(element)
-                or self.__is_swipeable(element)
-                or attributes.get("class") in self.__CONTENT_CLASSES
+                self.__is_tappable(element=element)
+                or self.__is_swipeable(element=element)
+                or metadata.get("class") in self.__CONTENT_CLASSES
                 or (
-                    str(attributes.get("text", "")).strip()
-                    or str(attributes.get("content-desc", "")).strip()
+                    str(metadata.get("text", "")).strip()
+                    or str(metadata.get("content-desc", "")).strip()
                 )
             ):
-                meaningful_elements_list.append(element)
+                meaningful.append(element)
 
-        return meaningful_elements_list
+        return meaningful
