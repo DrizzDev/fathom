@@ -198,6 +198,20 @@ class StepExecutor:
                 device_result = await self.__device.tap(x=x, y=y)
 
             elif action.action_type == ActionType.TYPE:
+                if not action.bounds:
+                    return ExecutionResult(
+                        duration=0,
+                        success=False,
+                        error="Type action requires bounds for focus tap guard",
+                    )
+                x, y = converter.center_to_pixels(bounds=action.bounds)
+                focus_result = await self.__device.tap(x=x, y=y)
+                if not focus_result.success:
+                    return ExecutionResult(
+                        duration=0,
+                        success=False,
+                        error=f"Focus tap failed before typing: {focus_result.error or 'unknown error'}",
+                    )
                 device_result = await self.__device.type_text(text=action.text or "")
 
             elif action.action_type == ActionType.SWIPE:

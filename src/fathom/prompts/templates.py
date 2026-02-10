@@ -12,6 +12,7 @@ TEXT ELEMENT PRECISION: For text elements (buttons, labels, search suggestions, 
 ICON/BUTTON PRECISION: Snap bbox TIGHTLY to the visible edges of the icon graphic or button text. Exclude whitespace, padding, and background containers. Do not wrap the full touch target.
 
 INPUT FIELD PRECISION: Bbox must tightly wrap editable text area (borders/background), not labels/icons.
+CRITICAL - TAP BEFORE TYPE: You MUST always 'tap' an input field to gain focus before using the 'type' action. If the field is not focused, the 'type' action will fail. Execute these as part of the same action sequence if possible.
 
 LIST ITEMS/SEARCH SUGGESTIONS: For search suggestions, list items, or dropdown options, bbox must tightly wrap ONLY the specific item's text content (typically 200-400px width, 50-100px height). Do NOT include the entire list, multiple items, or surrounding whitespace. Focus on the FIRST/TARGET item's visible text only.
 

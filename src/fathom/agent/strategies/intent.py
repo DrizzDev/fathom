@@ -567,6 +567,20 @@ class IntentStrategy(ExecutionStrategy):
             return await self.__device.tap(x=coordinates[0], y=coordinates[1])
 
         if action.action_type == ActionType.TYPE:
+            if not action.bounds:
+                return ActionResult(
+                    success=False,
+                    duration=0,
+                    error="Type action requires bounds for focus tap guard",
+                )
+            x, y = converter.center_to_pixels(bounds=action.bounds)
+            focus_result = await self.__device.tap(x=x, y=y)
+            if not focus_result.success:
+                return ActionResult(
+                    success=False,
+                    duration=0,
+                    error=f"Focus tap failed before typing: {focus_result.error or 'unknown error'}",
+                )
             return await self.__device.type_text(text=action.text or "")
 
         if action.action_type in (
