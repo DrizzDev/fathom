@@ -1,50 +1,86 @@
 from __future__ import annotations
 
-# SHARED RULES AND FRAGMENTS
-COMMON_RULES = """
-ICON vs MENU/PAGE: Distinguish ICONS/BUTTONS (small, nav bars) vs MENU/PAGE CONTENT (large, fills screen).
-If menu/page is open, interact WITHIN it, don't tap icon again.
+# Coordinate system and confidence guidance
+COORD_RULES = (
+    "COORDINATES: Use NORMALIZED coords (0-1000 grid). x=0,y=0 is top-left. "
+    "Format: {x, y, width, height, coord_system:'normalized'}."
+)
 
-DROPDOWN DISMISS: If dropdowns/selectors obstruct content, dismiss first: down arrows (▼), X buttons (×), 'Close'/'Done' buttons.
+CONFIDENCE_RULES = (
+    "CONFIDENCE: 0.9+ clear match, 0.7-0.89 certain. Below 0.7 indicates ambiguity."
+)
 
-TEXT ELEMENT PRECISION: For text elements (buttons, labels, search suggestions, list items, menu items) EXCEPT INPUT FIELDS, bbox must tightly wrap ONLY the visible text content. Exclude padding, margins, icons, and surrounding whitespace. Measure the actual text pixels, not the container or touch target.
+# Bbox precision rules
+PRECISION_RULES = {
+    "text": "TEXT: Bbox wraps ONLY visible text pixels. Exclude padding/margins/icons.",
+    "icon": "ICONS/BUTTONS: Snap bbox TIGHTLY to visible edges. Exclude whitespace/containers.",
+    "input": "INPUTS: Wrap editable area only (borders/background). Exclude labels/icons.",
+    "list": "LIST ITEMS: Wrap ONLY the specific item's text (not entire list or row).",
+}
 
-ICON/BUTTON PRECISION: Snap bbox TIGHTLY to the visible edges of the icon graphic or button text. Exclude whitespace, padding, and background containers. Do not wrap the full touch target.
+# Action rules
+ACTION_RULES = {
+    "scroll": (
+        "SCROLL/SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
+        "Bbox wraps scrollable region only (exclude fixed headers/footers)."
+    ),
+    "wait": (
+        "WAIT: ONLY for active loading (skeleton, spinner, 'Loading...' text). "
+        "NOT for sparse screens with visible text/buttons. Include wait_duration_ms (default 2000ms)."
+    ),
+    "zoom": "ZOOM: 'zoom_in' to enlarge, 'zoom_out' to shrink. Target the relevant region.",
+    "type": (
+        "CRITICAL - TAP BEFORE TYPE: Always tap input first to gain focus. "
+        "Then generate 'type' with text_to_type. "
+        "Both target SAME bbox. text_to_type is a literal value (no prefixes)."
+    ),
+}
 
-INPUT FIELD PRECISION: Bbox must tightly wrap editable text area (borders/background), not labels/icons.
-CRITICAL - TAP BEFORE TYPE: You MUST always 'tap' an input field to gain focus before using the 'type' action. If the field is not focused, the 'type' action will fail. Execute these as part of the same action sequence if possible.
+# UI handling rules
+UI_RULES = {
+    "goal_lock": (
+        "GOAL LOCK: Never change intent. Dismiss blockers (cookie consent, permission prompts, "
+        "privacy popups, login walls, app update dialogs, survey popups, rating requests) FIRST, "
+        "then proceed."
+    ),
+    "dropdown": "DROPDOWN DISMISS: Dismiss obstructions first: down arrows, X, 'Close'/'Done'.",
+    "overlay": "OVERLAY: Ignore system overlays. Focus on actual app UI elements.",
+    "icon_vs_page": (
+        "ICON vs PAGE: Distinguish small icons vs full-page content. "
+        "If menu/page is open, interact WITHIN it."
+    ),
+}
 
-LIST ITEMS/SEARCH SUGGESTIONS: For search suggestions, list items, or dropdown options, bbox must tightly wrap ONLY the specific item's text content (typically 200-400px width, 50-100px height). Do NOT include the entire list, multiple items, or surrounding whitespace. Focus on the FIRST/TARGET item's visible text only.
+# Backward-compatible aggregated blocks used by current builder
+COMMON_RULES = f"""
+{COORD_RULES}
+{CONFIDENCE_RULES}
 
-OVERLAY HANDLING: Ignore system overlays. Focus on ACTUAL app UI elements behind overlays.
+{UI_RULES["icon_vs_page"]}
+{UI_RULES["dropdown"]}
+{UI_RULES["overlay"]}
+{UI_RULES["goal_lock"]}
 
-GOAL LOCK: Never change user intent. If blockers appear, choose action that progresses toward SAME intent.
+BBOX PRECISION:
+- {PRECISION_RULES["text"]}
+- {PRECISION_RULES["icon"]}
+- {PRECISION_RULES["input"]}
+- {PRECISION_RULES["list"]}
 
-SWIPE/SCROLL REGIONS: Identify and tightly wrap the RELEVANT scrollable region (e.g., vertical list, horizontal carousel).
-Exclude fixed headers, footers, navigation bars, and non-scrollable areas. Bbox must match the visible scrollable area exactly.
-SWIPE DIRECTIONS: swipe_left (right→left), swipe_right (left→right), swipe_up (bottom→top), swipe_down (top→bottom).
-Use swipe_left/swipe_right for horizontal carousels (filter chips, product rows, tabs).
-Use swipe_up/swipe_down for vertical lists (product lists, search results, menus).
-SCROLL: Use 'scroll' for vertical scrolling in the center of screen (defaults to center if bbox not specified).
-Bbox for scroll should wrap the scrollable content area (typically full width, excludes fixed nav/headers).
-For horizontal swipe regions (carousels), bbox should wrap the carousel row (typically full width, height of one row).
-For vertical swipe regions (lists), bbox should wrap the list content (typically full width, excludes headers/footers).
+ACTIONS:
+- {ACTION_RULES["type"]}
+- {ACTION_RULES["scroll"]}
+- {ACTION_RULES["wait"]}
+- {ACTION_RULES["zoom"]}
 
-WAIT ACTION: Use 'wait' action ONLY when screen is actively loading.
-No bbox required. Include wait_duration_ms (default 2000ms, typically 1000-5000ms).
-Return wait action ONLY if screen shows: skeleton placeholders (grey animated rectangles), loading spinner, progress indicator, or explicit 'Loading...' text.
-Do NOT use wait for sparse screens that have readable text, buttons, or navigation elements - those are valid interactive screens.
-
-ZOOM ACTIONS: Use 'zoom_in' to enlarge content (pinch open) and 'zoom_out' to shrink content (pinch close).
-Bbox should target the region to zoom (e.g. map area, image view). If unsure, use screen center/main content area.
-
-STRICT FORMAT: Return ONLY valid responses using the provided tools.
+STRICT FORMAT: Return only valid tool calls using provided schema fields.
 """
 
 TOOL_GUIDANCE = """
 TOOL SELECTION & VALIDATION:
-- execute_ui: The PRIMARY tool. Use for all interactions (tap, type, swipe, scroll).
-  * CRITICAL: You MUST evaluate 'is_valid' (true/false) and 'validation_reason' for EVERY action.
-  * Self-Correction: If an action seems risky or the element is ambiguous, set is_valid=False and explain why.
-- validate_state: Use ONLY for explicit final verification where no further actions are needed.
+- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, zoom).
+  * Evaluate is_valid and validation_reason for EVERY action.
+  * If action is risky/ambiguous, set is_valid=False and explain.
+- validate_state: Use for explicit state checks when no immediate UI action is required.
+- verify_goal: Use for explicit completion checks.
 """
