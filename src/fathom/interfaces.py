@@ -52,7 +52,7 @@ class IImageStorage(Protocol):
     Contract for asset persistence.
     """
 
-    async def save(self, data: bytes) -> str: ...
+    async def save(self, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str: ...
 
 
 @runtime_checkable

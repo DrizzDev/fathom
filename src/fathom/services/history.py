@@ -38,7 +38,8 @@ class HistoryService:
 
         self.__save_json(data=history_data)
         self.__save_yaml(history=history_data["history"])
-        self.__append_text_audit(record=record)
+
+        self.__save_commands_text(record=record)
 
     def __load_history(self) -> Dict[str, Any]:
         """
@@ -89,6 +90,19 @@ class HistoryService:
         else:
             self.__write_manual_yaml(path=path, steps=steps)
 
+    def __save_commands_text(self, record: Dict[str, Any]) -> None:
+        """
+        Appends a readable command line to workflow-specific text file.
+        Format: Tap on [Target]
+        """
+
+        path = self.__base_directory / f"{self.__workflow_id}.txt"
+        line = self.__describe_command(record=record)
+
+        # Append to file
+        with path.open(mode="a") as handle:
+            handle.write(line + "\n")
+
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """
         Constructs a structured dictionary for a YAML step.
@@ -99,11 +113,11 @@ class HistoryService:
 
         return {
             "step": index,
-            "command": self.__describe_command(record=record),
-            "action_type": record.get("action_type", "wait"),
             "target": target,
-            "bounding_box": record.get("bounds"),
             "center": record.get("center"),
+            "bounding_box": record.get("bounds"),
+            "action_type": record.get("action_type", "wait"),
+            "command": self.__describe_command(record=record),
             "metadata": {
                 "success": record.get("success"),
                 "duration": record.get("duration"),
@@ -161,18 +175,6 @@ class HistoryService:
             return "Goal completed"
 
         return f"{action_type.replace('_', ' ').capitalize()} on {target}"
-
-    def __append_text_audit(self, record: Dict[str, Any]) -> None:
-        """
-        Appends a readable audit line to output.txt.
-        Format: Tap on [Target]
-        """
-        path = Path("output.txt")
-        line = self.__describe_command(record=record)
-
-        # Append to file
-        with path.open(mode="a") as handle:
-            handle.write(line + "\n")
 
     def __write_manual_yaml(self, path: Path, steps: List[Dict[str, Any]]) -> None:
         """

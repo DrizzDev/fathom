@@ -7,10 +7,6 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
-from fathom.infrastructure.llm import GeminiLLMClient
-from fathom.infrastructure.memory.ledger import Ledger
-from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
-from fathom.infrastructure.storage.local import LocalImageStorage
 from fathom.interfaces import (
     IImageStorage,
     ILedger,
@@ -18,7 +14,6 @@ from fathom.interfaces import (
     IVisionProvider,
 )
 from fathom.prompts.factory import PromptFactory
-from fathom.schemas.configuration import GeminiConfig
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.tools.definitions import ToolRegistry
@@ -35,31 +30,26 @@ class GeminiVisionTool(VisionTool):
 
     def __init__(
         self,
-        model: IVisionProvider | GeminiConfig,
-        memory: Optional[IMemoryProvider] = None,
-        ledger: Optional[ILedger] = None,
-        local_storage: Optional["IImageStorage"] = None,
-        gcs_storage: Optional["IImageStorage"] = None,
+        model: IVisionProvider,
+        memory: IMemoryProvider,
+        ledger: ILedger,
+        local_storage: IImageStorage,
+        *,
         version: str = "pro_xml",
+        session_id: str = "default",
+        package_name: str = "unknown_app",
+        gcs_storage: Optional[IImageStorage] = None,
     ) -> None:
-        if isinstance(model, GeminiConfig):
-            model = GeminiLLMClient(configuration=model)
-
-        if memory is None:
-            memory = SQLiteMemoryProvider()
-        if ledger is None:
-            ledger = Ledger()
-        if local_storage is None:
-            local_storage = LocalImageStorage()
-
         self.__model = model
         self.__version = version
+        self.__session_id = session_id
+        self.__package_name = package_name
 
         self.__memory = memory
         self.__ledger = ledger
 
-        self.__local_storage = local_storage
         self.__gcs_storage = gcs_storage
+        self.__local_storage = local_storage
 
         self.__builder = PromptFactory.get_builder(model_name="gemini")
 
@@ -93,7 +83,7 @@ class GeminiVisionTool(VisionTool):
         Coordinates the analysis flow using Native Tool Calling.
         """
 
-        asyncio.create_task(coro=self.__persist(data=capture.image))
+        asyncio.create_task(coro=self.__persist(data=capture.image, activity=capture.activity))
 
         # 1. BRAIN RETRIEVAL
         fingerprint = (
@@ -107,10 +97,15 @@ class GeminiVisionTool(VisionTool):
         retrieval = time.time() - start
 
         # 2. PROMPT & TOOL SCOPING
+        # Static system instruction (cacheable)
         instruction = self.__builder.build(
             intent=intent,
-            history=context,
             hints={"use_xml": use_xml},
+        )
+
+        # Dynamic context
+        dynamic_context = self.__builder.build_user_context(
+            history=context,
             memory=await self.__ledger.get_all(),
         )
 
@@ -120,11 +115,17 @@ class GeminiVisionTool(VisionTool):
         manifest = self.__format_elements(elements=elements)
         payload = self.__build_payload(
             intent=intent,
-            context=context,
             manifest=manifest,
             failures=failures,
             knowledge=knowledge,
             screen=capture.image,
+            context=dynamic_context,  # Pass unified dynamic context here
+        )
+
+        # Debug logs
+        logger.debug(f"System Instruction:\n{instruction[:200]}...")
+        logger.debug(
+            f"User Payload (Text Parts):\n{[parts for parts in payload if isinstance(parts, str)]}"
         )
 
         # 4. EXECUTION
@@ -183,11 +184,12 @@ class GeminiVisionTool(VisionTool):
         result = await self.analyze(intent=intent, capture=capture)
         return result.is_goal_complete
 
-    def _parse_bbox(self, raw: Any) -> Optional[Dict[str, int]]:
+    def __parse_bbox(self, raw: Any) -> Optional[Dict[str, int]]:
         """
         Legacy helper kept for test/backward compatibility.
         Accepts Gemini bbox variants and normalizes to x/y/width/height.
         """
+
         if isinstance(raw, dict):
             if {"x", "y", "width", "height"}.issubset(raw):
                 return {
@@ -291,15 +293,21 @@ class GeminiVisionTool(VisionTool):
 
         return "\n".join(lines) if lines else "No interactive elements found."
 
-    async def __persist(self, data: bytes) -> None:
+    async def __persist(self, data: bytes, activity: str) -> None:
         """
         Background persistence task.
         """
 
+        metadata = {
+            "activity_name": activity,
+            "session_id": self.__session_id,
+            "package_name": self.__package_name,
+        }
+
         try:
-            tasks = [self.__local_storage.save(data=data)]
+            tasks = [self.__local_storage.save(data=data, metadata=metadata)]
             if self.__gcs_storage:
-                tasks.append(self.__gcs_storage.save(data=data))
+                tasks.append(self.__gcs_storage.save(data=data, metadata=metadata))
 
             await asyncio.gather(*tasks)
         except Exception:
@@ -321,7 +329,7 @@ class GeminiVisionTool(VisionTool):
         allowed = {"execute_ui", "store_memory", "recall_memory"}
 
         # Validation tools for verification tasks
-        if any(w in intent.lower() for w in ("verify", "check", "confirm", "validate")):
+        if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):
             allowed.update({"validate_state", "verify_goal"})
 
         definitions = ToolRegistry.get_all_definitions()

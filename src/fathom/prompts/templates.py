@@ -79,6 +79,8 @@ TOOL SELECTION & VALIDATION:
 - execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, zoom).
   * Evaluate is_valid and validation_reason for EVERY action.
   * If action is risky/ambiguous, set is_valid=False and explain.
+  * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
+    DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
 - validate_state: Use for explicit state checks when no immediate UI action is required.
 - verify_goal: Use for explicit completion checks.
 """

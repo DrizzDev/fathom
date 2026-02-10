@@ -80,14 +80,32 @@ class ADBDeviceTool(DeviceTool):
         if not result.success or not result.output:
             return (1080, 1920)
 
-        match = re.search(r"(\d+)x(\d+)", result.output)
-        if match:
+        if match := re.search(r"(\d+)x(\d+)", result.output):
             width = int(match.group(1))
             height = int(match.group(2))
             self.__cached_size = (width, height)
+
             return width, height
 
         return (1080, 1920)
+
+    async def get_current_package(self) -> str:
+        """
+        Get current foreground package name.
+        """
+
+        result = await self.__shell(
+            command="dumpsys activity activities | grep mResumedActivity", capture_output=True
+        )
+
+        if (
+            result.success
+            and result.output
+            and (match := re.search(r"u0\s+([a-zA-Z0-9_.]+)/", result.output))
+        ):
+            return match.group(1)
+
+        return "unknown_app"
 
     async def screenshot(self) -> Optional[bytes]:
         """

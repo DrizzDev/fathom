@@ -90,6 +90,12 @@ class AuditService:
             f"[bold cyan]{self.__format_time(milliseconds=total_duration * 1000)}[/bold cyan]",
         )
 
+        # Cache Stats
+        if plan.metrics and "cache_hits" in plan.metrics:
+            hits = int(plan.metrics.get("cache_hits", 0))
+            misses = int(plan.metrics.get("cache_misses", 0))
+            audit.add_row("Cache:", f"hits: {hits} | misses: {misses}")
+
         self.__console.print(
             Panel(
                 renderable=audit,
@@ -98,6 +104,29 @@ class AuditService:
                 title=f"Step {step_count} Audit",
             )
         )
+
+        # Print Reasoning
+        reasoning = plan.reason
+
+        if plan.step and plan.step.action:
+            reasoning = plan.step.action.rationale or reasoning
+
+            # Show Action Details
+            action_panel = Table.grid(padding=(0, 2))
+            action_panel.add_column(style="bold yellow")
+            action_panel.add_column()
+
+            action_panel.add_row("Action:", plan.step.action.action_type.value)
+            action_panel.add_row("Target:", plan.step.action.target or "N/A")
+            action_panel.add_row("Rationale:", reasoning)
+
+            self.__console.print(
+                Panel(action_panel, title="LLM Reasoning & Action", border_style="yellow")
+            )
+        elif reasoning:
+            self.__console.print(
+                Panel(f"[italic]{reasoning}[/italic]", title="LLM Reasoning", border_style="yellow")
+            )
 
     def record_context(
         self,

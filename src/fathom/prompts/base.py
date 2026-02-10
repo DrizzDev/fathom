@@ -13,12 +13,22 @@ class PromptBuilder(ABC):
     def build(
         self,
         intent: str,
-        history: Optional[Any] = None,
         hints: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Constructs the stable system instruction string (for caching).
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def build_user_context(
+        self,
+        history: Optional[Any] = None,
         memory: Optional[Dict[str, str]] = None,
     ) -> str:
         """
-        Constructs the final system instruction string.
+        Constructs the dynamic user context string.
         """
 
         raise NotImplementedError

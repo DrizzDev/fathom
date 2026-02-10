@@ -97,3 +97,4 @@ class WorkflowConfig(BaseModel):
     use_xml_bounding_boxes: bool = Field(
         default=False, description="Use XML hierarchy for bounding boxes"
     )
+    package_name: str = Field(default="unknown_app", description="Target application package name")

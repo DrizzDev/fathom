@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from logging import getLogger
-from typing import Any
+from typing import Any, Dict, Optional
 
 from google.cloud import storage
 
@@ -23,9 +24,10 @@ class GCSImageStorage(IImageStorage):
         self.__credentials = credentials
         self.__configuration = configuration
 
-    async def save(self, data: bytes) -> str:
+    async def save(self, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
         Uploads image to GCS and returns the URI.
+        Path: YYYY-MM-DD/{package}/{session}/{timestamp}__{activity}.png
         """
 
         credentials = self.__credentials
@@ -41,8 +43,23 @@ class GCSImageStorage(IImageStorage):
                 client = storage.Client(project=project, credentials=credentials)
                 storage_bucket = client.bucket(bucket)
 
+                package = "unknown_app"
+                session = "default_session"
+                activity = "unknown_screen"
+                folder = datetime.now().strftime("%Y-%m-%d")
+
+                if metadata:
+                    session = metadata.get("session_id") or session
+                    package = metadata.get("package_name") or package
+                    activity = metadata.get("activity_name") or activity
+
+                # Sanitize
+                package = "".join(char for char in package if char.isalnum() or char in "._-")
+                session = "".join(char for char in session if char.isalnum() or char in "._-")
+                activity = "".join(char for char in activity if char.isalnum() or char in "._-")
+
                 timestamp = int(time.time() * 1000)
-                filename = f"{timestamp}.png"
+                filename = f"{folder}/{package}/{session}/{timestamp}__{activity}.png"
 
                 blob = storage_bucket.blob(filename)
                 blob.upload_from_string(data, content_type="image/png")

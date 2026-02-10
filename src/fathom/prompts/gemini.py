@@ -22,15 +22,13 @@ class GeminiPromptBuilder(PromptBuilder):
     def build(
         self,
         intent: str,
-        history: Optional[Any] = None,
         hints: Optional[Dict[str, Any]] = None,
-        memory: Optional[Dict[str, str]] = None,
     ) -> str:
         """
-        Build a high-signal system prompt for tool-based UI execution.
+        Build stable system prompt for tool-based UI execution.
+        EXCLUDES dynamic history/memory to enable Context Caching.
         """
 
-        interaction_context = self.__format_interaction_history(history=history)
         contextual_rules = self.__get_contextual_rules(intent=intent, hints=hints)
         conditional_notes = self.__get_conditional_notes(intent=intent, hints=hints)
 
@@ -40,8 +38,6 @@ class GeminiPromptBuilder(PromptBuilder):
             COMMON_RULES,
             contextual_rules,
             conditional_notes,
-            self.__get_ledger_segment(memory=memory),
-            interaction_context,
             (
                 "OUTPUT REQUIREMENTS:\n"
                 f"- {COORD_RULES}\n"
@@ -51,6 +47,28 @@ class GeminiPromptBuilder(PromptBuilder):
             ),
         ]
         return "\n\n".join([part for part in parts if part.strip()])
+
+    def build_user_context(
+        self,
+        history: Optional[Any] = None,
+        memory: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """
+        Build dynamic user context string.
+        """
+
+        ledger = self.__get_ledger_segment(memory=memory)
+        interaction_context = self.__format_interaction_history(history=history)
+
+        parts = []
+
+        if ledger:
+            parts.append(ledger)
+
+        if interaction_context:
+            parts.append(interaction_context)
+
+        return "\n".join(parts)
 
     def __get_persona(self) -> str:
         """

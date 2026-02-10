@@ -41,9 +41,7 @@ class PromptPreprocessor:
         )
 
         # Repeat-all detection.
-        hints["requires_repeat_all"] = bool(
-            re.search(r"\b(every|all|each|all of)\b", intent, re.I)
-        )
+        hints["requires_repeat_all"] = bool(re.search(r"\b(every|all|each|all of)\b", intent, re.I))
 
         # Basic element-type detection.
         if element_match := re.search(
@@ -72,7 +70,7 @@ class PromptPreprocessor:
         parts = []
 
         if hints.get("typing_text"):
-            parts.append(f"[HINT] Text to type: \"{hints['typing_text']}\"")
+            parts.append(f'[HINT] Text to type: "{hints["typing_text"]}"')
 
         if hints.get("needs_navigation"):
             parts.append(f"[HINT] May need to navigate to: {hints['target_screen']}")

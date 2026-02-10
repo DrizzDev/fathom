@@ -81,7 +81,7 @@ class BaseLogger:
         root_logger.setLevel(level_name)
 
         # Silence noisy libraries
-        for lib in ["httpx", "httpcore", "urllib3", "asyncio", "parso"]:
+        for lib in ["httpx", "httpcore", "urllib3", "asyncio", "parso", "aiosqlite"]:
             getLogger(lib).setLevel(WARNING)
 
         cls.__configured = True
