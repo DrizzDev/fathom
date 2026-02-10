@@ -14,7 +14,7 @@ logger = getLogger(__name__)
 class ReferenceResolutionService:
     """
     Resolves dynamic references in Action fields.
-    
+
     Supports:
     - $memory.key -> Value from Ledger
     - $env.VAR -> Value from Environment Variables
@@ -28,6 +28,7 @@ class ReferenceResolutionService:
         """
         Resolves references in the action's text and target fields.
         """
+
         updates: Dict[str, Any] = {}
 
         if action.text:
@@ -50,6 +51,7 @@ class ReferenceResolutionService:
         """
         Resolves all matches in a string.
         """
+
         if not text or "$" not in text:
             return text
 
@@ -75,6 +77,7 @@ class ReferenceResolutionService:
         """
         Fetches the value from the specified source.
         """
+
         if source == "env":
             return os.getenv(key)
 

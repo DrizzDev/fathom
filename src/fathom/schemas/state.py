@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-import json
 from logging import getLogger
-import time
 from typing import Any, Deque, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
@@ -12,23 +10,6 @@ from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
 
 logger = getLogger(__name__)
-DEBUG_LOG_PATH = "/Users/mohnishbangaru/Fathom v1/fathom/.cursor/debug.log"
-
-
-def _debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
-    payload = {
-        "runId": "pre-fix",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time() * 1000),
-    }
-    try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as debug_file:
-            debug_file.write(json.dumps(payload, ensure_ascii=True) + "\n")
-    except Exception:
-        logger.debug("Debug instrumentation write failed", exc_info=True)
 
 
 class LoopDetector(BaseModel):
@@ -53,21 +34,15 @@ class LoopDetector(BaseModel):
         """
 
         self.__recent_screens.append(screen)
-        logger.debug(f"LoopDetector.record: {screen.visual_hash[:8]} ({screen.activity}) | deque_size={len(self.__recent_screens)}")
-        # region agent log
-        _debug_log(
-            hypothesis_id="H1",
-            location="src/fathom/schemas/state.py:record",
-            message="Recorded screen in loop detector",
-            data={
-                "activity": screen.activity,
-                "activity_hash": screen.activity_hash,
-                "visual_hash_prefix": screen.visual_hash[:8],
-                "recent_screen_count": len(self.__recent_screens),
-                "threshold": self.threshold,
-            },
+        logger.debug(
+            f"LoopDetector.record: {screen.visual_hash[:8]} ({screen.activity}) | deque_size={len(self.__recent_screens)}"
         )
-        # endregion
+
+        logger.debug(
+            f"[H1] Recorded screen in loop detector | "
+            f"activity={screen.activity} hash_prefix={screen.visual_hash[:8]} "
+            f"recent_count={len(self.__recent_screens)} threshold={self.threshold}"
+        )
 
         if action_description:
             self.__recent_actions.append(action_description)
@@ -78,21 +53,16 @@ class LoopDetector(BaseModel):
         """
 
         screen_count = len(self.__recent_screens)
-        # region agent log
-        _debug_log(
-            hypothesis_id="H4",
-            location="src/fathom/schemas/state.py:is_stuck",
-            message="Evaluating stuck status",
-            data={
-                "screen_count": screen_count,
-                "threshold": self.threshold,
-                "recent_actions_count": len(self.__recent_actions),
-                "can_recover": self.can_recover(),
-            },
+        logger.debug(
+            f"[H4] Evaluating stuck status | "
+            f"screen_count={screen_count} threshold={self.threshold} "
+            f"recent_actions={len(self.__recent_actions)} can_recover={self.can_recover()}"
         )
-        # endregion
+
         if screen_count < self.threshold:
-            logger.debug(f"LoopDetector.is_stuck: False (only {screen_count} screens, need {self.threshold})")
+            logger.debug(
+                f"LoopDetector.is_stuck: False (only {screen_count} screens, need {self.threshold})"
+            )
             return False
 
         # Check for repeated screens using fuzzy matching
@@ -102,7 +72,7 @@ class LoopDetector(BaseModel):
             for __next_index in range(index + 1, len(self.__recent_screens)):
                 if current.is_same_screen(self.__recent_screens[__next_index]):
                     count += 1
-                    # region agent log
+
                     candidate = self.__recent_screens[__next_index]
                     distance = 64
                     if len(current.visual_hash) == len(candidate.visual_hash):
@@ -112,21 +82,12 @@ class LoopDetector(BaseModel):
                             ).count("1")
                         except ValueError:
                             distance = 64
-                    _debug_log(
-                        hypothesis_id="H6",
-                        location="src/fathom/schemas/state.py:is_stuck",
-                        message="Fuzzy screen match contributed to stuck count",
-                        data={
-                            "base_activity": current.activity,
-                            "base_visual_hash": current.visual_hash,
-                            "base_structural_hash": current.structural_hash,
-                            "candidate_activity": candidate.activity,
-                            "candidate_visual_hash": candidate.visual_hash,
-                            "candidate_structural_hash": candidate.structural_hash,
-                            "visual_hamming_distance": distance,
-                        },
+
+                    logger.debug(
+                        f"[H6] Fuzzy screen match | "
+                        f"base={current.activity} candidate={candidate.activity} "
+                        f"dist={distance}"
                     )
-                    # endregion
 
             if count >= self.threshold:
                 unique_recent_actions = len(set(self.__recent_actions))
@@ -134,39 +95,22 @@ class LoopDetector(BaseModel):
                     len(self.__recent_actions) >= self.threshold
                     and unique_recent_actions >= self.threshold
                 ):
-                    # region agent log
-                    _debug_log(
-                        hypothesis_id="H8",
-                        location="src/fathom/schemas/state.py:is_stuck",
-                        message="Bypassing stuck=true due to diverse recent actions",
-                        data={
-                            "recent_actions_count": len(self.__recent_actions),
-                            "unique_recent_actions": unique_recent_actions,
-                            "recent_action_samples": list(self.__recent_actions),
-                            "repeat_count": count,
-                        },
+                    logger.debug(
+                        f"[H8] Bypassing stuck=true due to diverse recent actions | "
+                        f"count={len(self.__recent_actions)} unique={unique_recent_actions} "
+                        f"repeat_count={count}"
                     )
-                    # endregion
                     continue
                 hashes = [s.visual_hash[:8] for s in self.__recent_screens]
-                logger.debug(f"LoopDetector.is_stuck: True (screen {current.visual_hash[:8]} repeated {count}x) | deque={hashes}")
-                # region agent log
-                _debug_log(
-                    hypothesis_id="H1",
-                    location="src/fathom/schemas/state.py:is_stuck",
-                    message="Stuck=true due to repeated screen",
-                    data={
-                        "matched_activity": current.activity,
-                        "matched_activity_hash": current.activity_hash,
-                        "matched_visual_hash_prefix": current.visual_hash[:8],
-                        "matched_structural_hash": current.structural_hash,
-                        "repeat_count": count,
-                        "recent_visual_hashes": hashes,
-                        "recent_action_samples": list(self.__recent_actions),
-                        "recent_unique_actions": len(set(self.__recent_actions)),
-                    },
+                logger.debug(
+                    f"LoopDetector.is_stuck: True (screen {current.visual_hash[:8]} repeated {count}x) | deque={hashes}"
                 )
-                # endregion
+
+                logger.debug(
+                    f"[H1] Stuck=true due to repeated screen | "
+                    f"activity={current.activity} hash_prefix={current.visual_hash[:8]} "
+                    f"repeat_count={count} unique_actions={len(set(self.__recent_actions))}"
+                )
                 return True
 
         # Check for repeated actions (exact match is fine for actions)
@@ -176,10 +120,12 @@ class LoopDetector(BaseModel):
             for action_description in self.__recent_actions:
                 action_counts[action_description] = action_counts.get(action_description, 0) + 1
                 if action_counts[action_description] >= self.threshold:
-                    logger.debug(f"LoopDetector.is_stuck: True (action '{action_description}' repeated {action_counts[action_description]}x)")
+                    logger.debug(
+                        f"LoopDetector.is_stuck: True (action '{action_description}' repeated {action_counts[action_description]}x)"
+                    )
                     return True
 
-        logger.debug(f"LoopDetector.is_stuck: False (no repeats above threshold)")
+        logger.debug("LoopDetector.is_stuck: False (no repeats above threshold)")
         return False
 
     def can_recover(self) -> bool:

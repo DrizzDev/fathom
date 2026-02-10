@@ -61,7 +61,6 @@ class GeminiLLMClient(IVisionProvider):
         if not project:
             project = os.environ.get("GEMINI_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
 
-
         http_options = {"timeout": self.__configuration.timeout * 1000}  # ms
 
         try:
@@ -90,6 +89,13 @@ class GeminiLLMClient(IVisionProvider):
         """
 
         return self.__credentials
+
+    @property
+    def cache_stats(self) -> Dict[str, Any]:
+        """
+        Returns cache statistics.
+        """
+        return self.__cache.stats.to_dict() if self.__cache else {}
 
     async def analyze(
         self,
@@ -154,15 +160,31 @@ class GeminiLLMClient(IVisionProvider):
                 usage = getattr(response, "usage_metadata", None)
                 if usage:
                     result.metrics["prompt_tokens"] = getattr(usage, "prompt_token_count", 0) or 0
-                    result.metrics["completion_tokens"] = getattr(usage, "candidates_token_count", 0) or 0
-                    result.metrics["cached_tokens"] = getattr(usage, "cached_content_token_count", 0) or 0
+                    result.metrics["completion_tokens"] = (
+                        getattr(usage, "candidates_token_count", 0) or 0
+                    )
+                    result.metrics["cached_tokens"] = (
+                        getattr(usage, "cached_content_token_count", 0) or 0
+                    )
 
                 return result
             except Exception as exception:
+                error_msg = str(exception)
+                is_quota_error = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
+
                 if attempt == max_retries:
                     raise VisionError(f"LLM fail: {exception}") from exception
 
-                delay = (self.__configuration.retry_delay * (2**attempt)) + (random.random() * 0.5)  # nosec
+                if is_quota_error:
+                    logger.warning(
+                        f"Quota exceeded (429). Pausing for 30s before retry {attempt + 1}/{max_retries}..."
+                    )
+                    jitter = random.random() * 5.0  # nosec
+                    delay = 30.0 + jitter
+                else:
+                    jitter = random.random() * 0.5  # nosec
+                    delay = (self.__configuration.retry_delay * (2**attempt)) + jitter
+
                 await asyncio.sleep(delay)
 
         raise VisionError("Unreachable")

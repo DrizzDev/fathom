@@ -39,6 +39,7 @@ class GeminiVisionTool(VisionTool):
         memory: Optional[IMemoryProvider] = None,
         ledger: Optional[ILedger] = None,
         local_storage: Optional["IImageStorage"] = None,
+        gcs_storage: Optional["IImageStorage"] = None,
         version: str = "pro_xml",
     ) -> None:
         if isinstance(model, GeminiConfig):
@@ -58,6 +59,7 @@ class GeminiVisionTool(VisionTool):
         self.__ledger = ledger
 
         self.__local_storage = local_storage
+        self.__gcs_storage = gcs_storage
 
         self.__builder = PromptFactory.get_builder(model_name="gemini")
 
@@ -134,6 +136,11 @@ class GeminiVisionTool(VisionTool):
         analysis.memories = len(knowledge.get("previous_actions", []))
         analysis.metrics["llm_analysis"] = duration
         analysis.metrics["memory_retrieval"] = retrieval
+
+        stats = getattr(self.__model, "cache_stats", {})
+        if stats:
+            analysis.metrics["cache_hits"] = stats.get("hits", 0)
+            analysis.metrics["cache_misses"] = stats.get("misses", 0)
 
         await self.__memory.store_observation(
             screen=ScreenState(
@@ -290,9 +297,13 @@ class GeminiVisionTool(VisionTool):
         """
 
         try:
-            await self.__local_storage.save(data=data)
+            tasks = [self.__local_storage.save(data=data)]
+            if self.__gcs_storage:
+                tasks.append(self.__gcs_storage.save(data=data))
+
+            await asyncio.gather(*tasks)
         except Exception:
-            logger.debug("Local screenshot save failed", exc_info=True)
+            logger.debug("Screenshot persistence failed", exc_info=True)
 
     async def cleanup(self) -> None:
         """

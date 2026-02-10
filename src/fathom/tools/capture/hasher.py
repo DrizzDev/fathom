@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import xml.etree.ElementTree as ET  # nosec
 
 from PIL import Image
 
@@ -13,7 +14,7 @@ class HybridHasher:
     Hybrid screen hashing for efficient deduplication.
 
     Combines multiple hashing strategies:
-    1. Perceptual hash (pHash) - robust to small changes
+    1. Perceptual hash (dHash) - robust to small changes
     2. Structural hash - based on image structure
     3. Content hash (MD5) - exact matching
 
@@ -72,34 +73,42 @@ class HybridHasher:
         except Exception:
             return hashlib.md5(image).hexdigest()  # nosec
 
-    def compute_phash(self, img: Image.Image) -> str:
+    def compute_dhash(self, img: Image.Image) -> str:
         """
-        Compute perceptual hash.
+        Compute difference hash (dHash).
 
-        Uses DCT-based perceptual hashing:
-        1. Resize to small thumbnail
-        2. Convert to grayscale
-        3. Compute mean of pixels
-        4. Build binary hash from comparison to mean
-
-        Args:
-            img: PIL Image.
-
-        Returns:
-            Hex hash string.
+        Much more sensitive to structural changes and gradients than pHash.
+        Resizes to (size+1) x size and compares adjacent pixels.
         """
 
-        size = self.__config.thumbnail_size
-        thumbnail = img.resize(size, Image.Resampling.LANCZOS)
-        gray = thumbnail.convert("L")
+        # dHash with 16x16 = 256 bits (extremely detailed)
+        # We need width 17 to compare 16 differences
+        hash_size = 16
+        img = img.resize((hash_size + 1, hash_size), Image.Resampling.LANCZOS)
+        gray = img.convert("L")
 
         pixels = list(gray.getdata())
-        mean = sum(pixels) / len(pixels)
 
-        bits = "".join("1" if p > mean else "0" for p in pixels)
+        diff = []
+        for row in range(hash_size):
+            for col in range(hash_size):
+                # pixel[x] < pixel[x+1]
+                left = pixels[row * (hash_size + 1) + col]
+                right = pixels[row * (hash_size + 1) + col + 1]
+                diff.append(left > right)
 
-        hash_int = int(bits, 2)
-        return format(hash_int, "016x")
+        decimal_value = 0
+        for index, value in enumerate(diff):
+            if value:
+                decimal_value += 2**index
+
+        return format(decimal_value, f"0{hash_size * hash_size // 4}x")
+
+    def compute_phash(self, img: Image.Image) -> str:
+        """
+        Legacy pHash wrapper (redirects to dHash for better performance).
+        """
+        return self.compute_dhash(img)
 
     def compute_structural(self, img: Image.Image) -> str:
         """
@@ -255,3 +264,96 @@ class FastHasher:
         """
 
         return hash1 == hash2
+
+
+class TreeHasher:
+    """
+    Robust XML state hasher using structural and interaction analysis.
+
+    Generates two hashes:
+    1. Structural Hash: Represents the complete DOM tree structure and content.
+    2. Interaction Hash: Represents the set of actionable elements (buttons, inputs).
+    """
+
+    def compute(self, xml_content: str) -> tuple[str, str]:
+        """
+        Compute structural and interaction hashes from XML.
+
+        Returns:
+            (structural_hash, interaction_hash)
+        """
+        if not xml_content:
+            return "0" * 16, "0" * 16
+
+        try:
+            # Parse XML
+            # Use basic string cleaning to handle potential encoding issues
+            clean_xml = xml_content.strip()
+            # Remove XML declaration if present to avoid parse errors
+            if clean_xml.startswith("<?xml"):
+                clean_xml = clean_xml.split("?>", 1)[-1]
+
+            root = ET.fromstring(clean_xml)  # nosec
+
+            structural_sig = []
+            interaction_sig = []
+
+            # DFS Traversal
+            stack = [(root, 0)]
+
+            while stack:
+                node, depth = stack.pop()
+
+                # 1. Structural Signature
+                # Tag, Class, Resource-ID, Text, Content-Desc, Checked, Selected
+                # We ignore bounds/index/focused as they are volatile
+                clazz = node.get("class", "")
+                res_id = node.get("resource-id", "")
+                text = node.get("text", "")
+                desc = node.get("content-desc", "")
+                checked = node.get("checked", "false")
+                selected = node.get("selected", "false")
+                enabled = node.get("enabled", "true")
+
+                # Create a dense node signature
+                # Format: D{depth}|C{class}|I{id}|T{text}|D{desc}|S{checked}{selected}{enabled}
+                node_sig = (
+                    f"D{depth}|C{clazz}|I{res_id}|T{text}|D{desc}|S{checked}{selected}{enabled}"
+                )
+                structural_sig.append(node_sig)
+
+                # 2. Interaction Signature
+                # If element is actionable, add it to interaction set
+                clickable = node.get("clickable", "false") == "true"
+                long_clickable = node.get("long-clickable", "false") == "true"
+                check_able = node.get("checkable", "false") == "true"
+                is_enabled = enabled == "true"
+
+                if is_enabled and (clickable or long_clickable or check_able):
+                    # For interactions, we care about WHAT can be clicked.
+                    # We include bounds here because if a button moves significantly,
+                    # it might be a new layout state, but we round them to grid to avoid noise.
+                    # Actually, let's strictly stick to semantic identity for now to avoid scroll noise.
+                    # Just the ID/Text/Desc is usually enough to identify the "set of actions".
+                    interaction_sig.append(f"{res_id}|{text}|{desc}")
+
+                # Add children to stack (reverse order to preserve document order in DFS)
+                for child in reversed(node):
+                    stack.append((child, depth + 1))
+
+            # Compute MD5 hashes
+            struct_str = "".join(structural_sig)
+            inter_str = "|".join(
+                sorted(interaction_sig)
+            )  # Sort interactions to be order-independent? Or Keep document order?
+            # Document order is better for "Screen Structure", but Sorted is better for "Set of Actions".
+            # Let's keep document order for now as UI logic usually implies order matters.
+
+            s_hash = hashlib.md5(struct_str.encode()).hexdigest()[:16]  # nosec
+            i_hash = hashlib.md5(inter_str.encode()).hexdigest()[:16]  # nosec
+
+            return s_hash, i_hash
+
+        except Exception:
+            # Fallback for invalid XML
+            return "0" * 16, "0" * 16

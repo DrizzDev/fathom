@@ -59,6 +59,9 @@ class GeminiConfig(BaseModel):
 
     max_retries: int = Field(default=3, description="Max retries on API failure")
     retry_delay: float = Field(default=2.0, description="Base retry delay in seconds")
+    gcs_bucket: str = Field(
+        default="drizz-dev-crawler-artifacts", description="GCS bucket for screenshot uploads"
+    )
 
 
 class HasherConfig(BaseModel):

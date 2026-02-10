@@ -6,9 +6,7 @@ COORD_RULES = (
     "Format: {x, y, width, height, coord_system:'normalized'}."
 )
 
-CONFIDENCE_RULES = (
-    "CONFIDENCE: 0.9+ clear match, 0.7-0.89 certain. Below 0.7 indicates ambiguity."
-)
+CONFIDENCE_RULES = "CONFIDENCE: 0.9+ clear match, 0.7-0.89 certain. Below 0.7 indicates ambiguity."
 
 # Bbox precision rules
 PRECISION_RULES = {

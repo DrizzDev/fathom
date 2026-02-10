@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fathom.agent.planner import StepPlanner
-from fathom.agent.state import AgentState
 from fathom.agent.strategies.intent import IntentStrategy
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.configuration import WorkflowConfig
@@ -130,7 +129,9 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         Required by base but unused in our overridden execute loop.
         """
 
-        return not self.is_cancelled() and not self.__state.is_complete
+        return not self.is_cancelled() and not (
+            self.__strategy and self.__strategy.state.is_complete
+        )
 
     def get_progress(self) -> Dict[str, Any]:
         """

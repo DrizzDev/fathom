@@ -15,6 +15,7 @@ from fathom.agent.strategies.base import ExecutionStrategy
 from fathom.constants import ActionType, StrategyStatus
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.interfaces import ILedger, IMemoryProvider
+from fathom.prompts.preprocessor import PromptPreprocessor
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.results import ActionResult, PlanResult, StrategyResult
@@ -23,7 +24,6 @@ from fathom.schemas.steps import Step, StepResult
 from fathom.services.audit import AuditService
 from fathom.services.hierarchy import HierarchyService
 from fathom.services.history import HistoryService
-from fathom.services.prompt_preprocessor import PromptPreprocessor
 from fathom.services.resolution import ReferenceResolutionService
 from fathom.services.ux import UXService
 from fathom.tools.capture import CaptureTool
@@ -148,8 +148,10 @@ class IntentStrategy(ExecutionStrategy):
             reason = getattr(plan, "validation_reasoning", "Invalid action")
             logger.warning(f"Invalid action: {reason}")
             self.__state.set_last_error(reason)
-            return StrategyResult(status=StrategyStatus.CONTINUE, message=f"Invalid action: {reason}")
-            
+            return StrategyResult(
+                status=StrategyStatus.CONTINUE, message=f"Invalid action: {reason}"
+            )
+
         step = plan.step
 
         if not step:
@@ -301,21 +303,20 @@ class IntentStrategy(ExecutionStrategy):
         knowledge["memory_store"] = entries
 
         start = time.time()
-        
+
         # Enhanced Context
         smart_context = self.__state.get_smart_context()
 
         # Prompt Preprocessing Hints
         hints = PromptPreprocessor.extract_hints(
-            intent=self.__state.intent,
-            current_activity=state.activity or ""
+            intent=self.__state.intent, current_activity=state.activity or ""
         )
         hint_str = PromptPreprocessor.build_context_prefix(hints)
 
         full_context = smart_context
         if hint_str:
             full_context = f"{hint_str}\n{smart_context}"
-        
+
         plan = await self.__planner.plan_step(
             state=self.__state,
             use_xml=self.__use_xml,

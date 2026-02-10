@@ -202,7 +202,9 @@ class ToolResponseParser(IResponseParser):
             confidence=float(data.get("confidence", 1.0)),
             label_id=str(data.get("label_id")) if data.get("label_id") else None,
             is_valid=bool(data.get("is_valid", True)),
-            validation_reason=str(data.get("validation_reason")) if data.get("validation_reason") else None,
+            validation_reason=str(data.get("validation_reason"))
+            if data.get("validation_reason")
+            else None,
         )
 
         return AnalysisResult(

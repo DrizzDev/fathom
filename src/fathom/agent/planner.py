@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from logging import getLogger
-import time
 from typing import Any, Dict, Optional, Tuple
 
 from fathom.agent.reasoner import Reasoner
@@ -15,23 +13,6 @@ from fathom.schemas.steps import Step
 from fathom.tools.vision import VisionTool
 
 logger = getLogger(name=__name__)
-DEBUG_LOG_PATH = "/Users/mohnishbangaru/Fathom v1/fathom/.cursor/debug.log"
-
-
-def _debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
-    payload = {
-        "runId": "pre-fix",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time() * 1000),
-    }
-    try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as debug_file:
-            debug_file.write(json.dumps(payload, ensure_ascii=True) + "\n")
-    except Exception:
-        logger.debug("Debug instrumentation write failed", exc_info=True)
 
 
 class CoordinateConverter:
@@ -140,20 +121,12 @@ class StepPlanner:
         Plan the next step based on current state.
         """
 
-        # region agent log
-        _debug_log(
-            hypothesis_id="H5",
-            location="src/fathom/agent/planner.py:plan_step",
-            message="Entering planner plan_step",
-            data={
-                "step_count": state.step_count,
-                "is_complete": state.is_complete,
-                "is_stuck": state.is_stuck,
-                "can_continue": state.can_continue,
-                "capture_activity": capture.activity,
-            },
+        logger.debug(
+            f"[H5] Entering planner plan_step | "
+            f"step_count={state.step_count} is_complete={state.is_complete} "
+            f"is_stuck={state.is_stuck} can_continue={state.can_continue}"
         )
-        # endregion
+
         if not state.can_continue:
             if state.is_complete:
                 return PlanResult(step=None, is_complete=True, reason="Intent completed")
@@ -174,20 +147,13 @@ class StepPlanner:
                 )
             except Exception as exception:
                 completion_error = str(exception)
-            # region agent log
-            _debug_log(
-                hypothesis_id="H3",
-                location="src/fathom/agent/planner.py:plan_step",
-                message="Stuck gate reached before analysis path",
-                data={
-                    "is_stuck": True,
-                    "can_recover": state.can_continue,
-                    "capture_activity": capture.activity,
-                    "check_completion_signal": completion_signal,
-                    "check_completion_error": completion_error,
-                },
+
+            logger.debug(
+                f"[H3] Stuck gate reached | "
+                f"can_recover={state.can_continue} "
+                f"check_completion_signal={completion_signal} "
+                f"check_completion_error={completion_error}"
             )
-            # endregion
 
             recovery_action = state.get_recovery_action()
             if recovery_action:
@@ -200,7 +166,7 @@ class StepPlanner:
 
         context = state.build_context()
         history_context = str(object=context.get("compact_history", "None"))
-        
+
         full_context = history_context
         if additional_context:
             full_context = f"{additional_context}\n{history_context}"
@@ -222,15 +188,13 @@ class StepPlanner:
 
         if completion.is_complete:
             state.mark_complete(reason=completion.evidence)
-            
+
             # If there's a valid physical action, we should execute it before finishing
             step = None
             if action.action_type not in ("complete", "unknown", "wait"):
-                 step = self.__build_step(
-                     action=action, 
-                     step_number=state.step_count, 
-                     capture=capture
-                 )
+                step = self.__build_step(
+                    action=action, step_number=state.step_count, capture=capture
+                )
 
             return PlanResult(
                 step=step,
@@ -312,10 +276,7 @@ class StepPlanner:
         """
 
         step = self.__build_step(
-            action=action,
-            step_number=step_number,
-            capture=capture,
-            is_recovery=is_recovery
+            action=action, step_number=step_number, capture=capture, is_recovery=is_recovery
         )
 
         return PlanResult(

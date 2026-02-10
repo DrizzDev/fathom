@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 from logging import getLogger
-import time
 from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
@@ -12,23 +10,6 @@ from fathom.schemas.state import ActionHistory, LoopDetector
 from fathom.schemas.steps import StepResult
 
 logger = getLogger(__name__)
-DEBUG_LOG_PATH = "/Users/mohnishbangaru/Fathom v1/fathom/.cursor/debug.log"
-
-
-def _debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
-    payload = {
-        "runId": "pre-fix",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time() * 1000),
-    }
-    try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as debug_file:
-            debug_file.write(json.dumps(payload, ensure_ascii=True) + "\n")
-    except Exception:
-        logger.debug("Debug instrumentation write failed", exc_info=True)
 
 
 class AgentState:
@@ -160,21 +141,13 @@ class AgentState:
         self.__current_screen = screen
         # Fuzzy matching for seen screens
         is_new_screen = self.__is_new_screen(screen)
-        # region agent log
-        _debug_log(
-            hypothesis_id="H2",
-            location="src/fathom/agent/state.py:update_screen",
-            message="Screen update classification",
-            data={
-                "is_new_screen": is_new_screen,
-                "seen_screens_count_before_append": len(self.__seen_screens),
-                "current_activity": screen.activity,
-                "current_activity_hash": screen.activity_hash,
-                "previous_activity": previous_screen.activity if previous_screen else None,
-                "previous_activity_hash": previous_screen.activity_hash if previous_screen else None,
-            },
+
+        logger.debug(
+            f"[H2] Screen update classification | "
+            f"is_new={is_new_screen} seen_count={len(self.__seen_screens)} "
+            f"current={screen.activity} hash={screen.activity_hash} "
+            f"prev={previous_screen.activity if previous_screen else None}"
         )
-        # endregion
 
         if is_new_screen:
             self.__seen_screens.append(screen)
@@ -220,17 +193,17 @@ class AgentState:
         # Known knowledge
         if self.__knowledge:
             lines.append("Known Facts:")
-            for k, v in self.__knowledge.items():
-                lines.append(f"- {k}: {v}")
+            for key, value in self.__knowledge.items():
+                lines.append(f"- {key}: {value}")
 
         lines.append(f"\n=== RECENT HISTORY (Last {max_history}) ===")
         # Get recent items from action history
         recent = self.__action_history.get_history_items()[-max_history:]
-        
-        for i, item in enumerate(recent):
+
+        for index, item in enumerate(recent):
             status = "[OK]" if item["success"] else "[FAIL]"
-            action_str = f"{item['type']}:{item['target']}"
-            lines.append(f"{i+1}. {status} {action_str}")
+            action_description = f"{item['type']}:{item['target']}"
+            lines.append(f"{index + 1}. {status} {action_description}")
 
         if self.__last_error:
             lines.append(f"\n[WARN] LAST ERROR: {self.__last_error}")
@@ -254,20 +227,12 @@ class AgentState:
             action=result.step.action, success=result.success, activity=activity
         )
         self.__last_action_description = result.step.action.to_description()
-        # region agent log
-        _debug_log(
-            hypothesis_id="H7",
-            location="src/fathom/agent/state.py:record_step",
-            message="Recorded executed action in action history",
-            data={
-                "step_count": self.__step_count,
-                "action_description": result.step.action.to_description(),
-                "action_type": result.step.action.action_type.value,
-                "success": result.success,
-                "activity": activity,
-            },
+
+        logger.debug(
+            f"[H7] Recorded executed action | "
+            f"step={self.__step_count} action={result.step.action.to_description()} "
+            f"type={result.step.action.action_type.value} success={result.success}"
         )
-        # endregion
 
         if result.step.action.action_type == ActionType.COMPLETE and result.success:
             self.mark_complete(reason="Goal achieved via COMPLETE action")

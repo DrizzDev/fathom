@@ -29,6 +29,7 @@ class GeminiPromptBuilder(PromptBuilder):
         """
         Build a high-signal system prompt for tool-based UI execution.
         """
+
         interaction_context = self.__format_interaction_history(history=history)
         contextual_rules = self.__get_contextual_rules(intent=intent, hints=hints)
         conditional_notes = self.__get_conditional_notes(intent=intent, hints=hints)
@@ -55,6 +56,7 @@ class GeminiPromptBuilder(PromptBuilder):
         """
         Core identity.
         """
+
         return (
             "You are a Mobile UI expert agent. "
             "Ground all interactions using normalized coordinates (0-1000)."
@@ -64,6 +66,7 @@ class GeminiPromptBuilder(PromptBuilder):
         """
         High-priority contextual rules.
         """
+
         rules: List[str] = []
 
         if hints and hints.get("use_xml"):
@@ -73,11 +76,15 @@ class GeminiPromptBuilder(PromptBuilder):
             rules.append("- LOOP: Iterate untried matching elements. Avoid repeats.")
 
         if any(word in intent.lower() for word in ["type", "enter", "input"]):
-            rules.append("- CRITICAL SEQ: Use 'tap' to gain focus on the input field, followed by 'type'.")
+            rules.append(
+                "- CRITICAL SEQ: Use 'tap' to gain focus on the input field, followed by 'type'."
+            )
 
         if hints and hints.get("needs_navigation"):
             target = str(hints.get("target_screen", "target screen"))
-            rules.append(f"- NAVIGATION: Move toward '{target}' before actioning intent-specific UI.")
+            rules.append(
+                f"- NAVIGATION: Move toward '{target}' before actioning intent-specific UI."
+            )
 
         return "RULES:\n" + "\n".join(rules) if rules else ""
 
@@ -85,6 +92,7 @@ class GeminiPromptBuilder(PromptBuilder):
         """
         Add concise behavior notes derived from intent/hints.
         """
+
         notes: List[str] = []
         intent_lower = intent.lower()
 
@@ -96,7 +104,9 @@ class GeminiPromptBuilder(PromptBuilder):
             notes.append("- SEARCH FLOW: If suggestions are visible, type then tap suggestion.")
 
         if not hints or not hints.get("requires_repeat_all"):
-            notes.append("- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly.")
+            notes.append(
+                "- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly."
+            )
 
         if not notes:
             return ""
@@ -119,6 +129,7 @@ class GeminiPromptBuilder(PromptBuilder):
         """
         Compact interaction history to reduce repeated actions.
         """
+
         if isinstance(history, str):
             return history
 
@@ -140,6 +151,7 @@ class GeminiPromptBuilder(PromptBuilder):
         block = "INTERACTION HISTORY:\n" + "\n".join(lines)
         if avoided:
             block += f"\nAvoid repeats when possible: {', '.join(avoided[:6])}"
+
         return block
 
     def build_next_step_prompt(
@@ -148,7 +160,9 @@ class GeminiPromptBuilder(PromptBuilder):
         """
         Build focused prompt for stuck/next-step recovery.
         """
+
         interaction_context = self.__format_interaction_history(history=interaction_history)
+
         return (
             "Task: Intent appears stuck. Propose ONE best action to progress.\n"
             f"User intent: {user_intent}\n"
@@ -169,6 +183,7 @@ class GeminiPromptBuilder(PromptBuilder):
         """
         Build strict action+screen alignment verification prompt.
         """
+
         return (
             "Task: Verify action alignment and screen context.\n"
             f"User Intent: {intent}\n"
@@ -183,8 +198,10 @@ class GeminiPromptBuilder(PromptBuilder):
         """
         Build prompt for exploration-style screen intent generation.
         """
+
         width, height = image_size
         context = f"App context: {app_context}\n" if app_context else ""
+
         return (
             "Task: Generate intents for all interactive elements on this screen.\n"
             f"{context}Screen size: {width}x{height}\n"

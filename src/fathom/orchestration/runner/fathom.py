@@ -8,6 +8,7 @@ from fathom.exceptions import FathomError
 from fathom.infrastructure.llm import GeminiLLMClient
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
+from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.infrastructure.storage.local import LocalImageStorage
 from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.prompts.factory import PromptFactory
@@ -143,12 +144,15 @@ class FathomRunner:
 
         client = GeminiLLMClient(configuration=llm_configuration)
 
+        gcs = GCSImageStorage(configuration=llm_configuration, credentials=client.credentials)
+
         return GeminiVisionTool(
             model=client,
             version=version,
-            ledger=self.__ledger,  # type: ignore[arg-type]
-            memory=self.__memory_provider,  # type: ignore[arg-type]
+            ledger=self.__ledger,
+            memory=self.__memory_provider,
             local_storage=LocalImageStorage(),
+            gcs_storage=gcs,
         )
 
     def cancel(self) -> None:

@@ -2,32 +2,39 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
 from google.genai.types import Content
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = getLogger(__name__)
 
 
-@dataclass
-class CacheStats:
+class CacheStats(BaseModel):
     """
     Tracks cache performance metrics.
     """
 
-    hits: int = 0
-    misses: int = 0
-    creates: int = 0
-    evictions: int = 0
+    model_config = ConfigDict(frozen=False)
+
+    hits: int = Field(default=0, description="Number of cache hits")
+    misses: int = Field(default=0, description="Number of cache misses")
+    creates: int = Field(default=0, description="Number of new caches created")
+    evictions: int = Field(default=0, description="Number of caches evicted")
 
     @property
     def hit_rate(self) -> float:
+        """
+        Calculate cache hit rate.
+        """
         total = self.hits + self.misses
         return self.hits / total if total > 0 else 0.0
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert stats to dictionary format.
+        """
         return {
             "hits": self.hits,
             "misses": self.misses,
@@ -43,6 +50,14 @@ class CacheService:
     """
 
     def __init__(self, client: Any, model_name: str, *, ttl_minutes: int = 60) -> None:
+        """
+        Initialize CacheService.
+
+        Args:
+            client: The GenAI client instance.
+            model_name: The model name to cache for.
+            ttl_minutes: Time-to-live for cached content in minutes.
+        """
         self.__client = client
         self.__model_name = model_name
         self.__ttl_minutes = ttl_minutes
@@ -58,6 +73,13 @@ class CacheService:
         """
         Creates or retrieves a cached content object.
         Invalidates the cache if the content hash changes.
+
+        Args:
+            system_instruction: The system prompt/instruction to cache.
+            tools: Optional list of tool declarations to include in cache.
+
+        Returns:
+            The name of the cached content object, or None if caching failed/skipped.
         """
 
         current_hash = self.__compute_hash(instruction=system_instruction, tools=tools)
@@ -74,7 +96,9 @@ class CacheService:
         # Evict stale cache if content changed
         if self.__cached_content and self.__content_hash != current_hash:
             self.stats.evictions += 1
-            logger.info(f"Cache invalidated (old={self.__content_hash[:8] if self.__content_hash else '?'}, new={current_hash[:8]})")
+            logger.info(
+                f"Cache invalidated (old={self.__content_hash[:8] if self.__content_hash else '?'}, new={current_hash[:8]})"
+            )
             await self.__evict()
 
         try:
@@ -96,7 +120,9 @@ class CacheService:
                 self.__content_hash = current_hash
                 self.stats.creates += 1
 
-                logger.info(f"Created context cache: {self.__cached_content.name} (hash={current_hash[:8]})")
+                logger.info(
+                    f"Created context cache: {self.__cached_content.name} (hash={current_hash[:8]})"
+                )
                 return str(self.__cached_content.name)
 
         except Exception as exception:
@@ -135,6 +161,13 @@ class CacheService:
     def __compute_hash(instruction: str, tools: Optional[List[Dict[str, Any]]] = None) -> str:
         """
         Computes a deterministic hash of the cache key content.
+
+        Args:
+            instruction: System instruction text.
+            tools: Tool declarations list.
+
+        Returns:
+            Hex digest of the hash.
         """
 
         payload = instruction

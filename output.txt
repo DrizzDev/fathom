@@ -22,3 +22,17 @@ Tap on Pay Now button
 Tap on Back button
 Tap on Back button
 Tap on Exit anyway button
+Tap on Schedule Pick your time
+Tap on Tomorrow button
+Tap on Evening button
+Tap on 06:00 PM button
+Tap on Pay Now button
+Tap on Credit / Debit Cards option
+Tap on Card Number field
+Type '4111111111111111' in edt_card_number
+Tap on edt_expiry_date
+Type '12/25' in edt_expiry_date
+Tap on edt_cvv
+Type '123' in edt_cvv
+Tap on Tomorrow button
+Tap on Pay ₹98.7 button
