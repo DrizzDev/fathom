@@ -103,10 +103,30 @@ class FathomCLI:
                 audit_table.add_column("Total Time (s)", style="magenta", justify="right")
                 audit_table.add_column("Avg/Step (s)", style="yellow", justify="right")
 
+                token_metrics = result.metrics.get("Tokens")
+                
                 for operation, data in result.metrics.items():
-                    audit_table.add_row(operation, f"{data['total']:.2f}s", f"{data['avg']:.2f}s")
+                    if operation == "Tokens":
+                        continue
+                    
+                    total = data.get("total", 0.0)
+                    avg = data.get("avg", 0.0)
+                    audit_table.add_row(operation, f"{total:.2f}s", f"{avg:.2f}s")
 
                 console.print(audit_table)
+
+                if token_metrics:
+                    token_table = Table(title="Resource Usage (Tokens)", border_style="yellow")
+                    token_table.add_column("Metric", style="cyan")
+                    token_table.add_column("Value", style="magenta", justify="right")
+                    
+                    token_table.add_row("Prompt Tokens", f"{token_metrics.get('prompt', 0):,.0f}")
+                    token_table.add_row("Completion Tokens", f"{token_metrics.get('completion', 0):,.0f}")
+                    token_table.add_row("Cached Tokens", f"{token_metrics.get('cached', 0):,.0f}")
+                    token_table.add_row("Total Tokens", f"{token_metrics.get('total', 0):,.0f}")
+                    
+                    console.print(token_table)
+
 
             # Memory / Knowledge Graph Summary
             if result.memory_summary:

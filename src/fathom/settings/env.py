@@ -17,7 +17,7 @@ class FathomSettings(BaseSettings):
 
     # Gemini settings
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
-    gemini_model: str = Field(default="gemini-2.0-flash", alias="GEMINI_MODEL")
+    gemini_model: str = Field(default="gemini-3-flash-preview", alias="GEMINI_MODEL")
 
     vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
     vertex_project_id: Optional[str] = Field(default=None, alias="VERTEX_PROJECT_ID")
@@ -38,7 +38,7 @@ class FathomSettings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     # Workflow default limits
-    max_steps: int = Field(default=20, alias="MAX_STEPS")
+    max_steps: int = Field(default=100, alias="MAX_STEPS")
 
     # Environment file support
     model_config = SettingsConfigDict(

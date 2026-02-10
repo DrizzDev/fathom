@@ -121,6 +121,18 @@ class MockDeviceTool(DeviceTool):
         """
         return self.__screen_size
 
+    async def screenshot(self) -> Optional[bytes]:
+        """
+        Return a stable mock screenshot payload.
+        """
+        return b"mock_screenshot"
+
+    async def dump_hierarchy(self) -> Optional[str]:
+        """
+        Return a minimal mock UI hierarchy.
+        """
+        return "<hierarchy></hierarchy>"
+
     async def get_activity(self) -> str:
         """
         Return mock activity.

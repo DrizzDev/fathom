@@ -135,16 +135,13 @@ class IntentStrategy(ExecutionStrategy):
         self.__metrics.record(operation="analysis", duration=analysis_duration)
 
         # Track token usage from the LLM call
+        # Track token usage from the LLM call
         if plan.metrics:
             self.__metrics.record_tokens(
                 prompt=int(plan.metrics.get("prompt_tokens", 0)),
                 completion=int(plan.metrics.get("completion_tokens", 0)),
                 cached=int(plan.metrics.get("cached_tokens", 0)),
             )
-
-        if plan.is_complete:
-            self.__audit_service.print_session_summary()
-            return StrategyResult(status=StrategyStatus.COMPLETE, message=plan.reason)
 
         # RETRY: Invalid action
         if getattr(plan, "is_valid_action", True) is False:
@@ -158,6 +155,11 @@ class IntentStrategy(ExecutionStrategy):
         if not step:
             if plan.should_retry:
                 return StrategyResult(status=StrategyStatus.CONTINUE, message=plan.reason)
+
+            # If no step but complete, we are done
+            if plan.is_complete:
+                self.__audit_service.print_session_summary()
+                return StrategyResult(status=StrategyStatus.COMPLETE, message=plan.reason)
 
             self.__audit_service.print_session_summary()
             return StrategyResult(status=StrategyStatus.ERROR, message=plan.reason)

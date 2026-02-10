@@ -117,7 +117,8 @@ class GeminiLLMClient(IVisionProvider):
             if isinstance(item, bytes):  # It's an image
                 if not item:
                     raise VisionError("Received empty image data for analysis")
-                parts.append(types.Part.from_bytes(data=item, mime_type="image/jpeg"))
+                mime_type = self.__detect_mime(data=item)
+                parts.append(types.Part.from_bytes(data=item, mime_type=mime_type))
             elif isinstance(item, str):
                 parts.append({"text": item})
             else:
@@ -173,3 +174,19 @@ class GeminiLLMClient(IVisionProvider):
 
         if self.__cache:
             await self.__cache.delete_cache()
+
+    @staticmethod
+    def __detect_mime(data: bytes) -> str:
+        """
+        Detect common image formats from file signatures.
+        """
+
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if data.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+            return "image/gif"
+        if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP":
+            return "image/webp"
+        return "image/jpeg"

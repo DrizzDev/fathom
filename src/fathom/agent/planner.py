@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from logging import getLogger
+import time
 from typing import Any, Dict, Optional, Tuple
 
 from fathom.agent.reasoner import Reasoner
@@ -13,6 +15,23 @@ from fathom.schemas.steps import Step
 from fathom.tools.vision import VisionTool
 
 logger = getLogger(name=__name__)
+DEBUG_LOG_PATH = "/Users/mohnishbangaru/Fathom v1/fathom/.cursor/debug.log"
+
+
+def _debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
+    payload = {
+        "runId": "pre-fix",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as debug_file:
+            debug_file.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except Exception:
+        logger.debug("Debug instrumentation write failed", exc_info=True)
 
 
 class CoordinateConverter:
@@ -121,6 +140,20 @@ class StepPlanner:
         Plan the next step based on current state.
         """
 
+        # region agent log
+        _debug_log(
+            hypothesis_id="H5",
+            location="src/fathom/agent/planner.py:plan_step",
+            message="Entering planner plan_step",
+            data={
+                "step_count": state.step_count,
+                "is_complete": state.is_complete,
+                "is_stuck": state.is_stuck,
+                "can_continue": state.can_continue,
+                "capture_activity": capture.activity,
+            },
+        )
+        # endregion
         if not state.can_continue:
             if state.is_complete:
                 return PlanResult(step=None, is_complete=True, reason="Intent completed")
@@ -133,6 +166,28 @@ class StepPlanner:
         # This breaks the loop by forcing a navigation change (BACK/SCROLL/HOME).
         if state.is_stuck:
             logger.warning(msg="Agent is stuck in a loop. Forcing recovery action.")
+            completion_signal = False
+            completion_error = None
+            try:
+                completion_signal = await self.__vision.check_completion(
+                    intent=state.intent, capture=capture
+                )
+            except Exception as exception:
+                completion_error = str(exception)
+            # region agent log
+            _debug_log(
+                hypothesis_id="H3",
+                location="src/fathom/agent/planner.py:plan_step",
+                message="Stuck gate reached before analysis path",
+                data={
+                    "is_stuck": True,
+                    "can_recover": state.can_continue,
+                    "capture_activity": capture.activity,
+                    "check_completion_signal": completion_signal,
+                    "check_completion_error": completion_error,
+                },
+            )
+            # endregion
 
             recovery_action = state.get_recovery_action()
             if recovery_action:
@@ -163,18 +218,28 @@ class StepPlanner:
             analysis=analysis, screen_description=capture.activity
         )
 
+        action = self.__select_action(state=state, reasoner=reasoner, analysis=analysis)
+
         if completion.is_complete:
             state.mark_complete(reason=completion.evidence)
+            
+            # If there's a valid physical action, we should execute it before finishing
+            step = None
+            if action.action_type not in ("complete", "unknown", "wait"):
+                 step = self.__build_step(
+                     action=action, 
+                     step_number=state.step_count, 
+                     capture=capture
+                 )
+
             return PlanResult(
-                step=None,
+                step=step,
                 is_complete=True,
                 metrics=analysis.metrics,
                 metadata=analysis.metadata,
                 reason=completion.evidence,
                 memories=analysis.memories,
             )
-
-        action = self.__select_action(state=state, reasoner=reasoner, analysis=analysis)
 
         # Optimization: Check if this EXACT action just failed on this screen hash
         if state.should_avoid_action(action=action):
@@ -246,14 +311,11 @@ class StepPlanner:
         Return a PlanResult with the given action and metadata.
         """
 
-        screen_hash = self.__compute_simple_hash(capture=capture)
-
-        step = Step(
+        step = self.__build_step(
             action=action,
-            screen_hash=screen_hash,
             step_number=step_number,
-            is_conditional=is_recovery,
-            condition="recovery" if is_recovery else None,
+            capture=capture,
+            is_recovery=is_recovery
         )
 
         return PlanResult(
@@ -265,6 +327,27 @@ class StepPlanner:
             reason="Step planned" if not is_recovery else "Recovery step",
             is_valid_action=action.is_valid,
             validation_reasoning=action.validation_reason,
+        )
+
+    def __build_step(
+        self,
+        action: Action,
+        step_number: int,
+        capture: ScreenCapture,
+        is_recovery: bool = False,
+    ) -> Step:
+        """
+        Helper to construct a Step object.
+        """
+
+        screen_hash = self.__compute_simple_hash(capture=capture)
+
+        return Step(
+            action=action,
+            screen_hash=screen_hash,
+            step_number=step_number,
+            is_conditional=is_recovery,
+            condition="recovery" if is_recovery else None,
         )
 
     def __compute_simple_hash(self, capture: ScreenCapture) -> str:

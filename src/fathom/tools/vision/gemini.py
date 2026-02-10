@@ -7,12 +7,18 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
+from fathom.infrastructure.llm import GeminiLLMClient
+from fathom.infrastructure.memory.ledger import Ledger
+from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
+from fathom.infrastructure.storage.local import LocalImageStorage
 from fathom.interfaces import (
+    IImageStorage,
     ILedger,
     IMemoryProvider,
     IVisionProvider,
 )
 from fathom.prompts.factory import PromptFactory
+from fathom.schemas.configuration import GeminiConfig
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.tools.definitions import ToolRegistry
@@ -29,12 +35,22 @@ class GeminiVisionTool(VisionTool):
 
     def __init__(
         self,
-        model: IVisionProvider,
-        memory: IMemoryProvider,
-        ledger: ILedger,
-        local_storage: "IImageStorage",
+        model: IVisionProvider | GeminiConfig,
+        memory: Optional[IMemoryProvider] = None,
+        ledger: Optional[ILedger] = None,
+        local_storage: Optional["IImageStorage"] = None,
         version: str = "pro_xml",
     ) -> None:
+        if isinstance(model, GeminiConfig):
+            model = GeminiLLMClient(configuration=model)
+
+        if memory is None:
+            memory = SQLiteMemoryProvider()
+        if ledger is None:
+            ledger = Ledger()
+        if local_storage is None:
+            local_storage = LocalImageStorage()
+
         self.__model = model
         self.__version = version
 
@@ -159,6 +175,43 @@ class GeminiVisionTool(VisionTool):
 
         result = await self.analyze(intent=intent, capture=capture)
         return result.is_goal_complete
+
+    def _parse_bbox(self, raw: Any) -> Optional[Dict[str, int]]:
+        """
+        Legacy helper kept for test/backward compatibility.
+        Accepts Gemini bbox variants and normalizes to x/y/width/height.
+        """
+        if isinstance(raw, dict):
+            if {"x", "y", "width", "height"}.issubset(raw):
+                return {
+                    "x": int(raw["x"]),
+                    "y": int(raw["y"]),
+                    "width": int(raw["width"]),
+                    "height": int(raw["height"]),
+                }
+            if {"ymin", "xmin", "ymax", "xmax"}.issubset(raw):
+                xmin = int(raw["xmin"])
+                ymin = int(raw["ymin"])
+                xmax = int(raw["xmax"])
+                ymax = int(raw["ymax"])
+                return {
+                    "x": xmin,
+                    "y": ymin,
+                    "width": max(0, xmax - xmin),
+                    "height": max(0, ymax - ymin),
+                }
+            return None
+
+        if isinstance(raw, list) and len(raw) == 4:
+            ymin, xmin, ymax, xmax = [int(value) for value in raw]
+            return {
+                "x": xmin,
+                "y": ymin,
+                "width": max(0, xmax - xmin),
+                "height": max(0, ymax - ymin),
+            }
+
+        return None
 
     def __build_payload(
         self,

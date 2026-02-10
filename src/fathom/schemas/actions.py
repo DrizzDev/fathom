@@ -151,3 +151,6 @@ class Action(BaseModel):
             return f"Validate {name} (Goal complete)"
 
         return f"{self.action_type.value.capitalize()} on {name}"
+
+
+BoundingBox = Bounds

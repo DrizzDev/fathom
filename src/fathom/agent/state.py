@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from logging import getLogger
+import time
 from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
@@ -10,6 +12,23 @@ from fathom.schemas.state import ActionHistory, LoopDetector
 from fathom.schemas.steps import StepResult
 
 logger = getLogger(__name__)
+DEBUG_LOG_PATH = "/Users/mohnishbangaru/Fathom v1/fathom/.cursor/debug.log"
+
+
+def _debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
+    payload = {
+        "runId": "pre-fix",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as debug_file:
+            debug_file.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except Exception:
+        logger.debug("Debug instrumentation write failed", exc_info=True)
 
 
 class AgentState:
@@ -63,6 +82,7 @@ class AgentState:
         self.__knowledge: Dict[str, Any] = {}
         self.__current_screen_name: Optional[str] = None
         self.__last_error: Optional[str] = None
+        self.__last_action_description: Optional[str] = None
 
     @property
     def intent(self) -> str:
@@ -140,6 +160,21 @@ class AgentState:
         self.__current_screen = screen
         # Fuzzy matching for seen screens
         is_new_screen = self.__is_new_screen(screen)
+        # region agent log
+        _debug_log(
+            hypothesis_id="H2",
+            location="src/fathom/agent/state.py:update_screen",
+            message="Screen update classification",
+            data={
+                "is_new_screen": is_new_screen,
+                "seen_screens_count_before_append": len(self.__seen_screens),
+                "current_activity": screen.activity,
+                "current_activity_hash": screen.activity_hash,
+                "previous_activity": previous_screen.activity if previous_screen else None,
+                "previous_activity_hash": previous_screen.activity_hash if previous_screen else None,
+            },
+        )
+        # endregion
 
         if is_new_screen:
             self.__seen_screens.append(screen)
@@ -157,7 +192,9 @@ class AgentState:
         else:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
 
-        self.__loop_detector.record(screen=screen)
+        self.__loop_detector.record(
+            screen=screen, action_description=self.__last_action_description
+        )
         return is_new_screen
 
     def set_knowledge(self, key: str, value: Any) -> None:
@@ -216,6 +253,21 @@ class AgentState:
         self.__action_history.record_action(
             action=result.step.action, success=result.success, activity=activity
         )
+        self.__last_action_description = result.step.action.to_description()
+        # region agent log
+        _debug_log(
+            hypothesis_id="H7",
+            location="src/fathom/agent/state.py:record_step",
+            message="Recorded executed action in action history",
+            data={
+                "step_count": self.__step_count,
+                "action_description": result.step.action.to_description(),
+                "action_type": result.step.action.action_type.value,
+                "success": result.success,
+                "activity": activity,
+            },
+        )
+        # endregion
 
         if result.step.action.action_type == ActionType.COMPLETE and result.success:
             self.mark_complete(reason="Goal achieved via COMPLETE action")
