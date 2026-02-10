@@ -144,7 +144,7 @@ class ADBDeviceTool(DeviceTool):
         Execute generic action from request dictionary.
         """
 
-        name = str(request.get("action", ""))
+        name = str(request.get("action", "") or request.get("action_type", ""))
 
         if name == "tap":
             return await self.tap(x=int(str(request.get("x", 0))), y=int(str(request.get("y", 0))))

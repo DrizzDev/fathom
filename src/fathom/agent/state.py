@@ -59,6 +59,11 @@ class AgentState:
         self.__is_complete = False
         self.__completion_reason: Optional[str] = None
 
+        # Enhanced state fields
+        self.__knowledge: Dict[str, Any] = {}
+        self.__current_screen_name: Optional[str] = None
+        self.__last_error: Optional[str] = None
+
     @property
     def intent(self) -> str:
         """
@@ -131,6 +136,7 @@ class AgentState:
             True if this is a new screen, False if seen before.
         """
 
+        previous_screen = self.__current_screen
         self.__current_screen = screen
         # Fuzzy matching for seen screens
         is_new_screen = self.__is_new_screen(screen)
@@ -138,11 +144,62 @@ class AgentState:
         if is_new_screen:
             self.__seen_screens.append(screen)
             logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
+            # If we reached a new screen, we are definitely not stuck in a local loop.
+            self.__loop_detector.reset()
+        elif previous_screen and previous_screen.activity_hash != screen.activity_hash:
+            # Activity changed but screen was seen before (e.g., revisiting a page via
+            # a different navigation path). This is progress, not a loop.
+            logger.debug(
+                f"Activity changed: {previous_screen.activity} -> {screen.activity}. "
+                f"Resetting loop detector."
+            )
+            self.__loop_detector.reset()
         else:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
 
         self.__loop_detector.record(screen=screen)
         return is_new_screen
+
+    def set_knowledge(self, key: str, value: Any) -> None:
+        """Set a fact in knowledge base."""
+        self.__knowledge[key] = value
+
+    def set_last_error(self, error: str) -> None:
+        """Set the last error message."""
+        self.__last_error = error
+
+    def get_smart_context(self, max_history: int = 5) -> str:
+        """
+        Structured context for LLM — current state + recent history + errors.
+        Ported from interactive_testing state manager.
+        """
+        lines = ["=== CURRENT STATE ==="]
+
+        if self.__current_screen:
+            # Use activity name if available, or just generic
+            screen_name = self.__current_screen.activity or "Unknown Screen"
+            lines.append(f"Current Screen: {screen_name}")
+
+        # Known knowledge
+        if self.__knowledge:
+            lines.append("Known Facts:")
+            for k, v in self.__knowledge.items():
+                lines.append(f"- {k}: {v}")
+
+        lines.append(f"\n=== RECENT HISTORY (Last {max_history}) ===")
+        # Get recent items from action history
+        recent = self.__action_history.get_history_items()[-max_history:]
+        
+        for i, item in enumerate(recent):
+            status = "[OK]" if item["success"] else "[FAIL]"
+            action_str = f"{item['type']}:{item['target']}"
+            lines.append(f"{i+1}. {status} {action_str}")
+
+        if self.__last_error:
+            lines.append(f"\n[WARN] LAST ERROR: {self.__last_error}")
+
+        lines.append("=== END STATE ===")
+        return "\n".join(lines)
 
     def record_step(self, result: StepResult) -> None:
         """

@@ -8,7 +8,6 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional
 
 from fathom.interfaces import (
-    IImageStorage,
     ILedger,
     IMemoryProvider,
     IVisionProvider,
@@ -33,8 +32,7 @@ class GeminiVisionTool(VisionTool):
         model: IVisionProvider,
         memory: IMemoryProvider,
         ledger: ILedger,
-        cloud_storage: IImageStorage,
-        local_storage: IImageStorage,
+        local_storage: "IImageStorage",
         version: str = "pro_xml",
     ) -> None:
         self.__model = model
@@ -43,7 +41,6 @@ class GeminiVisionTool(VisionTool):
         self.__memory = memory
         self.__ledger = ledger
 
-        self.__cloud_storage = cloud_storage
         self.__local_storage = local_storage
 
         self.__builder = PromptFactory.get_builder(model_name="gemini")
@@ -99,18 +96,7 @@ class GeminiVisionTool(VisionTool):
             memory=await self.__ledger.get_all(),
         )
 
-        allowed = ["execute_ui", "store_memory", "recall_memory"]
-        if any(keyword in intent.lower() for keyword in ["verify", "check", "confirm", "validate"]):
-            allowed.extend(["validate_state", "verify_goal"])
-
-        definitions = ToolRegistry.get_all_definitions()
-        tools = {
-            "function_declarations": [
-                definition
-                for definition in definitions["function_declarations"]
-                if definition["name"] in allowed
-            ]
-        }
+        tools = self.__scope_tools(intent=intent)
 
         # 3. CONTENT ASSEMBLY
         manifest = self.__format_elements(elements=elements)
@@ -250,11 +236,10 @@ class GeminiVisionTool(VisionTool):
         Background persistence task.
         """
 
-        await asyncio.gather(
-            self.__local_storage.save(data=data),
-            self.__cloud_storage.save(data=data),
-            return_exceptions=True,
-        )
+        try:
+            await self.__local_storage.save(data=data)
+        except Exception:
+            logger.debug("Local screenshot save failed", exc_info=True)
 
     async def cleanup(self) -> None:
         """
@@ -262,3 +247,25 @@ class GeminiVisionTool(VisionTool):
         """
 
         await self.__model.cleanup()
+
+    def __scope_tools(self, intent: str) -> Dict[str, Any]:
+        """
+        Dynamically selects tools based on the intent context.
+        """
+
+        # Base tools always available
+        allowed = {"execute_ui", "store_memory", "recall_memory"}
+
+        # Validation tools for verification tasks
+        if any(w in intent.lower() for w in ("verify", "check", "confirm", "validate")):
+            allowed.update({"validate_state", "verify_goal"})
+
+        definitions = ToolRegistry.get_all_definitions()
+
+        return {
+            "function_declarations": [
+                definition
+                for definition in definitions["function_declarations"]
+                if definition["name"] in allowed
+            ]
+        }

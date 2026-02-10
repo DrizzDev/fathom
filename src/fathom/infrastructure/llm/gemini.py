@@ -61,14 +61,6 @@ class GeminiLLMClient(IVisionProvider):
         if not project:
             project = os.environ.get("GEMINI_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
 
-        # Ensure credentials are set even if using API key (for other services like GCS)
-        if not self.__credentials and self.__configuration.credentials_path:
-            path = Path(self.__configuration.credentials_path)
-            if path.exists():
-                self.__credentials = service_account.Credentials.from_service_account_file(
-                    str(path),
-                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
-                )
 
         http_options = {"timeout": self.__configuration.timeout * 1000}  # ms
 
@@ -134,6 +126,7 @@ class GeminiLLMClient(IVisionProvider):
         config_args: Dict[str, Any] = {
             "candidate_count": 1,
             "temperature": self.__configuration.temperature,
+            "automatic_function_calling": {"disable": True},
         }
 
         if not cache_name:
@@ -154,7 +147,16 @@ class GeminiLLMClient(IVisionProvider):
                     model=self.__configuration.model,
                     contents=[types.Content(role="user", parts=parts)],
                 )
-                return self.__parser.parse(response)
+                result = self.__parser.parse(response)
+
+                # Extract token usage from response
+                usage = getattr(response, "usage_metadata", None)
+                if usage:
+                    result.metrics["prompt_tokens"] = getattr(usage, "prompt_token_count", 0) or 0
+                    result.metrics["completion_tokens"] = getattr(usage, "candidates_token_count", 0) or 0
+                    result.metrics["cached_tokens"] = getattr(usage, "cached_content_token_count", 0) or 0
+
+                return result
             except Exception as exception:
                 if attempt == max_retries:
                     raise VisionError(f"LLM fail: {exception}") from exception

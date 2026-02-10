@@ -10,7 +10,6 @@ from fathom.interfaces import IMemoryProvider
 from fathom.schemas.configuration import WorkflowConfig
 from fathom.schemas.results import IntentResult
 from fathom.schemas.screens import ScreenCapture
-from fathom.services.decomposer import IntentDecomposer
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
@@ -51,17 +50,22 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         self.__memory = memory
         self.__capture = capture
         self.__original_intent = intent
-        self.__decomposer = IntentDecomposer(model=vision.provider)
 
         self.__planner = StepPlanner(vision_tool=vision)
-        self.__state = AgentState(
+        # Create strategy immediately since we no longer decompose
+        self.__strategy = IntentStrategy(
             intent=intent,
-            max_steps=self.configuration.max_steps,
+            device=device,
+            memory=memory,
+            planner=self.__planner,
+            capture=capture,
+            workflow_id=workflow_id,
+            step_timeout=configuration.step_timeout if configuration else 30.0,
+            use_xml=configuration.use_xml_bounding_boxes if configuration else False,
+            max_steps=configuration.max_steps if configuration else 10,
         )
-        self.__strategy: Optional[IntentStrategy] = None
 
         self.__completion_reason = ""
-        self.__sub_intents: List[str] = []
         self.__final_screen: Optional[ScreenCapture] = None
 
     @property
@@ -85,65 +89,35 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         Execute the intent workflow with decomposition.
         """
 
-        # 1. Decompose
-        logger.info(f"Decomposing intent: {self.__original_intent}")
-        self.__sub_intents = await self.__decomposer.decompose(intent=self.__original_intent)
-        logger.info(f"Sub-intents: {self.__sub_intents}")
+        # Execute strategy loop
+        logger.info(f"Executing intent: {self.__original_intent}")
 
-        # 2. Iterate through sub-intents
-        for sub_intent in self.__sub_intents:
+        while await self.__strategy.should_continue():
             if self.is_cancelled():
                 self.__completion_reason = "Workflow cancelled"
                 break
 
-            logger.info(f"Executing Sub-Intent: {sub_intent}")
+            result = await self.__strategy.execute_step()
 
-            # Create strategy for this specific sub-intent
-            # We reuse the same planner and state to maintain history across sub-intents
-            self.__strategy = IntentStrategy(
-                intent=sub_intent,
-                device=self.__device,
-                memory=self.__memory,
-                planner=self.__planner,
-                capture=self.__capture,
-                workflow_id=self.workflow_id,
-                step_timeout=self.configuration.step_timeout,
-                use_xml=self.configuration.use_xml_bounding_boxes,
-                max_steps=self.configuration.max_steps // len(self.__sub_intents) + 5,
-            )
+            if result.step_result:
+                self.record_step(result=result.step_result)
 
-            # Internal loop for this sub-intent
-            while await self.__strategy.should_continue():
-                if self.is_cancelled():
-                    break
-
-                result = await self.__strategy.execute_step()
-
-                if result.step_result:
-                    self.record_step(result=result.step_result)
-
-                if result.is_terminal:
-                    # If it's an error, we might want to retry or abort
-                    if result.status == result.status.ERROR:
-                        logger.warning(f"Sub-intent failed: {result.message}")
-                    break
-
-            if self.is_cancelled():
+            if result.is_terminal:
+                if result.status == result.status.ERROR:
+                    logger.warning(f"Intent failed: {result.message}")
                 break
 
         # Finalize
-        # Success is determined by whether the LAST sub-intent completed or state is marked complete
-        metrics = self.__strategy.metrics if self.__strategy else {}
-        success = self.__strategy.state.is_complete if self.__strategy else False
+        success = self.__strategy.state.is_complete
 
         if not self.__completion_reason:
             if success:
                 self.__completion_reason = "Goal successfully achieved"
             else:
-                self.__completion_reason = "Execution failed to complete all sub-intents"
+                self.__completion_reason = "Execution failed or timed out"
 
         return IntentResult(
-            metrics=metrics,
+            metrics=self.__strategy.metrics,
             success=success,
             intent=self.__original_intent,
             steps_taken=self.steps_executed,
@@ -166,11 +140,10 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         progress = {
             "elapsed": self.elapsed,
             "intent": self.__original_intent,
-            "sub_intents": self.__sub_intents,
             "steps_executed": self.steps_executed,
             "max_steps": self.configuration.max_steps,
         }
         if self.__strategy:
-            progress["current_sub_intent"] = self.__strategy.get_progress()
+            progress["strategy"] = self.__strategy.get_progress()
 
         return progress

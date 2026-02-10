@@ -41,10 +41,9 @@ STRICT FORMAT: Return ONLY valid responses using the provided tools.
 """
 
 TOOL_GUIDANCE = """
-TOOL SELECTION:
-- execute_ui: Use for performing UI actions (tap, type, swipe, scroll, etc.)
-- validate_state: Use ONLY when you need to VERIFY or CHECK that a goal was achieved.
-  Call this tool when: (1) The intent contains 'verify', 'check', 'confirm', or 'validate', AND
-                       (2) You have ALREADY performed the actions and now need to verify the result.
-  Do NOT use validate_state if actions still need to be performed.
+TOOL SELECTION & VALIDATION:
+- execute_ui: The PRIMARY tool. Use for all interactions (tap, type, swipe, scroll).
+  * CRITICAL: You MUST evaluate 'is_valid' (true/false) and 'validation_reason' for EVERY action.
+  * Self-Correction: If an action seems risky or the element is ambiguous, set is_valid=False and explain why.
+- validate_state: Use ONLY for explicit final verification where no further actions are needed.
 """

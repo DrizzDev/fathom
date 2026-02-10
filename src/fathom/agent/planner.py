@@ -115,6 +115,7 @@ class StepPlanner:
         *,
         use_xml: bool = False,
         elements: Optional[Dict[str, Any]] = None,
+        additional_context: Optional[str] = None,
     ) -> PlanResult:
         """
         Plan the next step based on current state.
@@ -143,12 +144,18 @@ class StepPlanner:
                 )
 
         context = state.build_context()
+        history_context = str(object=context.get("compact_history", "None"))
+        
+        full_context = history_context
+        if additional_context:
+            full_context = f"{additional_context}\n{history_context}"
+
         analysis = await self.__vision.analyze(
             use_xml=use_xml,
             capture=capture,
             elements=elements,
             intent=state.intent,
-            context=str(object=context.get("compact_history", "None")),
+            context=full_context,
             failures=context.get("relevant_failures", []),  # type: ignore[arg-type]
         )
 
@@ -256,6 +263,8 @@ class StepPlanner:
             metrics=metrics or {},
             metadata=metadata or {},
             reason="Step planned" if not is_recovery else "Recovery step",
+            is_valid_action=action.is_valid,
+            validation_reasoning=action.validation_reason,
         )
 
     def __compute_simple_hash(self, capture: ScreenCapture) -> str:

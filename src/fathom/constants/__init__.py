@@ -27,6 +27,9 @@ class ActionType(StrEnum):
     SAVE_MEMORY = "save_memory"
     RETRIEVE_MEMORY = "retrieve_memory"
 
+    INFER = "infer"
+    UNKNOWN = "unknown"
+
 
 class FlowType(StrEnum):
     """

@@ -67,6 +67,18 @@ class AuditService:
                     self.__format_time(milliseconds=plan.metrics["llm_analysis"] * 1000),
                 )
 
+            # Token usage
+            prompt_t = int(plan.metrics.get("prompt_tokens", 0))
+            completion_t = int(plan.metrics.get("completion_tokens", 0))
+            cached_t = int(plan.metrics.get("cached_tokens", 0))
+            if prompt_t or completion_t:
+                total_t = prompt_t + completion_t
+                token_str = f"{total_t:,} (prompt: {prompt_t:,} | completion: {completion_t:,}"
+                if cached_t:
+                    token_str += f" | cached: {cached_t:,}"
+                token_str += ")"
+                audit.add_row("Tokens:", f"[dim]{token_str}[/dim]")
+
         audit.add_row("Total Analysis:", self.__format_time(milliseconds=analysis_duration * 1000))
         audit.add_row("ADB Execution:", self.__format_time(milliseconds=result.duration))
 

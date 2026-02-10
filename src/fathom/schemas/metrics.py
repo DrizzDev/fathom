@@ -37,6 +37,23 @@ class ExecutionMetrics(BaseModel):
     analysis: OperationMetric = Field(default_factory=OperationMetric)
     action: OperationMetric = Field(default_factory=OperationMetric)
 
+    # Token usage tracking
+    prompt_tokens: int = Field(default=0, description="Total prompt tokens consumed")
+    completion_tokens: int = Field(default=0, description="Total completion tokens consumed")
+    cached_tokens: int = Field(default=0, description="Tokens served from cache")
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+    def record_tokens(self, prompt: int = 0, completion: int = 0, cached: int = 0) -> None:
+        """
+        Accumulates token usage from an LLM call.
+        """
+        self.prompt_tokens += prompt
+        self.completion_tokens += completion
+        self.cached_tokens += cached
+
     def record(self, operation: str, duration: float) -> None:
         """
         Registers a new timing data point for a specific operation.
@@ -64,4 +81,10 @@ class ExecutionMetrics(BaseModel):
             },
             "Action": {"avg": self.action.average, "total": self.action.total_duration},
             "Analysis": {"avg": self.analysis.average, "total": self.analysis.total_duration},
+            "Tokens": {
+                "prompt": self.prompt_tokens,
+                "completion": self.completion_tokens,
+                "cached": self.cached_tokens,
+                "total": self.total_tokens,
+            },
         }

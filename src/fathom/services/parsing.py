@@ -17,9 +17,17 @@ class ToolResponseParser(IResponseParser):
     Parses raw LLM tool call responses into domain objects.
     """
 
+    # Primary tools produce the AnalysisResult; side-effect tools merge into it.
+    __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state"}
+    __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
+
     def parse(self, response: Any) -> AnalysisResult:
         """
-        Parses the tool call from the LLM response.
+        Parses ALL tool calls from the LLM response.
+
+        Supports compositional/parallel calling:
+        - Primary tools (execute_ui, verify_goal, validate_state) produce the AnalysisResult.
+        - Side-effect tools (store_memory, recall_memory) merge memory updates into the primary result.
         """
 
         try:
@@ -29,59 +37,80 @@ class ToolResponseParser(IResponseParser):
 
             candidate = candidates[0]
 
-            # Handle token limit or other non-success finish reasons
-            if candidate.finish_reason not in (
-                None,
-                "STOP",
-                1,
-            ):  # 1 is often STOP in some SDK versions
+            if candidate.finish_reason not in (None, "STOP", 1):
                 logger.warning(f"Model failed to finish normally: {candidate.finish_reason}")
 
             content = candidate.content
             parts = content.parts if content and content.parts else []
 
-            function_call = None
-            for part in parts:
-                if part.function_call:
-                    function_call = part.function_call
-                    break
+            # Collect ALL function calls from the response
+            function_calls = [part.function_call for part in parts if part.function_call]
 
-            if not function_call:
+            if not function_calls:
                 text_response = "".join(part.text for part in parts if part.text)
                 logger.warning(f"No function call received. Text: {text_response}")
                 return self.__create_fallback_result(message=text_response)
 
-            result: AnalysisResult
-            name = function_call.name
-            arguments = function_call.args
+            # Separate primary vs side-effect tool calls
+            primary_call = None
+            side_effects = []
 
-            if name == "verify_goal":
-                result = self.__parse_goal_verification(arguments=arguments)
+            for fc in function_calls:
+                if fc.name in self.__PRIMARY_TOOLS:
+                    if primary_call is None:
+                        primary_call = fc
+                    else:
+                        logger.warning(f"Multiple primary tools called; ignoring extra: {fc.name}")
+                elif fc.name in self.__SIDE_EFFECT_TOOLS:
+                    side_effects.append(fc)
+                else:
+                    logger.warning(f"Unknown tool call ignored: {fc.name}")
 
-            elif name == "execute_ui":
-                result = self.__parse_execution(arguments=arguments)
+            # If no primary tool, use the first side-effect as fallback
+            if not primary_call:
+                primary_call = side_effects.pop(0) if side_effects else function_calls[0]
 
-            elif name == "validate_state":
-                result = self.__parse_state_validation(arguments=arguments)
+            # Parse primary tool call
+            result = self.__dispatch_parse(name=primary_call.name, arguments=primary_call.args)
+            result.metadata["tool_name"] = primary_call.name
+            result.metadata["tool_args"] = dict(primary_call.args)
 
-            elif name == "store_memory":
-                result = self.__parse_memory_storage(arguments=arguments)
+            # Process side-effect tool calls (merge memory updates)
+            if side_effects:
+                merged_memory = dict(result.action.memory_updates or {})
+                for fc in side_effects:
+                    logger.info(f"Processing parallel tool call: {fc.name}")
+                    side_result = self.__dispatch_parse(name=fc.name, arguments=fc.args)
+                    if side_result.action.memory_updates:
+                        merged_memory.update(side_result.action.memory_updates)
 
-            elif name == "recall_memory":
-                result = self.__parse_memory_retrieval(arguments=arguments)
-
-            else:
-                raise VisionError(f"Unknown function call: {name}")
-
-            # Inject raw tool metadata for UI rendering later
-            result.metadata["tool_name"] = name
-            result.metadata["tool_args"] = dict(arguments)
+                if merged_memory:
+                    action = result.action.model_copy(update={"memory_updates": merged_memory})
+                    result = result.model_copy(update={"action": action})
 
             return result
 
         except Exception as exception:
             logger.exception("Failed to parse tool response")
             raise VisionError(f"Response parsing failed: {exception}") from exception
+
+    def __dispatch_parse(self, name: str, arguments: Any) -> AnalysisResult:
+        """
+        Routes a tool call to the appropriate parser.
+        """
+
+        if name == "verify_goal":
+            return self.__parse_goal_verification(arguments=arguments)
+        elif name == "execute_ui":
+            return self.__parse_execution(arguments=arguments)
+        elif name == "validate_state":
+            return self.__parse_state_validation(arguments=arguments)
+        elif name == "store_memory":
+            return self.__parse_memory_storage(arguments=arguments)
+        elif name == "recall_memory":
+            return self.__parse_memory_retrieval(arguments=arguments)
+        else:
+            raise VisionError(f"Unknown function call: {name}")
 
     def __parse_goal_verification(self, arguments: Any) -> AnalysisResult:
         """
@@ -172,6 +201,8 @@ class ToolResponseParser(IResponseParser):
             rationale=str(data.get("rationale", "")),
             confidence=float(data.get("confidence", 1.0)),
             label_id=str(data.get("label_id")) if data.get("label_id") else None,
+            is_valid=bool(data.get("is_valid", True)),
+            validation_reason=str(data.get("validation_reason")) if data.get("validation_reason") else None,
         )
 
         return AnalysisResult(

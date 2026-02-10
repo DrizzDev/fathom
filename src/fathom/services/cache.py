@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from dataclasses import dataclass, field
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
@@ -8,29 +11,73 @@ from google.genai.types import Content
 logger = getLogger(__name__)
 
 
-class CacheService:
+@dataclass
+class CacheStats:
     """
-    Service for managing LLM context caching.
+    Tracks cache performance metrics.
     """
 
-    def __init__(self, client: Any, model_name: str) -> None:
+    hits: int = 0
+    misses: int = 0
+    creates: int = 0
+    evictions: int = 0
+
+    @property
+    def hit_rate(self) -> float:
+        total = self.hits + self.misses
+        return self.hits / total if total > 0 else 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "creates": self.creates,
+            "evictions": self.evictions,
+            "hit_rate": round(self.hit_rate, 3),
+        }
+
+
+class CacheService:
+    """
+    Service for managing LLM context caching with key hashing and stats.
+    """
+
+    def __init__(self, client: Any, model_name: str, *, ttl_minutes: int = 60) -> None:
         self.__client = client
-        self.__ttl_minutes = 60
         self.__model_name = model_name
+        self.__ttl_minutes = ttl_minutes
+
         self.__cached_content: Optional[Any] = None
+        self.__content_hash: Optional[str] = None
+
+        self.stats = CacheStats()
 
     async def get_cached_content(
         self, system_instruction: str, tools: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[str]:
         """
         Creates or retrieves a cached content object.
+        Invalidates the cache if the content hash changes.
         """
 
-        if self.__cached_content:
+        current_hash = self.__compute_hash(instruction=system_instruction, tools=tools)
+
+        # Cache hit: same content, cache exists
+        if self.__cached_content and self.__content_hash == current_hash:
+            self.stats.hits += 1
+            logger.debug(f"Cache hit (hash={current_hash[:8]})")
             return str(self.__cached_content.name)
 
+        # Cache miss: content changed or no cache
+        self.stats.misses += 1
+
+        # Evict stale cache if content changed
+        if self.__cached_content and self.__content_hash != current_hash:
+            self.stats.evictions += 1
+            logger.info(f"Cache invalidated (old={self.__content_hash[:8] if self.__content_hash else '?'}, new={current_hash[:8]})")
+            await self.__evict()
+
         try:
-            # Accessing the async client property
             if hasattr(self.__client, "aio") and hasattr(self.__client.aio, "caches"):
                 tool_list = []
                 if tools:
@@ -43,11 +90,13 @@ class CacheService:
                     "contents": [Content(role="user", parts=[{"text": system_instruction}])],
                 }
 
-                # Correctly using the async create method
                 self.__cached_content = await self.__client.aio.caches.create(
                     model=self.__model_name, config=config
                 )
-                logger.info(f"Created context cache: {self.__cached_content.name}")
+                self.__content_hash = current_hash
+                self.stats.creates += 1
+
+                logger.info(f"Created context cache: {self.__cached_content.name} (hash={current_hash[:8]})")
                 return str(self.__cached_content.name)
 
         except Exception as exception:
@@ -65,10 +114,31 @@ class CacheService:
         Deletes the current cache if it exists.
         """
 
+        await self.__evict()
+
+    async def __evict(self) -> None:
+        """
+        Evicts the current cache entry.
+        """
+
         if self.__cached_content:
             try:
                 await self.__client.aio.caches.delete(name=self.__cached_content.name)
                 logger.info(f"Deleted cache: {self.__cached_content.name}")
-                self.__cached_content = None
             except Exception as exception:
                 logger.warning(f"Failed to delete cache: {exception}")
+            finally:
+                self.__cached_content = None
+                self.__content_hash = None
+
+    @staticmethod
+    def __compute_hash(instruction: str, tools: Optional[List[Dict[str, Any]]] = None) -> str:
+        """
+        Computes a deterministic hash of the cache key content.
+        """
+
+        payload = instruction
+        if tools:
+            payload += json.dumps(tools, sort_keys=True)
+
+        return hashlib.sha256(payload.encode(), usedforsecurity=False).hexdigest()[:16]

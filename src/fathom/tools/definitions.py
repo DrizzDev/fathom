@@ -94,8 +94,16 @@ class ToolRegistry:
                                     "type": "NUMBER",
                                     "description": "Confidence level (0.0-1.0) for this action.",
                                 },
+                                "is_valid": {
+                                    "type": "BOOLEAN",
+                                    "description": "Self-correction: Is this action valid given the current screen state?",
+                                },
+                                "validation_reason": {
+                                    "type": "STRING",
+                                    "description": "Reasoning for the validity judgment.",
+                                },
                             },
-                            "required": ["action_type", "rationale"],
+                            "required": ["action_type", "rationale", "is_valid"],
                         },
                     },
                     "goal_completed": {

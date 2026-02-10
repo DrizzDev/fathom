@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections import deque
+from logging import getLogger
 from typing import Any, Deque, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
+
+logger = getLogger(__name__)
 
 
 class LoopDetector(BaseModel):
@@ -31,6 +34,7 @@ class LoopDetector(BaseModel):
         """
 
         self.__recent_screens.append(screen)
+        logger.debug(f"LoopDetector.record: {screen.visual_hash[:8]} ({screen.activity}) | deque_size={len(self.__recent_screens)}")
 
         if action_description:
             self.__recent_actions.append(action_description)
@@ -40,7 +44,9 @@ class LoopDetector(BaseModel):
         Check if agent appears stuck in a loop.
         """
 
-        if len(self.__recent_screens) < self.threshold:
+        screen_count = len(self.__recent_screens)
+        if screen_count < self.threshold:
+            logger.debug(f"LoopDetector.is_stuck: False (only {screen_count} screens, need {self.threshold})")
             return False
 
         # Check for repeated screens using fuzzy matching
@@ -52,6 +58,8 @@ class LoopDetector(BaseModel):
                     count += 1
 
             if count >= self.threshold:
+                hashes = [s.visual_hash[:8] for s in self.__recent_screens]
+                logger.debug(f"LoopDetector.is_stuck: True (screen {current.visual_hash[:8]} repeated {count}x) | deque={hashes}")
                 return True
 
         # Check for repeated actions (exact match is fine for actions)
@@ -61,8 +69,10 @@ class LoopDetector(BaseModel):
             for action_description in self.__recent_actions:
                 action_counts[action_description] = action_counts.get(action_description, 0) + 1
                 if action_counts[action_description] >= self.threshold:
+                    logger.debug(f"LoopDetector.is_stuck: True (action '{action_description}' repeated {action_counts[action_description]}x)")
                     return True
 
+        logger.debug(f"LoopDetector.is_stuck: False (no repeats above threshold)")
         return False
 
     def can_recover(self) -> bool:
@@ -85,10 +95,11 @@ class LoopDetector(BaseModel):
         Reset loop detection state.
         """
 
+        prev_size = len(self.__recent_screens)
         self.__recent_screens.clear()
         self.__recent_actions.clear()
-
         self.__recovery_attempts = 0
+        logger.info(f"LoopDetector.reset: cleared {prev_size} screens")
 
 
 class ActionHistory(BaseModel):
@@ -143,6 +154,12 @@ class ActionHistory(BaseModel):
         """
 
         return [action["full_description"] for action in self.__actions]
+
+    def get_history_items(self) -> List[Dict[str, Any]]:
+        """
+        Returns raw list of history items for smart context.
+        """
+        return list(self.__actions)
 
     def get_activity_failures(self, current_activity: str) -> List[str]:
         """

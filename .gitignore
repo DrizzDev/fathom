@@ -192,6 +192,7 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+.cursor/
 
 # Marimo
 marimo/_static/
@@ -200,6 +201,7 @@ __marimo__/
 
 # Custom
 *.db
+.DS_Store
 assets/
 secrets/
 documents/

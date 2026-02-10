@@ -137,3 +137,6 @@ class PlanResult(BaseModel):
 
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
     metrics: Dict[str, float] = Field(default_factory=dict, description="Performance metrics")
+
+    is_valid_action: bool = Field(default=True, description="Whether the planned action is valid")
+    validation_reasoning: Optional[str] = Field(default=None, description="Reason if action is invalid")

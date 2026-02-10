@@ -50,7 +50,7 @@ class GeminiConfig(BaseModel):
     )
     project_id: Optional[str] = Field(default=None, description="GCP Project ID for Vertex AI")
 
-    model: str = Field(default="gemini-2.0-flash", description="High-speed VLM model")
+    model: str = Field(default="gemini-3-flash-preview", description="High-speed VLM model")
     location: str = Field(default="global", description="Vertex AI location")
 
     timeout: float = Field(default=180.0, description="API request timeout")
@@ -59,9 +59,6 @@ class GeminiConfig(BaseModel):
 
     max_retries: int = Field(default=3, description="Max retries on API failure")
     retry_delay: float = Field(default=2.0, description="Base retry delay in seconds")
-    gcs_bucket: str = Field(
-        default="prototype_img_test", description="GCS bucket for screenshot uploads"
-    )
 
 
 class HasherConfig(BaseModel):

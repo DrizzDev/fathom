@@ -23,6 +23,8 @@ from fathom.schemas.steps import Step, StepResult
 from fathom.services.audit import AuditService
 from fathom.services.hierarchy import HierarchyService
 from fathom.services.history import HistoryService
+from fathom.services.prompt_preprocessor import PromptPreprocessor
+from fathom.services.resolution import ReferenceResolutionService
 from fathom.services.ux import UXService
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
@@ -71,6 +73,7 @@ class IntentStrategy(ExecutionStrategy):
 
         self.__hierarchy = HierarchyService(device=device)
         self.__history = HistoryService(workflow_id=workflow_id)
+        self.__resolution = ReferenceResolutionService(ledger=self.__ledger)
 
         self.__start_time = time.time()
         self.__metrics = ExecutionMetrics()
@@ -131,10 +134,25 @@ class IntentStrategy(ExecutionStrategy):
         )
         self.__metrics.record(operation="analysis", duration=analysis_duration)
 
+        # Track token usage from the LLM call
+        if plan.metrics:
+            self.__metrics.record_tokens(
+                prompt=int(plan.metrics.get("prompt_tokens", 0)),
+                completion=int(plan.metrics.get("completion_tokens", 0)),
+                cached=int(plan.metrics.get("cached_tokens", 0)),
+            )
+
         if plan.is_complete:
             self.__audit_service.print_session_summary()
             return StrategyResult(status=StrategyStatus.COMPLETE, message=plan.reason)
 
+        # RETRY: Invalid action
+        if getattr(plan, "is_valid_action", True) is False:
+            reason = getattr(plan, "validation_reasoning", "Invalid action")
+            logger.warning(f"Invalid action: {reason}")
+            self.__state.set_last_error(reason)
+            return StrategyResult(status=StrategyStatus.CONTINUE, message=f"Invalid action: {reason}")
+            
         step = plan.step
 
         if not step:
@@ -143,6 +161,16 @@ class IntentStrategy(ExecutionStrategy):
 
             self.__audit_service.print_session_summary()
             return StrategyResult(status=StrategyStatus.ERROR, message=plan.reason)
+
+        # HARDWARE BACK: Always use keycode for back actions
+        if step.action.action_type == ActionType.BACK:
+            # Override to use hardware key capability (bounds=None)
+            # This ensures we use the device back button instead of clicking a UI element
+            action = step.action.model_copy(update={"bounds": None})
+            step = step.model_copy(update={"action": action})
+
+        # RESOLUTION: Resolve dynamic references ($memory, $env)
+        step = await self.__resolve_references(step=step)
 
         if self.__use_xml and step.action.label_id:
             step = await self.__resolve_coordinates(step=step)
@@ -271,12 +299,28 @@ class IntentStrategy(ExecutionStrategy):
         knowledge["memory_store"] = entries
 
         start = time.time()
+        
+        # Enhanced Context
+        smart_context = self.__state.get_smart_context()
+
+        # Prompt Preprocessing Hints
+        hints = PromptPreprocessor.extract_hints(
+            intent=self.__state.intent,
+            current_activity=state.activity or ""
+        )
+        hint_str = PromptPreprocessor.build_context_prefix(hints)
+
+        full_context = smart_context
+        if hint_str:
+            full_context = f"{hint_str}\n{smart_context}"
+        
         plan = await self.__planner.plan_step(
             state=self.__state,
             use_xml=self.__use_xml,
             capture=planning_screen,
             reasoner=self.__reasoner,
             elements=elements if elements else None,
+            additional_context=full_context,
         )
         return plan, knowledge, time.time() - start
 
@@ -394,6 +438,13 @@ class IntentStrategy(ExecutionStrategy):
             "step_count": self.__state.step_count,
             "is_complete": self.__state.is_complete,
         }
+
+    async def __resolve_references(self, step: Step) -> Step:
+        """
+        Resolves dynamic references in the action.
+        """
+        resolved_action = await self.__resolution.resolve(action=step.action)
+        return step.model_copy(update={"action": resolved_action})
 
     async def __resolve_coordinates(self, step: Step) -> Step:
         """
@@ -536,5 +587,11 @@ class IntentStrategy(ExecutionStrategy):
 
             await asyncio.sleep(delay=duration / 1000.0)
             return ActionResult(success=True, duration=duration)
+
+        if action.action_type == ActionType.BACK:
+            return await self.__device.back()
+
+        if action.action_type == ActionType.HOME:
+            return await self.__device.home()
 
         return await self.__device.execute(request=action.model_dump())
