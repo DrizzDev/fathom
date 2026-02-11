@@ -73,7 +73,7 @@ class FathomCLI:
         )
 
         try:
-            with console.status("[bold green]Agent working...[/bold green]", spinner="dots"):
+            with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
                 result = await self.runner.run_intent(
                     intent=intent,
                     max_steps=max_steps,
