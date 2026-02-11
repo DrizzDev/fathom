@@ -1,16 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import random
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import ClassVar, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from fathom.agent.strategies.base import (
-    ExecutionStrategy,
-)
+from fathom.agent.strategies.base import ExecutionStrategy
 from fathom.constants import ActionType, StrategyStatus
-from fathom.schemas.actions import Action, BoundingBox
+from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.results import StrategyResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
@@ -19,198 +17,222 @@ from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
 
 
-@dataclass
 class ScreenNode:
     """
-    Node in the screen graph representing a unique screen.
+    Node in the screen graph representing a unique screen state.
     """
 
-    screen_hash: str
-    activity: str
-    visit_count: int = 0
-    actions_tried: Set[str] = field(default_factory=set)
-    transitions: Dict[str, str] = field(default_factory=dict)
-    last_visited: float = 0.0
+    def __init__(self, fingerprint: str, activity: str) -> None:
+        self.__activity = activity
+        self.__fingerprint = fingerprint
 
-    def should_explore(self, max_visits: int = 5) -> bool:
+        self.__visits = 0
+        self.__last = 0.0
+        self.__actions: Set[str] = set()
+        self.__transitions: Dict[str, str] = {}
+
+    @property
+    def fingerprint(self) -> str:
         """
-        Check if this screen should be further explored.
+        Unique identifier for this screen state.
         """
-        return self.visit_count < max_visits
+
+        return self.__fingerprint
+
+    @property
+    def activity(self) -> str:
+        """
+        Activity name for this screen.
+        """
+
+        return self.__activity
+
+    @property
+    def visits(self) -> int:
+        """
+        Number of times this screen has been visited.
+        """
+
+        return self.__visits
+
+    @property
+    def actions(self) -> Set[str]:
+        """
+        Actions that can be performed from this screen.
+        """
+
+        return self.__actions
+
+    @property
+    def transitions(self) -> Dict[str, str]:
+        """
+        Transitions from this screen to other screens.
+        """
+
+        return self.__transitions
+
+    def record_visit(self) -> None:
+        """
+        Records a visit to this screen.
+        """
+
+        self.__visits += 1
+        self.__last = time.time()
+
+    def record_action(self, description: str, destination: str) -> None:
+        """
+        Records an action and its result.
+        """
+
+        self.__actions.add(description)
+        self.__transitions[description] = destination
+
+    def should_explore(self, limit: int = 5) -> bool:
+        """
+        Checks if exploration limit reached.
+        """
+
+        return self.__visits < limit
 
 
-@dataclass
 class ExplorationGraph:
-    """Graph of discovered screens and transitions.
-
-    Tracks:
-    - Unique screens encountered
-    - Transitions between screens
-    - Actions tried on each screen
-    - Coverage metrics
+    """
+    Graph of discovered screens and transitions.
     """
 
-    nodes: Dict[str, ScreenNode] = field(default_factory=dict)
-    edges: List[Tuple[str, str, str]] = field(default_factory=list)
+    def __init__(self) -> None:
+        self.__nodes: Dict[str, ScreenNode] = {}
+        self.__edges: List[Tuple[str, str, str]] = []
+
+    @property
+    def nodes(self) -> Dict[str, ScreenNode]:
+        """
+        All discovered screen nodes.
+        """
+
+        return self.__nodes
+
+    @property
+    def edges(self) -> List[Tuple[str, str, str]]:
+        """
+        All transitions between screens.
+        """
+
+        return self.__edges
 
     def add_screen(self, state: ScreenState) -> ScreenNode:
         """
-        Add or update a screen in the graph.
+        Adds or updates a screen.
         """
+
         key = state.visual_hash
-        if key not in self.nodes:
-            self.nodes[key] = ScreenNode(
-                screen_hash=key,
-                activity=state.activity,
-            )
-        node = self.nodes[key]
-        node.visit_count += 1
-        node.last_visited = time.time()
+        if key not in self.__nodes:
+            self.__nodes[key] = ScreenNode(fingerprint=key, activity=state.activity)
+
+        node = self.__nodes[key]
+        node.record_visit()
+
         return node
 
-    def record_transition(
-        self,
-        from_hash: str,
-        to_hash: str,
-        action_desc: str,
-    ) -> None:
+    def record_transition(self, origin: str, destination: str, action: str) -> None:
         """
-        Record a transition between screens.
+        Records a transition.
         """
-        if from_hash in self.nodes:
-            self.nodes[from_hash].actions_tried.add(action_desc)
-            self.nodes[from_hash].transitions[action_desc] = to_hash
-        self.edges.append((from_hash, action_desc, to_hash))
 
-    def get_unexplored_count(self) -> int:
-        """
-        Count screens with remaining exploration potential.
-        """
-        return sum(1 for n in self.nodes.values() if n.should_explore())
+        if origin in self.__nodes:
+            self.__nodes[origin].record_action(description=action, destination=destination)
 
-    def get_coverage_stats(self) -> Dict[str, object]:
+        self.__edges.append((origin, action, destination))
+
+    def get_stats(self) -> Dict[str, Any]:
         """
-        Get exploration coverage statistics.
+        Calculates coverage stats.
         """
-        total_actions = sum(len(n.actions_tried) for n in self.nodes.values())
+
+        total = sum(len(node.actions) for node in self.__nodes.values())
+        unexplored = sum(1 for node in self.__nodes.values() if node.should_explore())
+        activities = len({node.activity for node in self.__nodes.values()})
+
         return {
-            "unique_screens": len(self.nodes),
-            "total_transitions": len(self.edges),
-            "total_actions_tried": total_actions,
-            "unexplored_screens": self.get_unexplored_count(),
-            "unique_activities": len({n.activity for n in self.nodes.values()}),
+            "total_actions": total,
+            "unexplored": unexplored,
+            "activities": activities,
+            "unique_screens": len(self.__nodes),
+            "total_transitions": len(self.__edges),
         }
 
 
 class ActionGenerator:
-    """Generates exploration actions for a screen.
-
-    Implements intelligent exploration:
-    - Prioritizes untried elements
-    - Avoids repeated failures
-    - Balances breadth vs depth
+    """
+    Generates exploratory actions for unknown UI states.
     """
 
-    __EXPLORATION_ACTIONS: ClassVar[List[ActionType]] = [
-        ActionType.TAP,
-        ActionType.SCROLL,
-        ActionType.SWIPE,
-        ActionType.BACK,
-    ]
-
     def __init__(self, seed: Optional[int] = None) -> None:
-        """Initialize generator.
-
-        Args:
-            seed: Random seed for reproducibility.
-        """
         self.__rng = random.Random(seed)  # nosec
-        self.__failed_actions: Dict[str, int] = defaultdict(int)
+        self.__failures: Dict[str, int] = defaultdict(int)
 
-    def generate_random_tap(
-        self,
-        screen_width: int,
-        screen_height: int,
-    ) -> Action:
+    def generate(self, node: ScreenNode, width: int, height: int) -> Action:
         """
-        Generate random tap action.
+        Selects the best exploratory action.
         """
+
+        if node.visits <= 2:
+            return self.__tap(width=width, height=height)
+
+        if node.visits <= 4:
+            return self.__scroll()
+
+        return self.__back()
+
+    def __tap(self, width: int, height: int) -> Action:
+        """
+        Random tap.
+        """
+
+        _ = width
+        _ = height
+
         x = self.__rng.randint(50, 950)
         y = self.__rng.randint(100, 900)
 
         return Action(
-            action_type=ActionType.TAP,
-            target=f"exploration tap at ({x}, {y})",
-            bbox=BoundingBox(x=x, y=y, width=50, height=50),
             confidence=0.3,
-            reasoning="Random exploration tap",
+            rationale="Exploratory tap",
+            action_type=ActionType.TAP,
+            target=f"random tap at ({x}, {y})",
+            bounds=Bounds(x=x, y=y, width=50, height=50),
         )
 
-    def generate_scroll(self, direction: str = "down") -> Action:
+    def __scroll(self) -> Action:
         """
-        Generate scroll action.
+        Random scroll.
         """
+
+        direction = self.__rng.choice(["up", "down"])
+
         return Action(
-            action_type=ActionType.SCROLL,
-            target=f"exploration scroll {direction}",
             confidence=0.4,
-            reasoning=f"Scroll {direction} to reveal content",
+            action_type=ActionType.SCROLL,
+            rationale=f"Scrolling {direction}",
+            target=f"exploration scroll {direction}",
         )
 
-    def generate_back(self) -> Action:
+    def __back(self) -> Action:
         """
-        Generate back navigation action.
+        Back navigation.
         """
+
         return Action(
-            action_type=ActionType.BACK,
-            target="exploration back navigation",
             confidence=0.5,
-            reasoning="Navigate back to explore different path",
+            target="back navigation",
+            action_type=ActionType.BACK,
+            rationale="Exploring parent path",
         )
-
-    def select_exploration_action(
-        self,
-        node: ScreenNode,
-        screen_width: int,
-        screen_height: int,
-    ) -> Action:
-        """Select next exploration action for a screen.
-
-        Strategy:
-        1. If screen has few visits, try random taps
-        2. If screen is moderately visited, try scrolling
-        3. If screen is well-visited, navigate back
-        """
-        if node.visit_count <= 2:
-            return self.generate_random_tap(screen_width, screen_height)
-
-        if node.visit_count <= 4:
-            direction = self.__rng.choice(["up", "down"])
-            return self.generate_scroll(direction)
-
-        return self.generate_back()
-
-    def record_failure(self, action_desc: str) -> None:
-        """
-        Record a failed action.
-        """
-        self.__failed_actions[action_desc] += 1
 
 
 class ExplorationStrategy(ExecutionStrategy):
-    """Strategy for exploring app functionality.
-
-    Unlike IntentStrategy which pursues a specific goal,
-    ExplorationStrategy discovers and maps the application:
-    - Builds a graph of screens and transitions
-    - Tries actions to discover new screens
-    - Tracks coverage metrics
-    - Supports checkpointing for long-running exploration
-
-    Useful for:
-    - App discovery and documentation
-    - Test generation
-    - Coverage analysis
+    """
+    Strategy for autonomous application mapping.
     """
 
     def __init__(
@@ -223,36 +245,28 @@ class ExplorationStrategy(ExecutionStrategy):
         timeout: float = 3600.0,
         seed: Optional[int] = None,
     ) -> None:
-        """Initialize exploration strategy.
-
-        Args:
-            device: Device tool for actions.
-            capture: Capture tool for screenshots.
-            vision: Optional vision tool for guided exploration.
-            max_steps: Maximum exploration steps.
-            timeout: Maximum exploration time in seconds.
-            seed: Random seed for reproducibility.
-        """
         self.__device = device
         self.__capture = capture
-        self.__vision = vision
 
+        self.__vision = vision
         self.__max_steps = max_steps
+
+        self.__steps = 0
         self.__timeout = timeout
-        self.__step_count = 0
 
         self.__graph = ExplorationGraph()
-        self.__generator = ActionGenerator(seed)
+        self.__generator = ActionGenerator(seed=seed)
 
-        self.__start_time = time.time()
-        self.__current_screen: Optional[ScreenState] = None
-        self.__last_action: Optional[Action] = None
+        self.__start = time.time()
+        self.__last: Optional[Action] = None
+        self.__current: Optional[ScreenState] = None
 
     @property
     def name(self) -> str:
         """
         Strategy name.
         """
+
         return "exploration"
 
     @property
@@ -260,150 +274,83 @@ class ExplorationStrategy(ExecutionStrategy):
         """
         Exploration graph.
         """
+
         return self.__graph
 
     async def execute_step(self) -> StrategyResult:
-        """Execute a single exploration step.
-
-        Flow:
-        1. Capture current screen
-        2. Add to graph
-        3. Select exploration action
-        4. Execute action
-        5. Record transition
-        6. Update metrics
-
-        Returns:
-            Result indicating exploration status.
         """
+        Executes one discovery step.
+        """
+
         capture = await self.__capture.capture()
-        screen_state = self.__capture.compute_state(capture)
+        state = self.__capture.compute_state(capture=capture)
 
-        pre_hash = screen_state.visual_hash
-        node = self.__graph.add_screen(screen_state)
+        fingerprint = state.visual_hash
 
-        if self.__last_action and self.__current_screen:
+        node = self.__graph.add_screen(state=state)
+
+        if self.__last and self.__current:
             self.__graph.record_transition(
-                self.__current_screen.visual_hash,
-                pre_hash,
-                self.__last_action.to_description(),
+                destination=fingerprint,
+                origin=self.__current.visual_hash,
+                action=self.__last.to_description(),
             )
 
-        self.__current_screen = screen_state
-
-        screen_size = await self.__device.get_screen_size()
-        action = self.__generator.select_exploration_action(
-            node,
-            screen_size[0],
-            screen_size[1],
-        )
+        self.__current = state
+        size = await self.__device.get_screen_size()
+        action = self.__generator.generate(node=node, width=size[0], height=size[1])
 
         step = Step(
             action=action,
-            screen_hash=pre_hash,
-            step_number=self.__step_count,
+            screen_hash=fingerprint,
+            step_number=self.__steps,
         )
 
-        execution_request = self.__prepare_execution(action, screen_size)
-        result = await self.__device.execute(execution_request)
+        # Implementation of simple execution for exploration
+        result = await self.__device.execute(request=action.model_dump())
 
-        if not result.success:
-            self.__generator.record_failure(action.to_description())
+        self.__steps += 1
+        self.__last = action
 
-        import asyncio
+        # Stability wait
+        await asyncio.sleep(delay=0.5)
 
-        await asyncio.sleep(0.5)
         post_capture = await self.__capture.capture()
-        post_state = self.__capture.compute_state(post_capture)
-        post_hash = post_state.visual_hash
-
-        screen_changed = pre_hash != post_hash
-        self.__step_count += 1
-        self.__last_action = action
+        post_state = self.__capture.compute_state(capture=post_capture)
 
         step_result = StepResult(
             step=step,
-            success=result.success,
-            screen_changed=screen_changed,
-            pre_hash=pre_hash,
-            post_hash=post_hash,
-            duration=result.duration,
             error=result.error,
+            pre_hash=fingerprint,
+            success=result.success,
+            duration=result.duration,
+            post_hash=post_state.visual_hash,
+            screen_changed=fingerprint != post_state.visual_hash,
         )
-
-        should_checkpoint = (self.__step_count % 10) == 0
 
         return StrategyResult(
-            status=StrategyStatus.CONTINUE,
             step_result=step_result,
+            status=StrategyStatus.CONTINUE,
             message=f"Explored: {action.to_description()}",
-            should_checkpoint=should_checkpoint,
         )
-
-    def __prepare_execution(
-        self,
-        action: Action,
-        screen_size: Tuple[int, int],
-    ) -> Dict[str, object]:
-        """
-        Prepare action for device execution.
-        """
-        width, height = screen_size
-
-        if action.action_type == ActionType.TAP and action.bbox:
-            x = action.bbox.center_x * width // 1000
-            y = action.bbox.center_y * height // 1000
-            return {"action": "tap", "x": x, "y": y}
-
-        if action.action_type == ActionType.SCROLL:
-            cx, cy = width // 2, height // 2
-            return {
-                "action": "swipe",
-                "x1": cx,
-                "y1": cy + 400,
-                "x2": cx,
-                "y2": cy - 400,
-            }
-
-        if action.action_type == ActionType.BACK:
-            return {"action": "back"}
-
-        return {"action": "tap", "x": width // 2, "y": height // 2}
 
     async def should_continue(self) -> bool:
         """
-        Check if exploration should continue.
+        Stop conditions.
         """
-        if self.__step_count >= self.__max_steps:
+
+        if self.__steps >= self.__max_steps:
             return False
 
-        elapsed = time.time() - self.__start_time
-        if elapsed >= self.__timeout:
-            return False
+        return (time.time() - self.__start) < self.__timeout
 
-        return not (self.__graph.get_unexplored_count() == 0 and self.__step_count > 20)
+    def get_progress(self) -> Dict[str, Any]:
+        """
+        Discovery metrics.
+        """
 
-    def get_progress(self) -> Dict[str, object]:
-        """
-        Get current exploration progress.
-        """
-        elapsed = time.time() - self.__start_time
         return {
-            "step_count": self.__step_count,
-            "max_steps": self.__max_steps,
-            "elapsed_seconds": elapsed,
-            "remaining_seconds": max(0, self.__timeout - elapsed),
-            "coverage": self.__graph.get_coverage_stats(),
-        }
-
-    def get_checkpoint(self) -> Dict[str, object]:
-        """
-        Get checkpoint data for persistence.
-        """
-        return {
-            "strategy": self.name,
-            "step_count": self.__step_count,
-            "start_time": self.__start_time,
-            "graph_stats": self.__graph.get_coverage_stats(),
-            "progress": self.get_progress(),
+            "steps": self.__steps,
+            "stats": self.__graph.get_stats(),
+            "elapsed": time.time() - self.__start,
         }

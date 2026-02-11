@@ -3,13 +3,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from fathom.interfaces import IVisionProvider
 from fathom.schemas.results import AnalysisResult
+from fathom.schemas.screens import ScreenCapture
 from fathom.tools.base import Tool
 
 
 class VisionTool(Tool[AnalysisResult], ABC):
-    """Abstract base for vision/LLM tools.
-
+    """
+    Abstract base for vision/LLM tools.
     Vision tools analyze screens and plan actions.
     """
 
@@ -18,63 +20,75 @@ class VisionTool(Tool[AnalysisResult], ABC):
         """
         Tool name.
         """
+
         return "vision"
+
+    @property
+    @abstractmethod
+    def provider(self) -> IVisionProvider:
+        """
+        Returns the underlying vision provider.
+        """
+
+        raise NotImplementedError
 
     @abstractmethod
     async def analyze(
         self,
-        screen: bytes,
         intent: str,
+        capture: ScreenCapture,
         *,
-        context: Optional[List[str]] = None,
+        use_xml: bool = False,
+        context: Optional[str] = None,
         failures: Optional[List[str]] = None,
+        elements: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
-        """Analyze screen and plan next action.
-
-        Args:
-            screen: PNG image bytes.
-            intent: User intent to achieve.
-            context: Recent action history for context.
-            failures: Recent failures for recovery.
-
-        Returns:
-            Analysis result with recommended action.
-
-        Raises:
-            ToolTimeoutError: If analysis times out.
-            ToolExecutionError: If analysis fails.
         """
+        Analyze screen and recommend action.
+        """
+
         raise NotImplementedError
+
+    async def cleanup(self) -> None:
+        """
+        Perform any necessary cleanup (e.g., closing connections, deleting caches).
+        """
+
+        pass
 
     @abstractmethod
     async def check_completion(
         self,
-        screen: bytes,
         intent: str,
+        capture: ScreenCapture,
     ) -> bool:
-        """Check if intent is complete on current screen.
+        """
+        Check if intent is complete on current screen.
 
         Args:
-            screen: PNG image bytes.
+            capture: Screen capture object.
             intent: Intent to check completion for.
 
         Returns:
             True if intent appears complete.
         """
+
         raise NotImplementedError
 
     async def execute(self, request: Dict[str, Any]) -> AnalysisResult:
-        """Execute via generic interface.
+        """
+        Execute via generic interface.
 
         Args:
-            request: Dict with 'screen', 'intent', optional 'context', 'failures'.
+            request: Dict with 'capture' (ScreenCapture), 'intent', optional 'context', 'failures'.
 
         Returns:
             Analysis result.
         """
+
         return await self.analyze(
-            screen=request["screen"],
             intent=request["intent"],
+            capture=request["capture"],
             context=request.get("context"),
             failures=request.get("failures"),
         )

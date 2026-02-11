@@ -1,40 +1,30 @@
 from __future__ import annotations
 
-import contextlib
+from logging import getLogger
 from typing import Any, Dict, Optional
 
 from fathom.agent.planner import StepPlanner
-from fathom.agent.reasoner import Reasoner
-from fathom.agent.state import AgentState
 from fathom.agent.strategies.intent import IntentStrategy
+from fathom.interfaces import IMemoryProvider
+from fathom.schemas.configuration import WorkflowConfig
 from fathom.schemas.results import IntentResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
-from fathom.workflows.base import BaseWorkflow, WorkflowConfig
+from fathom.workflows.base import BaseWorkflow
+
+logger = getLogger(__name__)
 
 
 class IntentWorkflow(BaseWorkflow[IntentResult]):
-    """Workflow for executing a specific intent.
+    """
+    Workflow for executing a specific intent.
 
     Orchestrates the full execution of a goal-directed automation:
-    1. Initialize agent state and strategy
-    2. Execute steps until completion, failure, or timeout
-    3. Return structured result
-
-    Example:
-        ```python
-        workflow = IntentWorkflow(
-            workflow_id="login-001",
-            intent="Login with phone number",
-            vision=vision_tool,
-            device=device_tool,
-            capture=capture_tool,
-        )
-        result = await workflow.run()
-        print(f"Success: {result.success}")
-        ```
+    1. Decompose complex intent into atomic sub-intents
+    2. Execute each sub-intent sequentially using IntentStrategy
+    3. Return combined result
     """
 
     def __init__(
@@ -44,73 +34,64 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         vision: VisionTool,
         device: DeviceTool,
         capture: CaptureTool,
+        memory: IMemoryProvider,
         *,
-        config: Optional[WorkflowConfig] = None,
+        configuration: Optional[WorkflowConfig] = None,
     ) -> None:
-        """Initialize intent workflow.
-
-        Args:
-            workflow_id: Unique workflow identifier.
-            intent: Goal to achieve.
-            vision: Vision tool for screen analysis.
-            device: Device tool for action execution.
-            capture: Capture tool for screenshots.
-            config: Optional workflow configuration.
         """
-        super().__init__(workflow_id, config)
-        self.__intent = intent
+        Initialize intent workflow.
+        """
+
+        super().__init__(workflow_id=workflow_id, configuration=configuration)
+
         self.__vision = vision
         self.__device = device
+        self.__memory = memory
         self.__capture = capture
+        self.__original_intent = intent
 
-        self.__planner = StepPlanner(vision)
-        self.__reasoner = Reasoner(intent)
-        self.__state = AgentState(
-            intent,
-            max_steps=self.config.max_steps,
+        self.__planner = StepPlanner(vision_tool=vision)
+        # Create strategy immediately since we no longer decompose
+        self.__strategy = IntentStrategy(
+            intent=intent,
+            device=device,
+            memory=memory,
+            planner=self.__planner,
+            capture=capture,
+            workflow_id=workflow_id,
+            step_timeout=configuration.step_timeout if configuration else 30.0,
+            use_xml=configuration.use_xml_bounding_boxes if configuration else False,
+            max_steps=configuration.max_steps if configuration else 10,
         )
 
-        self.__strategy: Optional[IntentStrategy] = None
         self.__completion_reason = ""
         self.__final_screen: Optional[ScreenCapture] = None
 
     @property
     def name(self) -> str:
         """
-        Workflow type name.
+        Returns the name of the workflow.
         """
+
         return "intent"
 
     @property
     def intent(self) -> str:
         """
-        The goal being pursued.
+        Returns the original intent.
         """
-        return self.__intent
+
+        return self.__original_intent
 
     async def execute(self) -> IntentResult:
-        """Execute the intent workflow.
-
-        Runs the intent strategy loop until:
-        - Intent is completed
-        - Max steps exceeded
-        - Timeout exceeded
-        - Agent is stuck
-        - Workflow is cancelled
-
-        Returns:
-            IntentResult with execution details.
         """
-        self.__strategy = IntentStrategy(
-            self.__intent,
-            self.__planner,
-            self.__device,
-            self.__capture,
-            max_steps=self.config.max_steps,
-            step_timeout=self.config.step_timeout,
-        )
+        Execute the intent workflow with decomposition.
+        """
 
-        while await self.__should_continue():
+        # Execute strategy loop
+        logger.info(f"Executing intent: {self.__original_intent}")
+
+        while await self.__strategy.should_continue():
             if self.is_cancelled():
                 self.__completion_reason = "Workflow cancelled"
                 break
@@ -118,66 +99,53 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             result = await self.__strategy.execute_step()
 
             if result.step_result:
-                self.record_step(result.step_result)
+                self.record_step(result=result.step_result)
 
             if result.is_terminal:
-                self.__completion_reason = result.message
+                if result.status == result.status.ERROR:
+                    logger.warning(f"Intent failed: {result.message}")
                 break
 
-            if self.should_checkpoint():
-                await self.__save_checkpoint()
+        # Finalize
+        success = self.__strategy.state.is_complete
 
         if not self.__completion_reason:
-            if self.has_exceeded_timeout():
-                self.__completion_reason = "Workflow timeout exceeded"
-            elif self.has_exceeded_steps():
-                self.__completion_reason = f"Max steps ({self.config.max_steps}) exceeded"
+            if success:
+                self.__completion_reason = "Goal successfully achieved"
             else:
-                self.__completion_reason = "Execution completed"
-
-        with contextlib.suppress(Exception):
-            self.__final_screen = await self.__capture.capture()
+                self.__completion_reason = "Execution failed or timed out"
 
         return IntentResult(
-            intent=self.__intent,
-            success=self.__state.is_complete,
+            metrics=self.__strategy.metrics,
+            success=success,
+            intent=self.__original_intent,
             steps_taken=self.steps_executed,
-            completion_reason=self.__completion_reason,
             final_screen=self.__final_screen,
+            completion_reason=self.__completion_reason,
+            step_results=self.recorded_steps,
         )
 
     async def __should_continue(self) -> bool:
         """
-        Check if execution should continue.
+        Required by base but unused in our overridden execute loop.
         """
-        if self.has_exceeded_timeout():
-            return False
-        if self.has_exceeded_steps():
-            return False
-        if self.__strategy is None:
-            return False
-        return await self.__strategy.should_continue()
 
-    async def __save_checkpoint(self) -> None:
-        """
-        Save checkpoint (placeholder for persistence).
-        """
-        pass
+        return not self.is_cancelled() and not (
+            self.__strategy and self.__strategy.state.is_complete
+        )
 
     def get_progress(self) -> Dict[str, Any]:
         """
-        Get current progress information.
+        Get progress for the intent workflow.
         """
-        progress = {
-            "intent": self.__intent,
-            "steps_executed": self.steps_executed,
-            "max_steps": self.config.max_steps,
-            "elapsed_seconds": self.elapsed,
-            "is_complete": self.__state.is_complete,
-            "is_stuck": self.__state.is_stuck,
-        }
 
+        progress = {
+            "elapsed": self.elapsed,
+            "intent": self.__original_intent,
+            "steps_executed": self.steps_executed,
+            "max_steps": self.configuration.max_steps,
+        }
         if self.__strategy:
-            progress["strategy_progress"] = self.__strategy.get_progress()
+            progress["strategy"] = self.__strategy.get_progress()
 
         return progress

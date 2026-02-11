@@ -2,7 +2,8 @@ from __future__ import annotations
 
 
 class FathomError(Exception):
-    """Base exception for all Fathom errors.
+    """
+    Base exception for all Fathom errors.
 
     Attributes:
         message: Human-readable error description.
@@ -106,8 +107,9 @@ class MissingDependencyError(ConfigurationError):
     def __init__(self, dependency: str, feature: str) -> None:
         message = f"Missing dependency '{dependency}' required for {feature}"
         super().__init__(message)
-        self.dependency = dependency
+
         self.feature = feature
+        self.dependency = dependency
 
 
 class AgentError(FathomError):
@@ -172,5 +174,6 @@ class WorkflowTimeoutError(WorkflowError):
     def __init__(self, workflow_id: str, timeout: float) -> None:
         message = f"Workflow '{workflow_id}' timed out after {timeout}s"
         super().__init__(message, retryable=True)
-        self.workflow_id = workflow_id
+
         self.timeout = timeout
+        self.workflow_id = workflow_id

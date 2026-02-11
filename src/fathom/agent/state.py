@@ -1,131 +1,20 @@
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass, field
-from typing import Deque, Dict, List, Optional, Set
+from logging import getLogger
+from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
+from fathom.schemas.state import ActionHistory, LoopDetector
 from fathom.schemas.steps import StepResult
 
-
-@dataclass
-class LoopDetector:
-    """Detects when agent is stuck in a loop.
-
-    Uses a sliding window of screen hashes to detect repeated states.
-    Implements exponential backoff for recovery attempts.
-    """
-
-    window_size: int = 5
-    threshold: int = 3
-    __recent_hashes: Deque[str] = field(default_factory=lambda: deque(maxlen=5))
-    __recovery_attempts: int = 0
-    __max_recovery: int = 3
-
-    def record(self, screen_hash: str) -> None:
-        """
-        Record a screen hash.
-        """
-        self.__recent_hashes.append(screen_hash)
-
-    def is_stuck(self) -> bool:
-        """Check if agent appears stuck in a loop.
-
-        Returns True if the same screen hash appears threshold times
-        in the recent window.
-        """
-        if len(self.__recent_hashes) < self.threshold:
-            return False
-
-        hash_counts: Dict[str, int] = {}
-        for h in self.__recent_hashes:
-            hash_counts[h] = hash_counts.get(h, 0) + 1
-            if hash_counts[h] >= self.threshold:
-                return True
-        return False
-
-    def can_recover(self) -> bool:
-        """
-        Check if recovery is still possible.
-        """
-        return self.__recovery_attempts < self.__max_recovery
-
-    def record_recovery_attempt(self) -> int:
-        """
-        Record a recovery attempt and return the attempt number.
-        """
-        self.__recovery_attempts += 1
-        return self.__recovery_attempts
-
-    def reset(self) -> None:
-        """
-        Reset loop detection state.
-        """
-        self.__recent_hashes.clear()
-        self.__recovery_attempts = 0
-
-
-@dataclass
-class ActionHistory:
-    """Tracks action history for context building.
-
-    Maintains bounded history of actions and their outcomes
-    to provide context for planning.
-    """
-
-    max_size: int = 10
-    __actions: Deque[str] = field(default_factory=lambda: deque(maxlen=10))
-    __failures: Deque[str] = field(default_factory=lambda: deque(maxlen=5))
-    __success_count: int = 0
-    __failure_count: int = 0
-
-    def record_action(self, action: Action, success: bool) -> None:
-        """
-        Record an action and its outcome.
-        """
-        description = action.to_description()
-        if success:
-            self.__actions.append(f"✓ {description}")
-            self.__success_count += 1
-        else:
-            self.__actions.append(f"✗ {description}")
-            self.__failures.append(description)
-            self.__failure_count += 1
-
-    def get_context(self) -> List[str]:
-        """
-        Get recent actions as context for planning.
-        """
-        return list(self.__actions)
-
-    def get_failures(self) -> List[str]:
-        """
-        Get recent failures for recovery planning.
-        """
-        return list(self.__failures)
-
-    def get_stats(self) -> Dict[str, int]:
-        """
-        Get action statistics.
-        """
-        return {
-            "success": self.__success_count,
-            "failure": self.__failure_count,
-            "total": self.__success_count + self.__failure_count,
-        }
-
-    def has_repeated_failure(self, action: Action) -> bool:
-        """
-        Check if this action has failed recently.
-        """
-        description = action.to_description()
-        return description in self.__failures
+logger = getLogger(__name__)
 
 
 class AgentState:
-    """Stateful agent context for planning and execution.
+    """
+    Stateful agent context for planning and execution.
 
     Manages:
     - Screen state history with deduplication
@@ -144,7 +33,8 @@ class AgentState:
         loop_threshold: int = 3,
         context_window: int = 10,
     ) -> None:
-        """Initialize agent state.
+        """
+        Initialize agent state.
 
         Args:
             intent: The goal to achieve.
@@ -152,26 +42,35 @@ class AgentState:
             loop_threshold: Screen repetitions before stuck detection.
             context_window: Number of recent items to keep in context.
         """
+
+        self.__step_count = 0
         self.__intent = intent
         self.__max_steps = max_steps
-        self.__step_count = 0
 
         self.__loop_detector = LoopDetector(
-            window_size=context_window,
             threshold=loop_threshold,
+            window_size=context_window,
         )
         self.__action_history = ActionHistory(max_size=context_window)
 
-        self.__screen_hashes: Set[str] = set()
+        self.__seen_screens: List[ScreenState] = []
         self.__current_screen: Optional[ScreenState] = None
+
         self.__is_complete = False
         self.__completion_reason: Optional[str] = None
+
+        # Enhanced state fields
+        self.__knowledge: Dict[str, Any] = {}
+        self.__current_screen_name: Optional[str] = None
+        self.__last_error: Optional[str] = None
+        self.__last_action_description: Optional[str] = None
 
     @property
     def intent(self) -> str:
         """
         The goal being pursued.
         """
+
         return self.__intent
 
     @property
@@ -179,6 +78,7 @@ class AgentState:
         """
         Number of steps taken.
         """
+
         return self.__step_count
 
     @property
@@ -186,6 +86,7 @@ class AgentState:
         """
         Whether the intent has been achieved.
         """
+
         return self.__is_complete
 
     @property
@@ -193,6 +94,7 @@ class AgentState:
         """
         Whether the agent is stuck in a loop.
         """
+
         return self.__loop_detector.is_stuck()
 
     @property
@@ -200,10 +102,13 @@ class AgentState:
         """
         Whether the agent can continue execution.
         """
+
         if self.__is_complete:
             return False
+
         if self.__step_count >= self.__max_steps:
             return False
+
         return not (self.is_stuck and not self.__loop_detector.can_recover())
 
     @property
@@ -211,10 +116,19 @@ class AgentState:
         """
         Current screen state.
         """
+
         return self.__current_screen
 
+    def __is_new_screen(self, screen: ScreenState) -> bool:
+        """
+        Check if screen is new.
+        """
+
+        return all(not seen.is_same_screen(screen) for seen in self.__seen_screens)
+
     def update_screen(self, screen: ScreenState) -> bool:
-        """Update current screen state.
+        """
+        Update current screen state.
 
         Args:
             screen: New screen state.
@@ -222,38 +136,121 @@ class AgentState:
         Returns:
             True if this is a new screen, False if seen before.
         """
+
+        previous_screen = self.__current_screen
         self.__current_screen = screen
-        is_new = screen.visual_hash not in self.__screen_hashes
+        # Fuzzy matching for seen screens
+        is_new_screen = self.__is_new_screen(screen)
 
-        if is_new:
-            self.__screen_hashes.add(screen.visual_hash)
+        logger.debug(
+            f"[H2] Screen update classification | "
+            f"is_new={is_new_screen} seen_count={len(self.__seen_screens)} "
+            f"current={screen.activity} hash={screen.activity_hash} "
+            f"prev={previous_screen.activity if previous_screen else None}"
+        )
 
-        self.__loop_detector.record(screen.visual_hash)
-        return is_new
+        if is_new_screen:
+            self.__seen_screens.append(screen)
+            logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
+            # If we reached a new screen, we are definitely not stuck in a local loop.
+            self.__loop_detector.reset()
+        elif previous_screen and previous_screen.activity_hash != screen.activity_hash:
+            # Activity changed but screen was seen before (e.g., revisiting a page via
+            # a different navigation path). This is progress, not a loop.
+            logger.debug(
+                f"Activity changed: {previous_screen.activity} -> {screen.activity}. "
+                f"Resetting loop detector."
+            )
+            self.__loop_detector.reset()
+        else:
+            logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
+
+        self.__loop_detector.record(
+            screen=screen, action_description=self.__last_action_description
+        )
+        return is_new_screen
+
+    def set_knowledge(self, key: str, value: Any) -> None:
+        """Set a fact in knowledge base."""
+        self.__knowledge[key] = value
+
+    def set_last_error(self, error: str) -> None:
+        """Set the last error message."""
+        self.__last_error = error
+
+    def get_smart_context(self, max_history: int = 5) -> str:
+        """
+        Structured context for LLM — current state + recent history + errors.
+        Ported from interactive_testing state manager.
+        """
+        lines = ["=== CURRENT STATE ==="]
+
+        if self.__current_screen:
+            # Use activity name if available, or just generic
+            screen_name = self.__current_screen.activity or "Unknown Screen"
+            lines.append(f"Current Screen: {screen_name}")
+
+        # Known knowledge
+        if self.__knowledge:
+            lines.append("Known Facts:")
+            for key, value in self.__knowledge.items():
+                lines.append(f"- {key}: {value}")
+
+        lines.append(f"\n=== RECENT HISTORY (Last {max_history}) ===")
+        # Get recent items from action history
+        recent = self.__action_history.get_history_items()[-max_history:]
+
+        for index, item in enumerate(recent):
+            status = "[OK]" if item["success"] else "[FAIL]"
+            action_description = f"{item['type']}:{item['target']}"
+            lines.append(f"{index + 1}. {status} {action_description}")
+
+        if self.__last_error:
+            lines.append(f"\n[WARN] LAST ERROR: {self.__last_error}")
+
+        lines.append("=== END STATE ===")
+        return "\n".join(lines)
 
     def record_step(self, result: StepResult) -> None:
-        """Record a completed step.
+        """
+        Record a completed step.
 
         Args:
             result: Result of the executed step.
         """
+
         self.__step_count += 1
-        self.__action_history.record_action(result.step.action, result.success)
+
+        # Optimized record including activity context
+        activity = self.__current_screen.activity if self.__current_screen else "unknown"
+        self.__action_history.record_action(
+            action=result.step.action, success=result.success, activity=activity
+        )
+        self.__last_action_description = result.step.action.to_description()
+
+        logger.debug(
+            f"[H7] Recorded executed action | "
+            f"step={self.__step_count} action={result.step.action.to_description()} "
+            f"type={result.step.action.action_type.value} success={result.success}"
+        )
 
         if result.step.action.action_type == ActionType.COMPLETE and result.success:
-            self.mark_complete("Goal achieved via COMPLETE action")
+            self.mark_complete(reason="Goal achieved via COMPLETE action")
 
     def mark_complete(self, reason: str) -> None:
-        """Mark the intent as complete.
+        """
+        Mark the intent as complete.
 
         Args:
             reason: Why the intent is considered complete.
         """
+
         self.__is_complete = True
         self.__completion_reason = reason
 
     def get_recovery_action(self) -> Optional[Action]:
-        """Get a recovery action when stuck.
+        """
+        Get a recovery action when stuck.
 
         Uses escalating recovery strategies:
         1. First attempt: Press back
@@ -263,52 +260,56 @@ class AgentState:
         Returns:
             Recovery action or None if recovery exhausted.
         """
+
         if not self.__loop_detector.can_recover():
             return None
 
-        attempt = self.__loop_detector.record_recovery_attempt()
+        attempt_number = self.__loop_detector.record_recovery_attempt()
 
-        if attempt == 1:
+        if attempt_number == 1:
             return Action(
+                confidence=0.9,
+                target="system: back",
                 action_type=ActionType.BACK,
-                target="recovery: escape current screen",
-                confidence=0.5,
-                reasoning="Stuck in loop, attempting navigation back",
+                rationale="Loop detected (Screen repeating). Forcing BACK to break context.",
             )
-        elif attempt == 2:
+        elif attempt_number == 2:
             return Action(
+                confidence=0.8,
+                target="system: scroll",
                 action_type=ActionType.SCROLL,
-                target="recovery: reveal hidden content",
-                confidence=0.4,
-                reasoning="Stuck in loop, attempting scroll to reveal new elements",
+                rationale="Loop detected (Screen repeating). Forcing SCROLL to reveal new state.",
             )
         else:
             return Action(
+                confidence=0.7,
+                target="system: home",
                 action_type=ActionType.HOME,
-                target="recovery: reset to launcher",
-                confidence=0.3,
-                reasoning="Stuck in loop, resetting to home screen",
+                rationale="Loop detected (Screen repeating). Forcing HOME to reset agent.",
             )
 
     def build_context(self) -> Dict[str, object]:
-        """Build context for vision-language model.
-
-        Returns:
-            Dictionary with intent, history, failures, and state info.
         """
+        Build context for vision-language model with token optimization.
+        """
+
+        current_activity = self.__current_screen.activity if self.__current_screen else "unknown"
+
         return {
             "intent": self.__intent,
-            "step_count": self.__step_count,
-            "max_steps": self.__max_steps,
-            "recent_actions": self.__action_history.get_context(),
-            "recent_failures": self.__action_history.get_failures(),
             "is_stuck": self.is_stuck,
-            "unique_screens_seen": len(self.__screen_hashes),
-            "action_stats": self.__action_history.get_stats(),
+            "max_steps": self.__max_steps,
+            "step_count": self.__step_count,
+            "unique_screens_seen": len(self.__seen_screens),
+            "compact_history": self.__action_history.get_compact_history(),
+            "relevant_failures": self.__action_history.get_activity_failures(
+                current_activity=current_activity
+            ),
         }
 
     def should_avoid_action(self, action: Action) -> bool:
-        """Check if an action should be avoided due to recent failures.
+        """
+        Check if an action should be avoided due to recent failures.
 
         Args:
             action: Proposed action.
@@ -316,23 +317,26 @@ class AgentState:
         Returns:
             True if action has failed recently.
         """
-        return self.__action_history.has_repeated_failure(action)
+
+        return self.__action_history.has_repeated_failure(action=action)
 
     def to_checkpoint(self) -> Dict[str, object]:
-        """Serialize state for checkpointing.
+        """
+        Serialize state for checkpointing.
 
         Returns:
             Dictionary suitable for JSON serialization.
         """
+
         return {
             "intent": self.__intent,
-            "step_count": self.__step_count,
             "max_steps": self.__max_steps,
+            "step_count": self.__step_count,
             "is_complete": self.__is_complete,
             "completion_reason": self.__completion_reason,
-            "screen_hashes": list(self.__screen_hashes),
-            "action_context": self.__action_history.get_context(),
             "action_stats": self.__action_history.get_stats(),
+            "action_context": self.__action_history.get_context(),
+            "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
         }
 
     def __restore_from_data(
@@ -340,20 +344,23 @@ class AgentState:
         step_count: int,
         is_complete: bool,
         completion_reason: Optional[str],
-        screen_hashes: List[str],
+        seen_screens: List[Dict[str, Any]],
     ) -> None:
         """
         Restore internal state from checkpoint data.
         """
+
         self.__step_count = step_count
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
-        for h in screen_hashes:
-            self.__screen_hashes.add(h)
+
+        for data in seen_screens:
+            self.__seen_screens.append(ScreenState(**data))
 
     @classmethod
     def from_checkpoint(cls, data: Dict[str, object]) -> "AgentState":
-        """Restore state from checkpoint.
+        """
+        Restore state from checkpoint.
 
         Args:
             data: Checkpoint data from to_checkpoint().
@@ -361,27 +368,31 @@ class AgentState:
         Returns:
             Restored AgentState.
         """
-        max_steps_val = data.get("max_steps")
-        max_steps = int(max_steps_val) if isinstance(max_steps_val, (int, float)) else 20
 
-        state = cls(
-            intent=str(data["intent"]),
-            max_steps=max_steps,
-        )
+        max_steps_value = data.get("max_steps")
+        max_steps = int(max_steps_value) if isinstance(max_steps_value, (int, float)) else 20
 
-        step_count_val = data.get("step_count")
-        step_count = int(step_count_val) if isinstance(step_count_val, (int, float)) else 0
+        state = cls(intent=str(data["intent"]), max_steps=max_steps)
+
+        step_count_value = data.get("step_count")
+        step_count = int(step_count_value) if isinstance(step_count_value, (int, float)) else 0
 
         is_complete = bool(data.get("is_complete", False))
 
-        reason_val = data.get("completion_reason")
-        completion_reason = str(reason_val) if reason_val else None
+        reason_value = data.get("completion_reason")
+        completion_reason = str(reason_value) if reason_value else None
 
-        hashes_val = data.get("screen_hashes")
-        screen_hashes: List[str] = []
-        if isinstance(hashes_val, list):
-            screen_hashes = [str(h) for h in hashes_val]
+        seen_screens: List[Dict[str, Any]] = []
+        screens_value = data.get("seen_screens")
 
-        state.__restore_from_data(step_count, is_complete, completion_reason, screen_hashes)
+        if isinstance(screens_value, list):
+            seen_screens = [dict(screen) for screen in screens_value]
+
+        state.__restore_from_data(
+            step_count=step_count,
+            is_complete=is_complete,
+            seen_screens=seen_screens,
+            completion_reason=completion_reason,
+        )
 
         return state

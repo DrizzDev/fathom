@@ -1,74 +1,94 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.schemas.actions import Action
 
 
 class Step(BaseModel):
-    """A planned step to execute.
-
-    Produced by the agent's planner and contains the action to perform.
+    """
+    A planned step containing an action and metadata.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
-    action: Action = Field(description="Action to execute")
-    screen_hash: str = Field(description="Hash of screen when step was planned")
-    step_number: int = Field(ge=0, description="Step index in sequence")
+    action: Action = Field(description="The action to be executed in this step")
+    screen_hash: str = Field(description="Visual hash of the screen state before the action")
+
+    step_number: int = Field(ge=0, description="The sequence number of this step")
     is_conditional: bool = Field(
-        default=False,
-        description="Whether this step is conditional (IF block)",
+        default=False, description="Whether this step is a recovery attempt"
     )
-    condition: Optional[str] = Field(
-        default=None,
-        description="Condition expression if is_conditional is True",
-    )
+    condition: Optional[str] = Field(default=None, description="Optional condition for the step")
 
 
 class StepResult(BaseModel):
     """
-    Result of executing a step.
+    The outcome of an executed step.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
-    step: Step = Field(description="The step that was executed")
-    success: bool = Field(description="Whether execution succeeded")
-    screen_changed: bool = Field(description="Whether screen changed after action")
-    pre_hash: str = Field(description="Screen hash before action")
-    post_hash: str = Field(description="Screen hash after action")
+    step: Step = Field(description="The original step definition")
+    success: bool = Field(description="Whether the device execution reported success")
+
+    pre_hash: str = Field(description="Screen hash before execution")
+    post_hash: str = Field(description="Screen hash after execution")
+    screen_changed: bool = Field(description="Whether the screen visually changed after the action")
+
     duration: int = Field(ge=0, description="Execution duration in milliseconds")
-    error: Optional[str] = Field(default=None, description="Error message if failed")
+    error: Optional[str] = Field(default=None, description="Error details if execution failed")
 
-    def to_record(self) -> "StepRecord":
+    def to_record(self, absolute_center: Optional[List[int]] = None) -> "StepRecord":
         """
-        Convert to a minimal record for serialization.
+        Converts the result into a serializable record for persistence.
         """
+
+        if self.step.action.bounds:
+            box = self.step.action.bounds
+            bounds = [box.x, box.y, box.x + box.width, box.y + box.height]
+        else:
+            bounds = None
+
         return StepRecord(
-            step_number=self.step.step_number,
-            action_type=self.step.action.action_type.value,
-            target=self.step.action.target,
-            text=self.step.action.text,
+            bounds=bounds,
             success=self.success,
-            screen_changed=self.screen_changed,
             duration=self.duration,
+            center=absolute_center,
+            text=self.step.action.text,
+            target=self.step.action.target,
+            step_number=self.step.step_number,
+            screen_changed=self.screen_changed,
+            rationale=self.step.action.rationale,
+            action_type=self.step.action.action_type.value,
+            natural_language_target=self.step.action.natural_language_target,
         )
 
 
 class StepRecord(BaseModel):
     """
-    Minimal step record for serialization and checkpointing.
+    Persistence-optimized representation of an executed step.
     """
 
-    model_config = {"frozen": True}
+    model_config = ConfigDict(frozen=True)
 
-    step_number: int = Field(ge=0)
-    action_type: str = Field(min_length=1)
-    target: str = Field(min_length=1)
-    text: Optional[str] = Field(default=None)
-    success: bool
-    screen_changed: bool
+    step_number: int = Field(ge=0, description="Step index")
+    action_type: str = Field(min_length=1, description="Action category")
+    target: str = Field(min_length=1, description="Target element description")
+
+    natural_language_target: Optional[str] = Field(
+        default=None, description="Human-friendly name of the target element"
+    )
+    text: Optional[str] = Field(default=None, description="Typed text content")
+    rationale: Optional[str] = Field(default=None, description="Reasoning for the action")
+
+    success: bool = Field(description="Execution status")
+    screen_changed: bool = Field(description="Visual transition status")
     duration: int = Field(ge=0, description="Duration in milliseconds")
+
+    bounds: Optional[List[int]] = Field(
+        default=None, description="Normalized [x1, y1, x2, y2] bounds"
+    )
+    center: Optional[List[int]] = Field(default=None, description="Absolute [x, y] coordinates")

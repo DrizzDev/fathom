@@ -1,111 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
+import hashlib
+from logging import getLogger
+from typing import Any, Dict, Optional
 
 from fathom.agent.reasoner import Reasoner
 from fathom.agent.state import AgentState
-from fathom.constants import ActionType
-from fathom.schemas.actions import Action, BoundingBox
+from fathom.schemas.actions import Action
+from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
-from fathom.tools.vision import AnalysisResult, VisionTool
+from fathom.tools.vision import VisionTool
 
-
-@dataclass(frozen=True)
-class PlanResult:
-    """
-    Result of step planning.
-    """
-
-    step: Optional[Step]
-    is_complete: bool
-    reason: str
-    should_retry: bool = False
-
-
-class CoordinateConverter:
-    """Converts normalized coordinates to device pixels.
-
-    Handles the translation from 0-1000 normalized scale
-    to actual device pixel coordinates.
-    """
-
-    def __init__(self, screen_width: int, screen_height: int) -> None:
-        """Initialize converter.
-
-        Args:
-            screen_width: Device screen width in pixels.
-            screen_height: Device screen height in pixels.
-        """
-        self.__width = screen_width
-        self.__height = screen_height
-
-    def to_pixels(self, bbox: BoundingBox) -> Tuple[int, int, int, int]:
-        """Convert bounding box to pixel coordinates.
-
-        Args:
-            bbox: Normalized bounding box (0-1000 scale).
-
-        Returns:
-            Tuple of (x, y, width, height) in pixels.
-        """
-        return bbox.to_pixels(self.__width, self.__height)
-
-    def center_to_pixels(self, bbox: BoundingBox) -> Tuple[int, int]:
-        """Get center point in pixel coordinates.
-
-        Args:
-            bbox: Normalized bounding box.
-
-        Returns:
-            Tuple of (x, y) center point in pixels.
-        """
-        x, y, w, h = self.to_pixels(bbox)
-        return x + w // 2, y + h // 2
-
-    def swipe_coordinates(
-        self,
-        bbox: BoundingBox,
-        direction: str,
-    ) -> Tuple[int, int, int, int]:
-        """Calculate swipe start and end coordinates.
-
-        Args:
-            bbox: Target area for swipe.
-            direction: One of 'up', 'down', 'left', 'right'.
-
-        Returns:
-            Tuple of (x1, y1, x2, y2) for swipe.
-        """
-        x, y, w, h = self.to_pixels(bbox)
-        cx, cy = x + w // 2, y + h // 2
-
-        distance_x = int(w * 0.7)
-        distance_y = int(h * 0.7)
-
-        if direction == "up":
-            return cx, cy + distance_y // 2, cx, cy - distance_y // 2
-        elif direction == "down":
-            return cx, cy - distance_y // 2, cx, cy + distance_y // 2
-        elif direction == "left":
-            return cx + distance_x // 2, cy, cx - distance_x // 2, cy
-        elif direction == "right":
-            return cx - distance_x // 2, cy, cx + distance_x // 2, cy
-        else:
-            return cx, cy, cx, cy
+logger = getLogger(name=__name__)
 
 
 class StepPlanner:
-    """Plans and prepares steps for execution.
-
-    Orchestrates:
-    - Vision analysis for action recommendation
-    - Coordinate conversion for device interaction
-    - Step construction with proper metadata
-    - Recovery handling when stuck
-
-    The planner is stateless - all state is managed by AgentState.
+    """
+    Plans and prepares steps for execution.
     """
 
     def __init__(
@@ -114,128 +26,215 @@ class StepPlanner:
         *,
         min_confidence: float = 0.4,
     ) -> None:
-        """Initialize planner.
-
-        Args:
-            vision_tool: Vision tool for screen analysis.
-            min_confidence: Minimum confidence for action acceptance.
-        """
         self.__vision = vision_tool
         self.__min_confidence = min_confidence
+
+    @property
+    def vision_tool(self) -> VisionTool:
+        """
+        Returns the underlying vision tool.
+        """
+
+        return self.__vision
 
     async def plan_step(
         self,
         state: AgentState,
-        capture: ScreenCapture,
         reasoner: Reasoner,
+        capture: ScreenCapture,
+        *,
+        use_xml: bool = False,
+        additional_context: Optional[str] = None,
+        elements: Optional[Dict[str, Any]] = None,
     ) -> PlanResult:
-        """Plan the next step based on current state.
-
-        Args:
-            state: Current agent state.
-            capture: Current screen capture.
-            reasoner: Reasoner for completion detection.
-
-        Returns:
-            PlanResult with step to execute or completion info.
         """
+        Plan the next step based on current state.
+        """
+
+        logger.debug(
+            f"[H5] Entering planner plan_step | "
+            f"step_count={state.step_count} is_complete={state.is_complete} "
+            f"is_stuck={state.is_stuck} can_continue={state.can_continue}"
+        )
+
         if not state.can_continue:
             if state.is_complete:
-                return PlanResult(
-                    step=None,
-                    is_complete=True,
-                    reason="Intent completed",
-                )
-            if state.is_stuck:
-                recovery = state.get_recovery_action()
-                if recovery:
-                    return self.__build_plan_result(
-                        recovery,
-                        capture,
-                        state.step_count,
-                        is_recovery=True,
-                    )
-                return PlanResult(
-                    step=None,
-                    is_complete=False,
-                    reason="Stuck in loop, recovery exhausted",
-                )
+                return PlanResult(step=None, is_complete=True, reason="Intent completed")
+
             return PlanResult(
-                step=None,
-                is_complete=False,
-                reason=f"Max steps ({state.step_count}) exceeded",
+                step=None, is_complete=False, reason="Max steps or recovery exhausted"
             )
 
+        # IMMEDIATE RECOVERY: If we are stuck, don't ask the LLM again.
+        # This breaks the loop by forcing a navigation change (BACK/SCROLL/HOME).
+        if state.is_stuck:
+            completion_error = None
+            completion_signal = False
+            logger.warning("Agent is stuck in a loop. Forcing recovery action.")
+
+            try:
+                completion_signal = await self.__vision.check_completion(
+                    intent=state.intent, capture=capture
+                )
+            except Exception as exception:
+                completion_error = str(exception)
+
+            logger.debug(
+                f"[H3] Stuck gate reached | "
+                f"can_recover={state.can_continue} "
+                f"check_completion_signal={completion_signal} "
+                f"check_completion_error={completion_error}"
+            )
+
+            recovery_action = state.get_recovery_action()
+            if recovery_action:
+                return self.__build_plan_result(
+                    capture=capture,
+                    is_recovery=True,
+                    action=recovery_action,
+                    step_number=state.step_count,
+                )
+
         context = state.build_context()
+        history_context = str(object=context.get("compact_history", "None"))
+
+        full_context = history_context
+        if additional_context:
+            full_context = f"{additional_context}\n{history_context}"
+
         analysis = await self.__vision.analyze(
-            screen=capture.image,
+            use_xml=use_xml,
+            capture=capture,
+            elements=elements,
             intent=state.intent,
-            context=context.get("recent_actions", []),  # type: ignore[arg-type]
-            failures=context.get("recent_failures", []),  # type: ignore[arg-type]
+            context=full_context,
+            failures=context.get("relevant_failures", []),  # type: ignore[arg-type]
         )
 
         completion = reasoner.analyze_completion(
-            analysis,
-            screen_description=capture.activity,
+            analysis=analysis, screen_description=capture.activity
         )
 
+        action = self.__select_action(state=state, reasoner=reasoner, analysis=analysis)
+
         if completion.is_complete:
-            state.mark_complete(completion.evidence)
+            state.mark_complete(reason=completion.evidence)
+
+            # If there's a valid physical action, we should execute it before finishing
+            step = None
+            if action.action_type not in ("complete", "unknown", "wait"):
+                step = self.__build_step(
+                    action=action, step_number=state.step_count, capture=capture
+                )
+
             return PlanResult(
-                step=None,
+                step=step,
                 is_complete=True,
+                metrics=analysis.metrics,
+                metadata=analysis.metadata,
                 reason=completion.evidence,
+                memories=analysis.memories,
             )
 
-        action = self.__select_action(analysis, state, reasoner)
+        # Optimization: Check if this EXACT action just failed on this screen hash
+        if state.should_avoid_action(action=action):
+            logger.warning(msg=f"Avoiding recently failed action: {action.to_description()}")
+            return PlanResult(
+                step=None,
+                is_complete=False,
+                should_retry=True,
+                metrics=analysis.metrics,
+                metadata=analysis.metadata,
+                memories=analysis.memories,
+                reason="Action recently failed on this screen",
+            )
 
         if not reasoner.should_accept_action(
-            action,
-            has_failed_before=state.should_avoid_action(action),
+            action=action, has_failed_before=state.should_avoid_action(action=action)
         ):
             return PlanResult(
                 step=None,
                 is_complete=False,
-                reason=f"Action rejected: confidence {action.confidence:.2f}",
                 should_retry=True,
+                metrics=analysis.metrics,
+                metadata=analysis.metadata,
+                memories=analysis.memories,
+                reason=f"Action rejected: {action.rationale}",
             )
 
-        return self.__build_plan_result(action, capture, state.step_count)
+        return self.__build_plan_result(
+            action=action,
+            capture=capture,
+            metrics=analysis.metrics,
+            metadata=analysis.metadata,
+            memories=analysis.memories,
+            step_number=state.step_count,
+        )
 
     def __select_action(
         self,
-        analysis: AnalysisResult,
         state: AgentState,
         reasoner: Reasoner,
+        analysis: AnalysisResult,
     ) -> Action:
         """
-        Select best action from analysis result.
+        Return the best action from the analysis result.
         """
+
         context = state.build_context()
-        failures_raw = context.get("recent_failures", [])
+        failures_raw = context.get("relevant_failures", [])
         failures = failures_raw if isinstance(failures_raw, list) else []
-        failed_descs = {str(f) for f in failures}
 
         return reasoner.select_best_action(
-            analysis.action,
-            analysis.alternatives,
-            failed_actions=failed_descs,
+            primary=analysis.action,
+            alternatives=analysis.alternatives,
+            failed_actions={str(object=failure) for failure in failures},
         )
 
     def __build_plan_result(
         self,
         action: Action,
-        capture: ScreenCapture,
         step_number: int,
+        capture: ScreenCapture,
         *,
+        memories: int = 0,
         is_recovery: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
+        metrics: Optional[Dict[str, float]] = None,
     ) -> PlanResult:
         """
-        Build PlanResult from action.
+        Return a PlanResult with the given action and metadata.
         """
-        screen_hash = self.__compute_simple_hash(capture)
 
-        step = Step(
+        step = self.__build_step(
+            action=action, step_number=step_number, capture=capture, is_recovery=is_recovery
+        )
+
+        return PlanResult(
+            step=step,
+            is_complete=False,
+            memories=memories,
+            metrics=metrics or {},
+            metadata=metadata or {},
+            reason="Step planned" if not is_recovery else "Recovery step",
+            is_valid_action=action.is_valid,
+            validation_reasoning=action.validation_reason,
+        )
+
+    def __build_step(
+        self,
+        action: Action,
+        step_number: int,
+        capture: ScreenCapture,
+        is_recovery: bool = False,
+    ) -> Step:
+        """
+        Helper to construct a Step object.
+        """
+
+        screen_hash = self.__compute_simple_hash(capture=capture)
+
+        return Step(
             action=action,
             screen_hash=screen_hash,
             step_number=step_number,
@@ -243,98 +242,10 @@ class StepPlanner:
             condition="recovery" if is_recovery else None,
         )
 
-        return PlanResult(
-            step=step,
-            is_complete=False,
-            reason="Step planned" if not is_recovery else "Recovery step",
-        )
-
     def __compute_simple_hash(self, capture: ScreenCapture) -> str:
         """
-        Compute simple hash for screen capture.
+        Compute a simple hash of the screen capture
         """
-        import hashlib
 
         data = f"{capture.activity}:{len(capture.image)}".encode()
-        return hashlib.md5(data).hexdigest()[:16]  # nosec
-
-    def prepare_execution(
-        self,
-        step: Step,
-        screen_width: int,
-        screen_height: int,
-    ) -> dict[str, object]:
-        """Prepare step for device execution.
-
-        Converts normalized coordinates to pixels and builds
-        the execution request for the device tool.
-
-        Args:
-            step: Step to prepare.
-            screen_width: Device screen width.
-            screen_height: Device screen height.
-
-        Returns:
-            Execution request dict for device tool.
-        """
-        action = step.action
-        converter = CoordinateConverter(screen_width, screen_height)
-
-        if action.action_type == ActionType.TAP:
-            if action.bbox:
-                x, y = converter.center_to_pixels(action.bbox)
-            else:
-                x, y = screen_width // 2, screen_height // 2
-            return {"action": "tap", "x": x, "y": y}
-
-        elif action.action_type == ActionType.TYPE:
-            return {"action": "type", "text": action.text or ""}
-
-        elif action.action_type == ActionType.SWIPE:
-            if action.bbox:
-                x1, y1, x2, y2 = converter.swipe_coordinates(action.bbox, "up")
-            else:
-                cx, cy = screen_width // 2, screen_height // 2
-                x1, y1 = cx, cy + 300
-                x2, y2 = cx, cy - 300
-            return {"action": "swipe", "x1": x1, "y1": y1, "x2": x2, "y2": y2}
-
-        elif action.action_type == ActionType.SCROLL:
-            cx, cy = screen_width // 2, screen_height // 2
-            return {
-                "action": "swipe",
-                "x1": cx,
-                "y1": cy + 400,
-                "x2": cx,
-                "y2": cy - 400,
-                "duration": 500,
-            }
-
-        elif action.action_type == ActionType.LONG_PRESS:
-            if action.bbox:
-                x, y = converter.center_to_pixels(action.bbox)
-            else:
-                x, y = screen_width // 2, screen_height // 2
-            return {
-                "action": "swipe",
-                "x1": x,
-                "y1": y,
-                "x2": x,
-                "y2": y,
-                "duration": 1000,
-            }
-
-        elif action.action_type == ActionType.BACK:
-            return {"action": "back"}
-
-        elif action.action_type == ActionType.HOME:
-            return {"action": "home"}
-
-        elif action.action_type == ActionType.WAIT:
-            return {"action": "wait", "duration": 1000}
-
-        elif action.action_type == ActionType.COMPLETE:
-            return {"action": "complete"}
-
-        else:
-            return {"action": "unknown"}
+        return hashlib.md5(string=data, usedforsecurity=False).hexdigest()[:16]

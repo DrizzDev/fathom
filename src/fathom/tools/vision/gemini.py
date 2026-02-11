@@ -1,326 +1,345 @@
 from __future__ import annotations
 
-import base64
+import asyncio
+import hashlib
 import json
-import re
+import time
+from logging import getLogger
 from typing import Any, Dict, List, Optional
 
-from fathom.constants import ActionType
-from fathom.exceptions import VisionError
-from fathom.schemas.actions import Action, BoundingBox
-from fathom.schemas.configuration import GeminiConfig
+from fathom.interfaces import (
+    IImageStorage,
+    ILedger,
+    IMemoryProvider,
+    IVisionProvider,
+)
+from fathom.prompts.factory import PromptFactory
 from fathom.schemas.results import AnalysisResult
+from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.tools.definitions import ToolRegistry
 from fathom.tools.vision.base import VisionTool
+from fathom.utils.image import ImageProcessor
 
-ANALYSIS_PROMPT = """Analyze this Android screen and determine the next action to achieve the goal.
-
-GOAL: {intent}
-
-CONTEXT:
-- Recent actions: {context}
-- Recent failures (avoid repeating): {failures}
-
-OUTPUT FORMAT (JSON):
-{{
-    "action": {{
-        "type": "TAP|TYPE|SWIPE|SCROLL|BACK|HOME|WAIT|COMPLETE",
-        "target": "description of what to interact with",
-        "coordinates": {{"x": 0-1000, "y": 0-1000}} or null,
-        "text": "text to type" or null,
-        "confidence": 0.0-1.0
-    }},
-    "alternatives": [
-        // 1-2 alternative actions if uncertain
-    ],
-    "reasoning": "why this action helps achieve the goal",
-    "screen_description": "brief description of current screen",
-    "is_goal_complete": true/false
-}}
-
-RULES:
-1. Coordinates use 0-1000 normalized scale (center of screen = 500,500)
-2. Use COMPLETE only when the goal is definitively achieved
-3. Confidence should reflect certainty (0.9+ = very confident)
-4. Consider recent failures when choosing actions
-5. If stuck, try alternative navigation (BACK, SCROLL)
-"""
+logger = getLogger(name=__name__)
 
 
 class GeminiVisionTool(VisionTool):
-    """Vision tool using Google's Gemini API.
-
-    Analyzes screenshots and recommends actions to achieve goals.
-
-    Example:
-        ```python
-        vision = GeminiVisionTool(GeminiConfig(api_key="..."))
-        result = await vision.analyze(
-            screen=screenshot_bytes,
-            intent="Open settings",
-        )
-        print(f"Recommended: {result.action}")
-        ```
+    """
+    SOLID Orchestrator for Vision Analysis using Native Tool Calling.
     """
 
-    def __init__(self, config: GeminiConfig) -> None:
-        """Initialize Gemini vision tool.
+    def __init__(
+        self,
+        model: IVisionProvider,
+        memory: IMemoryProvider,
+        ledger: ILedger,
+        local_storage: IImageStorage,
+        *,
+        version: str = "pro_xml",
+        session_id: str = "default",
+        package_name: str = "unknown_app",
+        gcs_storage: Optional[IImageStorage] = None,
+    ) -> None:
+        self.__model = model
+        self.__version = version
+        self.__session_id = session_id
+        self.__package_name = package_name
 
-        Args:
-            config: Gemini API configuration.
+        self.__memory = memory
+        self.__ledger = ledger
+
+        self.__gcs_storage = gcs_storage
+        self.__local_storage = local_storage
+
+        self.__builder = PromptFactory.get_builder(model_name="gemini")
+
+    @property
+    def version_id(self) -> str:
         """
-        self.__config = config
-        self.__http_client: Optional[Any] = None
+        Returns current version.
+        """
+
+        return self.__version
+
+    @property
+    def provider(self) -> IVisionProvider:
+        """
+        Returns the underlying vision provider.
+        """
+
+        return self.__model
 
     async def analyze(
         self,
-        screen: bytes,
         intent: str,
-        context: Optional[List[str]] = None,
+        capture: ScreenCapture,
+        *,
+        use_xml: bool = False,
+        context: Optional[str] = None,
         failures: Optional[List[str]] = None,
+        elements: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
-        """Analyze screen and recommend action.
-
-        Args:
-            screen: Screenshot PNG bytes.
-            intent: Goal to achieve.
-            context: Recent action descriptions.
-            failures: Recently failed actions to avoid.
-
-        Returns:
-            AnalysisResult with recommended action.
         """
-        prompt = ANALYSIS_PROMPT.format(
+        Coordinates the analysis flow using Native Tool Calling.
+        """
+
+        asyncio.create_task(coro=self.__persist(data=capture.image, activity=capture.activity))
+
+        # 1. BRAIN RETRIEVAL
+        fingerprint = (
+            capture.state.visual_hash
+            if capture.state
+            else hashlib.md5(string=capture.image, usedforsecurity=False).hexdigest()[:16]
+        )
+
+        start = time.time()
+        knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
+        retrieval = time.time() - start
+
+        # 2. PROMPT & TOOL SCOPING
+        # Static Prompt (Cacheable)
+        hints = {"use_xml": use_xml}
+
+        instruction = self.__builder.build(
             intent=intent,
-            context=", ".join(context or []) or "None",
-            failures=", ".join(failures or []) or "None",
+            hints=hints,
         )
 
-        try:
-            response = await self.__call_api(screen, prompt)
-            return self.__parse_response(response)
-
-        except Exception as exception:
-            return AnalysisResult(
-                action=Action(
-                    action_type=ActionType.WAIT,
-                    target="Analysis failed, waiting",
-                    confidence=0.1,
-                    reasoning=f"Error: {exception}",
-                ),
-                alternatives=[],
-                reasoning=f"Analysis failed: {exception}",
-                screen_description="Unknown",
-                is_goal_complete=False,
-            )
-
-    async def __call_api(self, image: bytes, prompt: str) -> Dict[str, Any]:
-        """Call Gemini API.
-
-        Args:
-            image: Image bytes.
-            prompt: Text prompt.
-
-        Returns:
-            Parsed API response.
-        """
-        try:
-            import httpx
-        except ImportError as err:
-            raise VisionError("httpx required: pip install httpx") from err
-
-        image_b64 = base64.b64encode(image).decode()
-
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.__config.model}:generateContent"
-
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "inline_data": {
-                                "mime_type": "image/png",
-                                "data": image_b64,
-                            }
-                        },
-                        {"text": prompt},
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": self.__config.temperature,
-                "maxOutputTokens": self.__config.max_output_tokens,
-                "responseMimeType": "application/json",
-            },
-        }
-
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": self.__config.api_key,
-        }
-
-        async with httpx.AsyncClient(timeout=self.__config.timeout) as client:
-            response = await client.post(url, json=payload, headers=headers)
-
-            if response.status_code != 200:
-                raise VisionError(f"Gemini API error: {response.status_code} - {response.text}")
-
-            data = response.json()
-
-        candidates = data.get("candidates", [])
-        if not candidates:
-            raise VisionError("No response from Gemini")
-
-        content = candidates[0].get("content", {})
-        parts = content.get("parts", [])
-        if not parts:
-            raise VisionError("Empty response from Gemini")
-
-        text = parts[0].get("text", "")
-
-        try:
-            from typing import cast
-
-            return cast("Dict[str, Any]", json.loads(text))
-        except json.JSONDecodeError:
-            json_match = re.search(r"\{.*\}", text, re.DOTALL)
-            if json_match:
-                from typing import cast
-
-                return cast("Dict[str, Any]", json.loads(json_match.group()))
-            raise VisionError(f"Invalid JSON response: {text[:200]}") from None
-
-    def __parse_response(self, data: Dict[str, Any]) -> AnalysisResult:
-        """Parse API response to AnalysisResult.
-
-        Args:
-            data: Parsed JSON response.
-
-        Returns:
-            AnalysisResult.
-        """
-        action_data = data.get("action", {})
-
-        action = self.__parse_action(action_data)
-
-        alternatives = [self.__parse_action(alt) for alt in data.get("alternatives", [])]
-
-        return AnalysisResult(
-            action=action,
-            alternatives=alternatives,
-            reasoning=str(data.get("reasoning", "")),
-            screen_description=str(data.get("screen_description", "")),
-            is_goal_complete=bool(data.get("is_goal_complete", False)),
+        # Dynamic context
+        dynamic_context = self.__builder.build_user_context(
+            history=context,
+            memory=await self.__ledger.get_all(),
         )
 
-    def __parse_action(self, data: Dict[str, Any]) -> Action:
-        """Parse action from response data.
+        tools = self.__scope_tools(intent=intent)
 
-        Args:
-            data: Action data dictionary.
-
-        Returns:
-            Action object.
-        """
-        action_type_str = str(data.get("type", "WAIT")).upper()
-
-        try:
-            action_type = ActionType(action_type_str)
-        except ValueError:
-            action_type = ActionType.WAIT
-
-        bbox = None
-        coords = data.get("coordinates")
-        if coords and isinstance(coords, dict):
-            x = int(coords.get("x", 500))
-            y = int(coords.get("y", 500))
-            bbox = BoundingBox(
-                x=max(0, x - 50),
-                y=max(0, y - 50),
-                width=100,
-                height=100,
-            )
-
-        confidence_raw = data.get("confidence", 0.5)
-        confidence = float(confidence_raw) if confidence_raw else 0.5
-
-        return Action(
-            action_type=action_type,
-            target=str(data.get("target", "")),
-            bbox=bbox,
-            text=data.get("text"),
-            confidence=min(1.0, max(0.0, confidence)),
-            reasoning=str(data.get("reasoning", "")),
+        # 3. CONTENT ASSEMBLY
+        manifest = self.__format_elements(elements=elements)
+        payload = self.__build_payload(
+            intent=intent,
+            screen=capture.image,
+            knowledge=knowledge,
+            context=dynamic_context,
+            manifest=manifest,
+            failures=failures,
         )
 
+        # Debug logs
+        logger.debug(f"System Instruction:\n{instruction[:200]}...")
+        logger.debug(
+            f"User Payload (Text Parts):\n{[parts for parts in payload if isinstance(parts, str)]}"
+        )
 
-class MockGeminiVisionTool(VisionTool):
-    """Mock Gemini vision tool for testing without API calls.
+        # 4. EXECUTION
+        commence = time.time()
+        analysis = await self.__call_api(instruction=instruction, payload=payload, tools=tools)
+        duration = time.time() - commence
 
-    Returns scripted or random actions for testing.
-    """
+        # 5. METRICS & BRAIN UPDATE
+        analysis.memories = len(knowledge.get("previous_actions", []))
+        analysis.metrics["llm_analysis"] = duration
+        analysis.metrics["memory_retrieval"] = retrieval
 
-    def __init__(self, *, always_complete: bool = False) -> None:
-        """Initialize mock vision tool.
+        stats = getattr(self.__model, "cache_stats", {})
+        if stats:
+            analysis.metrics["cache_hits"] = stats.get("hits", 0)
+            analysis.metrics["cache_misses"] = stats.get("misses", 0)
 
-        Args:
-            always_complete: If True, always returns COMPLETE action.
-        """
-        self.__always_complete = always_complete
-        self.__call_count = 0
-
-    async def analyze(
-        self,
-        screen: bytes,
-        intent: str,
-        context: Optional[List[str]] = None,
-        failures: Optional[List[str]] = None,
-    ) -> AnalysisResult:
-        """Return mock analysis result.
-
-        Args:
-            screen: Screenshot bytes (ignored).
-            intent: Goal (used for description).
-            context: Context (ignored).
-            failures: Failures (ignored).
-
-        Returns:
-            Mock AnalysisResult.
-        """
-        self.__call_count += 1
-
-        if self.__always_complete or self.__call_count > 5:
-            return AnalysisResult(
-                action=Action(
-                    action_type=ActionType.COMPLETE,
-                    target="Goal achieved",
-                    confidence=0.95,
-                    reasoning="Task completed successfully",
-                ),
-                alternatives=[],
-                reasoning="Goal appears complete",
-                screen_description="Success screen",
-                is_goal_complete=True,
-            )
-
-        action_type = [
-            ActionType.TAP,
-            ActionType.SCROLL,
-            ActionType.TAP,
-            ActionType.TYPE,
-            ActionType.TAP,
-        ][self.__call_count % 5]
-
-        return AnalysisResult(
-            action=Action(
-                action_type=action_type,
-                target=f"Mock target for {intent}",
-                bbox=BoundingBox(x=400, y=400, width=200, height=100),
-                text="test" if action_type == ActionType.TYPE else None,
-                confidence=0.8,
-                reasoning=f"Mock reasoning step {self.__call_count}",
+        await self.__memory.store_observation(
+            screen=ScreenState(
+                activity=capture.activity,
+                activity_hash=hashlib.md5(
+                    string=capture.activity.encode(), usedforsecurity=False
+                ).hexdigest()[:8],
+                structural_hash="0",
+                visual_hash=fingerprint,
+                timestamp=int(time.time() * 1000),
             ),
-            alternatives=[],
-            reasoning=f"Mock analysis step {self.__call_count}",
-            screen_description="Mock screen",
-            is_goal_complete=False,
+            description=analysis.screen_description,
         )
+
+        return self.__parse_response(analysis=analysis)
+
+    async def __call_api(
+        self, instruction: str, payload: List[Any], tools: Dict[str, Any]
+    ) -> AnalysisResult:
+        """
+        Delegates the actual LLM call to the underlying provider.
+        """
+
+        return await self.__model.analyze(
+            system_instruction=instruction, user_content=payload, tools=tools
+        )
+
+    def __parse_response(self, analysis: AnalysisResult) -> AnalysisResult:
+        """
+        Maps or enriches the provider's response if needed.
+        """
+
+        return analysis
+
+    async def check_completion(self, intent: str, capture: ScreenCapture) -> bool:
+        """
+        Check if intent is complete.
+        """
+
+        result = await self.analyze(intent=intent, capture=capture)
+        return result.is_goal_complete
+
+    def __parse_bbox(self, raw: Any) -> Optional[Dict[str, int]]:
+        """
+        Legacy helper kept for test/backward compatibility.
+        Accepts Gemini bbox variants and normalizes to x/y/width/height.
+        """
+
+        if isinstance(raw, dict):
+            if {"x", "y", "width", "height"}.issubset(raw):
+                return {
+                    "x": int(raw["x"]),
+                    "y": int(raw["y"]),
+                    "width": int(raw["width"]),
+                    "height": int(raw["height"]),
+                }
+            if {"ymin", "xmin", "ymax", "xmax"}.issubset(raw):
+                xmin = int(raw["xmin"])
+                ymin = int(raw["ymin"])
+                xmax = int(raw["xmax"])
+                ymax = int(raw["ymax"])
+                return {
+                    "x": xmin,
+                    "y": ymin,
+                    "width": max(0, xmax - xmin),
+                    "height": max(0, ymax - ymin),
+                }
+            return None
+
+        if isinstance(raw, list) and len(raw) == 4:
+            ymin, xmin, ymax, xmax = [int(value) for value in raw]
+            return {
+                "x": xmin,
+                "y": ymin,
+                "width": max(0, xmax - xmin),
+                "height": max(0, ymax - ymin),
+            }
+
+        return None
+
+    def __build_payload(
+        self,
+        intent: str,
+        screen: bytes,
+        knowledge: Dict[str, Any],
+        context: Optional[str] = None,
+        manifest: str = "N/A",
+        failures: Optional[List[str]] = None,
+    ) -> List[Any]:
+        """
+        Assembles request with token-locality.
+        Stable intent at top, dynamic image/history at bottom for KV-cache.
+        """
+
+        payload: List[Any] = [f"Goal: {intent}"]
+
+        # 1. State Memory (Specific to this screen hash)
+        if knowledge.get("description"):
+            payload.append(f"Screen Info: {knowledge['description']}")
+
+        if history := knowledge.get("previous_actions", []):
+            payload.append(f"Past actions on this specific screen: {json.dumps(obj=history)}")
+
+        # 2. Dynamic Session Context (Changes every step)
+        if context:
+            payload.append(f"Recent turns (global): {context}")
+
+        if failures:
+            payload.append(f"Failures on this activity: {', '.join(failures)}")
+
+        # 3. Element Manifest (If present)
+        if manifest != "N/A":
+            payload.append(f"Element Manifest: {manifest}")
+
+        # 4. Image (Most dynamic, must be last)
+        optimized = ImageProcessor.optimize_for_vision(image_data=screen)
+        payload.append(optimized)
+
+        return payload
+
+    def __format_elements(self, elements: Optional[Dict[str, Any]]) -> str:
+        """
+        Converts label map to a high-density textual grounding manifest.
+        Format: [ID] Class | Text | Content-Description
+        """
+
+        if not elements:
+            return "N/A"
+
+        lines = []
+
+        for label, information in elements.items():
+            if label.startswith("__"):  # Skip internal scale factors
+                continue
+
+            kind = str(object=information.get("class", "View")).split(sep=".")[-1]
+
+            value = f"[{label}] {kind}"
+            text = information.get("text", "").strip()
+            detail = information.get("content-desc", "").strip()
+
+            if text:
+                value += f" | text: '{text}'"
+
+            if detail:
+                value += f" | description: '{detail}'"
+
+            lines.append(value)
+
+        return "\n".join(lines) if lines else "No interactive elements found."
+
+    async def __persist(self, data: bytes, activity: str) -> None:
+        """
+        Background persistence task.
+        """
+
+        metadata = {
+            "activity_name": activity,
+            "session_id": self.__session_id,
+            "package_name": self.__package_name,
+        }
+
+        try:
+            tasks = [self.__local_storage.save(data=data, metadata=metadata)]
+            if self.__gcs_storage:
+                tasks.append(self.__gcs_storage.save(data=data, metadata=metadata))
+
+            await asyncio.gather(*tasks)
+        except Exception:
+            logger.debug("Screenshot persistence failed", exc_info=True)
+
+    async def cleanup(self) -> None:
+        """
+        Shut down providers.
+        """
+
+        await self.__model.cleanup()
+
+    def __scope_tools(self, intent: str) -> Dict[str, Any]:
+        """
+        Dynamically selects tools based on the intent context.
+        """
+
+        # Base tools always available
+        allowed = {"execute_ui", "store_memory", "recall_memory"}
+
+        # Validation tools for verification tasks
+        if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):
+            allowed.update({"validate_state", "verify_goal"})
+
+        definitions = ToolRegistry.get_all_definitions()
+
+        return {
+            "function_declarations": [
+                definition
+                for definition in definitions["function_declarations"]
+                if definition["name"] in allowed
+            ]
+        }

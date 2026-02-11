@@ -1,28 +1,40 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
+from fathom.schemas.configuration import ADBConfig
 from fathom.schemas.results import ActionResult
 from fathom.tools.base import Tool
 
 
 class DeviceTool(Tool[ActionResult], ABC):
-    """Abstract base for device interaction tools.
-
+    """
+    Abstract base for device interaction tools.
     Device tools execute actions on the target device.
     """
+
+    @property
+    @abstractmethod
+    def configuration(self) -> ADBConfig:
+        """
+        Returns the tool configuration.
+        """
+
+        raise NotImplementedError
 
     @property
     def name(self) -> str:
         """
         Tool name.
         """
+
         return "device"
 
     @abstractmethod
     async def tap(self, x: int, y: int) -> ActionResult:
-        """Tap at pixel coordinates.
+        """
+        Tap at pixel coordinates.
 
         Args:
             x: X coordinate in pixels.
@@ -31,11 +43,13 @@ class DeviceTool(Tool[ActionResult], ABC):
         Returns:
             Action result.
         """
+
         raise NotImplementedError
 
     @abstractmethod
     async def type_text(self, text: str) -> ActionResult:
-        """Type text into focused element.
+        """
+        Type text into focused element.
 
         Args:
             text: Text to type.
@@ -43,6 +57,7 @@ class DeviceTool(Tool[ActionResult], ABC):
         Returns:
             Action result.
         """
+
         raise NotImplementedError
 
     @abstractmethod
@@ -54,7 +69,8 @@ class DeviceTool(Tool[ActionResult], ABC):
         y2: int,
         duration: int = 300,
     ) -> ActionResult:
-        """Swipe from one point to another.
+        """
+        Swipe from one point to another.
 
         Args:
             x1: Start X coordinate.
@@ -66,43 +82,63 @@ class DeviceTool(Tool[ActionResult], ABC):
         Returns:
             Action result.
         """
+
         raise NotImplementedError
 
     @abstractmethod
     async def back(self) -> ActionResult:
-        """Press back button.
+        """
+        Press back button.
 
         Returns:
             Action result.
         """
+
         raise NotImplementedError
 
     @abstractmethod
     async def home(self) -> ActionResult:
-        """Press home button.
+        """
+        Press home button.
 
         Returns:
             Action result.
         """
+
         raise NotImplementedError
 
     @abstractmethod
     async def get_screen_size(self) -> Tuple[int, int]:
-        """Get device screen dimensions.
+        """
+        Get device screen dimensions in pixels.
+        """
+
+        raise NotImplementedError
+
+    async def cleanup(self) -> None:
+        """
+        Clean up any device connections or background processes.
+        """
+        pass
+
+    @abstractmethod
+    async def screenshot(self) -> Optional[bytes]:
+        """
+        Capture device screenshot.
 
         Returns:
-            Tuple of (width, height) in pixels.
+            PNG image bytes or None on failure.
         """
+
         raise NotImplementedError
 
     @abstractmethod
-    async def get_activity(self) -> str:
-        """Get current activity name.
-
-        Returns:
-            Fully qualified activity name.
+    async def dump_hierarchy(self) -> Optional[str]:
         """
-        raise NotImplementedError
+        Dump UI hierarchy to XML string.
+        """
+
+        return None
 
     async def long_press(
         self,
@@ -110,7 +146,8 @@ class DeviceTool(Tool[ActionResult], ABC):
         y: int,
         duration: int = 1000,
     ) -> ActionResult:
-        """Long press at coordinates.
+        """
+        Long press at coordinates.
 
         Default implementation uses swipe with same start/end.
 
@@ -122,10 +159,12 @@ class DeviceTool(Tool[ActionResult], ABC):
         Returns:
             Action result.
         """
+
         return await self.swipe(x, y, x, y, duration)
 
     async def execute(self, request: Dict[str, Any]) -> ActionResult:
-        """Execute via generic interface.
+        """
+        Execute via generic interface.
 
         Args:
             request: Dict with 'action' type and params.
@@ -133,11 +172,15 @@ class DeviceTool(Tool[ActionResult], ABC):
         Returns:
             Action result.
         """
+
         action = request["action"]
+
         if action == "tap":
             return await self.tap(request["x"], request["y"])
+
         elif action == "type":
             return await self.type_text(request["text"])
+
         elif action == "swipe":
             return await self.swipe(
                 request["x1"],
@@ -146,9 +189,12 @@ class DeviceTool(Tool[ActionResult], ABC):
                 request["y2"],
                 request.get("duration", 300),
             )
+
         elif action == "back":
             return await self.back()
+
         elif action == "home":
             return await self.home()
+
         else:
             return ActionResult(success=False, duration=0, error=f"Unknown action: {action}")

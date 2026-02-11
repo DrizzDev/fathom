@@ -2,39 +2,36 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from fathom.constants import StrategyStatus, WorkflowStatus
+from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
-from fathom.schemas.screens import ScreenCapture
-from fathom.schemas.steps import StepResult
-
-
-class ActionResult(BaseModel):
-    """
-    Result from device action execution.
-    """
-
-    model_config = {"frozen": True}
-
-    success: bool = Field(description="Whether action succeeded")
-    duration: int = Field(ge=0, description="Execution duration in milliseconds")
-    error: Optional[str] = Field(default=None, description="Error if failed")
-    output: Optional[str] = Field(default=None, description="Command output if any")
+from fathom.schemas.steps import Step, StepResult
 
 
 class AnalysisResult(BaseModel):
     """
-    Result from screen analysis.
+    Result of vision analysis.
     """
 
-    model_config = {"frozen": True}
-
-    action: Action = Field(description="Recommended action")
-    alternatives: List[Action] = Field(default_factory=list, description="Alternative actions")
+    action: Action = Field(description="Primary recommended action")
+    alternatives: List[Action] = Field(
+        default_factory=list, description="Alternative actions considered"
+    )
     reasoning: str = Field(description="Reasoning process")
     screen_description: str = Field(description="Description of screen content")
-    is_goal_complete: bool = Field(default=False, description="Whether goal appears complete")
+    is_goal_complete: bool = Field(
+        default=False, description="Whether the user intent has been fully achieved"
+    )
+    memories: int = Field(
+        default=0, description="Number of historical experiences retrieved for this state"
+    )
+    metrics: Dict[str, float] = Field(
+        default_factory=dict, description="Internal analysis timing metrics"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional context like raw tool calls"
+    )
 
 
 class StrategyResult(BaseModel):
@@ -42,108 +39,106 @@ class StrategyResult(BaseModel):
     Result from strategy execution.
     """
 
-    model_config = {"frozen": True}
-
+    step_result: Optional[StepResult] = Field(default=None, description="Result of the step")
     status: StrategyStatus = Field(description="Execution status")
-    step_result: Optional[StepResult] = Field(default=None, description="Step result if executed")
     message: str = Field(description="Status message")
-    should_checkpoint: bool = Field(default=False, description="Whether to checkpoint")
+    should_checkpoint: bool = Field(default=False, description="Whether to save state")
 
     @property
     def is_terminal(self) -> bool:
-        """
-        Whether this result ends execution.
-        """
-        return self.status != StrategyStatus.CONTINUE
+        """Checks if status is terminal."""
+        return self.status in (StrategyStatus.COMPLETE, StrategyStatus.ERROR)
 
 
 class WorkflowResult(BaseModel):
     """
-    Result of workflow execution.
+    Base class for workflow outcomes.
     """
 
-    model_config = {"frozen": True}
-
-    workflow_id: str = Field(description="Workflow identifier")
-    status: WorkflowStatus = Field(description="Final status")
-    steps_executed: int = Field(ge=0, description="Total steps executed")
-    duration: float = Field(ge=0.0, description="Total duration in seconds")
-    error: Optional[str] = Field(default=None, description="Error message if failed")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata")
-    step_results: List[StepResult] = Field(default_factory=list, description="Step history")
-
-    @property
-    def success(self) -> bool:
-        """
-        Whether workflow completed successfully.
-        """
-        return self.status == WorkflowStatus.COMPLETED
-
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Serialize to dictionary.
-        """
-        return {
-            "workflow_id": self.workflow_id,
-            "status": self.status.value,
-            "steps_executed": self.steps_executed,
-            "duration_seconds": self.duration,
-            "success": self.success,
-            "error": self.error,
-            "metadata": self.metadata,
-        }
+    success: bool = Field(default=False, description="Whether workflow achieved goal")
+    completion_reason: str = Field(default="", description="Reason for finishing")
+    workflow_id: str = Field(default="", description="Unique ID")
+    status: str = Field(default="unknown")
+    duration: float = Field(default=0.0)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    steps_executed: int = Field(default=0)
+    step_results: List[StepResult] = Field(default_factory=list)
+    error: Optional[str] = Field(default=None)
 
 
-class IntentResult(BaseModel):
+class IntentResult(WorkflowResult):
     """
-    Result of intent workflow execution.
+    Result of intent workflow.
     """
 
-    model_config = {"frozen": True}
-
-    intent: str = Field(description="Goal intent")
-    success: bool = Field(description="Whether intent was achieved")
-    steps_taken: int = Field(ge=0, description="Steps executed")
-    completion_reason: str = Field(description="Reason for completion/failure")
-    final_screen: Optional[ScreenCapture] = Field(default=None, description="Final screen capture")
-
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Serialize to dictionary.
-        """
-        return {
-            "intent": self.intent,
-            "success": self.success,
-            "steps_taken": self.steps_taken,
-            "completion_reason": self.completion_reason,
-        }
-
-
-class ExplorationResult(BaseModel):
-    """
-    Result of exploration workflow execution.
-    """
-
-    model_config = {"frozen": True}
-
-    unique_screens: int = Field(ge=0, description="Number of unique screens found")
-    total_transitions: int = Field(ge=0, description="Number of transitions executed")
-    total_actions: int = Field(ge=0, description="Total actions executed")
-    coverage_percentage: float = Field(ge=0.0, le=100.0, description="Estimated coverage")
-    discovered_activities: List[str] = Field(
-        default_factory=list, description="Discovered activities"
+    intent: str = Field(default="", description="The intent executed")
+    steps_taken: int = Field(ge=0, description="Number of steps executed")
+    final_screen: Optional[Any] = Field(default=None, description="Final state")
+    metrics: Dict[str, Dict[str, float]] = Field(
+        default_factory=dict, description="Execution metrics"
     )
-    screen_graph: Dict[str, Any] = Field(default_factory=dict, description="Graph representation")
+    memory_summary: Dict[str, Any] = Field(
+        default_factory=dict, description="Summary of Knowledge Graph"
+    )
 
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Serialize to dictionary.
-        """
-        return {
-            "unique_screens": self.unique_screens,
-            "total_transitions": self.total_transitions,
-            "total_actions": self.total_actions,
-            "coverage_percentage": self.coverage_percentage,
-            "discovered_activities": self.discovered_activities,
-            "screen_graph": self.screen_graph,
-        }
+
+class ExplorationResult(WorkflowResult):
+    """
+    Result of app exploration.
+    """
+
+    unique_screens: int = Field(ge=0, description="Unique screens discovered")
+    total_actions: int = Field(ge=0, description="Total actions performed")
+    total_transitions: int = Field(ge=0, description="Total transitions")
+    coverage_percentage: float = Field(ge=0.0, le=100.0, description="App coverage")
+    discovered_activities: List[str] = Field(default_factory=list)
+    screen_graph: Dict[str, List[str]] = Field(default_factory=dict)
+
+
+class ActionResult(BaseModel):
+    """
+    Result of physical action execution.
+    """
+
+    success: bool = Field(description="Execution status")
+    duration: int = Field(ge=0, description="Duration in milliseconds")
+    output: Optional[str] = Field(default=None, description="Command output")
+    error: Optional[str] = Field(default=None, description="Error details")
+
+
+class ExecutionResult(BaseModel):
+    """
+    Result of step execution attempt.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    success: bool = Field(..., description="Whether the execution was successful")
+    duration: int = Field(..., description="Duration of execution in milliseconds")
+    pre_hash: str = Field(default="", description="Visual hash before execution")
+    post_hash: str = Field(default="", description="Visual hash after execution")
+    error: Optional[str] = Field(default=None, description="Error message if failed")
+    screen_changed: bool = Field(default=False, description="Whether the screen changed")
+
+
+class PlanResult(BaseModel):
+    """
+    Result of step planning.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    reason: str = Field(..., description="Explanation for the plan")
+    is_complete: bool = Field(..., description="Whether the intent is achieved")
+    step: Optional[Step] = Field(default=None, description="The planned step, if any")
+
+    memories: int = Field(default=0, description="Count of memories used")
+    should_retry: bool = Field(default=False, description="Whether to retry analysis")
+
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
+    metrics: Dict[str, float] = Field(default_factory=dict, description="Performance metrics")
+
+    is_valid_action: bool = Field(default=True, description="Whether the planned action is valid")
+    validation_reasoning: Optional[str] = Field(
+        default=None, description="Reason if action is invalid"
+    )
