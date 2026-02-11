@@ -126,7 +126,6 @@ class GeminiPromptBuilder(PromptBuilder):
                 "- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly."
             )
 
-
         if not notes:
             return ""
 

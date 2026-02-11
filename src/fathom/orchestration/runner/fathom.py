@@ -100,16 +100,7 @@ class FathomRunner:
 
         # 4. Execution
         try:
-            result = await self.__current_workflow.execute()
-
-            if workflow_configuration.export_path:
-                self.__export_results(
-                    result=result,
-                    export_path=workflow_configuration.export_path,
-                    intent=intent,
-                )
-
-            return result
+            return await self.__current_workflow.execute()
         finally:
             await self.cleanup()
 
@@ -201,25 +192,6 @@ class FathomRunner:
             session_id=session_id,
             package_name=package_name,
         )
-
-    def __export_results(
-        self, result: IntentResult, export_path: str, intent: str
-    ) -> None:
-        """
-        Export step results to a natural language script.
-        """
-
-        from fathom.services.exporter import ScriptExporter
-
-        try:
-            content = ScriptExporter.export(result.step_results, intent=intent)
-
-            with open(export_path, "w") as f:
-                f.write(content)
-
-            logger.info(f"Execution script exported to {export_path}")
-        except Exception as e:
-            logger.warning(f"Failed to export script: {e}")
 
     def cancel(self) -> None:
         """

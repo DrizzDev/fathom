@@ -15,64 +15,71 @@ from fathom.schemas.steps import StepResult
 
 class HistoryService:
     """
-    Service responsible for persisting execution history.
-    Generates structured JSON logs and YAML test scripts.
+    Service responsible for persisting execution history and generating scripts.
+    All outputs are saved to assets/history directory.
     """
 
     def __init__(self, workflow_id: str) -> None:
         self.__workflow_id = workflow_id
-        self.__base_directory = Path("assets/history")
-        self.__base_directory.mkdir(parents=True, exist_ok=True)
+        self.__directory = Path("assets/history")
+        self.__directory.mkdir(parents=True, exist_ok=True)
 
-    def save_step(self, result: StepResult, absolute_center: Optional[List[int]] = None) -> None:
+    def save_step(
+        self,
+        result: StepResult,
+        *,
+        intent: str = "",
+        absolute_center: Optional[List[int]] = None,
+    ) -> None:
         """
-        Saves a single step result to the workflow history files.
+        Saves a single step result and updates associated artifact files.
         """
 
-        history_data = self.__load_history()
+        history = self.__load_history()
 
         record = result.to_record(absolute_center=absolute_center).model_dump()
         record["timestamp"] = int(time.time() * 1000)
+        record["screen_changed"] = result.screen_changed
 
-        history_data["history"].append(record)
+        history["history"].append(record)
 
-        self.__save_json(data=history_data)
-        self.__save_yaml(history=history_data["history"])
-
-        self.__save_commands_text(record=record)
+        self.__save_json(data=history)
+        self.__save_yaml(history=history["history"])
+        self.__update_script(history=history["history"], intent=intent)
 
     def __load_history(self) -> Dict[str, Any]:
         """
-        Loads existing history from disk.
+        Loads existing history from the JSON artifact.
         """
 
-        path = self.__base_directory / f"{self.__workflow_id}.json"
+        path = self.__directory / f"{self.__workflow_id}.json"
         data: Dict[str, Any] = {"workflow_id": self.__workflow_id, "history": []}
 
         if path.exists():
             try:
                 with path.open(mode="r") as handle:
                     data = json.load(fp=handle)
-            except Exception:  # nosec
+            except Exception as exception:  # nosec
+                _ = exception
                 pass
 
         return data
 
     def __save_json(self, data: Dict[str, Any]) -> None:
         """
-        Writes the history data to JSON.
+        Writes history to structured JSON format.
         """
 
-        path = self.__base_directory / f"{self.__workflow_id}.json"
+        path = self.__directory / f"{self.__workflow_id}.json"
         with path.open(mode="w") as handle:
             json.dump(obj=data, fp=handle, indent=2)
 
     def __save_yaml(self, history: List[Dict[str, Any]]) -> None:
         """
-        Orchestrates the YAML script generation.
+        Generates a YAML representation of the execution.
         """
 
-        path = self.__base_directory / f"{self.__workflow_id}.yaml"
+        path = self.__directory / f"{self.__workflow_id}.yaml"
         steps = [
             self.__build_yaml_item(index=index, record=item)
             for index, item in enumerate(iterable=history, start=1)
@@ -90,26 +97,135 @@ class HistoryService:
         else:
             self.__write_manual_yaml(path=path, steps=steps)
 
-    def __save_commands_text(self, record: Dict[str, Any]) -> None:
+    def __update_script(self, history: List[Dict[str, Any]], intent: str) -> None:
         """
-        Appends a readable command line to workflow-specific text file.
-        Format: Tap on [Target]
+        Generates a natural language test script with smart validation.
         """
 
-        path = self.__base_directory / f"{self.__workflow_id}.txt"
-        line = self.__describe_command(record=record)
+        lines = []
+        step_number = 1
+        path = self.__directory / f"{self.__workflow_id}.txt"
 
-        # Append to file
-        with path.open(mode="a") as handle:
-            handle.write(line + "\n")
+        for index, record in enumerate(iterable=history):
+            action_type = record.get("action_type", "unknown")
+            raw_target = record.get("natural_language_target") or record.get("target") or "element"
+
+            # 1. Resolve Target (Generalize if not in intent)
+            target = self.__resolve_script_target(
+                target=raw_target, intent=intent, action=action_type
+            )
+
+            # 2. Smart Validation (if previous screen changed)
+            if index > 0:
+                previous = history[index - 1]
+                if previous.get("screen_changed") and target.lower() not in (
+                    "none",
+                    "element",
+                    "ui element",
+                    "a visible item",
+                ):
+                    lines.append(f"{step_number}. Validate {target} is visible")
+                    step_number += 1
+
+            # 3. Action Description
+            description = self.__build_description(
+                action=action_type, target=target, text=record.get("text")
+            )
+            lines.append(f"{step_number}. {description}")
+            step_number += 1
+
+        with path.open(mode="w") as handle:
+            handle.write("\n".join(lines) + "\n")
+
+    def __resolve_script_target(self, target: str, intent: str, action: str) -> str:
+        """
+        Checks if target is meaningful to intent, otherwise generalizes.
+        """
+
+        if not target or not intent:
+            return "element"
+
+        target_lower = target.lower()
+        intent_lower = intent.lower()
+
+        if target_lower in intent_lower:
+            return target
+
+        # Fuzzy overlap check
+        target_words = set(target_lower.replace("_", " ").split())
+        filler = {
+            "the",
+            "a",
+            "an",
+            "on",
+            "in",
+            "to",
+            "of",
+            "is",
+            "and",
+            "or",
+            "item",
+            "button",
+            "icon",
+            "area",
+            "field",
+        }
+        meaningful = target_words - filler
+        if not meaningful:
+            return target
+
+        intent_words = set(intent_lower.replace("_", " ").split())
+        overlap = meaningful & intent_words
+
+        if len(overlap) >= len(meaningful) * 0.5:
+            return target
+
+        return "a visible item" if action in ("tap", "long_press") else "the current view"
+
+    def __build_description(self, action: str, target: str, text: Optional[str]) -> str:
+        """
+        Constructs a human-readable action description.
+        """
+
+        if action == "tap":
+            return f"Tap on {target}"
+
+        if action == "type":
+            return f"Type '{text}' into {target}"
+
+        if "swipe" in action:
+            direction = action.split(sep="_")[-1] if "_" in action else "content"
+            return f"Swipe {direction} on {target}"
+
+        if action in ("back", "press_back"):
+            return "Press back button"
+
+        if action in ("home", "press_home"):
+            return "Press home button"
+
+        if action == "enter":
+            return "Press enter"
+
+        if action == "wait":
+            return f"Wait for {target}"
+
+        if action == "scroll":
+            return f"Scroll until you see {target}"
+
+        if action == "long_press":
+            return f"Long press on {target}"
+
+        if action == "complete":
+            return f"Validate {target} (Goal complete)"
+
+        return f"{action.replace('_', ' ').capitalize()} on {target}"
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """
         Constructs a structured dictionary for a YAML step.
         """
 
-        # Improved target resolution for YAML
-        target = self.__resolve_target_name(record=record)
+        target = record.get("natural_language_target") or record.get("target") or "UI Element"
 
         return {
             "step": index,
@@ -117,7 +233,6 @@ class HistoryService:
             "center": record.get("center"),
             "bounding_box": record.get("bounds"),
             "action_type": record.get("action_type", "wait"),
-            "command": self.__describe_command(record=record),
             "metadata": {
                 "success": record.get("success"),
                 "duration": record.get("duration"),
@@ -125,56 +240,6 @@ class HistoryService:
                 "rationale": record.get("rationale"),
             },
         }
-
-    def __resolve_target_name(self, record: Dict[str, Any]) -> str:
-        """
-        Resolves the best human-readable target name.
-        """
-
-        target = record.get("target")
-        natural_language_target = record.get("natural_language_target")
-
-        # Trust natural language target if present
-        if natural_language_target and str(natural_language_target).strip():
-            return str(natural_language_target).strip()
-
-        # Fallback to technical target
-        if target and str(target).strip():
-            return str(target).strip()
-
-        return "UI Element"
-
-    def __describe_command(self, record: Dict[str, Any]) -> str:
-        """
-        Generates a readable command description.
-        """
-
-        action_type = str(object=record.get("action_type", "wait")).lower()
-        target = self.__resolve_target_name(record=record)
-
-        if action_type == "type":
-            return f"Type '{record.get('text', '')}' in {target}"
-
-        if action_type == "tap":
-            return f"Tap on {target}"
-
-        if action_type == "scroll":
-            return f"Scroll until you see {target}"
-
-        if "swipe" in action_type:
-            direction = action_type.split(sep="_")[-1] if "_" in action_type else "content"
-            return f"Swipe {direction} on {target}"
-
-        if action_type == "back":
-            return "Press back button"
-
-        if action_type == "home":
-            return "Press home button"
-
-        if action_type == "complete":
-            return "Goal completed"
-
-        return f"{action_type.replace('_', ' ').capitalize()} on {target}"
 
     def __write_manual_yaml(self, path: Path, steps: List[Dict[str, Any]]) -> None:
         """
@@ -185,18 +250,17 @@ class HistoryService:
 
         for step in steps:
             lines.append(f"- step: {step['step']}")
-            lines.append(f'  command: "{step["command"]}"')
             lines.append(f'  action_type: "{step["action_type"]}"')
             lines.append(f'  target: "{step["target"]}"')
             lines.append(f"  bounding_box: {step.get('bounding_box')}")
             lines.append(f"  center: {step.get('center')}")
 
-            metadata = step["metadata"]
-            rationale = str(object=metadata.get("rationale", "")).replace('"', '\\"')
+            meta = step["metadata"]
+            rationale = str(object=meta.get("rationale", "")).replace('"', '\\"')
             lines.append("  metadata:")
-            lines.append(f"    success: {str(object=metadata.get('success')).lower()}")
-            lines.append(f"    duration: {metadata.get('duration')}")
-            lines.append(f"    timestamp: {metadata.get('timestamp')}")
+            lines.append(f"    success: {str(object=meta.get('success')).lower()}")
+            lines.append(f"    duration: {meta.get('duration')}")
+            lines.append(f"    timestamp: {meta.get('timestamp')}")
             lines.append(f'    rationale: "{rationale}"')
             lines.append("")
 

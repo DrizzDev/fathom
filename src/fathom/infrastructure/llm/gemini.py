@@ -97,14 +97,6 @@ class GeminiLLMClient(IVisionProvider):
         """
         return self.__cache.stats.to_dict() if self.__cache else {}
 
-    @property
-    def configuration(self) -> GeminiConfig:
-        """
-        Returns configuration.
-        """
-
-        return self.__configuration
-
     async def analyze(
         self,
         system_instruction: str,
@@ -148,8 +140,7 @@ class GeminiLLMClient(IVisionProvider):
             config_args["system_instruction"] = [{"text": system_instruction}]
             if tools:
                 config_args["tools"] = [tools]
-
-            config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
+                config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
         else:
             config_args["cached_content"] = cache_name
 

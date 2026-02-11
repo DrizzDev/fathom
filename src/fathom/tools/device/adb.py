@@ -24,6 +24,14 @@ class ADBDeviceTool(DeviceTool):
         self.__configuration = configuration or ADBConfig()
         self.__cached_size: Optional[Tuple[int, int]] = None
 
+    @property
+    def configuration(self) -> ADBConfig:
+        """
+        Returns the tool configuration.
+        """
+
+        return self.__configuration
+
     async def tap(self, x: int, y: int) -> ActionResult:
         """
         Execute tap at coordinates.

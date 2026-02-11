@@ -421,7 +421,9 @@ class IntentStrategy(ExecutionStrategy):
                 visual_hash=step_result.pre_hash,
             )
         )
-        self.__history.save_step(result=step_result, absolute_center=coordinates)
+        self.__history.save_step(
+            result=step_result, absolute_center=coordinates, intent=self.__intent
+        )
         return step_result
 
     async def should_continue(self) -> bool:
@@ -492,7 +494,9 @@ class IntentStrategy(ExecutionStrategy):
         """
 
         size = await self.__device.get_screen_size()
-        converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
+        converter = CoordinateConverter(
+            screen_width=size[0], screen_height=size[1], configuration=self.__device.configuration
+        )
 
         if action.action_type in (
             ActionType.TAP,
@@ -559,7 +563,9 @@ class IntentStrategy(ExecutionStrategy):
         """
 
         size = await self.__device.get_screen_size()
-        converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
+        converter = CoordinateConverter(
+            screen_width=size[0], screen_height=size[1], configuration=self.__device.configuration
+        )
 
         if action.action_type == ActionType.TAP:
             coordinates = (

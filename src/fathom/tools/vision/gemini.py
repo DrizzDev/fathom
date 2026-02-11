@@ -111,7 +111,6 @@ class GeminiVisionTool(VisionTool):
             memory=await self.__ledger.get_all(),
         )
 
-
         tools = self.__scope_tools(intent=intent)
 
         # 3. CONTENT ASSEMBLY

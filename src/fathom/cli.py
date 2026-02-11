@@ -237,7 +237,6 @@ def main() -> int:
         help="Version of prompt/toolset to use",
     )
 
-
     explore_parser = subparsers.add_parser("explore", help="Run app exploration")
     explore_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
     explore_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
@@ -245,14 +244,11 @@ def main() -> int:
         "--verbose", "-v", action="store_true", help="Enable verbose output"
     )
 
-
-
     args = parser.parse_args()
     settings = FathomSettings()
 
     if hasattr(args, "api_key") and args.api_key:
         settings.gemini_api_key = args.api_key
-
 
     if hasattr(args, "verbose") and args.verbose:
         settings.log_level = "DEBUG"

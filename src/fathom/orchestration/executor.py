@@ -4,7 +4,6 @@ import asyncio
 import time
 from typing import Optional
 
-from fathom.agent.planner import CoordinateConverter
 from fathom.constants import ActionType
 from fathom.exceptions import ToolError
 from fathom.schemas.orchestration import ExecutionContext
@@ -13,6 +12,7 @@ from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
+from fathom.utils.coordinates import CoordinateConverter
 
 
 class StepExecutor:
@@ -174,7 +174,9 @@ class StepExecutor:
         screen_size = await self.__device.get_screen_size()
 
         width, height = screen_size
-        converter = CoordinateConverter(screen_width=width, screen_height=height)
+        converter = CoordinateConverter(
+            screen_width=width, screen_height=height, configuration=self.__device.configuration
+        )
 
         # Handle special actions that don't need device interaction
         if action.action_type == ActionType.WAIT:
