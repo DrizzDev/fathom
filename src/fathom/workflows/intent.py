@@ -122,6 +122,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             steps_taken=self.steps_executed,
             final_screen=self.__final_screen,
             completion_reason=self.__completion_reason,
+            step_results=self.recorded_steps,
         )
 
     async def __should_continue(self) -> bool:

@@ -50,7 +50,7 @@ class GeminiConfig(BaseModel):
     )
     project_id: Optional[str] = Field(default=None, description="GCP Project ID for Vertex AI")
 
-    model: str = Field(default="gemini-3-flash-preview", description="High-speed VLM model")
+    model: str = Field(default="gemini-2.5-flash-lite", description="High-speed VLM model")
     location: str = Field(default="global", description="Vertex AI location")
 
     timeout: float = Field(default=180.0, description="API request timeout")
@@ -62,6 +62,7 @@ class GeminiConfig(BaseModel):
     gcs_bucket: str = Field(
         default="drizz-dev-crawler-artifacts", description="GCS bucket for screenshot uploads"
     )
+
 
 
 class HasherConfig(BaseModel):
@@ -97,4 +98,7 @@ class WorkflowConfig(BaseModel):
     use_xml_bounding_boxes: bool = Field(
         default=False, description="Use XML hierarchy for bounding boxes"
     )
-    package_name: str = Field(default="unknown_app", description="Target application package name")
+    package_name: str = Field(default="unknown_app", description="Target application package name"
+    )
+    export_path: Optional[str] = Field(default="results.txt", description="Path to export execution script. None disables export."
+    )

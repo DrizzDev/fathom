@@ -237,6 +237,7 @@ def main() -> int:
         help="Version of prompt/toolset to use",
     )
 
+
     explore_parser = subparsers.add_parser("explore", help="Run app exploration")
     explore_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
     explore_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
@@ -244,11 +245,14 @@ def main() -> int:
         "--verbose", "-v", action="store_true", help="Enable verbose output"
     )
 
+
+
     args = parser.parse_args()
     settings = FathomSettings()
 
     if hasattr(args, "api_key") and args.api_key:
         settings.gemini_api_key = args.api_key
+
 
     if hasattr(args, "verbose") and args.verbose:
         settings.log_level = "DEBUG"
@@ -269,7 +273,7 @@ def main() -> int:
 
     try:
         if args.command == "run":
-            return asyncio.run(
+            result = asyncio.run(
                 cli.run(
                     intent=args.intent,
                     use_xml=args.use_xml,
@@ -278,6 +282,7 @@ def main() -> int:
                     prompt_version=args.prompt_version,
                 )
             )
+            return result
         elif args.command == "explore":
             return asyncio.run(cli.explore(max_steps=args.max_steps, device_serial=args.serial))
         else:

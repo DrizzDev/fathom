@@ -29,6 +29,7 @@ class FathomSettings(BaseSettings):
         ),
     )
 
+
     # Device settings
     android_serial: Optional[str] = Field(default=None, alias="ANDROID_SERIAL")
     adb_path: str = Field(default="adb", alias="ADB_PATH")

@@ -97,10 +97,12 @@ class GeminiVisionTool(VisionTool):
         retrieval = time.time() - start
 
         # 2. PROMPT & TOOL SCOPING
-        # Static system instruction (cacheable)
+        # Static Prompt (Cacheable)
+        hints = {"use_xml": use_xml}
+
         instruction = self.__builder.build(
             intent=intent,
-            hints={"use_xml": use_xml},
+            hints=hints,
         )
 
         # Dynamic context
@@ -109,17 +111,18 @@ class GeminiVisionTool(VisionTool):
             memory=await self.__ledger.get_all(),
         )
 
+
         tools = self.__scope_tools(intent=intent)
 
         # 3. CONTENT ASSEMBLY
         manifest = self.__format_elements(elements=elements)
         payload = self.__build_payload(
             intent=intent,
+            screen=capture.image,
+            knowledge=knowledge,
+            context=dynamic_context,
             manifest=manifest,
             failures=failures,
-            knowledge=knowledge,
-            screen=capture.image,
-            context=dynamic_context,  # Pass unified dynamic context here
         )
 
         # Debug logs

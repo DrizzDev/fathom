@@ -229,7 +229,7 @@ class StepExecutor:
                 cx, cy = width // 2, height // 2
                 # Scroll down (swipe up)
                 device_result = await self.__device.swipe(
-                    x1=cx, y1=cy + 400, x2=cx, y2=cy - 400, duration=500
+                    x1=cx, y1=cy + 200, x2=cx, y2=cy - 200, duration=500
                 )
 
             elif action.action_type == ActionType.LONG_PRESS:

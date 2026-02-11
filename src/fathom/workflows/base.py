@@ -80,6 +80,14 @@ class BaseWorkflow(ABC, Generic[T]):
         return len(self.__step_results)
 
     @property
+    def recorded_steps(self) -> List[StepResult]:
+        """
+        Returns a copy of recorded step results.
+        """
+
+        return self.__step_results.copy()
+
+    @property
     def is_running(self) -> bool:
         """
         Whether workflow is currently running.
