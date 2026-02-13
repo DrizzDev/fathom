@@ -46,7 +46,7 @@ class CoordinateConverter:
         center_x, center_y = x + width // 2, y + height // 2
 
         distance_x = int(width * 0.7)
-        distance_y = int(height * 0.3)
+        distance_y = int(height * 0.45)
 
         if direction == "up":
             return center_x, center_y + distance_y // 2, center_x, center_y - distance_y // 2

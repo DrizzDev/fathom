@@ -1,3 +1,4 @@
+import asyncio
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generic, List, Optional, TypeVar
@@ -44,6 +45,7 @@ class BaseWorkflow(ABC, Generic[T]):
         self.__start_time: Optional[float] = None
 
         self.__cancelled = False
+        self.__cancel_event = asyncio.Event()
         self.__error: Optional[str] = None
         self.__step_results: List[StepResult] = []
 
@@ -160,6 +162,10 @@ class BaseWorkflow(ABC, Generic[T]):
             else:
                 self.__status = WorkflowStatus.COMPLETED
 
+        except asyncio.CancelledError:
+            self.__status = WorkflowStatus.CANCELLED
+            self.__cancelled = True
+
         except TimeoutError as exception:
             self.__status = WorkflowStatus.TIMEOUT
             self.__error = str(exception)
@@ -194,9 +200,14 @@ class BaseWorkflow(ABC, Generic[T]):
     def cancel(self) -> None:
         """
         Request workflow cancellation.
+
+        Sets both the boolean flag (for backward-compat sync checks) and
+        the ``asyncio.Event`` so that async code waiting on it wakes up
+        immediately.
         """
 
         self.__cancelled = True
+        self.__cancel_event.set()
 
     def is_cancelled(self) -> bool:
         """
@@ -204,6 +215,17 @@ class BaseWorkflow(ABC, Generic[T]):
         """
 
         return self.__cancelled
+
+    @property
+    def cancel_event(self) -> asyncio.Event:
+        """
+        Async-friendly cancellation event.
+
+        Nodes / tasks can ``await cancel_event.wait()`` or poll
+        ``cancel_event.is_set()`` for fast, non-blocking cancellation.
+        """
+
+        return self.__cancel_event
 
     def should_checkpoint(self) -> bool:
         """

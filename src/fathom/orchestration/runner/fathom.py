@@ -11,7 +11,7 @@ from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.infrastructure.storage.local import LocalImageStorage
-from fathom.interfaces import ILedger, IMemoryProvider
+from fathom.interfaces import ILedger, IMemoryProvider, IVisionProvider
 from fathom.prompts.factory import PromptFactory
 from fathom.schemas.configuration import ADBCaptureConfig, ADBConfig, GeminiConfig, WorkflowConfig
 from fathom.schemas.results import ExplorationResult, IntentResult
@@ -30,6 +30,10 @@ class FathomRunner:
     """
     Main entry point for executing Fathom workflows.
     Orchestrates the wiring of infrastructure, tools, and strategies.
+
+    When ``settings.use_langgraph`` is ``True``, uses the LangChain model
+    adapter and passes the flag through to :class:`IntentWorkflow` so it
+    executes via the LangGraph StateGraph.
     """
 
     def __init__(self, settings: FathomSettings) -> None:
@@ -96,6 +100,7 @@ class FathomRunner:
             vision=self.__vision_orchestrator,
             configuration=workflow_configuration,
             capture=ADBCaptureTool(config=ADBCaptureConfig(device_serial=serial)),
+            use_langgraph=self.__settings.use_langgraph,
         )
 
         # 4. Execution
@@ -163,6 +168,9 @@ class FathomRunner:
     ) -> GeminiVisionTool:
         """
         Builds the Gemini-based vision orchestrator.
+
+        When ``settings.use_langgraph`` is enabled, uses
+        :class:`LangChainLLMClient` instead of the direct Gemini SDK client.
         """
 
         llm_configuration = GeminiConfig(
@@ -173,9 +181,16 @@ class FathomRunner:
             credentials_path=self.__settings.google_application_credentials,
         )
 
-        client = GeminiLLMClient(configuration=llm_configuration)
+        client: IVisionProvider
+        if self.__settings.use_langgraph:
+            from fathom.infrastructure.llm.langchain_adapter import LangChainLLMClient
+
+            client = LangChainLLMClient(configuration=llm_configuration)
+        else:
+            client = GeminiLLMClient(configuration=llm_configuration)
+
         cloud_storage = GCSImageStorage(
-            configuration=llm_configuration, credentials=client.credentials
+            configuration=llm_configuration, credentials=getattr(client, "credentials", None)
         )
 
         if not self.__ledger:
