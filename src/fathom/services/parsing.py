@@ -163,6 +163,7 @@ class ToolResponseParser(IResponseParser):
         actions = arguments.get("actions", [])
         message = str(arguments.get("assistant_message", ""))
         completed = bool(arguments.get("goal_completed", False))
+        content_exhausted = bool(arguments.get("content_exhausted", False))
 
         if not actions:
             return self.__create_fallback_result(message=message, completed=completed)
@@ -213,6 +214,7 @@ class ToolResponseParser(IResponseParser):
             alternatives=[],
             reasoning=message,
             is_goal_complete=completed,
+            content_exhausted=content_exhausted,
             screen_description="Tool-based analysis",
         )
 

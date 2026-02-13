@@ -20,7 +20,9 @@ PRECISION_RULES = {
 ACTION_RULES = {
     "scroll": (
         "SCROLL/SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
-        "Bbox wraps scrollable region only (exclude fixed headers/footers)."
+        "Bbox wraps scrollable region only (exclude fixed headers/footers). "
+        "If the screen does not change after swiping (same items visible, carousel at last dot, "
+        "bounce effect), set content_exhausted=true to signal end of scrollable content."
     ),
     "wait": (
         "WAIT: ONLY for active loading (skeleton, spinner, 'Loading...' text). "

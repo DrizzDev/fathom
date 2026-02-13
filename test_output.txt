@@ -1,0 +1,32 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.2, pytest-9.0.2, pluggy-1.6.0 -- /opt/anaconda3/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/mohnishbangaru/Fathom v1/fathom
+configfile: pyproject.toml
+plugins: anyio-4.11.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items
+
+tests/unit/test_loop_detector.py::test_loop_detector_exhaustion_signal FAILED [ 25%]
+tests/unit/test_loop_detector.py::test_loop_detector_exhaustion_clears_history PASSED [ 50%]
+tests/unit/test_parsing_exhaustion.py::test_parse_content_exhausted_flag PASSED [ 75%]
+tests/unit/test_parsing_exhaustion.py::test_parse_content_exhausted_default_false PASSED [100%]
+
+=================================== FAILURES ===================================
+_____________________ test_loop_detector_exhaustion_signal _____________________
+tests/unit/test_loop_detector.py:23: in test_loop_detector_exhaustion_signal
+    assert detector.is_stuck() is True
+           ^^^^^^^^^^^^^^^^^^^
+src/fathom/schemas/state.py:73: in is_stuck
+    if current.is_same_screen(self.__recent_screens[__next_index]):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/fathom/schemas/screens.py:66: in is_same_screen
+    distance = self.__hamming_distance(self.visual_hash, other.visual_hash)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/fathom/schemas/screens.py:78: in __hamming_distance
+    return bin(int(hash1, 16) ^ int(hash2, 16)).count("1")
+               ^^^^^^^^^^^^^^
+E   ValueError: invalid literal for int() with base 16: 'visual1'
+=========================== short test summary info ============================
+FAILED tests/unit/test_loop_detector.py::test_loop_detector_exhaustion_signal - ValueError: invalid literal for int() with base 16: 'visual1'
+========================= 1 failed, 3 passed in 0.13s ==========================

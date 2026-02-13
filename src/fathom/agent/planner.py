@@ -135,34 +135,9 @@ class StepPlanner:
                 step=None, is_complete=False, reason="Max steps or recovery exhausted"
             )
 
-        # IMMEDIATE RECOVERY: If we are stuck, don't ask the LLM again.
-        # This breaks the loop by forcing a navigation change (BACK/SCROLL/HOME).
         if state.is_stuck:
-            logger.warning(msg="Agent is stuck in a loop. Forcing recovery action.")
-            completion_signal = False
-            completion_error = None
-            try:
-                completion_signal = await self.__vision.check_completion(
-                    intent=state.intent, capture=capture
-                )
-            except Exception as exception:
-                completion_error = str(exception)
-
-            logger.debug(
-                f"[H3] Stuck gate reached | "
-                f"can_recover={state.can_continue} "
-                f"check_completion_signal={completion_signal} "
-                f"check_completion_error={completion_error}"
-            )
-
-            recovery_action = state.get_recovery_action()
-            if recovery_action:
-                return self.__build_plan_result(
-                    capture=capture,
-                    is_recovery=True,
-                    action=recovery_action,
-                    step_number=state.step_count,
-                )
+            logger.warning(msg="Agent is stuck in a loop. Requesting recovery from model.")
+            # Defer recording recovery attempt until after we check for completion flags.
 
         context = state.build_context()
         history_context = str(object=context.get("compact_history", "None"))
@@ -176,9 +151,25 @@ class StepPlanner:
             capture=capture,
             elements=elements,
             intent=state.intent,
+            is_stuck=state.is_stuck,
+            last_action=(state.last_action_type.value if state.last_action_type else None),
             context=full_context,
             failures=context.get("relevant_failures", []),  # type: ignore[arg-type]
         )
+
+        # Content Exhaustion Signal:
+        # If model signals content exhaustion, reset loop detector to prevent
+        # false stuck detection from repeated swipes on an unchanged screen.
+        if analysis.content_exhausted:
+            state.reset_loop_detector()
+            return PlanResult(
+                step=None,
+                is_complete=True,
+                reason="Model signaled content exhaustion (end of list/carousel).",
+                metrics=analysis.metrics,
+                metadata=analysis.metadata,
+                memories=analysis.memories,
+            )
 
         completion = reasoner.analyze_completion(
             analysis=analysis, screen_description=capture.activity
@@ -204,6 +195,10 @@ class StepPlanner:
                 reason=completion.evidence,
                 memories=analysis.memories,
             )
+
+        # If we are NOT complete and still stuck, NOW we record the attempt.
+        if state.is_stuck:
+            state.record_recovery_attempt()
 
         # Optimization: Check if this EXACT action just failed on this screen hash
         if state.should_avoid_action(action=action):

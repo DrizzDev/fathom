@@ -14,6 +14,7 @@ from fathom.interfaces import (
     IVisionProvider,
 )
 from fathom.prompts.factory import PromptFactory
+from fathom.prompts.modes import PromptMode
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.tools.definitions import ToolRegistry
@@ -77,6 +78,8 @@ class GeminiVisionTool(VisionTool):
         use_xml: bool = False,
         context: Optional[str] = None,
         failures: Optional[List[str]] = None,
+        is_stuck: bool = False,
+        last_action: Optional[str] = None,
         elements: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
         """
@@ -97,10 +100,16 @@ class GeminiVisionTool(VisionTool):
         retrieval = time.time() - start
 
         # 2. PROMPT & TOOL SCOPING
-        # Static Prompt (Cacheable)
-        hints = {"use_xml": use_xml}
+        mode = self.__detect_mode(intent=intent)
+        hints = {"use_xml": use_xml, "is_stuck": is_stuck, "last_action": last_action}
 
         instruction = self.__builder.build(
+            mode=mode.value,
+            intent="",
+            hints=hints,
+        )
+
+        task_instructions = self.__builder.build_task_instructions(
             intent=intent,
             hints=hints,
         )
@@ -111,12 +120,12 @@ class GeminiVisionTool(VisionTool):
             memory=await self.__ledger.get_all(),
         )
 
-        tools = self.__scope_tools(intent=intent)
+        tools = self.__scope_tools(mode=mode)
 
         # 3. CONTENT ASSEMBLY
         manifest = self.__format_elements(elements=elements)
         payload = self.__build_payload(
-            intent=intent,
+            instructions=task_instructions,
             screen=capture.image,
             knowledge=knowledge,
             context=dynamic_context,
@@ -226,7 +235,7 @@ class GeminiVisionTool(VisionTool):
 
     def __build_payload(
         self,
-        intent: str,
+        instructions: str,
         screen: bytes,
         knowledge: Dict[str, Any],
         context: Optional[str] = None,
@@ -238,7 +247,7 @@ class GeminiVisionTool(VisionTool):
         Stable intent at top, dynamic image/history at bottom for KV-cache.
         """
 
-        payload: List[Any] = [f"Goal: {intent}"]
+        payload: List[Any] = [instructions]
 
         # 1. State Memory (Specific to this screen hash)
         if knowledge.get("description"):
@@ -322,17 +331,24 @@ class GeminiVisionTool(VisionTool):
 
         await self.__model.cleanup()
 
-    def __scope_tools(self, intent: str) -> Dict[str, Any]:
+    def __scope_tools(self, mode: PromptMode) -> Dict[str, Any]:
         """
         Dynamically selects tools based on the intent context.
         """
 
         # Base tools always available
-        allowed = {"execute_ui", "store_memory", "recall_memory"}
+        allowed = {"execute_ui", "store_memory"}
 
-        # Validation tools for verification tasks
-        if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):
-            allowed.update({"validate_state", "verify_goal"})
+        if mode == PromptMode.DEFAULT:
+            allowed.update({"recall_memory", "validate_state", "verify_goal"})
+
+        elif mode == PromptMode.INTERACTION:
+            allowed.update({"recall_memory"})
+
+        elif mode == PromptMode.VERIFICATION:
+            allowed.update({"validate_state", "verify_goal", "recall_memory"})
+
+        # Discovery Mode gets minimal tools (just execute_ui + store)
 
         definitions = ToolRegistry.get_all_definitions()
 
@@ -343,3 +359,14 @@ class GeminiVisionTool(VisionTool):
                 if definition["name"] in allowed
             ]
         }
+
+    def __detect_mode(self, intent: str) -> PromptMode:
+        """
+        Heuristic to detect the mode from the intent.
+        """
+        intent_lower = intent.lower()
+        if any(word in intent_lower for word in ("find", "search", "locate", "where")):
+            return PromptMode.DISCOVERY
+        if any(word in intent_lower for word in ("verify", "check", "confirm", "validate")):
+            return PromptMode.VERIFICATION
+        return PromptMode.DEFAULT

@@ -63,6 +63,7 @@ class UXService:
                 subtitle=f"[dim]{category}[/dim]",
             )
         )
+        self.__console.print("")
 
     def render_fallback(self, reasoning: str, action: str, step_number: int) -> None:
         """

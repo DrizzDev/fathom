@@ -41,6 +41,8 @@ class VisionTool(Tool[AnalysisResult], ABC):
         use_xml: bool = False,
         context: Optional[str] = None,
         failures: Optional[List[str]] = None,
+        is_stuck: bool = False,
+        last_action: Optional[str] = None,
         elements: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
         """

@@ -75,14 +75,14 @@ class ScriptExporter:
 
         return target or "element"
 
-    _SWIPE_ACTIONS = {"swipe_up", "swipe_down", "swipe_left", "swipe_right"}
+    _SWIPE_ACTIONS = {"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"}
 
     @staticmethod
     def _get_action_type(step: Union[StepResult, Dict[str, Any]]) -> str:
         """Extract the action type string from a step."""
         if isinstance(step, StepResult):
             return step.step.action.action_type.value
-        return step.get("action_type", "unknown")
+        return str(step.get("action_type", "unknown"))
 
     @staticmethod
     def _swipe_direction_label(action_type: str) -> str:
@@ -98,6 +98,7 @@ class ScriptExporter:
             "swipe_down": "Scroll up",
             "swipe_left": "Swipe left",
             "swipe_right": "Swipe right",
+            "scroll": "Scroll down",
         }
         return mapping.get(action_type, "Scroll")
 

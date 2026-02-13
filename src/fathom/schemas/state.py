@@ -154,6 +154,16 @@ class LoopDetector(BaseModel):
         self.__recovery_attempts = 0
         logger.info(f"LoopDetector.reset: cleared {prev_size} screens")
 
+    def signal_content_exhausted(self) -> None:
+        """
+        Model indicated scrollable content is exhausted.
+        Reset loop state to prevent false stuck detection.
+        """
+
+        logger.info("LoopDetector: Content exhausted signal received, resetting.")
+        self.__recent_screens.clear()
+        self.__recent_actions.clear()
+
 
 class ActionHistory(BaseModel):
     """
@@ -170,7 +180,9 @@ class ActionHistory(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         object.__setattr__(self, "_ActionHistory__actions", deque(maxlen=self.max_size))
 
-    def record_action(self, action: Action, success: bool, activity: str) -> None:
+    def record_action(
+        self, action: Action, success: bool, activity: str, screen_changed: bool = True
+    ) -> None:
         """
         Record an action with its outcome and associated activity.
         """
@@ -178,6 +190,7 @@ class ActionHistory(BaseModel):
         self.__actions.append(
             {
                 "success": success,
+                "screen_changed": screen_changed,
                 "activity": activity,
                 "type": action.action_type.value.upper(),
                 "full_description": action.to_description(),
@@ -197,6 +210,9 @@ class ActionHistory(BaseModel):
 
         for action in self.__actions:
             result_indicator = "✓" if action["success"] else "✗"
+            if action["success"] and not action.get("screen_changed", True):
+                result_indicator += " (No Change)"
+
             parts.append(f"{action['type']}:{action['target']}:{result_indicator}")
 
         return " | ".join(parts) if parts else "None"

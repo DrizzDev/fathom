@@ -110,6 +110,10 @@ class ToolRegistry:
                         "type": "BOOLEAN",
                         "description": "True if the user's high-level goal is fully achieved after these actions.",
                     },
+                    "content_exhausted": {
+                        "type": "BOOLEAN",
+                        "description": "Set to true if you can visually confirm that the scrollable content (carousel, list) has reached its end and no new items will appear on further swiping.",
+                    },
                     "memory_updates": {
                         "type": "OBJECT",
                         "description": "Optional key-value pairs to update in persistent memory. Use this to track progress (e.g., 'visited_card1': 'true').",

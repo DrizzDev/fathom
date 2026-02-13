@@ -61,7 +61,9 @@ class TargetClassifier:
         if not target or not self.__client:
             return target
 
-        cache_key = hashlib.md5(f"{target}:{intent}:{rationale}".encode()).hexdigest()
+        cache_key = hashlib.md5(
+            f"{target}:{intent}:{rationale}".encode(), usedforsecurity=False
+        ).hexdigest()
         if cache_key in self.__cache:
             return self.__cache[cache_key]
 
@@ -142,7 +144,7 @@ Answer:
         if not intent or not self.__client:
             return "Goal State"
 
-        cache_key = hashlib.md5(f"GOAL:{intent}".encode()).hexdigest()
+        cache_key = hashlib.md5(f"GOAL:{intent}".encode(), usedforsecurity=False).hexdigest()
         if cache_key in self.__cache:
             return self.__cache[cache_key]
 

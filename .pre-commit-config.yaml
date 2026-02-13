@@ -18,7 +18,7 @@ repos:
     rev: v1.19.1
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic>=2.0.0, pydantic-settings>=2.0.0, types-setuptools]
+        additional_dependencies: [pydantic>=2.0.0, pydantic-settings>=2.0.0, types-setuptools, types-PyYAML]
         args: [--strict, --ignore-missing-imports]
         exclude: ^tests/
 
@@ -28,3 +28,4 @@ repos:
       - id: bandit
         args: ["-c", "pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
+        exclude: ^tests/

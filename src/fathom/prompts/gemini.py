@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from fathom.prompts.base import PromptBuilder
+from fathom.prompts.modes import PromptMode
 from fathom.prompts.templates import (
     ACTION_RULES,
     COMMON_RULES,
@@ -21,30 +22,53 @@ class GeminiPromptBuilder(PromptBuilder):
 
     def build(
         self,
-        intent: str,
+        mode: str = "default",
+        intent: str = "",
         hints: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Build stable system prompt for tool-based UI execution.
         EXCLUDES dynamic history/memory to enable Context Caching.
+        Ignores intent/hints to ensure static cache key.
+        Uses 'mode' to select specialized prompt.
+        """
+
+        if mode == PromptMode.DISCOVERY.value:
+            return self.__build_discovery_prompt()
+
+        if mode == PromptMode.VERIFICATION.value:
+            return self.__build_verification_prompt()
+
+        parts = [
+            self.__get_persona(),
+            TOOL_GUIDANCE,
+            COMMON_RULES,
+            (
+                "OUTPUT REQUIREMENTS:\n"
+                f"- {COORD_RULES}\n"
+                f"- {CONFIDENCE_RULES}\n"
+                "- Return tool call(s) only, with schema-valid fields."
+            ),
+        ]
+        return "\n\n".join([part for part in parts if part.strip()])
+
+    def build_task_instructions(
+        self,
+        intent: str,
+        hints: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Build dynamic task instructions for the User Message.
         """
 
         contextual_rules = self.__get_contextual_rules(intent=intent, hints=hints)
         conditional_notes = self.__get_conditional_notes(intent=intent, hints=hints)
 
         parts = [
-            self.__get_persona(),
-            TOOL_GUIDANCE,
-            COMMON_RULES,
+            f"GOAL: {intent}",
             contextual_rules,
             conditional_notes,
-            (
-                "OUTPUT REQUIREMENTS:\n"
-                f"- {COORD_RULES}\n"
-                f"- {CONFIDENCE_RULES}\n"
-                "- Return tool call(s) only, with schema-valid fields.\n"
-                f"\nGOAL: {intent}\nExecute next best step via tool."
-            ),
+            "Execute next best step via tool.",
         ]
         return "\n\n".join([part for part in parts if part.strip()])
 
@@ -86,6 +110,21 @@ class GeminiPromptBuilder(PromptBuilder):
         """
 
         rules: List[str] = []
+
+        if hints and hints.get("is_stuck"):
+            last_action = hints.get("last_action", "")
+            if last_action in ["scroll", "swipe_left", "swipe_right", "swipe_up", "swipe_down"]:
+                rules.append(
+                    "- CRITICAL: SCREEN UNCHANGED AFTER SCROLL. Compare the last visible item on this screen with the previous screen. If they are the same, you have reached the end. Set 'content_exhausted' to true."
+                )
+            elif last_action in ["tap", "type", "enter"]:
+                rules.append(
+                    "- CRITICAL: LOOP DETECTED (action had no effect). Target may be non-interactive or loading. Try a different strategy or go BACK."
+                )
+            else:
+                rules.append(
+                    "- CRITICAL: LOOP DETECTED. You are stuck (screen repeating). You MUST break this loop. Use 'back', 'scroll', or 'home'."
+                )
 
         if hints and hints.get("use_xml"):
             rules.append("- XML Grounding enabled.")
@@ -221,7 +260,46 @@ class GeminiPromptBuilder(PromptBuilder):
         context = f"App context: {app_context}\n" if app_context else ""
 
         return (
-            "Task: Generate intents for all interactive elements on this screen.\n"
-            f"{context}Screen size: {width}x{height}\n"
-            "Output each intent with normalized bbox and predicted next state."
+            f"Screen Analysis ({width}x{height})\n"
+            f"{context}"
+            "Describe the screen content and suggest likely user intents."
         )
+
+    def __build_discovery_prompt(self) -> str:
+        """
+        Discovery Mode: Focused on finding elements.
+        """
+        parts = [
+            self.__get_persona(),
+            TOOL_GUIDANCE,  # Keep standard guidance for now
+            COMMON_RULES,  # Keep standard rules for now
+            (
+                "MODE: DISCOVERY (Navigation & Scanning)\n"
+                "Prioritize scrolling and swiping to find elements.\n"
+                "OUTPUT REQUIREMENTS:\n"
+                f"- {COORD_RULES}\n"
+                f"- {CONFIDENCE_RULES}\n"
+                "- Return tool call(s) only."
+            ),
+        ]
+        return "\n\n".join([part for part in parts if part.strip()])
+
+    def __build_verification_prompt(self) -> str:
+        """
+        Verification Mode: Focused on assertions.
+        """
+        parts = [
+            self.__get_persona(),
+            TOOL_GUIDANCE,
+            COMMON_RULES,
+            (
+                "MODE: VERIFICATION (Strict Checking)\n"
+                "Use 'validate_state' or 'verify_goal'.\n"
+                "Be extremely strict with evidence.\n"
+                "OUTPUT REQUIREMENTS:\n"
+                f"- {COORD_RULES}\n"
+                f"- {CONFIDENCE_RULES}\n"
+                "- Return tool call(s) only."
+            ),
+        ]
+        return "\n\n".join([part for part in parts if part.strip()])

@@ -135,6 +135,20 @@ class AgentState:
 
         return all(not seen.is_same_screen(screen) for seen in self.__seen_screens)
 
+    def reset_loop_detector(self) -> None:
+        """
+        Reset loop detector (e.g., after content exhaustion signal).
+        """
+
+        self.__loop_detector.signal_content_exhausted()
+
+    @property
+    def last_action_type(self) -> Optional[ActionType]:
+        """
+        The type of the last action executed.
+        """
+        return self.__last_action_type
+
     def update_screen(self, screen: ScreenState) -> bool:
         """
         Update current screen state.
@@ -243,7 +257,10 @@ class AgentState:
         # Optimized record including activity context
         activity = self.__current_screen.activity if self.__current_screen else "unknown"
         self.__action_history.record_action(
-            action=result.step.action, success=result.success, activity=activity
+            action=result.step.action,
+            success=result.success,
+            activity=activity,
+            screen_changed=result.screen_changed,
         )
         self.__last_action_description = result.step.action.to_description()
 
@@ -306,6 +323,12 @@ class AgentState:
                 action_type=ActionType.HOME,
                 rationale="Loop detected (Screen repeating). Forcing HOME to reset agent.",
             )
+
+    def record_recovery_attempt(self) -> int:
+        """
+        Record a recovery attempt (prompt-driven).
+        """
+        return self.__loop_detector.record_recovery_attempt()
 
     def build_context(self) -> Dict[str, object]:
         """

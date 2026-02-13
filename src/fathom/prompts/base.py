@@ -12,7 +12,8 @@ class PromptBuilder(ABC):
     @abstractmethod
     def build(
         self,
-        intent: str,
+        mode: str = "default",
+        intent: str = "",
         hints: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
@@ -29,6 +30,18 @@ class PromptBuilder(ABC):
     ) -> str:
         """
         Constructs the dynamic user context string.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def build_task_instructions(
+        self,
+        intent: str,
+        hints: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Constructs the dynamic task instructions (for user message).
         """
 
         raise NotImplementedError

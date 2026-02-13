@@ -123,10 +123,12 @@ class AuditService:
             self.__console.print(
                 Panel(action_panel, title="LLM Reasoning & Action", border_style="yellow")
             )
+            self.__console.print("")
         elif reasoning:
             self.__console.print(
                 Panel(f"[italic]{reasoning}[/italic]", title="LLM Reasoning", border_style="yellow")
             )
+            self.__console.print("")
 
     def record_context(
         self,

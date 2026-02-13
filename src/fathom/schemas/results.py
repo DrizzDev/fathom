@@ -32,6 +32,9 @@ class AnalysisResult(BaseModel):
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional context like raw tool calls"
     )
+    content_exhausted: bool = Field(
+        default=False, description="Model signals end of scrollable content"
+    )
 
 
 class StrategyResult(BaseModel):
