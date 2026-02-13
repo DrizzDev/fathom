@@ -39,7 +39,6 @@ class GeminiVisionTool(VisionTool):
         version: str = "pro_xml",
         session_id: str = "default",
         package_name: str = "unknown_app",
-        gcs_storage: Optional[IImageStorage] = None,
     ) -> None:
         self.__model = model
         self.__version = version
@@ -49,7 +48,6 @@ class GeminiVisionTool(VisionTool):
         self.__memory = memory
         self.__ledger = ledger
 
-        self.__gcs_storage = gcs_storage
         self.__local_storage = local_storage
 
         self.__builder = PromptFactory.get_builder(model_name="gemini")
@@ -81,9 +79,14 @@ class GeminiVisionTool(VisionTool):
         is_stuck: bool = False,
         last_action: Optional[str] = None,
         elements: Optional[Dict[str, Any]] = None,
+        mode: Optional[PromptMode] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow using Native Tool Calling.
+
+        When ``mode`` is provided it overrides the heuristic-based mode
+        detection, allowing callers (e.g. the BFS exploration strategy) to
+        force a specific prompt mode.
         """
 
         asyncio.create_task(coro=self.__persist(data=capture.image, activity=capture.activity))
@@ -100,11 +103,11 @@ class GeminiVisionTool(VisionTool):
         retrieval = time.time() - start
 
         # 2. PROMPT & TOOL SCOPING
-        mode = self.__detect_mode(intent=intent)
+        resolved_mode = mode if mode is not None else self.__detect_mode(intent=intent)
         hints = {"use_xml": use_xml, "is_stuck": is_stuck, "last_action": last_action}
 
         instruction = self.__builder.build(
-            mode=mode.value,
+            mode=resolved_mode.value,
             intent="",
             hints=hints,
         )
@@ -120,7 +123,7 @@ class GeminiVisionTool(VisionTool):
             memory=await self.__ledger.get_all(),
         )
 
-        tools = self.__scope_tools(mode=mode)
+        tools = self.__scope_tools(mode=resolved_mode)
 
         # 3. CONTENT ASSEMBLY
         manifest = self.__format_elements(elements=elements)
@@ -256,6 +259,17 @@ class GeminiVisionTool(VisionTool):
         if history := knowledge.get("previous_actions", []):
             payload.append(f"Past actions on this specific screen: {json.dumps(obj=history)}")
 
+        # 1b. Navigation Map (Known transitions from this screen)
+        if transitions := knowledge.get("transitions", []):
+            nav_lines = []
+            for t in transitions:
+                desc = t.get("destination_description")
+                if desc:  # Only include transitions with known destinations
+                    target = t.get("action_target") or "unknown"
+                    nav_lines.append(f'- {t["action_type"]} "{target}" -> {desc}')
+            if nav_lines:
+                payload.append("Known navigation from this screen:\n" + "\n".join(nav_lines))
+
         # 2. Dynamic Session Context (Changes every step)
         if context:
             payload.append(f"Recent turns (global): {context}")
@@ -316,11 +330,7 @@ class GeminiVisionTool(VisionTool):
         }
 
         try:
-            tasks = [self.__local_storage.save(data=data, metadata=metadata)]
-            if self.__gcs_storage:
-                tasks.append(self.__gcs_storage.save(data=data, metadata=metadata))
-
-            await asyncio.gather(*tasks)
+            await self.__local_storage.save(data=data, metadata=metadata)
         except Exception:
             logger.debug("Screenshot persistence failed", exc_info=True)
 
@@ -347,6 +357,10 @@ class GeminiVisionTool(VisionTool):
 
         elif mode == PromptMode.VERIFICATION:
             allowed.update({"validate_state", "verify_goal", "recall_memory"})
+
+        elif mode == PromptMode.EXPLORATION:
+            # Exploration only needs execute_ui; drop store_memory to reduce noise
+            allowed = {"execute_ui"}
 
         # Discovery Mode gets minimal tools (just execute_ui + store)
 

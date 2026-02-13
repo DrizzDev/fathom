@@ -78,7 +78,8 @@ def build_intent_graph(
     workflow_id: str = "default",
     checkpointer: Optional[MemorySaver] = None,
     cancel_event: Optional[asyncio.Event] = None,
-) -> tuple[CompiledStateGraph[FathomGraphState, None, Any, Any], NodeContext]:
+    package_name: str = "",
+) -> tuple[CompiledStateGraph[Any, Any, Any, Any], NodeContext]:
     """
     Build and compile a LangGraph :class:`StateGraph` for intent execution.
 
@@ -111,12 +112,13 @@ def build_intent_graph(
         Optional LangGraph checkpointer. Defaults to in-memory.
     cancel_event:
         Optional ``asyncio.Event`` signalled on workflow cancellation.
-        When set, graph nodes will bail out early.
+    package_name:
+        Target app package name for memory scoping.
 
     Returns
     -------
-    CompiledStateGraph
-        A compiled graph ready to be invoked via ``graph.ainvoke(state)``.
+    tuple[CompiledStateGraph, NodeContext]
+        A compiled graph and its shared context.
     """
 
     # ── 1. Shared context (closed over by node functions) ──────────────
@@ -131,6 +133,7 @@ def build_intent_graph(
         step_timeout=step_timeout,
         workflow_id=workflow_id,
         cancel_event=cancel_event,
+        package_name=package_name,
     )
 
     # ── 2. Build node functions ────────────────────────────────────────

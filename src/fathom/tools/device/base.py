@@ -105,6 +105,31 @@ class DeviceTool(Tool[ActionResult], ABC):
 
         raise NotImplementedError
 
+    async def get_current_package(self) -> str:
+        """
+        Get the foreground application package name.
+
+        Returns:
+            Package name string, or ``"unknown_app"`` if detection fails.
+        """
+
+        return "unknown_app"
+
+    async def launch_app(self, package_name: str) -> ActionResult:
+        """
+        Launch an application by package name.
+
+        Default implementation uses monkey to open the launcher activity.
+
+        Args:
+            package_name: Android package name (e.g. ``com.example.app``).
+
+        Returns:
+            Action result.
+        """
+
+        return ActionResult(success=False, error="Not implemented", duration=0)
+
     async def cleanup(self) -> None:
         """
         Clean up any device connections or background processes.

@@ -169,6 +169,7 @@ class FathomCLI:
         self,
         max_steps: int = 100,
         device_serial: Optional[str] = None,
+        package_name: Optional[str] = None,
     ) -> int:
         """
         Run an exploration workflow with rich UI.
@@ -176,9 +177,14 @@ class FathomCLI:
 
         self.__setup_signals()
 
+        scope_label = (
+            f"[cyan]Package:[/cyan] {package_name}"
+            if package_name
+            else "[cyan]Package:[/cyan] auto-detect"
+        )
         console.print(
             Panel.fit(
-                "[bold blue]Fathom Explorer[/bold blue]\n[cyan]Goal:[/cyan] Map application structure",
+                f"[bold blue]Fathom Explorer[/bold blue]\n[cyan]Goal:[/cyan] Map application structure\n{scope_label}",
                 border_style="blue",
             )
         )
@@ -186,7 +192,9 @@ class FathomCLI:
         try:
             with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
                 result = await self.runner.run_exploration(
-                    max_steps=max_steps, device_serial=device_serial
+                    max_steps=max_steps,
+                    device_serial=device_serial,
+                    package_name=package_name,
                 )
 
             table = Table(title="Exploration Results", border_style="green")
@@ -243,6 +251,9 @@ def main() -> int:
     )
 
     explore_parser = subparsers.add_parser("explore", help="Run app exploration")
+    explore_parser.add_argument(
+        "--package", "-p", type=str, help="Target package name to explore (e.g. com.example.app)"
+    )
     explore_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
     explore_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
     explore_parser.add_argument(
@@ -288,7 +299,13 @@ def main() -> int:
             )
             return result
         elif args.command == "explore":
-            return asyncio.run(cli.explore(max_steps=args.max_steps, device_serial=args.serial))
+            return asyncio.run(
+                cli.explore(
+                    max_steps=args.max_steps,
+                    device_serial=args.serial,
+                    package_name=args.package,
+                )
+            )
         else:
             parser.print_help()
             return 0

@@ -230,5 +230,9 @@ def get_tools_for_mode(mode: str) -> List[Any]:
     if mode == "verification":
         return base + [validate_state, verify_goal, recall_memory]
 
+    if mode == "exploration":
+        # Exploration only needs execute_ui; matches GeminiVisionTool.__scope_tools
+        return [execute_ui]
+
     # discovery — minimal
     return base

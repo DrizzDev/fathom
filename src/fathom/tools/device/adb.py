@@ -92,20 +92,66 @@ class ADBDeviceTool(DeviceTool):
     async def get_current_package(self) -> str:
         """
         Get current foreground package name.
+
+        Tries multiple strategies to handle different Android versions
+        and OEM skins:
+
+        1. ``mResumedActivity`` from ``dumpsys activity`` (most common).
+        2. ``mCurrentFocus`` from ``dumpsys window`` (reliable fallback).
+        3. ``mFocusedApp`` from ``dumpsys window`` (older devices).
         """
 
+        # Strategy 1: mResumedActivity (Android 10+)
         result = await self.__shell(
-            command="dumpsys activity activities | grep mResumedActivity", capture_output=True
+            command="dumpsys activity activities | grep mResumedActivity",
+            capture_output=True,
         )
+        if pkg := self.__extract_package(output=result.output if result.success else None):
+            return pkg
 
-        if (
-            result.success
-            and result.output
-            and (match := re.search(r"u0\s+([a-zA-Z0-9_.]+)/", result.output))
-        ):
-            return match.group(1)
+        # Strategy 2: mCurrentFocus (window manager — works across most versions)
+        result = await self.__shell(
+            command="dumpsys window displays | grep mCurrentFocus",
+            capture_output=True,
+        )
+        if pkg := self.__extract_package(output=result.output if result.success else None):
+            return pkg
+
+        # Strategy 3: mFocusedApp (older devices)
+        result = await self.__shell(
+            command="dumpsys window windows | grep mFocusedApp",
+            capture_output=True,
+        )
+        if pkg := self.__extract_package(output=result.output if result.success else None):
+            return pkg
 
         return "unknown_app"
+
+    @staticmethod
+    def __extract_package(output: Optional[str]) -> Optional[str]:
+        """
+        Extract an Android package name from a dumpsys output line.
+
+        Matches the ``com.example.app/...Activity`` pattern found in
+        ``mResumedActivity``, ``mCurrentFocus``, and ``mFocusedApp`` lines.
+        Requires at least one dot (all real packages have one).
+        """
+
+        if not output:
+            return None
+
+        # Match "com.example.app/" — package names always contain at least one dot
+        match = re.search(r"([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)/", output)
+        return match.group(1) if match else None
+
+    async def launch_app(self, package_name: str) -> ActionResult:
+        """
+        Launch an application by package name using monkey.
+        """
+
+        return await self.__shell(
+            command=f"monkey -p {package_name} -c android.intent.category.LAUNCHER 1"
+        )
 
     async def screenshot(self) -> Optional[bytes]:
         """

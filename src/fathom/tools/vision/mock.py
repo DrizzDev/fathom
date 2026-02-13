@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
+from fathom.prompts.modes import PromptMode
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture
@@ -29,6 +30,7 @@ class MockGeminiVisionTool(VisionTool):
         is_stuck: bool = False,
         last_action: Optional[str] = None,
         elements: Optional[Dict[str, Any]] = None,
+        mode: Optional[PromptMode] = None,
     ) -> AnalysisResult:
         """
         Return mock analysis result.

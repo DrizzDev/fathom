@@ -83,6 +83,10 @@ class IntentResult(WorkflowResult):
     memory_summary: Dict[str, Any] = Field(
         default_factory=dict, description="Summary of Knowledge Graph"
     )
+    knowledge_graph: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Accumulated knowledge graph snapshot (nodes, edges, stats)",
+    )
 
 
 class ExplorationResult(WorkflowResult):
@@ -95,7 +99,11 @@ class ExplorationResult(WorkflowResult):
     total_transitions: int = Field(ge=0, description="Total transitions")
     coverage_percentage: float = Field(ge=0.0, le=100.0, description="App coverage")
     discovered_activities: List[str] = Field(default_factory=list)
-    screen_graph: Dict[str, List[str]] = Field(default_factory=dict)
+    screen_graph: Dict[str, Any] = Field(default_factory=dict)
+    knowledge_graph: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Accumulated knowledge graph snapshot (nodes, edges, stats)",
+    )
 
 
 class ActionResult(BaseModel):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from google import genai
 from google.oauth2 import service_account
@@ -19,7 +19,7 @@ class TargetClassifier:
 
     def __init__(self) -> None:
         self.__settings = FathomSettings()
-        self.__client = None
+        self.__client: Optional[genai.Client] = None
         self.__model = "gemini-2.5-flash-lite"
         self.__initialize_client()
         self.__cache: Dict[str, str] = {}
@@ -177,7 +177,7 @@ Goal State:
                 goal_state = goal_state.split("Goal State:", 1)[1].strip()
 
             self.__cache[cache_key] = goal_state
-            return goal_state
+            return str(goal_state)
 
         except Exception as e:
             print(f"DEBUG: Goal Inference Error: {e}")

@@ -10,3 +10,4 @@ class PromptMode(Enum):
     DISCOVERY = "discovery"  # Navigation, finding elements
     INTERACTION = "interaction"  # Typing, tapping, forms
     VERIFICATION = "verification"  # Assertions, checks
+    EXPLORATION = "exploration"  # BFS app mapping, screen discovery

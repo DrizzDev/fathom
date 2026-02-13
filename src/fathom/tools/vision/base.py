@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from fathom.interfaces import IVisionProvider
+from fathom.prompts.modes import PromptMode
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.tools.base import Tool
@@ -44,9 +45,12 @@ class VisionTool(Tool[AnalysisResult], ABC):
         is_stuck: bool = False,
         last_action: Optional[str] = None,
         elements: Optional[Dict[str, Any]] = None,
+        mode: Optional[PromptMode] = None,
     ) -> AnalysisResult:
         """
         Analyze screen and recommend action.
+
+        When ``mode`` is provided, it overrides automatic mode detection.
         """
 
         raise NotImplementedError

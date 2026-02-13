@@ -60,6 +60,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         self.__original_intent = intent
         self.__use_langgraph = use_langgraph
 
+        self.__package_name = configuration.package_name if configuration else ""
         self.__planner = StepPlanner(vision_tool=vision)
         # Create strategy immediately since we no longer decompose
         self.__strategy = IntentStrategy(
@@ -72,6 +73,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             step_timeout=configuration.step_timeout if configuration else 30.0,
             use_xml=configuration.use_xml_bounding_boxes if configuration else False,
             max_steps=configuration.max_steps if configuration else 10,
+            package_name=self.__package_name,
         )
 
         self.__completion_reason = ""
@@ -204,6 +206,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             step_timeout=config.step_timeout if config else 15.0,
             workflow_id=self.workflow_id,
             cancel_event=self.cancel_event,
+            package_name=self.__package_name,
         )
 
         initial_state = {

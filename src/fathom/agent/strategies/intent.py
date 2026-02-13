@@ -14,6 +14,7 @@ from fathom.agent.state import AgentState
 from fathom.agent.strategies.base import ExecutionStrategy
 from fathom.constants import ActionType, StrategyStatus
 from fathom.infrastructure.memory.ledger import Ledger
+from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.prompts.preprocessor import PromptPreprocessor
 from fathom.schemas.actions import Action, Bounds
@@ -53,6 +54,7 @@ class IntentStrategy(ExecutionStrategy):
         use_xml: bool = False,
         step_timeout: float = 15.0,
         workflow_id: str = "default",
+        package_name: str = "",
     ) -> None:
         self.__intent = intent
         self.__planner = planner
@@ -62,6 +64,7 @@ class IntentStrategy(ExecutionStrategy):
 
         self.__memory = memory
         self.__ledger: ILedger = Ledger()
+        self.__current_package = package_name
 
         self.__use_xml = use_xml
         self.__max_steps = max_steps
@@ -126,6 +129,9 @@ class IntentStrategy(ExecutionStrategy):
 
         if not screen:
             return StrategyResult(status=StrategyStatus.ERROR, message="Capture failed")
+
+        # Detect package change and switch knowledge DB if needed
+        self.__maybe_switch_knowledge_db(activity=screen.activity)
 
         state, is_new_screen = self.__update_state(screen=screen)
 
@@ -262,6 +268,30 @@ class IntentStrategy(ExecutionStrategy):
             screen = await self.__capture.capture_stable(timeout=2000)
 
         return screen, xml, time.time() - start
+
+    def __maybe_switch_knowledge_db(self, activity: str) -> None:
+        """Switch the knowledge DB when the foreground app changes.
+
+        Extracts the package from *activity* (format
+        ``com.example.app/.MainActivity``), compares with the tracked
+        ``__current_package``, and calls ``switch_database`` on the
+        memory provider when they diverge.
+        """
+
+        new_pkg = activity.split("/")[0] if activity else ""
+        if not new_pkg or new_pkg == self.__current_package:
+            return
+
+        if isinstance(self.__memory, SQLiteMemoryProvider):
+            new_db = f"assets/memory/{new_pkg}/knowledge.db"
+            self.__memory.switch_database(new_db)
+            logger.info(
+                "Package changed: %s -> %s, knowledge DB switched",
+                self.__current_package or "(initial)",
+                new_pkg,
+            )
+
+        self.__current_package = new_pkg
 
     def __update_state(self, screen: ScreenCapture) -> Tuple[ScreenState, bool]:
         """

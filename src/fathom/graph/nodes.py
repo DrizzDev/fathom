@@ -22,6 +22,7 @@ from fathom.agent.state import AgentState
 from fathom.constants import ActionType
 from fathom.graph.state import FathomGraphState
 from fathom.infrastructure.memory.ledger import Ledger
+from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.prompts.preprocessor import PromptPreprocessor
 from fathom.schemas.actions import Action, Bounds
@@ -39,12 +40,55 @@ from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision.processing.annotator import ImageAnnotator
 from fathom.utils.coordinates import CoordinateConverter
+from fathom.utils.execution import execute_device_action, get_action_coordinates
 
 logger = getLogger(__name__)
 
 
 class CancellationError(Exception):
     """Raised when a graph node detects that the workflow has been cancelled."""
+
+
+def _extract_package(activity: str) -> str:
+    """Extract the package name from an activity string.
+
+    Activity strings are typically ``com.example.app/.MainActivity``.
+    Returns the portion before ``/``, or the full string if no ``/``
+    is present.
+    """
+
+    if not activity:
+        return ""
+    return activity.split("/")[0]
+
+
+def _maybe_switch_knowledge_db(
+    ctx: "NodeContext",
+    activity: str,
+) -> None:
+    """Switch the knowledge DB when the foreground app changes.
+
+    Compares the package extracted from *activity* against
+    ``ctx.current_package``.  When they differ and the memory provider
+    is a :class:`SQLiteMemoryProvider`, ``switch_database`` is called so
+    that all subsequent queries target the correct per-app knowledge
+    graph.  ``ctx.current_package`` is updated accordingly.
+    """
+
+    new_pkg = _extract_package(activity)
+    if not new_pkg or new_pkg == ctx.current_package:
+        return
+
+    if isinstance(ctx.memory, SQLiteMemoryProvider):
+        new_db = f"assets/memory/{new_pkg}/knowledge.db"
+        ctx.memory.switch_database(new_db)
+        logger.info(
+            "Package changed: %s -> %s, knowledge DB switched",
+            ctx.current_package or "(initial)",
+            new_pkg,
+        )
+
+    ctx.current_package = new_pkg
 
 
 class NodeContext:
@@ -69,6 +113,7 @@ class NodeContext:
         step_timeout: float = 15.0,
         workflow_id: str = "default",
         cancel_event: Optional[asyncio.Event] = None,
+        package_name: str = "",
     ) -> None:
         self.intent = intent
         self.planner = planner
@@ -78,6 +123,7 @@ class NodeContext:
         self.use_xml = use_xml
         self.max_steps = max_steps
         self._cancel_event = cancel_event or asyncio.Event()
+        self.current_package = package_name
 
         self.ledger: ILedger = Ledger()
         self.reasoner = Reasoner(intent=intent)
@@ -149,6 +195,9 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
         screen_state = ctx.capture_tool.compute_state(capture=screen)
         screen = screen.model_copy(update={"state": screen_state})
         is_new = ctx.agent_state.update_screen(screen=screen_state)
+
+        # Detect package change and switch knowledge DB if needed
+        _maybe_switch_knowledge_db(ctx=ctx, activity=screen.activity)
 
         return {
             **state,
@@ -439,9 +488,9 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
             }
 
         # Physical action
-        coordinates = await _get_action_coordinates(ctx.device, step.action)
+        coordinates = await get_action_coordinates(ctx.device, step.action)
         await _trace_background(ctx, step.action, capture.image, coordinates)
-        action_result = await _execute_device_action(ctx.device, step.action)
+        action_result = await execute_device_action(ctx.device, step.action)
 
         if step.action.memory_updates:
             for key, value in step.action.memory_updates.items():
@@ -646,31 +695,9 @@ def _build_step_result(
     )
 
 
-async def _get_action_coordinates(device: DeviceTool, action: Action) -> Tuple[int, ...]:
-    size = await device.get_screen_size()
-    converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
-
-    if action.action_type in (ActionType.TAP, ActionType.TYPE, ActionType.LONG_PRESS):
-        if action.bounds:
-            return converter.center_to_pixels(bounds=action.bounds)
-        return (size[0] // 2, size[1] // 2)
-
-    if action.action_type in (
-        ActionType.SWIPE,
-        ActionType.SCROLL,
-        ActionType.SWIPE_UP,
-        ActionType.SWIPE_DOWN,
-        ActionType.SWIPE_LEFT,
-        ActionType.SWIPE_RIGHT,
-    ):
-        if action.bounds:
-            direction = "up"
-            if "_" in action.action_type.value:
-                direction = action.action_type.value.split("_")[1]
-            return converter.swipe_coordinates(bounds=action.bounds, direction=direction)
-        return (size[0] // 2, size[1] * 3 // 4, size[0] // 2, size[1] // 4)
-
-    return ()
+# _get_action_coordinates and _execute_device_action have been moved to
+# fathom.utils.execution and are imported at the top of this module as
+# ``get_action_coordinates`` and ``execute_device_action``.
 
 
 def _coords_to_center(coordinates: Tuple[int, ...]) -> Optional[List[int]]:
@@ -701,64 +728,3 @@ async def _trace_background(
         label=action.to_description(),
         action_type=action.action_type.value,
     )
-
-
-async def _execute_device_action(device: DeviceTool, action: Action) -> ActionResult:
-    size = await device.get_screen_size()
-    converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
-
-    if action.action_type == ActionType.TAP:
-        coords = (
-            converter.center_to_pixels(bounds=action.bounds)
-            if action.bounds
-            else (size[0] // 2, size[1] // 2)
-        )
-        return await device.tap(x=coords[0], y=coords[1])
-
-    if action.action_type == ActionType.TYPE:
-        if not action.bounds:
-            return ActionResult(
-                success=False,
-                duration=0,
-                error="Type action requires bounds for focus tap guard",
-            )
-        x, y = converter.center_to_pixels(bounds=action.bounds)
-        focus = await device.tap(x=x, y=y)
-        if not focus.success:
-            return ActionResult(
-                success=False,
-                duration=0,
-                error=f"Focus tap failed: {focus.error or 'unknown'}",
-            )
-        return await device.type_text(text=action.text or "")
-
-    if action.action_type in (
-        ActionType.SWIPE_LEFT,
-        ActionType.SWIPE_RIGHT,
-        ActionType.SWIPE_UP,
-        ActionType.SWIPE_DOWN,
-    ):
-        direction = action.action_type.value.split("_")[1]
-        swipe_coords = converter.swipe_coordinates(
-            bounds=action.bounds or Bounds(x=200, y=200, width=600, height=600),
-            direction=direction,
-        )
-        return await device.swipe(
-            x1=swipe_coords[0],
-            y1=swipe_coords[1],
-            x2=swipe_coords[2],
-            y2=swipe_coords[3],
-        )
-
-    if action.action_type == ActionType.WAIT:
-        duration = action.wait_duration or 1000
-        await asyncio.sleep(delay=duration / 1000.0)
-        return ActionResult(success=True, duration=duration)
-
-    if action.action_type == ActionType.BACK:
-        return await device.back()
-
-    if action.action_type == ActionType.HOME:
-        return await device.home()
-
-    return await device.execute(request=action.model_dump())
