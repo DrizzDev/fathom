@@ -55,7 +55,7 @@ class FathomCLI:
     async def run(
         self,
         intent: str,
-        max_steps: int = 20,
+        max_steps: int = 100,
         device_serial: Optional[str] = None,
         **kwargs: Any,
     ) -> int:
@@ -167,7 +167,7 @@ class FathomCLI:
 
     async def explore(
         self,
-        max_steps: int = 50,
+        max_steps: int = 100,
         device_serial: Optional[str] = None,
     ) -> int:
         """
@@ -227,7 +227,7 @@ def main() -> int:
     run_parser.add_argument("intent", type=str, help="The goal description")
     run_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
     run_parser.add_argument("--api-key", "-k", type=str, help="Gemini API Key")
-    run_parser.add_argument("--max-steps", type=int, default=20, help="Maximum steps allowed")
+    run_parser.add_argument("--max-steps", type=int, default=100, help="Maximum steps allowed")
     run_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     run_parser.add_argument("--use-xml", "-x", action="store_true", help="Use XML bounding boxes")
     run_parser.add_argument(
@@ -237,7 +237,6 @@ def main() -> int:
         help="Version of prompt/toolset to use",
     )
 
-
     explore_parser = subparsers.add_parser("explore", help="Run app exploration")
     explore_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
     explore_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
@@ -245,14 +244,11 @@ def main() -> int:
         "--verbose", "-v", action="store_true", help="Enable verbose output"
     )
 
-
-
     args = parser.parse_args()
     settings = FathomSettings()
 
     if hasattr(args, "api_key") and args.api_key:
         settings.gemini_api_key = args.api_key
-
 
     if hasattr(args, "verbose") and args.verbose:
         settings.log_level = "DEBUG"

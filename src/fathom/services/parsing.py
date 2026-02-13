@@ -140,17 +140,18 @@ class ToolResponseParser(IResponseParser):
 
         evidence = str(arguments.get("evidence", ""))
         reason = str(arguments.get("assistant_message", ""))
+        completed = bool(arguments.get("goal_completed", False))
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
                 target="State Validation",
-                action_type=ActionType.WAIT,  # Validation alone doesn't complete goals
+                action_type=ActionType.COMPLETE if completed else ActionType.WAIT,
                 rationale=f"{reason} | Evidence: {evidence}",
             ),
             alternatives=[],
             reasoning=reason,
-            is_goal_complete=False,
+            is_goal_complete=completed,
             screen_description="State validation step",
         )
 

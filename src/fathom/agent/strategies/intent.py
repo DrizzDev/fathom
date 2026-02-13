@@ -22,6 +22,7 @@ from fathom.schemas.results import ActionResult, PlanResult, StrategyResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.services.audit import AuditService
+from fathom.services.classifier import TargetClassifier
 from fathom.services.hierarchy import HierarchyService
 from fathom.services.history import HistoryService
 from fathom.services.resolution import ReferenceResolutionService
@@ -48,7 +49,7 @@ class IntentStrategy(ExecutionStrategy):
         capture: CaptureTool,
         memory: IMemoryProvider,
         *,
-        max_steps: int = 20,
+        max_steps: int = 100,
         use_xml: bool = False,
         step_timeout: float = 15.0,
         workflow_id: str = "default",
@@ -72,8 +73,9 @@ class IntentStrategy(ExecutionStrategy):
         self.__audit_service = AuditService()
 
         self.__hierarchy = HierarchyService(device=device)
-        self.__history = HistoryService(workflow_id=workflow_id)
+        self.__history = HistoryService(workflow_id=workflow_id, intent=intent)
         self.__resolution = ReferenceResolutionService(ledger=self.__ledger)
+        self.__classifier = TargetClassifier()
 
         self.__start_time = time.time()
         self.__metrics = ExecutionMetrics()
@@ -108,6 +110,15 @@ class IntentStrategy(ExecutionStrategy):
         """
 
         step_start = time.time()
+
+        # CLASSIFICATION: Infer goal state for history export (Lazy Init)
+        if not self.__history.goal_state:
+            try:
+                self.__history.goal_state = await self.__classifier.infer_goal_state(
+                    intent=self.__intent
+                )
+            except Exception as e:
+                logger.warning(f"Failed to infer goal state: {e}")
 
         # 1. GROUNDING
         screen, xml, grounding_duration = await self.__perform_grounding()
@@ -187,6 +198,19 @@ class IntentStrategy(ExecutionStrategy):
         )
         self.__metrics.record(operation="action", duration=execution_duration)
 
+        # CLASSIFICATION: Check if target is dynamic
+        generalized_target = None
+        target_text = step.action.natural_language_target or step.action.target
+        if target_text:
+            try:
+                generalized_target = await self.__classifier.classify_and_generalize(
+                    target=target_text, intent=self.__intent, rationale=step.action.rationale
+                )
+                if generalized_target == target_text:
+                    generalized_target = None  # No generalization needed
+            except Exception as e:
+                logger.warning(f"Target classification failed: {e}")
+
         # 5. RECORDING & AUDIT
         step_result = self.__record_result(
             step=step,
@@ -194,6 +218,7 @@ class IntentStrategy(ExecutionStrategy):
             result=result,
             step_start=step_start,
             coordinates=coordinates,
+            generalized_target=generalized_target,
         )
 
         self.__audit_service.record_context(
@@ -399,6 +424,7 @@ class IntentStrategy(ExecutionStrategy):
         state: ScreenState,
         result: ActionResult,
         coordinates: Optional[List[int]] = None,
+        generalized_target: Optional[str] = None,
     ) -> StepResult:
         """
         Records the step result.
@@ -411,6 +437,7 @@ class IntentStrategy(ExecutionStrategy):
             success=result.success,
             pre_hash=state.visual_hash,
             duration=int((time.time() - step_start) * 1000),
+            generalized_target=generalized_target,
         )
         self.__state.record_step(result=step_result)
 

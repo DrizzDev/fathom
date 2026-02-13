@@ -147,12 +147,17 @@ class ToolRegistry:
                         "type": "STRING",
                         "description": "Visual evidence supporting the conclusion.",
                     },
+                    "goal_completed": {
+                        "type": "BOOLEAN",
+                        "description": "True if the user's high-level goal is fully achieved after this validation.",
+                    },
                 },
                 "required": [
                     "assistant_message",
                     "condition_to_verify",
                     "condition_met",
                     "evidence",
+                    "goal_completed",
                 ],
             },
         }

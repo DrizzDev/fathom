@@ -40,6 +40,9 @@ class StepResult(BaseModel):
 
     duration: int = Field(ge=0, description="Execution duration in milliseconds")
     error: Optional[str] = Field(default=None, description="Error details if execution failed")
+    generalized_target: Optional[str] = Field(
+        default=None, description="Generalized description if target is dynamic"
+    )
 
     def to_record(self, absolute_center: Optional[List[int]] = None) -> "StepRecord":
         """
@@ -64,6 +67,7 @@ class StepResult(BaseModel):
             rationale=self.step.action.rationale,
             action_type=self.step.action.action_type.value,
             natural_language_target=self.step.action.natural_language_target,
+            generalized_target=self.generalized_target,
         )
 
 
@@ -80,6 +84,9 @@ class StepRecord(BaseModel):
 
     natural_language_target: Optional[str] = Field(
         default=None, description="Human-friendly name of the target element"
+    )
+    generalized_target: Optional[str] = Field(
+        default=None, description="Generalized description if target is dynamic"
     )
     text: Optional[str] = Field(default=None, description="Typed text content")
     rationale: Optional[str] = Field(default=None, description="Reasoning for the action")

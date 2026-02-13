@@ -19,10 +19,12 @@ class HistoryService:
     Generates structured JSON logs and YAML test scripts.
     """
 
-    def __init__(self, workflow_id: str) -> None:
+    def __init__(self, workflow_id: str, intent: str = "") -> None:
         self.__workflow_id = workflow_id
+        self.__intent = intent
         self.__base_directory = Path("assets/history")
         self.__base_directory.mkdir(parents=True, exist_ok=True)
+        self.goal_state: str = ""
 
     def save_step(self, result: StepResult, absolute_center: Optional[List[int]] = None) -> None:
         """
@@ -39,7 +41,9 @@ class HistoryService:
         self.__save_json(data=history_data)
         self.__save_yaml(history=history_data["history"])
 
-        self.__save_commands_text(record=record)
+        # Use ScriptExporter for high-quality, reproducible text output
+        # Re-export entire history to enable smart validation context
+        self.__save_commands_text(history=history_data["history"])
 
     def __load_history(self) -> Dict[str, Any]:
         """
@@ -90,18 +94,19 @@ class HistoryService:
         else:
             self.__write_manual_yaml(path=path, steps=steps)
 
-    def __save_commands_text(self, record: Dict[str, Any]) -> None:
+    def __save_commands_text(self, history: List[Dict[str, Any]]) -> None:
         """
-        Appends a readable command line to workflow-specific text file.
-        Format: Tap on [Target]
+        Writes high-quality readable script to workflow-specific text file.
+        Uses ScriptExporter to include validation and reproducible targets.
         """
+        from fathom.services.exporter import ScriptExporter
 
         path = self.__base_directory / f"{self.__workflow_id}.txt"
-        line = self.__describe_command(record=record)
+        content = ScriptExporter.export(step_results=history, goal_state=self.goal_state)
 
-        # Append to file
-        with path.open(mode="a") as handle:
-            handle.write(line + "\n")
+        # Overwrite file with full, improved script
+        with path.open(mode="w") as handle:
+            handle.write(content)
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """

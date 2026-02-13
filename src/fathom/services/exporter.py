@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, Optional, Sequence, Union
 
 from fathom.schemas.steps import StepResult
 
@@ -27,8 +27,28 @@ class ScriptExporter:
 
         # Word overlap against the intent
         target_words = set(target_lower.replace("_", " ").split())
-        filler = {"the", "a", "an", "on", "in", "to", "of", "is", "and", "or",
-                  "item", "button", "icon", "area", "field"}
+        filler = {
+            "the",
+            "a",
+            "an",
+            "on",
+            "in",
+            "to",
+            "of",
+            "is",
+            "and",
+            "or",
+            "item",
+            "button",
+            "icon",
+            "area",
+            "field",
+            "for",
+            "with",
+            "from",
+            "by",
+            "at",
+        }
         meaningful = target_words - filler
         if not meaningful:
             return True  # Only filler words = generic enough already
@@ -38,70 +58,149 @@ class ScriptExporter:
         return len(overlap) >= len(meaningful) * 0.5
 
     @staticmethod
+    def _resolve_target(step: Union[StepResult, Dict[str, Any]]) -> str:
+        """
+        Resolve the description for a target.
+        Uses the pre-computed 'generalized_target' if available (dynamic).
+        Otherwise uses the specific target text (stable).
+        """
+        if isinstance(step, StepResult):
+            if step.generalized_target:
+                return step.generalized_target
+            target = step.step.action.natural_language_target or step.step.action.target
+        else:
+            if step.get("generalized_target"):
+                return str(step.get("generalized_target") or "")
+            target = step.get("natural_language_target") or step.get("target") or ""
+
+        return target or "element"
+
+    _SWIPE_ACTIONS = {"swipe_up", "swipe_down", "swipe_left", "swipe_right"}
+
+    @staticmethod
+    def _get_action_type(step: Union[StepResult, Dict[str, Any]]) -> str:
+        """Extract the action type string from a step."""
+        if isinstance(step, StepResult):
+            return step.step.action.action_type.value
+        return step.get("action_type", "unknown")
+
+    @staticmethod
+    def _swipe_direction_label(action_type: str) -> str:
+        """
+        Map a swipe action to its user-facing scroll/swipe label.
+        swipe_up   -> 'Scroll down'  (finger moves up = content scrolls down)
+        swipe_down -> 'Scroll up'
+        swipe_left -> 'Swipe left'
+        swipe_right -> 'Swipe right'
+        """
+        mapping = {
+            "swipe_up": "Scroll down",
+            "swipe_down": "Scroll up",
+            "swipe_left": "Swipe left",
+            "swipe_right": "Swipe right",
+        }
+        return mapping.get(action_type, "Scroll")
+
+    @staticmethod
     def export(
-        step_results: List[Union[StepResult, Dict[str, Any]]],
-        intent: str = "",
+        step_results: Sequence[Union[StepResult, Dict[str, Any]]],
+        goal_state: str = "",
     ) -> str:
         """
         Export steps to a natural language test script.
-        Uses the structured Action data directly for clean, readable output.
-        Includes Smart Validation for screen changes.
 
-        Targets not mentioned in the user's original intent are generalized
-        to ensure the script is reproducible across different runs.
+        Consecutive swipe actions are collapsed into a single
+        'Scroll down until X is visible' instruction where X is the
+        target of the next non-swipe action.
 
         Args:
             step_results: List of executed step results.
-            intent: The original user intent, used to determine which targets
-                    are stable (mentioned by user) vs dynamic (content-specific).
+            goal_state: Optional specific goal state for final validation.
         """
-        lines = []
-        step_num = 1
+        lines: list[str] = []
+        n = len(step_results)
+        i = 0
 
-        for i, step in enumerate(step_results):
-            # --- Extract raw target and action info ---
-            if isinstance(step, StepResult):
-                action = step.step.action
-                raw_target = action.natural_language_target or action.target
-                action_type_val = action.action_type.value
-                screen_changed = step.screen_changed
-            else:
-                raw_target = step.get("natural_language_target") or step.get("target") or "element"
-                action_type_val = step.get("action_type", "unknown")
-                screen_changed = step.get("screen_changed", False)
+        while i < n:
+            step = step_results[i]
+            action_type_val = ScriptExporter._get_action_type(step)
 
-            # --- Resolve target: keep intent-mentioned targets, generalize the rest ---
-            if ScriptExporter._is_intent_target(raw_target, intent):
-                target = raw_target
-            else:
-                target = "a visible item" if action_type_val in ("tap", "long_press") else "the current view"
+            # --- Detect start of a swipe sequence ---
+            if action_type_val in ScriptExporter._SWIPE_ACTIONS:
+                swipe_direction = action_type_val
+                # Skip all consecutive swipes of the same direction
+                while (
+                    i < n
+                    and ScriptExporter._get_action_type(step_results[i])
+                    in ScriptExporter._SWIPE_ACTIONS
+                ):
+                    i += 1
+
+                # Find the target of the NEXT non-swipe step (lookahead)
+                if i < n:
+                    next_target = ScriptExporter._resolve_target(step_results[i])
+                else:
+                    next_target = goal_state or "the target"
+
+                label = ScriptExporter._swipe_direction_label(swipe_direction)
+                lines.append(f"{label} until {next_target} is visible")
+                continue  # don't increment i again, already advanced
+
+            # --- Resolve target for current step ---
+            target = ScriptExporter._resolve_target(step)
 
             # --- Smart Validation: insert when previous step caused a screen change ---
-            if i > 0:
+            if i > 0 and action_type_val != "wait":
                 prev = step_results[i - 1]
+                prev_action_type = ScriptExporter._get_action_type(prev)
                 prev_changed = (
-                    prev.screen_changed if isinstance(prev, StepResult) else prev.get("screen_changed", False)
+                    prev.screen_changed
+                    if isinstance(prev, StepResult)
+                    else prev.get("screen_changed", False)
                 )
-                if prev_changed:
-                    if target.lower() not in ("element", "ui element", "none", "a visible item"):
-                        lines.append(f"{step_num}. Validate {target} is visible")
-                        step_num += 1
+                if (
+                    prev_changed
+                    and prev_action_type not in ("wait", *ScriptExporter._SWIPE_ACTIONS)
+                    and target.lower() not in ("element", "ui element", "none", "a visible item")
+                ):
+                    lines.append(f"Validate {target} is visible")
 
             # --- Build action description ---
             if isinstance(step, StepResult):
                 action = step.step.action
-                description = ScriptExporter._build_description(action_type_val, target, action.text)
+                description = ScriptExporter._build_description(
+                    action_type_val, target, action.text
+                )
             else:
                 text = step.get("text")
                 description = ScriptExporter._build_description(action_type_val, target, text)
 
-            lines.append(f"{step_num}. {description}")
-            step_num += 1
+            lines.append(description)
+            i += 1
+
+        # --- Ensure final step is a validation ---
+        if step_results:
+            last_action_type = ScriptExporter._get_action_type(step_results[-1])
+
+            if last_action_type not in ("complete", "verify_goal_completion"):
+                if goal_state:
+                    lines.append(f"Validate {goal_state} is visible")
+                else:
+                    last_target = ScriptExporter._resolve_target(step_results[-1])
+                    if last_target and last_target.lower() not in (
+                        "element",
+                        "ui element",
+                        "none",
+                        "a visible item",
+                    ):
+                        lines.append(f"Validate {last_target} is visible")
+                    else:
+                        lines.append("Validate Goal State is visible")
 
         return "\n".join(lines) + "\n"
 
     @staticmethod
-    def _build_description(action_type: str, target: str, text: str = None) -> str:
+    def _build_description(action_type: str, target: str, text: Optional[str] = None) -> str:
         """Build a human-readable action description."""
         if action_type == "tap":
             return f"Tap on {target}"

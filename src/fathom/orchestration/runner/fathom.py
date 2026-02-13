@@ -44,7 +44,7 @@ class FathomRunner:
     async def run_intent(
         self,
         intent: str,
-        max_steps: int = 20,
+        max_steps: int = 100,
         use_xml: bool = False,
         request_id: Optional[str] = None,
         device_serial: Optional[str] = None,
@@ -101,13 +101,6 @@ class FathomRunner:
         # 4. Execution
         try:
             result = await self.__current_workflow.execute()
-
-            if workflow_configuration.export_path:
-                self.__export_results(
-                    result=result,
-                    export_path=workflow_configuration.export_path,
-                    intent=intent,
-                )
 
             return result
         finally:
@@ -201,25 +194,6 @@ class FathomRunner:
             session_id=session_id,
             package_name=package_name,
         )
-
-    def __export_results(
-        self, result: IntentResult, export_path: str, intent: str
-    ) -> None:
-        """
-        Export step results to a natural language script.
-        """
-
-        from fathom.services.exporter import ScriptExporter
-
-        try:
-            content = ScriptExporter.export(result.step_results, intent=intent)
-
-            with open(export_path, "w") as f:
-                f.write(content)
-
-            logger.info(f"Execution script exported to {export_path}")
-        except Exception as e:
-            logger.warning(f"Failed to export script: {e}")
 
     def cancel(self) -> None:
         """

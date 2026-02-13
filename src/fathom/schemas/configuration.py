@@ -64,7 +64,6 @@ class GeminiConfig(BaseModel):
     )
 
 
-
 class HasherConfig(BaseModel):
     """
     Configuration for hybrid hasher.
@@ -84,7 +83,7 @@ class WorkflowConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    max_steps: int = Field(default=20, ge=1, le=1000, description="Maximum steps")
+    max_steps: int = Field(default=100, ge=1, le=1000, description="Maximum steps")
     step_timeout: float = Field(
         default=15.0, ge=1.0, le=300.0, description="Per-step timeout in seconds"
     )
@@ -98,7 +97,4 @@ class WorkflowConfig(BaseModel):
     use_xml_bounding_boxes: bool = Field(
         default=False, description="Use XML hierarchy for bounding boxes"
     )
-    package_name: str = Field(default="unknown_app", description="Target application package name"
-    )
-    export_path: Optional[str] = Field(default="results.txt", description="Path to export execution script. None disables export."
-    )
+    package_name: str = Field(default="unknown_app", description="Target application package name")

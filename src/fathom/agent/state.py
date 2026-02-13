@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action
@@ -29,7 +29,7 @@ class AgentState:
         self,
         intent: str,
         *,
-        max_steps: int = 20,
+        max_steps: int = 100,
         loop_threshold: int = 3,
         context_window: int = 10,
     ) -> None:
@@ -64,6 +64,15 @@ class AgentState:
         self.__current_screen_name: Optional[str] = None
         self.__last_error: Optional[str] = None
         self.__last_action_description: Optional[str] = None
+        self.__last_action_type: Optional[ActionType] = None
+
+        # Non-physical actions that don't change the screen
+        self.__non_physical_actions: Set[ActionType] = {
+            ActionType.WAIT,
+            ActionType.COMPLETE,
+            ActionType.SAVE_MEMORY,
+            ActionType.RETRIEVE_MEMORY,
+        }
 
     @property
     def intent(self) -> str:
@@ -165,9 +174,18 @@ class AgentState:
         else:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
 
-        self.__loop_detector.record(
-            screen=screen, action_description=self.__last_action_description
-        )
+        # Only feed the loop detector if the last action was physical.
+        # Non-physical actions (WAIT, COMPLETE, memory ops) don't change
+        # the screen, so recording them inflates the repeat count and
+        # causes false-positive stuck detection (e.g., validate intents).
+        if self.__last_action_type not in self.__non_physical_actions:
+            self.__loop_detector.record(
+                screen=screen, action_description=self.__last_action_description
+            )
+        else:
+            logger.debug(
+                f"Skipping loop detector record for non-physical action: {self.__last_action_type}"
+            )
         return is_new_screen
 
     def set_knowledge(self, key: str, value: Any) -> None:
@@ -220,6 +238,7 @@ class AgentState:
         """
 
         self.__step_count += 1
+        self.__last_action_type = result.step.action.action_type
 
         # Optimized record including activity context
         activity = self.__current_screen.activity if self.__current_screen else "unknown"
