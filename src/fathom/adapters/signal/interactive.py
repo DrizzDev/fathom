@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import queue
+import sys
+import threading
 from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 
-from fathom.adapters.signal.file_watcher import FileWatcher
 from fathom.constants import SignalType
 from fathom.interfaces.signal import SignalPort
 
@@ -17,98 +19,91 @@ console = Console()
 
 
 class InteractiveSignal(SignalPort):
-    """
-    Interactive signal adapter for human-in-the-loop control.
-    
-    Provides real-time interaction capabilities:
-    - ASK: Agent asks user for clarification when uncertain
-    - INJECT: Inject additional context into execution
-    - RESUME: Resume execution after providing context
-    - MANUAL PAUSE: User can pause execution at any time using files
-    
-    This is production-grade HITL with:
-    1. Automatic pause when agent is uncertain (confidence < 50%)
-    2. Manual pause using file-based control (.fathom_pause)
-    """
+    """Interactive signal with immediate pause capability."""
 
     def __init__(self) -> None:
         """Initialize interactive signal adapter."""
         self.__paused = False
         self.__injected_context: Optional[str] = None
-        self.__pending_question: Optional[str] = None
-        self.__user_answer: Optional[str] = None
         self.__resume_event = asyncio.Event()
+        self.__pause_requested = False
+        self.__command_queue: queue.Queue = queue.Queue()
+        self.__stop_listener = False
         
-        # File-based pause control
-        self.__file_watcher = FileWatcher()
-        self.__file_watcher.start()
+        # Start command listener thread
+        self.__listener_thread = threading.Thread(
+            target=self.__listen_for_commands,
+            daemon=True,
+            name="HITLCommandListener"
+        )
+        self.__listener_thread.start()
         
         # Show instructions
-        console.print("[bold cyan]🤝 Interactive HITL Mode Enabled[/bold cyan]")
+        console.print("\n[bold cyan]🤝 Interactive HITL Mode Enabled[/bold cyan]")
         console.print("[dim]• Agent will ask questions when uncertain (confidence < 50%)[/dim]")
-        console.print("[dim]• You can pause execution at ANY time using files[/dim]\n")
+        console.print("[dim]• Type 'pause' and press Enter to pause IMMEDIATELY[/dim]")
+        console.print("[dim]• Press Ctrl+C to cancel execution[/dim]\n")
+        
         console.print(Panel.fit(
-            self.__file_watcher.get_instructions(),
+            "[bold yellow]To Pause Manually:[/bold yellow]\n"
+            "1. Type: [bold cyan]pause[/bold cyan]\n"
+            "2. Press: [bold cyan]Enter[/bold cyan]\n"
+            "3. Agent pauses immediately (even during LLM calls)",
             title="Manual Pause Instructions",
             border_style="cyan"
         ))
+        console.print()
+
+    def __listen_for_commands(self) -> None:
+        """Background thread that listens for user commands."""
+        while not self.__stop_listener:
+            try:
+                if sys.stdin.isatty():
+                    line = sys.stdin.readline().strip().lower()
+                    if line == 'pause':
+                        self.__command_queue.put('pause')
+            except Exception:
+                pass
 
     async def check_signal(self) -> Optional[str]:
-        """
-        Check for control signal.
+        """Check for control signal."""
+        try:
+            while not self.__command_queue.empty():
+                cmd = self.__command_queue.get_nowait()
+                if cmd == 'pause':
+                    self.__pause_requested = True
+                    console.print("\n[bold yellow]⏸️  Pause requested - pausing immediately...[/bold yellow]\n")
+        except queue.Empty:
+            pass
         
-        Returns:
-            Signal type: ASK or None
-        """
-        # Check file-based pause request
-        if self.__file_watcher.is_pause_requested():
-            self.__paused = True
-            return SignalType.ASK.value
-        
-        # Check if there's a pending question from agent
-        if self.__pending_question:
+        if self.__pause_requested:
             return SignalType.ASK.value
         
         return None
 
+    def is_pause_requested(self) -> bool:
+        """Check if pause is requested (for immediate cancellation)."""
+        try:
+            while not self.__command_queue.empty():
+                cmd = self.__command_queue.get_nowait()
+                if cmd == 'pause':
+                    self.__pause_requested = True
+                    console.print("\n[bold yellow]⏸️  Pause requested - interrupting...[/bold yellow]\n")
+        except queue.Empty:
+            pass
+        
+        return self.__pause_requested
+
     async def wait_for_resume(self) -> None:
-        """
-        Block until RESUME signal received.
+        """Block until RESUME signal received."""
+        console.print("\n" + "="*70)
+        console.print("[bold yellow]⏸️  EXECUTION PAUSED[/bold yellow]")
+        console.print("="*70 + "\n")
         
-        This is called when execution is paused. It displays an interactive
-        menu allowing the user to:
-        1. Resume execution
-        2. Inject additional context
-        3. Cancel execution
-        
-        Also handles file-based pause/resume.
-        """
-        console.print("\n[bold yellow]⏸️  Execution Paused[/bold yellow]")
-        
-        # Check if paused by file watcher
-        if self.__file_watcher.is_pause_requested():
-            console.print("[dim]Paused by file (.fathom_pause detected)[/dim]")
-            console.print("[dim]Waiting for resume signal...[/dim]\n")
-            
-            # Wait for file-based resume
-            while self.__file_watcher.is_pause_requested():
-                # Check for injected context from file
-                if self.__file_watcher.has_injected_context():
-                    context = self.__file_watcher.get_injected_context()
-                    if context:
-                        self.__injected_context = context
-                        console.print(f"[green]✓[/green] Context injected from file: [italic]{context}[/italic]\n")
-                
-                await asyncio.sleep(0.5)
-            
-            # Clear pause request
-            self.__file_watcher.clear_pause_request()
-            self.__paused = False
-            console.print("[bold green]▶️  Resuming execution...[/bold green]\n")
-            return
-        
-        # Interactive menu for agent-initiated pause
-        console.print("[dim]The agent is waiting for your input...[/dim]\n")
+        # Show current context if any
+        if self.__injected_context:
+            console.print("[bold cyan]📝 Current Context:[/bold cyan]")
+            console.print(f"[dim]{self.__injected_context}[/dim]\n")
         
         while True:
             console.print(Panel.fit(
@@ -120,99 +115,96 @@ class InteractiveSignal(SignalPort):
                 border_style="yellow"
             ))
             
-            choice = Prompt.ask(
-                "Choose an option",
-                choices=["1", "2", "3"],
-                default="1"
-            )
+            # Get choice without validation to avoid Prompt.ask() issues
+            console.print("\n[bold]Your choice (1/2/3):[/bold] ", end="")
+            sys.stdout.flush()
+            choice = input().strip()
+            
+            # Validate manually
+            if choice not in ["1", "2", "3"]:
+                if not choice:  # Empty input, use default
+                    choice = "1"
+                else:
+                    console.print(f"[yellow]Invalid choice '{choice}'. Please enter 1, 2, or 3.[/yellow]\n")
+                    continue
+            
+            console.print(f"[green]→ You chose: {choice}[/green]")
             
             if choice == "1":
                 # Resume execution
                 self.__paused = False
+                self.__pause_requested = False
                 self.__resume_event.set()
-                console.print("[bold green]▶️  Resuming execution...[/bold green]\n")
+                
+                console.print("\n" + "="*70)
+                console.print("[bold green]▶️  RESUMING EXECUTION[/bold green]")
+                if self.__injected_context:
+                    console.print(f"[bold cyan]📝 With Context:[/bold cyan] [italic]{self.__injected_context}[/italic]")
+                console.print("="*70 + "\n")
                 break
-            
+                
             elif choice == "2":
                 # Inject context
-                console.print("\n[bold cyan]💡 Inject Additional Context[/bold cyan]")
-                console.print("[dim]Provide additional information to help the agent make better decisions.[/dim]")
-                console.print("[dim]Examples:[/dim]")
-                console.print("[dim]  - 'The login button is at the bottom of the screen'[/dim]")
-                console.print("[dim]  - 'Use test@example.com as the email'[/dim]")
-                console.print("[dim]  - 'Skip the tutorial screens'[/dim]\n")
+                console.print("\n" + "-"*70)
+                console.print("[bold cyan]💡 INJECT ADDITIONAL CONTEXT[/bold cyan]")
+                console.print("-"*70)
+                console.print("[dim]You can provide:[/dim]")
+                console.print("[dim]  • [bold]Guidance:[/bold] 'Wait for ChatGPT to finish generating'[/dim]")
+                console.print("[dim]  • [bold]Clarification:[/bold] 'The login button is at bottom right'[/dim]")
+                console.print("[dim]  • [bold]Sub-goal:[/bold] 'First scroll down, then click submit'[/dim]")
+                console.print("[dim]  • [bold]Modified intent:[/bold] 'Actually search for indian climate instead'[/dim]")
+                console.print("[dim]\n[yellow]Note:[/yellow] Your instruction takes priority over the original goal.[/dim]\n")
                 
-                context = Prompt.ask("Enter context (or press Enter to skip)")
+                console.print("[bold]Enter your instruction:[/bold]")
+                sys.stdout.flush()
+                context = input().strip()
                 
-                if context.strip():
-                    self.__injected_context = context.strip()
-                    console.print(f"[green]✓[/green] Context injected: [italic]{context}[/italic]\n")
+                # Remove surrounding quotes if present
+                if context and ((context.startswith("'") and context.endswith("'")) or 
+                               (context.startswith('"') and context.endswith('"'))):
+                    context = context[1:-1]
+                
+                if context:
+                    old_context = self.__injected_context
+                    self.__injected_context = context
+                    
+                    console.print("\n[green]✓ Instruction Recorded[/green]")
+                    if old_context:
+                        console.print(f"[dim]Previous:[/dim] {old_context}")
+                    console.print(f"[bold cyan]New:[/bold cyan] {context}")
+                    console.print(f"[dim]This will be sent to the LLM with priority.[/dim]\n")
                 else:
-                    console.print("[yellow]No context provided[/yellow]\n")
-            
+                    console.print("[yellow]⚠ No instruction provided[/yellow]\n")
+                    
             elif choice == "3":
                 # Cancel execution
-                console.print("[bold red]❌ Execution cancelled by user[/bold red]")
+                console.print("\n[bold red]❌ EXECUTION CANCELLED BY USER[/bold red]\n")
                 raise KeyboardInterrupt("User cancelled execution")
 
     async def request_input(self, *, prompt: str) -> str:
-        """
-        Request human input with prompt.
-        
-        This is called when the agent needs clarification or is stuck.
-        
-        Args:
-            prompt: Question or clarification request from agent
-        
-        Returns:
-            User's answer
-        """
+        """Request human input with prompt."""
         console.print(f"\n[bold yellow]❓ Agent Question[/bold yellow]")
-        console.print(Panel.fit(
-            f"[cyan]{prompt}[/cyan]",
-            title="Agent needs your help",
-            border_style="yellow"
-        ))
-        
+        console.print(Panel.fit(f"[cyan]{prompt}[/cyan]", title="Agent needs your help", border_style="yellow"))
         answer = Prompt.ask("Your answer")
-        
         console.print(f"[green]✓[/green] Answer recorded: [italic]{answer}[/italic]\n")
-        
         return answer
 
     def pause(self) -> None:
-        """Pause execution (called externally or by user)."""
+        """Pause execution."""
         self.__paused = True
+        self.__pause_requested = True
         self.__resume_event.clear()
 
     def get_injected_context(self) -> Optional[str]:
-        """
-        Get injected context and clear it.
-        
-        Returns:
-            Injected context string, or None if no context
-        """
-        # Check file watcher first
-        if self.__file_watcher.has_injected_context():
-            file_context = self.__file_watcher.get_injected_context()
-            if file_context:
-                return file_context
-        
-        # Then check interactive context
+        """Get injected context and clear it."""
         context = self.__injected_context
-        self.__injected_context = None  # Clear after reading
+        self.__injected_context = None
         return context
 
     def has_injected_context(self) -> bool:
         """Check if there's injected context available."""
-        return (
-            self.__injected_context is not None 
-            or self.__file_watcher.has_injected_context()
-        )
+        return self.__injected_context is not None
     
     def __del__(self) -> None:
-        """Cleanup file watcher on deletion."""
-        try:
-            self.__file_watcher.stop()
-        except Exception:
-            pass
+        """Cleanup listener thread."""
+        self.__stop_listener = True

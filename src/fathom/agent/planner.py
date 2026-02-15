@@ -206,7 +206,7 @@ class StepPlanner:
         Return a PlanResult with the given action and metadata.
         """
 
-        step = self.__build_step(
+        step: Step = self.__build_step(
             action=action, step_number=step_number, capture=capture, is_recovery=is_recovery
         )
 
@@ -232,7 +232,7 @@ class StepPlanner:
         Helper to construct a Step object.
         """
 
-        screen_hash = self.__compute_simple_hash(capture=capture)
+        screen_hash: str = self.__compute_simple_hash(capture=capture)
 
         return Step(
             action=action,
@@ -247,5 +247,5 @@ class StepPlanner:
         Compute a simple hash of the screen capture
         """
 
-        data = f"{capture.activity}:{len(capture.image)}".encode()
+        data: bytes = f"{capture.activity}:{len(capture.image)}".encode()
         return hashlib.md5(string=data, usedforsecurity=False).hexdigest()[:16]

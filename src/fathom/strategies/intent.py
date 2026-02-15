@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import time
+import asyncio
 from logging import getLogger
 from typing import Any, Dict, Optional, Tuple
+
+from rich.console import Console
 
 from fathom.adapters.vision import (
     ImageStorageAdapter,
@@ -44,6 +47,7 @@ from fathom.services.ux import UXService
 from fathom.tools.vision.gemini import GeminiVisionTool
 
 logger = getLogger(name=__name__)
+console = Console()
 
 
 class IntentStrategy:
@@ -140,12 +144,6 @@ class IntentStrategy:
             while self.__state.can_continue and not self.__state.is_complete and not self.__cancelled:
                 if self.__state.step_count >= max_steps:
                     break
-                
-                # Check for manual pause signal
-                signal = await self.__signal.check_signal()
-                if signal == SignalType.ASK.value:
-                    # User requested pause - wait for resume
-                    await self.__signal.wait_for_resume()
                 
                 # Execute one step
                 step_result = await self.__execute_step()
@@ -252,10 +250,20 @@ class IntentStrategy:
                 await self.__context.inject_user_guidance(guidance=injected)
                 
                 # Re-analyze with injected context
+                # Format to make it clear this can override/modify the goal
+                priority_context = (
+                    f"{'='*60}\n"
+                    f"🎯 USER INSTRUCTION (PRIORITY):\n"
+                    f"{injected}\n\n"
+                    f"Note: This user instruction takes priority. If it conflicts with the original goal, "
+                    f"follow this instruction instead. If it adds a sub-goal, complete it as part of the workflow.\n"
+                    f"{'='*60}"
+                )
+                
                 plan, knowledge, analysis_duration = await self.__perform_analysis(
                     state=state,
                     screen=screen,
-                    additional_context=f"USER CONTEXT: {injected}"
+                    additional_context=priority_context
                 )
         
         # Check if we have a step to execute
@@ -383,6 +391,8 @@ class IntentStrategy:
         """
         Retrieve knowledge and plan next step using LLM.
         
+        Supports immediate cancellation if pause is requested.
+        
         Args:
             state: Current screen state
             screen: Screen capture
@@ -421,18 +431,69 @@ class IntentStrategy:
             full_context = f"{hint_str}\n{smart_context}"
         
         # Add additional context if provided (e.g., from HITL)
+        # Context can be: guidance, clarification, sub-goal, or modified intent
         if additional_context:
             full_context = f"{full_context}\n\n{additional_context}"
         
-        # Plan next step using planner (which uses LLM)
-        plan = await self.__planner.plan_step(
-            state=self.__state,
-            use_xml=self.__use_xml,
-            capture=screen,
-            reasoner=self.__reasoner,
-            elements=None,
-            additional_context=full_context,
+        # Create LLM task that can be cancelled
+        console.print("[dim]🤖 Analyzing screen and planning next action...[/dim]")
+        
+        llm_task = asyncio.create_task(
+            self.__planner.plan_step(
+                state=self.__state,
+                use_xml=self.__use_xml,
+                capture=screen,
+                reasoner=self.__reasoner,
+                elements=None,
+                additional_context=full_context,
+            )
         )
+        
+        # Poll for pause requests while LLM is working
+        while not llm_task.done():
+            # Check if pause requested
+            if hasattr(self.__signal, 'is_pause_requested') and self.__signal.is_pause_requested():
+                # Cancel the LLM task immediately
+                console.print("[yellow]⏸️  Cancelling current LLM analysis...[/yellow]")
+                llm_task.cancel()
+                try:
+                    await llm_task
+                except asyncio.CancelledError:
+                    console.print("[green]✓ LLM analysis cancelled[/green]")
+                
+                # Wait for user to resume
+                await self.__signal.wait_for_resume()
+                
+                # Check for injected context
+                if self.__signal.has_injected_context():
+                    injected = self.__signal.get_injected_context()
+                    if injected:
+                        # Add injected context and retry
+                        console.print(f"[bold cyan]📝 Adding your context to LLM prompt:[/bold cyan]")
+                        console.print(f"[italic]{injected}[/italic]\n")
+                        
+                        # Format context to make it clear it can override/modify the goal
+                        full_context = f"{full_context}\n\n{'='*60}\n🎯 USER INSTRUCTION (PRIORITY):\n{injected}\n\nNote: This user instruction takes priority. If it conflicts with the original goal, follow this instruction instead. If it adds a sub-goal, complete it as part of the workflow.\n{'='*60}"
+                
+                # Restart the LLM call with updated context
+                console.print("[dim]🤖 Restarting analysis with your context...[/dim]")
+                llm_task = asyncio.create_task(
+                    self.__planner.plan_step(
+                        state=self.__state,
+                        use_xml=self.__use_xml,
+                        capture=screen,
+                        reasoner=self.__reasoner,
+                        elements=None,
+                        additional_context=full_context,
+                    )
+                )
+            
+            # Small sleep to avoid busy waiting
+            await asyncio.sleep(0.1)
+        
+        # Get the result
+        plan = await llm_task
+        console.print("[green]✓ Analysis complete[/green]\n")
         
         return plan, knowledge, time.time() - start
 

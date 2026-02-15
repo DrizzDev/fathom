@@ -108,13 +108,22 @@ class FathomCLI:
                 .build()
             )
 
-            with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
+            # Don't use spinner in interactive mode - it blocks output
+            if interactive_mode:
                 result = await self.runner.run_intent(
                     intent=intent,
                     max_steps=max_steps,
                     use_xml=kwargs.get("use_xml", False),
                     prompt_version=kwargs.get("prompt_version"),
                 )
+            else:
+                with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
+                    result = await self.runner.run_intent(
+                        intent=intent,
+                        max_steps=max_steps,
+                        use_xml=kwargs.get("use_xml", False),
+                        prompt_version=kwargs.get("prompt_version"),
+                    )
 
             # Execution Summary
             table = Table(
