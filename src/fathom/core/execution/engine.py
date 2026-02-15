@@ -208,6 +208,15 @@ class ExecutionEngine:
         """
         screenshot_bytes = await self.__device.capture_screen()
         
+        # Get screen dimensions
+        width, height = await self.__device.get_screen_size()
+        
+        # Get current activity
+        try:
+            activity = await self.__device.get_current_package()
+        except Exception:
+            activity = "unknown"
+        
         # Store screenshot artifact
         storage_id = await self.__storage.save(
             data=screenshot_bytes,
@@ -215,9 +224,12 @@ class ExecutionEngine:
         )
         
         return ScreenCapture(
-            image_data=screenshot_bytes,
-            storage_id=storage_id,
-            timestamp=time.time(),
+            width=width,
+            height=height,
+            activity=activity,
+            image=screenshot_bytes,
+            timestamp=int(time.time() * 1000),
+            metadata={"storage_id": storage_id},
         )
     
     def __compute_visual_hash(self, capture: ScreenCapture) -> str:
@@ -230,7 +242,7 @@ class ExecutionEngine:
         Returns:
             Visual hash string
         """
-        return hashlib.sha256(capture.image_data).hexdigest()[:VISUAL_HASH_LENGTH]
+        return hashlib.sha256(capture.image).hexdigest()[:VISUAL_HASH_LENGTH]
     
     async def __act(self, step: Step) -> ExecutionResult:
         """
