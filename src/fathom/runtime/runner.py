@@ -90,10 +90,6 @@ class FathomRunner:
         
         Returns:
             Execution result with outcome and metrics
-        
-        NOTE: This implementation provides the core execution infrastructure.
-        Strategy implementations (IntentStrategy, ExplorationStrategy) will be
-        added in Task 13 to provide the full workflow logic.
         """
         self._telemetry.info(
             "Starting execution",
@@ -105,17 +101,46 @@ class FathomRunner:
         # Initialize context with intent
         self._context_manager.set_roadmap(intent=intent)
         
-        # For now, return a placeholder result
-        # Full strategy implementation will be added in Task 13
+        # Select and execute strategy
+        if strategy == "intent":
+            from fathom.strategies.intent import IntentStrategy
+            strategy_impl = IntentStrategy(
+                engine=self._engine,
+                context=self._context_manager,
+                intent=intent,
+                device=self._device,
+                llm=self._llm,
+                memory=self._memory,
+                storage=self._storage,
+                telemetry=self._telemetry,
+                max_steps=max_steps,
+            )
+        elif strategy == "exploration":
+            from fathom.strategies.exploration import ExplorationStrategy
+            strategy_impl = ExplorationStrategy(
+                engine=self._engine,
+                context=self._context_manager,
+                device=self._device,
+                storage=self._storage,
+                telemetry=self._telemetry,
+                max_steps=max_steps,
+            )
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}")
+        
+        # Execute strategy
+        result = await strategy_impl.execute(max_steps=max_steps)
+        
         self._telemetry.info(
-            "Execution infrastructure ready",
-            message="Strategy implementations coming in Task 13",
+            "Execution completed",
+            success=result.success,
+            duration=result.duration,
         )
         
         return {
-            "success": True,
-            "steps": 0,
-            "message": "Execution engine and context manager initialized. Strategy implementations coming in Task 13.",
+            "success": result.success,
+            "duration": result.duration,
+            "error": result.error,
             "intent": intent,
             "max_steps": max_steps,
             "strategy": strategy,

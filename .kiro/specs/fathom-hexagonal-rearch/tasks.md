@@ -124,7 +124,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - Test StructlogAdapter logs correctly
     - _Requirements: 3.4, 3.5, 3.6, 3.7_
 
-- [ ] 7. Checkpoint - Ensure all adapter tests pass
+- [x] 7. Checkpoint - Ensure all adapter tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 8. Implement builder API
@@ -212,7 +212,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - Test recall() retrieves correct tier
     - _Requirements: 10.1_
 
-- [ ] 11. Checkpoint - Ensure all core tests pass
+- [x] 11. Checkpoint - Ensure all core tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 12. Implement FathomRunner
@@ -314,17 +314,17 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - **Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5, 9.4**
 
 - [ ] 16. Migrate proprietary code
-  - [ ] 16.1 Verify prompts/ location
+  - [x] 16.1 Verify prompts/ location
     - Check if prompts/ needs to be moved
     - If moving, copy-paste code with only import updates
     - _Requirements: 6.1, 6.4, 6.5, 6.6_
   
-  - [ ] 16.2 Verify tools/definitions.py location
+  - [x] 16.2 Verify tools/definitions.py location
     - Check if tools/definitions.py needs to be moved
     - If moving, copy-paste code with only import updates
     - _Requirements: 6.2, 6.5, 6.6_
   
-  - [ ] 16.3 Verify services/parsing.py location
+  - [x] 16.3 Verify services/parsing.py location
     - Check if services/parsing.py needs to be moved
     - If moving, copy-paste code with only import updates
     - _Requirements: 6.3, 6.5, 6.6_
@@ -348,7 +348,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - **Validates: Requirements 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.10**
 
 - [ ] 18. Verify schema preservation
-  - [ ] 18.1 Verify schemas/ directory unchanged
+  - [x] 18.1 Verify schemas/ directory unchanged
     - Check all Pydantic models in schemas/ are unchanged
     - Verify schemas/ is importable by all layers
     - _Requirements: 12.1, 12.2, 12.3, 12.4_
@@ -358,7 +358,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - **Validates: Requirements 12.2, 12.3, 12.4**
 
 - [ ] 19. Run full test suite
-  - [ ] 19.1 Run existing test suite
+  - [x] 19.1 Run existing test suite
     - Execute all existing tests
     - Verify all tests pass with new architecture
     - _Requirements: 5.6_
@@ -369,7 +369,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - _Requirements: All property requirements_
 
 - [ ] 20. Create minimal working example
-  - [ ] 20.1 Write example script
+  - [x] 20.1 Write example script
     - Create example showing minimal configuration (device + llm)
     - Create example showing full configuration (all seven ports)
     - Demonstrate order-independent builder API
@@ -381,7 +381,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - Verify both produce expected results
     - _Requirements: 11.2_
 
-- [ ] 21. Final checkpoint - Ensure all tests pass
+- [x] 21. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
