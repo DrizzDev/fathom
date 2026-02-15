@@ -1,21 +1,33 @@
-"""Domain-specific exceptions for Fathom."""
+"""Core exceptions for Fathom."""
+
+from __future__ import annotations
 
 
-class FathomError(Exception):
-    """Base exception for all Fathom errors."""
+class FathomCoreError(Exception):
+    """Base exception for core errors."""
+
+    pass
 
 
-class ExecutionError(FathomError):
-    """Execution phase failed."""
+class StrategyError(FathomCoreError):
+    """Exception raised by strategy execution."""
+
+    pass
 
 
-class ConfigurationError(FathomError):
-    """Invalid configuration."""
+class ConfigurationError(FathomCoreError):
+    """Exception raised for configuration errors."""
+
+    pass
 
 
-class StrategyError(FathomError):
-    """Strategy execution failed."""
+class ExecutionError(FathomCoreError):
+    """Exception raised during execution."""
+
+    pass
 
 
-class PortError(FathomError):
-    """Port communication failed."""
+class PortError(FathomCoreError):
+    """Exception raised by port operations."""
+
+    pass

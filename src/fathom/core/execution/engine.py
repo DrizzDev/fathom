@@ -12,7 +12,18 @@ import hashlib
 import time
 from typing import Optional, Tuple
 
-from fathom.constants import ActionType
+from fathom.constants import (
+    ActionType,
+    BOUNDS_SWIPE_DISTANCE,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_DELAY,
+    DEFAULT_SCROLL_DISTANCE,
+    DEFAULT_STABILITY_WAIT,
+    DEFAULT_SWIPE_DISTANCE,
+    DEFAULT_SWIPE_DURATION,
+    SignalType,
+    VISUAL_HASH_LENGTH,
+)
 from fathom.core.exceptions import ExecutionError, PortError
 from fathom.exceptions import ToolError
 from fathom.interfaces.device import DevicePort
@@ -21,17 +32,10 @@ from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.schemas.actions import Action
+from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
-
-# Constants
-VISUAL_HASH_LENGTH = 16
-DEFAULT_SWIPE_DISTANCE = 300
-DEFAULT_SCROLL_DISTANCE = 200
-DEFAULT_SWIPE_DURATION = 500
-BOUNDS_SWIPE_DISTANCE = 100
 
 
 class ExecutionEngine:
@@ -53,8 +57,8 @@ class ExecutionEngine:
         storage: StoragePort,
         telemetry: TelemetryPort,
         *,
-        max_retries: int = 2,
-        stability_wait: float = 0.5,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        stability_wait: float = DEFAULT_STABILITY_WAIT / 1000.0,  # Convert ms to seconds
     ) -> None:
         """
         Initialize execution engine with ports.
@@ -67,7 +71,7 @@ class ExecutionEngine:
             storage: Storage port for artifact persistence
             telemetry: Telemetry port for logging and observability
             max_retries: Maximum retry attempts for transient failures
-            stability_wait: Wait time after action for screen stability
+            stability_wait: Wait time after action for screen stability (seconds)
         """
         self.__device = device
         self.__llm = llm
@@ -188,14 +192,14 @@ class ExecutionEngine:
         """
         signal = await self.__signal.check_signal()
         
-        if signal == "PAUSE":
+        if signal == SignalType.PAUSE:
             self.__telemetry.info("Execution paused by signal")
             await self.__signal.wait_for_resume()
             self.__telemetry.info("Execution resumed")
-        elif signal == "INJECT":
+        elif signal == SignalType.INJECT:
             self.__telemetry.info("Injection signal received")
             # Injection handling would be implemented by caller
-        elif signal == "ASK":
+        elif signal == SignalType.ASK:
             self.__telemetry.info("Ask signal received")
             # Ask handling would be implemented by caller
     
@@ -278,7 +282,7 @@ class ExecutionEngine:
                     )
             
             if attempt < self.__max_retries:
-                await asyncio.sleep(delay=0.5 * (attempt + 1))
+                await asyncio.sleep(delay=(DEFAULT_RETRY_DELAY / 1000.0) * (attempt + 1))
         
         return ExecutionResult(
             success=False,
@@ -404,46 +408,63 @@ class ExecutionEngine:
             )
             raise ExecutionError(f"Action execution failed: {action.action_type.value}") from exception
     
-    def __bounds_to_center(self, bounds: str, width: int, height: int) -> Tuple[int, int]:
+    def __bounds_to_center(self, bounds: Bounds, width: int, height: int) -> Tuple[int, int]:
         """
-        Convert bounds string to center coordinates.
+        Convert Bounds object to center coordinates.
         
         Args:
-            bounds: Bounds string in format "[x1,y1][x2,y2]"
+            bounds: Bounds object with x, y, width, height
             width: Screen width
             height: Screen height
         
         Returns:
-            Tuple of (x, y) center coordinates
+            Tuple of (x, y) center coordinates in screen pixels
         """
         try:
-            parts = bounds.replace("[", "").replace("]", ",").split(",")
-            x1, y1, x2, y2 = map(int, [p for p in parts if p])
-            return (x1 + x2) // 2, (y1 + y2) // 2
-        except (ValueError, IndexError):
+            # Convert to pixels if normalized
+            x_pixel, y_pixel, width_pixel, height_pixel = bounds.to_pixels(
+                screen_width=width,
+                screen_height=height,
+            )
+            
+            # Calculate center
+            center_x = x_pixel + width_pixel // 2
+            center_y = y_pixel + height_pixel // 2
+            
+            return center_x, center_y
+        except Exception:
+            # Fallback to screen center
             return width // 2, height // 2
     
     def __bounds_to_swipe(
-        self, bounds: str, width: int, height: int
+        self, bounds: Bounds, width: int, height: int
     ) -> Tuple[int, int, int, int]:
         """
-        Convert bounds string to swipe coordinates (upward swipe).
+        Convert Bounds object to swipe coordinates (upward swipe).
         
         Args:
-            bounds: Bounds string in format "[x1,y1][x2,y2]"
+            bounds: Bounds object with x, y, width, height
             width: Screen width
             height: Screen height
         
         Returns:
-            Tuple of (x1, y1, x2, y2) swipe coordinates
+            Tuple of (x1, y1, x2, y2) swipe coordinates for upward swipe
         """
         try:
-            parts = bounds.replace("[", "").replace("]", ",").split(",")
-            x1, y1, x2, y2 = map(int, [p for p in parts if p])
-            cx = (x1 + x2) // 2
-            cy = (y1 + y2) // 2
+            # Convert to pixels if normalized
+            x_pixel, y_pixel, width_pixel, height_pixel = bounds.to_pixels(
+                screen_width=width,
+                screen_height=height,
+            )
+            
+            # Calculate center
+            cx = x_pixel + width_pixel // 2
+            cy = y_pixel + height_pixel // 2
+            
+            # Swipe upward from center
             return cx, cy + BOUNDS_SWIPE_DISTANCE, cx, cy - BOUNDS_SWIPE_DISTANCE
-        except (ValueError, IndexError):
+        except Exception:
+            # Fallback to screen center
             cx, cy = width // 2, height // 2
             return cx, cy + BOUNDS_SWIPE_DISTANCE, cx, cy - BOUNDS_SWIPE_DISTANCE
     

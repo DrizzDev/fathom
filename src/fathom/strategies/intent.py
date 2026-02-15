@@ -20,6 +20,7 @@ from fathom.agent.planner import StepPlanner
 from fathom.agent.reasoner import Reasoner
 from fathom.agent.state import AgentState
 from fathom.constants import ActionType
+from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import StrategyError
 from fathom.core.execution.engine import ExecutionEngine
@@ -294,15 +295,14 @@ class IntentStrategy:
 
     async def __update_state(self, screen: ScreenCapture) -> Tuple[ScreenState, bool]:
         """Update agent state with new screen."""
-        visual_hash = hashlib.sha256(screen.image).hexdigest()[:16]
-        visual_hash = hashlib.sha256(screen.image).hexdigest()[:16]
+        visual_hash = hashlib.sha256(screen.image).hexdigest()[:VISUAL_HASH_LENGTH]
         
         state = ScreenState(
             visual_hash=visual_hash,
             activity=screen.activity,
             timestamp=screen.timestamp,
-            activity_hash=hashlib.md5(screen.activity.encode()).hexdigest()[:16],
-            structural_hash="0" * 16,  # Not computed in this simplified version
+            activity_hash=hashlib.md5(screen.activity.encode()).hexdigest()[:VISUAL_HASH_LENGTH],
+            structural_hash="0" * VISUAL_HASH_LENGTH,  # Not computed in this simplified version
         )
         
         is_new = self.__state.update_screen(screen=state)
@@ -360,4 +360,9 @@ class IntentStrategy:
             "step_count": self.__state.step_count,
             "is_complete": self.__state.is_complete,
             "context": self.__context.get_full_context(),
+            "metrics": self.__metrics.to_dict(),
         }
+
+    def get_metrics(self) -> ExecutionMetrics:
+        """Get execution metrics."""
+        return self.__metrics

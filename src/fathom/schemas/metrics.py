@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Any, Dict
 
 from pydantic import BaseModel, Field
 
@@ -87,4 +87,19 @@ class ExecutionMetrics(BaseModel):
                 "cached": self.cached_tokens,
                 "total": self.total_tokens,
             },
+        }
+
+    def to_dict(self) -> Dict[str, any]:
+        """Convert metrics to dictionary for result objects."""
+        return {
+            "screenshot_count": self.screenshot.call_count,
+            "screenshot_total_ms": int(self.screenshot.total_duration * 1000),
+            "analysis_count": self.analysis.call_count,
+            "analysis_total_ms": int(self.analysis.total_duration * 1000),
+            "action_count": self.action.call_count,
+            "action_total_ms": int(self.action.total_duration * 1000),
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "cached_tokens": self.cached_tokens,
+            "total_tokens": self.total_tokens,
         }

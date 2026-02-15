@@ -5,6 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from fathom.core.exceptions import ConfigurationError
+from fathom.schemas.configuration import (
+    ExecutionConfig,
+    ExplorationStrategyConfig,
+    FathomConfig,
+    IntentStrategyConfig,
+)
 
 if TYPE_CHECKING:
     from fathom.interfaces.device import DevicePort
@@ -33,6 +39,7 @@ class FathomBuilder:
         self._signal: Optional[SignalPort] = None
         self._storage: Optional[StoragePort] = None
         self._telemetry: Optional[TelemetryPort] = None
+        self._config: FathomConfig = FathomConfig()
 
     def device(self, device: DevicePort) -> FathomBuilder:
         """Configure device port."""
@@ -67,6 +74,26 @@ class FathomBuilder:
     def telemetry(self, telemetry: TelemetryPort) -> FathomBuilder:
         """Configure telemetry port."""
         self._telemetry = telemetry
+        return self
+
+    def config(self, config: FathomConfig) -> FathomBuilder:
+        """Configure Fathom settings."""
+        self._config = config
+        return self
+
+    def execution_config(self, config: ExecutionConfig) -> FathomBuilder:
+        """Configure execution engine settings."""
+        self._config.execution = config
+        return self
+
+    def intent_config(self, config: IntentStrategyConfig) -> FathomBuilder:
+        """Configure intent strategy settings."""
+        self._config.intent_strategy = config
+        return self
+
+    def exploration_config(self, config: ExplorationStrategyConfig) -> FathomBuilder:
+        """Configure exploration strategy settings."""
+        self._config.exploration_strategy = config
         return self
 
     def build(self) -> FathomRunner:
@@ -115,6 +142,7 @@ class FathomBuilder:
             signal=self._signal,
             storage=self._storage,
             telemetry=self._telemetry,
+            config=self._config,
         )
 
 
