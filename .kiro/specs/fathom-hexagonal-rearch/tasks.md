@@ -128,20 +128,20 @@ This plan implements an incremental migration to hexagonal architecture. The app
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 8. Implement builder API
-  - [ ] 8.1 Create FathomBuilder class
+  - [x] 8.1 Create FathomBuilder class
     - Create runtime/builder.py
     - Implement builder methods: device(), llm(), memory(), knowledge(), signal(), storage(), telemetry()
     - Each method returns self for chaining
     - _Requirements: 4.1, 4.2, 4.3_
   
-  - [ ] 8.2 Implement build() validation
+  - [x] 8.2 Implement build() validation
     - Validate device() and llm() are required
     - Raise ValueError with descriptive message if missing
     - Apply defaults for optional ports (memory, knowledge, signal, storage, telemetry)
     - Return FathomRunner instance
     - _Requirements: 4.5, 4.6, 4.7, 11.1, 11.4, 11.5_
   
-  - [ ] 8.3 Create Fathom entry point
+  - [x] 8.3 Create Fathom entry point
     - Create Fathom class with static builder() method
     - _Requirements: 4.1_
   
@@ -216,7 +216,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 12. Implement FathomRunner
-  - [ ] 12.1 Create FathomRunner class
+  - [x] 12.1 Create FathomRunner class
     - Create runtime/runner.py
     - Accept all seven ports as constructor parameters
     - Wire ExecutionEngine and ContextManager
