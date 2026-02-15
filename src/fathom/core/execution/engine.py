@@ -8,10 +8,12 @@ execution cycle: SignalCheck → Perceive → Reason → Act → Learn → Check
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
-from typing import Any, Dict, Optional
+from typing import Optional, Tuple
 
 from fathom.constants import ActionType
+from fathom.core.exceptions import ExecutionError, PortError
 from fathom.exceptions import ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
@@ -20,9 +22,16 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.actions import Action
-from fathom.schemas.results import AnalysisResult, ExecutionResult
-from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.results import ExecutionResult
+from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
+
+# Constants
+VISUAL_HASH_LENGTH = 16
+DEFAULT_SWIPE_DISTANCE = 300
+DEFAULT_SCROLL_DISTANCE = 200
+DEFAULT_SWIPE_DURATION = 500
+BOUNDS_SWIPE_DISTANCE = 100
 
 
 class ExecutionEngine:
@@ -145,7 +154,7 @@ class ExecutionEngine:
             # Phase 7: Evaluate (terminal check handled by caller)
             return step_result
             
-        except Exception as exception:
+        except (ToolError, PortError) as exception:
             duration = int((time.time() - start_time) * 1000)
             self.__telemetry.error(
                 "Step execution failed",
@@ -162,6 +171,14 @@ class ExecutionEngine:
                 error=str(exception),
                 screen_changed=False,
             )
+        except Exception as exception:
+            duration = int((time.time() - start_time) * 1000)
+            self.__telemetry.error(
+                "Unexpected error in step execution",
+                step_number=step.step_number,
+                error=str(exception),
+            )
+            raise ExecutionError(f"Step {step.step_number} failed unexpectedly") from exception
     
     async def __check_signal(self) -> None:
         """
@@ -213,10 +230,7 @@ class ExecutionEngine:
         Returns:
             Visual hash string
         """
-        # Simple hash based on image data length and timestamp
-        # In production, this would use perceptual hashing
-        import hashlib
-        return hashlib.sha256(capture.image_data).hexdigest()[:16]
+        return hashlib.sha256(capture.image_data).hexdigest()[:VISUAL_HASH_LENGTH]
     
     async def __act(self, step: Step) -> ExecutionResult:
         """
@@ -242,8 +256,14 @@ class ExecutionEngine:
                 if not exception.retryable:
                     break
                     
-            except Exception as exception:
+            except PortError as exception:
                 last_error = str(exception)
+                if attempt < self.__max_retries:
+                    self.__telemetry.warning(
+                        "Port communication failed, retrying",
+                        attempt=attempt + 1,
+                        error=str(exception),
+                    )
             
             if attempt < self.__max_retries:
                 await asyncio.sleep(delay=0.5 * (attempt + 1))
@@ -314,14 +334,18 @@ class ExecutionEngine:
                     x1, y1, x2, y2 = self.__bounds_to_swipe(action.bounds, width, height)
                 else:
                     cx, cy = width // 2, height // 2
-                    x1, y1 = cx, cy + 300
-                    x2, y2 = cx, cy - 300
+                    x1, y1 = cx, cy + DEFAULT_SWIPE_DISTANCE
+                    x2, y2 = cx, cy - DEFAULT_SWIPE_DISTANCE
                 device_result = await self.__device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
             
             elif action.action_type == ActionType.SCROLL:
                 cx, cy = width // 2, height // 2
                 device_result = await self.__device.swipe(
-                    x1=cx, y1=cy + 200, x2=cx, y2=cy - 200, duration=500
+                    x1=cx,
+                    y1=cy + DEFAULT_SCROLL_DISTANCE,
+                    x2=cx,
+                    y2=cy - DEFAULT_SCROLL_DISTANCE,
+                    duration=DEFAULT_SWIPE_DURATION,
                 )
             
             elif action.action_type == ActionType.LONG_PRESS:
@@ -352,15 +376,23 @@ class ExecutionEngine:
                 success=device_result.success,
             )
             
-        except Exception as exception:
+        except PortError as exception:
             duration = int((time.time() - start_time) * 1000)
             return ExecutionResult(
                 success=False,
                 duration=duration,
+                error=f"Device communication failed: {exception}",
+            )
+        except Exception as exception:
+            duration = int((time.time() - start_time) * 1000)
+            self.__telemetry.error(
+                "Unexpected error executing action",
+                action_type=action.action_type.value,
                 error=str(exception),
             )
+            raise ExecutionError(f"Action execution failed: {action.action_type.value}") from exception
     
-    def __bounds_to_center(self, bounds: str, width: int, height: int) -> tuple[int, int]:
+    def __bounds_to_center(self, bounds: str, width: int, height: int) -> Tuple[int, int]:
         """
         Convert bounds string to center coordinates.
         
@@ -372,18 +404,16 @@ class ExecutionEngine:
         Returns:
             Tuple of (x, y) center coordinates
         """
-        # Parse bounds: "[x1,y1][x2,y2]"
         try:
             parts = bounds.replace("[", "").replace("]", ",").split(",")
             x1, y1, x2, y2 = map(int, [p for p in parts if p])
             return (x1 + x2) // 2, (y1 + y2) // 2
-        except Exception:
-            # Fallback to screen center
+        except (ValueError, IndexError):
             return width // 2, height // 2
     
     def __bounds_to_swipe(
         self, bounds: str, width: int, height: int
-    ) -> tuple[int, int, int, int]:
+    ) -> Tuple[int, int, int, int]:
         """
         Convert bounds string to swipe coordinates (upward swipe).
         
@@ -400,12 +430,10 @@ class ExecutionEngine:
             x1, y1, x2, y2 = map(int, [p for p in parts if p])
             cx = (x1 + x2) // 2
             cy = (y1 + y2) // 2
-            # Swipe up from center
-            return cx, cy + 100, cx, cy - 100
-        except Exception:
-            # Fallback to screen center swipe
+            return cx, cy + BOUNDS_SWIPE_DISTANCE, cx, cy - BOUNDS_SWIPE_DISTANCE
+        except (ValueError, IndexError):
             cx, cy = width // 2, height // 2
-            return cx, cy + 100, cx, cy - 100
+            return cx, cy + BOUNDS_SWIPE_DISTANCE, cx, cy - BOUNDS_SWIPE_DISTANCE
     
     async def __learn(self, visual_hash: str, action: Action, success: bool) -> None:
         """
@@ -422,8 +450,7 @@ class ExecutionEngine:
                 action=action,
                 success=success,
             )
-        except Exception as exception:
-            # Learning failures are non-critical
+        except PortError as exception:
             self.__telemetry.warning(
                 "Failed to store experience",
                 error=str(exception),

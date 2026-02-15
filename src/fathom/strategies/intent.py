@@ -6,6 +6,7 @@ Migrated from agent/strategies/intent.py with ports instead of tools.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from logging import getLogger
 from typing import Any, Dict, Optional, Tuple
@@ -20,6 +21,7 @@ from fathom.agent.reasoner import Reasoner
 from fathom.agent.state import AgentState
 from fathom.constants import ActionType
 from fathom.core.context.manager import ContextManager
+from fathom.core.exceptions import StrategyError
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.interfaces.device import DevicePort
@@ -145,10 +147,13 @@ class IntentStrategy:
             if not success and not error:
                 error = "Max steps reached or execution stopped"
                 
-        except Exception as e:
-            logger.exception(f"Intent strategy execution failed: {e}")
-            error = str(e)
+        except StrategyError as exception:
+            logger.exception(f"Intent strategy execution failed: {exception}")
+            error = str(exception)
             success = False
+        except Exception as exception:
+            logger.exception(f"Unexpected error in intent strategy: {exception}")
+            raise StrategyError("Intent execution failed unexpectedly") from exception
         
         duration = int((time.time() - start_time) * 1000)
         
@@ -280,14 +285,16 @@ class IntentStrategy:
             
             return screen, xml, time.time() - start
             
-        except Exception as e:
-            logger.exception(f"Grounding failed: {e}")
+        except StrategyError as exception:
+            logger.exception(f"Grounding failed: {exception}")
             return None, None, time.time() - start
+        except Exception as exception:
+            logger.exception(f"Unexpected error in grounding: {exception}")
+            raise StrategyError("Grounding failed unexpectedly") from exception
 
     async def __update_state(self, screen: ScreenCapture) -> Tuple[ScreenState, bool]:
         """Update agent state with new screen."""
-        # Compute screen state (hash, activity, etc.)
-        import hashlib
+        visual_hash = hashlib.sha256(screen.image).hexdigest()[:16]
         visual_hash = hashlib.sha256(screen.image).hexdigest()[:16]
         
         state = ScreenState(

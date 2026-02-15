@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+from fathom.core.exceptions import ConfigurationError
+
 if TYPE_CHECKING:
     from fathom.interfaces.device import DevicePort
     from fathom.interfaces.knowledge import KnowledgePort
@@ -89,9 +91,9 @@ class FathomBuilder:
 
         # Validate required ports
         if not self._device:
-            raise ValueError("device() is required")
+            raise ConfigurationError("Device port is required. Call .device() before .build()")
         if not self._llm:
-            raise ValueError("llm() is required")
+            raise ConfigurationError("LLM port is required. Call .llm() before .build()")
 
         # Apply defaults for optional ports
         if not self._memory:

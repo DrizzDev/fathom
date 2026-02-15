@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fathom.constants import ActionType
 from fathom.core.context.manager import ContextManager
+from fathom.core.exceptions import StrategyError
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
@@ -283,10 +284,13 @@ class ExplorationStrategy:
             
             success = True
             
-        except Exception as e:
-            logger.exception(f"Exploration strategy execution failed: {e}")
-            error = str(e)
+        except StrategyError as exception:
+            logger.exception(f"Exploration strategy execution failed: {exception}")
+            error = str(exception)
             success = False
+        except Exception as exception:
+            logger.exception(f"Unexpected error in exploration strategy: {exception}")
+            raise StrategyError("Exploration execution failed unexpectedly") from exception
         
         duration = int((time.time() - start_time) * 1000)
         
@@ -360,9 +364,12 @@ class ExplorationStrategy:
             
             return result.success
             
-        except Exception as e:
-            logger.exception(f"Exploration step failed: {e}")
+        except StrategyError as exception:
+            logger.exception(f"Exploration step failed: {exception}")
             return False
+        except Exception as exception:
+            logger.exception(f"Unexpected error in exploration step: {exception}")
+            raise StrategyError("Exploration step failed unexpectedly") from exception
     
     async def __capture_screen(self) -> Optional[ScreenCapture]:
         """Capture screen through device port."""
@@ -393,9 +400,12 @@ class ExplorationStrategy:
                 metadata={"storage_id": storage_id},
             )
             
-        except Exception as e:
-            logger.exception(f"Screen capture failed: {e}")
+        except StrategyError as exception:
+            logger.exception(f"Screen capture failed: {exception}")
             return None
+        except Exception as exception:
+            logger.exception(f"Unexpected error in screen capture: {exception}")
+            raise StrategyError("Screen capture failed unexpectedly") from exception
     
     async def __compute_state(self, capture: ScreenCapture) -> ScreenState:
         """Compute screen state from capture."""
