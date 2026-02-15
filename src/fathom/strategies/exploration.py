@@ -309,7 +309,7 @@ class ExplorationStrategy:
                 return False
             
             # 2. Compute screen state
-            state = self.__compute_state(capture=capture)
+            state = await self.__compute_state(capture=capture)
             fingerprint = state.visual_hash
             
             # 3. Update graph
@@ -348,7 +348,7 @@ class ExplorationStrategy:
             # 9. Capture post-action screen
             post_capture = await self.__capture_screen()
             if post_capture:
-                post_state = self.__compute_state(capture=post_capture)
+                post_state = await self.__compute_state(capture=post_capture)
                 screen_changed = fingerprint != post_state.visual_hash
                 
                 # Update context
@@ -369,6 +369,15 @@ class ExplorationStrategy:
         try:
             screenshot_bytes = await self.__device.capture_screen()
             
+            # Get screen dimensions
+            width, height = await self.__device.get_screen_size()
+            
+            # Get current activity
+            try:
+                activity = await self.__device.get_current_package()
+            except:
+                activity = "unknown"
+            
             # Store screenshot
             storage_id = await self.__storage.save(
                 data=screenshot_bytes,
@@ -376,33 +385,29 @@ class ExplorationStrategy:
             )
             
             return ScreenCapture(
-                image_data=screenshot_bytes,
-                storage_id=storage_id,
-                timestamp=time.time(),
+                width=width,
+                height=height,
+                activity=activity,
                 image=screenshot_bytes,
+                timestamp=int(time.time() * 1000),  # milliseconds as int
+                metadata={"storage_id": storage_id},
             )
             
         except Exception as e:
             logger.exception(f"Screen capture failed: {e}")
             return None
     
-    def __compute_state(self, capture: ScreenCapture) -> ScreenState:
+    async def __compute_state(self, capture: ScreenCapture) -> ScreenState:
         """Compute screen state from capture."""
         # Compute visual hash
-        visual_hash = hashlib.sha256(capture.image_data).hexdigest()[:16]
-        
-        # Get current package/activity (synchronous wrapper needed)
-        try:
-            # Note: This is a limitation - we need async support
-            # For now, use a placeholder
-            package = "unknown"
-        except:
-            package = "unknown"
+        visual_hash = hashlib.sha256(capture.image).hexdigest()[:16]
         
         return ScreenState(
             visual_hash=visual_hash,
-            activity=package,
+            activity=capture.activity,
             timestamp=capture.timestamp,
+            activity_hash=hashlib.md5(capture.activity.encode()).hexdigest()[:16],
+            structural_hash="0" * 16,  # Not computed in this simplified version
         )
     
     async def __should_continue(self) -> bool:

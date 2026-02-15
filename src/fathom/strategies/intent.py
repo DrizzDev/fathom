@@ -10,6 +10,11 @@ import time
 from logging import getLogger
 from typing import Any, Dict, Optional, Tuple
 
+from fathom.adapters.vision import (
+    ImageStorageAdapter,
+    LLMVisionProvider,
+    MemoryProviderAdapter,
+)
 from fathom.agent.planner import StepPlanner
 from fathom.agent.reasoner import Reasoner
 from fathom.agent.state import AgentState
@@ -31,6 +36,7 @@ from fathom.services.audit import AuditService
 from fathom.services.history import HistoryService
 from fathom.services.resolution import ReferenceResolutionService
 from fathom.services.ux import UXService
+from fathom.tools.vision.gemini import GeminiVisionTool
 
 logger = getLogger(name=__name__)
 
@@ -74,11 +80,28 @@ class IntentStrategy:
         self.__use_xml = use_xml
         self.__max_steps = max_steps
         
-        # Agent components (reuse existing logic)
-        self.__planner = StepPlanner(vision_tool=None)  # Will need LLM port
+        # Create adapters to bridge new ports to old interfaces
+        vision_provider = LLMVisionProvider(llm=llm)
+        memory_provider = MemoryProviderAdapter(memory=memory)
+        image_storage = ImageStorageAdapter(storage=storage)
+        
+        # Ledger for session state
+        self.__ledger = Ledger()
+        
+        # Create vision tool with adapters
+        vision_tool = GeminiVisionTool(
+            model=vision_provider,
+            memory=memory_provider,
+            ledger=self.__ledger,
+            local_storage=image_storage,
+            version="pro_xml" if use_xml else "pro",
+            session_id=workflow_id,
+        )
+        
+        # Agent components (reuse existing logic with proper wiring)
+        self.__planner = StepPlanner(vision_tool=vision_tool)
         self.__reasoner = Reasoner(intent=intent)
         self.__state = AgentState(intent=intent, max_steps=max_steps)
-        self.__ledger = Ledger()
         
         # Services (reuse existing)
         self.__ux_service = UXService()
@@ -225,6 +248,15 @@ class IntentStrategy:
             # Capture screenshot through device port
             screenshot_bytes = await self.__device.capture_screen()
             
+            # Get screen dimensions
+            width, height = await self.__device.get_screen_size()
+            
+            # Get current activity
+            try:
+                activity = await self.__device.get_current_package()
+            except:
+                activity = "unknown"
+            
             # Store screenshot
             storage_id = await self.__storage.save(
                 data=screenshot_bytes,
@@ -232,10 +264,12 @@ class IntentStrategy:
             )
             
             screen = ScreenCapture(
-                image_data=screenshot_bytes,
-                storage_id=storage_id,
-                timestamp=time.time(),
-                image=screenshot_bytes,  # For compatibility
+                width=width,
+                height=height,
+                activity=activity,
+                image=screenshot_bytes,
+                timestamp=int(time.time() * 1000),  # milliseconds as int
+                metadata={"storage_id": storage_id},
             )
             
             # Get XML hierarchy if enabled
@@ -254,18 +288,14 @@ class IntentStrategy:
         """Update agent state with new screen."""
         # Compute screen state (hash, activity, etc.)
         import hashlib
-        visual_hash = hashlib.sha256(screen.image_data).hexdigest()[:16]
-        
-        # Get current package/activity
-        try:
-            package = await self.__device.get_current_package()
-        except:
-            package = "unknown"
+        visual_hash = hashlib.sha256(screen.image).hexdigest()[:16]
         
         state = ScreenState(
             visual_hash=visual_hash,
-            activity=package,
+            activity=screen.activity,
             timestamp=screen.timestamp,
+            activity_hash=hashlib.md5(screen.activity.encode()).hexdigest()[:16],
+            structural_hash="0" * 16,  # Not computed in this simplified version
         )
         
         is_new = self.__state.update_screen(screen=state)
