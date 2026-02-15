@@ -236,7 +236,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - Copy-paste existing logic, only update imports
     - _Requirements: 10.5_
   
-  - [ ] 13.2 Create ExplorationStrategy
+  - [x] 13.2 Create ExplorationStrategy
     - Create strategies/exploration.py
     - Migrate logic from workflows/exploration.py
     - Copy-paste existing logic, only update imports
@@ -289,7 +289,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - _Requirements: 7.7_
 
 - [ ] 15. Create backward compatibility shims
-  - [ ] 15.1 Create re-export shims in orchestration/
+  - [x] 15.1 Create re-export shims in orchestration/
     - Add imports from new runtime/ and core/
     - Re-export with original names
     - _Requirements: 5.1, 5.5, 9.4_
@@ -299,7 +299,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - Re-export with original names
     - _Requirements: 5.2, 5.5, 9.4_
   
-  - [ ] 15.3 Create re-export shims in workflows/
+  - [x] 15.3 Create re-export shims in workflows/
     - Add imports from new strategies/
     - Re-export with original names
     - _Requirements: 5.4, 5.5, 9.4_
