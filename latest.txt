@@ -1,0 +1,537 @@
+(Fathom-ENV) ➜  fathom git:(feature/reArch) ✗ fathom run "Ask GPT to do deep research about opencrawler(moltybot)" --use-xml --serial emulator-5554 -v
+
+╭─────────────────────────────────────────────────────────────────╮
+│ Fathom Agent                                                    │
+│ Intent: Ask GPT to do deep research about opencrawler(moltybot) │
+╰─────────────────────────────────────────────────────────────────╯
+⚡ ADB ❯ dumpsys activity activities | grep mResumedActivity 56ms
+⠋ Agent working...
+2026-02-15T11:55:02.938687Z [info     ] Executing intent: Ask GPT to do deep research about opencrawler(moltybot) [fathom.workflows.intent]
+2026-02-15T11:55:02.938816Z [debug    ] [H4] Evaluating stuck status | screen_count=0 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+⠏ Agent working...
+⠙ Agent working...
+2026-02-15T11:55:05.390434Z [debug    ] [H2] Screen update classification | is_new=True seen_count=0 current=com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity hash=49bc73b9 prev=None [fathom.agent.state]
+2026-02-15T11:55:05.390549Z [debug    ] New screen detected: 3513ecc0 (com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity) [fathom.agent.state]
+2026-02-15T11:55:05.390611Z [info     ] LoopDetector.reset: cleared 0 screens [fathom.schemas.state]
+2026-02-15T11:55:05.390641Z [debug    ] LoopDetector.record: 3513ecc0 (com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity) | deque_size=1 [fathom.schemas.state]
+2026-02-15T11:55:05.390663Z [debug    ] [H1] Recorded screen in loop detector | activity=com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity hash_prefix=3513ecc0 recent_count=1 threshold=3 [fathom.schemas.state]
+2026-02-15T11:55:05.390691Z [info     ] Hierarchy processing started. XML Size: 4.72 KB [fathom.agent.strategies.intent]
+2026-02-15T11:55:05.390758Z [info     ] Processing hierarchy. XML Size: 4.72 KB, Action: tap [fathom.services.hierarchy]
+2026-02-15T11:55:05.392214Z [debug    ] Saved raw screenshot to: assets/screenshot/20260215_172505.png [fathom.services.hierarchy]
+2026-02-15T11:55:05.392502Z [debug    ] Saved raw XML to: assets/xmls/20260215_172505.xml [fathom.services.hierarchy]
+2026-02-15T11:55:05.393422Z [info     ] BoundsGenerator.create_element called with image_path: assets/screenshot/20260215_172505.png, action: tap [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.393931Z [info     ] Using parser: AndroidParser    [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.394352Z [info     ] Screenshot opened successfully: 1080x2340 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.394464Z [info     ] Scale factor calculated: 1.0   [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.394507Z [info     ] Screen size: 1080x2340         [fathom.tools.vision.processing.parsers.android]
+2026-02-15T11:55:05.394666Z [info     ] Found 13 valid elements. Skips: {'visibility': 0, 'off_screen': 0, 'meaningless': 0, 'invalid_size': 0, 'non_interactive': 0} [fathom.tools.vision.processing.parsers.android]
+2026-02-15T11:55:05.394696Z [info     ] Raw elements found: 13         [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.394716Z [info     ] Applying pre-filter for action: 'tap' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.394745Z [info     ] After pre-filter for action: tap: 13 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.394877Z [info     ] After deduplication filter: 12 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.394900Z [info     ] Final element count after all filtering: 12 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.394956Z [debug    ] Element Label 1: android.widget.ScrollView - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.394986Z [debug    ] Element Label 2: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395010Z [debug    ] Element Label 3: android.widget.FrameLayout - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395036Z [debug    ] Element Label 4: android.widget.TextView - text='Snabbit' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395062Z [debug    ] Element Label 5: android.widget.TextView - text='Instamart' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395087Z [debug    ] Element Label 6: android.widget.TextView - text='Nykaa Fashion' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395114Z [debug    ] Element Label 7: android.widget.TextView - text='ChatGPT' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395134Z [debug    ] Element Label 8: android.widget.TextView - text='MakeMyTrip' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395154Z [debug    ] Element Label 9: android.widget.TextView - text='Messages' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395175Z [debug    ] Element Label 10: android.widget.TextView - text='Play Store' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395195Z [debug    ] Element Label 11: android.widget.TextView - text='Chrome' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395215Z [debug    ] Element Label 12: android.widget.ImageView - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:05.395233Z [info     ] Successfully generated 12 labeled elements. [fathom.tools.vision.processing.drawer]
+⠹ Agent working...
+2026-02-15T11:55:05.504449Z [info     ] Saved annotated image: assets/annotated/20260215_172505.png [fathom.tools.vision.processing.annotator]
+2026-02-15T11:55:05.504722Z [info     ] Saved annotated screenshot to: assets/annotated/20260215_172505.png [fathom.services.hierarchy]
+2026-02-15T11:55:05.504888Z [info     ] Hierarchy processing complete in 0.11s [fathom.services.hierarchy]
+2026-02-15T11:55:05.504927Z [info     ] Successfully annotated screen hierarchy in 0.11s [fathom.agent.strategies.intent]
+2026-02-15T11:55:05.519078Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:05.519422Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:05.519522Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:05.519556Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:05.519583Z [debug    ] [H5] Entering planner plan_step | step_count=0 is_complete=False is_stuck=False can_continue=True [fathom.agent.planner]
+2026-02-15T11:55:05.519606Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:05.519624Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:05.519643Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:05.519660Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:05.519684Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:05.519699Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:05.522275Z [debug    ] Saved local screenshot: assets/screenshot/2026-02-15/com.google.android.apps.nexuslauncher/4bf5f513/20260215
+⠸ Agent working...
+2026-02-15T11:55:05.590246Z [debug    ] System Instruction:
+You are a Mobile UI expert agent. Ground all interactions using normalized coordinates (0-1000).
+
+
+TOOL SELECTION & VALIDATION:
+- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, w... [fathom.tools.vision.gemini]
+2026-02-15T11:55:05.590320Z [debug    ] User Payload (Text Parts):
+['Goal: Ask GPT to do deep research about opencrawler(moltybot)', 'Recent turns (global): === CURRENT STATE ===\nCurrent Screen: com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity\n\n=== RECENT HISTORY (Last 5) ===\n=== END STATE ===\nNone', "Element Manifest: [1] ScrollView\n[2] View | description: 'Home'\n[3] FrameLayout | description: 'Search'\n[4] TextView | text: 'Snabbit' | description: 'Snabbit'\n[5] TextView | text: 'Instamart' | description: 'Instamart, has 3 notifications'\n[6] TextView | text: 'Nykaa Fashion' | description: 'Nykaa Fashion, has 4 notifications'\n[7] TextView | text: 'ChatGPT' | description: 'ChatGPT'\n[8] TextView | text: 'MakeMyTrip' | description: 'MakeMyTrip'\n[9] TextView | text: 'Messages' | description: 'Messages'\n[10] TextView | text: 'Play Store' | description: 'Play Store'\n[11] TextView | tex
+⠹ Agent working...
+2026-02-15T11:55:06.327898Z [debug    ] Uploaded image to GCS: gs://drizz-dev-crawler-artifacts/2026-02-15/com.google.android.apps.nexuslauncher/4bf5f513/1771156505523__com.google.android.apps.nexuslaunchercom.google.android.apps.nexuslauncher.NexusLauncherActivity.png [fathom.infrastructure.sto
+⠹ Agent working...
+2026-02-15T11:55:10.310257Z [info     ] Created context cache: projects/790754672560/locations/global/cachedContents/6020258338862792704 (hash=fd93a
+⠋ Agent working...
+2026-02-15T11:55:14.944928Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:14.945111Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+╭────────────────────────── execute_ui 9.43s ───────────────────────────╮
+│ Reasoning: Opening the ChatGPT app to research opencrawler(moltybot). │
+│   Actions: tap                                                        │
+⠙ Agent working...
+⚡ ADB ❯ wm size 60ms
+⠸ Agent working...
+⚡ ADB ❯ input tap 740 316 58ms
+2026-02-15T11:55:15.181199Z [debug    ] [H7] Recorded executed action | step=1 action=Tap on ChatGPT app icon type=tap success=True [fathom.agent.state]
+2026-02-15T11:55:15.182565Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:15.182613Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:15.182653Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:15.182675Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 1 Audit ─╮
+│ Screen Status:      🆕 3513ecc0f328 (com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity)          │
+│ Grounding:                                                                                                               2.39s [2387ms]          │
+│ Hierarchy:                                                                                                                0.11s [114ms]          │
+│ Memory Retrieval:                                                                                                          0.02s [18ms]          │
+│ LLM Core Analysis:                                                                                                       9.35s [9348ms]          │
+│ Tokens:                                                                          2,686 (prompt: 2,615 | completion: 71 | cached: 1,256)          │
+│ Total Analysis:                                                                                                          9.43s [9428ms]          │
+│ ADB Execution:                                                                                                             0.06s [58ms]          │
+│ Overhead:                                                                                                                 0.18s [175ms]          │
+│ Total Step Time:                                                                                                       12.24s [12244ms]          │
+│ Cache:                                                                                                              hits: 0 | misses: 1          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭───────────────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                                  │
+│ Target:     ChatGPT app icon                                                                                                                     │
+│ Rationale:  Tap on the ChatGPT app icon to open the application.                                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+2026-02-15T11:55:15.184778Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=0 can_recover=True [fathom.schemas.state]
+⠹ Agent working...
+⠸ Agent working...
+2026-02-15T11:55:17.604148Z [debug    ] [H2] Screen update classification | is_new=True seen_count=1 current=com.openai.chatgpt/.MainActivity hash=6d1513a6 prev=com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity [fathom.agent.state]
+2026-02-15T11:55:17.604607Z [debug    ] New screen detected: 088c0000 (com.openai.chatgpt/.MainActivity) [fathom.agent.state]
+2026-02-15T11:55:17.604888Z [info     ] LoopDetector.reset: cleared 1 screens [fathom.schemas.state]
+2026-02-15T11:55:17.604954Z [debug    ] LoopDetector.record: 088c0000 (com.openai.chatgpt/.MainActivity) | deque_size=1 [fathom.schemas.state]
+2026-02-15T11:55:17.604983Z [debug    ] [H1] Recorded screen in loop detector | activity=com.openai.chatgpt/.MainActivity hash_prefix=088c0000 recent_count=1 threshold=3 [fathom.schemas.state]
+2026-02-15T11:55:17.605101Z [info     ] Hierarchy processing started. XML Size: 4.72 KB [fathom.agent.strategies.intent]
+2026-02-15T11:55:17.605277Z [info     ] Processing hierarchy. XML Size: 4.72 KB, Action: tap [fathom.services.hierarchy]
+2026-02-15T11:55:17.606373Z [debug    ] Saved raw screenshot to: assets/screenshot/20260215_172517.png [fathom.services.hierarchy]
+2026-02-15T11:55:17.606695Z [debug    ] Saved raw XML to: assets/xmls/20260215_172517.xml [fathom.services.hierarchy]
+2026-02-15T11:55:17.606978Z [info     ] BoundsGenerator.create_element called with image_path: assets/screenshot/20260215_172517.png, action: tap [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.607156Z [info     ] Using parser: AndroidParser    [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.607478Z [info     ] Screenshot opened successfully: 1080x2340 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.607539Z [info     ] Scale factor calculated: 1.0   [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.607601Z [info     ] Screen size: 1080x2340         [fathom.tools.vision.processing.parsers.android]
+2026-02-15T11:55:17.607796Z [info     ] Found 13 valid elements. Skips: {'visibility': 0, 'off_screen': 0, 'meaningless': 0, 'invalid_size': 0, 'non_interactive': 0} [fathom.tools.vision.processing.parsers.android]
+2026-02-15T11:55:17.607856Z [info     ] Raw elements found: 13         [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.607917Z [info     ] Applying pre-filter for action: 'tap' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.607958Z [info     ] After pre-filter for action: tap: 13 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608148Z [info     ] After deduplication filter: 12 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608201Z [info     ] Final element count after all filtering: 12 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608303Z [debug    ] Element Label 1: android.widget.ScrollView - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608345Z [debug    ] Element Label 2: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608371Z [debug    ] Element Label 3: android.widget.FrameLayout - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608394Z [debug    ] Element Label 4: android.widget.TextView - text='Snabbit' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608418Z [debug    ] Element Label 5: android.widget.TextView - text='Instamart' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608475Z [debug    ] Element Label 6: android.widget.TextView - text='Nykaa Fashion' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608526Z [debug    ] Element Label 7: android.widget.TextView - text='ChatGPT' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608816Z [debug    ] Element Label 8: android.widget.TextView - text='MakeMyTrip' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608879Z [debug    ] Element Label 9: android.widget.TextView - text='Messages' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608947Z [debug    ] Element Label 10: android.widget.TextView - text='Play Store' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.608982Z [debug    ] Element Label 11: android.widget.TextView - text='Chrome' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.609014Z [debug    ] Element Label 12: android.widget.ImageView - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:17.609035Z [info     ] Successfully generated 12 labeled elements. [fathom.tools.vision.processing.drawer]
+⠼ Agent working...
+2026-02-15T11:55:17.665607Z [info     ] Saved annotated image: assets/annotated/20260215_172517.png [fathom.tools.vision.processing.annotator]
+2026-02-15T11:55:17.665927Z [info     ] Saved annotated screenshot to: assets/annotated/20260215_172517.png [fathom.services.hierarchy]
+2026-02-15T11:55:17.666079Z [info     ] Hierarchy processing complete in 0.06s [fathom.services.hierarchy]
+2026-02-15T11:55:17.666134Z [info     ] Successfully annotated screen hierarchy in 0.06s [fathom.agent.strategies.intent]
+2026-02-15T11:55:17.668387Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:17.668455Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:17.668505Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:17.668531Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:17.668558Z [debug    ] [H5] Entering planner plan_step | step_count=1 is_complete=False is_stuck=False can_continue=True [fathom.agent.planner]
+2026-02-15T11:55:17.668582Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:17.668598Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:17.668619Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:17.668635Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:17.668658Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:17.668675Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:17.669289Z [debug    ] Saved local screenshot: assets/screenshot/2026-02-15/com.google.android.apps.nexuslauncher/4bf5f513/20260215
+⠴ Agent working...
+2026-02-15T11:55:17.722580Z [debug    ] System Instruction:
+You are a Mobile UI expert agent. Ground all interactions using normalized coordinates (0-1000).
+
+
+TOOL SELECTION & VALIDATION:
+- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, w... [fathom.tools.vision.gemini]
+2026-02-15T11:55:17.722747Z [debug    ] User Payload (Text Parts):
+['Goal: Ask GPT to do deep research about opencrawler(moltybot)', 'Recent turns (global): === CURRENT STATE ===\nCurrent Screen: com.openai.chatgpt/.MainActivity\n\n=== RECENT HISTORY (Last 5) ===\n1. [OK] TAP:ChatGPT app icon\n=== END STATE ===\nTAP:ChatGPT app icon:✓', "Element Manifest: [1] ScrollView\n[2] View | description: 'Home'\n[3] FrameLayout | description: 'Search'\n[4] TextView | text: 'Snabbit' | description: 'Snabbit'\n[5] TextView | text: 'Instamart' | description: 'Instamart, has 3 notifications'\n[6] TextView | text: 'Nykaa Fashion' | description: 'Nykaa Fashion, has 4 notifications'\n[7] TextView | text: 'ChatGPT' | description: 'ChatGPT'\n[8] TextView | text: 'MakeMyTrip' | description: 'MakeMyTrip'\n[9] TextView | text: 'Messages' | description: 'Messages'\n[10] TextView | text: 'Play Store' | description: 'Play Store'\n[11] TextView | text: 'Chrome' | description: 'Chrome'\n[12] ImageView | description: 'Voice search'"] [fathom.tools.vision.gemini]
+⠧ Agent working...
+2026-02-15T11:55:17.912234Z [debug    ] Uploaded image to GCS: gs://drizz-dev-crawler-artifacts/2026-02-15/com.google.android.apps.nexuslauncher/4bf
+⠋ Agent working...
+2026-02-15T11:55:22.966790Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:22.967158Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+╭──────────── execute_ui 5.30s ─────────────╮
+│ Reasoning: Waiting for ChatGPT to load... │
+│   Actions: wait                           │
+╰────────────────────────────── UI Actions ─╯
+⠸ Agent working...
+2026-02-15T11:55:23.970944Z [debug    ] [H7] Recorded executed action | step=2 action=Wait for ChatGPT splash screen type=wait success=True [fathom.agent.state]
+2026-02-15T11:55:23.977802Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:23.977946Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:23.978070Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:23.978141Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 2 Audit ─╮
+│ Screen Status:          🆕 088c00000000 (com.openai.chatgpt/.MainActivity)                                                                       │
+│ Grounding:                                                  2.38s [2378ms]                                                                       │
+│ Hierarchy:                                                    0.06s [61ms]                                                                       │
+│ Memory Retrieval:                                              0.01s [6ms]                                                                       │
+│ LLM Core Analysis:                                          5.24s [5239ms]                                                                       │
+│ Tokens:             2,682 (prompt: 2,615 | completion: 67 | cached: 1,256)                                                                       │
+│ Total Analysis:                                             5.30s [5299ms]                                                                       │
+│ ADB Execution:                                              1.00s [1000ms]                                                                       │
+│ Overhead:                                                      0.00s [1ms]                                                                       │
+│ Total Step Time:                                            8.79s [8793ms]                                                                       │
+│ Cache:                                                 hits: 1 | misses: 1                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭───────────────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────────────╮
+│ Action:     wait                                                                                                                                 │
+│ Target:     ChatGPT splash screen                                                                                                                │
+│ Rationale:  The app is currently on a splash screen. I need to wait for the main interface to load so I can enter the research prompt.           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+2026-02-15T11:55:23.986481Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+⠋ Agent working...
+⠴ Agent working...
+2026-02-15T11:55:26.512366Z [debug    ] [H2] Screen update classification | is_new=True seen_count=2 current=com.openai.chatgpt/com.openai.chatgpt.MainActivity hash=2e7b079b prev=com.openai.chatgpt/.MainActivity [fathom.agent.state]
+2026-02-15T11:55:26.512480Z [debug    ] New screen detected: 48e47905 (com.openai.chatgpt/com.openai.chatgpt.MainActivity) [fathom.agent.state]
+2026-02-15T11:55:26.512541Z [info     ] LoopDetector.reset: cleared 1 screens [fathom.schemas.state]
+2026-02-15T11:55:26.512581Z [debug    ] LoopDetector.record: 48e47905 (com.openai.chatgpt/com.openai.chatgpt.MainActivity) | deque_size=1 [fathom.schemas.state]
+2026-02-15T11:55:26.512652Z [debug    ] [H1] Recorded screen in loop detector | activity=com.openai.chatgpt/com.openai.chatgpt.MainActivity hash_prefix=48e47905 recent_count=1 threshold=3 [fathom.schemas.state]
+2026-02-15T11:55:26.512717Z [info     ] Hierarchy processing started. XML Size: 19.42 KB [fathom.agent.strategies.intent]
+2026-02-15T11:55:26.512793Z [info     ] Processing hierarchy. XML Size: 19.42 KB, Action: tap [fathom.services.hierarchy]
+2026-02-15T11:55:26.513613Z [debug    ] Saved raw screenshot to: assets/screenshot/20260215_172526.png [fathom.services.hierarchy]
+2026-02-15T11:55:26.513856Z [debug    ] Saved raw XML to: assets/xmls/20260215_172526.xml [fathom.services.hierarchy]
+2026-02-15T11:55:26.514291Z [info     ] BoundsGenerator.create_element called with image_path: assets/screenshot/20260215_172526.png, action: tap [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.514356Z [info     ] Using parser: AndroidParser    [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.514481Z [info     ] Screenshot opened successfully: 1080x2340 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.514516Z [info     ] Scale factor calculated: 1.0   [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.514550Z [info     ] Screen size: 1080x2340         [fathom.tools.vision.processing.parsers.android]
+2026-02-15T11:55:26.514902Z [info     ] Found 61 valid elements. Skips: {'visibility': 0, 'off_screen': 0, 'meaningless': 0, 'invalid_size': 0, 'non_interactive': 0} [fathom.tools.vision.processing.parsers.android]
+2026-02-15T11:55:26.514929Z [info     ] Raw elements found: 61         [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.514951Z [info     ] Applying pre-filter for action: 'tap' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.515000Z [info     ] After pre-filter for action: tap: 59 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.515872Z [info     ] After deduplication filter: 33 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.515897Z [info     ] Final element count after all filtering: 33 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.515932Z [debug    ] Element Label 1: android.widget.EditText - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.515960Z [debug    ] Element Label 2: android.widget.TextView - text='What can I help with?' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.515986Z [debug    ] Element Label 3: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516011Z [debug    ] Element Label 4: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516035Z [debug    ] Element Label 5: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516060Z [debug    ] Element Label 6: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516085Z [debug    ] Element Label 7: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516109Z [debug    ] Element Label 8: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516154Z [debug    ] Element Label 9: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516199Z [debug    ] Element Label 10: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516232Z [debug    ] Element Label 11: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516259Z [debug    ] Element Label 12: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516286Z [debug    ] Element Label 13: android.widget.TextView - text='Ask ChatGPT' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516313Z [debug    ] Element Label 14: android.widget.ImageView - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516339Z [debug    ] Element Label 15: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516365Z [debug    ] Element Label 16: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516389Z [debug    ] Element Label 17: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516412Z [debug    ] Element Label 18: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516436Z [debug    ] Element Label 19: android.widget.TextView - text='Analyze images' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516461Z [debug    ] Element Label 20: android.widget.TextView - text='Summarize text' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516484Z [debug    ] Element Label 21: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516507Z [debug    ] Element Label 22: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516533Z [debug    ] Element Label 23: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516557Z [debug    ] Element Label 24: android.widget.TextView - text='Analyze data' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516582Z [debug    ] Element Label 25: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516609Z [debug    ] Element Label 26: android.widget.TextView - text='Make a plan' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516632Z [debug    ] Element Label 27: android.widget.TextView - text='ChatGPT' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516655Z [debug    ] Element Label 28: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516678Z [debug    ] Element Label 29: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516702Z [debug    ] Element Label 30: android.widget.TextView - text='Log in' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516726Z [debug    ] Element Label 31: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516748Z [debug    ] Element Label 32: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516770Z [debug    ] Element Label 33: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516790Z [info     ] Successfully generated 33 labeled elements. [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:26.516834Z [info     ] Found 33 elements in hierarchy. [fathom.services.hierarchy]
+2026-02-15T11:55:26.586326Z [info     ] Saved annotated image: assets/annotated/20260215_172526.png [fathom.tools.vision.processing.annotator]
+2026-02-15T11:55:26.586646Z [info     ] Saved annotated screenshot to: assets/annotated/20260215_172526.png [fathom.services.hierarchy]
+2026-02-15T11:55:26.586805Z [info     ] Hierarchy processing complete in 0.07s [fathom.services.hierarchy]
+⠦ Agent working...
+2026-02-15T11:55:26.588553Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:26.588591Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:26.588616Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:26.588634Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:26.588658Z [debug    ] [H5] Entering planner plan_step | step_count=2 is_complete=False is_stuck=False can_continue=True [fathom.agent.planner]
+2026-02-15T11:55:26.588678Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:26.588693Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:26.588712Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:26.588726Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:26.588748Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:26.588764Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:26.589540Z [debug    ] Saved local screenshot: assets/screenshot/2026-02-15/com.google.android.apps.nexuslauncher/4bf5f513/20260215_172526__com.openai.chatgptcom.openai.chatgpt.MainActivity.png [fathom.infrastructure.storage.local]
+2026-02-15T11:55:26.655092Z [debug    ] System Instruction:
+You are a Mobile UI expert agent. Ground all interactions using normalized coordinates (0-1000).
+
+
+TOOL SELECTION & VALIDATION:
+- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, w... [fathom.tools.vision.gemini]
+2026-02-15T11:55:26.655179Z [debug    ] User Payload (Text Parts):
+['Goal: Ask GPT to do deep research about opencrawler(moltybot)', 'Recent turns (global): === CURRENT STATE ===\nCurrent Screen: com.openai.chatgpt/com.openai.chatgpt.MainActivity\n\n=== RECENT HISTORY (Last 5) ===\n1. [OK] TAP:ChatGPT app icon\n2. [OK] WAIT:ChatGPT splash screen\n=== END STATE ===\nTAP:ChatGPT app icon:✓ | WAIT:ChatGPT splash screen:✓', "Element Manifest: [1] EditText\n[2] TextView | text: 'What can I help with?'\n[3] View\n[4] View\n[5] View\n[6] View\n[7] Button\n[8] Button\n[9] Button\n[10] Button\n[11] View\n[12] Button\n[13] TextView | text: 'Ask ChatGPT'\n[14] ImageView | description: 'Menu'\n[15] View\n[16] View\n[17] View\n[18] View\n[19] TextView | text: 'Analyze images'\n[20] TextView | text: 'Summarize text'\n[21] Button\n[22] Button\n[23] View\n[24] TextView | text: 'Analyze data'\n[25] Button\n[26] TextView | text: 'Make a plan'\n[27] TextView | text: 'ChatGPT'\n[28] View\n[29] Button\n[30] TextView | text: 'Log in'\n[31] View | description: 'Attachment'\n[32] View | description: 'Dictation'\n[33] View | description: 'Send Message'"] [fathom.tools.vision.gemini]
+⠏ Agent working...
+2026-02-15T11:55:26.924341Z [debug    ] Uploaded image to GCS: gs://drizz-dev-crawler-artifacts/2026-02-15/com.google.android.apps.nexuslauncher/4bf
+⠸ Agent working...
+2026-02-15T11:55:33.621723Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:33.621990Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+╭─────────────────────────────────────────── execute_ui 7.03s ───────────────────────────────────────────╮
+│ Reasoning: I'm typing your research request about 'opencrawler(moltybot)' into ChatGPT and sending it. │
+│   Actions: tap, type, tap                                                                              │
+╰─────────────────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+⠦ Agent working...
+⚡ ADB ❯ input tap 485 1408 97ms
+2026-02-15T11:55:33.794634Z [debug    ] [H7] Recorded executed action | step=3 action=Tap on Ask ChatGPT input field type=tap success=True [fathom.agent.state]
+2026-02-15T11:55:33.796672Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:33.796730Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:33.796774Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:33.796795Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 3 Audit ─╮
+│ Screen Status:      🆕 48e479057291 (com.openai.chatgpt/com.openai.chatgpt.MainActivity)                                                         │
+│ Grounding:                                                                2.48s [2482ms]                                                         │
+│ Hierarchy:                                                                  0.07s [74ms]                                                         │
+│ Memory Retrieval:                                                            0.00s [4ms]                                                         │
+│ LLM Core Analysis:                                                        6.96s [6962ms]                                                         │
+│ Tokens:                          2,889 (prompt: 2,708 | completion: 181 | cached: 1,256)                                                         │
+│ Total Analysis:                                                           7.03s [7034ms]                                                         │
+│ ADB Execution:                                                              0.10s [97ms]                                                         │
+│ Overhead:                                                                   0.07s [73ms]                                                         │
+│ Total Step Time:                                                          9.81s [9810ms]                                                         │
+│ Cache:                                                               hits: 2 | misses: 1                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭───────────────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                                  │
+│ Target:     Ask ChatGPT input field                                                                                                              │
+│ Rationale:  Tap on the 'Ask ChatGPT' input field to focus it for typing.                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+2026-02-15T11:55:33.798722Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+⠹ Agent working...
+⠇ Agent working...
+2026-02-15T11:55:36.403209Z [debug    ] [H2] Screen update classification | is_new=False seen_count=3 current=com.openai.chatgpt/com.openai.chatgpt.MainActivity hash=2e7b079b prev=com.openai.chatgpt/com.openai.chatgpt.MainActivity [fathom.agent.state]
+2026-02-15T11:55:36.403322Z [debug    ] Returning to known screen: 48e47905 [fathom.agent.state]
+2026-02-15T11:55:36.403373Z [debug    ] LoopDetector.record: 48e47905 (com.openai.chatgpt/com.openai.chatgpt.MainActivity) | deque_size=2 [fathom.schemas.state]
+2026-02-15T11:55:36.403397Z [debug    ] [H1] Recorded screen in loop detector | activity=com.openai.chatgpt/com.openai.chatgpt.MainActivity hash_prefix=48e47905 recent_count=2 threshold=3 [fathom.schemas.state]
+2026-02-15T11:55:36.403436Z [info     ] Hierarchy processing started. XML Size: 19.42 KB [fathom.agent.strategies.intent]
+2026-02-15T11:55:36.403490Z [info     ] Processing hierarchy. XML Size: 19.42 KB, Action: tap [fathom.services.hierarchy]
+2026-02-15T11:55:36.403852Z [debug    ] Saved raw screenshot to: assets/screenshot/20260215_172536.png [fathom.services.hierarchy]
+2026-02-15T11:55:36.404022Z [debug    ] Saved raw XML to: assets/xmls/20260215_172536.xml [fathom.services.hierarchy]
+2026-02-15T11:55:36.404391Z [info     ] BoundsGenerator.create_element called with image_path: assets/screenshot/20260215_172536.png, action: tap [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.404470Z [info     ] Using parser: AndroidParser    [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.404621Z [info     ] Screenshot opened successfully: 1080x2340 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.404661Z [info     ] Scale factor calculated: 1.0   [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.404691Z [info     ] Screen size: 1080x2340         [fathom.tools.vision.processing.parsers.android]
+2026-02-15T11:55:36.405017Z [info     ] Found 61 valid elements. Skips: {'visibility': 0, 'off_screen': 0, 'meaningless': 0, 'invalid_size': 0, 'non_interactive': 0} [fathom.tools.vision.processing.parsers.android]
+2026-02-15T11:55:36.405043Z [info     ] Raw elements found: 61         [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.405063Z [info     ] Applying pre-filter for action: 'tap' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.405103Z [info     ] After pre-filter for action: tap: 59 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.405870Z [info     ] After deduplication filter: 33 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.405892Z [info     ] Final element count after all filtering: 33 [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.405929Z [debug    ] Element Label 1: android.widget.EditText - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.405956Z [debug    ] Element Label 2: android.widget.TextView - text='What can I help with?' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.405979Z [debug    ] Element Label 3: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406001Z [debug    ] Element Label 4: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406022Z [debug    ] Element Label 5: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406044Z [debug    ] Element Label 6: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406065Z [debug    ] Element Label 7: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406086Z [debug    ] Element Label 8: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406108Z [debug    ] Element Label 9: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406129Z [debug    ] Element Label 10: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406148Z [debug    ] Element Label 11: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406168Z [debug    ] Element Label 12: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406189Z [debug    ] Element Label 13: android.widget.TextView - text='Ask ChatGPT' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406211Z [debug    ] Element Label 14: android.widget.ImageView - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406232Z [debug    ] Element Label 15: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406266Z [debug    ] Element Label 16: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406288Z [debug    ] Element Label 17: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406308Z [debug    ] Element Label 18: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406327Z [debug    ] Element Label 19: android.widget.TextView - text='Analyze images' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406348Z [debug    ] Element Label 20: android.widget.TextView - text='Summarize text' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406368Z [debug    ] Element Label 21: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406389Z [debug    ] Element Label 22: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406409Z [debug    ] Element Label 23: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406429Z [debug    ] Element Label 24: android.widget.TextView - text='Analyze data' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406449Z [debug    ] Element Label 25: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406469Z [debug    ] Element Label 26: android.widget.TextView - text='Make a plan' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406490Z [debug    ] Element Label 27: android.widget.TextView - text='ChatGPT' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406510Z [debug    ] Element Label 28: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406531Z [debug    ] Element Label 29: android.widget.Button - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406552Z [debug    ] Element Label 30: android.widget.TextView - text='Log in' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406572Z [debug    ] Element Label 31: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406593Z [debug    ] Element Label 32: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406613Z [debug    ] Element Label 33: android.view.View - text='' [fathom.tools.vision.processing.drawer]
+2026-02-15T11:55:36.406630Z [info     ] Successfully generated 33 labeled elements. [fathom.tools.vision.processing.drawer]
+⠏ Agent working...
+2026-02-15T11:55:36.475011Z [info     ] Saved annotated image: assets/annotated/20260215_172536.png [fathom.tools.vision.processing.annotator]
+2026-02-15T11:55:36.475294Z [info     ] Saved annotated screenshot to: assets/annotated/20260215_172536.png [fathom.services.hierarchy]
+2026-02-15T11:55:36.475427Z [info     ] Hierarchy processing complete in 0.07s [fathom.services.hierarchy]
+2026-02-15T11:55:36.475487Z [info     ] Successfully annotated screen hierarchy in 0.07s [fathom.agent.strategies.intent]
+2026-02-15T11:55:36.476961Z [debug    ] [H4] Evaluating stuck status | screen_count=2 threshold=3 recent_actions=2 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:36.477006Z [debug    ] LoopDetector.is_stuck: False (only 2 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:36.477040Z [debug    ] [H4] Evaluating stuck status | screen_count=2 threshold=3 recent_actions=2 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:36.477063Z [debug    ] LoopDetector.is_stuck: False (only 2 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:36.477087Z [debug    ] [H5] Entering planner plan_step | step_count=3 is_complete=False is_stuck=False can_continue=True [fathom.agent.planner]
+2026-02-15T11:55:36.477108Z [debug    ] [H4] Evaluating stuck status | screen_count=2 threshold=3 recent_actions=2 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:36.477124Z [debug    ] LoopDetector.is_stuck: False (only 2 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:36.477143Z [debug    ] [H4] Evaluating stuck status | screen_count=2 threshold=3 recent_actions=2 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:36.477159Z [debug    ] LoopDetector.is_stuck: False (only 2 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:36.477179Z [debug    ] [H4] Evaluating stuck status | screen_count=2 threshold=3 recent_actions=2 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:36.477194Z [debug    ] LoopDetector.is_stuck: False (only 2 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:36.478345Z [debug    ] Saved local screenshot: assets/screenshot/2026-02-15/com.google.android.apps.nexuslauncher/4bf5f513/20260215
+⠋ Agent working...
+2026-02-15T11:55:36.520086Z [debug    ] System Instruction:
+You are a Mobile UI expert agent. Ground all interactions using normalized coordinates (0-1000).
+
+
+TOOL SELECTION & VALIDATION:
+- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, w... [fathom.tools.vision.gemini]
+2026-02-15T11:55:36.520165Z [debug    ] User Payload (Text Parts):
+['Goal: Ask GPT to do deep research about opencrawler(moltybot)', 'Recent turns (global): === CURRENT STATE ===\nCurrent Screen: com.openai.chatgpt/com.openai.chatgpt.MainActivity\n\n=== RECENT HISTORY (Last 5) ===\n1. [OK] TAP:ChatGPT app icon\n2. [OK] WAIT:ChatGPT splash screen\n3. [OK] TAP:Ask ChatGPT input field\n=== END STATE ===\nTAP:ChatGPT app icon:✓ | WAIT:ChatGPT splash screen:✓ | TAP:Ask ChatGPT input field:✓', "Element Manifest: [1] EditText\n[2] TextView | text: 'What can I help with?'\n[3] View\n[4] View\n[5] View\n[6] View\n[7] Button\n[8] Button\n[9] Button\n[10] Button\n[11] View\n[12] Button\n[13] TextView | text: 'Ask ChatGPT'\n[14] ImageView | description: 'Menu'\n[15] View\n[16] View\n[17] View\n[18] View\n[19] TextView | text: 'Analyze images'\n[20] TextView | text: 'Summarize text'\n[21] Button\n[22] Button\n[23] View\n[24] TextView | text: 'Analyze data'\n[25] Button\n[26] TextView | text: 'Make a plan'\n[27] TextView | text: 'ChatGPT'\n[28] View\n[29] Button\n[30] TextView | text: 'Log in'\n[31] View | description: 'Attachment'\n[32] View | description: 'Dictation'\n[33] View | description: 'Send Message'"] [fathom.tools.vision.gemini]
+⠸ Agent working...
+2026-02-15T11:55:36.823162Z [debug    ] Uploaded image to GCS: gs://drizz-dev-crawler-artifacts/2026-02-15/com.google.android.apps.nexuslauncher/4bf
+⠙ Agent working...
+2026-02-15T11:55:41.425151Z [debug    ] [H4] Evaluating stuck status | screen_count=2 threshold=3 recent_actions=2 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:41.425223Z [debug    ] LoopDetector.is_stuck: False (only 2 screens, need 3) [fathom.schemas.state]
+╭────────────────────────────────────────── execute_ui 4.95s ──────────────────────────────────────────╮
+│ Reasoning: I'm typing your research request about opencrawler(moltybot) into ChatGPT and sending it. │
+│   Actions: type, tap                                                                                 │
+╰───────────────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+⠹ Agent working...
+⠸ Agent working...
+⚡ ADB ❯ input text "Do%sdeep%sresearch%sabout%sopencrawler(moltybot)... 1645ms
+2026-02-15T11:55:43.200510Z [debug    ] [H7] Recorded executed action | step=4 action=Type 'Do deep research about opencrawler(moltybot)' in Ask ChatGPT input field type=type success=True [fathom.agent.state]
+2026-02-15T11:55:43.208257Z [debug    ] [H4] Evaluating stuck status | screen_count=2 threshold=3 recent_actions=2 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:43.208394Z [debug    ] LoopDetector.is_stuck: False (only 2 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:43.208543Z [debug    ] [H4] Evaluating stuck status | screen_count=2 threshold=3 recent_actions=2 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:43.208603Z [debug    ] LoopDetector.is_stuck: False (only 2 screens, need 3) [fathom.schemas.state]
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 4 Audit ─╮
+│ Screen Status:      🔄 48e479057291 (com.openai.chatgpt/com.openai.chatgpt.MainActivity)                                                         │
+│ Grounding:                                                                2.57s [2566ms]                                                         │
+│ Hierarchy:                                                                  0.07s [72ms]                                                         │
+│ Memory Retrieval:                                                            0.00s [4ms]                                                         │
+│ LLM Core Analysis:                                                        4.90s [4903ms]                                                         │
+│ Tokens:                          2,863 (prompt: 2,729 | completion: 134 | cached: 1,256)                                                         │
+│ Total Analysis:                                                           4.95s [4948ms]                                                         │
+│ ADB Execution:                                                            1.65s [1645ms]                                                         │
+│ Overhead:                                                                  0.13s [128ms]                                                         │
+│ Total Step Time:                                                          9.41s [9410ms]                                                         │
+│ Cache:                                                               hits: 3 | misses: 1                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭───────────────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────────────╮
+│ Action:     type                                                                                                                                 │
+│ Target:     Ask ChatGPT input field                                                                                                              │
+│ Rationale:  Type the research query into the ChatGPT input field.                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+2026-02-15T11:55:43.213064Z [debug    ] [H4] Evaluating stuck status | screen_count=2 threshold=3 recent_actions=2 can_recover=True [fathom.schemas.state]
+
+Stopping gracefully... Please wait.
+⠋ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 1292ms
+⠼ Agent working...
+2026-02-15T11:55:45.716048Z [debug    ] [H2] Screen update classification | is_new=True seen_count=3 current=com.openai.chatgpt/com.openai.chatgpt.MainActivity hash=2e7b079b prev=com.openai.chatgpt/com.openai.chatgpt.MainActivity [fathom.agent.state]
+2026-02-15T11:55:45.716163Z [debug    ] New screen detected: 48a57b05 (com.openai.chatgpt/com.openai.chatgpt.MainActivity) [fathom.agent.state]
+2026-02-15T11:55:45.716230Z [info     ] LoopDetector.reset: cleared 2 screens [fathom.schemas.state]
+2026-02-15T11:55:45.716260Z [debug    ] LoopDetector.record: 48a57b05 (com.openai.chatgpt/com.openai.chatgpt.MainActivity) | deque_size=1 [fathom.schemas.state]
+2026-02-15T11:55:45.716283Z [debug    ] [H1] Recorded screen in loop detector | activity=com.openai.chatgpt/com.openai.chatgpt.MainActivity hash_prefix=48a57b05 recent_count=1 threshold=3 [fathom.schemas.state]
+2026-02-15T11:55:45.716311Z [debug    ] XML Grounding disabled or XML missing. [fathom.agent.strategies.intent]
+2026-02-15T11:55:45.718502Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:45.718549Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:45.718582Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:45.718605Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:45.718639Z [debug    ] [H5] Entering planner plan_step | step_count=4 is_complete=False is_stuck=False can_continue=True [fathom.agent.planner]
+2026-02-15T11:55:45.718665Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:45.718684Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:45.718708Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:45.718727Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:45.718752Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:45.718770Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:45.720230Z [debug    ] Saved local screenshot: assets/screenshot/2026-02-15/com.google.android.apps.nexuslauncher/4bf5f513/20260215
+⠴ Agent working...
+2026-02-15T11:55:45.763102Z [debug    ] System Instruction:
+You are a Mobile UI expert agent. Ground all interactions using normalized coordinates (0-1000).
+
+
+TOOL SELECTION & VALIDATION:
+- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, w... [fathom.tools.vision.gemini]
+2026-02-15T11:55:45.763182Z [debug    ] User Payload (Text Parts):
+['Goal: Ask GPT to do deep research about opencrawler(moltybot)', 'Recent turns (global): === CURRENT STATE ===\nCurrent Screen: com.openai.chatgpt/com.openai.chatgpt.MainActivity\n\n=== RECENT HISTORY (Last 5) ===\n1. [OK] TAP:ChatGPT app icon\n2. [OK] WAIT:ChatGPT splash screen\n3. [OK] TAP:Ask ChatGPT input field\n4. [OK] TYPE:Ask ChatGPT input field\n=== END STATE ===\nTAP:ChatGPT app icon:✓ | WAIT:ChatGPT splash screen:✓ | TAP:Ask ChatGPT input field:✓ | TYPE:Ask ChatGPT input field:✓'] [fathom.tools.vision.gemini]
+⠇ Agent working...
+2026-02-15T11:55:46.069299Z [debug    ] Uploaded image to GCS: gs://drizz-dev-crawler-artifacts/2026-02-15/com.google.android.apps.nexuslauncher/4bf
+⠙ Agent working...
+
+2026-02-15T11:55:52.581313Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:52.581695Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+╭──────────────────────────────────────── execute_ui 6.86s ────────────────────────────────────────╮
+│ Reasoning: I've typed the research query, now I'm tapping the send button to start the research. │
+│   Actions: tap                                                                                   │
+╰───────────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+⠸ Agent working...
+⚡ ADB ❯ input tap 985 1415 76ms
+2026-02-15T11:55:52.739349Z [debug    ] [H7] Recorded executed action | step=5 action=Tap on send button type=tap success=True [fathom.agent.state]
+2026-02-15T11:55:52.745063Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:52.745133Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+2026-02-15T11:55:52.745191Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:52.745303Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 5 Audit ─╮
+│ Screen Status:      🆕 48a57b057a91 (com.openai.chatgpt/com.openai.chatgpt.MainActivity)                                                         │
+│ Grounding:                                                                2.46s [2461ms]                                                         │
+│ Memory Retrieval:                                                            0.00s [4ms]                                                         │
+│ LLM Core Analysis:                                                        6.81s [6810ms]                                                         │
+│ Tokens:                           2,551 (prompt: 2,473 | completion: 78 | cached: 1,256)                                                         │
+│ Total Analysis:                                                           6.86s [6864ms]                                                         │
+│ ADB Execution:                                                              0.08s [76ms]                                                         │
+│ Overhead:                                                                   0.08s [79ms]                                                         │
+│ Total Step Time:                                                          9.53s [9532ms]                                                         │
+│ Cache:                                                               hits: 4 | misses: 1                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭───────────────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                                  │
+│ Target:     send button                                                                                                                          │
+│ Rationale:  Tap the send button to submit the research query to ChatGPT.                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+2026-02-15T11:55:52.747878Z [debug    ] [H4] Evaluating stuck status | screen_count=1 threshold=3 recent_actions=1 can_recover=True [fathom.schemas.state]
+2026-02-15T11:55:52.747923Z [debug    ] LoopDetector.is_stuck: False (only 1 screens, need 3) [fathom.schemas.state]
+⠙ Agent working...
+2026-02-15T11:55:54.229213Z [info     ] Deleted cache: projects/790754672560/locations/global/cachedContents/6020258338862792704 [fathom.services.ca
+         Execution Summary          
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ Metric      ┃ Value              ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ Status      │ Failed             │
+│ Reason      │ Workflow cancelled │
+│ Steps Taken │ 5                  │
+└─────────────┴────────────────────┘
+                      Timing Audit                      
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
+┃ Operation            ┃ Total Time (s) ┃ Avg/Step (s) ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
+│ Screenshot           │         12.27s │        2.45s │
+│ Hierarchy Dump       │          0.00s │        0.00s │
+│ Hierarchy Processing │          0.32s │        0.08s │
+│ Action               │          3.33s │        0.67s │
+│ Analysis             │         33.57s │        6.71s │
+└──────────────────────┴────────────────┴──────────────┘
+   Resource Usage (Tokens)    
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Metric            ┃  Value ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ Prompt Tokens     │ 13,140 │
+│ Completion Tokens │    531 │
+│ Cached Tokens     │  6,280 │
+│ Total Tokens      │ 13,671 │
+└───────────────────┴────────┘
+Failure Reason: Workflow cancelled
+(Fathom-ENV) ➜  fathom git:(feature/reArch) ✗ 
+(Fathom-ENV) ➜  fathom git:(feature/reArch) ✗ 

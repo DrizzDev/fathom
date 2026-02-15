@@ -1,0 +1,266 @@
+"""ADB device adapter - wraps existing ADB tool logic."""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from logging import getLogger
+from typing import List, Optional, Tuple
+
+from rich.console import Console
+
+from fathom.interfaces.device import DevicePort
+from fathom.schemas.configuration import ADBConfig
+from fathom.schemas.results import ActionResult
+
+console = Console()
+logger = getLogger(__name__)
+
+
+class ADBDevice(DevicePort):
+    """
+    ADB adapter for Android devices.
+    
+    This adapter wraps the existing ADB tool logic without modifications.
+    All methods are copied from tools/device/adb.py to preserve exact behavior.
+    """
+
+    def __init__(self, *, serial: Optional[str] = None, configuration: Optional[ADBConfig] = None) -> None:
+        """Initialize ADB device adapter."""
+        if configuration:
+            self.__configuration = configuration
+        else:
+            self.__configuration = ADBConfig(device_serial=serial) if serial else ADBConfig()
+        self.__cached_size: Optional[Tuple[int, int]] = None
+
+    @property
+    def configuration(self) -> ADBConfig:
+        """Returns the tool configuration."""
+        return self.__configuration
+
+    async def tap(self, *, x: int, y: int) -> ActionResult:
+        """Execute tap at coordinates."""
+        return await self.__shell(command=f"input tap {x} {y}")
+
+    async def type_text(self, *, text: str) -> ActionResult:
+        """Type text on device."""
+        escaped_text = self.__escape(text=text)
+        return await self.__shell(command=f'input text "{escaped_text}"')
+
+    async def swipe(
+        self, *, x1: int, y1: int, x2: int, y2: int, duration: int = 300
+    ) -> ActionResult:
+        """Execute swipe gesture."""
+        time_limit = duration or self.__configuration.swipe_duration
+        return await self.__shell(command=f"input swipe {x1} {y1} {x2} {y2} {time_limit}")
+
+    async def back(self) -> ActionResult:
+        """Press back button."""
+        return await self.__keyevent(keycode=4)
+
+    async def home(self) -> ActionResult:
+        """Press home button."""
+        return await self.__keyevent(keycode=3)
+
+    async def get_screen_size(self) -> Tuple[int, int]:
+        """Get device screen dimensions."""
+        if self.__cached_size:
+            return self.__cached_size
+
+        result = await self.__shell(command="wm size", capture_output=True)
+        if not result.success or not result.output:
+            return (1080, 1920)
+
+        if match := re.search(r"(\d+)x(\d+)", result.output):
+            width = int(match.group(1))
+            height = int(match.group(2))
+            self.__cached_size = (width, height)
+            return width, height
+
+        return (1080, 1920)
+
+    async def capture_screen(self) -> bytes:
+        """Capture device screenshot."""
+        arguments = self.__build_arguments(parts=["exec-out", "screencap", "-p"])
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *arguments,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(
+                fut=process.communicate(),
+                timeout=self.__configuration.command_timeout,
+            )
+            return stdout if process.returncode == 0 and stdout else b""
+        except Exception:
+            return b""
+
+    async def get_current_package(self) -> str:
+        """Get current foreground package name."""
+        result = await self.__shell(
+            command="dumpsys activity activities | grep mResumedActivity", capture_output=True
+        )
+
+        if (
+            result.success
+            and result.output
+            and (match := re.search(r"u0\s+([a-zA-Z0-9_.]+)/", result.output))
+        ):
+            return match.group(1)
+
+        return "unknown_app"
+
+    async def wait_for_device(self, *, timeout: float = 30.0) -> bool:
+        """Wait for device availability."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *self.__build_arguments(parts=["wait-for-device"]),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(fut=process.wait(), timeout=timeout)
+            return process.returncode == 0
+        except Exception:
+            return False
+
+    # Additional methods from original ADBDeviceTool
+    async def screenshot(self) -> Optional[bytes]:
+        """Capture device screenshot (legacy method)."""
+        result = await self.capture_screen()
+        return result if result else None
+
+    async def dump_hierarchy(self) -> Optional[str]:
+        """
+        Dump UI hierarchy to XML string efficiently.
+        
+        Copied from original ADBDeviceTool without modifications.
+        """
+        path = "/data/local/tmp/window_dump.xml"
+
+        # 1. Dump to file on device (reliable)
+        dump_command = f"uiautomator dump --compressed {path}"
+        dump_result = await self.__shell(command=dump_command)
+
+        if not dump_result.success:
+            logger.warning("uiautomator dump failed")
+            return None
+
+        # 2. Stream file content back (fast)
+        cat_arguments = self.__build_arguments(parts=["exec-out", "cat", path])
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cat_arguments,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(fut=process.communicate(), timeout=5.0)
+            return stdout.decode("utf-8", errors="ignore") if stdout else None
+        except Exception as exception:
+            logger.error(f"Failed to retrieve hierarchy XML: {exception}")
+            return None
+
+    async def execute(self, request: dict[str, object]) -> ActionResult:
+        """
+        Execute generic action from request dictionary.
+        
+        Copied from original ADBDeviceTool without modifications.
+        """
+        name = str(request.get("action", "") or request.get("action_type", ""))
+
+        if name == "tap":
+            return await self.tap(x=int(str(request.get("x", 0))), y=int(str(request.get("y", 0))))
+
+        if name == "type":
+            return await self.type_text(text=str(request.get("text", "")))
+
+        if name == "swipe":
+            x1 = int(str(request.get("x1", 0)))
+            y1 = int(str(request.get("y1", 0)))
+            x2 = int(str(request.get("x2", 0)))
+            y2 = int(str(request.get("y2", 0)))
+            duration_val = request.get("duration")
+            return await self.swipe(
+                x1=x1, y1=y1, x2=x2, y2=y2, duration=int(str(duration_val)) if duration_val else 300
+            )
+
+        if name == "back":
+            return await self.back()
+
+        if name == "home":
+            return await self.home()
+
+        if name == "wait":
+            duration_val = int(str(request.get("duration", 1000)))
+            await asyncio.sleep(duration_val / 1000)
+            return ActionResult(success=True, duration=duration_val)
+
+        return (
+            ActionResult(success=True, duration=0)
+            if name == "complete"
+            else ActionResult(success=False, error=f"Unknown: {name}", duration=0)
+        )
+
+    async def cleanup(self) -> None:
+        """Cleanup logic."""
+        pass
+
+    # Private methods - copied from original without modifications
+    async def __shell(self, command: str, *, capture_output: bool = False) -> ActionResult:
+        """Execute ADB shell command with terminal logging."""
+        arguments = self.__build_arguments(parts=["shell", command])
+        start_time = asyncio.get_event_loop().time()
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *arguments,
+                stderr=asyncio.subprocess.PIPE,
+                stdout=(asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL),
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                fut=process.communicate(),
+                timeout=self.__configuration.command_timeout,
+            )
+
+            duration = int((asyncio.get_event_loop().time() - start_time) * 1000)
+
+            # Rich formatting for command logs
+            color_theme = "green" if process.returncode == 0 else "red"
+            console.print(
+                f"[bold blue]⚡ ADB[/bold blue] [white]❯[/white] "
+                f"[{color_theme}]{command[:60]}{'...' if len(command) > 60 else ''}[/{color_theme}] "
+                f"[bold yellow]{duration}ms[/bold yellow]"
+            )
+
+            if process.returncode != 0:
+                error_message = stderr.decode().strip() if stderr else "Failed"
+                return ActionResult(success=False, error=error_message, duration=duration)
+
+            return ActionResult(
+                success=True,
+                output=stdout.decode().strip() if stdout else None,
+                duration=duration,
+            )
+
+        except Exception as exception:
+            return ActionResult(success=False, error=str(exception), duration=0)
+
+    async def __keyevent(self, keycode: int) -> ActionResult:
+        """Execute a key event."""
+        return await self.__shell(command=f"input keyevent {keycode}")
+
+    def __build_arguments(self, parts: List[str]) -> List[str]:
+        """Builds full command list."""
+        cmd = [self.__configuration.adb_path]
+
+        if self.__configuration.device_serial:
+            cmd.extend(["-s", self.__configuration.device_serial])
+
+        cmd.extend(parts)
+        return cmd
+
+    def __escape(self, text: str) -> str:
+        """Escapes text for ADB."""
+        return text.replace(r"\\", r"\\\\").replace(r'"', r"\"").replace(r" ", r"%s")
