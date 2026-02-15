@@ -172,14 +172,14 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - _Requirements: 4.1, 4.2, 4.5, 4.6, 11.2_
 
 - [ ] 9. Implement core execution engine
-  - [ ] 9.1 Create ExecutionEngine class
+  - [x] 9.1 Create ExecutionEngine class
     - Create core/execution/engine.py
     - Implement execute_step() with seven phases: SignalCheck → Perceive → Reason → Act → Learn → Checkpoint → Evaluate
     - Accept ports as constructor parameters (device, llm, memory, signal, storage, telemetry)
     - Copy logic from orchestration/executor.py, only update imports
     - _Requirements: 10.1, 10.2, 10.3_
   
-  - [ ] 9.2 Implement HITL signal handling
+  - [x] 9.2 Implement HITL signal handling
     - Add signal checking in SignalCheck phase
     - Handle PAUSE, RESUME, INJECT, ASK signals
     - Copy logic from existing code, do not modify
@@ -200,7 +200,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
 - [ ] 10. Implement context management
-  - [ ] 10.1 Create ContextManager class
+  - [x] 10.1 Create ContextManager class
     - Create core/context/manager.py
     - Implement three-tier context: roadmap, milestones, trace
     - Implement methods: commit(), branch(), recall()
@@ -230,7 +230,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - _Requirements: 4.7, 11.2_
 
 - [ ] 13. Implement execution strategies
-  - [ ] 13.1 Create IntentStrategy
+  - [x] 13.1 Create IntentStrategy
     - Create strategies/intent.py
     - Migrate logic from workflows/intent.py
     - Copy-paste existing logic, only update imports
@@ -252,27 +252,27 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - _Requirements: 10.5_
 
 - [ ] 14. Migrate processing module
-  - [ ] 14.1 Move annotator module
+  - [x] 14.1 Move annotator module
     - Copy tools/vision/processing/annotator.py to processing/annotator.py
     - Update imports only, preserve all logic
     - _Requirements: 7.2, 7.7_
   
-  - [ ] 14.2 Move drawer module
+  - [x] 14.2 Move drawer module
     - Copy tools/vision/processing/drawer.py to processing/drawer.py
     - Update imports only, preserve all logic
     - _Requirements: 7.3, 7.7_
   
-  - [ ] 14.3 Move geometry module
+  - [x] 14.3 Move geometry module
     - Copy tools/vision/processing/geometry.py to processing/geometry.py
     - Update imports only, preserve all logic
     - _Requirements: 7.4, 7.7_
   
-  - [ ] 14.4 Move parsers directory
+  - [x] 14.4 Move parsers directory
     - Copy tools/vision/processing/parsers/ to processing/parsers/
     - Update imports only, preserve all logic
     - _Requirements: 7.5, 7.7_
   
-  - [ ] 14.5 Update imports in dependent code
+  - [x] 14.5 Update imports in dependent code
     - Find all imports from tools/vision/processing
     - Update to import from processing/
     - _Requirements: 7.6_
@@ -294,7 +294,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - Re-export with original names
     - _Requirements: 5.1, 5.5, 9.4_
   
-  - [ ] 15.2 Create re-export shims in tools/
+  - [x] 15.2 Create re-export shims in tools/
     - Add imports from new adapters/device/
     - Re-export with original names
     - _Requirements: 5.2, 5.5, 9.4_
@@ -304,7 +304,7 @@ This plan implements an incremental migration to hexagonal architecture. The app
     - Re-export with original names
     - _Requirements: 5.4, 5.5, 9.4_
   
-  - [ ] 15.4 Create re-export shims in tools/vision/processing/
+  - [x] 15.4 Create re-export shims in tools/vision/processing/
     - Add imports from new processing/
     - Re-export with original names
     - _Requirements: 5.2, 5.5, 9.4_

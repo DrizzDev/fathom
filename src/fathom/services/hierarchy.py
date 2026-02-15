@@ -10,8 +10,8 @@ from fathom.constants import ActionType
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
 from fathom.tools.device import DeviceTool
-from fathom.tools.vision.processing.annotator import ImageAnnotator
-from fathom.tools.vision.processing.drawer import BoundsGenerator
+from fathom.processing.annotator import ImageAnnotator
+from fathom.processing.drawer import BoundsGenerator
 
 logger = getLogger(__name__)
 

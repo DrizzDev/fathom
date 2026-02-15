@@ -1,25 +1,13 @@
-import xml.etree.ElementTree as ET  # nosec
-from typing import List, Optional, Type
+"""
+Backward compatibility shim for parsers.factory module.
 
-from fathom.tools.vision.processing.parsers.android import AndroidParser
-from fathom.tools.vision.processing.parsers.base import PlatformParser
+This module re-exports from the new processing/parsers/ location to maintain
+backward compatibility during the hexagonal architecture migration.
+"""
 
+from __future__ import annotations
 
-class PlatformParserFactory:
-    """
-    Factory class for creating platform parsers.
-    """
+# Re-export from new location
+from fathom.processing.parsers.factory import PlatformParserFactory
 
-    __parsers: List[Type[PlatformParser]] = [AndroidParser]
-
-    @classmethod
-    def get_parser(cls, root: ET.Element) -> Optional[PlatformParser]:
-        """
-        Get a parser for the platform.
-        """
-
-        for parser in cls.__parsers:
-            if parser.is_platform_match(root):
-                return parser()
-
-        return AndroidParser()
+__all__ = ["PlatformParserFactory"]

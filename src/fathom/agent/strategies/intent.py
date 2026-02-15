@@ -28,7 +28,7 @@ from fathom.services.resolution import ReferenceResolutionService
 from fathom.services.ux import UXService
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
-from fathom.tools.vision.processing.annotator import ImageAnnotator
+from fathom.processing.annotator import ImageAnnotator
 from fathom.utils.coordinates import CoordinateConverter
 
 console = Console()
