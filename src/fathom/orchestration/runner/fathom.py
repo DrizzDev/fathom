@@ -1,7 +1,22 @@
+"""
+LEGACY CODE - DEPRECATED
+
+This module contains the old FathomRunner implementation using direct tool wiring.
+It is preserved for backward compatibility via the 'fathom-old' command.
+
+NEW CODE: Use the hexagonal architecture instead:
+- Runner: src/fathom/runtime/runner.py
+- Builder: src/fathom/runtime/builder.py
+- CLI: src/fathom/cli_new.py (via 'fathom' command)
+
+This code will be removed in a future major version.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import uuid
+import warnings
 from logging import getLogger
 from typing import Any, Optional
 
@@ -28,11 +43,27 @@ logger = getLogger(name=__name__)
 
 class FathomRunner:
     """
+    DEPRECATED: Old FathomRunner using direct tool wiring.
+    
+    Use the new hexagonal architecture instead:
+    - from fathom.runtime.runner import FathomRunner (new)
+    - from fathom.runtime.builder import FathomBuilder
+    
+    This class is preserved for backward compatibility and will be removed
+    in a future major version.
     Main entry point for executing Fathom workflows.
     Orchestrates the wiring of infrastructure, tools, and strategies.
     """
 
     def __init__(self, settings: FathomSettings) -> None:
+        warnings.warn(
+            "FathomRunner from orchestration.runner is deprecated. "
+            "Use fathom.runtime.runner.FathomRunner with hexagonal architecture instead. "
+            "This class will be removed in a future major version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        
         self.__settings = settings
 
         self.__memory_provider: Optional[IMemoryProvider] = None

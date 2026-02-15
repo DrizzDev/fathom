@@ -4,6 +4,7 @@ Intent-based execution strategy using hexagonal architecture.
 Migrated from agent/strategies/intent.py with ports instead of tools.
 """
 
+
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +21,7 @@ from fathom.agent.planner import StepPlanner
 from fathom.agent.reasoner import Reasoner
 from fathom.agent.state import AgentState
 from fathom.constants import ActionType
-from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.constants.execution import VISUAL_HASH_LENGTH, SignalType
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import StrategyError
 from fathom.core.execution.engine import ExecutionEngine
@@ -28,6 +29,7 @@ from fathom.infrastructure.memory.ledger import Ledger
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.prompts.preprocessor import PromptPreprocessor
@@ -63,6 +65,7 @@ class IntentStrategy:
         memory: MemoryPort,
         storage: StoragePort,
         telemetry: TelemetryPort,
+        signal: SignalPort,
         max_steps: int = 20,
         use_xml: bool = False,
         workflow_id: str = "default",
@@ -78,6 +81,7 @@ class IntentStrategy:
         self.__memory = memory
         self.__storage = storage
         self.__telemetry = telemetry
+        self.__signal = signal
         
         # Configuration
         self.__use_xml = use_xml
@@ -115,6 +119,9 @@ class IntentStrategy:
         # Metrics
         self.__start_time = time.time()
         self.__metrics = ExecutionMetrics()
+        
+        # Cancellation support
+        self.__cancelled = False
 
     async def execute(self, max_steps: int) -> ExecutionResult:
         """
@@ -130,9 +137,15 @@ class IntentStrategy:
         
         try:
             # Main execution loop
-            while self.__state.can_continue and not self.__state.is_complete:
+            while self.__state.can_continue and not self.__state.is_complete and not self.__cancelled:
                 if self.__state.step_count >= max_steps:
                     break
+                
+                # Check for manual pause signal
+                signal = await self.__signal.check_signal()
+                if signal == SignalType.ASK.value:
+                    # User requested pause - wait for resume
+                    await self.__signal.wait_for_resume()
                 
                 # Execute one step
                 step_result = await self.__execute_step()
@@ -145,7 +158,9 @@ class IntentStrategy:
                     success = True
                     break
             
-            if not success and not error:
+            if self.__cancelled:
+                error = "Execution cancelled by user"
+            elif not success and not error:
                 error = "Max steps reached or execution stopped"
                 
         except StrategyError as exception:
@@ -192,6 +207,56 @@ class IntentStrategy:
                 completion=int(plan.metrics.get("completion_tokens", 0)),
                 cached=int(plan.metrics.get("cached_tokens", 0)),
             )
+        
+        # HITL: Check if agent is stuck or uncertain and needs human help
+        if plan.step and plan.step.action.confidence < 0.5:
+            # Agent is uncertain - ask for help
+            self.__telemetry.warning(
+                "Agent uncertain about next action",
+                confidence=plan.step.action.confidence,
+                step=self.__state.step_count
+            )
+            
+            # Request human input through signal port
+            question = (
+                f"The agent is uncertain (confidence: {plan.step.action.confidence:.1%}) about what to do next.\n"
+                f"Current screen: {state.activity}\n"
+                f"Intent: {self.__intent}\n"
+                f"Suggested action: {plan.step.action.to_description() if plan.step else 'None'}\n\n"
+                f"What should the agent do? (Provide guidance or press Enter to continue)"
+            )
+            
+            try:
+                user_guidance = await self.__signal.request_input(prompt=question)
+                
+                if user_guidance.strip():
+                    # Inject user guidance into context for next analysis
+                    await self.__context.inject_user_guidance(guidance=user_guidance)
+                    self.__telemetry.info("User guidance received", guidance=user_guidance)
+                    
+                    # Re-analyze with user guidance
+                    plan, knowledge, analysis_duration = await self.__perform_analysis(
+                        state=state,
+                        screen=screen,
+                        additional_context=f"USER GUIDANCE: {user_guidance}"
+                    )
+            except Exception as exception:
+                self.__telemetry.warning(f"Failed to get user input: {exception}")
+        
+        # HITL: Check for injected context from signal
+        if hasattr(self.__signal, 'has_injected_context') and self.__signal.has_injected_context():
+            injected = self.__signal.get_injected_context()
+            if injected:
+                self.__telemetry.info("Using injected context", context=injected)
+                # Inject into context for LLM reasoning
+                await self.__context.inject_user_guidance(guidance=injected)
+                
+                # Re-analyze with injected context
+                plan, knowledge, analysis_duration = await self.__perform_analysis(
+                    state=state,
+                    screen=screen,
+                    additional_context=f"USER CONTEXT: {injected}"
+                )
         
         # Check if we have a step to execute
         step = plan.step
@@ -313,8 +378,19 @@ class IntentStrategy:
         self,
         state: ScreenState,
         screen: ScreenCapture,
+        additional_context: Optional[str] = None,
     ) -> Tuple[PlanResult, Dict[str, Any], float]:
-        """Retrieve knowledge and plan next step using LLM."""
+        """
+        Retrieve knowledge and plan next step using LLM.
+        
+        Args:
+            state: Current screen state
+            screen: Screen capture
+            additional_context: Optional additional context (e.g., user guidance)
+        
+        Returns:
+            Tuple of (plan, knowledge, duration)
+        """
         start = time.time()
         
         # Get memory entries
@@ -324,6 +400,14 @@ class IntentStrategy:
         
         # Build context
         smart_context = self.__state.get_smart_context()
+        
+        # Add user guidance if available
+        user_guidance = self.__context.get_user_guidance()
+        if user_guidance:
+            guidance_str = "\n\nUSER GUIDANCE:\n" + "\n".join(f"- {g}" for g in user_guidance)
+            smart_context = smart_context + guidance_str
+            # Clear guidance after using it
+            self.__context.clear_user_guidance()
         
         # Prompt preprocessing
         hints = PromptPreprocessor.extract_hints(
@@ -335,6 +419,10 @@ class IntentStrategy:
         full_context = smart_context
         if hint_str:
             full_context = f"{hint_str}\n{smart_context}"
+        
+        # Add additional context if provided (e.g., from HITL)
+        if additional_context:
+            full_context = f"{full_context}\n\n{additional_context}"
         
         # Plan next step using planner (which uses LLM)
         plan = await self.__planner.plan_step(
@@ -366,3 +454,8 @@ class IntentStrategy:
     def get_metrics(self) -> ExecutionMetrics:
         """Get execution metrics."""
         return self.__metrics
+    
+    def cancel(self) -> None:
+        """Cancel the execution."""
+        self.__cancelled = True
+        self.__telemetry.warning("Intent strategy cancellation requested")

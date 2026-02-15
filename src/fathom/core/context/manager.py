@@ -41,6 +41,7 @@ class ContextManager:
         self.__roadmap: str = ""
         self.__milestones: List[str] = []
         self.__trace: List[Dict[str, Any]] = []
+        self.__user_guidance: List[str] = []  # Store user-injected guidance
     
     def set_roadmap(self, intent: str) -> None:
         """
@@ -112,12 +113,13 @@ class ContextManager:
         Get complete context across all tiers.
         
         Returns:
-            Dictionary with roadmap, milestones, and trace
+            Dictionary with roadmap, milestones, trace, and user guidance
         """
         return {
             "roadmap": self.__roadmap,
             "milestones": self.__milestones,
             "trace": self.__trace,
+            "user_guidance": self.__user_guidance,
         }
     
     def get_trace_length(self) -> int:
@@ -137,3 +139,35 @@ class ContextManager:
             Number of milestones
         """
         return len(self.__milestones)
+    
+    async def inject_user_guidance(self, guidance: str) -> None:
+        """
+        Inject user guidance into context.
+        
+        This is called when user provides additional context or clarification
+        during HITL interaction. The guidance is added to the context and will
+        be included in the next LLM reasoning cycle.
+        
+        Args:
+            guidance: User-provided guidance or context
+        """
+        self.__user_guidance.append(guidance)
+        
+        # Also store in memory for persistence
+        await self.__memory.set(
+            key=f"user_guidance_{len(self.__user_guidance)}",
+            value=guidance
+        )
+    
+    def get_user_guidance(self) -> List[str]:
+        """
+        Get all user-injected guidance.
+        
+        Returns:
+            List of user guidance strings
+        """
+        return self.__user_guidance.copy()
+    
+    def clear_user_guidance(self) -> None:
+        """Clear user guidance after it's been used."""
+        self.__user_guidance = []

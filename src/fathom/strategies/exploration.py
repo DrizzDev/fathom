@@ -82,6 +82,9 @@ class ExplorationStrategy:
         # Tracking
         self.__last: Optional[Action] = None
         self.__current: Optional[ScreenState] = None
+        
+        # Cancellation support
+        self.__cancelled = False
     
     @property
     def graph(self) -> ExplorationGraph:
@@ -102,7 +105,7 @@ class ExplorationStrategy:
         
         try:
             # Main exploration loop
-            while await self.__should_continue():
+            while await self.__should_continue() and not self.__cancelled:
                 if self.__steps >= max_steps:
                     break
                 
@@ -113,7 +116,11 @@ class ExplorationStrategy:
                     # Continue even if individual step fails
                     self.__telemetry.warning("Exploration step failed, continuing")
             
-            success = True
+            if self.__cancelled:
+                error = "Exploration cancelled by user"
+                success = False
+            else:
+                success = True
             
         except StrategyError as exception:
             logger.exception(f"Exploration strategy execution failed: {exception}")
@@ -273,3 +280,8 @@ class ExplorationStrategy:
             "elapsed": time.time() - self.__start,
             "context": self.__context.get_full_context(),
         }
+    
+    def cancel(self) -> None:
+        """Cancel the exploration."""
+        self.__cancelled = True
+        self.__telemetry.warning("Exploration strategy cancellation requested")

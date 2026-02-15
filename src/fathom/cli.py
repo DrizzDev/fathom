@@ -1,7 +1,22 @@
+"""
+LEGACY CODE - DEPRECATED
+
+This is the old Fathom CLI using direct tool wiring.
+It is preserved for backward compatibility via the 'fathom-old' command.
+
+NEW CODE: Use the new CLI with hexagonal architecture:
+- CLI: src/fathom/cli_new.py (via 'fathom' command)
+- Runner: src/fathom/runtime/runner.py
+- Builder: src/fathom/runtime/builder.py
+
+This code will be removed in a future major version.
+"""
+
 import argparse
 import asyncio
 import signal
 import sys
+import warnings
 from logging import getLogger
 from typing import Any, Optional
 
@@ -20,13 +35,25 @@ logger = getLogger(__name__)
 
 class FathomCLI:
     """
-    Fathom CLI application
+    DEPRECATED: Old Fathom CLI application.
+    
+    Use the new CLI instead: 'fathom' command (not 'fathom-old')
+    
+    This class is preserved for backward compatibility and will be removed
+    in a future major version.
     """
 
     def __init__(self, settings: FathomSettings) -> None:
         """
         Initialize CLI with settings.
         """
+        warnings.warn(
+            "The 'fathom-old' command is deprecated. "
+            "Use 'fathom' command with the new hexagonal architecture instead. "
+            "This command will be removed in a future major version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         self.settings = settings
         self.runner = FathomRunner(settings)

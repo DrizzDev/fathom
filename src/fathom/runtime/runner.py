@@ -133,6 +133,7 @@ class FathomRunner:
             memory=self._memory,
             storage=self._storage,
             telemetry=self._telemetry,
+            signal=self._signal,
             max_steps=max_steps or self._config.intent_strategy.max_steps,
             use_xml=use_xml if use_xml is not None else self._config.intent_strategy.use_xml,
             workflow_id=workflow_id,
@@ -146,8 +147,9 @@ class FathomRunner:
             # Get progress info
             progress = strategy.get_progress()
             
-            # Collect metrics from strategy
-            metrics = progress.get("metrics", {})
+            # Collect metrics from strategy - use to_report_dict() for proper format
+            strategy_metrics = strategy.get_metrics()
+            metrics = strategy_metrics.to_report_dict() if strategy_metrics else {}
             
             # Get memory summary
             memory_summary = await self._get_memory_summary()
@@ -284,7 +286,11 @@ class FathomRunner:
         """Cancel the currently running workflow."""
         if self._current_strategy:
             self._telemetry.warning("Workflow cancellation requested")
-            # TODO: Implement cancellation mechanism in strategies
+            # Call cancel method on strategy if it has one
+            if hasattr(self._current_strategy, 'cancel'):
+                self._current_strategy.cancel()
+            else:
+                self._telemetry.warning("Strategy does not support cancellation")
     
     async def cleanup(self) -> None:
         """Cleanup resources."""
@@ -296,23 +302,36 @@ class FathomRunner:
     async def _get_memory_summary(self) -> Dict[str, Any]:
         """Get memory summary from memory port."""
         try:
-            # Get all memory entries
-            all_entries = await self._memory.get_all()
+            # Get all knowledge from memory provider
+            knowledge = await self._memory.get_all_knowledge()
             
-            # Count unique screens
-            unique_screens = len({entry.get("visual_hash") for entry in all_entries if "visual_hash" in entry})
+            # Extract screens information
+            screens = knowledge.get("screens", [])
+            
+            # Format for CLI display
+            screens_formatted = []
+            for screen in screens[:10]:  # Last 10 screens
+                screens_formatted.append({
+                    "hash": screen.get("visual_hash", "")[:12],
+                    "activity": screen.get("activity", "unknown"),
+                    "description": screen.get("description", ""),
+                })
             
             # Count experiences
-            experience_count = len([entry for entry in all_entries if entry.get("type") == "experience"])
+            experience_count = knowledge.get("experience_count", 0)
             
             return {
-                "total_entries": len(all_entries),
-                "unique_screens": unique_screens,
-                "experiences": experience_count,
+                "screens": screens_formatted,
+                "experience_count": experience_count,
+                "total_screens": len(screens),
             }
         except Exception as exception:
             self._telemetry.warning(f"Failed to get memory summary: {exception}")
-            return {}
+            return {
+                "screens": [],
+                "experience_count": 0,
+                "total_screens": 0,
+            }
     
     def _export_graph(self, graph: ExplorationGraph) -> Dict[str, Any]:
         """Export exploration graph to dictionary."""

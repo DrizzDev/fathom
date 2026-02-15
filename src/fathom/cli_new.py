@@ -69,6 +69,10 @@ class FathomCLI:
             )
         )
 
+        # Choose signal adapter based on interactive mode
+        interactive_mode = kwargs.get("interactive", False)
+        signal_adapter = None
+        
         try:
             # Build runner with hexagonal architecture
             serial = device_serial or self.settings.android_serial
@@ -84,13 +88,21 @@ class FathomCLI:
                 credentials_path=self.settings.google_application_credentials,
             )
             
+            if interactive_mode:
+                from fathom.adapters.signal.interactive import InteractiveSignal
+                signal_adapter = InteractiveSignal()
+                console.print("[bold cyan]🤝 Interactive mode enabled[/bold cyan]")
+                console.print("[dim]Agent will ask questions when uncertain[/dim]")
+            else:
+                signal_adapter = NoopSignal()
+            
             self.runner = (
                 Fathom.builder()
                 .device(ADBDevice(serial=serial))
                 .llm(GeminiLLM(configuration=gemini_config))
                 .memory(SQLiteMemory())
                 .knowledge(SQLiteKnowledge())
-                .signal(NoopSignal())
+                .signal(signal_adapter)
                 .storage(LocalStorage())
                 .telemetry(StructlogAdapter())
                 .build()
@@ -289,6 +301,7 @@ def main() -> int:
     run_parser.add_argument("--max-steps", type=int, default=20, help="Maximum steps allowed")
     run_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     run_parser.add_argument("--use-xml", "-x", action="store_true", help="Use XML bounding boxes")
+    run_parser.add_argument("--interactive", "-i", action="store_true", help="Enable interactive HITL mode")
     run_parser.add_argument(
         "--prompt-version",
         type=str,
@@ -335,6 +348,7 @@ def main() -> int:
                     max_steps=args.max_steps,
                     device_serial=args.serial,
                     prompt_version=args.prompt_version,
+                    interactive=args.interactive,
                 )
             )
             return result

@@ -135,6 +135,7 @@ def test_intent_strategy():
         memory=memory,
         storage=storage,
         telemetry=telemetry,
+        signal=signal,
     )
     
     # Verify it has a planner (not None)

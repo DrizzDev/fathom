@@ -111,7 +111,7 @@ class ExecutionEngine:
         
         try:
             # Phase 1: Signal Check
-            await self.__check_signal()
+            injected_context = await self.__check_signal()
             
             # Phase 2: Perceive (capture pre-action state)
             if pre_capture is None:
@@ -121,6 +121,15 @@ class ExecutionEngine:
             
             # Phase 3: Reason (handled by caller - LLM analysis happens before step creation)
             # This phase is implicit - the Step already contains the reasoned action
+            # If context was injected, it should be passed back to caller for re-reasoning
+            if injected_context:
+                # Store injected context for strategy to use
+                step = step.model_copy(update={
+                    "metadata": {
+                        **(step.metadata or {}),
+                        "injected_context": injected_context
+                    }
+                })
             
             # Phase 4: Act
             result = await self.__act(step=step)
@@ -184,24 +193,43 @@ class ExecutionEngine:
             )
             raise ExecutionError(f"Step {step.step_number} failed unexpectedly") from exception
     
-    async def __check_signal(self) -> None:
+    async def __check_signal(self) -> Optional[str]:
         """
         Phase 1: Check for HITL control signals.
         
         Handles PAUSE, RESUME, INJECT, ASK signals.
+        
+        Returns:
+            Injected context if available, None otherwise
         """
         signal = await self.__signal.check_signal()
         
-        if signal == SignalType.PAUSE:
+        if signal == SignalType.PAUSE.value:
             self.__telemetry.info("Execution paused by signal")
             await self.__signal.wait_for_resume()
             self.__telemetry.info("Execution resumed")
-        elif signal == SignalType.INJECT:
+            
+            # Check if user injected context during pause
+            if hasattr(self.__signal, 'get_injected_context'):
+                injected = self.__signal.get_injected_context()
+                if injected:
+                    self.__telemetry.info("Context injected by user", context=injected)
+                    return injected
+        
+        elif signal == SignalType.INJECT.value:
             self.__telemetry.info("Injection signal received")
-            # Injection handling would be implemented by caller
-        elif signal == SignalType.ASK:
+            # Get injected context from signal adapter
+            if hasattr(self.__signal, 'get_injected_context'):
+                injected = self.__signal.get_injected_context()
+                if injected:
+                    self.__telemetry.info("Context injected", context=injected)
+                    return injected
+        
+        elif signal == SignalType.ASK.value:
             self.__telemetry.info("Ask signal received")
-            # Ask handling would be implemented by caller
+            # Ask handling is done by strategy layer
+        
+        return None
     
     async def __perceive(self) -> ScreenCapture:
         """

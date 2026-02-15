@@ -1,0 +1,148 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    WHICH CODE RUNS: fathom vs fathom-old                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+COMMAND: fathom run "..." --use-xml --serial emulator-5554 -v
+
+ANSWER: ✅ NEW HEXAGONAL ARCHITECTURE CODE
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              CODE PATH TRACE                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  1. Entry Point (pyproject.toml)
+     ┌─────────────────────────────────────┐
+     │ fathom = "fathom.cli_new:main"      │ ← YOU ARE HERE
+     │ fathom-old = "fathom.cli:main"      │ ← OLD (deprecated)
+     └─────────────────────────────────────┘
+                    ↓
+  
+  2. CLI Layer (src/fathom/cli_new.py)
+     ┌─────────────────────────────────────┐
+     │ from fathom.runtime.builder         │ ← NEW
+     │                                     │
+     │ runner = Fathom.builder()          │
+     │   .device(ADBDevice(...))          │ ← NEW adapter
+     │   .llm(GeminiLLM(...))             │ ← NEW adapter
+     │   .memory(SQLiteMemory())          │ ← NEW adapter
+     │   .build()                         │
+     └─────────────────────────────────────┘
+                    ↓
+  
+  3. Builder Layer (src/fathom/runtime/builder.py)
+     ┌─────────────────────────────────────┐
+     │ from fathom.runtime.runner          │ ← NEW
+     │                                     │
+     │ return FathomRunner(                │
+     │   device=device_port,               │ ← Port interface
+     │   llm=llm_port,                     │ ← Port interface
+     │   ...                               │
+     │ )                                   │
+     └─────────────────────────────────────┘
+                    ↓
+  
+  4. Runner Layer (src/fathom/runtime/runner.py)
+     ┌─────────────────────────────────────┐
+     │ from fathom.core.execution.engine   │ ← NEW
+     │ from fathom.strategies.intent       │ ← NEW
+     │                                     │
+     │ engine = ExecutionEngine(...)       │ ← NEW 7-phase DAG
+     │ strategy = IntentStrategy(...)      │ ← NEW strategy
+     │ result = await strategy.execute()   │
+     └─────────────────────────────────────┘
+                    ↓
+  
+  5. Strategy Layer (src/fathom/strategies/intent.py)
+     ┌─────────────────────────────────────┐
+     │ Uses ExecutionEngine                │ ← NEW
+     │ Uses ContextManager                 │ ← NEW
+     │ Uses Port interfaces                │ ← NEW
+     │                                     │
+     │ result = await engine.execute_step()│
+     └─────────────────────────────────────┘
+                    ↓
+  
+  6. Core Layer (src/fathom/core/execution/engine.py)
+     ┌─────────────────────────────────────┐
+     │ 7-Phase DAG Execution:              │ ← NEW
+     │   1. SignalCheck                    │
+     │   2. Perceive                       │
+     │   3. Reason                         │
+     │   4. Act                            │
+     │   5. Learn                          │
+     │   6. Checkpoint                     │
+     │   7. Evaluate                       │
+     └─────────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          COMPARISON TABLE                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────┬──────────────────────────┬──────────────────────────┐
+│ Component       │ OLD (fathom-old)         │ NEW (fathom) ✅          │
+├─────────────────┼──────────────────────────┼──────────────────────────┤
+│ CLI             │ cli.py                   │ cli_new.py               │
+│ Runner          │ orchestration/runner/    │ runtime/runner.py        │
+│                 │ fathom.py                │                          │
+│ Workflow        │ workflows/intent.py      │ strategies/intent.py     │
+│ Execution       │ Embedded in workflow     │ core/execution/engine.py │
+│ Architecture    │ Direct tool wiring       │ Ports & Adapters         │
+│ Testability     │ Hard to mock             │ Easy to mock             │
+│ Status          │ DEPRECATED ⚠️            │ ACTIVE ✅                │
+└─────────────────┴──────────────────────────┴──────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         VERIFICATION COMMANDS                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+1. Check entry point:
+   $ grep "^\[project.scripts\]" -A 2 pyproject.toml
+   
+   Output:
+   [project.scripts]
+   fathom = "fathom.cli_new:main"      ← NEW CODE ✅
+   fathom-old = "fathom.cli:main"      ← OLD CODE
+
+2. Check CLI imports:
+   $ grep "from fathom.runtime" src/fathom/cli_new.py
+   
+   Output:
+   from fathom.runtime.builder import Fathom  ← NEW ✅
+
+3. Check runner:
+   $ grep "from fathom.runtime.runner" src/fathom/runtime/builder.py
+   
+   Output:
+   from fathom.runtime.runner import FathomRunner  ← NEW ✅
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              CONCLUSION                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+When you run:
+  fathom run "Ask GPT to do deep research about opencrawler(moltybot)" \
+    --use-xml --serial emulator-5554 -v
+
+You are using:
+  ✅ NEW hexagonal architecture
+  ✅ NEW CLI (cli_new.py)
+  ✅ NEW Runner (runtime/runner.py)
+  ✅ NEW Strategy (strategies/intent.py)
+  ✅ NEW ExecutionEngine (core/execution/engine.py)
+  ✅ NEW Ports & Adapters
+  ✅ 7-Phase DAG execution
+  ✅ 3-Tier context management
+
+NOT using:
+  ❌ OLD CLI (cli.py)
+  ❌ OLD Runner (orchestration/runner/fathom.py)
+  ❌ OLD Workflow (workflows/intent.py)
+  ❌ OLD direct tool wiring
+
+The hexagonal architecture is FULLY ACTIVE! 🎉
+
+To use old code (deprecated), run: fathom-old run "..."
