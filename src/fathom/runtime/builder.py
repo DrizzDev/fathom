@@ -42,37 +42,128 @@ class FathomBuilder:
         self._config: FathomConfig = FathomConfig()
 
     def device(self, device: DevicePort) -> FathomBuilder:
-        """Configure device port."""
+        """
+        Configure device port (plug-and-play).
+        
+        Accepts any implementation of DevicePort interface:
+        - ADBDevice: Android Debug Bridge
+        - Custom: Your own device implementation
+        
+        Args:
+            device: Device port implementation
+        
+        Returns:
+            Self for method chaining
+        """
         self._device = device
         return self
 
     def llm(self, llm: LLMPort) -> FathomBuilder:
-        """Configure LLM port."""
+        """
+        Configure LLM port (plug-and-play).
+        
+        Accepts any implementation of LLMPort interface:
+        - GeminiLLM: Google Gemini
+        - OpenAILLM: OpenAI GPT
+        - Custom: Your own LLM implementation
+        
+        Args:
+            llm: LLM port implementation
+        
+        Returns:
+            Self for method chaining
+        """
         self._llm = llm
         return self
 
     def memory(self, memory: MemoryPort) -> FathomBuilder:
-        """Configure memory port."""
+        """
+        Configure memory port (plug-and-play).
+        
+        Accepts any implementation of MemoryPort interface:
+        - SQLiteMemory: Local SQLite storage (default)
+        - RedisMemory: Redis-based storage
+        - Custom: Your own memory implementation
+        
+        Args:
+            memory: Memory port implementation
+        
+        Returns:
+            Self for method chaining
+        """
         self._memory = memory
         return self
 
     def knowledge(self, knowledge: KnowledgePort) -> FathomBuilder:
-        """Configure knowledge port."""
+        """
+        Configure knowledge port (plug-and-play).
+        
+        Accepts any implementation of KnowledgePort interface:
+        - SQLiteKnowledge: Local SQLite storage (default)
+        - VectorKnowledge: Vector database storage
+        - Custom: Your own knowledge implementation
+        
+        Args:
+            knowledge: Knowledge port implementation
+        
+        Returns:
+            Self for method chaining
+        """
         self._knowledge = knowledge
         return self
 
     def signal(self, signal: SignalPort) -> FathomBuilder:
-        """Configure signal port."""
+        """
+        Configure signal port (plug-and-play).
+        
+        Accepts any implementation of SignalPort interface:
+        - InteractiveSignal: Terminal-based HITL
+        - TemporalSignalAdapter: Temporal workflow signals
+        - NoopSignal: No HITL (default)
+        - Custom: Your own signal implementation
+        
+        Args:
+            signal: Signal port implementation
+        
+        Returns:
+            Self for method chaining
+        """
         self._signal = signal
         return self
 
     def storage(self, storage: StoragePort) -> FathomBuilder:
-        """Configure storage port."""
+        """
+        Configure storage port (plug-and-play).
+        
+        Accepts any implementation of StoragePort interface:
+        - LocalStorage: Local filesystem storage (default)
+        - S3Storage: AWS S3 storage
+        - Custom: Your own storage implementation
+        
+        Args:
+            storage: Storage port implementation
+        
+        Returns:
+            Self for method chaining
+        """
         self._storage = storage
         return self
 
     def telemetry(self, telemetry: TelemetryPort) -> FathomBuilder:
-        """Configure telemetry port."""
+        """
+        Configure telemetry port (plug-and-play).
+        
+        Accepts any implementation of TelemetryPort interface:
+        - StructlogAdapter: Structured logging (default)
+        - DatadogAdapter: Datadog APM
+        - Custom: Your own telemetry implementation
+        
+        Args:
+            telemetry: Telemetry port implementation
+        
+        Returns:
+            Self for method chaining
+        """
         self._telemetry = telemetry
         return self
 
