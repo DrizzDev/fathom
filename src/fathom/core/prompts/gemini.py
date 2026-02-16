@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from fathom.core.prompts.base import PromptBuilder
+from fathom.schemas.context import UserGuidance
 from fathom.core.prompts.templates import (
     ACTION_RULES,
     COMMON_RULES,
@@ -52,6 +53,7 @@ class GeminiPromptBuilder(PromptBuilder):
         self,
         history: Optional[Any] = None,
         memory: Optional[Dict[str, str]] = None,
+        guidance: Optional[List[UserGuidance]] = None,
     ) -> str:
         """
         Build dynamic user context string.
@@ -62,13 +64,19 @@ class GeminiPromptBuilder(PromptBuilder):
 
         parts = []
 
+        if guidance:
+            # Format user instructions prominently
+            instructions = [f"- {item.content}" for item in guidance]
+            guidance_text = "USER INSTRUCTIONS (PRIORITY):\n" + "\n".join(instructions)
+            parts.append(guidance_text)
+
         if ledger:
             parts.append(ledger)
 
         if interaction_context:
             parts.append(interaction_context)
 
-        return "\n".join(parts)
+        return "\n\n".join(parts)
 
     def __get_persona(self) -> str:
         """

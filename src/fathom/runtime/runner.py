@@ -138,8 +138,6 @@ class FathomRunner:
         from fathom.strategies.intent import IntentStrategy
 
         strategy = IntentStrategy(
-            engine=self.__engine,
-            context=self.__context_manager,
             intent=intent,
             device=self.__device,
             llm=self.__llm,
@@ -240,11 +238,13 @@ class FathomRunner:
         from fathom.strategies.exploration import ExplorationStrategy
 
         strategy = ExplorationStrategy(
-            engine=self.__engine,
-            context=self.__context_manager,
             device=self.__device,
+            llm=self.__llm,
+            memory=self.__memory,
             storage=self.__storage,
             telemetry=self.__telemetry,
+            signal=self.__signal,
+            path_manager=self.__path_manager,
             max_steps=max_steps or self.__config.exploration_strategy.max_steps,
             timeout=self.__config.exploration_strategy.timeout,
             seed=self.__config.exploration_strategy.seed,

@@ -10,6 +10,7 @@ from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
+from fathom.schemas.context import UserGuidance
 from fathom.core.services.vision import VisionService
 
 logger = getLogger(name=__name__)
@@ -46,6 +47,7 @@ class StepPlanner:
         use_xml: bool = False,
         additional_context: Optional[str] = None,
         elements: Optional[Dict[str, Any]] = None,
+        guidance: Optional[List[UserGuidance]] = None,
     ) -> PlanResult:
         """
         Plan the next step based on current state.
@@ -111,6 +113,7 @@ class StepPlanner:
             intent=state.intent,
             context=full_context,
             failures=cast("List[str]", context.get("relevant_failures", [])),
+            guidance=guidance,
         )
 
         completion = reasoner.analyze_completion(

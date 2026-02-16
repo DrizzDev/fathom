@@ -11,7 +11,6 @@ from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
 
 from fathom.constants import SignalType
 from fathom.interfaces.signal import SignalPort
@@ -20,7 +19,7 @@ console = Console()
 
 
 class InteractiveSignal(SignalPort):
-    """Interactive signal with immediate pause capability."""
+    """Interactive signal with robust threaded input handling."""
 
     def __init__(self) -> None:
         """Initialize interactive signal adapter."""
@@ -32,6 +31,7 @@ class InteractiveSignal(SignalPort):
         self.__stop_listener = False
 
         # Start command listener thread
+        # This thread is the EXCLUSIVE consumer of sys.stdin to avoid race conditions
         self.__listener_thread = threading.Thread(
             target=self.__listen_for_commands, daemon=True, name="HITLCommandListener"
         )
@@ -56,19 +56,24 @@ class InteractiveSignal(SignalPort):
         console.print()
 
     def __listen_for_commands(self) -> None:
-        """Background thread that listens for user commands."""
+        """Background thread that continuously reads stdin."""
         while not self.__stop_listener:
-            with contextlib.suppress(Exception):
-                if sys.stdin.isatty():
-                    line = sys.stdin.readline().strip().lower()
-                    if line == "pause":
-                        self.__command_queue.put("pause")
+            try:
+                # Blocking read (thread-safe)
+                if sys.stdin:
+                    line = sys.stdin.readline()
+                    if line:
+                        self.__command_queue.put(line.strip())
+            except Exception:
+                break
 
     async def check_signal(self) -> Optional[str]:
-        """Check for control signal."""
+        """Check for control signal. Flushes queue looking for 'pause'."""
         try:
+            # Drain queue to check for 'pause' command
+            # We only care about 'pause' when running. Other input is ignored/discarded.
             while not self.__command_queue.empty():
-                cmd = self.__command_queue.get_nowait()
+                cmd = self.__command_queue.get_nowait().lower()
                 if cmd == "pause":
                     self.__pause_requested = True
                     console.print(
@@ -82,23 +87,18 @@ class InteractiveSignal(SignalPort):
 
         return None
 
-    def is_pause_requested(self) -> bool:
-        """Check if pause is requested (for immediate cancellation)."""
-        try:
-            while not self.__command_queue.empty():
-                cmd = self.__command_queue.get_nowait()
-                if cmd == "pause":
-                    self.__pause_requested = True
-                    console.print(
-                        "\n[bold yellow]⏸️  Pause requested - interrupting...[/bold yellow]\n"
-                    )
-        except queue.Empty:
-            pass
-
-        return self.__pause_requested
+    async def __get_input_async(self) -> str:
+        """Async wrapper to poll the command queue."""
+        while True:
+            try:
+                # Non-blocking check
+                return self.__command_queue.get_nowait()
+            except queue.Empty:
+                # Small sleep to yield to event loop
+                await asyncio.sleep(0.1)
 
     async def wait_for_resume(self) -> None:
-        """Block until RESUME signal received."""
+        """Block until RESUME signal received. Handles interactive menu."""
         console.print("\n" + "=" * 70)
         console.print("[bold yellow]⏸️  EXECUTION PAUSED[/bold yellow]")
         console.print("=" * 70 + "\n")
@@ -120,15 +120,16 @@ class InteractiveSignal(SignalPort):
                 )
             )
 
-            # Get choice without validation to avoid Prompt.ask() issues
             console.print("\n[bold]Your choice (1/2/3):[/bold] ", end="")
             sys.stdout.flush()
-            choice = input().strip()
+            
+            # Wait for input from queue
+            choice = await self.__get_input_async()
+            console.print(choice) # Echo input
 
-            # Validate manually
             if choice not in ["1", "2", "3"]:
-                if not choice:  # Empty input, use default
-                    choice = "1"
+                if not choice:
+                    choice = "1" # Default
                 else:
                     console.print(
                         f"[yellow]Invalid choice '{choice}'. Please enter 1, 2, or 3.[/yellow]\n"
@@ -138,7 +139,7 @@ class InteractiveSignal(SignalPort):
             console.print(f"[green]→ You chose: {choice}[/green]")
 
             if choice == "1":
-                # Resume execution
+                # Resume
                 self.__paused = False
                 self.__pause_requested = False
                 self.__resume_event.set()
@@ -157,28 +158,12 @@ class InteractiveSignal(SignalPort):
                 console.print("\n" + "-" * 70)
                 console.print("[bold cyan]💡 INJECT ADDITIONAL CONTEXT[/bold cyan]")
                 console.print("-" * 70)
-                console.print("[dim]You can provide:[/dim]")
-                console.print(
-                    "[dim]  • [bold]Guidance:[/bold] 'Wait for ChatGPT to finish generating'[/dim]"
-                )
-                console.print(
-                    "[dim]  • [bold]Clarification:[/bold] 'The login button is at bottom right'[/dim]"
-                )
-                console.print(
-                    "[dim]  • [bold]Sub-goal:[/bold] 'First scroll down, then click submit'[/dim]"
-                )
-                console.print(
-                    "[dim]  • [bold]Modified intent:[/bold] 'Actually search for indian climate instead'[/dim]"
-                )
-                console.print(
-                    "[dim]\n[yellow]Note:[/yellow] Your instruction takes priority over the original goal.[/dim]\n"
-                )
-
                 console.print("[bold]Enter your instruction:[/bold]")
                 sys.stdout.flush()
-                context = input().strip()
+                
+                context = await self.__get_input_async()
+                console.print(context) # Echo
 
-                # Remove surrounding quotes if present
                 if context and (
                     (context.startswith("'") and context.endswith("'"))
                     or (context.startswith('"') and context.endswith('"'))
@@ -186,19 +171,14 @@ class InteractiveSignal(SignalPort):
                     context = context[1:-1]
 
                 if context:
-                    old_context = self.__injected_context
                     self.__injected_context = context
-
                     console.print("\n[green]✓ Instruction Recorded[/green]")
-                    if old_context:
-                        console.print(f"[dim]Previous:[/dim] {old_context}")
                     console.print(f"[bold cyan]New:[/bold cyan] {context}")
                     console.print("[dim]This will be sent to the LLM with priority.[/dim]\n")
                 else:
                     console.print("[yellow]⚠ No instruction provided[/yellow]\n")
 
             elif choice == "3":
-                # Cancel execution
                 console.print("\n[bold red]❌ EXECUTION CANCELLED BY USER[/bold red]\n")
                 raise KeyboardInterrupt("User cancelled execution")
 
@@ -210,9 +190,16 @@ class InteractiveSignal(SignalPort):
                 f"[cyan]{prompt}[/cyan]", title="Agent needs your help", border_style="yellow"
             )
         )
-        answer = str(Prompt.ask(prompt="Your answer"))
+        console.print("[bold]Your answer:[/bold] ", end="")
+        sys.stdout.flush()
+        
+        answer = await self.__get_input_async()
         console.print(f"[green]✓[/green] Answer recorded: [italic]{answer}[/italic]\n")
         return answer
+
+    def is_pause_requested(self) -> bool:
+        """Check if pause is requested (for immediate cancellation)."""
+        return self.__pause_requested
 
     def pause(self) -> None:
         """Pause execution."""

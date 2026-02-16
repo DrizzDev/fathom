@@ -12,9 +12,22 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from pydantic import BaseModel
+
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.screens import ScreenState
+
+
+class BFSQueueEntry(BaseModel):
+    """
+    Entry in the BFS exploration queue.
+    """
+    screen_hash: str
+    parent_hash: str
+    action_from_parent: Action
+    depth: int
+    path_from_root: List[Tuple[str, Action]]
 
 
 class ScreenNode:

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -68,14 +69,14 @@ class AuditService:
                 )
 
             # Token usage
-            prompt_t = int(plan.metrics.get("prompt_tokens", 0))
-            completion_t = int(plan.metrics.get("completion_tokens", 0))
-            cached_t = int(plan.metrics.get("cached_tokens", 0))
-            if prompt_t or completion_t:
-                total_t = prompt_t + completion_t
-                token_str = f"{total_t:,} (prompt: {prompt_t:,} | completion: {completion_t:,}"
-                if cached_t:
-                    token_str += f" | cached: {cached_t:,}"
+            prompt_tokens = int(plan.metrics.get("prompt_tokens", 0))
+            completion_tokens = int(plan.metrics.get("completion_tokens", 0))
+            cached_tokens = int(plan.metrics.get("cached_tokens", 0))
+            if prompt_tokens or completion_tokens:
+                total_tokens = prompt_tokens + completion_tokens
+                token_str = f"{total_tokens:,} (prompt: {prompt_tokens:,} | completion: {completion_tokens:,}"
+                if cached_tokens:
+                    token_str += f" | cached: {cached_tokens:,}"
                 token_str += ")"
                 audit.add_row("Tokens:", f"[dim]{token_str}[/dim]")
 
@@ -104,6 +105,31 @@ class AuditService:
                 title=f"Step {step_count} Audit",
             )
         )
+        
+        # --- PROMPT AUDIT ---
+        prompt_payload = plan.metadata.get("prompt_payload")
+        if prompt_payload:
+            sanitized = self.__sanitize_for_log(prompt_payload)
+            # Sanitized is a list (because payload is list).
+            # Convert to string, escaping markup characters in the content
+            prompt_string = "\n".join(
+                escape(str(item)) for item in sanitized
+            )
+            
+            if "USER INSTRUCTION" in prompt_string:
+                prompt_string = prompt_string.replace(
+                    "USER INSTRUCTION (PRIORITY)", 
+                    "[bold red]USER INSTRUCTION (PRIORITY)[/bold red]"
+                )
+            
+            self.__console.print(
+                Panel(
+                    prompt_string,
+                    title="[bold blue]Context & Prompt[/bold blue]",
+                    border_style="blue",
+                    expand=False
+                )
+            )
 
         # Print Reasoning
         reasoning = plan.reason
@@ -144,10 +170,10 @@ class AuditService:
         self.__memory_audit_trail.append(
             {
                 "step": step_number,
-                "context": context,
+                "context": self.__sanitize_for_log(context),
                 "success": success,
                 "hash": visual_hash,
-                "knowledge": knowledge,
+                "knowledge": self.__sanitize_for_log(knowledge),
                 "action": action_description,
             }
         )
@@ -184,7 +210,7 @@ class AuditService:
             context = item["context"]
             failures = context.get("relevant_failures", [])
             context_string = f"History: {context.get('compact_history')}"
-            context_string += f"Failures Sent: {', '.join(failures) if failures else 'None'}"
+            context_string += f"Failures Sent: {', '.join(str(f) for f in failures) if failures else 'None'}"
 
             status = (
                 "[bold green]OK[/bold green]" if item["success"] else "[bold red]FAIL[/bold red]"
@@ -202,3 +228,17 @@ class AuditService:
 
         seconds = milliseconds / 1000.0
         return f"{seconds:.2f}s [{milliseconds:.0f}ms]"
+
+    def __sanitize_for_log(self, data: Any) -> Any:
+        """
+        Recursively sanitizes data structure to remove bytes and large objects.
+        """
+        if isinstance(data, bytes):
+            return f"<bytes len={len(data)}>"
+        if isinstance(data, dict):
+            return {k: self.__sanitize_for_log(v) for k, v in data.items()}
+        if isinstance(data, list):
+            return [self.__sanitize_for_log(v) for v in data]
+        if isinstance(data, tuple):
+            return tuple(self.__sanitize_for_log(v) for v in data)
+        return data

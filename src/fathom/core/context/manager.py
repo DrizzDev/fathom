@@ -13,6 +13,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fathom.schemas.orchestration import ExecutionContext, ExecutionRoadmap
+from fathom.schemas.context import UserGuidance
 
 if TYPE_CHECKING:
     from fathom.interfaces.memory import MemoryPort
@@ -41,7 +42,7 @@ class ContextManager:
         # 3-Tier Context State
         self.__milestones: List[str] = []
         self.__trace: List[Dict[str, Any]] = []
-        self.__user_guidance: List[str] = []
+        self.__user_guidance: List[UserGuidance] = []
 
     def set_roadmap(self, intent: str) -> None:
         """Set the execution roadmap based on intent."""
@@ -86,19 +87,23 @@ class ContextManager:
             "roadmap": self.__roadmap,
             "milestones": self.__milestones,
             "trace": self.__trace,
-            "guidance": self.__user_guidance,
+            "guidance": [g.content for g in self.__user_guidance],
             # Kept for compatibility with existing runners
             "history": self.__context.get_history_summary(),
         }
 
-    async def inject_user_guidance(self, guidance: str) -> None:
+    async def inject_user_guidance(self, guidance: str, step: Optional[int] = None) -> None:
         """Inject manual guidance into the context."""
-        self.__user_guidance.append(guidance)
+        instruction = UserGuidance(content=guidance, step_number=step)
+        self.__user_guidance.append(instruction)
 
         # Persist guidance to memory
-        await self.__memory.set(key=f"user_guidance_{len(self.__user_guidance)}", value=guidance)
+        await self.__memory.set(
+            key=f"user_guidance_{len(self.__user_guidance)}", 
+            value=instruction.model_dump_json()
+        )
 
-    def get_user_guidance(self) -> List[str]:
+    def get_user_guidance(self) -> List[UserGuidance]:
         """Get currently pending user guidance."""
         return self.__user_guidance.copy()
 

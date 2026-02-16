@@ -18,6 +18,7 @@ from fathom.interfaces.storage import StoragePort
 from fathom.core.prompts.factory import PromptFactory
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.context import UserGuidance
 from fathom.utils.image import ImageProcessor
 
 logger = getLogger(__name__)
@@ -58,6 +59,7 @@ class VisionService:
         context: Optional[str] = None,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
+        guidance: Optional[List[UserGuidance]] = None,
     ) -> AnalysisResult:
         """Coordinates the analysis flow mirroring GeminiVisionTool strictly."""
         # Background persistence (original logic)
@@ -83,6 +85,7 @@ class VisionService:
         dynamic_context = self.__builder.build_user_context(
             history=context,
             memory=knowledge.get("memory_store", []),  # Adapted to new Port structure
+            guidance=guidance,
         )
 
         tools = self.__scope_tools(intent=intent)
@@ -111,9 +114,15 @@ class VisionService:
         parser = ToolResponseParser()
         analysis = parser.parse(response)
 
-        # Update metrics
+        # Update metrics & metadata
         if response.metrics:
             analysis.metrics.update(response.metrics)
+            
+        # Expose payload for debugging/audit
+        analysis.metadata["prompt_payload"] = [
+            str(p) if not isinstance(p, (dict, bytes)) else "Image(...)" for p in payload
+        ]
+        analysis.metadata["system_instruction"] = instruction
 
         analysis.memories = len(knowledge.get("previous_actions", []))
         analysis.metrics["llm_analysis"] = duration
@@ -159,7 +168,7 @@ class VisionService:
             payload.append(f"Past actions on this specific screen: {json.dumps(history)}")
 
         if context:
-            payload.append(f"Recent turns (global): {context}")
+            payload.append(context)
 
         if failures:
             payload.append(f"Failures on this activity: {', '.join(failures)}")
@@ -209,13 +218,16 @@ class VisionService:
 
     async def __persist(self, data: bytes, activity: str) -> None:
         """Background persistence."""
+        # Use current activity (package) for folder organization if available
+        package = activity if activity and activity != "unknown" else self.__package_name
+
         with contextlib.suppress(Exception):
             await self.__storage.save(
                 data=data,
                 metadata={
                     "type": "screenshots",
                     "activity_name": activity,
-                    "package_name": self.__package_name,
+                    "package_name": package,
                     "session_id": self.__session_id,
                 },
             )

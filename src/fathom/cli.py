@@ -10,6 +10,7 @@ from logging import getLogger
 from typing import Optional
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -142,7 +143,7 @@ class FathomCLI:
             table.add_row(
                 "Status", "[green]Success[/green]" if result.success else "[red]Failed[/red]"
             )
-            table.add_row("Reason", result.completion_reason)
+            table.add_row("Reason", escape(result.completion_reason or "N/A"))
             table.add_row("Steps Taken", str(result.steps_taken))
             console.print(table)
 
@@ -203,7 +204,7 @@ class FathomCLI:
                 )
 
             if not result.success:
-                console.print(f"[bold red]Failure Reason:[/bold red] {result.completion_reason}")
+                console.print(f"[bold red]Failure Reason:[/bold red] {escape(result.completion_reason)}")
 
             if self.runner:
                 await self.runner.cleanup()
@@ -216,13 +217,13 @@ class FathomCLI:
             return 1
         except FathomError as exception:
             logger.error(f"CLI Error: {exception}")
-            console.print(f"[bold red]Fathom Error:[/bold red] {exception}")
+            console.print(f"[bold red]Fathom Error:[/bold red] {escape(str(exception))}")
             if self.runner:
                 await self.runner.cleanup()
             return 1
         except Exception as exception:
             logger.exception("Unexpected error")
-            console.print(f"[bold red]Unexpected Error:[/bold red] {exception}")
+            console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")
             if self.runner:
                 await self.runner.cleanup()
             return 1
@@ -297,7 +298,7 @@ class FathomCLI:
             return 1
         except Exception as exception:
             logger.exception("Unexpected error")
-            console.print(f"[bold red]Unexpected Error:[/bold red] {exception}")
+            console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")
             if self.runner:
                 await self.runner.cleanup()
             return 1
@@ -352,7 +353,7 @@ def main() -> int:
     try:
         cli = FathomCLI(settings)
     except FathomError as exception:
-        console.print(f"[bold red]Configuration Error:[/bold red] {exception}")
+        console.print(f"[bold red]Configuration Error:[/bold red] {escape(str(exception))}")
         return 1
 
     try:
