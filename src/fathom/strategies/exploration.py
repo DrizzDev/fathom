@@ -253,7 +253,9 @@ class ExplorationStrategy:
             visual_hash=visual_hash,
             activity=capture.activity,
             timestamp=capture.timestamp,
-            activity_hash=hashlib.md5(capture.activity.encode()).hexdigest()[:VISUAL_HASH_LENGTH],  # nosec
+            activity_hash=hashlib.md5(capture.activity.encode(), usedforsecurity=False).hexdigest()[
+                :VISUAL_HASH_LENGTH
+            ],
             structural_hash="0" * VISUAL_HASH_LENGTH,
         )
 

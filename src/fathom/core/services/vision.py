@@ -1,0 +1,214 @@
+"""Vision service for high-level UI reasoning."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import time
+from logging import getLogger
+from typing import Any, Dict, List, Optional
+
+from fathom.core.definitions import ToolRegistry
+from fathom.core.services.parsing import ToolResponseParser
+from fathom.interfaces.llm import LLMPort
+from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.storage import StoragePort
+from fathom.prompts.factory import PromptFactory
+from fathom.schemas.results import AnalysisResult
+from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.utils.image import ImageProcessor
+
+logger = getLogger(__name__)
+
+
+class VisionService:
+    """
+    Service that orchestrates the LLM interaction for UI perception and reasoning.
+    Mirrors original GeminiVisionTool logic strictly.
+    """
+
+    def __init__(
+        self,
+        llm: LLMPort,
+        memory: MemoryPort,
+        storage: StoragePort,
+        version: str = "pro",
+        session_id: str = "default",
+    ) -> None:
+        """Initialize vision service."""
+        self.__llm = llm
+        self.__memory = memory
+        self.__storage = storage
+        self.__version = version
+        self.__session_id = session_id
+
+        # Use the original prompt builder factory
+        self.__builder = PromptFactory.get_builder(model_name="gemini")
+
+    async def analyze(
+        self,
+        intent: str,
+        capture: ScreenCapture,
+        *,
+        use_xml: bool = False,
+        context: Optional[str] = None,
+        failures: Optional[List[str]] = None,
+        elements: Optional[Dict[str, Any]] = None,
+    ) -> AnalysisResult:
+        """Coordinates the analysis flow mirroring GeminiVisionTool strictly."""
+        # Background persistence (original logic)
+        asyncio.create_task(self.__persist(data=capture.image, activity=capture.activity))
+
+        # 1. BRAIN RETRIEVAL
+        fingerprint = hashlib.sha256(capture.image).hexdigest()[:16]
+
+        start = time.time()
+        knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
+        retrieval = time.time() - start
+
+        # 2. PROMPT & TOOL SCOPING
+        # Static Prompt (Cacheable)
+        hints = {"use_xml": use_xml}
+
+        instruction = self.__builder.build(
+            intent=intent,
+            hints=hints,
+        )
+
+        # Dynamic context
+        dynamic_context = self.__builder.build_user_context(
+            history=context,
+            memory=knowledge.get("memory_store", []),  # Adapted to new Port structure
+        )
+
+        tools = self.__scope_tools(intent=intent)
+
+        # 3. CONTENT ASSEMBLY
+        manifest = self.__format_elements(elements=elements)
+        payload = self.__build_payload(
+            intent=intent,
+            screen=capture.image,
+            knowledge=knowledge,
+            context=dynamic_context,
+            manifest=manifest,
+            failures=failures,
+        )
+
+        # 4. EXECUTION
+        commence = time.time()
+        response = await self.__llm.generate(
+            prompt=payload,
+            system_instruction=instruction,
+            tools=tools,
+        )
+        duration = time.time() - commence
+
+        # 5. PARSE & ENRICH
+        parser = ToolResponseParser()
+        analysis = parser.parse(response)
+
+        # Update metrics
+        if response.metrics:
+            analysis.metrics.update(response.metrics)
+
+        analysis.memories = len(knowledge.get("previous_actions", []))
+        analysis.metrics["llm_analysis"] = duration
+        analysis.metrics["memory_retrieval"] = retrieval
+
+        # 6. BRAIN UPDATE (Store observation)
+        await self.__memory.store_observation(
+            screen=ScreenState(
+                activity=capture.activity,
+                visual_hash=fingerprint,
+                timestamp=int(time.time() * 1000),
+                activity_hash=hashlib.md5(  # nosec
+                    capture.activity.encode(), usedforsecurity=False
+                ).hexdigest()[:16],
+                structural_hash="0" * 16,
+            ),
+            description=analysis.screen_description,
+        )
+
+        return analysis
+
+    async def check_completion(self, intent: str, capture: ScreenCapture) -> bool:
+        """Check if intent is complete."""
+        result = await self.analyze(intent=intent, capture=capture)
+        return result.is_goal_complete
+
+    def __build_payload(
+        self,
+        intent: str,
+        screen: bytes,
+        knowledge: Dict[str, Any],
+        context: Optional[str] = None,
+        manifest: str = "N/A",
+        failures: Optional[List[str]] = None,
+    ) -> List[Any]:
+        """Assembles request with token-locality (strictly mirrored)."""
+        payload: List[Any] = [f"Goal: {intent}"]
+
+        if knowledge.get("description"):
+            payload.append(f"Screen Info: {knowledge['description']}")
+
+        if history := knowledge.get("previous_actions", []):
+            payload.append(f"Past actions on this specific screen: {json.dumps(history)}")
+
+        if context:
+            payload.append(f"Recent turns (global): {context}")
+
+        if failures:
+            payload.append(f"Failures on this activity: {', '.join(failures)}")
+
+        if manifest != "N/A":
+            payload.append(f"Element Manifest: {manifest}")
+
+        # Image must be last for KV-cache efficiency
+        optimized = ImageProcessor.optimize_for_vision(image_data=screen)
+        payload.append(optimized)
+
+        return payload
+
+    def __format_elements(self, elements: Optional[Dict[str, Any]]) -> str:
+        """Converts label map to grounding manifest (strictly mirrored)."""
+        if not elements:
+            return "N/A"
+
+        lines = []
+        for label, info in elements.items():
+            if label.startswith("__"):
+                continue
+            kind = str(info.get("class", "View")).split(".")[-1]
+            value = f"[{label}] {kind}"
+            text = str(info.get("text", "")).strip()
+            detail = str(info.get("content-desc", "")).strip()
+            if text:
+                value += f" | text: '{text}'"
+            if detail:
+                value += f" | description: '{detail}'"
+            lines.append(value)
+
+        return "\n".join(lines) if lines else "No interactive elements found."
+
+    def __scope_tools(self, intent: str) -> Dict[str, Any]:
+        """Dynamically selects tools (strictly mirrored)."""
+        allowed = {"execute_ui", "store_memory", "recall_memory"}
+        if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):
+            allowed.update({"validate_state", "verify_goal"})
+
+        definitions = ToolRegistry.get_all_definitions()
+        return {
+            "function_declarations": [
+                d for d in definitions["function_declarations"] if d["name"] in allowed
+            ]
+        }
+
+    async def __persist(self, data: bytes, activity: str) -> None:
+        """Background persistence."""
+        try:
+            await self.__storage.save(
+                data=data, metadata={"activity": activity, "session_id": self.__session_id}
+            )
+        except Exception:
+            pass

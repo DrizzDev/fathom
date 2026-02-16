@@ -7,12 +7,9 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
-from fathom.interfaces import (
-    IImageStorage,
-    ILedger,
-    IMemoryProvider,
-    IVisionProvider,
-)
+from fathom.interfaces.llm import LLMPort
+from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.storage import StoragePort
 from fathom.prompts.factory import PromptFactory
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
@@ -30,15 +27,15 @@ class GeminiVisionTool(VisionTool):
 
     def __init__(
         self,
-        model: IVisionProvider,
-        memory: IMemoryProvider,
-        ledger: ILedger,
-        local_storage: IImageStorage,
+        model: LLMPort,
+        memory: MemoryPort,
+        ledger: MemoryPort,
+        local_storage: StoragePort,
         *,
         version: str = "pro_xml",
         session_id: str = "default",
         package_name: str = "unknown_app",
-        gcs_storage: Optional[IImageStorage] = None,
+        gcs_storage: Optional[StoragePort] = None,
     ) -> None:
         self.__model = model
         self.__version = version
@@ -62,7 +59,7 @@ class GeminiVisionTool(VisionTool):
         return self.__version
 
     @property
-    def provider(self) -> IVisionProvider:
+    def provider(self) -> LLMPort:
         """
         Returns the underlying vision provider.
         """
@@ -167,9 +164,21 @@ class GeminiVisionTool(VisionTool):
         Delegates the actual LLM call to the underlying provider.
         """
 
-        return await self.__model.analyze(
-            system_instruction=instruction, user_content=payload, tools=tools
+        response = await self.__model.generate(
+            system_instruction=instruction, prompt=payload, tools=tools
         )
+
+        # Parse the GenerateResult into AnalysisResult
+        # We need to use ToolResponseParser like VisionService does,
+        # or rely on legacy logic if GeminiVisionTool is legacy.
+        # But GeminiVisionTool is used by legacy runner which expects AnalysisResult.
+        # GenerateResult is NOT AnalysisResult.
+        # So we MUST parse it here.
+
+        from fathom.core.services.parsing import ToolResponseParser
+
+        parser = ToolResponseParser()
+        return parser.parse(response)
 
     def __parse_response(self, analysis: AnalysisResult) -> AnalysisResult:
         """

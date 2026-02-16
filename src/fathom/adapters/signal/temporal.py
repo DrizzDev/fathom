@@ -100,12 +100,12 @@ class TemporalSignalAdapter(SignalPort):
 
             await asyncio.sleep(0.5)
 
-    async def request_input(self, *, prompt: str) -> str:
+    async def ask(self, *, prompt: str) -> str:
         """
         Request human input with prompt.
         """
         logger.warning(
-            f"request_input called in Temporal mode for workflow {self.__workflow_id} "
+            f"ask called in Temporal mode for workflow {self.__workflow_id} "
             "- not supported, use /inject endpoint instead"
         )
         return ""

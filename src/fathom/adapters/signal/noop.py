@@ -22,7 +22,7 @@ class NoopSignal(SignalPort):
         """Block until RESUME signal - no-op for autonomous mode."""
         pass
 
-    async def request_input(self, *, prompt: str) -> str:
+    async def ask(self, *, prompt: str) -> str:
         """Request human input - returns empty string for autonomous mode."""
         return ""
 
@@ -32,4 +32,8 @@ class NoopSignal(SignalPort):
 
     def has_injected_context(self) -> bool:
         """Check if there's injected context - always returns False for autonomous mode."""
+        return False
+
+    def is_pause_requested(self) -> bool:
+        """Check if pause is requested - always returns False for autonomous mode."""
         return False

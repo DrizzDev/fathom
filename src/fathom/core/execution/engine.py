@@ -30,7 +30,7 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.processing.annotator import ImageAnnotator
 from fathom.schemas.actions import Action
-from fathom.schemas.results import ExecutionResult
+from fathom.schemas.results import ActionResult, ExecutionResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
 from fathom.utils.coordinates import CoordinateConverter
@@ -245,12 +245,23 @@ class ExecutionEngine:
         except Exception:
             activity = "unknown"
 
+        # Store screenshot artifact
+        storage_id = await self.__persist_capture(data=screenshot_bytes)
+
         return ScreenCapture(
             width=width,
             height=height,
             activity=activity,
             image=screenshot_bytes,
             timestamp=int(time.time() * 1000),
+            metadata={"storage_id": storage_id},
+        )
+
+    async def __persist_capture(self, data: bytes) -> str:
+        """Persists screenshot to storage."""
+        return await self.__storage.save(
+            data=data,
+            metadata={"type": "screenshot", "timestamp": time.time()},
         )
 
     def __compute_visual_hash(self, capture: ScreenCapture) -> str:
@@ -263,7 +274,9 @@ class ExecutionEngine:
         Returns:
             Visual hash string
         """
-        return hashlib.sha256(capture.image).hexdigest()[:16]
+        from fathom.constants.execution import VISUAL_HASH_LENGTH
+
+        return hashlib.sha256(capture.image).hexdigest()[:VISUAL_HASH_LENGTH]
 
     async def __act(self, step: Step, pre_capture: ScreenCapture) -> ExecutionResult:
         """
@@ -349,24 +362,13 @@ class ExecutionEngine:
     async def __execute_action(
         self, step: Step
     ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
-        """
-        Execute device action for step using CoordinateConverter.
-
-        Args:
-            step: Step containing action to execute
-
-        Returns:
-            Tuple of (ExecutionResult, optional physical coordinates)
-        """
+        """Execute device action for step."""
         action = step.action
         start_time = time.time()
-        coords: Optional[Tuple[int, ...]] = None
 
-        # Get screen dimensions for coordinate conversion
         screen_size = await self.__device.get_screen_size()
         width, height = screen_size
 
-        # Use the configuration from the device if available, otherwise default
         config = self.__device.configuration
         from fathom.schemas.configuration import ADBConfig
 
@@ -374,7 +376,6 @@ class ExecutionEngine:
             screen_width=width, screen_height=height, configuration=config or ADBConfig()
         )
 
-        # Handle special actions that don't need device interaction
         if action.action_type == ActionType.WAIT:
             await asyncio.sleep(delay=1.0)
             duration_ms = int((time.time() - start_time) * 1000)
@@ -384,71 +385,32 @@ class ExecutionEngine:
             duration_ms = int((time.time() - start_time) * 1000)
             return ExecutionResult(success=True, duration=duration_ms), None
 
-        # Execute device actions
         try:
             device_result = None
+            coords = None
 
             if action.action_type == ActionType.TAP:
-                if action.bounds:
-                    x, y = converter.center_to_pixels(bounds=action.bounds)
-                else:
-                    x, y = width // 2, height // 2
-                coords = (x, y)
-                device_result = await self.__device.tap(x=x, y=y)
-
-            elif action.action_type == ActionType.TYPE:
-                if not action.bounds:
-                    return (
-                        ExecutionResult(
-                            duration=0,
-                            success=False,
-                            error="Type action requires bounds for focus tap guard",
-                        ),
-                        None,
-                    )
-                x, y = converter.center_to_pixels(bounds=action.bounds)
-                coords = (x, y)
-                focus_result = await self.__device.tap(x=x, y=y)
-                if not focus_result.success:
-                    return (
-                        ExecutionResult(
-                            duration=0,
-                            success=False,
-                            error=f"Focus tap failed before typing: {focus_result.error or 'unknown error'}",
-                        ),
-                        None,
-                    )
-                device_result = await self.__device.type_text(text=action.text or "")
-
-            elif action.action_type == ActionType.SWIPE:
-                if action.bounds:
-                    x1, y1, x2, y2 = converter.swipe_coordinates(
-                        bounds=action.bounds, direction="up"
-                    )
-                else:
-                    cx, cy = width // 2, height // 2
-                    x1, y1 = cx, cy + 300
-                    x2, y2 = cx, cy - 300
-                coords = (x1, y1, x2, y2)
-                device_result = await self.__device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
-
-            elif action.action_type == ActionType.SCROLL:
-                cx, cy = width // 2, height // 2
-                # Scroll down (swipe up)
-                x1, y1 = cx, cy + 200
-                x2, y2 = cx, cy - 200
-                coords = (x1, y1, x2, y2)
-                device_result = await self.__device.swipe(
-                    x1=x1, y1=y1, x2=x2, y2=y2, duration=DEFAULT_SWIPE_DURATION
+                device_result, coords = await self.__execute_tap(
+                    action=action, converter=converter, width=width, height=height
                 )
 
+            elif action.action_type == ActionType.TYPE:
+                device_result, coords = await self.__execute_type(
+                    action=action, converter=converter, width=width, height=height
+                )
+
+            elif action.action_type == ActionType.SWIPE:
+                device_result, coords = await self.__execute_swipe(
+                    action=action, converter=converter, width=width, height=height
+                )
+
+            elif action.action_type == ActionType.SCROLL:
+                device_result, coords = await self.__execute_scroll(width=width, height=height)
+
             elif action.action_type == ActionType.LONG_PRESS:
-                if action.bounds:
-                    x, y = converter.center_to_pixels(bounds=action.bounds)
-                else:
-                    x, y = width // 2, height // 2
-                coords = (x, y)
-                device_result = await self.__device.tap(x=x, y=y)
+                device_result, coords = await self.__execute_long_press(
+                    action=action, converter=converter, width=width, height=height
+                )
 
             elif action.action_type == ActionType.BACK:
                 device_result = await self.__device.back()
@@ -476,26 +438,77 @@ class ExecutionEngine:
                 coords,
             )
 
-        except PortError as exception:
-            duration = int((time.time() - start_time) * 1000)
-            return (
-                ExecutionResult(
-                    success=False,
-                    duration=duration,
-                    error=f"Device communication failed: {exception}",
-                ),
-                None,
-            )
         except Exception as exception:
             duration = int((time.time() - start_time) * 1000)
-            self.__telemetry.error(
-                "Unexpected error executing action",
-                action_type=action.action_type.value,
-                error=str(exception),
+            return (
+                ExecutionResult(success=False, duration=duration, error=str(exception)),
+                None,
             )
-            raise ExecutionError(
-                f"Action execution failed: {action.action_type.value}"
-            ) from exception
+
+    async def __execute_tap(
+        self, action: Action, converter: CoordinateConverter, width: int, height: int
+    ) -> Tuple[ActionResult, Tuple[int, ...]]:
+        """Executes tap action."""
+        if action.bounds:
+            x, y = converter.center_to_pixels(bounds=action.bounds)
+        else:
+            x, y = width // 2, height // 2
+        coords = (x, y)
+        result = await self.__device.tap(x=x, y=y)
+        return result, coords
+
+    async def __execute_type(
+        self, action: Action, converter: CoordinateConverter, width: int, height: int
+    ) -> Tuple[ActionResult, Tuple[int, ...]]:
+        """Executes type action."""
+        if not action.bounds:
+            raise ExecutionError("Type action requires bounds for focus tap guard")
+        x, y = converter.center_to_pixels(bounds=action.bounds)
+        coords = (x, y)
+        focus_result = await self.__device.tap(x=x, y=y)
+        if not focus_result.success:
+            return focus_result, coords
+        result = await self.__device.type_text(text=action.text or "")
+        return result, coords
+
+    async def __execute_swipe(
+        self, action: Action, converter: CoordinateConverter, width: int, height: int
+    ) -> Tuple[ActionResult, Tuple[int, ...]]:
+        """Executes swipe action."""
+        if action.bounds:
+            x1, y1, x2, y2 = converter.swipe_coordinates(bounds=action.bounds, direction="up")
+        else:
+            cx, cy = width // 2, height // 2
+            x1, y1 = cx, cy + 300
+            x2, y2 = cx, cy - 300
+        coords = (x1, y1, x2, y2)
+        result = await self.__device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
+        return result, coords
+
+    async def __execute_scroll(
+        self, width: int, height: int
+    ) -> Tuple[ActionResult, Tuple[int, ...]]:
+        """Executes scroll action."""
+        cx, cy = width // 2, height // 2
+        x1, y1 = cx, cy + 200
+        x2, y2 = cx, cy - 200
+        coords = (x1, y1, x2, y2)
+        result = await self.__device.swipe(
+            x1=x1, y1=y1, x2=x2, y2=y2, duration=DEFAULT_SWIPE_DURATION
+        )
+        return result, coords
+
+    async def __execute_long_press(
+        self, action: Action, converter: CoordinateConverter, width: int, height: int
+    ) -> Tuple[ActionResult, Tuple[int, ...]]:
+        """Executes long press action."""
+        if action.bounds:
+            x, y = converter.center_to_pixels(bounds=action.bounds)
+        else:
+            x, y = width // 2, height // 2
+        coords = (x, y)
+        result = await self.__device.tap(x=x, y=y)
+        return result, coords
 
     async def __learn(self, visual_hash: str, action: Action, success: bool) -> None:
         """

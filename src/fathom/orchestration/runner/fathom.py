@@ -21,11 +21,8 @@ from logging import getLogger
 from typing import Any, Optional
 
 from fathom.exceptions import FathomError
-from fathom.infrastructure.llm import GeminiLLMClient
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
-from fathom.infrastructure.storage.cloud import GCSImageStorage
-from fathom.infrastructure.storage.local import LocalImageStorage
 from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.prompts.factory import PromptFactory
 from fathom.schemas.configuration import ADBCaptureConfig, ADBConfig, GeminiConfig, WorkflowConfig
@@ -193,6 +190,14 @@ class FathomRunner:
         """
         Builds the Gemini-based vision orchestrator.
         """
+        from pathlib import Path
+
+        from google.oauth2 import service_account
+
+        from fathom.adapters.llm.gemini import GeminiLLM
+        from fathom.adapters.memory.sqlite import SQLiteMemory
+        from fathom.adapters.storage.cloud import CloudStorage
+        from fathom.adapters.storage.local import LocalStorage
 
         llm_configuration = GeminiConfig(
             model=self.__settings.gemini_model,
@@ -202,22 +207,42 @@ class FathomRunner:
             credentials_path=self.__settings.google_application_credentials,
         )
 
-        client = GeminiLLMClient(configuration=llm_configuration)
-        cloud_storage = GCSImageStorage(
-            configuration=llm_configuration, credentials=client.credentials
-        )
+        # Create LLM adapter
+        llm_adapter = GeminiLLM(configuration=llm_configuration)
+
+        # Handle credentials manually for GCS
+        credentials = None
+        if llm_configuration.credentials_path:
+            path = Path(llm_configuration.credentials_path)
+            if path.exists():
+                credentials = service_account.Credentials.from_service_account_file(
+                    filename=str(path),
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                )
+
+        # Create Cloud Storage adapter if credentials available
+        cloud_storage = None
+        if credentials:
+            cloud_storage = CloudStorage(configuration=llm_configuration, credentials=credentials)
 
         if not self.__ledger:
             raise FathomError(message="Ledger not initialized")
 
-        if not self.__memory_provider:
-            raise FathomError(message="Memory provider not initialized")
+        # We need to wrap existing ledger/memory provider into adapter interface
+        # Since this is legacy code, creating a fresh SQLiteMemory adapter is safest
+        # as it will point to the same DB file by default or we can configure it.
+        # However, self.__memory_provider and self.__ledger are already initialized.
+        # We can just ignore them and create new adapters pointing to same DBs?
+        # Or wrap them?
+
+        # Let's create new adapters pointing to default locations which match legacy defaults
+        memory_adapter = SQLiteMemory()
 
         return GeminiVisionTool(
-            model=client,
-            memory=self.__memory_provider,
-            ledger=self.__ledger,
-            local_storage=LocalImageStorage(),
+            model=llm_adapter,
+            memory=memory_adapter,
+            ledger=memory_adapter,  # Use memory adapter as ledger
+            local_storage=LocalStorage(),
             gcs_storage=cloud_storage,
             version=version,
             session_id=session_id,

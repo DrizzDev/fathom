@@ -1,22 +1,11 @@
-"""
-LEGACY CODE - DEPRECATED
+"""Main CLI entry point for Fathom using hexagonal architecture."""
 
-This is the old Fathom CLI using direct tool wiring.
-It is preserved for backward compatibility via the 'fathom-old' command.
-
-NEW CODE: Use the new CLI with hexagonal architecture:
-- CLI: src/fathom/cli_new.py (via 'fathom' command)
-- Runner: src/fathom/runtime/runner.py
-- Builder: src/fathom/runtime/builder.py
-
-This code will be removed in a future major version.
-"""
+from __future__ import annotations
 
 import argparse
 import asyncio
 import signal
 import sys
-import warnings
 from logging import getLogger
 from typing import Any, Optional
 
@@ -24,9 +13,18 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from fathom.adapters.device.adb import ADBDevice
+from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
+from fathom.adapters.llm.gemini import GeminiLLM
+from fathom.adapters.memory.sqlite import SQLiteMemory
+from fathom.adapters.signal.noop import NoopSignal
+from fathom.adapters.storage.local import LocalStorage
+from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.logger import BaseLogger
 from fathom.exceptions import FathomError
-from fathom.orchestration.runner import FathomRunner
+from fathom.interfaces.signal import SignalPort
+from fathom.runtime.builder import Fathom
+from fathom.runtime.runner import FathomRunner
 from fathom.settings.env import FathomSettings
 
 console = Console()
@@ -34,36 +32,16 @@ logger = getLogger(__name__)
 
 
 class FathomCLI:
-    """
-    DEPRECATED: Old Fathom CLI application.
-
-    Use the new CLI instead: 'fathom' command (not 'fathom-old')
-
-    This class is preserved for backward compatibility and will be removed
-    in a future major version.
-    """
+    """Fathom CLI application using hexagonal architecture."""
 
     def __init__(self, settings: FathomSettings) -> None:
-        """
-        Initialize CLI with settings.
-        """
-        warnings.warn(
-            "The 'fathom-old' command is deprecated. "
-            "Use 'fathom' command with the new hexagonal architecture instead. "
-            "This command will be removed in a future major version.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
+        """Initialize CLI with settings."""
         self.settings = settings
-        self.runner = FathomRunner(settings)
+        self.runner: Optional[FathomRunner] = None
+        self._cancelled = False
 
     def __setup_signals(self) -> None:
-        """
-        Configure signal handlers for graceful shutdown.
-        Must be called within an active event loop.
-        """
-
+        """Configure signal handlers for graceful shutdown."""
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
                 loop = asyncio.get_running_loop()
@@ -72,12 +50,11 @@ class FathomCLI:
                 pass
 
     def __handle_interrupt(self) -> None:
-        """
-        Handler called when a signal is received.
-        """
-
+        """Handler called when a signal is received."""
         console.print("\n[bold yellow]Stopping gracefully... Please wait.[/bold yellow]")
-        self.runner.cancel()
+        self._cancelled = True
+        if self.runner:
+            self.runner.cancel()
 
     async def run(
         self,
@@ -86,10 +63,7 @@ class FathomCLI:
         device_serial: Optional[str] = None,
         **kwargs: Any,
     ) -> int:
-        """
-        Run an intent workflow with rich UI.
-        """
-
+        """Run an intent workflow with rich UI."""
         self.__setup_signals()
 
         console.print(
@@ -99,15 +73,60 @@ class FathomCLI:
             )
         )
 
+        interactive_mode = kwargs.get("interactive", False)
+        signal_adapter: SignalPort
+
         try:
-            with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
+            # Build runner with hexagonal architecture
+            serial = device_serial or self.settings.android_serial
+
+            from fathom.schemas.configuration import GeminiConfig
+
+            gemini_config = GeminiConfig(
+                model=self.settings.gemini_model,
+                api_key=self.settings.gemini_api_key,
+                location=self.settings.vertex_location,
+                project_id=self.settings.vertex_project_id,
+                credentials_path=self.settings.google_application_credentials,
+            )
+
+            if interactive_mode:
+                from fathom.adapters.signal.interactive import InteractiveSignal
+
+                signal_adapter = InteractiveSignal()
+                console.print("[bold cyan]🤝 Interactive mode enabled[/bold cyan]")
+                console.print("[dim]Agent will ask questions when uncertain[/dim]")
+            else:
+                signal_adapter = NoopSignal()
+
+            self.runner = (
+                Fathom.builder()
+                .device(device=ADBDevice(serial=serial))
+                .llm(llm=GeminiLLM(configuration=gemini_config))
+                .memory(memory=SQLiteMemory())
+                .knowledge(knowledge=SQLiteKnowledge())
+                .signal(signal=signal_adapter)
+                .storage(storage=LocalStorage())
+                .telemetry(telemetry=StructlogAdapter())
+                .build()
+            )
+
+            # Don't use spinner in interactive mode - it blocks output
+            if interactive_mode:
                 result = await self.runner.run_intent(
                     intent=intent,
                     max_steps=max_steps,
-                    device_serial=device_serial,
                     use_xml=kwargs.get("use_xml", False),
                     prompt_version=kwargs.get("prompt_version"),
                 )
+            else:
+                with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
+                    result = await self.runner.run_intent(
+                        intent=intent,
+                        max_steps=max_steps,
+                        use_xml=kwargs.get("use_xml", False),
+                        prompt_version=kwargs.get("prompt_version"),
+                    )
 
             # Execution Summary
             table = Table(
@@ -136,13 +155,14 @@ class FathomCLI:
                     if operation == "Tokens":
                         continue
 
-                    total = data.get("total", 0.0)
-                    avg = data.get("avg", 0.0)
-                    audit_table.add_row(operation, f"{total:.2f}s", f"{avg:.2f}s")
+                    if isinstance(data, dict):
+                        total = data.get("total", 0.0)
+                        avg = data.get("avg", 0.0)
+                        audit_table.add_row(operation, f"{total:.2f}s", f"{avg:.2f}s")
 
                 console.print(audit_table)
 
-                if token_metrics:
+                if token_metrics and isinstance(token_metrics, dict):
                     token_table = Table(title="Resource Usage (Tokens)", border_style="yellow")
                     token_table.add_column("Metric", style="cyan")
                     token_table.add_column("Value", style="magenta", justify="right")
@@ -156,7 +176,7 @@ class FathomCLI:
 
                     console.print(token_table)
 
-            # Memory / Knowledge Graph Summary
+            # Memory Graph Summary
             if result.memory_summary:
                 memory_table = Table(title="Agent Knowledge Graph (Brain)", border_style="cyan")
                 memory_table.add_column("Screen Hash", style="dim")
@@ -164,10 +184,13 @@ class FathomCLI:
                 memory_table.add_column("Agent Description", style="italic")
 
                 screens = result.memory_summary.get("screens", [])
-                for screen in screens[:10]:  # Show last 10
-                    memory_table.add_row(
-                        screen["hash"], screen["activity"], screen["description"] or "Unidentified"
-                    )
+                if isinstance(screens, list):
+                    for screen in screens[:10]:
+                        memory_table.add_row(
+                            screen.get("hash", ""),
+                            screen.get("activity", ""),
+                            screen.get("description") or "Unidentified",
+                        )
 
                 experience_count = result.memory_summary.get("experience_count", 0)
                 console.print(memory_table)
@@ -178,18 +201,26 @@ class FathomCLI:
             if not result.success:
                 console.print(f"[bold red]Failure Reason:[/bold red] {result.completion_reason}")
 
+            if self.runner:
+                await self.runner.cleanup()
             return 0 if result.success else 1
 
         except (asyncio.CancelledError, KeyboardInterrupt):
             console.print("\n[bold red]Execution cancelled by user.[/bold red]")
+            if self.runner:
+                await self.runner.cleanup()
             return 1
         except FathomError as exception:
             logger.error(f"CLI Error: {exception}")
             console.print(f"[bold red]Fathom Error:[/bold red] {exception}")
+            if self.runner:
+                await self.runner.cleanup()
             return 1
         except Exception as exception:
             logger.exception("Unexpected error")
             console.print(f"[bold red]Unexpected Error:[/bold red] {exception}")
+            if self.runner:
+                await self.runner.cleanup()
             return 1
 
     async def explore(
@@ -197,10 +228,7 @@ class FathomCLI:
         max_steps: int = 50,
         device_serial: Optional[str] = None,
     ) -> int:
-        """
-        Run an exploration workflow with rich UI.
-        """
-
+        """Run an exploration workflow with rich UI."""
         self.__setup_signals()
 
         console.print(
@@ -211,13 +239,34 @@ class FathomCLI:
         )
 
         try:
+            serial = device_serial or self.settings.android_serial
+
+            from fathom.schemas.configuration import GeminiConfig
+
+            gemini_config = GeminiConfig(
+                model=self.settings.gemini_model,
+                api_key=self.settings.gemini_api_key,
+                location=self.settings.vertex_location,
+                project_id=self.settings.vertex_project_id,
+                credentials_path=self.settings.google_application_credentials,
+            )
+
+            self.runner = (
+                Fathom.builder()
+                .device(device=ADBDevice(serial=serial))
+                .llm(llm=GeminiLLM(configuration=gemini_config))
+                .memory(memory=SQLiteMemory())
+                .knowledge(knowledge=SQLiteKnowledge())
+                .signal(signal=NoopSignal())
+                .storage(storage=LocalStorage())
+                .telemetry(telemetry=StructlogAdapter())
+                .build()
+            )
+
             with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
-                result = await self.runner.run_exploration(
-                    max_steps=max_steps, device_serial=device_serial
-                )
+                result = await self.runner.run_exploration(max_steps=max_steps)
 
             table = Table(title="Exploration Results", border_style="green")
-
             table.add_column("Metric", style="cyan")
             table.add_column("Value", style="magenta")
 
@@ -227,26 +276,26 @@ class FathomCLI:
             table.add_row("Coverage", f"{result.coverage_percentage:.1f}%")
 
             console.print(table)
+
+            if self.runner:
+                await self.runner.cleanup()
             return 0
 
         except (asyncio.CancelledError, KeyboardInterrupt):
             console.print("\n[bold red]Exploration cancelled by user.[/bold red]")
-            return 1
-        except FathomError as exception:
-            logger.error(f"Exploration Error: {exception}")
-            console.print(f"[bold red]Fathom Error:[/bold red] {exception}")
+            if self.runner:
+                await self.runner.cleanup()
             return 1
         except Exception as exception:
             logger.exception("Unexpected error")
             console.print(f"[bold red]Unexpected Error:[/bold red] {exception}")
+            if self.runner:
+                await self.runner.cleanup()
             return 1
 
 
 def main() -> int:
-    """
-    CLI entry point.
-    """
-
+    """CLI entry point."""
     parser = argparse.ArgumentParser(description="Fathom: AI-powered mobile automation agent")
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
@@ -257,6 +306,9 @@ def main() -> int:
     run_parser.add_argument("--max-steps", type=int, default=20, help="Maximum steps allowed")
     run_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     run_parser.add_argument("--use-xml", "-x", action="store_true", help="Use XML bounding boxes")
+    run_parser.add_argument(
+        "--interactive", "-i", action="store_true", help="Enable interactive HITL mode"
+    )
     run_parser.add_argument(
         "--prompt-version",
         type=str,
@@ -303,6 +355,7 @@ def main() -> int:
                     max_steps=args.max_steps,
                     device_serial=args.serial,
                     prompt_version=args.prompt_version,
+                    interactive=args.interactive,
                 )
             )
             return result
@@ -312,7 +365,6 @@ def main() -> int:
             parser.print_help()
             return 0
     except KeyboardInterrupt:
-        # Final safety catch for KeyboardInterrupt at the top level
         return 1
 
 

@@ -202,7 +202,7 @@ class InteractiveSignal(SignalPort):
                 console.print("\n[bold red]❌ EXECUTION CANCELLED BY USER[/bold red]\n")
                 raise KeyboardInterrupt("User cancelled execution")
 
-    async def request_input(self, *, prompt: str) -> str:
+    async def ask(self, *, prompt: str) -> str:
         """Request human input with prompt."""
         console.print("\n[bold yellow]❓ Agent Question[/bold yellow]")
         console.print(

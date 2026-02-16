@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from fathom.interfaces import IVisionProvider
+from fathom.interfaces.llm import LLMPort
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.tools.base import Tool
@@ -25,7 +25,7 @@ class VisionTool(Tool[AnalysisResult], ABC):
 
     @property
     @abstractmethod
-    def provider(self) -> IVisionProvider:
+    def provider(self) -> LLMPort:
         """
         Returns the underlying vision provider.
         """

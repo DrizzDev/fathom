@@ -138,9 +138,6 @@ class BoundsGenerator:
                 "center_x": int((logic.x1 + logic.x2) / 2),
                 "center_y": int((logic.y1 + logic.y2) / 2),
             }
-            logger.debug(
-                f"Element Label {element.label}: {element.attributes.get('class')} - text='{element.attributes.get('text')}'"
-            )
 
         mapping["__scale_factor__"] = float(factor)
         logger.info(f"Successfully generated {len(labeled)} labeled elements.")

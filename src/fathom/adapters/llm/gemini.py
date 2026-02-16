@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types
 from google.oauth2 import service_account
 
+from fathom.core.services.parsing import ToolResponseParser
 from fathom.exceptions import VisionError
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import GeminiConfig
@@ -46,6 +47,7 @@ class GeminiLLM(LLMPort):
         self.__client: Optional[Any] = None
         self.__credentials: Optional[Any] = None
         self.__cache: Optional[CacheService] = None
+        self.__parser = ToolResponseParser()
 
         self.__initialize()
 
@@ -117,7 +119,7 @@ class GeminiLLM(LLMPort):
                 mime_type = self.__detect_mime(data=item)
                 parts.append(types.Part.from_bytes(data=item, mime_type=mime_type))
             elif isinstance(item, str):
-                parts.append({"text": item})
+                parts.append(types.Part.from_text(text=item))
             else:
                 parts.append(item)
 

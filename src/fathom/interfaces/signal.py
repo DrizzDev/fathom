@@ -20,7 +20,7 @@ class SignalPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def request_input(self, *, prompt: str) -> str:
+    async def ask(self, *, prompt: str) -> str:
         """Request human input with prompt."""
         raise NotImplementedError
 
@@ -32,4 +32,9 @@ class SignalPort(ABC):
     @abstractmethod
     def has_injected_context(self) -> bool:
         """Check if there's injected context available."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def is_pause_requested(self) -> bool:
+        """Check if pause is requested (for immediate cancellation)."""
         raise NotImplementedError
