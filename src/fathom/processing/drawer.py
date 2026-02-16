@@ -9,8 +9,8 @@ if TYPE_CHECKING:
 from PIL import Image
 
 from fathom.constants import ActionType
-from fathom.schemas.ui import LabeledElement, UIBounds
 from fathom.processing.parsers.factory import PlatformParserFactory
+from fathom.schemas.ui import LabeledElement, UIBounds
 
 logger = getLogger(name=__name__)
 

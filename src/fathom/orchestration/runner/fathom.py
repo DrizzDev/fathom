@@ -44,11 +44,11 @@ logger = getLogger(name=__name__)
 class FathomRunner:
     """
     DEPRECATED: Old FathomRunner using direct tool wiring.
-    
+
     Use the new hexagonal architecture instead:
     - from fathom.runtime.runner import FathomRunner (new)
     - from fathom.runtime.builder import FathomBuilder
-    
+
     This class is preserved for backward compatibility and will be removed
     in a future major version.
     Main entry point for executing Fathom workflows.
@@ -63,7 +63,7 @@ class FathomRunner:
             DeprecationWarning,
             stacklevel=2,
         )
-        
+
         self.__settings = settings
 
         self.__memory_provider: Optional[IMemoryProvider] = None

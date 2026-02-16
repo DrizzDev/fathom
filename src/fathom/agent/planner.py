@@ -102,13 +102,15 @@ class StepPlanner:
         if additional_context:
             full_context = f"{additional_context}\n{history_context}"
 
+        from typing import List, cast
+
         analysis = await self.__vision.analyze(
             use_xml=use_xml,
             capture=capture,
             elements=elements,
             intent=state.intent,
             context=full_context,
-            failures=context.get("relevant_failures", []),  # type: ignore[arg-type]
+            failures=cast("List[str]", context.get("relevant_failures", [])),
         )
 
         completion = reasoner.analyze_completion(

@@ -10,7 +10,7 @@ from fathom.interfaces.signal import SignalPort
 class NoopSignal(SignalPort):
     """
     No-op adapter for signal port.
-    
+
     Returns None for all signals, enabling fully autonomous operation.
     """
 
@@ -25,3 +25,11 @@ class NoopSignal(SignalPort):
     async def request_input(self, *, prompt: str) -> str:
         """Request human input - returns empty string for autonomous mode."""
         return ""
+
+    def get_injected_context(self) -> Optional[str]:
+        """Get injected context - always returns None for autonomous mode."""
+        return None
+
+    def has_injected_context(self) -> bool:
+        """Check if there's injected context - always returns False for autonomous mode."""
+        return False

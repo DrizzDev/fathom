@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from fathom.constants import ActionType
+from fathom.processing.annotator import ImageAnnotator
+from fathom.processing.drawer import BoundsGenerator
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
 from fathom.tools.device import DeviceTool
-from fathom.processing.annotator import ImageAnnotator
-from fathom.processing.drawer import BoundsGenerator
 
 logger = getLogger(__name__)
 

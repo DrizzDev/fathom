@@ -126,7 +126,7 @@ ignore = [
 # Architectural boundary enforcement
 # Note: These rules are documented here but enforcement is manual via code review
 # Ruff's flake8-tidy-imports doesn't support complex allowed-in patterns
-# 
+#
 # Rules:
 # 1. Core layer (core/) cannot import from adapters/
 # 2. Interfaces layer (interfaces/) can only import from schemas/

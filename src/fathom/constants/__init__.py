@@ -2,6 +2,20 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+# Re-export execution constants
+from fathom.constants.execution import (
+    BOUNDS_SWIPE_DISTANCE,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_DELAY,
+    DEFAULT_SCROLL_DISTANCE,
+    DEFAULT_STABILITY_WAIT,
+    DEFAULT_SWIPE_DISTANCE,
+    DEFAULT_SWIPE_DURATION,
+    VISUAL_HASH_LENGTH,
+    ExecutionPhase,
+    SignalType,
+)
+
 
 class ActionType(StrEnum):
     """
@@ -65,20 +79,6 @@ class StrategyStatus(StrEnum):
     CONTINUE = "continue"
     COMPLETE = "complete"
 
-
-# Re-export execution constants
-from fathom.constants.execution import (
-    BOUNDS_SWIPE_DISTANCE,
-    DEFAULT_MAX_RETRIES,
-    DEFAULT_RETRY_DELAY,
-    DEFAULT_SCROLL_DISTANCE,
-    DEFAULT_STABILITY_WAIT,
-    DEFAULT_SWIPE_DISTANCE,
-    DEFAULT_SWIPE_DURATION,
-    VISUAL_HASH_LENGTH,
-    ExecutionPhase,
-    SignalType,
-)
 
 __all__ = [
     "ActionType",

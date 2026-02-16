@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +22,7 @@ class Step(BaseModel):
         default=False, description="Whether this step is a recovery attempt"
     )
     condition: Optional[str] = Field(default=None, description="Optional condition for the step")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
 
 
 class StepResult(BaseModel):

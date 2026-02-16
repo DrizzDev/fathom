@@ -13,7 +13,6 @@ This code will be removed in a future major version.
 
 from __future__ import annotations
 
-import warnings
 from logging import getLogger
 from typing import Any, Dict, Optional
 
@@ -34,14 +33,14 @@ logger = getLogger(__name__)
 class IntentWorkflow(BaseWorkflow[IntentResult]):
     """
     DEPRECATED: Old IntentWorkflow implementation.
-    
+
     Use the new hexagonal architecture instead:
     - from fathom.strategies.intent import IntentStrategy
     - from fathom.runtime.runner import FathomRunner
-    
+
     This class is preserved for backward compatibility and will be removed
     in a future major version.
-    
+
     Workflow for executing a specific intent.
 
     Orchestrates the full execution of a goal-directed automation:

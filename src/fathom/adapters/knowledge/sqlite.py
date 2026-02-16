@@ -16,7 +16,7 @@ from fathom.schemas.actions import Action
 class SQLiteKnowledge(KnowledgePort):
     """
     SQLite adapter for application knowledge graph.
-    
+
     Uses SQLite for persistence and rustworkx for graph operations.
     """
 
@@ -36,8 +36,7 @@ class SQLiteKnowledge(KnowledgePort):
         async with aiosqlite.connect(self.__path) as db:
             # Create tables
             await db.execute(
-                "CREATE TABLE IF NOT EXISTS screens "
-                "(screen_id TEXT PRIMARY KEY, metadata TEXT)"
+                "CREATE TABLE IF NOT EXISTS screens (screen_id TEXT PRIMARY KEY, metadata TEXT)"
             )
             await db.execute(
                 "CREATE TABLE IF NOT EXISTS transitions "
@@ -61,8 +60,9 @@ class SQLiteKnowledge(KnowledgePort):
                 async for row in cursor:
                     screen_id = row[0]
                     metadata = json.loads(row[1]) if row[1] else {}
-                    node_idx = self.__graph.add_node({"screen_id": screen_id, **metadata})
-                    self.__screen_to_node[screen_id] = node_idx
+                    if self.__graph is not None:
+                        node_idx = self.__graph.add_node({"screen_id": screen_id, **metadata})
+                        self.__screen_to_node[screen_id] = node_idx
 
             # Load transitions as edges
             async with db.execute(
@@ -74,7 +74,8 @@ class SQLiteKnowledge(KnowledgePort):
                         from_idx = self.__screen_to_node[from_screen]
                         to_idx = self.__screen_to_node[to_screen]
                         action_data = json.loads(action_json) if action_json else {}
-                        self.__graph.add_edge(from_idx, to_idx, action_data)
+                        if self.__graph is not None:
+                            self.__graph.add_edge(from_idx, to_idx, action_data)
 
     async def add_screen(self, *, screen_id: str, metadata: Dict[str, Any]) -> None:
         """Add screen node to graph."""
@@ -90,12 +91,12 @@ class SQLiteKnowledge(KnowledgePort):
 
         # Add to in-memory graph
         if screen_id not in self.__screen_to_node:
+            if self.__graph is None:
+                raise RuntimeError("Knowledge graph not initialized")
             node_idx = self.__graph.add_node({"screen_id": screen_id, **metadata})
             self.__screen_to_node[screen_id] = node_idx
 
-    async def add_transition(
-        self, *, from_screen: str, to_screen: str, action: Action
-    ) -> None:
+    async def add_transition(self, *, from_screen: str, to_screen: str, action: Action) -> None:
         """Add transition edge between screens."""
         await self.__initialize()
 
@@ -116,11 +117,11 @@ class SQLiteKnowledge(KnowledgePort):
         # Add to in-memory graph
         from_idx = self.__screen_to_node[from_screen]
         to_idx = self.__screen_to_node[to_screen]
+        if self.__graph is None:
+            raise RuntimeError("Knowledge graph not initialized")
         self.__graph.add_edge(from_idx, to_idx, action.model_dump())
 
-    async def find_path(
-        self, *, from_screen: str, to_screen: str
-    ) -> Optional[List[Action]]:
+    async def find_path(self, *, from_screen: str, to_screen: str) -> Optional[List[Action]]:
         """Find action sequence to reach target screen."""
         await self.__initialize()
 
@@ -132,6 +133,8 @@ class SQLiteKnowledge(KnowledgePort):
 
         try:
             # Use Dijkstra's algorithm to find shortest path
+            if self.__graph is None:
+                raise RuntimeError("Knowledge graph not initialized")
             path_indices = rx.dijkstra_shortest_paths(
                 self.__graph, from_idx, target=to_idx, weight_fn=lambda _: 1
             )
@@ -159,6 +162,8 @@ class SQLiteKnowledge(KnowledgePort):
             return []
 
         node_idx = self.__screen_to_node[screen_id]
+        if self.__graph is None:
+            raise RuntimeError("Knowledge graph not initialized")
         neighbor_indices = self.__graph.successor_indices(node_idx)
 
         neighbors = []

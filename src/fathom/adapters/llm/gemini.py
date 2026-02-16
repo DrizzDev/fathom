@@ -16,9 +16,8 @@ from google.oauth2 import service_account
 from fathom.exceptions import VisionError
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import GeminiConfig
-from fathom.schemas.results import AnalysisResult
+from fathom.schemas.results import GenerateResult
 from fathom.services.cache import CacheService
-from fathom.services.parsing import ToolResponseParser
 
 logger = getLogger(__name__)
 
@@ -26,9 +25,9 @@ logger = getLogger(__name__)
 class GeminiLLM(LLMPort):
     """
     Gemini adapter for LLM interactions.
-    
-    This adapter wraps the existing GeminiLLMClient logic without modifications.
-    All code is copied from infrastructure/llm/gemini.py to preserve exact behavior.
+
+    This adapter wraps the existing Gemini client logic without modifications.
+    All code is adapted from infrastructure/llm/gemini.py to preserve exact behavior.
     """
 
     def __init__(
@@ -43,20 +42,15 @@ class GeminiLLM(LLMPort):
             self.__configuration = configuration
         else:
             self.__configuration = GeminiConfig(api_key=api_key, model=model)
-        
+
         self.__client: Optional[Any] = None
         self.__credentials: Optional[Any] = None
         self.__cache: Optional[CacheService] = None
-        self.__parser = ToolResponseParser()
-        
+
         self.__initialize()
 
     def __initialize(self) -> None:
-        """
-        Initialize client.
-        
-        Copied from original GeminiLLMClient without modifications.
-        """
+        """Initialize client."""
         project = self.__configuration.project_id
         location = self.__configuration.location or "global"
 
@@ -64,7 +58,7 @@ class GeminiLLM(LLMPort):
             path = Path(self.__configuration.credentials_path)
             if path.exists():
                 self.__credentials = service_account.Credentials.from_service_account_file(
-                    str(path),
+                    filename=str(path),
                     scopes=["https://www.googleapis.com/auth/cloud-platform"],
                 )
                 if not project:
@@ -92,37 +86,23 @@ class GeminiLLM(LLMPort):
                     credentials=self.__credentials,
                 )
 
-            self.__cache = CacheService(self.__client, self.__configuration.model)
+            self.__cache = CacheService(client=self.__client, model_name=self.__configuration.model)
         except Exception as exception:
             raise VisionError(f"Init failed: {exception}") from exception
 
-    @property
-    def credentials(self) -> Any:
-        """Returns credentials."""
-        return self.__credentials
-
-    @property
-    def cache_stats(self) -> Dict[str, Any]:
-        """Returns cache statistics."""
-        return self.__cache.stats.to_dict() if self.__cache else {}
-
-    async def analyze(
+    async def generate(
         self,
         *,
-        system_instruction: str,
-        user_content: List[Any],
+        prompt: List[Any],
+        system_instruction: Optional[str] = None,
         tools: Optional[Dict[str, Any]] = None,
-    ) -> AnalysisResult:
-        """
-        Main handler for LLM interaction.
-        
-        Copied from original GeminiLLMClient without modifications.
-        """
+    ) -> GenerateResult:
+        """Main handler for LLM interaction."""
         if not self.__client:
             raise VisionError("Client not ready")
 
         cache_name = None
-        if self.__cache:
+        if self.__cache and system_instruction:
             cache_name = await self.__cache.get_cached_content(
                 system_instruction=system_instruction,
                 tools=tools.get("function_declarations") if tools else None,
@@ -130,7 +110,7 @@ class GeminiLLM(LLMPort):
 
         # Wrap content parts correctly for SDK
         parts = []
-        for item in user_content:
+        for item in prompt:
             if isinstance(item, bytes):  # It's an image
                 if not item:
                     raise VisionError("Received empty image data for analysis")
@@ -148,7 +128,8 @@ class GeminiLLM(LLMPort):
         }
 
         if not cache_name:
-            config_args["system_instruction"] = [{"text": system_instruction}]
+            if system_instruction:
+                config_args["system_instruction"] = [{"text": system_instruction}]
             if tools:
                 config_args["tools"] = [tools]
                 config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
@@ -165,20 +146,33 @@ class GeminiLLM(LLMPort):
                     model=self.__configuration.model,
                     contents=[types.Content(role="user", parts=parts)],
                 )
-                result = self.__parser.parse(response)
 
-                # Extract token usage from response
+                # Extract content
+                content = ""
+                tool_calls = []
+                if response.candidates:
+                    candidate = response.candidates[0]
+                    if candidate.content and candidate.content.parts:
+                        for part in candidate.content.parts:
+                            if part.text:
+                                content += part.text
+                            if part.function_call:
+                                tool_calls.append(part.function_call)
+
+                # Extract token usage
+                metrics = {}
                 usage = getattr(response, "usage_metadata", None)
                 if usage:
-                    result.metrics["prompt_tokens"] = getattr(usage, "prompt_token_count", 0) or 0
-                    result.metrics["completion_tokens"] = (
+                    metrics["prompt_tokens"] = float(getattr(usage, "prompt_token_count", 0) or 0)
+                    metrics["completion_tokens"] = float(
                         getattr(usage, "candidates_token_count", 0) or 0
                     )
-                    result.metrics["cached_tokens"] = (
+                    metrics["cached_tokens"] = float(
                         getattr(usage, "cached_content_token_count", 0) or 0
                     )
 
-                return result
+                return GenerateResult(content=content, tool_calls=tool_calls, metrics=metrics)
+
             except Exception as exception:
                 error_msg = str(exception)
                 is_quota_error = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
@@ -188,34 +182,26 @@ class GeminiLLM(LLMPort):
 
                 if is_quota_error:
                     logger.warning(
-                        f"Quota exceeded (429). Pausing for 30s before retry {attempt + 1}/{max_retries}..."
+                        f"Quota exceeded (429). Pausing before retry {attempt + 1}/{max_retries}..."
                     )
                     jitter = random.random() * 5.0  # nosec
                     delay = 30.0 + jitter
                 else:
                     jitter = random.random() * 0.5  # nosec
-                    delay = (self.__configuration.retry_delay * (2**attempt)) + jitter
+                    delay = (1.0 * (2**attempt)) + jitter  # Using 1.0s base delay
 
-                await asyncio.sleep(delay)
+                await asyncio.sleep(delay=delay)
 
         raise VisionError("Unreachable")
 
     async def cleanup(self) -> None:
-        """
-        Cleanup resources.
-        
-        Copied from original GeminiLLMClient without modifications.
-        """
+        """Cleanup resources."""
         if self.__cache:
             await self.__cache.delete_cache()
 
     @staticmethod
     def __detect_mime(data: bytes) -> str:
-        """
-        Detect common image formats from file signatures.
-        
-        Copied from original GeminiLLMClient without modifications.
-        """
+        """Detect common image formats from file signatures."""
         if data.startswith(b"\x89PNG\r\n\x1a\n"):
             return "image/png"
         if data.startswith(b"\xff\xd8\xff"):

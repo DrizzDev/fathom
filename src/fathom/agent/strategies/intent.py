@@ -15,6 +15,7 @@ from fathom.agent.strategies.base import ExecutionStrategy
 from fathom.constants import ActionType, StrategyStatus
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.interfaces import ILedger, IMemoryProvider
+from fathom.processing.annotator import ImageAnnotator
 from fathom.prompts.preprocessor import PromptPreprocessor
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.metrics import ExecutionMetrics
@@ -28,7 +29,6 @@ from fathom.services.resolution import ReferenceResolutionService
 from fathom.services.ux import UXService
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
-from fathom.processing.annotator import ImageAnnotator
 from fathom.utils.coordinates import CoordinateConverter
 
 console = Console()

@@ -20,7 +20,7 @@ from fathom.schemas.screens import ScreenState
 class ScreenNode:
     """
     Node in the screen graph representing a unique screen state.
-    
+
     Tracks visits, actions, and transitions for a discovered screen.
     """
 
@@ -77,7 +77,7 @@ class ScreenNode:
 class ExplorationGraph:
     """
     Graph of discovered screens and transitions.
-    
+
     Maintains the complete exploration state including all discovered screens
     and the transitions between them.
     """
@@ -133,7 +133,7 @@ class ExplorationGraph:
 class ActionGenerator:
     """
     Generates exploratory actions for unknown UI states.
-    
+
     Uses heuristics to select appropriate exploratory actions based on
     screen visit history and exploration state.
     """

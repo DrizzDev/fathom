@@ -25,11 +25,11 @@ if TYPE_CHECKING:
 class FathomRunner:
     """
     Executes Fathom workflows with configured ports.
-    
+
     This is the main execution orchestrator that wires together all ports
     and coordinates the execution of automation workflows using the new
     hexagonal architecture.
-    
+
     The runner:
     - Wires ExecutionEngine and ContextManager
     - Manages execution lifecycle
@@ -51,7 +51,7 @@ class FathomRunner:
     ) -> None:
         """
         Initialize runner with all configured ports.
-        
+
         Args:
             device: Device port for mobile device interactions
             llm: LLM port for language model interactions
@@ -62,17 +62,17 @@ class FathomRunner:
             telemetry: Telemetry port for observability
             config: Optional configuration (uses defaults if not provided)
         """
-        self._device = device
-        self._llm = llm
-        self._memory = memory
-        self._knowledge = knowledge
-        self._signal = signal
-        self._storage = storage
-        self._telemetry = telemetry
-        self._config = config or FathomConfig()
-        
+        self.__device = device
+        self.__llm = llm
+        self.__memory = memory
+        self.__knowledge = knowledge
+        self.__signal = signal
+        self.__storage = storage
+        self.__telemetry = telemetry
+        self.__config = config or FathomConfig()
+
         # Wire core components
-        self._engine = ExecutionEngine(
+        self.__engine = ExecutionEngine(
             device=device,
             llm=llm,
             memory=memory,
@@ -80,10 +80,10 @@ class FathomRunner:
             storage=storage,
             telemetry=telemetry,
         )
-        self._context_manager = ContextManager(memory=memory)
-        
+        self.__context_manager: Optional[ContextManager] = None
+
         # Track current workflow for cancellation
-        self._current_strategy: Optional[object] = None
+        self.__current_strategy: Optional[object] = None
 
     async def run_intent(
         self,
@@ -96,7 +96,7 @@ class FathomRunner:
     ) -> IntentResult:
         """
         Execute intent-based workflow.
-        
+
         Args:
             intent: User intent to accomplish
             max_steps: Maximum execution steps
@@ -104,62 +104,65 @@ class FathomRunner:
             request_id: Optional workflow ID
             device_serial: Device serial (unused, kept for compatibility)
             prompt_version: Prompt version (unused, kept for compatibility)
-        
+
         Returns:
             IntentResult with execution outcome and metrics
         """
         workflow_id = request_id or uuid.uuid4().hex[:8]
         start_time = time.time()
-        
-        self._telemetry.info(
+
+        self.__telemetry.info(
             "Starting intent workflow",
             intent=intent,
             max_steps=max_steps,
             workflow_id=workflow_id,
         )
-        
+
         # Initialize context
-        self._context_manager.set_roadmap(intent=intent)
-        
+        self.__context_manager = ContextManager(memory=self.__memory, workflow_id=workflow_id)
+        self.__context_manager.set_roadmap(intent=intent)
+
         # Create and execute strategy
         from fathom.strategies.intent import IntentStrategy
-        
+
         strategy = IntentStrategy(
-            engine=self._engine,
-            context=self._context_manager,
+            engine=self.__engine,
+            context=self.__context_manager,
             intent=intent,
-            device=self._device,
-            llm=self._llm,
-            memory=self._memory,
-            storage=self._storage,
-            telemetry=self._telemetry,
-            signal=self._signal,
-            max_steps=max_steps or self._config.intent_strategy.max_steps,
-            use_xml=use_xml if use_xml is not None else self._config.intent_strategy.use_xml,
+            device=self.__device,
+            llm=self.__llm,
+            memory=self.__memory,
+            storage=self.__storage,
+            telemetry=self.__telemetry,
+            signal=self.__signal,
+            max_steps=max_steps or self.__config.intent_strategy.max_steps,
+            use_xml=use_xml if use_xml is not None else self.__config.intent_strategy.use_xml,
             workflow_id=workflow_id,
         )
-        self._current_strategy = strategy
-        
+        self.__current_strategy = strategy
+
         try:
             # Execute strategy
             execution_result = await strategy.execute(max_steps=max_steps)
-            
+
             # Get progress info
             progress = strategy.get_progress()
-            
+
             # Collect metrics from strategy - use to_report_dict() for proper format
             strategy_metrics = strategy.get_metrics()
             metrics = strategy_metrics.to_report_dict() if strategy_metrics else {}
-            
+
             # Get memory summary
-            memory_summary = await self._get_memory_summary()
-            
+            memory_summary = await self.__get_memory_summary()
+
             # Build IntentResult
             duration = time.time() - start_time
-            
+
             result = IntentResult(
                 success=execution_result.success,
-                completion_reason=execution_result.error or "Completed successfully" if execution_result.success else "Failed",
+                completion_reason=execution_result.error or "Completed successfully"
+                if execution_result.success
+                else "Failed",
                 workflow_id=workflow_id,
                 status="completed" if execution_result.success else "failed",
                 duration=duration,
@@ -170,18 +173,18 @@ class FathomRunner:
                 memory_summary=memory_summary,
                 error=execution_result.error,
             )
-            
-            self._telemetry.info(
+
+            self.__telemetry.info(
                 "Intent workflow completed",
                 success=result.success,
                 steps_taken=result.steps_taken,
                 duration=duration,
             )
-            
+
             return result
-            
+
         finally:
-            self._current_strategy = None
+            self.__current_strategy = None
 
     async def run_exploration(
         self,
@@ -191,54 +194,57 @@ class FathomRunner:
     ) -> ExplorationResult:
         """
         Execute exploration workflow.
-        
+
         Args:
             max_steps: Maximum exploration steps
             request_id: Optional workflow ID
             device_serial: Device serial (unused, kept for compatibility)
-        
+
         Returns:
             ExplorationResult with discovery metrics
         """
         workflow_id = request_id or uuid.uuid4().hex[:8]
         start_time = time.time()
-        
-        self._telemetry.info(
+
+        self.__telemetry.info(
             "Starting exploration workflow",
             max_steps=max_steps,
             workflow_id=workflow_id,
         )
-        
+
         # Initialize context
-        self._context_manager.set_roadmap(intent="Explore application structure")
-        
+        self.__context_manager = ContextManager(memory=self.__memory, workflow_id=workflow_id)
+        self.__context_manager.set_roadmap(intent="Explore application structure")
+
         # Create and execute strategy
         from fathom.strategies.exploration import ExplorationStrategy
-        
+
         strategy = ExplorationStrategy(
-            engine=self._engine,
-            context=self._context_manager,
-            device=self._device,
-            storage=self._storage,
-            telemetry=self._telemetry,
-            max_steps=max_steps or self._config.exploration_strategy.max_steps,
-            timeout=self._config.exploration_strategy.timeout,
-            seed=self._config.exploration_strategy.seed,
+            engine=self.__engine,
+            context=self.__context_manager,
+            device=self.__device,
+            storage=self.__storage,
+            telemetry=self.__telemetry,
+            max_steps=max_steps or self.__config.exploration_strategy.max_steps,
+            timeout=self.__config.exploration_strategy.timeout,
+            seed=self.__config.exploration_strategy.seed,
         )
-        self._current_strategy = strategy
-        
+        self.__current_strategy = strategy
+
         try:
             # Execute strategy
-            execution_result = await strategy.execute(max_steps=max_steps or self._config.exploration_strategy.max_steps)
-            
+            execution_result = await strategy.execute(
+                max_steps=max_steps or self.__config.exploration_strategy.max_steps
+            )
+
             # Get progress info
             progress = strategy.get_progress()
             stats = progress.get("stats", {})
-            
+
             # Extract discovered activities from graph
             graph = strategy.graph
             discovered_activities = list({node.activity for node in graph.nodes.values()})
-            
+
             # Calculate coverage (percentage of screens explored vs total discovered)
             unique_screens = stats.get("unique_screens", 0)
             unexplored = stats.get("unexplored", 0)
@@ -247,13 +253,13 @@ class FathomRunner:
                 if unique_screens > 0
                 else 0.0
             )
-            
+
             # Export graph structure
-            screen_graph = self._export_graph(graph)
-            
+            screen_graph = self.__export_graph(graph=graph)
+
             # Build ExplorationResult
             duration = time.time() - start_time
-            
+
             result = ExplorationResult(
                 success=execution_result.success,
                 completion_reason="Exploration completed",
@@ -269,71 +275,73 @@ class FathomRunner:
                 screen_graph=screen_graph,
                 error=execution_result.error,
             )
-            
-            self._telemetry.info(
+
+            self.__telemetry.info(
                 "Exploration workflow completed",
                 unique_screens=result.unique_screens,
                 total_actions=result.total_actions,
                 duration=duration,
             )
-            
+
             return result
-            
+
         finally:
-            self._current_strategy = None
+            self.__current_strategy = None
 
     def cancel(self) -> None:
         """Cancel the currently running workflow."""
-        if self._current_strategy:
-            self._telemetry.warning("Workflow cancellation requested")
+        if self.__current_strategy:
+            self.__telemetry.warning("Workflow cancellation requested")
             # Call cancel method on strategy if it has one
-            if hasattr(self._current_strategy, 'cancel'):
-                self._current_strategy.cancel()
+            if hasattr(self.__current_strategy, "cancel"):
+                self.__current_strategy.cancel()
             else:
-                self._telemetry.warning("Strategy does not support cancellation")
-    
+                self.__telemetry.warning("Strategy does not support cancellation")
+
     async def cleanup(self) -> None:
         """Cleanup resources."""
         # Cleanup LLM resources
-        await self._llm.cleanup()
-        
-        self._telemetry.info("Runner cleanup completed")
-    
-    async def _get_memory_summary(self) -> Dict[str, Any]:
+        await self.__llm.cleanup()
+
+        self.__telemetry.info("Runner cleanup completed")
+
+    async def __get_memory_summary(self) -> Dict[str, Any]:
         """Get memory summary from memory port."""
         try:
             # Get all knowledge from memory provider
-            knowledge = await self._memory.get_all_knowledge()
-            
+            knowledge = await self.__memory.get_all_knowledge()
+
             # Extract screens information
             screens = knowledge.get("screens", [])
-            
+
             # Format for CLI display
             screens_formatted = []
             for screen in screens[:10]:  # Last 10 screens
-                screens_formatted.append({
-                    "hash": screen.get("visual_hash", "")[:12],
-                    "activity": screen.get("activity", "unknown"),
-                    "description": screen.get("description", ""),
-                })
-            
+                screens_formatted.append(
+                    {
+                        "hash": screen.get("visual_hash", "")[:12],
+                        "activity": screen.get("activity", "unknown"),
+                        "description": screen.get("description", ""),
+                    }
+                )
+
             # Count experiences
             experience_count = knowledge.get("experience_count", 0)
-            
+
             return {
                 "screens": screens_formatted,
                 "experience_count": experience_count,
                 "total_screens": len(screens),
             }
         except Exception as exception:
-            self._telemetry.warning(f"Failed to get memory summary: {exception}")
+            self.__telemetry.warning(f"Failed to get memory summary: {exception}")
             return {
                 "screens": [],
                 "experience_count": 0,
                 "total_screens": 0,
             }
-    
-    def _export_graph(self, graph: ExplorationGraph) -> Dict[str, Any]:
+
+    def __export_graph(self, graph: ExplorationGraph) -> Dict[str, Any]:
         """Export exploration graph to dictionary."""
         try:
             nodes_dict = {}
@@ -344,27 +352,27 @@ class FathomRunner:
                     "actions": list(node.actions),
                     "transitions": node.transitions,
                 }
-            
+
             edges_list = [
                 {"origin": origin, "action": action, "destination": dest}
                 for origin, action, dest in graph.edges
             ]
-            
+
             return {
                 "nodes": nodes_dict,
                 "edges": edges_list,
                 "stats": graph.get_stats(),
             }
         except Exception as exception:
-            self._telemetry.warning(f"Failed to export graph: {exception}")
+            self.__telemetry.warning(f"Failed to export graph: {exception}")
             return {}
-    
+
     @property
     def engine(self) -> ExecutionEngine:
         """Get the execution engine."""
-        return self._engine
-    
+        return self.__engine
+
     @property
-    def context(self) -> ContextManager:
+    def context(self) -> Optional[ContextManager]:
         """Get the context manager."""
-        return self._context_manager
+        return self.__context_manager

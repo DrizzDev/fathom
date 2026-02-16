@@ -11,7 +11,7 @@ from fathom.interfaces.storage import StoragePort
 class LocalStorage(StoragePort):
     """
     Local filesystem adapter for storage.
-    
+
     This adapter wraps the existing LocalImageStorage logic without modifications.
     All code delegates to existing implementation to preserve exact behavior.
     """
@@ -21,12 +21,10 @@ class LocalStorage(StoragePort):
         # Use existing implementation as-is
         self.__storage = LocalImageStorage()
 
-    async def save(
-        self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None
-    ) -> str:
+    async def save(self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
         Save artifact and return identifier.
-        
+
         Delegates to existing LocalImageStorage implementation.
         """
         return await self.__storage.save(data=data, metadata=metadata)

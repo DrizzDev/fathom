@@ -5,34 +5,34 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from fathom.schemas.results import AnalysisResult
+from fathom.schemas.results import GenerateResult
 
 
 class LLMPort(ABC):
     """Abstract interface for language model interactions."""
 
     @abstractmethod
-    async def analyze(
+    async def generate(
         self,
         *,
-        system_instruction: str,
-        user_content: List[Any],
+        prompt: List[Any],
+        system_instruction: Optional[str] = None,
         tools: Optional[Dict[str, Any]] = None,
-    ) -> AnalysisResult:
+    ) -> GenerateResult:
         """
-        Analyze content with LLM.
+        Generate response from LLM.
 
         Args:
-            system_instruction: System prompt
-            user_content: List of text strings and image bytes
-            tools: Optional tool definitions for function calling
+            prompt: List of text parts and image bytes
+            system_instruction: Optional system prompt
+            tools: Optional tool definitions
 
         Returns:
-            AnalysisResult with reasoning, action, and metrics
+            GenerateResult with content and tool calls
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def cleanup(self) -> None:
         """Release resources."""
-        pass
+        raise NotImplementedError

@@ -14,23 +14,19 @@ class KnowledgePort(ABC):
     @abstractmethod
     async def add_screen(self, *, screen_id: str, metadata: Dict[str, Any]) -> None:
         """Add screen node to graph."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
-    async def add_transition(
-        self, *, from_screen: str, to_screen: str, action: Action
-    ) -> None:
+    async def add_transition(self, *, from_screen: str, to_screen: str, action: Action) -> None:
         """Add transition edge between screens."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
-    async def find_path(
-        self, *, from_screen: str, to_screen: str
-    ) -> Optional[List[Action]]:
+    async def find_path(self, *, from_screen: str, to_screen: str) -> Optional[List[Action]]:
         """Find action sequence to reach target screen."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def get_neighbors(self, *, screen_id: str) -> List[str]:
         """Get screens reachable from given screen."""
-        pass
+        raise NotImplementedError

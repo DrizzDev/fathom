@@ -11,8 +11,8 @@ try:
 except ImportError:
     FreeTypeFont = Any
 
-from fathom.schemas.ui import LabeledElement
 from fathom.processing.geometry import GeometryUtils
+from fathom.schemas.ui import LabeledElement
 
 logger = getLogger(__name__)
 BoundsTuple = Tuple[float, float, float, float]

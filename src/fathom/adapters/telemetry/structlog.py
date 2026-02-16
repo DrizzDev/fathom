@@ -11,13 +11,13 @@ from fathom.interfaces.telemetry import TelemetryPort
 class StructlogAdapter(TelemetryPort):
     """
     Structlog adapter for telemetry.
-    
+
     Uses Python's standard logging with structlog for structured logging.
     """
 
     def __init__(self, *, logger_name: str = "fathom") -> None:
         """Initialize structlog adapter."""
-        self.__logger = getLogger(logger_name)
+        self.__logger = getLogger(name=logger_name)
 
     def debug(self, message: str, **context: Any) -> None:
         """Log debug message with context."""

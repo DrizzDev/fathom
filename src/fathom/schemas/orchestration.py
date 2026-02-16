@@ -173,6 +173,14 @@ class ExecutionContext(BaseModel):
             for step in self.steps
         ]
 
+    def get_history_summary(self) -> List[str]:
+        """Get summary of previous actions."""
+        return [
+            f"Step {s.step_number}: {s.metadata.get('action', 'unknown')} "
+            f"({'Success' if s.success else 'Failed'})"
+            for s in self.steps
+        ]
+
     def to_checkpoint(self) -> Dict[str, Any]:
         """
         Serialize to checkpoint.
@@ -214,6 +222,13 @@ class ExecutionContext(BaseModel):
             correlation_id=data.get("correlation_id"),
             start_time=float(data.get("start_time", time.time())),
         )
+
+
+class ExecutionRoadmap(BaseModel):
+    """Roadmap for intent-based execution."""
+
+    intent: str = Field(..., description="Goal intent")
+    steps: List[str] = Field(default_factory=list, description="Planned steps")
 
 
 class RunnerConfig(BaseModel):

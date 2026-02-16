@@ -7,9 +7,9 @@ if TYPE_CHECKING:
     import xml.etree.ElementTree as ET  # nosec
 
 from fathom.constants import ActionType
-from fathom.schemas.ui import LabeledElement, UIBounds
 from fathom.processing.geometry import GeometryUtils
 from fathom.processing.parsers.base import PlatformParser
+from fathom.schemas.ui import LabeledElement, UIBounds
 
 logger = getLogger(__name__)
 

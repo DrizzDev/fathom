@@ -12,14 +12,24 @@ class SignalPort(ABC):
     @abstractmethod
     async def check_signal(self) -> Optional[str]:
         """Check for control signal (PAUSE, RESUME, INJECT, ASK)."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def wait_for_resume(self) -> None:
         """Block until RESUME signal received."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def request_input(self, *, prompt: str) -> str:
         """Request human input with prompt."""
-        pass
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_injected_context(self) -> Optional[str]:
+        """Get injected context and clear it."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def has_injected_context(self) -> bool:
+        """Check if there's injected context available."""
+        raise NotImplementedError

@@ -23,7 +23,7 @@ DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
 
 class SignalType(StrEnum):
     """HITL control signals."""
-    
+
     PAUSE = "PAUSE"
     RESUME = "RESUME"
     INJECT = "INJECT"
@@ -34,7 +34,7 @@ class SignalType(StrEnum):
 
 class ExecutionPhase(StrEnum):
     """Execution DAG phases."""
-    
+
     SIGNAL_CHECK = "signal_check"
     PERCEIVE = "perceive"
     REASON = "reason"

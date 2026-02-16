@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
-from fathom.schemas.actions import Action
-from fathom.schemas.results import AnalysisResult
-from fathom.schemas.screens import ScreenState
-
 # New hexagonal architecture ports
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
@@ -16,6 +12,9 @@ from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.schemas.actions import Action
+from fathom.schemas.results import AnalysisResult
+from fathom.schemas.screens import ScreenState
 
 
 # Legacy Protocol definitions for backward compatibility

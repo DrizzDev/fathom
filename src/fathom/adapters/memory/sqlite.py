@@ -14,7 +14,7 @@ from fathom.schemas.screens import ScreenState
 class SQLiteMemory(MemoryPort):
     """
     SQLite adapter for memory persistence.
-    
+
     This adapter wraps the existing SQLiteMemoryProvider and Ledger logic without modifications.
     All code delegates to existing implementations to preserve exact behavior.
     """
@@ -42,15 +42,11 @@ class SQLiteMemory(MemoryPort):
         """Get all session data."""
         return await self.__ledger.get_all()
 
-    async def store_observation(
-        self, *, screen: ScreenState, description: Optional[str]
-    ) -> None:
+    async def store_observation(self, *, screen: ScreenState, description: Optional[str]) -> None:
         """Store screen observation for future recall."""
         await self.__provider.store_observation(screen=screen, description=description)
 
-    async def store_experience(
-        self, *, visual_hash: str, action: Action, success: bool
-    ) -> None:
+    async def store_experience(self, *, visual_hash: str, action: Action, success: bool) -> None:
         """Store action outcome for learning."""
         await self.__provider.store_experience(
             visual_hash=visual_hash, action=action, success=success
@@ -61,9 +57,5 @@ class SQLiteMemory(MemoryPort):
         return await self.__provider.retrieve_knowledge(visual_hash=visual_hash)
 
     async def get_all_knowledge(self) -> Dict[str, Any]:
-        """
-        Retrieve a summary of all stored knowledge for reporting.
-        
-        Additional method from SQLiteMemoryProvider for compatibility.
-        """
+        """Retrieve a summary of all stored knowledge."""
         return await self.__provider.get_all_knowledge()

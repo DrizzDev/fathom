@@ -142,3 +142,11 @@ class PlanResult(BaseModel):
     validation_reasoning: Optional[str] = Field(
         default=None, description="Reason if action is invalid"
     )
+
+
+class GenerateResult(BaseModel):
+    """Raw result from LLM generation."""
+
+    content: str = Field(default="", description="Text content from LLM")
+    tool_calls: List[Any] = Field(default_factory=list, description="Structured tool calls")
+    metrics: Dict[str, float] = Field(default_factory=dict, description="Token usage and timing")

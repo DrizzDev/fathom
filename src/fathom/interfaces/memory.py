@@ -15,33 +15,34 @@ class MemoryPort(ABC):
     @abstractmethod
     async def set(self, *, key: str, value: str) -> None:
         """Store key-value pair in session."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def get(self, *, key: str) -> Optional[str]:
         """Retrieve value by key."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def get_all(self) -> Dict[str, str]:
         """Get all session data."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
-    async def store_observation(
-        self, *, screen: ScreenState, description: Optional[str]
-    ) -> None:
+    async def store_observation(self, *, screen: ScreenState, description: Optional[str]) -> None:
         """Store screen observation for future recall."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
-    async def store_experience(
-        self, *, visual_hash: str, action: Action, success: bool
-    ) -> None:
+    async def store_experience(self, *, visual_hash: str, action: Action, success: bool) -> None:
         """Store action outcome for learning."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def retrieve_knowledge(self, *, visual_hash: str) -> Dict[str, Any]:
         """Retrieve everything known about a screen."""
-        pass
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_all_knowledge(self) -> Dict[str, Any]:
+        """Retrieve a summary of all stored knowledge."""
+        raise NotImplementedError

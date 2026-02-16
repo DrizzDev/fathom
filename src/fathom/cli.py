@@ -36,9 +36,9 @@ logger = getLogger(__name__)
 class FathomCLI:
     """
     DEPRECATED: Old Fathom CLI application.
-    
+
     Use the new CLI instead: 'fathom' command (not 'fathom-old')
-    
+
     This class is preserved for backward compatibility and will be removed
     in a future major version.
     """

@@ -9,7 +9,7 @@ Installation:
 
 Usage:
     from fathom.runtime.temporal import FathomWorkflow
-    
+
     # Register with Temporal worker
     worker = Worker(
         client,
@@ -24,15 +24,16 @@ from __future__ import annotations
 # Graceful import handling for optional Temporal dependency
 try:
     from temporalio import workflow
+
     TEMPORAL_AVAILABLE = True
 except ImportError:
     TEMPORAL_AVAILABLE = False
     workflow = None
 
 if TEMPORAL_AVAILABLE:
+    from .activities import execute_fathom_exploration, execute_fathom_intent
     from .workflow import FathomWorkflow
-    from .activities import execute_fathom_intent, execute_fathom_exploration
-    
+
     __all__ = [
         "FathomWorkflow",
         "execute_fathom_intent",
@@ -46,7 +47,7 @@ else:
 def check_temporal_available() -> None:
     """
     Check if Temporal is available and raise helpful error if not.
-    
+
     Raises:
         ImportError: If temporalio is not installed
     """

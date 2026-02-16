@@ -10,9 +10,7 @@ class StoragePort(ABC):
     """Abstract interface for artifact persistence."""
 
     @abstractmethod
-    async def save(
-        self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None
-    ) -> str:
+    async def save(self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
         Save artifact and return identifier.
 
@@ -23,4 +21,4 @@ class StoragePort(ABC):
         Returns:
             Storage identifier (path, URL, etc.)
         """
-        pass
+        raise NotImplementedError

@@ -103,18 +103,18 @@ OPTION 1: Add Import Linting Rules (Task 17.1)
 
 OPTION 2: Start Using the New API
    The architecture is fully functional. You can:
-   
+
    ```python
    from fathom.adapters import ADBDevice, GeminiLLM
    from fathom.runtime import Fathom
-   
+
    runner = (
        Fathom.builder()
        .device(ADBDevice(serial="emulator-5554"))
        .llm(GeminiLLM(api_key="your-key"))
        .build()
    )
-   
+
    result = await runner.run(
        intent="Open settings",
        max_steps=20,

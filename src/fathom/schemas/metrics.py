@@ -89,7 +89,7 @@ class ExecutionMetrics(BaseModel):
             },
         }
 
-    def to_dict(self) -> Dict[str, any]:
+    def to_dict(self) -> Dict[str, Any]:
         """Convert metrics to dictionary for result objects."""
         return {
             "screenshot_count": self.screenshot.call_count,
