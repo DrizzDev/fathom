@@ -15,7 +15,7 @@ from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.storage import StoragePort
-from fathom.prompts.factory import PromptFactory
+from fathom.core.prompts.factory import PromptFactory
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
@@ -47,7 +47,7 @@ class VisionService:
         self.__package_name = package_name
 
         # Use the original prompt builder factory
-        self.__builder = PromptFactory.get_builder(model_name="gemini")
+        self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
 
     async def analyze(
         self,

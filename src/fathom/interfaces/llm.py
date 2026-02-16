@@ -11,6 +11,12 @@ from fathom.schemas.results import GenerateResult
 class LLMPort(ABC):
     """Abstract interface for language model interactions."""
 
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """Name of the model being used."""
+        raise NotImplementedError
+
     @abstractmethod
     async def generate(
         self,

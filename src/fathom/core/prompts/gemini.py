@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from fathom.prompts.base import PromptBuilder
-from fathom.prompts.templates import (
+from fathom.core.prompts.base import PromptBuilder
+from fathom.core.prompts.templates import (
     ACTION_RULES,
     COMMON_RULES,
     CONFIDENCE_RULES,

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Dict, Type
 
-from fathom.prompts.base import PromptBuilder
-from fathom.prompts.gemini import GeminiPromptBuilder
+from fathom.core.prompts.base import PromptBuilder
+from fathom.core.prompts.gemini import GeminiPromptBuilder
 
 
 class PromptFactory:

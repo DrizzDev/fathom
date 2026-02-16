@@ -53,6 +53,7 @@ dependencies = [
     "google-cloud-storage>=2.0.0",
     "types-PyYAML>=6.0.12.20250915",
     "rustworkx>=0.15.0",
+    "langgraph>=0.0.10",
 ]
 
 [project.scripts]

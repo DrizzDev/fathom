@@ -47,6 +47,11 @@ class GeminiLLM(LLMPort):
 
         self.__initialize()
 
+    @property
+    def model_name(self) -> str:
+        """Name of the model being used."""
+        return self.__configuration.model
+
     def __initialize(self) -> None:
         """Initialize client."""
         project = self.__configuration.project_id

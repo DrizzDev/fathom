@@ -35,7 +35,7 @@ from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.prompts.preprocessor import PromptPreprocessor
+from fathom.core.prompts.preprocessor import PromptPreprocessor
 from fathom.schemas.actions import Bounds
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.results import ActionResult, ExecutionResult, PlanResult
