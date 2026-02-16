@@ -47,6 +47,8 @@ class ExplorationStrategy:
         max_steps: int = 100,
         timeout: float = 3600.0,
         seed: Optional[int] = None,
+        package_name: str = "unknown_app",
+        workflow_id: str = "exploration",
     ) -> None:
         """
         Initialize exploration strategy with ports.
@@ -60,9 +62,13 @@ class ExplorationStrategy:
             max_steps: Maximum number of exploration steps
             timeout: Maximum exploration time in seconds
             seed: Random seed for reproducible exploration
+            package_name: Target package name
+            workflow_id: Execution session ID
         """
         self.__engine = engine
         self.__context = context
+        self.__package_name = package_name
+        self.__workflow_id = workflow_id
 
         # Ports
         self.__device = device
@@ -179,7 +185,11 @@ class ExplorationStrategy:
             )
 
             # 7. Execute through engine
-            result = await self.__engine.execute_step(step=step)
+            result = await self.__engine.execute_step(
+                step=step,
+                package_name=self.__package_name,
+                session_id=self.__workflow_id,
+            )
 
             self.__steps += 1
             self.__last = action

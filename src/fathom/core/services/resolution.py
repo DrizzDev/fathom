@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any
 
 from fathom.interfaces.memory import MemoryPort
 from fathom.schemas.actions import Action

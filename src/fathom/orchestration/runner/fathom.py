@@ -198,6 +198,7 @@ class FathomRunner:
         from fathom.adapters.memory.sqlite import SQLiteMemory
         from fathom.adapters.storage.cloud import CloudStorage
         from fathom.adapters.storage.local import LocalStorage
+        from fathom.base.paths import SharedPathManager
 
         llm_configuration = GeminiConfig(
             model=self.__settings.gemini_model,
@@ -206,6 +207,9 @@ class FathomRunner:
             project_id=self.__settings.vertex_project_id,
             credentials_path=self.__settings.google_application_credentials,
         )
+
+        # Initialize shared paths
+        path_manager = SharedPathManager(settings=self.__settings)
 
         # Create LLM adapter
         llm_adapter = GeminiLLM(configuration=llm_configuration)
@@ -228,21 +232,14 @@ class FathomRunner:
         if not self.__ledger:
             raise FathomError(message="Ledger not initialized")
 
-        # We need to wrap existing ledger/memory provider into adapter interface
-        # Since this is legacy code, creating a fresh SQLiteMemory adapter is safest
-        # as it will point to the same DB file by default or we can configure it.
-        # However, self.__memory_provider and self.__ledger are already initialized.
-        # We can just ignore them and create new adapters pointing to same DBs?
-        # Or wrap them?
-
-        # Let's create new adapters pointing to default locations which match legacy defaults
-        memory_adapter = SQLiteMemory()
+        # Create new adapters using path manager
+        memory_adapter = SQLiteMemory(path_manager=path_manager)
 
         return GeminiVisionTool(
             model=llm_adapter,
             memory=memory_adapter,
             ledger=memory_adapter,  # Use memory adapter as ledger
-            local_storage=LocalStorage(),
+            local_storage=LocalStorage(path_manager=path_manager),
             gcs_storage=cloud_storage,
             version=version,
             session_id=session_id,

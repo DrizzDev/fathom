@@ -6,10 +6,10 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional
 
 from google.genai.types import Content
+
 from fathom.schemas.statistics import CacheStats
 
 logger = getLogger(__name__)
-
 
 
 class CacheService:

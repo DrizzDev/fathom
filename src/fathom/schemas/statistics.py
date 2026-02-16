@@ -1,6 +1,6 @@
 from typing import Any, Dict
-from pydantic import BaseModel, ConfigDict, Field
 
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CacheStats(BaseModel):

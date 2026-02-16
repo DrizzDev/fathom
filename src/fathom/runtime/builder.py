@@ -13,6 +13,7 @@ from fathom.schemas.configuration import (
 )
 
 if TYPE_CHECKING:
+    from fathom.base.paths import SharedPathManager
     from fathom.interfaces.device import DevicePort
     from fathom.interfaces.knowledge import KnowledgePort
     from fathom.interfaces.llm import LLMPort
@@ -30,7 +31,7 @@ class FathomBuilder:
     Methods are order-independent. Validation happens at build().
     """
 
-    def __init__(self) -> None:
+    def __init__(self, path_manager: Optional[SharedPathManager] = None) -> None:
         """Initialize builder with no ports configured."""
         self.__device: Optional[DevicePort] = None
         self.__llm: Optional[LLMPort] = None
@@ -40,6 +41,7 @@ class FathomBuilder:
         self.__storage: Optional[StoragePort] = None
         self.__telemetry: Optional[TelemetryPort] = None
         self.__config: FathomConfig = FathomConfig()
+        self.__path_manager = path_manager
 
     def device(self, device: DevicePort) -> FathomBuilder:
         """
@@ -205,7 +207,13 @@ class FathomBuilder:
         from fathom.adapters.signal.noop import NoopSignal
         from fathom.adapters.storage.local import LocalStorage
         from fathom.adapters.telemetry.structlog import StructlogAdapter
+        from fathom.base.paths import SharedPathManager
         from fathom.runtime.runner import FathomRunner
+        from fathom.settings.env import FathomSettings
+
+        # Ensure path manager exists
+        if not self.__path_manager:
+            self.__path_manager = SharedPathManager(settings=FathomSettings())
 
         # Validate required ports
         if not self.__device:
@@ -215,13 +223,13 @@ class FathomBuilder:
 
         # Apply defaults for optional ports
         if not self.__memory:
-            self.__memory = SQLiteMemory()
+            self.__memory = SQLiteMemory(path_manager=self.__path_manager)
         if not self.__knowledge:
-            self.__knowledge = SQLiteKnowledge()
+            self.__knowledge = SQLiteKnowledge(path_manager=self.__path_manager)
         if not self.__signal:
             self.__signal = NoopSignal()
         if not self.__storage:
-            self.__storage = LocalStorage()
+            self.__storage = LocalStorage(path_manager=self.__path_manager)
         if not self.__telemetry:
             self.__telemetry = StructlogAdapter()
 
@@ -233,6 +241,7 @@ class FathomBuilder:
             signal=self.__signal,
             storage=self.__storage,
             telemetry=self.__telemetry,
+            path_manager=self.__path_manager,
             config=self.__config,
         )
 
@@ -241,6 +250,6 @@ class Fathom:
     """Main entry point for Fathom library."""
 
     @staticmethod
-    def builder() -> FathomBuilder:
+    def builder(path_manager: Optional[SharedPathManager] = None) -> FathomBuilder:
         """Create a new builder instance."""
-        return FathomBuilder()
+        return FathomBuilder(path_manager=path_manager)

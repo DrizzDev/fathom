@@ -40,6 +40,9 @@ class FathomSettings(BaseSettings):
     # Workflow default limits
     max_steps: int = Field(default=100, alias="MAX_STEPS")
 
+    # Assets path
+    assets_path: Path = Field(default=PROJECT_ROOT / "assets", alias="FATHOM_ASSETS_PATH")
+
     # Environment file support
     model_config = SettingsConfigDict(
         extra="ignore",

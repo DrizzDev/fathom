@@ -11,7 +11,7 @@ import contextlib
 import hashlib
 import time
 from logging import getLogger
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from rich.console import Console
 
@@ -42,6 +42,9 @@ from fathom.schemas.results import ActionResult, ExecutionResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 
+if TYPE_CHECKING:
+    from fathom.base.paths import SharedPathManager
+
 logger = getLogger(name=__name__)
 console = Console()
 
@@ -65,14 +68,17 @@ class IntentStrategy:
         storage: StoragePort,
         telemetry: TelemetryPort,
         signal: SignalPort,
+        path_manager: SharedPathManager,
         max_steps: int = 20,
         use_xml: bool = False,
         workflow_id: str = "default",
+        package_name: str = "unknown_app",
     ) -> None:
         """Initialize intent strategy with ports."""
         self.__engine = engine
         self.__context = context
         self.__intent = intent
+        self.__package_name = package_name
 
         # Ports
         self.__device = device
@@ -81,10 +87,12 @@ class IntentStrategy:
         self.__storage = storage
         self.__telemetry = telemetry
         self.__signal = signal
+        self.__path_manager = path_manager
 
         # Configuration
         self.__use_xml = use_xml
         self.__max_steps = max_steps
+        self.__workflow_id = workflow_id
 
         # Create vision service
         vision_tool = VisionService(
@@ -93,6 +101,7 @@ class IntentStrategy:
             storage=storage,
             version="pro_xml" if use_xml else "pro",
             session_id=workflow_id,
+            package_name=package_name,
         )
 
         # Agent components
@@ -108,7 +117,11 @@ class IntentStrategy:
         self.__ux_service = UXService()
         self.__audit_service = AuditService()
         self.__hierarchy = HierarchyService(device=device)
-        self.__history = HistoryService(workflow_id=workflow_id)
+        self.__history = HistoryService(
+            workflow_id=workflow_id,
+            package_name=package_name,
+            path_manager=path_manager,
+        )
         self.__resolution = ReferenceResolutionService(ledger=memory)
 
         # Metrics
@@ -251,10 +264,19 @@ class IntentStrategy:
             step = await self.__resolve_coordinates(step=step)
 
         # 4. EXECUTION
-        result = await self.__engine.execute_step(step=step, pre_capture=screen)
+        result = await self.__engine.execute_step(
+            step=step,
+            pre_capture=screen,
+            package_name=self.__package_name,
+            session_id=self.__workflow_id,
+        )
 
         # 5. RECORDING
         self.__state.record_step(result=result)
+
+        # Save history
+        self.__history.save_step(result=result, intent=self.__intent)
+
         await self.__memory.store_experience(
             visual_hash=state.visual_hash,
             action=step.action,
@@ -302,7 +324,12 @@ class IntentStrategy:
             # Store screenshot
             storage_id = await self.__storage.save(
                 data=screenshot_bytes,
-                metadata={"type": "screenshot", "timestamp": time.time()},
+                metadata={
+                    "type": "screenshots",
+                    "package_name": activity,
+                    "session_id": self.__workflow_id,
+                    "timestamp": time.time(),
+                },
             )
 
             screen = ScreenCapture(
@@ -320,7 +347,12 @@ class IntentStrategy:
 
             if self.__use_xml and xml:
                 annotated_screen, elements = await self.__hierarchy.process_xml_and_screen(
-                    screen=screen, xml=xml, action_type=ActionType.TAP
+                    screen=screen,
+                    xml=xml,
+                    path_manager=self.__path_manager,
+                    package_name=self.__package_name,
+                    session_id=self.__workflow_id,
+                    action_type=ActionType.TAP,
                 )
                 if annotated_screen:
                     screen = annotated_screen

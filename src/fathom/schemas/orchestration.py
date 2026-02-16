@@ -259,3 +259,21 @@ class RunnerResult(BaseModel):
     execution_context: ExecutionContext = Field(..., description="Details of the execution run")
     checkpoints_saved: int = Field(default=0, description="Number of saved checkpoints")
     total_duration: float = Field(default=0.0, description="Total run time in seconds")
+
+
+class WorkflowRequest(BaseModel):
+    """
+    Request entity for starting a workflow.
+    Ensures consistent field naming across the system.
+    """
+
+    intent: str = Field(..., description="User goal")
+    session_id: str = Field(
+        default_factory=lambda: uuid.uuid4().hex[:8], description="Unique session ID"
+    )
+    package_name: str = Field(default="unknown_app", description="Target application package")
+    max_steps: int = Field(default=20, description="Step limit")
+    use_xml: bool = Field(default=False, description="Enable XML grounding")
+    interactive: bool = Field(default=False, description="Enable HITL mode")
+    device_serial: Optional[str] = Field(default=None, description="Specific device to target")
+    prompt_version: Optional[str] = Field(default=None, description="Prompt variant")

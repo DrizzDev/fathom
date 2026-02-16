@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import aiosqlite
 import rustworkx as rx
 
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.schemas.actions import Action
+
+if TYPE_CHECKING:
+    from fathom.base.paths import SharedPathManager
 
 
 class SQLiteKnowledge(KnowledgePort):
@@ -20,10 +23,23 @@ class SQLiteKnowledge(KnowledgePort):
     Uses SQLite for persistence and rustworkx for graph operations.
     """
 
-    def __init__(self, *, database_path: str = "assets/memory/knowledge_graph.db") -> None:
+    def __init__(
+        self,
+        path_manager: Optional[SharedPathManager] = None,
+        *,
+        database_path: str = "assets/memory/knowledge_graph.db",
+    ) -> None:
         """Initialize SQLite knowledge adapter."""
+        if path_manager:
+            # We can use memory_path and append specific filename
+            # SharedPathManager has get_knowledge_db_path? No, only for memory/ledger.
+            # But memory_path returns path to 'memory' dir.
+            # Let's use that.
+            self.__path = path_manager.memory_path / "knowledge_graph.db"
+        else:
+            self.__path = Path(database_path)
+
         self.__initialized = False
-        self.__path = Path(database_path)
         self.__path.parent.mkdir(parents=True, exist_ok=True)
         self.__graph: Optional[rx.PyDiGraph] = None
         self.__screen_to_node: Dict[str, int] = {}

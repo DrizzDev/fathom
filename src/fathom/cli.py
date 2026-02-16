@@ -7,7 +7,7 @@ import asyncio
 import signal
 import sys
 from logging import getLogger
-from typing import Any, Optional
+from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -25,6 +25,7 @@ from fathom.exceptions import FathomError
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.builder import Fathom
 from fathom.runtime.runner import FathomRunner
+from fathom.schemas.orchestration import WorkflowRequest
 from fathom.settings.env import FathomSettings
 
 console = Console()
@@ -58,29 +59,30 @@ class FathomCLI:
 
     async def run(
         self,
-        intent: str,
-        max_steps: int = 20,
-        device_serial: Optional[str] = None,
-        **kwargs: Any,
+        request: WorkflowRequest,
     ) -> int:
         """Run an intent workflow with rich UI."""
         self.__setup_signals()
 
         console.print(
             Panel.fit(
-                f"[bold blue]Fathom Agent[/bold blue]\n[cyan]Intent:[/cyan] {intent}",
+                f"[bold blue]Fathom Agent[/bold blue]\n[cyan]Intent:[/cyan] {request.intent}",
                 border_style="blue",
             )
         )
 
-        interactive_mode = kwargs.get("interactive", False)
+        interactive_mode = request.interactive
         signal_adapter: SignalPort
 
         try:
             # Build runner with hexagonal architecture
-            serial = device_serial or self.settings.android_serial
+            serial = request.device_serial or self.settings.android_serial
 
+            from fathom.base.paths import SharedPathManager
             from fathom.schemas.configuration import GeminiConfig
+
+            # Initialize shared paths
+            path_manager = SharedPathManager(settings=self.settings)
 
             gemini_config = GeminiConfig(
                 model=self.settings.gemini_model,
@@ -100,13 +102,13 @@ class FathomCLI:
                 signal_adapter = NoopSignal()
 
             self.runner = (
-                Fathom.builder()
+                Fathom.builder(path_manager=path_manager)
                 .device(device=ADBDevice(serial=serial))
                 .llm(llm=GeminiLLM(configuration=gemini_config))
-                .memory(memory=SQLiteMemory())
-                .knowledge(knowledge=SQLiteKnowledge())
+                .memory(memory=SQLiteMemory(path_manager=path_manager))
+                .knowledge(knowledge=SQLiteKnowledge(path_manager=path_manager))
                 .signal(signal=signal_adapter)
-                .storage(storage=LocalStorage())
+                .storage(storage=LocalStorage(path_manager=path_manager))
                 .telemetry(telemetry=StructlogAdapter())
                 .build()
             )
@@ -114,18 +116,20 @@ class FathomCLI:
             # Don't use spinner in interactive mode - it blocks output
             if interactive_mode:
                 result = await self.runner.run_intent(
-                    intent=intent,
-                    max_steps=max_steps,
-                    use_xml=kwargs.get("use_xml", False),
-                    prompt_version=kwargs.get("prompt_version"),
+                    intent=request.intent,
+                    max_steps=request.max_steps,
+                    use_xml=request.use_xml,
+                    prompt_version=request.prompt_version,
+                    request_id=request.session_id,
                 )
             else:
                 with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
                     result = await self.runner.run_intent(
-                        intent=intent,
-                        max_steps=max_steps,
-                        use_xml=kwargs.get("use_xml", False),
-                        prompt_version=kwargs.get("prompt_version"),
+                        intent=request.intent,
+                        max_steps=request.max_steps,
+                        use_xml=request.use_xml,
+                        prompt_version=request.prompt_version,
+                        request_id=request.session_id,
                     )
 
             # Execution Summary
@@ -225,8 +229,7 @@ class FathomCLI:
 
     async def explore(
         self,
-        max_steps: int = 50,
-        device_serial: Optional[str] = None,
+        request: WorkflowRequest,
     ) -> int:
         """Run an exploration workflow with rich UI."""
         self.__setup_signals()
@@ -239,9 +242,13 @@ class FathomCLI:
         )
 
         try:
-            serial = device_serial or self.settings.android_serial
+            serial = request.device_serial or self.settings.android_serial
 
+            from fathom.base.paths import SharedPathManager
             from fathom.schemas.configuration import GeminiConfig
+
+            # Initialize shared paths
+            path_manager = SharedPathManager(settings=self.settings)
 
             gemini_config = GeminiConfig(
                 model=self.settings.gemini_model,
@@ -252,19 +259,21 @@ class FathomCLI:
             )
 
             self.runner = (
-                Fathom.builder()
+                Fathom.builder(path_manager=path_manager)
                 .device(device=ADBDevice(serial=serial))
                 .llm(llm=GeminiLLM(configuration=gemini_config))
-                .memory(memory=SQLiteMemory())
-                .knowledge(knowledge=SQLiteKnowledge())
+                .memory(memory=SQLiteMemory(path_manager=path_manager))
+                .knowledge(knowledge=SQLiteKnowledge(path_manager=path_manager))
                 .signal(signal=NoopSignal())
-                .storage(storage=LocalStorage())
+                .storage(storage=LocalStorage(path_manager=path_manager))
                 .telemetry(telemetry=StructlogAdapter())
                 .build()
             )
 
             with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
-                result = await self.runner.run_exploration(max_steps=max_steps)
+                result = await self.runner.run_exploration(
+                    max_steps=request.max_steps, request_id=request.session_id
+                )
 
             table = Table(title="Exploration Results", border_style="green")
             table.add_column("Metric", style="cyan")
@@ -348,19 +357,23 @@ def main() -> int:
 
     try:
         if args.command == "run":
-            result = asyncio.run(
-                cli.run(
-                    intent=args.intent,
-                    use_xml=args.use_xml,
-                    max_steps=args.max_steps,
-                    device_serial=args.serial,
-                    prompt_version=args.prompt_version,
-                    interactive=args.interactive,
-                )
+            request = WorkflowRequest(
+                intent=args.intent,
+                use_xml=args.use_xml,
+                max_steps=args.max_steps,
+                device_serial=args.serial,
+                prompt_version=args.prompt_version,
+                interactive=args.interactive,
             )
+            result = asyncio.run(cli.run(request=request))
             return result
         elif args.command == "explore":
-            return asyncio.run(cli.explore(max_steps=args.max_steps, device_serial=args.serial))
+            request = WorkflowRequest(
+                intent="Explore application structure",
+                max_steps=args.max_steps,
+                device_serial=args.serial,
+            )
+            return asyncio.run(cli.explore(request=request))
         else:
             parser.print_help()
             return 0

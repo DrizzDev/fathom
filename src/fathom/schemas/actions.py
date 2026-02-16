@@ -124,7 +124,8 @@ class Action(BaseModel):
             return f"Tap on {name}"
 
         if self.action_type == ActionType.TYPE:
-            return f"Type '{self.text}' in {name}"
+            text_val = self.text if self.text is not None else ""
+            return f"Type '{text_val}' in {name}"
 
         if "swipe" in self.action_type.value:
             direction = (

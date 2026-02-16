@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import time
@@ -35,6 +36,7 @@ class VisionService:
         storage: StoragePort,
         version: str = "pro",
         session_id: str = "default",
+        package_name: str = "unknown_app",
     ) -> None:
         """Initialize vision service."""
         self.__llm = llm
@@ -42,6 +44,7 @@ class VisionService:
         self.__storage = storage
         self.__version = version
         self.__session_id = session_id
+        self.__package_name = package_name
 
         # Use the original prompt builder factory
         self.__builder = PromptFactory.get_builder(model_name="gemini")
@@ -206,9 +209,13 @@ class VisionService:
 
     async def __persist(self, data: bytes, activity: str) -> None:
         """Background persistence."""
-        try:
+        with contextlib.suppress(Exception):
             await self.__storage.save(
-                data=data, metadata={"activity": activity, "session_id": self.__session_id}
+                data=data,
+                metadata={
+                    "type": "screenshots",
+                    "activity_name": activity,
+                    "package_name": self.__package_name,
+                    "session_id": self.__session_id,
+                },
             )
-        except Exception:
-            pass

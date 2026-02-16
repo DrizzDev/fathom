@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET  # nosec
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from fathom.constants import ActionType
 from fathom.interfaces.device import DevicePort
@@ -14,6 +14,9 @@ from fathom.processing.annotator import ImageAnnotator
 from fathom.processing.drawer import BoundsGenerator
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
+
+if TYPE_CHECKING:
+    from fathom.base.paths import SharedPathManager
 
 logger = getLogger(__name__)
 
@@ -35,10 +38,13 @@ class HierarchyService:
         return self.__label_map.copy()
 
     async def process_xml_and_screen(
-        self, 
-        screen: ScreenCapture, 
-        xml: str, 
-        action_type: Optional[ActionType] = None
+        self,
+        screen: ScreenCapture,
+        xml: str,
+        path_manager: SharedPathManager,
+        package_name: str,
+        session_id: str,
+        action_type: Optional[ActionType] = None,
     ) -> Tuple[Optional[ScreenCapture], Dict[str, Any]]:
         """Processes XML and screen data to identify UI elements."""
         start_time = datetime.now()
@@ -52,12 +58,19 @@ class HierarchyService:
 
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename_base = f"{timestamp}"
 
-            # 1. Save Raw Screenshot
-            screenshot_path = self.__save_screenshot(data=screen.image, timestamp=timestamp)
+            # 1. Save Raw Screenshot (using path manager)
+            screenshot_path = path_manager.get_screenshot_path(
+                package_name=package_name, session_id=session_id, filename=f"{filename_base}.png"
+            )
+            self.__save_file(path=screenshot_path, data=screen.image, mode="wb")
 
-            # 2. Save Raw XML
-            xml_path = self.__save_xml(content=xml, timestamp=timestamp)
+            # 2. Save Raw XML (using path manager)
+            xml_path = path_manager.get_xml_path(
+                package_name=package_name, session_id=session_id, filename=f"{filename_base}.xml"
+            )
+            self.__save_file(path=xml_path, data=xml.encode("utf-8"), mode="wb")
 
             # 3. Parse Elements
             elements = self.__parse_elements(
@@ -65,20 +78,23 @@ class HierarchyService:
             )
 
             # 4. Generate Annotated Image
-            annotated_path = self.__annotate(
-                source=screenshot_path, timestamp=timestamp, elements=elements
+            annotated_path = path_manager.get_annotated_path(
+                package_name=package_name, session_id=session_id, filename=f"{filename_base}.png"
+            )
+            annotated_result = self.__annotate(
+                source=screenshot_path, destination=annotated_path, elements=elements
             )
 
-            if not annotated_path:
+            if not annotated_result:
                 return screen, self.__label_map.copy()
 
             # 5. Build Result Capture
-            capture = self.__build_capture(original=screen, path=annotated_path)
+            capture = self.__build_capture(original=screen, path=annotated_result)
 
             # Inject metadata
             new_metadata = capture.metadata.copy()
             new_metadata["xml_path"] = str(xml_path)
-            new_metadata["path"] = str(annotated_path)
+            new_metadata["path"] = str(annotated_result)
             capture = capture.model_copy(update={"metadata": new_metadata})
 
             duration = (datetime.now() - start_time).total_seconds()
@@ -90,23 +106,10 @@ class HierarchyService:
             logger.exception(f"Hierarchy processing failed: {exception}")
             return screen, {}
 
-    def __save_xml(self, content: str, timestamp: str) -> Path:
-        """Persists hierarchy XML."""
-        directory = Path("assets/xmls")
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{timestamp}.xml"
-        with path.open("w", encoding="utf-8") as handle:
-            handle.write(content)
-        return path
-
-    def __save_screenshot(self, data: bytes, timestamp: str) -> Path:
-        """Persists screenshot image."""
-        directory = Path("assets/screenshot")
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{timestamp}.png"
-        with path.open("wb") as handle:
+    def __save_file(self, path: Path, data: bytes, mode: str = "wb") -> None:
+        """Helper to save file."""
+        with path.open(mode) as handle:
             handle.write(data)
-        return path
 
     def __parse_elements(
         self, xml: str, image_path: Path, action: Optional[ActionType]
@@ -124,12 +127,9 @@ class HierarchyService:
         return elements
 
     def __annotate(
-        self, source: Path, timestamp: str, elements: List[LabeledElement]
+        self, source: Path, destination: Path, elements: List[LabeledElement]
     ) -> Optional[Path]:
         """Annotates image with identified elements."""
-        directory = Path("assets/annotated")
-        directory.mkdir(parents=True, exist_ok=True)
-        destination = directory / f"{timestamp}.png"
         path = ImageAnnotator.annotate(
             image_path=str(source), output_path=str(destination), elements=elements
         )

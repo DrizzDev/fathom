@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict
+from typing import Any
 
 from fathom.constants import ActionType
 from fathom.exceptions import VisionError
@@ -165,6 +165,9 @@ class ToolResponseParser:
         except ValueError:
             action_type = ActionType.WAIT
 
+        # Support variations from different prompt/model versions
+        text = data.get("text") or data.get("text_to_type")
+        wait = data.get("wait_duration") or data.get("wait_duration_ms")
         target_name = data.get("target_name") or data.get("element_name") or "UI Element"
 
         action = Action(
@@ -173,13 +176,15 @@ class ToolResponseParser:
             natural_language_target=target_name,
             memory_updates=arguments.get("memory_updates"),
             action_type=action_type,
-            text=str(data.get("text")) if data.get("text") else None,
-            wait_duration=int(data.get("wait_duration")) if data.get("wait_duration") else None,
+            text=str(text) if text else None,
+            wait_duration=int(wait) if wait else None,
             rationale=str(data.get("rationale", "")),
             confidence=float(data.get("confidence", 1.0)),
             label_id=str(data.get("label_id")) if data.get("label_id") else None,
             is_valid=bool(data.get("is_valid", True)),
-            validation_reason=str(data.get("validation_reason")) if data.get("validation_reason") else None,
+            validation_reason=str(data.get("validation_reason"))
+            if data.get("validation_reason")
+            else None,
         )
 
         return AnalysisResult(

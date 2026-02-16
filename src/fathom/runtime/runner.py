@@ -12,6 +12,7 @@ from fathom.schemas.configuration import FathomConfig
 from fathom.schemas.results import ExplorationResult, IntentResult
 
 if TYPE_CHECKING:
+    from fathom.base.paths import SharedPathManager
     from fathom.interfaces.device import DevicePort
     from fathom.interfaces.knowledge import KnowledgePort
     from fathom.interfaces.llm import LLMPort
@@ -47,6 +48,7 @@ class FathomRunner:
         signal: SignalPort,
         storage: StoragePort,
         telemetry: TelemetryPort,
+        path_manager: SharedPathManager,
         config: Optional[FathomConfig] = None,
     ) -> None:
         """
@@ -54,12 +56,13 @@ class FathomRunner:
 
         Args:
             device: Device port for mobile device interactions
-            llm: LLM port for language model interactions
+            llm: LLM port for reasoning and analysis
             memory: Memory port for session state and cross-run memory
             knowledge: Knowledge port for application knowledge graph
             signal: Signal port for human-in-the-loop control
             storage: Storage port for artifact persistence
-            telemetry: Telemetry port for observability
+            telemetry: Telemetry port for logging and observability
+            path_manager: Shared path manager for trace storage
             config: Optional configuration (uses defaults if not provided)
         """
         self.__device = device
@@ -69,6 +72,7 @@ class FathomRunner:
         self.__signal = signal
         self.__storage = storage
         self.__telemetry = telemetry
+        self.__path_manager = path_manager
         self.__config = config or FathomConfig()
 
         # Wire core components
@@ -79,6 +83,7 @@ class FathomRunner:
             signal=signal,
             storage=storage,
             telemetry=telemetry,
+            path_manager=path_manager,
         )
         self.__context_manager: Optional[ContextManager] = None
 
@@ -111,11 +116,18 @@ class FathomRunner:
         workflow_id = request_id or uuid.uuid4().hex[:8]
         start_time = time.time()
 
+        # Fetch package name from device at start
+        try:
+            package_name = await self.__device.get_current_package()
+        except Exception:
+            package_name = "unknown_app"
+
         self.__telemetry.info(
             "Starting intent workflow",
             intent=intent,
             max_steps=max_steps,
             workflow_id=workflow_id,
+            package_name=package_name,
         )
 
         # Initialize context
@@ -135,9 +147,11 @@ class FathomRunner:
             storage=self.__storage,
             telemetry=self.__telemetry,
             signal=self.__signal,
+            path_manager=self.__path_manager,
             max_steps=max_steps or self.__config.intent_strategy.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent_strategy.use_xml,
             workflow_id=workflow_id,
+            package_name=package_name,
         )
         self.__current_strategy = strategy
 
@@ -160,9 +174,8 @@ class FathomRunner:
 
             result = IntentResult(
                 success=execution_result.success,
-                completion_reason=execution_result.error or "Completed successfully"
-                if execution_result.success
-                else "Failed",
+                completion_reason=execution_result.error
+                or ("Completed successfully" if execution_result.success else "Failed"),
                 workflow_id=workflow_id,
                 status="completed" if execution_result.success else "failed",
                 duration=duration,
@@ -206,10 +219,17 @@ class FathomRunner:
         workflow_id = request_id or uuid.uuid4().hex[:8]
         start_time = time.time()
 
+        # Fetch package name from device at start
+        try:
+            package_name = await self.__device.get_current_package()
+        except Exception:
+            package_name = "unknown_app"
+
         self.__telemetry.info(
             "Starting exploration workflow",
             max_steps=max_steps,
             workflow_id=workflow_id,
+            package_name=package_name,
         )
 
         # Initialize context
@@ -228,6 +248,8 @@ class FathomRunner:
             max_steps=max_steps or self.__config.exploration_strategy.max_steps,
             timeout=self.__config.exploration_strategy.timeout,
             seed=self.__config.exploration_strategy.seed,
+            package_name=package_name,
+            workflow_id=workflow_id,
         )
         self.__current_strategy = strategy
 
@@ -319,7 +341,7 @@ class FathomRunner:
             for screen in screens[:10]:  # Last 10 screens
                 screens_formatted.append(
                     {
-                        "hash": screen.get("visual_hash", "")[:12],
+                        "hash": screen.get("hash", "")[:12],
                         "activity": screen.get("activity", "unknown"),
                         "description": screen.get("description", ""),
                     }

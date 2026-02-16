@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.infrastructure.storage.local import LocalImageStorage
 from fathom.interfaces.storage import StoragePort
+
+if TYPE_CHECKING:
+    from fathom.base.paths import SharedPathManager
 
 
 class LocalStorage(StoragePort):
@@ -16,10 +19,10 @@ class LocalStorage(StoragePort):
     All code delegates to existing implementation to preserve exact behavior.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, path_manager: SharedPathManager) -> None:
         """Initialize local storage adapter."""
         # Use existing implementation as-is
-        self.__storage = LocalImageStorage()
+        self.__storage = LocalImageStorage(path_manager=path_manager)
 
     async def save(self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
         """

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.interfaces.memory import MemoryPort
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
+
+if TYPE_CHECKING:
+    from fathom.base.paths import SharedPathManager
 
 
 class SQLiteMemory(MemoryPort):
@@ -21,14 +24,18 @@ class SQLiteMemory(MemoryPort):
 
     def __init__(
         self,
+        path_manager: SharedPathManager,
         *,
         knowledge_path: str = "assets/memory/knowledge.db",
         ledger_path: str = "assets/memory/ledger.db",
     ) -> None:
         """Initialize SQLite memory adapter."""
+        k_path = str(path_manager.get_knowledge_db_path())
+        l_path = str(path_manager.get_ledger_db_path())
+
         # Use existing implementations as-is
-        self.__provider = SQLiteMemoryProvider(database_path=knowledge_path)
-        self.__ledger = Ledger(database_path=ledger_path)
+        self.__provider = SQLiteMemoryProvider(database_path=k_path)
+        self.__ledger = Ledger(database_path=l_path)
 
     async def set(self, *, key: str, value: str) -> None:
         """Store key-value pair in session."""

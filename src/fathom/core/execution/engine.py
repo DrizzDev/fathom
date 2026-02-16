@@ -12,6 +12,7 @@ import hashlib
 import time
 from typing import Optional, Tuple
 
+from fathom.base.paths import SharedPathManager
 from fathom.constants import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY,
@@ -54,6 +55,7 @@ class ExecutionEngine:
         signal: SignalPort,
         storage: StoragePort,
         telemetry: TelemetryPort,
+        path_manager: SharedPathManager,
         *,
         max_retries: int = DEFAULT_MAX_RETRIES,
         stability_wait: float = DEFAULT_STABILITY_WAIT / 1000.0,  # Convert ms to seconds
@@ -68,6 +70,7 @@ class ExecutionEngine:
             signal: Signal port for HITL control
             storage: Storage port for artifact persistence
             telemetry: Telemetry port for logging and observability
+            path_manager: Shared path manager for trace storage
             max_retries: Maximum retry attempts for transient failures
             stability_wait: Wait time after action for screen stability (seconds)
         """
@@ -77,6 +80,7 @@ class ExecutionEngine:
         self.__signal = signal
         self.__storage = storage
         self.__telemetry = telemetry
+        self.__path_manager = path_manager
         self.__max_retries = max_retries
         self.__stability_wait = stability_wait
 
@@ -85,6 +89,8 @@ class ExecutionEngine:
         step: Step,
         *,
         pre_capture: Optional[ScreenCapture] = None,
+        package_name: str = "unknown_app",
+        session_id: str = "default",
     ) -> StepResult:
         """
         Execute one step of the execution DAG.
@@ -101,6 +107,8 @@ class ExecutionEngine:
         Args:
             step: Step to execute
             pre_capture: Optional pre-captured screen state
+            package_name: Application package name
+            session_id: Execution session ID
 
         Returns:
             StepResult with execution details
@@ -129,7 +137,12 @@ class ExecutionEngine:
                 )
 
             # Phase 4: Act
-            result = await self.__act(step=step, pre_capture=pre_capture)
+            result = await self.__act(
+                step=step,
+                pre_capture=pre_capture,
+                package_name=package_name,
+                session_id=session_id,
+            )
 
             # Wait for screen stability
             # Phase 2 (post-action): Perceive after stability
@@ -278,13 +291,21 @@ class ExecutionEngine:
 
         return hashlib.sha256(capture.image).hexdigest()[:VISUAL_HASH_LENGTH]
 
-    async def __act(self, step: Step, pre_capture: ScreenCapture) -> ExecutionResult:
+    async def __act(
+        self,
+        step: Step,
+        pre_capture: ScreenCapture,
+        package_name: str,
+        session_id: str,
+    ) -> ExecutionResult:
         """
         Phase 4: Execute device action with retry logic and tracing.
 
         Args:
             step: Step containing action to execute
             pre_capture: Pre-action screen capture for tracing
+            package_name: Application package name
+            session_id: Execution session ID
 
         Returns:
             ExecutionResult with success status
@@ -321,7 +342,15 @@ class ExecutionEngine:
 
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                         filename = f"step_{step.step_number}_{step.action.action_type.value}_{timestamp}.png"
-                        trace_path = f"assets/traces/{filename}"
+
+                        # Use path manager to get session-specific trace path
+                        trace_path = str(
+                            self.__path_manager.get_trace_path(
+                                package_name=package_name,
+                                session_id=session_id,
+                                filename=filename,
+                            )
+                        )
 
                         # Run tracing in background thread to avoid latency
                         asyncio.create_task(
