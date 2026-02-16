@@ -15,9 +15,9 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from rich.console import Console
 
-from fathom.agent.planner import StepPlanner
-from fathom.agent.reasoner import Reasoner
-from fathom.agent.state import AgentState
+from fathom.core.agent.planner import StepPlanner
+from fathom.core.agent.reasoner import Reasoner
+from fathom.core.agent.state import AgentState
 from fathom.constants import ActionType, SignalType
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
@@ -105,11 +105,7 @@ class IntentStrategy:
         )
 
         # Agent components
-        from typing import cast
-
-        from fathom.tools.vision.base import VisionTool
-
-        self.__planner = StepPlanner(vision_tool=cast("VisionTool", vision_tool))
+        self.__planner = StepPlanner(vision_tool=vision_tool)
         self.__reasoner = Reasoner(intent=intent)
         self.__state = AgentState(intent=intent, max_steps=max_steps)
 

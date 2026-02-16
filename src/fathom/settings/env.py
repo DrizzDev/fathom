@@ -20,7 +20,12 @@ class FathomSettings(BaseSettings):
     gemini_model: str = Field(default="gemini-3-flash-preview", alias="GEMINI_MODEL")
 
     vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
-    vertex_project_id: Optional[str] = Field(default=None, alias="VERTEX_PROJECT_ID")
+    vertex_project_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT", "GCP_PROJECT"
+        ),
+    )
 
     google_application_credentials: Optional[str] = Field(
         default=None,

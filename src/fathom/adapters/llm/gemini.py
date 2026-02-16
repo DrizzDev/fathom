@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import random
 from logging import getLogger
 from pathlib import Path
@@ -18,7 +17,7 @@ from fathom.exceptions import VisionError
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import GeminiConfig
 from fathom.schemas.results import GenerateResult
-from fathom.services.cache import CacheService
+from fathom.adapters.llm.cache import CacheService
 
 logger = getLogger(__name__)
 
@@ -26,9 +25,6 @@ logger = getLogger(__name__)
 class GeminiLLM(LLMPort):
     """
     Gemini adapter for LLM interactions.
-
-    This adapter wraps the existing Gemini client logic without modifications.
-    All code is adapted from infrastructure/llm/gemini.py to preserve exact behavior.
     """
 
     def __init__(
@@ -67,9 +63,6 @@ class GeminiLLM(LLMPort):
                     project = getattr(self.__credentials, "project_id", None)
             else:
                 logger.warning(f"Credential file not found at: {path}")
-
-        if not project:
-            project = os.environ.get("GEMINI_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
 
         http_options = {"timeout": self.__configuration.timeout * 1000}  # ms
 

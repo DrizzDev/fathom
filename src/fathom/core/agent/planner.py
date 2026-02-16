@@ -4,13 +4,13 @@ import hashlib
 from logging import getLogger
 from typing import Any, Dict, Optional
 
-from fathom.agent.reasoner import Reasoner
-from fathom.agent.state import AgentState
+from fathom.core.agent.reasoner import Reasoner
+from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
-from fathom.tools.vision import VisionTool
+from fathom.core.services.vision import VisionService
 
 logger = getLogger(name=__name__)
 
@@ -22,7 +22,7 @@ class StepPlanner:
 
     def __init__(
         self,
-        vision_tool: VisionTool,
+        vision_tool: VisionService,
         *,
         min_confidence: float = 0.4,
     ) -> None:
@@ -30,7 +30,7 @@ class StepPlanner:
         self.__min_confidence = min_confidence
 
     @property
-    def vision_tool(self) -> VisionTool:
+    def vision_tool(self) -> VisionService:
         """
         Returns the underlying vision tool.
         """

@@ -7,7 +7,7 @@ from typing import List, Optional, Set
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action
 from fathom.schemas.reasoning import CompletionSignal
-from fathom.tools.vision import AnalysisResult
+from fathom.schemas.results import AnalysisResult
 
 logger = getLogger(name=__name__)
 
