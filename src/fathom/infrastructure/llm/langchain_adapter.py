@@ -4,6 +4,7 @@ import asyncio
 import base64
 import os
 import random
+import threading
 from logging import getLogger
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -49,20 +50,41 @@ class LangChainLLMClient(IVisionProvider):
         self.__genai_client: Any = None  # Raw genai.Client for caching
         self.__cache: Optional[CacheService] = None
         self.__credentials: Any = None
+
+        # Background model readiness — set once __create_model finishes
+        self.__model_ready = threading.Event()
+        self.__model_init_error: Optional[Exception] = None
+
         self.__initialize()
 
     # ── initialisation ─────────────────────────────────────────────────
 
     def __initialize(self) -> None:
         """
-        Build the LangChain model wrapper AND a raw genai.Client for caching.
+        Build the raw genai.Client (fast, ~150 ms) synchronously, then
+        kick off the heavy LangChain model construction in a background
+        daemon thread so the caller isn't blocked.
         """
 
-        try:
-            # ── 1. Build raw genai.Client for caching ──────────────────
-            self.__init_genai_client()
+        # ── 1. Fast path: raw genai.Client for caching (~150 ms) ──────
+        self.__init_genai_client()
 
-            # ── 2. Build LangChain model ───────────────────────────────
+        # ── 2. Slow path: LangChain model — run in background ─────────
+        thread = threading.Thread(
+            target=self.__create_model_background,
+            daemon=True,
+            name="fathom-llm-init",
+        )
+        thread.start()
+
+    def __create_model_background(self) -> None:
+        """Create the LangChain ChatModel in a background thread.
+
+        Sets ``__model_ready`` on success or stores the exception in
+        ``__model_init_error`` so the first ``analyze()`` call can
+        re-raise it on the caller's async context.
+        """
+        try:
             if self.__configuration.api_key:
                 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -85,7 +107,19 @@ class LangChainLLMClient(IVisionProvider):
                     credentials=self.__credentials,
                 )
         except Exception as exc:
-            raise VisionError(f"LangChain model init failed: {exc}") from exc
+            self.__model_init_error = exc
+            logger.error("Background LangChain model init failed: %s", exc)
+        finally:
+            self.__model_ready.set()
+
+    async def _ensure_model_ready(self) -> None:
+        """Block (off the event loop) until the background model init finishes."""
+        if not self.__model_ready.is_set():
+            await asyncio.to_thread(self.__model_ready.wait)
+        if self.__model_init_error:
+            raise VisionError(
+                f"LangChain model init failed: {self.__model_init_error}"
+            ) from self.__model_init_error
 
     def __init_genai_client(self) -> None:
         """
@@ -170,10 +204,7 @@ class LangChainLLMClient(IVisionProvider):
           and ``bind_tools``.
         """
 
-        if not self.__model:
-            raise VisionError("LangChain model not initialised")
-
-        # ── 1. Cache lookup ────────────────────────────────────────────
+        # ── 0. Cache lookup (doesn't need LangChain model) ─────────────
         cache_name: Optional[str] = None
         if self.__cache:
             cache_name = await self.__cache.get_cached_content(
@@ -181,12 +212,15 @@ class LangChainLLMClient(IVisionProvider):
                 tools=tools.get("function_declarations") if tools else None,
             )
 
-        # ── 2. Dispatch: cached → raw genai SDK, uncached → LangChain ─
+        # ── 1. Dispatch: cached → raw genai SDK (no model needed) ─────
         if cache_name:
             return await self.__invoke_with_genai_cached(
                 cache_name=cache_name,
                 user_content=user_content,
             )
+
+        # ── 2. Cache miss → need the LangChain model; wait if still loading
+        await self._ensure_model_ready()
 
         return await self.__invoke_with_langchain(
             system_instruction=system_instruction,

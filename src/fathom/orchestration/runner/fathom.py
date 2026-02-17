@@ -76,14 +76,15 @@ class FathomRunner:
         knowledge_db = f"assets/memory/{package_name}/knowledge.db"
 
         # Only use the per-app knowledge graph if exploration has already
-        # created one. Intent runs must never create a knowledge graph.
+        # created one. Intent runs are read-only: they consume knowledge
+        # but must never mutate or create a knowledge graph.
         self.__knowledge_graph = None
         if Path(knowledge_db).exists():
-            self.__memory_provider = SQLiteMemoryProvider(database_path=knowledge_db)
+            self.__memory_provider = SQLiteMemoryProvider(database_path=knowledge_db, readonly=True)
             self.__knowledge_graph = KnowledgeGraph(database_path=knowledge_db)
             await self.__knowledge_graph.load()
         else:
-            self.__memory_provider = SQLiteMemoryProvider()
+            self.__memory_provider = SQLiteMemoryProvider(readonly=True)
 
         # Determine prompt version
         actual_version = prompt_version or PromptFactory.resolve_version(

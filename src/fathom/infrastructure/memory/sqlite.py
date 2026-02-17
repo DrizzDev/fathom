@@ -21,8 +21,14 @@ class SQLiteMemoryProvider(IMemoryProvider):
     Handles raw database operations for the Knowledge Graph.
     """
 
-    def __init__(self, database_path: str = "assets/memory/knowledge.db") -> None:
+    def __init__(
+        self,
+        database_path: str = "assets/memory/knowledge.db",
+        *,
+        readonly: bool = False,
+    ) -> None:
         self.__initialized = False
+        self.__readonly = readonly
         self.__path = Path(database_path)
         self.__path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -30,6 +36,11 @@ class SQLiteMemoryProvider(IMemoryProvider):
     def path(self) -> Path:
         """Returns the database file path."""
         return self.__path
+
+    @property
+    def readonly(self) -> bool:
+        """Whether this provider silently drops all write operations."""
+        return self.__readonly
 
     def switch_database(self, new_path: str) -> None:
         """Switch to a different database file.
@@ -42,6 +53,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
         candidate = Path(new_path)
         if candidate == self.__path:
             return
+
         self.__path = candidate
         self.__path.parent.mkdir(parents=True, exist_ok=True)
         self.__initialized = False
@@ -131,6 +143,9 @@ class SQLiteMemoryProvider(IMemoryProvider):
         Increments visit_count on subsequent observations of the same screen.
         """
 
+        if self.__readonly:
+            return
+
         await self.__initialize()
         now = int(time.time())
 
@@ -151,6 +166,9 @@ class SQLiteMemoryProvider(IMemoryProvider):
         """
         Stores an action experience in the database.
         """
+
+        if self.__readonly:
+            return
 
         await self.__initialize()
 
@@ -238,6 +256,9 @@ class SQLiteMemoryProvider(IMemoryProvider):
         Stores or updates a screen transition edge in the knowledge graph.
         Increments count on repeated observations of the same transition.
         """
+
+        if self.__readonly:
+            return
 
         await self.__initialize()
         now = int(time.time())
