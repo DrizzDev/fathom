@@ -4,104 +4,110 @@ Graph builder for intent execution.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, List, Literal, Optional
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
-from fathom.strategies.graph.context import GraphContext
+from fathom.constants.graph import GraphKey, NodeName
+from fathom.interfaces.graph import GraphBuilder
 from fathom.strategies.graph.intent.nodes import build_intent_nodes
 from fathom.strategies.graph.state import IntentGraphState
 
 if TYPE_CHECKING:
+    from langgraph.checkpoint.base import BaseCheckpointSaver
     from langgraph.graph.state import CompiledStateGraph
 
+    from fathom.strategies.graph.context import GraphContext
 
-def build_intent_graph(
-    context: GraphContext,
-) -> CompiledStateGraph:
+
+class IntentGraphBuilder(GraphBuilder):
     """
-    Builds the Intent Execution Graph.
-    Configures interrupts for HITL.
+    Builder class for the Intent Execution Graph.
+    Implements clean separation of node definition, routing, and compilation.
     """
 
-    # 1. Build Nodes
-    nodes = build_intent_nodes(context=context)
+    def __init__(self, context: GraphContext) -> None:
+        """
+        Initialize builder with shared graph context.
+        """
+        self.__context = context
 
-    # 2. Define Graph
-    workflow = StateGraph(IntentGraphState)
+    def build(
+        self,
+        checkpointer: Optional[BaseCheckpointSaver] = None,
+        interrupt_before: Optional[List[str]] = None,
+    ) -> CompiledStateGraph:
+        """
+        Builds and compiles the Intent Execution Graph.
+        """
 
-    workflow.add_node("ground", nodes["ground"])
-    workflow.add_node("analyze", nodes["analyze"])
-    workflow.add_node("execute", nodes["execute"])
-    workflow.add_node("record", nodes["record"])
+        # 1. Build Nodes
+        nodes = build_intent_nodes(context=self.__context)
 
-    # 3. Define Edges
-    workflow.set_entry_point("ground")
+        # 2. Define Workflow
+        workflow = StateGraph(state_schema=IntentGraphState)
 
-    workflow.add_edge("ground", "analyze")
+        workflow.add_node(NodeName.GROUND, nodes[NodeName.GROUND])
+        workflow.add_node(NodeName.ANALYZE, nodes[NodeName.ANALYZE])
+        workflow.add_node(NodeName.EXECUTE, nodes[NodeName.EXECUTE])
+        workflow.add_node(NodeName.RECORD, nodes[NodeName.RECORD])
 
-    def route_after_analyze(state: IntentGraphState) -> Literal["execute", "ground", "end"]:
-        if state.get("is_complete"):
-            return "end"
+        # 3. Define Edges
+        workflow.set_entry_point(key=NodeName.GROUND)
 
-        if state.get("should_retry"):
-            return "ground"
+        workflow.add_edge(start_key=NodeName.GROUND, end_key=NodeName.ANALYZE)
 
-        if not state.get("planned_step"):
-            return "end"
+        # Conditional Routing
+        workflow.add_conditional_edges(
+            source=NodeName.ANALYZE,
+            path=self.__route_after_analyze,
+            path_map={
+                NodeName.EXECUTE: NodeName.EXECUTE,
+                NodeName.GROUND: NodeName.GROUND,
+                NodeName.END: END,
+            },
+        )
 
-        return "execute"
+        workflow.add_edge(start_key=NodeName.EXECUTE, end_key=NodeName.RECORD)
 
-    workflow.add_conditional_edges(
-        "analyze", route_after_analyze, {"execute": "execute", "ground": "ground", "end": END}
-    )
+        workflow.add_conditional_edges(
+            source=NodeName.RECORD,
+            path=self.__route_after_record,
+            path_map={NodeName.GROUND: NodeName.GROUND, NodeName.END: END},
+        )
 
-    workflow.add_edge("execute", "record")
+        # 4. Compile with injected dependencies
+        return workflow.compile(
+            checkpointer=checkpointer,
+            interrupt_before=interrupt_before or [],
+        )
 
-    def route_after_record(state: IntentGraphState) -> Literal["ground", "end"]:
-        if state.get("is_complete"):
-            return "end"
+    def __route_after_analyze(
+        self, state: IntentGraphState
+    ) -> Literal[NodeName.EXECUTE, NodeName.GROUND, NodeName.END]:
+        """Routes execution after analysis node."""
+        if state.get(GraphKey.IS_COMPLETE):
+            return NodeName.END
 
-        if context.agent_state.step_count >= context.max_steps:
-            return "end"
+        if state.get(GraphKey.SHOULD_RETRY):
+            return NodeName.GROUND
 
-        if context.is_cancelled:
-            return "end"
+        if not state.get(GraphKey.PLANNED_STEP):
+            return NodeName.END
 
-        return "ground"
+        return NodeName.EXECUTE
 
-    workflow.add_conditional_edges("record", route_after_record, {"ground": "ground", "end": END})
+    def __route_after_record(
+        self, state: IntentGraphState
+    ) -> Literal[NodeName.GROUND, NodeName.END]:
+        """Routes execution after recording node."""
+        if state.get(GraphKey.IS_COMPLETE):
+            return NodeName.END
 
-    # 4. Compile with Checkpointer and Interrupts
-    # MemorySaver is required for interrupts to work.
-    checkpointer = MemorySaver()
+        if self.__context.agent_state.step_count >= self.__context.max_steps:
+            return NodeName.END
 
-    # We interrupt before 'analyze' (to inject reasoning context)
-    # and before 'execute' (to validate/modify physical action).
-    # NOTE: The actual interruption logic is controlled by the Runner/Strategy
-    # checking the signal port. If we want *automatic* interruption every time,
-    # we set interrupt_before. But we only want to interrupt IF user requested it.
-    # LangGraph's interrupt_before halts EVERY time.
-    # To support "Pause on request", we need dynamic interrupts.
-    # LangGraph supports `NodeInterrupt` exception raised from within a node.
-    # OR we can stick to my previous `_check_signal` approach but implement it
-    # properly by raising `NodeInterrupt` which LangGraph catches and saves state.
+        if self.__context.is_cancelled:
+            return NodeName.END
 
-    # However, the user called the previous approach "brute force".
-    # The "Scalable" way in LangGraph is to rely on checkpointers.
-    # If I set interrupt_before=[], I can't pause from outside easily unless I stop the graph.
-    # But `ainvoke` runs until end.
-    # To allow pausing, I should perhaps use `stream` mode in Strategy and check signal between steps?
-    # YES. `graph.astream()` yields events. I can check signal between steps.
-    # If signal is present, I stop iterating (pause).
-    # Then I resume with `graph.invoke(..., config=thread_config)`.
-
-    # So I do NOT need `interrupt_before` hardcoded here if I use streaming control.
-    # But if I want to allow editing state *before* a specific node running,
-    # hardcoded interrupts are safer.
-
-    # The user asked for "Robust".
-    # I will use `checkpointer` to enable time-travel/resume capabilities.
-
-    return workflow.compile(checkpointer=checkpointer)
+        return NodeName.GROUND

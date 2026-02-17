@@ -73,7 +73,7 @@ class VisionService:
         start = time.time()
         knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
         retrieval = time.time() - start
-        
+
         # Log memory stats
         memory_store = knowledge.get("memory_store", {})
         prev_actions = knowledge.get("previous_actions", [])
@@ -92,8 +92,10 @@ class VisionService:
 
         # Dynamic context from ContextManager (GCC-Inspired)
         full_context = context_manager.get_full_context()
-        logger.debug(f"[H3] Vision Input Context | guidance={full_context.get('guidance')} | trace_len={len(full_context.get('trace', []))}")
-        
+        logger.debug(
+            f"[H3] Vision Input Context | guidance={full_context.get('guidance')} | trace_len={len(full_context.get('trace', []))}"
+        )
+
         dynamic_context = self.__builder.build_user_context(
             context=full_context,
             memory=knowledge.get("memory_store", {}),
@@ -125,7 +127,7 @@ class VisionService:
         duration = time.time() - commence
 
         # Log Raw LLM output
-        raw_text = response.text[:200].replace('\n', ' ') if response.text else "No text"
+        raw_text = response.content[:200].replace("\n", " ") if response.content else "No text"
         logger.debug(f"[H3] LLM Response | Duration: {duration:.3f}s | Raw: {raw_text}...")
 
         # 5. PARSE & ENRICH

@@ -6,22 +6,22 @@ from __future__ import annotations
 
 import time
 from logging import getLogger
-from typing import TYPE_CHECKING
 
+from langgraph.checkpoint.memory import MemorySaver
 from rich.console import Console
 
+from fathom.base.paths import SharedPathManager
+from fathom.constants.graph import NodeName
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.runtime.executor import GraphExecutor
 from fathom.schemas.results import ExecutionResult
 from fathom.strategies.graph.context import GraphContext
-from fathom.strategies.graph.intent.builder import build_intent_graph
-
-if TYPE_CHECKING:
-    from fathom.base.paths import SharedPathManager
+from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 
 logger = getLogger(name=__name__)
 console = Console()
@@ -67,40 +67,35 @@ class IntentStrategy:
             package_name=package_name,
         )
 
-        self.__graph = build_intent_graph(context=self.__graph_context)
+        # 1. Build Graph with Interrupts (Injected dependency: MemorySaver)
+        builder = IntentGraphBuilder(context=self.__graph_context)
+
+        # We interrupt before critical decision points to allow HITL via Strategy Loop
+        self.__graph = builder.build(
+            checkpointer=MemorySaver(),
+            interrupt_before=[NodeName.ANALYZE, NodeName.EXECUTE],
+        )
 
     async def execute(self, max_steps: int) -> ExecutionResult:
-        """Execute intent-based workflow."""
+        """Execute intent-based workflow via specialized executor."""
         start_time = time.time()
 
-        # Configuration for checkpointing
-        config = {"configurable": {"thread_id": self.__workflow_id}}
-
         try:
-            # Stream execution to allow HITL intervention between nodes
-            async for event in self.__graph.astream({}, config=config):
-                # Check for control signals (Pause/Interrupt)
-                signal_type = await self.__graph_context.signal.check_signal()
+            # 2. Delegate execution lifecycle to the GraphExecutor (SRP)
+            # invalidate_on_injection=True forces re-planning when context is added
+            executor = GraphExecutor(
+                graph=self.__graph,
+                context=self.__graph_context,
+                thread_id=self.__workflow_id,
+                invalidate_on_injection=True
+            )
 
-                if signal_type:
-                    # Block execution until user resumes
-                    await self.__graph_context.signal.wait_for_resume()
+            await executor.run()
 
-                    # Check if user injected new context/instruction
-                    if hasattr(self.__graph_context.signal, "get_injected_context"):
-                        injected = self.__graph_context.signal.get_injected_context()
-                        if injected:
-                            logger.info(f"Injecting user context: {injected}")
-                            # Update graph state dynamically
-                            await self.__graph.aupdate_state(config, {"injected_context": injected})
-
-                # Check cancellation
-                if self.__graph_context.is_cancelled:
-                    logger.warning("Graph execution cancelled by user")
-                    break
-
-            # Result extraction from final state
+            # 3. Result extraction from final state
+            config = {"configurable": {"thread_id": self.__workflow_id}}
             final_state = await self.__graph.aget_state(config)
+
             success = self.__graph_context.agent_state.is_complete
             error = final_state.values.get("completion_reason")
 

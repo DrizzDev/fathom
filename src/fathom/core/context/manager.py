@@ -62,7 +62,9 @@ class ContextManager:
         }
         self.__trace.append(entry)
         # Log trace commit for visibility
-        logger.debug(f"[H3] Context Trace Commit | Trace size: {len(self.__trace)} | Action: {action}")
+        logger.debug(
+            f"[H3] Context Trace Commit | Trace size: {len(self.__trace)} | Action: {action}"
+        )
 
     async def branch(self, milestone: str) -> None:
         """

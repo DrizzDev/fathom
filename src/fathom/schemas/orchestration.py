@@ -275,5 +275,6 @@ class WorkflowRequest(BaseModel):
     max_steps: int = Field(default=20, description="Step limit")
     use_xml: bool = Field(default=False, description="Enable XML grounding")
     interactive: bool = Field(default=False, description="Enable HITL mode")
+    signal_type: str = Field(default="interactive", description="Type of signal adapter (interactive/socket)")
     device_serial: Optional[str] = Field(default=None, description="Specific device to target")
     prompt_version: Optional[str] = Field(default=None, description="Prompt variant")
