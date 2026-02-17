@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from logging import WARNING, StreamHandler, getLogger
-from typing import Optional
+from typing import Any, Optional, Sequence, cast
 
 import structlog
 
@@ -38,7 +38,7 @@ class BaseLogger:
         level_name = settings.log_level.upper()
 
         # Shared processors for both structlog and stdlib logging
-        shared_processors = [
+        shared_processors: list[Any] = [
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.add_log_level,
@@ -58,13 +58,13 @@ class BaseLogger:
 
         # Determine renderer
         if json_format:
-            renderer = structlog.processors.JSONRenderer()
+            renderer: Any = structlog.processors.JSONRenderer()
         else:
             renderer = structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty())
 
         formatter = structlog.stdlib.ProcessorFormatter(
             # These run on stdlib log records that didn't go through structlog
-            foreign_pre_chain=shared_processors,
+            foreign_pre_chain=cast("Optional[Sequence[Any]]", shared_processors),
             # These run on all log records (structlog or stdlib)
             processors=[
                 structlog.stdlib.ProcessorFormatter.remove_processors_meta,

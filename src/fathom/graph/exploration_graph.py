@@ -64,7 +64,7 @@ def build_exploration_graph(
     checkpointer: Optional[MemorySaver] = None,
     cancel_event: Optional[asyncio.Event] = None,
     target_package: Optional[str] = None,
-) -> tuple[CompiledStateGraph[Any, Any, Any, Any], ExplorationNodeContext]:
+) -> tuple["CompiledStateGraph[Any, Any, Any]", ExplorationNodeContext]:
     """
     Build and compile a LangGraph :class:`StateGraph` for BFS exploration.
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -25,7 +25,10 @@ class ImageAnnotator:
 
     @classmethod
     def __get_text_size(
-        cls, draw: ImageDraw.ImageDraw, text: str, font: FreeTypeFont
+        cls,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        font: Union[FreeTypeFont, ImageFont.ImageFont],
     ) -> Tuple[int, int]:
         """
         Gets the width and height of a text string for a given font.
@@ -33,7 +36,9 @@ class ImageAnnotator:
         try:
             bbox = draw.textbbox((0, 0), text, font=font)
             if isinstance(bbox, (tuple, list)) and len(bbox) == 4:
-                return max(1, bbox[2] - bbox[0]), max(1, bbox[3] - bbox[1])
+                w = max(1, int(bbox[2] - bbox[0]))
+                h = max(1, int(bbox[3] - bbox[1]))
+                return w, h
             else:
                 return 10, 10  # Fallback
         except Exception:
@@ -42,11 +47,11 @@ class ImageAnnotator:
     @classmethod
     def __load_fonts(
         cls, font_name: str, default_size: int, min_size: int, step: int = 2
-    ) -> Dict[int, FreeTypeFont]:
+    ) -> Dict[int, Union[FreeTypeFont, ImageFont.ImageFont]]:
         """
         Pre-loads all required font sizes into a cache once.
         """
-        cache = {}
+        cache: Dict[int, Union[FreeTypeFont, ImageFont.ImageFont]] = {}
         step = abs(step) if step != 0 else 2
         requested_sizes = set(range(default_size, min_size - 1, -step)) | {
             min_size,
@@ -94,8 +99,8 @@ class ImageAnnotator:
         padding: int,
         draw: ImageDraw.ImageDraw,
         sorted_font_sizes: List[int],
-        font_cache: Dict[int, FreeTypeFont],
-    ) -> Optional[Tuple[FreeTypeFont, int, int]]:
+        font_cache: Dict[int, Union[FreeTypeFont, ImageFont.ImageFont]],
+    ) -> Optional[Tuple[Union[FreeTypeFont, ImageFont.ImageFont], int, int]]:
         """
         Finds the largest font from the cache that fits the label inside the box.
         """
@@ -119,7 +124,7 @@ class ImageAnnotator:
         label: str,
         image_width: int,
         image_height: int,
-        font: FreeTypeFont,
+        font: Union[FreeTypeFont, ImageFont.ImageFont],
         bounds: BoundsTuple,
         draw: ImageDraw.ImageDraw,
         _placed_label_boxes: List[BoundsTuple],
@@ -168,7 +173,7 @@ class ImageAnnotator:
         cls,
         label: str,
         color: str,
-        font: FreeTypeFont,
+        font: Union[FreeTypeFont, ImageFont.ImageFont],
         draw: ImageDraw.ImageDraw,
         draw_connector_line: bool,
         element_bounds: BoundsTuple,

@@ -108,7 +108,7 @@ Answer:
             response = await self.__client.aio.models.generate_content(
                 model=self.__model, contents=prompt
             )
-            text = response.text.strip()
+            text = (response.text or "").strip()
 
             # Parse response - look for the classification line
             final_description = target
@@ -171,7 +171,7 @@ Goal State:
             response = await self.__client.aio.models.generate_content(
                 model=self.__model, contents=prompt
             )
-            goal_state = response.text.strip()
+            goal_state = (response.text or "").strip()
             # Clean up potential extra text
             if "Goal State:" in goal_state:
                 goal_state = goal_state.split("Goal State:", 1)[1].strip()

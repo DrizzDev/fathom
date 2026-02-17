@@ -115,7 +115,7 @@ class LangChainLLMClient(IVisionProvider):
         if not project:
             project = os.environ.get("GEMINI_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
 
-        http_options = {"timeout": self.__configuration.timeout * 1000}  # ms
+        http_options: Any = {"timeout": self.__configuration.timeout * 1000}  # ms
 
         if self.__configuration.api_key:
             self.__genai_client = genai.Client(

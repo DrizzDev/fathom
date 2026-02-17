@@ -343,7 +343,10 @@ class GraphExportService:
 
         # ── Node styling ─────────────────────────────────────────────
         activities = sorted({G.nodes[n].get("activity", "unknown") for n in G.nodes()})
-        palette = plt.cm.Set2.colors
+        cmap = plt.get_cmap("Set2")
+        palette = (
+            cmap.colors if hasattr(cmap, "colors") else [cmap(i) for i in range(len(activities))]
+        )
         color_map = {act: palette[i % len(palette)] for i, act in enumerate(activities)}
 
         node_list = list(G.nodes())

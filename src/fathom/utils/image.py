@@ -21,9 +21,9 @@ class ImageProcessor:
         Resizes and compresses an image to improve LLM latency.
         """
         try:
-            with Image.open(io.BytesIO(image_data)) as image:
+            with Image.open(io.BytesIO(image_data)) as opened:
                 # Calculate new dimensions maintaining aspect ratio
-                width, height = image.size
+                width, height = opened.size
                 if width > max_dimension or height > max_dimension:
                     if width > height:
                         new_width = max_dimension
@@ -32,11 +32,13 @@ class ImageProcessor:
                         new_height = max_dimension
                         new_width = int(width * (max_dimension / height))
 
-                    image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    to_save = opened.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                else:
+                    to_save = opened
 
                 # Compress
                 buffer = io.BytesIO()
-                image.convert("RGB").save(buffer, format="JPEG", quality=quality, optimize=True)
+                to_save.convert("RGB").save(buffer, format="JPEG", quality=quality, optimize=True)
                 return buffer.getvalue()
         except Exception as exception:
             logger.warning(f"Image optimization failed, using original: {exception}")

@@ -19,7 +19,8 @@ repos:
     hooks:
       - id: mypy
         additional_dependencies: [pydantic>=2.0.0, pydantic-settings>=2.0.0, types-setuptools, types-PyYAML, langchain-core, langgraph]
-        args: [--strict, --ignore-missing-imports]
+        args: [--strict, --ignore-missing-imports, -p, fathom]
+        pass_filenames: false
         exclude: ^tests/
 
   - repo: https://github.com/PyCQA/bandit

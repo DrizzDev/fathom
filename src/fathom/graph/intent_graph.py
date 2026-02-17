@@ -79,7 +79,7 @@ def build_intent_graph(
     checkpointer: Optional[MemorySaver] = None,
     cancel_event: Optional[asyncio.Event] = None,
     package_name: str = "",
-) -> tuple[CompiledStateGraph[Any, Any, Any, Any], NodeContext]:
+) -> tuple["CompiledStateGraph[Any, Any, Any]", NodeContext]:
     """
     Build and compile a LangGraph :class:`StateGraph` for intent execution.
 
