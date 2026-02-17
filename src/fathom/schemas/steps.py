@@ -21,7 +21,7 @@ class Step(BaseModel):
     is_conditional: bool = Field(
         default=False, description="Whether this step is a recovery attempt"
     )
-    condition: Optional[str] = Field(default=None, description="Optional condition for the step")
+    condition: Optional[str] = Field(default=None, description="Condition for IF block")
 
 
 class StepResult(BaseModel):

@@ -99,6 +99,12 @@ class Action(BaseModel):
         default=None, description="Reason if action is invalid"
     )
 
+    # Conditional Execution
+    condition: Optional[str] = Field(
+        default=None,
+        description="Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
+    )
+
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
     def to_description(self) -> str:

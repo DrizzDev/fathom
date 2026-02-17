@@ -49,6 +49,11 @@ UI_RULES = {
         "ICON vs PAGE: Distinguish small icons vs full-page content. "
         "If menu/page is open, interact WITHIN it."
     ),
+    "conditional": (
+        "CONDITIONAL: When handling ANY optional/dynamic element (e.g. 'Close' on popup, 'Expand' on collapsed section, "
+        "'Skip' on tutorial, 'Retry' on error), SET THE `condition` FIELD to the visible requirement "
+        "(e.g. 'Promo popup is visible', 'Section is collapsed', 'Error message is displayed')."
+    ),
 }
 
 # Backward-compatible aggregated blocks used by current builder
@@ -60,6 +65,7 @@ COMMON_RULES = f"""
 {UI_RULES["dropdown"]}
 {UI_RULES["overlay"]}
 {UI_RULES["goal_lock"]}
+{UI_RULES["conditional"]}
 
 BBOX PRECISION:
 - {PRECISION_RULES["text"]}

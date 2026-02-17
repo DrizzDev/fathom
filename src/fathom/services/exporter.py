@@ -164,19 +164,34 @@ class ScriptExporter:
                     and prev_action_type not in ("wait", *ScriptExporter._SWIPE_ACTIONS)
                     and target.lower() not in ("element", "ui element", "none", "a visible item")
                 ):
-                    lines.append(f"Validate {target} is visible")
+                    val_line = f"Validate {target} is visible"
+                    prev_condition = ScriptExporter._get_condition(prev)
+                    if prev_condition:
+                        val_line = f"IF {prev_condition} {{ {val_line} }}"
+                    lines.append(val_line)
 
-            # --- Build action description ---
+            condition = ScriptExporter._get_condition(step)
+
             if isinstance(step, StepResult):
                 action = step.step.action
-                description = ScriptExporter._build_description(
-                    action_type_val, target, action.text
-                )
+                text = action.text
             else:
                 text = step.get("text")
-                description = ScriptExporter._build_description(action_type_val, target, text)
 
-            lines.append(description)
+            description = ScriptExporter._build_description(action_type_val, target, text)
+
+            # Wrap in IF block with Pre-Action Validation
+            if condition:
+                lines.append(f"IF {condition} {{")
+                if (
+                    target.lower() not in ("element", "ui element", "none", "a visible item")
+                    and action_type_val != "wait"
+                ):
+                    lines.append(f"    Validate {target} is visible")
+                lines.append(f"    {description}")
+                lines.append("}")
+            else:
+                lines.append(description)
             i += 1
 
         # --- Ensure final step is a validation ---
@@ -226,3 +241,44 @@ class ScriptExporter:
             return f"Validate {target} (Goal complete)"
         else:
             return f"{action_type.replace('_', ' ').capitalize()} on {target}"
+
+    @staticmethod
+    def _get_condition(step: Union[StepResult, Dict[str, Any]]) -> Optional[str]:
+        """
+        Get the condition for a step, inferring from rationale if needed.
+        """
+        condition: Optional[str] = None
+        rationale: Optional[str] = None
+        action_type: str = "wait"
+        target: str = "element"
+
+        if isinstance(step, StepResult):
+            condition = getattr(step.step, "condition", None) or getattr(
+                step.step.action, "condition", None
+            )
+            rationale = step.step.action.rationale
+            action_type = step.step.action.action_type.value.lower()
+            target = step.step.action.target
+        else:
+            condition = step.get("condition")
+            rationale = step.get("rationale")
+            action_type = str(step.get("action_type", "wait")).lower()
+            target = str(step.get("target", "element"))
+
+        # Heuristic Inference
+        if not condition and rationale:
+            lower_rationale = str(rationale).lower()
+            if "timeout" in lower_rationale:
+                condition = "Timeout error is displayed"
+            elif (
+                "retry" in lower_rationale
+                or "try again" in lower_rationale
+                or "error" in lower_rationale
+            ):
+                condition = "Error message is displayed"
+
+        # Enforce Conditional Wait
+        if action_type == "wait" and not condition:
+            condition = f"{target} is visible"
+
+        return condition
