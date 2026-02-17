@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from logging import getLogger
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from langgraph.checkpoint.memory import MemorySaver
 from rich.console import Console
@@ -21,6 +21,7 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.executor import GraphExecutor
 from fathom.schemas.metrics import ExecutionMetrics
+from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExecutionResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
@@ -49,6 +50,7 @@ class IntentStrategy:
         use_xml: bool = False,
         workflow_id: str = "default",
         package_name: str = "unknown_app",
+        realignment: Optional[RealignmentPolicy] = None,
     ) -> None:
         self.__intent = intent
         self.__workflow_id = workflow_id
@@ -73,6 +75,7 @@ class IntentStrategy:
             use_xml=use_xml,
             workflow_id=workflow_id,
             package_name=package_name,
+            realignment=realignment,
         )
 
         # 1. Build Graph with Interrupts (Injected dependency: MemorySaver)
@@ -95,7 +98,7 @@ class IntentStrategy:
                 graph=self.__graph,
                 context=self.__graph_context,
                 thread_id=self.__workflow_id,
-                invalidate_on_injection=True,
+                invalidate_on_injection=self.__graph_context.realignment.immediate,
             )
 
             await executor.run()

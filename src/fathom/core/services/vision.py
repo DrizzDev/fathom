@@ -10,7 +10,6 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
-from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.core.definitions import ToolRegistry
 from fathom.core.prompts.factory import PromptFactory
@@ -59,8 +58,8 @@ class VisionService:
         intent: str,
         capture: ScreenCapture,
         context_manager: ContextManager,
-        agent_state: AgentState,
         *,
+        tracking_note: Optional[str] = None,
         use_xml: bool = False,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
@@ -103,7 +102,7 @@ class VisionService:
         dynamic_context = self.__builder.build_user_context(
             history=full_context,
             memory=knowledge.get("memory_store", {}),
-            tracking_note=agent_state.tracking_note,
+            tracking_note=tracking_note,
         )
 
         tools = self.__scope_tools(intent=intent)
@@ -174,14 +173,14 @@ class VisionService:
         intent: str,
         capture: ScreenCapture,
         context_manager: ContextManager,
-        agent_state: AgentState,
+        tracking_note: Optional[str] = None,
     ) -> bool:
         """Check if intent is complete."""
         result = await self.analyze(
             intent=intent,
             capture=capture,
             context_manager=context_manager,
-            agent_state=agent_state,
+            tracking_note=tracking_note,
         )
         return result.is_goal_complete
 

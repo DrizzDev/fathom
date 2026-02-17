@@ -155,6 +155,8 @@ class GraphExecutor:
             logger.info("Executor: Invalidating pending plan to force re-planning")
             update_dict["plan"] = None
             update_dict["planned_step"] = None
+            # Force router to send us back to 'ground' instead of 'end'
+            update_dict["should_retry"] = True
         else:
             logger.info("Executor: Preserving pending plan (if any)")
 

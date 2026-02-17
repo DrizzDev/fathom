@@ -26,7 +26,7 @@ from fathom.exceptions import FathomError
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.builder import Fathom
 from fathom.runtime.runner import FathomRunner
-from fathom.schemas.orchestration import WorkflowRequest
+from fathom.schemas.orchestration import RealignmentPolicy, WorkflowRequest
 from fathom.settings.env import FathomSettings
 
 console = Console()
@@ -338,6 +338,19 @@ def main() -> int:
         help="Type of signal adapter to use in interactive mode",
     )
     run_parser.add_argument(
+        "--realignment-budget",
+        type=int,
+        default=3,
+        help="Maximum allowed consecutive re-plans",
+    )
+    run_parser.add_argument(
+        "--no-realignment",
+        action="store_false",
+        dest="immediate_realignment",
+        help="Disable immediate re-planning on context injection",
+    )
+    run_parser.set_defaults(immediate_realignment=True)
+    run_parser.add_argument(
         "--prompt-version",
         type=str,
         default=None,
@@ -376,6 +389,11 @@ def main() -> int:
 
     try:
         if args.command == "run":
+            realignment = RealignmentPolicy(
+                immediate=args.immediate_realignment,
+                budget=args.realignment_budget
+            )
+            
             request = WorkflowRequest(
                 intent=args.intent,
                 use_xml=args.use_xml,
@@ -384,6 +402,7 @@ def main() -> int:
                 prompt_version=args.prompt_version,
                 interactive=args.interactive,
                 signal_type=args.signal,
+                realignment=realignment,
             )
             result = asyncio.run(cli.run(request=request))
             return result

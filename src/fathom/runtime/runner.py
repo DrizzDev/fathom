@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.schemas.configuration import FathomConfig
+from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExplorationResult, IntentResult
 
 if TYPE_CHECKING:
@@ -98,6 +99,7 @@ class FathomRunner:
         request_id: Optional[str] = None,
         device_serial: Optional[str] = None,
         prompt_version: Optional[str] = None,
+        realignment: Optional[RealignmentPolicy] = None,
     ) -> IntentResult:
         """
         Execute intent-based workflow.
@@ -109,6 +111,7 @@ class FathomRunner:
             request_id: Optional workflow ID
             device_serial: Device serial (unused, kept for compatibility)
             prompt_version: Prompt version (unused, kept for compatibility)
+            realignment: Configuration for HITL re-planning behavior
 
         Returns:
             IntentResult with execution outcome and metrics
@@ -150,6 +153,7 @@ class FathomRunner:
             use_xml=use_xml if use_xml is not None else self.__config.intent_strategy.use_xml,
             workflow_id=workflow_id,
             package_name=package_name,
+            realignment=realignment,
         )
         self.__current_strategy = strategy
 

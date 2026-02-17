@@ -77,7 +77,7 @@ class StepPlanner:
                     intent=state.intent,
                     capture=capture,
                     context_manager=context_manager,
-                    agent_state=state,
+                    tracking_note=state.tracking_note,
                 )
             except Exception as exception:
                 completion_error = str(exception)
@@ -106,7 +106,7 @@ class StepPlanner:
             elements=elements,
             intent=state.intent,
             context_manager=context_manager,
-            agent_state=state,
+            tracking_note=state.tracking_note,
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
 

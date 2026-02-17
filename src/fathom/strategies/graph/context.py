@@ -28,6 +28,7 @@ from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
+from fathom.schemas.orchestration import RealignmentPolicy
 
 if TYPE_CHECKING:
     from fathom.base.paths import SharedPathManager
@@ -56,6 +57,7 @@ class GraphContext:
         use_xml: bool = False,
         workflow_id: str = "default",
         package_name: str = "unknown_app",
+        realignment: Optional[RealignmentPolicy] = None,
         cancel_event: Optional[asyncio.Event] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
         auditor: Optional[AuditService] = None,
@@ -75,6 +77,7 @@ class GraphContext:
         self.__use_xml = use_xml
         self.__workflow_id = workflow_id
         self.__package_name = package_name
+        self.__realignment = realignment or RealignmentPolicy()
         self.__cancel_event = cancel_event or asyncio.Event()
 
         # --- Domain Services & Agent ---
@@ -161,6 +164,10 @@ class GraphContext:
     @property
     def package_name(self) -> str:
         return self.__package_name
+
+    @property
+    def realignment(self) -> RealignmentPolicy:
+        return self.__realignment
 
     @property
     def is_cancelled(self) -> bool:
