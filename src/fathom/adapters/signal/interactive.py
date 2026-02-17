@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from typing import Optional, ClassVar
+from typing import ClassVar, Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -18,11 +18,11 @@ console = Console()
 class InteractiveSignal(SignalPort):
     """
     High-performance, event-driven HITL signal adapter.
-    
+
     Architecture:
     - Zero-Thread Multiplexing: Uses `loop.add_reader` on `sys.stdin` for O(1) kernel-level notifications.
     - Singleton Input Bus: Shares a single async queue across all signal instances to prevent contention.
-    - Blocking-Safe I/O: Maintains `sys.stdin` in blocking mode to prevent `stdout` side-effects 
+    - Blocking-Safe I/O: Maintains `sys.stdin` in blocking mode to prevent `stdout` side-effects
       (avoiding `BlockingIOError`), relying on kernel readiness signals to ensure non-blocking reads.
     """
 
@@ -34,7 +34,7 @@ class InteractiveSignal(SignalPort):
         """Initialize high-scale interactive signal adapter."""
         self.__injected_context: Optional[str] = None
         self.__pause_requested = False
-        
+
         # Ensure the global listener is registered in the current event loop
         self.__ensure_listener()
 
@@ -69,10 +69,7 @@ class InteractiveSignal(SignalPort):
         if line:
             # Dispatch to the global async bus
             # We use call_soon because we are in a low-level callback
-            asyncio.get_running_loop().call_soon(
-                cls.__input_bus.put_nowait, 
-                line.strip()
-            )
+            asyncio.get_running_loop().call_soon(cls.__input_bus.put_nowait, line.strip())
 
     async def check_signal(self) -> Optional[str]:
         """
@@ -114,7 +111,7 @@ class InteractiveSignal(SignalPort):
 
         while True:
             self.__render_options()
-            
+
             # Efficiently wait for the next user interaction on the global bus
             choice = await self.__input_bus.get()
             console.print(choice)  # Echo input for feedback
@@ -160,7 +157,9 @@ class InteractiveSignal(SignalPort):
         )
 
     def __render_pause_menu(self) -> None:
-        console.print("\n" + "=" * 70 + "\n[bold yellow]⏸️  EXECUTION PAUSED[/bold yellow]\n" + "=" * 70)
+        console.print(
+            "\n" + "=" * 70 + "\n[bold yellow]⏸️  EXECUTION PAUSED[/bold yellow]\n" + "=" * 70
+        )
         if self.__injected_context:
             console.print(f"[bold cyan]📝 Context:[/bold cyan] {self.__injected_context}\n")
 

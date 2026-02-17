@@ -95,16 +95,18 @@ class FathomCLI:
 
             if interactive_mode:
                 signal_type = getattr(request, "signal_type", "interactive")
-                
+
                 if signal_type == "socket":
                     from fathom.adapters.signal.socket import SocketSignal
+
                     signal_adapter = SocketSignal()
                     console.print("[bold cyan]🔌 Socket-based control enabled[/bold cyan]")
                 else:
                     from fathom.adapters.signal.interactive import InteractiveSignal
+
                     signal_adapter = InteractiveSignal()
                     console.print("[bold cyan]🤝 Interactive mode enabled[/bold cyan]")
-                
+
                 console.print("[dim]Agent will ask questions when uncertain[/dim]")
             else:
                 signal_adapter = NoopSignal()
@@ -329,11 +331,11 @@ def main() -> int:
         "--interactive", "-i", action="store_true", help="Enable interactive HITL mode"
     )
     run_parser.add_argument(
-        "--signal", 
-        type=str, 
-        choices=["interactive", "socket"], 
+        "--signal",
+        type=str,
+        choices=["interactive", "socket"],
         default="interactive",
-        help="Type of signal adapter to use in interactive mode"
+        help="Type of signal adapter to use in interactive mode",
     )
     run_parser.add_argument(
         "--prompt-version",

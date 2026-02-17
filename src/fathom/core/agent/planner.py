@@ -103,6 +103,7 @@ class StepPlanner:
             elements=elements,
             intent=state.intent,
             context_manager=context_manager,
+            agent_state=state,
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
 

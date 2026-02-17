@@ -24,8 +24,8 @@ from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
-from fathom.interfaces.telemetry import TelemetryPort
 from fathom.interfaces.summarization import SummarizationPort
+from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
 
@@ -81,12 +81,10 @@ class GraphContext:
         self.__agent_state = AgentState(intent=intent, max_steps=max_steps)
         self.__reasoner = Reasoner(intent=intent)
         self.__metrics = ExecutionMetrics()
-        
+
         # GCC Context Manager with optional summarizer
         self.__context_manager = ContextManager(
-            memory=memory, 
-            workflow_id=workflow_id,
-            summarizer=summarizer
+            memory=memory, workflow_id=workflow_id, summarizer=summarizer
         )
 
         # --- Application Services ---

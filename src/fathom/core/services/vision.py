@@ -10,6 +10,7 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
+from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.core.definitions import ToolRegistry
 from fathom.core.prompts.factory import PromptFactory
@@ -58,6 +59,7 @@ class VisionService:
         intent: str,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        agent_state: AgentState,
         *,
         use_xml: bool = False,
         failures: Optional[List[str]] = None,
@@ -87,8 +89,8 @@ class VisionService:
         # 2. PROMPT & TOOL SCOPING
         # Dynamic context from ContextManager (GCC-Inspired)
         full_context = context_manager.get_full_context()
-        guidance = full_context.get('guidance')
-        
+        guidance = full_context.get("guidance")
+
         logger.debug(
             f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
         )
@@ -101,6 +103,7 @@ class VisionService:
         dynamic_context = self.__builder.build_user_context(
             context=full_context,
             memory=knowledge.get("memory_store", {}),
+            tracking_note=agent_state.tracking_note,
         )
 
         tools = self.__scope_tools(intent=intent)

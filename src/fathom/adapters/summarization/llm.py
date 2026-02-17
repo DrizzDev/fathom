@@ -36,18 +36,18 @@ class LLMSummarizer(SummarizationPort):
         )
 
         prompt = [
-            "TASK: Summarize the following execution trace into a single, concise sentence.",
-            "FOCUS: Capture the key actions taken and the resulting state change.",
-            "CONSTRAINT: Do not list every step. Synthesize the progress.",
+            "TASK: Compress this execution trace into a single, high-density milestone sentence.",
+            "REQUIREMENTS:",
+            "1. Focus on OUTCOMES and STATE CHANGES (e.g., 'Successfully logged in', 'Failed to find search bar').",
+            "2. Discard routine navigation details (e.g., 'scrolled', 'tapped X') unless they failed.",
+            "3. capture specific knowledge gained (e.g., 'Found article about X').",
             f"\nTRACE:\n{trace_text}",
         ]
 
         try:
-            # We use a lower temperature for deterministic summarization if possible,
-            # but LLMPort abstraction might fix it. The prompt constraints help.
             result = await self.__llm.generate(
                 prompt=prompt,
-                system_instruction="You are a precise technical summarizer for AI agent logs.",
+                system_instruction="You are a state-tracking expert. Synthesize agent logs into semantic milestones.",
             )
             return result.content.strip()
         except Exception as e:

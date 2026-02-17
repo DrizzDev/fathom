@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
+
     from fathom.strategies.graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ class GraphExecutor:
     ) -> None:
         """
         Initialize executor.
-        
+
         Args:
             graph: The compiled LangGraph to execute.
             context: Shared graph context for services and signals.
@@ -49,7 +50,7 @@ class GraphExecutor:
         Executes the graph workflow with HITL support.
         Processes interrupts and resumes until completion or cancellation.
         """
-        
+
         # Start with empty input for fresh run
         current_input: Optional[Dict[str, Any]] = {}
 
@@ -58,21 +59,20 @@ class GraphExecutor:
             # We wrap the graph stream in a task to allow cancellation
             stream_task = asyncio.create_task(self.__stream_graph(current_input))
             pause_task = asyncio.create_task(self.__context.signal.wait_for_pause())
-            
+
             done, pending = await asyncio.wait(
-                [stream_task, pause_task], 
-                return_when=asyncio.FIRST_COMPLETED
+                [stream_task, pause_task], return_when=asyncio.FIRST_COMPLETED
             )
-            
+
             # Case A: Pause Requested
             if pause_task in done:
                 logger.info("Executor: Pause signal received during execution")
-                
+
                 # Cancel the running graph step immediately
                 stream_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await stream_task
-                
+
                 await self.__handle_interrupt(source="manual_pause")
                 # Resume loop (with current_input=None to continue from last checkpoint)
                 current_input = None
@@ -88,7 +88,7 @@ class GraphExecutor:
 
             # Check Graph State
             snapshot = await self.__graph.aget_state(self.__config)
-            
+
             # If execution finished (no next node), exit loop
             if not snapshot.next:
                 break
@@ -101,7 +101,7 @@ class GraphExecutor:
             if self.__context.is_cancelled:
                 logger.warning(f"Executor: Workflow {self.__thread_id} cancelled")
                 break
-            
+
             # Resume Execution
             current_input = None
 
@@ -119,7 +119,7 @@ class GraphExecutor:
         """
         # Log interrupt check for visibility
         logger.debug(f"Executor: Checking signal at interrupt ({source})")
-        
+
         signal_type = await self.__context.signal.check_signal()
 
         if not signal_type:
@@ -133,7 +133,7 @@ class GraphExecutor:
         injected = self.__context.signal.get_injected_context()
         if injected:
             await self.__inject_context(content=injected)
-        
+
         logger.info("Executor: Resuming execution")
 
     async def __inject_context(self, content: str) -> None:
@@ -142,16 +142,15 @@ class GraphExecutor:
         """
         current_step = self.__context.agent_state.step_count
         logger.info(f"Executor: Injecting user context at Step {current_step}: '{content}'")
-        
+
         # A. Update ContextManager (Data Source)
         await self.__context.context_manager.inject_user_guidance(
-            guidance=content, 
-            step=current_step
+            guidance=content, step=current_step
         )
-        
+
         # B. Update Graph State
         update_dict = {"injected_context": content}
-        
+
         if self.__invalidate_on_injection:
             logger.info("Executor: Invalidating pending plan to force re-planning")
             update_dict["plan"] = None
@@ -159,7 +158,4 @@ class GraphExecutor:
         else:
             logger.info("Executor: Preserving pending plan (if any)")
 
-        await self.__graph.aupdate_state(
-            self.__config, 
-            update_dict
-        )
+        await self.__graph.aupdate_state(self.__config, update_dict)

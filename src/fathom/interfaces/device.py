@@ -61,6 +61,14 @@ class DevicePort(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
+        """
+        Capture atomic snapshot (Screenshot + XML) in parallel.
+        Returns: (screenshot_bytes, xml_string)
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def get_current_package(self) -> str:
         """Get current foreground package name."""
         raise NotImplementedError

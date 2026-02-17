@@ -155,6 +155,50 @@ class LoopDetector(BaseModel):
         logger.info(f"LoopDetector.reset: cleared {prev_size} screens")
 
 
+class InteractionTracker(BaseModel):
+    """
+    Elegantly tracks the cadence and repetition of agent interactions.
+
+    Provides deterministic data on consecutive action sequences to enforce
+    behavioral constraints (e.g., 'Don't swipe more than 3 times').
+    """
+
+    __consecutive_count: int = PrivateAttr(default=0)
+    __last_action_type: Optional[str] = PrivateAttr(default=None)
+    __total_counters: Dict[str, int] = PrivateAttr(default_factory=dict)
+
+    def record(self, action_type: str) -> None:
+        """
+        Records an interaction and updates cadence metrics.
+        """
+        # Update Total
+        self.__total_counters[action_type] = self.__total_counters.get(action_type, 0) + 1
+
+        # Update Consecutive
+        if action_type == self.__last_action_type:
+            self.__consecutive_count += 1
+        else:
+            self.__last_action_type = action_type
+            self.__consecutive_count = 1
+
+    def get_cadence_note(self) -> Optional[str]:
+        """
+        Returns a semantic note about current interaction repetition if significant.
+        Example: "Consecutive swipe_up: 3"
+        """
+        if self.__consecutive_count > 1 and self.__last_action_type:
+            return f"Consecutive {self.__last_action_type}: {self.__consecutive_count}"
+        return None
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Returns raw tracking data."""
+        return {
+            "consecutive": self.__consecutive_count,
+            "last_type": self.__last_action_type,
+            "totals": dict(self.__total_counters),
+        }
+
+
 class ActionHistory(BaseModel):
     """
     Tracks action history for context building with token optimization.

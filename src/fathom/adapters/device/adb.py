@@ -194,6 +194,20 @@ class ADBDevice(DevicePort):
         except Exception:
             return None
 
+    async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
+        """
+        Capture atomic snapshot (Screenshot + XML) in parallel.
+        """
+
+        results = await asyncio.gather(
+            self.capture_screen(), self.dump_hierarchy(), return_exceptions=True
+        )
+
+        image = results[0] if not isinstance(results[0], Exception) else b""
+        xml = results[1] if not isinstance(results[1], Exception) else None
+
+        return image, xml
+
     # Helper methods copied from original tool
     async def __shell(self, command: str, *, capture_output: bool = False) -> ActionResult:
         """

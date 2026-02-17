@@ -20,17 +20,17 @@ class GraphBuilder(ABC):
 
     @abstractmethod
     def build(
-        self, 
+        self,
         checkpointer: Optional[BaseCheckpointSaver] = None,
         interrupt_before: Optional[List[str]] = None,
     ) -> CompiledStateGraph:
         """
         Builds and compiles the graph.
-        
+
         Args:
             checkpointer: Optional persistence layer for state.
             interrupt_before: List of node names to interrupt before.
-            
+
         Returns:
             CompiledStateGraph: The ready-to-execute graph.
         """

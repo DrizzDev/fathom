@@ -54,6 +54,7 @@ class IntentStrategy:
         # Initialize Graph Context
         # Dependency Injection: LLMSummarizer for GCC branching
         from fathom.adapters.summarization.llm import LLMSummarizer
+
         summarizer = LLMSummarizer(llm=llm)
 
         self.__graph_context = GraphContext(
@@ -92,7 +93,7 @@ class IntentStrategy:
                 graph=self.__graph,
                 context=self.__graph_context,
                 thread_id=self.__workflow_id,
-                invalidate_on_injection=True
+                invalidate_on_injection=True,
             )
 
             await executor.run()

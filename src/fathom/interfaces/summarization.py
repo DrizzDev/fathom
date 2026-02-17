@@ -17,10 +17,10 @@ class SummarizationPort(ABC):
     async def summarize_trace(self, trace: List[Dict[str, Any]]) -> str:
         """
         Compresses a list of trace entries into a concise semantic summary.
-        
+
         Args:
             trace: List of OTA (Observation-Thought-Action) dictionaries.
-            
+
         Returns:
             A single sentence summarizing the progress and state change.
         """

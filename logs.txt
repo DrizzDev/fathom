@@ -126,7 +126,7 @@ Choice: 2
 2
 
 Enter instruction:
-Don't ssearch on GPT, search in chrome 
+Don't ssearch on GPT, search in chrome
 ✓ Recorded: Don't ssearch on GPT, search in chrome
 
 [1] Resume | [2] Inject Context | [3] Cancel
@@ -1304,7 +1304,7 @@ Choice: 2
 2
 
 Enter instruction:
-Don't swipe more than 3 times                
+Don't swipe more than 3 times
 ✓ Recorded: Don't swipe more than 3 times
 
 [1] Resume | [2] Inject Context | [3] Cancel
@@ -2648,7 +2648,7 @@ Step 20
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 2026-02-17T11:33:38.495645Z [debug    ] Executor: Node 'analyze' completed [fathom.runtime.executor]
 2026-02-17T11:33:38.506413Z [info     ] Intent workflow completed      [fathom]
-           Execution Summary            
+           Execution Summary
 ┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ Metric      ┃ Value                  ┃
 ┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -2656,7 +2656,7 @@ Step 20
 │ Reason      │ Completed successfully │
 │ Steps Taken │ 19                     │
 └─────────────┴────────────────────────┘
-                      Timing Audit                      
+                      Timing Audit
 ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
 ┃ Operation            ┃ Total Time (s) ┃ Avg/Step (s) ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
@@ -2666,7 +2666,7 @@ Step 20
 │ Action               │          5.71s │        0.30s │
 │ Analysis             │        181.97s │        9.10s │
 └──────────────────────┴────────────────┴──────────────┘
-   Resource Usage (Tokens)    
+   Resource Usage (Tokens)
 ┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
 ┃ Metric            ┃  Value ┃
 ┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
@@ -2675,7 +2675,7 @@ Step 20
 │ Cached Tokens     │ 25,120 │
 │ Total Tokens      │ 59,844 │
 └───────────────────┴────────┘
-               Agent Knowledge Graph (Brain)               
+               Agent Knowledge Graph (Brain)
 ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┓
 ┃ Screen Hash  ┃ Activity           ┃ Agent Description   ┃
 ┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━┩

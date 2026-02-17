@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from fathom.constants import ActionType
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
-from fathom.schemas.state import ActionHistory, LoopDetector
+from fathom.schemas.state import ActionHistory, InteractionTracker, LoopDetector
 from fathom.schemas.steps import StepResult
 
 logger = getLogger(__name__)
@@ -19,8 +19,8 @@ class AgentState:
     Manages:
     - Screen state history with deduplication
     - Action history with success/failure tracking
+    - Interaction tracking for behavioral constraints
     - Loop detection with recovery strategies
-    - Context building for vision-language models
 
     Thread-safe for async operations. Serializable for checkpointing.
     """
@@ -52,6 +52,7 @@ class AgentState:
             window_size=context_window,
         )
         self.__action_history = ActionHistory(max_size=context_window)
+        self.__interaction_tracker = InteractionTracker()
 
         self.__seen_screens: List[ScreenState] = []
         self.__current_screen: Optional[ScreenState] = None
@@ -184,6 +185,11 @@ class AgentState:
         """
         return self.__action_history.get_history_items()[-limit:]
 
+    @property
+    def tracking_note(self) -> Optional[str]:
+        """Provides semantic feedback on interaction cadence."""
+        return self.__interaction_tracker.get_cadence_note()
+
     def record_step(self, result: StepResult) -> None:
         """
         Record a completed step.
@@ -199,6 +205,7 @@ class AgentState:
         self.__action_history.record_action(
             action=result.step.action, success=result.success, activity=activity
         )
+        self.__interaction_tracker.record(action_type=result.step.action.action_type.value)
         self.__last_action_description = result.step.action.to_description()
 
         logger.debug(

@@ -6,7 +6,7 @@ Defines the contract for versioned memory management strategies.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 class ContextEngine(ABC):
@@ -16,13 +16,7 @@ class ContextEngine(ABC):
     """
 
     @abstractmethod
-    async def record(
-        self, 
-        *, 
-        observation: str, 
-        thought: str, 
-        action: Dict[str, Any]
-    ) -> None:
+    async def record(self, *, observation: str, thought: str, action: Dict[str, Any]) -> None:
         """Appends a fine-grained reasoning record to the active log."""
         raise NotImplementedError
 

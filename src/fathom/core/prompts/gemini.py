@@ -52,12 +52,17 @@ class GeminiPromptBuilder(PromptBuilder):
         self,
         context: Dict[str, Any],
         memory: Optional[Dict[str, str]] = None,
+        tracking_note: Optional[str] = None,
     ) -> str:
         """
         Build dynamic user context string from GCC-inspired tiers.
         """
 
         parts = []
+
+        # 0. Interaction Cadence (Deterministic Repetition Tracking)
+        if tracking_note:
+            parts.append(f"<CADENCE_NOTE>\n{tracking_note}\n</CADENCE_NOTE>")
 
         # 1. Memory Ledger (Factual Memory)
         ledger = self.__get_ledger_segment(memory=memory)
@@ -68,9 +73,7 @@ class GeminiPromptBuilder(PromptBuilder):
         milestones = context.get("milestones", [])
         if milestones:
             parts.append(
-                "<MILESTONES>\n" 
-                + "\n".join(f"- {m}" for m in milestones) + 
-                "\n</MILESTONES>"
+                "<MILESTONES>\n" + "\n".join(f"- {m}" for m in milestones) + "\n</MILESTONES>"
             )
 
         # 3. Execution Trace (Tier 3 Context - The Hot Suffix)
@@ -86,8 +89,7 @@ class GeminiPromptBuilder(PromptBuilder):
             instructions = [f"- {item}" for item in guidance]
             parts.append(
                 "<SYSTEM_OVERRIDE>\n"
-                "  <INSTRUCTION>\n" 
-                + "\n".join(f"    {inst}" for inst in instructions) + "\n"
+                "  <INSTRUCTION>\n" + "\n".join(f"    {inst}" for inst in instructions) + "\n"
                 "  </INSTRUCTION>\n"
                 "  <WARNING>\n"
                 "    This is a meta-instruction for the agent's behavior.\n"

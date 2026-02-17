@@ -5,6 +5,7 @@ class NodeName(StrEnum):
     """
     Standardized names for graph nodes.
     """
+
     GROUND = "ground"
     ANALYZE = "analyze"
     EXECUTE = "execute"
@@ -16,6 +17,7 @@ class GraphKey(StrEnum):
     """
     Standardized keys for graph state.
     """
+
     INPUT = "input"
     INJECTED_CONTEXT = "injected_context"
     IS_COMPLETE = "is_complete"

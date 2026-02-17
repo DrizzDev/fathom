@@ -42,8 +42,9 @@ class IntentNodeProvider:
         start_time = time.time()
 
         try:
-            # Capture screen via DevicePort
-            screenshot_bytes = await self.__context.device.capture_screen()
+            # Parallel Snapshot (Screenshot + XML) via DevicePort
+            # This aligns with Drizz microservice 'snapshot' semantics for max speed (P0).
+            screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
 
             if not screenshot_bytes:
                 return {
@@ -81,36 +82,27 @@ class IntentNodeProvider:
                 metadata={"storage_id": storage_id},
             )
 
-            # XML Dump if enabled
-            xml_content = None
+            # Process Hierarchy if dump succeeded and use_xml is enabled
             elements = None
-
-            if self.__context.use_xml:
-                dump_start = time.time()
-                xml_content = await self.__context.device.dump_hierarchy()
+            if self.__context.use_xml and xml_content:
+                process_start = time.time()
+                (
+                    annotated_screen,
+                    elements,
+                ) = await self.__context.hierarchy.process_xml_and_screen(
+                    screen=screen,
+                    xml=xml_content,
+                    path_manager=self.__context.path_manager,
+                    package_name=activity,
+                    session_id=self.__context.workflow_id,
+                    action_type=ActionType.TAP,
+                )
                 self.__context.metrics.record(
-                    operation="hierarchy_dump", duration=time.time() - dump_start
+                    operation="hierarchy_processing", duration=time.time() - process_start
                 )
 
-                if xml_content:
-                    process_start = time.time()
-                    (
-                        annotated_screen,
-                        elements,
-                    ) = await self.__context.hierarchy.process_xml_and_screen(
-                        screen=screen,
-                        xml=xml_content,
-                        path_manager=self.__context.path_manager,
-                        package_name=activity,
-                        session_id=self.__context.workflow_id,
-                        action_type=ActionType.TAP,
-                    )
-                    self.__context.metrics.record(
-                        operation="hierarchy_processing", duration=time.time() - process_start
-                    )
-
-                    if annotated_screen:
-                        screen = annotated_screen
+                if annotated_screen:
+                    screen = annotated_screen
 
             # Update Agent State
             import hashlib
