@@ -200,11 +200,16 @@ class ADBDevice(DevicePort):
         """
 
         results = await asyncio.gather(
-            self.capture_screen(), self.dump_hierarchy(), return_exceptions=True
+            self.capture_screen(),
+            self.dump_hierarchy(),
+            return_exceptions=True,
         )
 
-        image = results[0] if not isinstance(results[0], Exception) else b""
-        xml = results[1] if not isinstance(results[1], Exception) else None
+        image_result = results[0]
+        xml_result = results[1]
+
+        image = image_result if isinstance(image_result, bytes) else b""
+        xml = xml_result if isinstance(xml_result, str) else None
 
         return image, xml
 

@@ -84,6 +84,23 @@ class TemporalSignalAdapter(SignalPort):
         except Exception:
             return False
 
+    async def wait_for_pause(self) -> None:
+        """
+        Block until a pause signal is received from Temporal.
+        """
+        while True:
+            state = await self.__query_workflow_state()
+
+            if state.get("paused"):
+                logger.info(f"Workflow {self.__workflow_id} pause signal detected")
+                return
+
+            with contextlib.suppress(RuntimeError):
+                activity.heartbeat("Running - waiting for pause signal")
+
+            # Check frequently enough to be responsive but not flood queries
+            await asyncio.sleep(0.5)
+
     async def wait_for_resume(self) -> None:
         """Block until RESUME signal received from Temporal."""
         logger.info(f"Workflow {self.__workflow_id} paused, waiting for resume signal")

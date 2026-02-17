@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 from logging import getLogger
+from typing import Any, Dict
 
 from langgraph.checkpoint.memory import MemorySaver
 from rich.console import Console
@@ -19,6 +20,7 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.executor import GraphExecutor
+from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.results import ExecutionResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
@@ -122,7 +124,7 @@ class IntentStrategy:
                 error=str(exception),
             )
 
-    def get_progress(self) -> dict:
+    def get_progress(self) -> Dict[str, Any]:
         """Get execution progress."""
         return {
             "intent": self.__intent,
@@ -130,7 +132,7 @@ class IntentStrategy:
             "is_complete": self.__graph_context.agent_state.is_complete,
         }
 
-    def get_metrics(self) -> object:
+    def get_metrics(self) -> ExecutionMetrics:
         """Get execution metrics."""
         return self.__graph_context.metrics
 

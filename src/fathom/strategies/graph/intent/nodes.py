@@ -10,11 +10,11 @@ import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from fathom.constants import ActionType
-from fathom.constants.graph import GraphKey, NodeName
+from fathom.constants.graph import NodeName
 from fathom.schemas.actions import Bounds
-from fathom.schemas.results import ActionResult
+from fathom.schemas.results import ActionResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
-from fathom.schemas.steps import StepResult
+from fathom.schemas.steps import Step, StepResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
 from fathom.utils.coordinates import CoordinateConverter
@@ -37,20 +37,19 @@ class IntentNodeProvider:
         Capture the screen and update state.
         """
         if self.__context.is_cancelled:
-            return {GraphKey.IS_COMPLETE: True, "completion_reason": "Cancelled"}
+            return {"is_complete": True, "completion_reason": "Cancelled"}
 
         start_time = time.time()
 
         try:
             # Parallel Snapshot (Screenshot + XML) via DevicePort
-            # This aligns with Drizz microservice 'snapshot' semantics for max speed (P0).
             screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
 
             if not screenshot_bytes:
                 return {
                     "capture": None,
                     "completion_reason": "Empty screenshot captured",
-                    GraphKey.IS_COMPLETE: False,
+                    "is_complete": False,
                 }
 
             width, height = await self.__context.device.get_screen_size()
@@ -82,16 +81,23 @@ class IntentNodeProvider:
                 metadata={"storage_id": storage_id},
             )
 
-            # Process Hierarchy if dump succeeded and use_xml is enabled
+            # XML Dump if enabled
+            xml_content_str = xml_content if xml_content else None
             elements = None
-            if self.__context.use_xml and xml_content:
+
+            if self.__context.use_xml and xml_content_str:
+                dump_start = time.time()
+                self.__context.metrics.record(
+                    operation="hierarchy_dump", duration=time.time() - dump_start
+                )
+
                 process_start = time.time()
                 (
                     annotated_screen,
                     elements,
                 ) = await self.__context.hierarchy.process_xml_and_screen(
                     screen=screen,
-                    xml=xml_content,
+                    xml=xml_content_str,
                     path_manager=self.__context.path_manager,
                     package_name=activity,
                     session_id=self.__context.workflow_id,
@@ -131,10 +137,10 @@ class IntentNodeProvider:
                 "capture": screen,
                 "screen_state": screen_state,
                 "is_new_screen": is_new_screen,
-                "xml_content": xml_content,
+                "xml_content": xml_content_str,
                 "elements": elements,
                 "grounding_duration": duration,
-                GraphKey.PLANNED_STEP: None,
+                "planned_step": None,
                 "step_result": None,
             }
 
@@ -143,7 +149,7 @@ class IntentNodeProvider:
             return {
                 "capture": None,
                 "completion_reason": f"Grounding failed: {exception}",
-                GraphKey.IS_COMPLETE: False,
+                "is_complete": False,
             }
 
     async def analyze(self, state: IntentGraphState) -> IntentGraphState:
@@ -151,20 +157,22 @@ class IntentNodeProvider:
         Plan the next step using the Agent Planner.
         """
         if self.__context.is_cancelled:
-            return {GraphKey.IS_COMPLETE: True}
+            return {"is_complete": True}
 
-        capture = state.get("capture")
+        capture: Optional[ScreenCapture] = state.get("capture")
         if not capture:
-            return {GraphKey.SHOULD_RETRY: True}
+            return {"should_retry": True}
 
         # Check injected context (Provided by Strategy via state update)
-        state_injected = state.get(GraphKey.INJECTED_CONTEXT)
+        state_injected = state.get("injected_context")
         current_step = self.__context.agent_state.step_count
 
         # Log visibility of context
         guidance_snapshot = self.__context.context_manager.get_user_guidance()
         logger.debug(
-            f"[H3] Analysis Context | Step: {current_step} | Active Guidance: {len(guidance_snapshot)} items | State Injected: {state_injected is not None}"
+            f"[H3] Analysis Context | Step: {current_step} | "
+            f"Active Guidance: {len(guidance_snapshot)} items | "
+            f"State Injected: {state_injected is not None}"
         )
 
         start_time = time.time()
@@ -198,14 +206,14 @@ class IntentNodeProvider:
 
         return {
             "plan": plan,
-            GraphKey.PLANNED_STEP: plan.step,
-            GraphKey.IS_COMPLETE: plan.is_complete,
+            "planned_step": plan.step,
+            "is_complete": plan.is_complete,
             "completion_reason": plan.reason
             if plan.is_complete
             else state.get("completion_reason"),
-            GraphKey.SHOULD_RETRY: plan.should_retry,
+            "should_retry": plan.should_retry,
             "analysis_duration": duration,
-            GraphKey.INJECTED_CONTEXT: None,
+            "injected_context": None,
         }
 
     async def execute(self, state: IntentGraphState) -> IntentGraphState:
@@ -213,10 +221,10 @@ class IntentNodeProvider:
         Execute the planned action.
         """
         if self.__context.is_cancelled:
-            return {GraphKey.IS_COMPLETE: True}
+            return {"is_complete": True}
 
-        step = state.get(GraphKey.PLANNED_STEP)
-        capture = state.get("capture")
+        step: Optional[Step] = state.get("planned_step")
+        capture: Optional[ScreenCapture] = state.get("capture")
         if not step or not capture:
             return {}
 
@@ -302,9 +310,12 @@ class IntentNodeProvider:
         duration = time.time() - start_time
         self.__context.metrics.record(operation="action", duration=duration)
 
+        current_screen_state = state.get("screen_state")
+        pre_hash = current_screen_state.visual_hash if current_screen_state else "0"
+
         step_result = StepResult(
             step=step,
-            pre_hash=state.get("screen_state").visual_hash if state.get("screen_state") else "0",
+            pre_hash=pre_hash,
             post_hash="0",
             success=device_result.success,
             duration=int(duration * 1000),
@@ -322,9 +333,9 @@ class IntentNodeProvider:
         Record the execution result.
         """
         if self.__context.is_cancelled:
-            return {GraphKey.IS_COMPLETE: True}
+            return {"is_complete": True}
 
-        step_result = state.get("step_result")
+        step_result: Optional[StepResult] = state.get("step_result")
         if not step_result:
             return {}
 
@@ -348,29 +359,33 @@ class IntentNodeProvider:
         )
 
         # GCC Branching: If trace gets too long, compress into a milestone
-        # This keeps the 'hot' context window small (O(1)) and efficient.
         full_context = self.__context.context_manager.get_full_context()
         trace = full_context.get("trace", [])
         if len(trace) >= 5:
             # Trigger non-blocking semantic summarization
-            # This ensures O(1) latency on the main execution path (P0)
             await self.__context.context_manager.branch()
 
-        self.__context.auditor.log_step(
-            plan=state.get("plan"),
-            state=state.get("screen_state"),
-            result=ActionResult(success=step_result.success, duration=step_result.duration),
-            is_new_screen=state.get("is_new_screen"),
-            is_stuck=self.__context.agent_state.is_stuck,
-            step_count=self.__context.agent_state.step_count,
-            analysis_duration=state.get("analysis_duration", 0),
-            grounding_duration=state.get("grounding_duration", 0),
-            hierarchy_duration=0,
-            execution_duration=state.get("execution_duration", 0),
-            total_duration=state.get("grounding_duration", 0)
-            + state.get("analysis_duration", 0)
-            + state.get("execution_duration", 0),
-        )
+        # Audit logging with strict type checks
+        plan: Optional[PlanResult] = state.get("plan")
+        screen_state: Optional[ScreenState] = state.get("screen_state")
+        is_new_screen: Optional[bool] = state.get("is_new_screen")
+
+        if plan and screen_state and is_new_screen is not None:
+            self.__context.auditor.log_step(
+                plan=plan,
+                state=screen_state,
+                result=ActionResult(success=step_result.success, duration=step_result.duration),
+                is_new_screen=is_new_screen,
+                is_stuck=self.__context.agent_state.is_stuck,
+                step_count=self.__context.agent_state.step_count,
+                analysis_duration=state.get("analysis_duration", 0.0),
+                grounding_duration=state.get("grounding_duration", 0.0),
+                hierarchy_duration=0.0,
+                execution_duration=state.get("execution_duration", 0.0),
+                total_duration=state.get("grounding_duration", 0.0)
+                + state.get("analysis_duration", 0.0)
+                + state.get("execution_duration", 0.0),
+            )
 
         return {}
 

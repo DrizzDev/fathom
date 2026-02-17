@@ -101,7 +101,7 @@ class VisionService:
         )
 
         dynamic_context = self.__builder.build_user_context(
-            context=full_context,
+            history=full_context,
             memory=knowledge.get("memory_store", {}),
             tracking_note=agent_state.tracking_note,
         )
@@ -169,9 +169,20 @@ class VisionService:
 
         return analysis
 
-    async def check_completion(self, intent: str, capture: ScreenCapture) -> bool:
+    async def check_completion(
+        self,
+        intent: str,
+        capture: ScreenCapture,
+        context_manager: ContextManager,
+        agent_state: AgentState,
+    ) -> bool:
         """Check if intent is complete."""
-        result = await self.analyze(intent=intent, capture=capture)
+        result = await self.analyze(
+            intent=intent,
+            capture=capture,
+            context_manager=context_manager,
+            agent_state=agent_state,
+        )
         return result.is_goal_complete
 
     def __build_payload(

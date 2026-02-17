@@ -18,6 +18,13 @@ class NoopSignal(SignalPort):
 
         return None
 
+    async def wait_for_pause(self) -> None:
+        """
+        Block until a pause signal is received.
+        No-op for autonomous mode (returns immediately).
+        """
+        pass
+
     async def wait_for_resume(self) -> None:
         """
         Block until RESUME signal - no-op for autonomous mode.

@@ -74,7 +74,10 @@ class StepPlanner:
 
             try:
                 completion_signal = await self.__vision.check_completion(
-                    intent=state.intent, capture=capture
+                    intent=state.intent,
+                    capture=capture,
+                    context_manager=context_manager,
+                    agent_state=state,
                 )
             except Exception as exception:
                 completion_error = str(exception)

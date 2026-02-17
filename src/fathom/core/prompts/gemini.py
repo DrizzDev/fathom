@@ -50,13 +50,17 @@ class GeminiPromptBuilder(PromptBuilder):
 
     def build_user_context(
         self,
-        context: Dict[str, Any],
+        history: Optional[Any] = None,
         memory: Optional[Dict[str, str]] = None,
-        tracking_note: Optional[str] = None,
+        **kwargs: Any,
     ) -> str:
         """
         Build dynamic user context string from GCC-inspired tiers.
         """
+
+        # Map history to context for internal consistency with GCC terminology
+        context = history if isinstance(history, dict) else {}
+        tracking_note: Optional[str] = kwargs.get("tracking_note")
 
         parts = []
 

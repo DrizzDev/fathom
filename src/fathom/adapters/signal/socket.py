@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from rich.console import Console
@@ -25,14 +25,9 @@ class SocketSignal(SignalPort):
     """
     Signal adapter listening on a Unix Domain Socket or TCP Port.
     Decouples control from TTY, enabling API-driven interaction.
-
-    Architecture:
-    - Event-Driven: Uses asyncio.Event for O(1) notification of pause signals.
-    - Non-blocking: Handler dispatches to a queue for consumption by the Executor.
-    - Zero-polling: No sleep loops; tasks are parked by the kernel.
     """
 
-    def __init__(self, socket_path: str = "/tmp/fathom.sock") -> None:
+    def __init__(self, socket_path: str = "/tmp/fathom.sock") -> None:  # nosec B108
         """
         Initialize socket listener.
 
@@ -55,8 +50,9 @@ class SocketSignal(SignalPort):
         """Starts the async socket server."""
         try:
             # Clean up old socket if exists
-            if os.path.exists(self.__socket_path):
-                os.remove(self.__socket_path)
+            socket_file = Path(self.__socket_path)
+            if socket_file.exists():
+                socket_file.unlink()
 
             loop = asyncio.get_running_loop()
 
@@ -85,7 +81,8 @@ class SocketSignal(SignalPort):
     async def __start_serving(self) -> None:
         """Internal server starter."""
         self.__server = await asyncio.start_unix_server(
-            self.__handle_client, path=self.__socket_path
+            self.__handle_client,
+            path=self.__socket_path,
         )
         async with self.__server:
             await self.__server.serve_forever()
@@ -203,4 +200,8 @@ class SocketSignal(SignalPort):
         while True:
             cmd_data = await self.__command_queue.get()
             if cmd_data.get("cmd") == "answer":
-                return cmd_data.get("data", "")
+                # Ensure we return a string, not Any/None
+                return str(cmd_data.get("data", ""))
+
+        # Should be unreachable, but satisfies mypy
+        return ""

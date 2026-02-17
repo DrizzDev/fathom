@@ -6,6 +6,7 @@ Orchestrates memory construction by delegating to a ContextEngine.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -44,6 +45,12 @@ class ContextManager:
     ) -> None:
         """
         Initialize the manager.
+
+        Args:
+            memory: Distributed persistence port.
+            engine: Memory construction strategy (defaults to GCC).
+            summarizer: Intelligence port for semantic compression.
+            workflow_id: Unique session identifier.
         """
         self.__memory = memory
         self.__engine = engine or GitContextEngine()
@@ -57,11 +64,11 @@ class ContextManager:
         self.__user_guidance: List[UserGuidance] = []
 
         # Async Lifecycle
-        self.__background_tasks: set[asyncio.Task] = set()
+        self.__background_tasks: set[asyncio.Task[None]] = set()
 
         # Persistence Queue for Non-Blocking I/O
         self.__persist_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
-        self.__persistence_task: Optional[asyncio.Task] = None
+        self.__persistence_task: Optional[asyncio.Task[None]] = None
         self.__start_persistence_loop()
 
     def __start_persistence_loop(self) -> None:
@@ -83,7 +90,8 @@ class ContextManager:
 
                 # Perform I/O
                 await self.__memory.set(
-                    key=f"ctx_v3:{self.__workflow_id}", value=json.dumps(state_data)
+                    key=f"ctx_v3:{self.__workflow_id}",
+                    value=json.dumps(state_data),
                 )
                 self.__persist_queue.task_done()
 
@@ -128,6 +136,7 @@ class ContextManager:
 
     async def commit(self, *, observation: str, thought: str, action: Action) -> None:
         """Record an atomic reasoning cycle."""
+        # Clean action dump
         action_data = action.model_dump() if hasattr(action, "model_dump") else {"raw": str(action)}
 
         await self.__engine.record(observation=observation, thought=thought, action=action_data)
@@ -137,23 +146,27 @@ class ContextManager:
     async def branch(self) -> None:
         """
         Triggers non-blocking semantic compression (The GCC COMMIT logic).
+        Offloads summarization to a background task to maintain Zero Latency (P0).
         """
+        # 1. Prepare engine for background work
+        # (GitContextEngine moves active log to shadow buffer)
         if not hasattr(self.__engine, "prepare_summarization"):
+            # If engine doesn't support semantic branching, we do nothing or simple commit
             return
 
         segment = self.__engine.prepare_summarization()
         if not segment:
             return
 
-        # Persist structural change immediately (non-blocking)
+        # 2. Persist structural change immediately (non-blocking)
         await self.__enqueue_persist()
 
+        # 3. Offload intelligence
         if not self.__summarizer:
             await self.__engine.commit(summary=f"Captured {len(segment)} steps.")
             await self.__enqueue_persist()
             return
 
-        # Offload intelligence
         task = asyncio.create_task(self.__async_summarize(segment=segment))
         self.__background_tasks.add(task)
         task.add_done_callback(self.__background_tasks.discard)
@@ -161,8 +174,12 @@ class ContextManager:
     async def __async_summarize(self, *, segment: List[Dict[str, Any]]) -> None:
         """Background worker for semantic distillation."""
         try:
-            summary = await self.__summarizer.summarize_trace(trace=segment)
-            await self.__engine.commit(summary=summary)
+            if self.__summarizer:
+                summary = await self.__summarizer.summarize_trace(trace=segment)
+                await self.__engine.commit(summary=summary)
+            else:
+                await self.__engine.commit(summary=f"Captured {len(segment)} steps.")
+
             await self.__enqueue_persist()
         except Exception as exception:
             logger.error(f"Context: Background summarization failed: {exception}")
@@ -211,7 +228,5 @@ class ContextManager:
             if not self.__persist_queue.empty():
                 await self.__persist_queue.join()
             self.__persistence_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self.__persistence_task
-            except asyncio.CancelledError:
-                pass

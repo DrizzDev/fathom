@@ -100,16 +100,12 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
 
         start = time.time()
 
-        # Use Vision Service to find *unexplored* elements.
-        # Ideally we pass context about what we've already done on this screen.
-        # KnowledgeGraph (context.knowledge) stores this?
-        # GraphContext doesn't expose KG lookup directly?
-        # We'll use agent_state history for now.
-
+        # Update: VisionService.analyze now requires context_manager and agent_state
         analysis = await context.vision.analyze(
             intent="Explore this app. Find a unique interactive element that hasn't been clicked yet.",
             capture=capture,
-            context=context.agent_state.build_context().get("compact_history"),
+            context_manager=context.context_manager,
+            agent_state=context.agent_state,
         )
 
         # If no action found or action is "complete", mark exhausted
@@ -151,7 +147,12 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
                     await context.device.tap(x=x, y=y)
                     success = True
             elif action.action_type == ActionType.SCROLL:
-                x1, y1, x2, y2 = size[0] // 2, size[1] // 2 + 300, size[0] // 2, size[1] // 2 - 300
+                x1, y1, x2, y2 = (
+                    size[0] // 2,
+                    size[1] // 2 + 300,
+                    size[0] // 2,
+                    size[1] // 2 - 300,
+                )
                 await context.device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
                 success = True
             elif action.action_type == ActionType.BACK:
@@ -162,10 +163,13 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
 
         duration = time.time() - start
 
+        screen_state = state.get("screen_state")
+        screen_hash = screen_state.visual_hash if screen_state else "0"
+
         step = Step(
             action=action,
             step_number=context.agent_state.step_count,
-            screen_hash=state.get("screen_state").visual_hash if state.get("screen_state") else "0",
+            screen_hash=screen_hash,
         )
 
         step_result = StepResult(
@@ -193,8 +197,9 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
             return state
 
         # Update Exploration Graph
-        if state.get("screen_state"):
-            context.exploration_graph.add_screen(state.get("screen_state"))
+        screen_state = state.get("screen_state")
+        if screen_state:
+            context.exploration_graph.add_screen(screen_state)
 
         if step_result.success and step_result.pre_hash and step_result.step.action:
             context.exploration_graph.record_transition(

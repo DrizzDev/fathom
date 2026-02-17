@@ -4,7 +4,7 @@ Graph state for BFS exploration.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple, TypedDict
+from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
 from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisResult
@@ -27,10 +27,10 @@ class ExplorationGraphState(TypedDict, total=False):
 
     # BFS State
     bfs_phase: str  # "scan", "return", "advance"
-    bfs_queue: List[Dict]  # serialized BFSQueueEntry
+    bfs_queue: List[Dict[str, Any]]  # serialized BFSQueueEntry
     visited_hashes: List[str]
-    current_path: List[Tuple[str, Dict]]  # (hash, serialized_action)
-    pending_nav: List[Dict]  # serialized Action
+    current_path: List[Tuple[str, Dict[str, Any]]]  # (hash, serialized_action)
+    pending_nav: List[Dict[str, Any]]  # serialized Action
     scanning_hash: Optional[str]
     root_hash: Optional[str]
 

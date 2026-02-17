@@ -110,7 +110,7 @@ class GraphExecutor:
         async for event in self.__graph.astream(input_val, config=self.__config):
             # Log node transitions for visibility
             if isinstance(event, dict):
-                for node, output in event.items():
+                for node, _output in event.items():
                     logger.debug(f"Executor: Node '{node}' completed")
 
     async def __handle_interrupt(self, source: str) -> None:
@@ -149,7 +149,7 @@ class GraphExecutor:
         )
 
         # B. Update Graph State
-        update_dict = {"injected_context": content}
+        update_dict: Dict[str, Any] = {"injected_context": content}
 
         if self.__invalidate_on_injection:
             logger.info("Executor: Invalidating pending plan to force re-planning")

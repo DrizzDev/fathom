@@ -26,6 +26,7 @@ class PromptBuilder(ABC):
         self,
         history: Optional[Any] = None,
         memory: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
     ) -> str:
         """
         Constructs the dynamic user context string.
