@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, TypedDict
 
-from fathom.schemas.results import PlanResult
+from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 
@@ -39,6 +39,7 @@ class IntentGraphState(TypedDict, total=False):
     elements: Optional[Dict[str, Any]]  # Label map
 
     # Analysis
+    analysis: Optional[AnalysisResult]  # Full analysis result
     plan: Optional[PlanResult]
     planned_step: Optional[Step]
 

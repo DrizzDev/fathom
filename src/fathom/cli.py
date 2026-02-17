@@ -390,10 +390,9 @@ def main() -> int:
     try:
         if args.command == "run":
             realignment = RealignmentPolicy(
-                immediate=args.immediate_realignment,
-                budget=args.realignment_budget
+                immediate=args.immediate_realignment, budget=args.realignment_budget
             )
-            
+
             request = WorkflowRequest(
                 intent=args.intent,
                 use_xml=args.use_xml,

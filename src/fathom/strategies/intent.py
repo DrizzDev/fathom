@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 
 from langgraph.checkpoint.memory import MemorySaver
 from rich.console import Console

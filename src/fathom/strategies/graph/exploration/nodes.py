@@ -100,12 +100,13 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
 
         start = time.time()
 
-        # Update: VisionService.analyze now requires context_manager and agent_state
+        # Update: VisionService.analyze now requires context_manager
+        # Exploration doesn't have explicit tracking note yet
         analysis = await context.vision.analyze(
             intent="Explore this app. Find a unique interactive element that hasn't been clicked yet.",
             capture=capture,
             context_manager=context.context_manager,
-            agent_state=context.agent_state,
+            tracking_note=None,
         )
 
         # If no action found or action is "complete", mark exhausted

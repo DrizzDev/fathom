@@ -262,8 +262,6 @@ class RunnerResult(BaseModel):
 
 
 class RealignmentPolicy(BaseModel):
-
-
     """
 
 
@@ -272,40 +270,16 @@ class RealignmentPolicy(BaseModel):
 
     """
 
-
     immediate: bool = Field(
-
-
-        default=True, 
-
-
-        description="If True, clears pending plans to re-evaluate state immediately"
-
-
+        default=True, description="If True, clears pending plans to re-evaluate state immediately"
     )
-
 
     budget: int = Field(
-
-
-        default=3, 
-
-
-        description="Maximum allowed consecutive re-plans to prevent exhaustion"
-
-
+        default=3, description="Maximum allowed consecutive re-plans to prevent exhaustion"
     )
-
-
-
-
-
-
 
 
 class WorkflowRequest(BaseModel):
-
-
     """
 
 
@@ -317,41 +291,26 @@ class WorkflowRequest(BaseModel):
 
     """
 
-
-
-
-
     intent: str = Field(..., description="User goal")
 
-
     session_id: str = Field(
-
-
         default_factory=lambda: uuid.uuid4().hex[:8], description="Unique session ID"
-
-
     )
-
 
     package_name: str = Field(default="unknown_app", description="Target application package")
 
-
     max_steps: int = Field(default=20, description="Step limit")
-
 
     use_xml: bool = Field(default=False, description="Enable XML grounding")
 
-
     interactive: bool = Field(default=False, description="Enable HITL mode")
 
-
-    signal_type: str = Field(default="interactive", description="Type of signal adapter (interactive/socket)")
-
+    signal_type: str = Field(
+        default="interactive", description="Type of signal adapter (interactive/socket)"
+    )
 
     realignment: RealignmentPolicy = Field(default_factory=RealignmentPolicy)
 
-
     device_serial: Optional[str] = Field(default=None, description="Specific device to target")
-
 
     prompt_version: Optional[str] = Field(default=None, description="Prompt variant")

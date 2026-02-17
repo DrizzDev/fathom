@@ -44,6 +44,7 @@ class GraphExecutor:
         self.__thread_id = thread_id
         self.__invalidate_on_injection = invalidate_on_injection
         self.__config = {"configurable": {"thread_id": self.__thread_id}}
+        self.__replan_count = 0
 
     async def run(self) -> None:
         """
@@ -142,6 +143,16 @@ class GraphExecutor:
         """
         current_step = self.__context.agent_state.step_count
         logger.info(f"Executor: Injecting user context at Step {current_step}: '{content}'")
+
+        # Track budget usage
+        if self.__invalidate_on_injection:
+            self.__replan_count += 1
+            remaining = self.__context.realignment.budget - self.__replan_count
+            logger.info(
+                f"Executor: Re-planning triggered. Budget used: {self.__replan_count}/{self.__context.realignment.budget} (Remaining: {remaining})"
+            )
+            if remaining < 0:
+                logger.warning("Executor: Realignment budget exceeded! Proceeding with caution.")
 
         # A. Update ContextManager (Data Source)
         await self.__context.context_manager.inject_user_guidance(

@@ -1,5 +1,5 @@
-(Fathom-ENV) ➜  fathom git:(feature/reArch) ✗ 
-(Fathom-ENV) ➜  fathom git:(feature/reArch) ✗ 
+(Fathom-ENV) ➜  fathom git:(feature/reArch) ✗
+(Fathom-ENV) ➜  fathom git:(feature/reArch) ✗
 (Fathom-ENV) ➜  fathom git:(feature/reArch) ✗ clear
 (Fathom-ENV) ➜  fathom git:(feature/reArch) ✗ fathom run "Search about open source memory options for vision LLM in Chat GPT App" --use-xml --serial emulator-5554 --verbose --interactive --realignment-budget 2
 ╭────────────────────────────────────────────────────────────────────────────────╮
@@ -2637,7 +2637,7 @@ Step 20
 2026-02-17T13:32:17.926923Z [info     ] Cache invalidated (old=1caafe9a, new=6bc23dbc) [fathom.adapters.llm.cache]
 2026-02-17T13:32:17.928412Z [debug    ] Executor: Node 'record' completed [fathom.runtime.executor]
 2026-02-17T13:32:17.933191Z [info     ] Intent workflow completed      [fathom]
-   Execution Summary    
+   Execution Summary
 ┏━━━━━━━━━━━━━┳━━━━━━━━┓
 ┃ Metric      ┃ Value  ┃
 ┡━━━━━━━━━━━━━╇━━━━━━━━┩
@@ -2645,7 +2645,7 @@ Step 20
 │ Reason      │ Failed │
 │ Steps Taken │ 20     │
 └─────────────┴────────┘
-                      Timing Audit                      
+                      Timing Audit
 ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
 ┃ Operation            ┃ Total Time (s) ┃ Avg/Step (s) ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
@@ -2655,7 +2655,7 @@ Step 20
 │ Action               │          5.85s │        0.29s │
 │ Analysis             │        133.83s │        6.69s │
 └──────────────────────┴────────────────┴──────────────┘
-   Resource Usage (Tokens)    
+   Resource Usage (Tokens)
 ┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
 ┃ Metric            ┃  Value ┃
 ┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
@@ -2664,7 +2664,7 @@ Step 20
 │ Cached Tokens     │ 25,120 │
 │ Total Tokens      │ 58,700 │
 └───────────────────┴────────┘
-                        Agent Knowledge Graph (Brain)                         
+                        Agent Knowledge Graph (Brain)
 ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┓
 ┃ Screen Hash  ┃ Activity                              ┃ Agent Description   ┃
 ┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━┩
