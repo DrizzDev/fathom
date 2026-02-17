@@ -122,6 +122,7 @@ class ADBDevice(DevicePort):
 
         arguments = self.__build_arguments(parts=["exec-out", "screencap", "-p"])
 
+        process = None
         try:
             process = await asyncio.create_subprocess_exec(
                 *arguments,
@@ -133,8 +134,20 @@ class ADBDevice(DevicePort):
                 timeout=self.__configuration.command_timeout,
             )
             return stdout if process.returncode == 0 and stdout else b""
-        except Exception:
+        except asyncio.TimeoutError as exception:
+            logger.error(f"Screenshot capture timed out: {exception}")
             return b""
+        except Exception as exception:
+            logger.error(f"Screenshot capture failed: {exception}")
+            return b""
+        finally:
+            # Ensure process is terminated if still running
+            if process and process.returncode is None:
+                try:
+                    process.kill()
+                    await process.wait()
+                except Exception as cleanup_exception:
+                    logger.warning(f"Failed to cleanup subprocess: {cleanup_exception}")
 
     async def get_current_package(self) -> str:
         """

@@ -18,6 +18,7 @@ from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
+from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.executor import GraphExecutor
 from fathom.schemas.metrics import ExecutionMetrics
@@ -45,6 +46,7 @@ class IntentStrategy:
         storage: StoragePort,
         telemetry: TelemetryPort,
         signal: SignalPort,
+        summarizer: SummarizationPort,
         path_manager: SharedPathManager,
         max_steps: int = 20,
         use_xml: bool = False,
@@ -55,12 +57,7 @@ class IntentStrategy:
         self.__intent = intent
         self.__workflow_id = workflow_id
 
-        # Initialize Graph Context
-        # Dependency Injection: LLMSummarizer for GCC branching
-        from fathom.adapters.summarization.llm import LLMSummarizer
-
-        summarizer = LLMSummarizer(llm=llm)
-
+        # Initialize Graph Context with injected summarizer
         self.__graph_context = GraphContext(
             intent=intent,
             device=device,

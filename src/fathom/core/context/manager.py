@@ -88,10 +88,13 @@ class ContextManager:
                 # Wait for next state snapshot
                 state_data = await self.__persist_queue.get()
 
+                # Perform CPU-bound serialization in thread
+                json_data = await asyncio.to_thread(json.dumps, state_data)
+
                 # Perform I/O
                 await self.__memory.set(
                     key=f"ctx_v3:{self.__workflow_id}",
-                    value=json.dumps(state_data),
+                    value=json_data,
                 )
                 self.__persist_queue.task_done()
 
@@ -105,7 +108,8 @@ class ContextManager:
         try:
             state_raw = await self.__memory.get(key=f"ctx_v3:{self.__workflow_id}")
             if state_raw:
-                data = json.loads(state_raw)
+                # Offload JSON parsing to thread pool to avoid blocking event loop
+                data = await asyncio.to_thread(json.loads, state_raw)
                 self.__roadmap_intent = data.get("intent", "unknown")
                 self.__user_guidance = [UserGuidance(**g) for g in data.get("guidance", [])]
                 # Delegate engine hydration

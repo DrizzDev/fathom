@@ -50,6 +50,6 @@ class LLMSummarizer(SummarizationPort):
                 system_instruction="You are a state-tracking expert. Synthesize agent logs into semantic milestones.",
             )
             return result.content.strip()
-        except Exception as e:
-            logger.error(f"Summarization failed: {e}")
+        except Exception as exception:
+            logger.error(f"Summarization failed: {exception}")
             return f"Executed {len(trace)} steps (Summarization failed)."

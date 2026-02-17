@@ -8,20 +8,14 @@ execution cycle: SignalCheck → Perceive → Reason → Act → Learn → Check
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 from fathom.base.paths import SharedPathManager
-from fathom.constants import (
-    DEFAULT_MAX_RETRIES,
-    DEFAULT_RETRY_DELAY,
-    DEFAULT_STABILITY_WAIT,
-    DEFAULT_SWIPE_DURATION,
-    ActionType,
-    SignalType,
-)
+from fathom.constants import DEFAULT_MAX_RETRIES, DEFAULT_STABILITY_WAIT, SignalType
 from fathom.core.exceptions import ExecutionError, PortError
+from fathom.core.services.action import ActionExecutor
+from fathom.core.services.perception import PerceptionService
 from fathom.exceptions import ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
@@ -29,12 +23,9 @@ from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.processing.annotator import ImageAnnotator
 from fathom.schemas.actions import Action
-from fathom.schemas.results import ActionResult, ExecutionResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
-from fathom.utils.coordinates import CoordinateConverter
 
 
 class ExecutionEngine:
@@ -60,20 +51,6 @@ class ExecutionEngine:
         max_retries: int = DEFAULT_MAX_RETRIES,
         stability_wait: float = DEFAULT_STABILITY_WAIT / 1000.0,  # Convert ms to seconds
     ) -> None:
-        """
-        Initialize execution engine with ports.
-
-        Args:
-            device: Device port for mobile device interactions
-            llm: LLM port for reasoning and analysis
-            memory: Memory port for state and knowledge storage
-            signal: Signal port for HITL control
-            storage: Storage port for artifact persistence
-            telemetry: Telemetry port for logging and observability
-            path_manager: Shared path manager for trace storage
-            max_retries: Maximum retry attempts for transient failures
-            stability_wait: Wait time after action for screen stability (seconds)
-        """
         self.__device = device
         self.__llm = llm
         self.__memory = memory
@@ -83,6 +60,15 @@ class ExecutionEngine:
         self.__path_manager = path_manager
         self.__max_retries = max_retries
         self.__stability_wait = stability_wait
+
+        # Initialize Domain Services
+        self.__perception = PerceptionService(device=device, storage=storage, telemetry=telemetry)
+        self.__action_executor = ActionExecutor(
+            device=device,
+            telemetry=telemetry,
+            path_manager=path_manager,
+            max_retries=max_retries,
+        )
 
     async def execute_step(
         self,
@@ -94,24 +80,6 @@ class ExecutionEngine:
     ) -> StepResult:
         """
         Execute one step of the execution DAG.
-
-        Implements the seven-phase execution cycle:
-        1. SignalCheck: Check for HITL control signals
-        2. Perceive: Capture screen state
-        3. Reason: Analyze with LLM (if needed)
-        4. Act: Execute device action
-        5. Learn: Store experience in memory
-        6. Checkpoint: Log execution state
-        7. Evaluate: Determine if terminal
-
-        Args:
-            step: Step to execute
-            pre_capture: Optional pre-captured screen state
-            package_name: Application package name
-            session_id: Execution session ID
-
-        Returns:
-            StepResult with execution details
         """
         start_time = time.time()
 
@@ -121,15 +89,12 @@ class ExecutionEngine:
 
             # Phase 2: Perceive (capture pre-action state)
             if pre_capture is None:
-                pre_capture = await self.__perceive()
+                pre_capture = await self.__perception.perceive()
 
-            pre_hash = self.__compute_visual_hash(capture=pre_capture)
+            pre_hash = self.__perception.compute_visual_hash(capture=pre_capture)
 
-            # Phase 3: Reason (handled by caller - LLM analysis happens before step creation)
-            # This phase is implicit - the Step already contains the reasoned action
-            # If context was injected, it should be passed back to caller for re-reasoning
+            # Phase 3: Reason (Implicit)
             if injected_context:
-                # Store injected context for strategy to use
                 step = step.model_copy(
                     update={
                         "metadata": {**(step.metadata or {}), "injected_context": injected_context}
@@ -137,7 +102,7 @@ class ExecutionEngine:
                 )
 
             # Phase 4: Act
-            result = await self.__act(
+            result = await self.__action_executor.act(
                 step=step,
                 pre_capture=pre_capture,
                 package_name=package_name,
@@ -145,10 +110,9 @@ class ExecutionEngine:
             )
 
             # Wait for screen stability
-            # Phase 2 (post-action): Perceive after stability
             await asyncio.sleep(delay=self.__stability_wait)
-            post_capture = await self.__perceive()
-            post_hash = self.__compute_visual_hash(capture=post_capture)
+            post_capture = await self.__perception.perceive()
+            post_hash = self.__perception.compute_visual_hash(capture=post_capture)
 
             # Phase 5: Learn
             await self.__learn(
@@ -173,7 +137,6 @@ class ExecutionEngine:
 
             self.__checkpoint(step_result=step_result)
 
-            # Phase 7: Evaluate (terminal check handled by caller)
             return step_result
 
         except (ToolError, PortError) as exception:
@@ -203,14 +166,7 @@ class ExecutionEngine:
             raise ExecutionError(f"Step {step.step_number} failed unexpectedly") from exception
 
     async def __check_signal(self) -> Optional[str]:
-        """
-        Phase 1: Check for HITL control signals.
-
-        Handles PAUSE, RESUME, INJECT, ASK signals.
-
-        Returns:
-            Injected context if available, None otherwise
-        """
+        """Phase 1: Check for HITL control signals."""
         signal = await self.__signal.check_signal()
 
         if signal == SignalType.PAUSE.value:
@@ -218,7 +174,6 @@ class ExecutionEngine:
             await self.__signal.wait_for_resume()
             self.__telemetry.info("Execution resumed")
 
-            # Check if user injected context during pause
             if hasattr(self.__signal, "get_injected_context"):
                 injected = self.__signal.get_injected_context()
                 if injected:
@@ -227,327 +182,16 @@ class ExecutionEngine:
 
         elif signal == SignalType.INJECT.value:
             self.__telemetry.info("Injection signal received")
-            # Get injected context from signal adapter
             if hasattr(self.__signal, "get_injected_context"):
                 injected = self.__signal.get_injected_context()
                 if injected:
                     self.__telemetry.info("Context injected", context=injected)
                     return injected
 
-        elif signal == SignalType.ASK.value:
-            self.__telemetry.info("Ask signal received")
-            # Ask handling is done by strategy layer
-
         return None
 
-    async def __perceive(self) -> ScreenCapture:
-        """
-        Phase 2: Capture current screen state via DevicePort.
-
-        Returns:
-            ScreenCapture with screenshot data
-        """
-        screenshot_bytes = await self.__device.capture_screen()
-
-        # Get screen dimensions
-        width, height = await self.__device.get_screen_size()
-
-        # Get current activity
-        try:
-            activity = await self.__device.get_current_package()
-        except Exception:
-            activity = "unknown"
-
-        # Store screenshot artifact
-        storage_id = await self.__persist_capture(data=screenshot_bytes)
-
-        return ScreenCapture(
-            width=width,
-            height=height,
-            activity=activity,
-            image=screenshot_bytes,
-            timestamp=int(time.time() * 1000),
-            metadata={"storage_id": storage_id},
-        )
-
-    async def __persist_capture(self, data: bytes) -> str:
-        """Persists screenshot to storage."""
-        return await self.__storage.save(
-            data=data,
-            metadata={"type": "screenshot", "timestamp": time.time()},
-        )
-
-    def __compute_visual_hash(self, capture: ScreenCapture) -> str:
-        """
-        Compute visual hash for screen capture.
-
-        Args:
-            capture: Screen capture to hash
-
-        Returns:
-            Visual hash string
-        """
-        from fathom.constants.execution import VISUAL_HASH_LENGTH
-
-        return hashlib.sha256(capture.image).hexdigest()[:VISUAL_HASH_LENGTH]
-
-    async def __act(
-        self,
-        step: Step,
-        pre_capture: ScreenCapture,
-        package_name: str,
-        session_id: str,
-    ) -> ExecutionResult:
-        """
-        Phase 4: Execute device action with retry logic and tracing.
-
-        Args:
-            step: Step containing action to execute
-            pre_capture: Pre-action screen capture for tracing
-            package_name: Application package name
-            session_id: Execution session ID
-
-        Returns:
-            ExecutionResult with success status
-        """
-        last_error: Optional[str] = None
-
-        for attempt in range(self.__max_retries + 1):
-            try:
-                result, coords = await self.__execute_action(step=step)
-
-                # Perform tracing if successful and coordinates are available
-                if result.success and coords:
-
-                    def _do_trace(
-                        img_data: bytes,
-                        t_path: str,
-                        a_type: str,
-                        c: Tuple[int, ...],
-                        label_desc: str,
-                    ) -> None:
-                        try:
-                            ImageAnnotator.trace(
-                                image_data=img_data,
-                                output_path=t_path,
-                                action_type=a_type,
-                                coords=c,
-                                label=label_desc,
-                            )
-                        except Exception as exception:
-                            self.__telemetry.warning(f"Tracing failed: {exception}")
-
-                    try:
-                        from datetime import datetime
-
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                        filename = f"step_{step.step_number}_{step.action.action_type.value}_{timestamp}.png"
-
-                        # Use path manager to get session-specific trace path
-                        trace_path = str(
-                            self.__path_manager.get_trace_path(
-                                package_name=package_name,
-                                session_id=session_id,
-                                filename=filename,
-                            )
-                        )
-
-                        # Run tracing in background thread to avoid latency
-                        asyncio.create_task(
-                            asyncio.to_thread(
-                                _do_trace,
-                                pre_capture.image,
-                                trace_path,
-                                step.action.action_type.value,
-                                coords,
-                                step.action.to_description(),
-                            )
-                        )
-                    except Exception as exception:
-                        self.__telemetry.warning(f"Failed to schedule tracing: {exception}")
-
-                if result.success:
-                    return result
-                last_error = result.error
-
-            except (ToolError, PortError) as exception:
-                last_error = str(exception)
-                if attempt < self.__max_retries:
-                    self.__telemetry.warning(
-                        "Device operation failed, retrying",
-                        attempt=attempt + 1,
-                        error=str(exception),
-                    )
-
-            if attempt < self.__max_retries:
-                await asyncio.sleep(delay=(DEFAULT_RETRY_DELAY / 1000.0) * (attempt + 1))
-
-        return ExecutionResult(
-            success=False,
-            duration=0,
-            error=last_error or "Unknown error",
-        )
-
-    async def __execute_action(
-        self, step: Step
-    ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
-        """Execute device action for step."""
-        action = step.action
-        start_time = time.time()
-
-        screen_size = await self.__device.get_screen_size()
-        width, height = screen_size
-
-        config = self.__device.configuration
-        from fathom.schemas.configuration import ADBConfig
-
-        converter = CoordinateConverter(
-            screen_width=width, screen_height=height, configuration=config or ADBConfig()
-        )
-
-        if action.action_type == ActionType.WAIT:
-            await asyncio.sleep(delay=1.0)
-            duration_ms = int((time.time() - start_time) * 1000)
-            return ExecutionResult(success=True, duration=duration_ms), None
-
-        if action.action_type == ActionType.COMPLETE:
-            duration_ms = int((time.time() - start_time) * 1000)
-            return ExecutionResult(success=True, duration=duration_ms), None
-
-        try:
-            device_result = None
-            coords = None
-
-            if action.action_type == ActionType.TAP:
-                device_result, coords = await self.__execute_tap(
-                    action=action, converter=converter, width=width, height=height
-                )
-
-            elif action.action_type == ActionType.TYPE:
-                device_result, coords = await self.__execute_type(
-                    action=action, converter=converter, width=width, height=height
-                )
-
-            elif action.action_type == ActionType.SWIPE:
-                device_result, coords = await self.__execute_swipe(
-                    action=action, converter=converter, width=width, height=height
-                )
-
-            elif action.action_type == ActionType.SCROLL:
-                device_result, coords = await self.__execute_scroll(width=width, height=height)
-
-            elif action.action_type == ActionType.LONG_PRESS:
-                device_result, coords = await self.__execute_long_press(
-                    action=action, converter=converter, width=width, height=height
-                )
-
-            elif action.action_type == ActionType.BACK:
-                device_result = await self.__device.back()
-
-            elif action.action_type == ActionType.HOME:
-                device_result = await self.__device.home()
-
-            else:
-                return (
-                    ExecutionResult(
-                        duration=0,
-                        success=False,
-                        error=f"Unknown action type: {action.action_type}",
-                    ),
-                    None,
-                )
-
-            duration = int((time.time() - start_time) * 1000)
-            return (
-                ExecutionResult(
-                    duration=duration,
-                    error=device_result.error,
-                    success=device_result.success,
-                ),
-                coords,
-            )
-
-        except Exception as exception:
-            duration = int((time.time() - start_time) * 1000)
-            return (
-                ExecutionResult(success=False, duration=duration, error=str(exception)),
-                None,
-            )
-
-    async def __execute_tap(
-        self, action: Action, converter: CoordinateConverter, width: int, height: int
-    ) -> Tuple[ActionResult, Tuple[int, ...]]:
-        """Executes tap action."""
-        if action.bounds:
-            x, y = converter.center_to_pixels(bounds=action.bounds)
-        else:
-            x, y = width // 2, height // 2
-        coords = (x, y)
-        result = await self.__device.tap(x=x, y=y)
-        return result, coords
-
-    async def __execute_type(
-        self, action: Action, converter: CoordinateConverter, width: int, height: int
-    ) -> Tuple[ActionResult, Tuple[int, ...]]:
-        """Executes type action."""
-        if not action.bounds:
-            raise ExecutionError("Type action requires bounds for focus tap guard")
-        x, y = converter.center_to_pixels(bounds=action.bounds)
-        coords = (x, y)
-        focus_result = await self.__device.tap(x=x, y=y)
-        if not focus_result.success:
-            return focus_result, coords
-        result = await self.__device.type_text(text=action.text or "")
-        return result, coords
-
-    async def __execute_swipe(
-        self, action: Action, converter: CoordinateConverter, width: int, height: int
-    ) -> Tuple[ActionResult, Tuple[int, ...]]:
-        """Executes swipe action."""
-        if action.bounds:
-            x1, y1, x2, y2 = converter.swipe_coordinates(bounds=action.bounds, direction="up")
-        else:
-            cx, cy = width // 2, height // 2
-            x1, y1 = cx, cy + 300
-            x2, y2 = cx, cy - 300
-        coords = (x1, y1, x2, y2)
-        result = await self.__device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
-        return result, coords
-
-    async def __execute_scroll(
-        self, width: int, height: int
-    ) -> Tuple[ActionResult, Tuple[int, ...]]:
-        """Executes scroll action."""
-        cx, cy = width // 2, height // 2
-        x1, y1 = cx, cy + 200
-        x2, y2 = cx, cy - 200
-        coords = (x1, y1, x2, y2)
-        result = await self.__device.swipe(
-            x1=x1, y1=y1, x2=x2, y2=y2, duration=DEFAULT_SWIPE_DURATION
-        )
-        return result, coords
-
-    async def __execute_long_press(
-        self, action: Action, converter: CoordinateConverter, width: int, height: int
-    ) -> Tuple[ActionResult, Tuple[int, ...]]:
-        """Executes long press action."""
-        if action.bounds:
-            x, y = converter.center_to_pixels(bounds=action.bounds)
-        else:
-            x, y = width // 2, height // 2
-        coords = (x, y)
-        result = await self.__device.tap(x=x, y=y)
-        return result, coords
-
     async def __learn(self, visual_hash: str, action: Action, success: bool) -> None:
-        """
-        Phase 5: Store experience in memory.
-
-        Args:
-            visual_hash: Visual hash of the screen
-            action: Action that was executed
-            success: Whether the action succeeded
-        """
+        """Phase 5: Store experience in memory."""
         try:
             await self.__memory.store_experience(
                 visual_hash=visual_hash,
@@ -561,12 +205,7 @@ class ExecutionEngine:
             )
 
     def __checkpoint(self, step_result: StepResult) -> None:
-        """
-        Phase 6: Log execution state.
-
-        Args:
-            step_result: Result of step execution
-        """
+        """Phase 6: Log execution state."""
         self.__telemetry.info(
             "Step completed",
             step_number=step_result.step.step_number,

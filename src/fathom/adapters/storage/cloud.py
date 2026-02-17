@@ -4,21 +4,20 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fathom.infrastructure.storage.cloud import GCSImageStorage
+from fathom.interfaces import IImageStorage
 from fathom.interfaces.storage import StoragePort
-from fathom.schemas.configuration import GeminiConfig
 
 
 class CloudStorage(StoragePort):
     """
     Cloud storage adapter.
 
-    Wraps GCSImageStorage.
+    Wraps an IImageStorage implementation.
     """
 
-    def __init__(self, configuration: GeminiConfig, credentials: Any) -> None:
-        """Initialize cloud storage adapter."""
-        self.__storage = GCSImageStorage(configuration=configuration, credentials=credentials)
+    def __init__(self, storage: IImageStorage) -> None:
+        """Initialize cloud storage adapter with injected storage infrastructure."""
+        self.__storage = storage
 
     async def save(self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
         """

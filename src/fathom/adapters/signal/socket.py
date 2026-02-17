@@ -75,8 +75,8 @@ class SocketSignal(SignalPort):
             )
             logger.info(f"Signal Server listening on {self.__socket_path}")
 
-        except Exception as e:
-            logger.error(f"Failed to start signal server: {e}")
+        except Exception as exception:
+            logger.error(f"Failed to start signal server: {exception}")
 
     async def __start_serving(self) -> None:
         """Internal server starter."""
@@ -107,8 +107,8 @@ class SocketSignal(SignalPort):
                     writer.write(b'{"error": "Invalid JSON"}\n')
                     await writer.drain()
 
-        except Exception as e:
-            logger.error(f"Client connection error: {e}")
+        except Exception as exception:
+            logger.error(f"Client connection error: {exception}")
         finally:
             writer.close()
 

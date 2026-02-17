@@ -5,7 +5,8 @@ Auditor service for execution tracking and visualization.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, Dict, List
+from collections import deque
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from rich.console import Console
 from rich.markup import escape
@@ -23,10 +24,11 @@ class AuditService:
     Handles logging and console visualization of agent execution.
     """
 
-    def __init__(self) -> None:
-        """Initialize auditor with rich console."""
-        self.__console = Console()
-        self.__memory_audit_trail: List[Dict[str, Any]] = []
+    def __init__(self, *, console: Optional[Console] = None) -> None:
+        """Initialize auditor with injected or default console."""
+        self.__console = console or Console()
+        # Use deque with maxlen for efficient memory management
+        self.__memory_audit_trail: deque[Dict[str, Any]] = deque(maxlen=1000)
 
     def log_context(self, manager: ContextManager) -> None:
         """

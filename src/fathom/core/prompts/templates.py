@@ -1,4 +1,10 @@
+"""
+Shared prompt templates and rules for agent reasoning.
+"""
+
 from __future__ import annotations
+
+from types import MappingProxyType
 
 # Coordinate system and confidence guidance
 COORD_RULES = (
@@ -8,16 +14,17 @@ COORD_RULES = (
 
 CONFIDENCE_RULES = "CONFIDENCE: 0.9+ clear match, 0.7-0.89 certain. Below 0.7 indicates ambiguity."
 
-# Bbox precision rules
-PRECISION_RULES = {
+# Bbox precision rules (Immutable)
+_PRECISION_RULES_RAW = {
     "text": "TEXT: Bbox wraps ONLY visible text pixels. Exclude padding/margins/icons.",
     "icon": "ICONS/BUTTONS: Snap bbox TIGHTLY to visible edges. Exclude whitespace/containers.",
     "input": "INPUTS: Wrap editable area only (borders/background). Exclude labels/icons.",
     "list": "LIST ITEMS: Wrap ONLY the specific item's text (not entire list or row).",
 }
+PRECISION_RULES = MappingProxyType(_PRECISION_RULES_RAW)
 
-# Action rules
-ACTION_RULES = {
+# Action rules (Immutable)
+_ACTION_RULES_RAW = {
     "scroll": (
         "SCROLL/SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
         "Bbox wraps scrollable region only (exclude fixed headers/footers)."
@@ -33,9 +40,10 @@ ACTION_RULES = {
         "Both target SAME bbox. text_to_type is a literal value (no prefixes)."
     ),
 }
+ACTION_RULES = MappingProxyType(_ACTION_RULES_RAW)
 
-# UI handling rules
-UI_RULES = {
+# UI handling rules (Immutable)
+_UI_RULES_RAW = {
     "goal_lock": (
         "GOAL LOCK: Never change intent. Dismiss blockers (cookie consent, permission prompts, "
         "privacy popups, login walls, app update dialogs, survey popups, rating requests) FIRST, "
@@ -48,6 +56,7 @@ UI_RULES = {
         "If menu/page is open, interact WITHIN it."
     ),
 }
+UI_RULES = MappingProxyType(_UI_RULES_RAW)
 
 # Backward-compatible aggregated blocks used by current builder
 COMMON_RULES = f"""

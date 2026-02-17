@@ -5,7 +5,7 @@ Graph nodes for exploration execution.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 from fathom.constants import ActionType
 from fathom.schemas.screens import ScreenCapture, ScreenState
@@ -94,14 +94,13 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
         if context.is_cancelled:
             return {**state, "is_complete": True}
 
-        capture = state.get("capture")
+        capture: Optional[ScreenCapture] = state.get("capture")
         if not capture:
             return {**state, "content_exhausted": True}
 
         start = time.time()
 
         # Update: VisionService.analyze now requires context_manager
-        # Exploration doesn't have explicit tracking note yet
         analysis = await context.vision.analyze(
             intent="Explore this app. Find a unique interactive element that hasn't been clicked yet.",
             capture=capture,
@@ -164,7 +163,7 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
 
         duration = time.time() - start
 
-        screen_state = state.get("screen_state")
+        screen_state: Optional[ScreenState] = state.get("screen_state")
         screen_hash = screen_state.visual_hash if screen_state else "0"
 
         step = Step(
@@ -193,29 +192,25 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
         if context.is_cancelled:
             return {**state, "is_complete": True}
 
-        step_result = state.get("step_result")
+        step_result: Optional[StepResult] = state.get("step_result")
         if not step_result:
             return state
 
         # Update Exploration Graph
-        screen_state = state.get("screen_state")
+        screen_state: Optional[ScreenState] = state.get("screen_state")
         if screen_state:
             context.exploration_graph.add_screen(screen_state)
 
         if step_result.success and step_result.pre_hash and step_result.step.action:
             context.exploration_graph.record_transition(
                 origin=step_result.pre_hash,
-                destination="0",  # Post hash not available yet?
+                destination="0",  # Post hash not available yet
                 action=step_result.step.action.to_description(),
             )
 
         # Record
         context.agent_state.record_step(result=step_result)
         context.history.save_step(result=step_result, intent="exploration")
-
-        # Determine next phase (Simplified BFS logic)
-        # In a real impl, we'd check if screen changed, add to queue, etc.
-        # For now, we rely on the loop.
 
         # Check max steps
         if context.agent_state.step_count >= context.max_steps:

@@ -83,8 +83,8 @@ class GraphExecutor:
             pause_task.cancel()
             try:
                 await stream_task
-            except Exception as e:
-                logger.error(f"Executor: Graph stream failed: {e}")
+            except Exception as exception:
+                logger.error(f"Executor: Graph stream failed: {exception}")
                 raise
 
             # Check Graph State

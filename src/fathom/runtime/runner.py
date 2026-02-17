@@ -138,7 +138,10 @@ class FathomRunner:
         self.__context_manager.set_roadmap(intent=intent)
 
         # Create and execute strategy
+        from fathom.adapters.summarization.llm import LLMSummarizer
         from fathom.strategies.intent import IntentStrategy
+
+        summarizer = LLMSummarizer(llm=self.__llm)
 
         strategy = IntentStrategy(
             intent=intent,
@@ -148,6 +151,7 @@ class FathomRunner:
             storage=self.__storage,
             telemetry=self.__telemetry,
             signal=self.__signal,
+            summarizer=summarizer,
             path_manager=self.__path_manager,
             max_steps=max_steps or self.__config.intent_strategy.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent_strategy.use_xml,

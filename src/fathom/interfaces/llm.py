@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, Sequence, Union
 
 from fathom.schemas.results import GenerateResult
+
+# Type alias for LLM prompt parts (text, images, or structured content)
+PromptPart = Union[str, bytes, Dict[str, str]]
 
 
 class LLMPort(ABC):
@@ -21,7 +24,7 @@ class LLMPort(ABC):
     async def generate(
         self,
         *,
-        prompt: List[Any],
+        prompt: Sequence[PromptPart],
         system_instruction: Optional[str] = None,
         tools: Optional[Dict[str, Any]] = None,
     ) -> GenerateResult:
