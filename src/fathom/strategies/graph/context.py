@@ -25,8 +25,8 @@ from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.exploration import ExplorationGraph
+from fathom.schemas.metrics import ExecutionMetrics
 
 if TYPE_CHECKING:
     from fathom.base.paths import SharedPathManager
@@ -56,6 +56,7 @@ class GraphContext:
         package_name: str = "unknown_app",
         cancel_event: Optional[asyncio.Event] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
+        auditor: Optional[AuditService] = None,
     ) -> None:
         self.__intent = intent
         self.__device = device
@@ -67,7 +68,7 @@ class GraphContext:
         self.__path_manager = path_manager
         self.__knowledge = knowledge
         self.__exploration_graph = exploration_graph or ExplorationGraph()
-        
+
         self.__max_steps = max_steps
         self.__use_xml = use_xml
         self.__workflow_id = workflow_id
@@ -81,26 +82,25 @@ class GraphContext:
         self.__context_manager = ContextManager(memory=memory, workflow_id=workflow_id)
 
         # --- Application Services ---
+        self.__auditor = auditor or AuditService()
+
         self.__vision = VisionService(
             llm=llm,
             memory=memory,
             storage=storage,
             session_id=workflow_id,
             package_name=package_name,
+            auditor=self.__auditor,
         )
-        
+
         self.__planner = StepPlanner(vision_tool=self.__vision)
-        
         self.__hierarchy = HierarchyService(device=device)
-        
         self.__history = HistoryService(
             workflow_id=workflow_id,
             package_name=package_name,
             path_manager=path_manager,
         )
         self.__trace = TraceService(path_manager=path_manager)
-        
-        self.__audit = AuditService()
         self.__ux = UXService()
         self.__resolution = ReferenceResolutionService(ledger=memory)
 
@@ -207,8 +207,8 @@ class GraphContext:
         return self.__trace
 
     @property
-    def audit(self) -> AuditService:
-        return self.__audit
+    def auditor(self) -> AuditService:
+        return self.__auditor
 
     @property
     def ux(self) -> UXService:

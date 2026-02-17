@@ -30,7 +30,7 @@ class NoopSignal(SignalPort):
         Request human input - returns empty string for autonomous mode.
         """
 
-        _: str = prompt  
+        _: str = prompt
 
         return ""
 

@@ -23,6 +23,7 @@ class BFSQueueEntry(BaseModel):
     """
     Entry in the BFS exploration queue.
     """
+
     screen_hash: str
     parent_hash: str
     action_from_parent: Action

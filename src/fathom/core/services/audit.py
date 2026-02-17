@@ -1,244 +1,209 @@
+"""
+Auditor service for execution tracking and visualization.
+"""
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Union
+import time
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from fathom.schemas.results import ActionResult, PlanResult
-from fathom.schemas.screens import ScreenState
+if TYPE_CHECKING:
+    from fathom.core.context.manager import ContextManager
+    from fathom.schemas.results import ActionResult, PlanResult
+    from fathom.schemas.screens import ScreenState
 
 
 class AuditService:
     """
-    Service for logging execution details and metrics to the console.
+    Handles logging and console visualization of agent execution.
     """
 
     def __init__(self) -> None:
+        """Initialize auditor with rich console."""
         self.__console = Console()
         self.__memory_audit_trail: List[Dict[str, Any]] = []
 
-    def log_step(
-        self,
-        is_stuck: bool,
-        step_count: int,
-        plan: PlanResult,
-        state: ScreenState,
-        is_new_screen: bool,
-        result: ActionResult,
-        total_duration: float,
-        analysis_duration: float,
-        execution_duration: float,
-        grounding_duration: float,
-        hierarchy_duration: float,
-    ) -> None:
+    def log_context(self, manager: ContextManager) -> None:
         """
-        Prints a detailed audit table for a single execution step.
+        Visualizes the current three-tier execution context.
         """
+        full_context = manager.get_full_context()
 
-        audit = Table.grid(padding=(0, 2))
-        audit.add_column(style="dim")
-        audit.add_column(justify="right")
+        # 1. Build Roadmap Table
+        roadmap = full_context.get("roadmap")
+        roadmap_table = Table.grid(padding=(0, 1))
+        roadmap_table.add_column(style="bold blue")
+        roadmap_table.add_column()
 
-        status_icon = "🆕" if is_new_screen else "🔄"
-        audit.add_row(
-            "Screen Status:",
-            f"{status_icon} {state.visual_hash[:12]} ({state.activity})",
-        )
+        intent = getattr(roadmap, "intent", "Unknown")
+        roadmap_table.add_row("Intent:", escape(str(object=intent)))
 
-        if is_stuck:
-            audit.add_row("[bold red]Loop Detected:[/bold red]", "YES")
-
-        audit.add_row("Grounding:", self.__format_time(milliseconds=grounding_duration * 1000))
-
-        if hierarchy_duration > 0:
-            audit.add_row("Hierarchy:", self.__format_time(milliseconds=hierarchy_duration * 1000))
-
-        if plan.metrics:
-            if "memory_retrieval" in plan.metrics:
-                audit.add_row(
-                    "Memory Retrieval:",
-                    self.__format_time(milliseconds=plan.metrics["memory_retrieval"] * 1000),
-                )
-            if "llm_analysis" in plan.metrics:
-                audit.add_row(
-                    "LLM Core Analysis:",
-                    self.__format_time(milliseconds=plan.metrics["llm_analysis"] * 1000),
+        # 2. Build Guidance Block
+        guidance = manager.get_user_guidance()
+        if guidance:
+            guidance_panel = Table.grid(padding=(0, 1))
+            for instruction in guidance:
+                time_str = time.strftime("%H:%M:%S", time.localtime(instruction.timestamp))
+                guidance_panel.add_row(
+                    f"[dim][{time_str}][/dim]",
+                    f"[bold red]![/bold red] {escape(instruction.content)}",
                 )
 
-            # Token usage
-            prompt_tokens = int(plan.metrics.get("prompt_tokens", 0))
-            completion_tokens = int(plan.metrics.get("completion_tokens", 0))
-            cached_tokens = int(plan.metrics.get("cached_tokens", 0))
-            if prompt_tokens or completion_tokens:
-                total_tokens = prompt_tokens + completion_tokens
-                token_str = f"{total_tokens:,} (prompt: {prompt_tokens:,} | completion: {completion_tokens:,}"
-                if cached_tokens:
-                    token_str += f" | cached: {cached_tokens:,}"
-                token_str += ")"
-                audit.add_row("Tokens:", f"[dim]{token_str}[/dim]")
+            self.__console.print(
+                Panel(
+                    guidance_panel,
+                    title="[bold red]User Instructions (Priority)[/bold red]",
+                    border_style="red",
+                )
+            )
 
-        audit.add_row("Total Analysis:", self.__format_time(milliseconds=analysis_duration * 1000))
-        audit.add_row("ADB Execution:", self.__format_time(milliseconds=result.duration))
+        # 3. Build Milestones/Trace summary
+        summary = Table.grid(padding=(0, 1))
+        summary.add_column(style="dim")
+        summary.add_column()
 
-        overhead = (execution_duration * 1000) - result.duration
-        audit.add_row("Overhead:", self.__format_time(milliseconds=overhead))
+        milestones = full_context.get("milestones", [])
+        if milestones:
+            summary.add_row("Milestones:", ", ".join(escape(str(m)) for m in milestones))
 
-        audit.add_row(
-            "[bold white]Total Step Time:[/bold white]",
-            f"[bold cyan]{self.__format_time(milliseconds=total_duration * 1000)}[/bold cyan]",
-        )
-
-        # Cache Stats
-        if plan.metrics and "cache_hits" in plan.metrics:
-            hits = int(plan.metrics.get("cache_hits", 0))
-            misses = int(plan.metrics.get("cache_misses", 0))
-            audit.add_row("Cache:", f"hits: {hits} | misses: {misses}")
+        trace = full_context.get("trace", [])
+        summary.add_row("Trace Size:", f"{len(trace)} cycles recorded")
 
         self.__console.print(
             Panel(
-                renderable=audit,
-                border_style="dim",
-                title_align="right",
-                title=f"Step {step_count} Audit",
+                summary,
+                title="[bold blue]Execution Context (GCC-Inspired)[/bold blue]",
+                border_style="blue",
             )
         )
-        
-        # --- PROMPT AUDIT ---
-        prompt_payload = plan.metadata.get("prompt_payload")
-        if prompt_payload:
-            sanitized = self.__sanitize_for_log(prompt_payload)
-            # Sanitized is a list (because payload is list).
-            # Convert to string, escaping markup characters in the content
-            prompt_string = "\n".join(
-                escape(str(item)) for item in sanitized
-            )
-            
-            if "USER INSTRUCTION" in prompt_string:
-                prompt_string = prompt_string.replace(
-                    "USER INSTRUCTION (PRIORITY)", 
-                    "[bold red]USER INSTRUCTION (PRIORITY)[/bold red]"
+
+    def log_prompt(self, payload: List[Any], instruction: str) -> None:
+        """
+        Visualizes the exact prompt being sent to the LLM.
+        """
+        sanitized_payload = self.__sanitize_recursive(data=payload)
+
+        prompt_table = Table.grid(padding=(0, 1))
+        prompt_table.add_column(style="cyan", no_wrap=True)
+        prompt_table.add_column()
+
+        for index, item in enumerate(sanitized_payload):
+            label = f"Part {index + 1}:"
+            content = str(object=item)
+
+            # Highlight instructions if they appear in text parts
+            if "USER INSTRUCTIONS" in content:
+                content = content.replace(
+                    "USER INSTRUCTIONS", "[bold red]USER INSTRUCTIONS[/bold red]"
                 )
-            
-            self.__console.print(
-                Panel(
-                    prompt_string,
-                    title="[bold blue]Context & Prompt[/bold blue]",
-                    border_style="blue",
-                    expand=False
-                )
+
+            prompt_table.add_row(label, escape(content))
+
+        self.__console.print(
+            Panel(
+                prompt_table,
+                title="[bold cyan]🚀 LLM Dispatch[/bold cyan]",
+                subtitle=f"[dim]System: {escape(instruction[:80])}...[/dim]",
+                border_style="cyan",
             )
+        )
 
-        # Print Reasoning
-        reasoning = plan.reason
-
-        if plan.step and plan.step.action:
-            reasoning = plan.step.action.rationale or reasoning
-
-            # Show Action Details
-            action_panel = Table.grid(padding=(0, 2))
-            action_panel.add_column(style="bold yellow")
-            action_panel.add_column()
-
-            action_panel.add_row("Action:", plan.step.action.action_type.value)
-            action_panel.add_row("Target:", plan.step.action.target or "N/A")
-            action_panel.add_row("Rationale:", reasoning)
-
-            self.__console.print(
-                Panel(action_panel, title="LLM Reasoning & Action", border_style="yellow")
-            )
-        elif reasoning:
-            self.__console.print(
-                Panel(f"[italic]{reasoning}[/italic]", title="LLM Reasoning", border_style="yellow")
-            )
-
-    def record_context(
+    def log_step(
         self,
-        success: bool,
-        step_number: int,
-        visual_hash: str,
-        context: Dict[str, Any],
-        action_description: str,
-        knowledge: Dict[str, Any],
+        plan: PlanResult,
+        state: ScreenState,
+        result: ActionResult,
+        *,
+        step_count: int,
+        is_new_screen: bool,
+        is_stuck: bool,
+        total_duration: float,
+        analysis_duration: float,
+        grounding_duration: float,
+        hierarchy_duration: float,
+        execution_duration: float,
     ) -> None:
         """
-        Records context data for the final session audit.
+        Prints the detailed audit for a single execution step.
         """
+        audit_grid = Table.grid(padding=(0, 2))
+        audit_grid.add_column(style="dim")
+        audit_grid.add_column(justify="right")
 
-        self.__memory_audit_trail.append(
-            {
-                "step": step_number,
-                "context": self.__sanitize_for_log(context),
-                "success": success,
-                "hash": visual_hash,
-                "knowledge": self.__sanitize_for_log(knowledge),
-                "action": action_description,
-            }
+        status_tag = "🆕" if is_new_screen else "🔄"
+        audit_grid.add_row(
+            "Screen:",
+            f"{status_tag} {state.visual_hash[:12]} ({state.activity})",
         )
 
-    def print_session_summary(self) -> None:
-        """
-        Prints the final memory and context audit for the entire session.
-        """
+        if is_stuck:
+            audit_grid.add_row("[bold red]STUCK:[/bold red]", "YES")
 
-        if not self.__memory_audit_trail:
-            return
+        # Duration metrics
+        audit_grid.add_row("Grounding:", self.__format_ms(seconds=grounding_duration))
 
-        table = Table(
-            show_lines=True,
-            header_style="bold magenta",
-            title="Execution Context & Memory Audit",
+        if hierarchy_duration > 0:
+            audit_grid.add_row("Hierarchy:", self.__format_ms(seconds=hierarchy_duration))
+
+        if plan.metrics:
+            if "llm_analysis" in plan.metrics:
+                audit_grid.add_row(
+                    "LLM Analysis:", self.__format_ms(seconds=plan.metrics["llm_analysis"])
+                )
+
+            # Token usage
+            prompt_t = int(plan.metrics.get("prompt_tokens", 0))
+            completion_t = int(plan.metrics.get("completion_tokens", 0))
+            if prompt_t or completion_t:
+                token_info = f"{prompt_t + completion_t:,} (P:{prompt_t:,} | C:{completion_t:,})"
+                audit_grid.add_row("Tokens:", f"[dim]{token_info}[/dim]")
+
+        audit_grid.add_row("ADB Command:", self.__format_ms(milliseconds=result.duration))
+
+        audit_grid.add_row(
+            "[bold white]Total Time:[/bold white]",
+            f"[bold cyan]{self.__format_ms(seconds=total_duration)}[/bold cyan]",
         )
 
-        table.add_column(header="Step", justify="center")
-        table.add_column(header="Hash / Knowledge (READ)", style="cyan")
-        table.add_column(header="Session Context (SENT)", style="green")
-        table.add_column(header="Action Result (WRITE)", style="yellow")
+        self.__console.print(
+            Panel(
+                audit_grid,
+                title=f"Step {step_count} Result",
+                border_style="dim",
+                title_align="right",
+            )
+        )
 
-        for item in self.__memory_audit_trail:
-            knowledge = item["knowledge"]
-            knowledge_string = f"Hash: [dim]{item['hash'][:12]}[/dim]"
-            knowledge_string += f"Desc: {knowledge.get('description', 'N/A')}"
+        # Reasoning Output
+        if plan.step and plan.step.action:
+            action_info = Table.grid(padding=(0, 2))
+            action_info.add_column(style="bold yellow")
+            action_info.add_column()
 
-            past = knowledge.get("previous_actions", [])
-            knowledge_string += (
-                f"Past: {len(past)} actions retrieved" if past else "Past: No prior experience"
+            action_info.add_row("Action:", plan.step.action.action_type.value)
+            action_info.add_row("Target:", escape(str(object=plan.step.action.target or "N/A")))
+            action_info.add_row(
+                "Rationale:", escape(str(object=plan.step.action.rationale or "N/A"))
             )
 
-            context = item["context"]
-            failures = context.get("relevant_failures", [])
-            context_string = f"History: {context.get('compact_history')}"
-            context_string += f"Failures Sent: {', '.join(str(f) for f in failures) if failures else 'None'}"
+            self.__console.print(Panel(action_info, title="Brain Reasoning", border_style="yellow"))
 
-            status = (
-                "[bold green]OK[/bold green]" if item["success"] else "[bold red]FAIL[/bold red]"
-            )
-            action_string = f"{item['action']}\nStatus: {status}"
-            table.add_row(str(item["step"]), knowledge_string, context_string, action_string)
+    def __format_ms(self, seconds: float = 0, milliseconds: float = 0) -> str:
+        """Format time elegantly."""
+        total_ms = (seconds * 1000) + milliseconds
+        return f"{total_ms / 1000.0:.2f}s [{total_ms:.0f}ms]"
 
-        self.__console.print("")
-        self.__console.print(table)
-
-    def __format_time(self, milliseconds: float) -> str:
-        """
-        Formats milliseconds to 'Xs [Yms]' format.
-        """
-
-        seconds = milliseconds / 1000.0
-        return f"{seconds:.2f}s [{milliseconds:.0f}ms]"
-
-    def __sanitize_for_log(self, data: Any) -> Any:
-        """
-        Recursively sanitizes data structure to remove bytes and large objects.
-        """
+    def __sanitize_recursive(self, data: Any) -> Any:
+        """Recursively replaces bytes and large objects for logging."""
         if isinstance(data, bytes):
-            return f"<bytes len={len(data)}>"
+            return f"<binary data: {len(data)} bytes>"
         if isinstance(data, dict):
-            return {k: self.__sanitize_for_log(v) for k, v in data.items()}
-        if isinstance(data, list):
-            return [self.__sanitize_for_log(v) for v in data]
-        if isinstance(data, tuple):
-            return tuple(self.__sanitize_for_log(v) for v in data)
+            return {k: self.__sanitize_recursive(data=v) for k, v in data.items()}
+        if isinstance(data, (list, tuple)):
+            return [self.__sanitize_recursive(data=item) for item in data]
         return data

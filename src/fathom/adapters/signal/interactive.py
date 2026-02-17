@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import queue
 import sys
 import threading
@@ -122,14 +121,14 @@ class InteractiveSignal(SignalPort):
 
             console.print("\n[bold]Your choice (1/2/3):[/bold] ", end="")
             sys.stdout.flush()
-            
+
             # Wait for input from queue
             choice = await self.__get_input_async()
-            console.print(choice) # Echo input
+            console.print(choice)  # Echo input
 
             if choice not in ["1", "2", "3"]:
                 if not choice:
-                    choice = "1" # Default
+                    choice = "1"  # Default
                 else:
                     console.print(
                         f"[yellow]Invalid choice '{choice}'. Please enter 1, 2, or 3.[/yellow]\n"
@@ -160,9 +159,9 @@ class InteractiveSignal(SignalPort):
                 console.print("-" * 70)
                 console.print("[bold]Enter your instruction:[/bold]")
                 sys.stdout.flush()
-                
+
                 context = await self.__get_input_async()
-                console.print(context) # Echo
+                console.print(context)  # Echo
 
                 if context and (
                     (context.startswith("'") and context.endswith("'"))
@@ -192,7 +191,7 @@ class InteractiveSignal(SignalPort):
         )
         console.print("[bold]Your answer:[/bold] ", end="")
         sys.stdout.flush()
-        
+
         answer = await self.__get_input_async()
         console.print(f"[green]✓[/green] Answer recorded: [italic]{answer}[/italic]\n")
         return answer

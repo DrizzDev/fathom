@@ -204,7 +204,9 @@ class FathomCLI:
                 )
 
             if not result.success:
-                console.print(f"[bold red]Failure Reason:[/bold red] {escape(result.completion_reason)}")
+                console.print(
+                    f"[bold red]Failure Reason:[/bold red] {escape(result.completion_reason)}"
+                )
 
             if self.runner:
                 await self.runner.cleanup()

@@ -36,7 +36,7 @@ class TraceService:
     ) -> None:
         """
         Save an annotated trace image to the session directory.
-        
+
         Args:
             image_data: Raw screenshot bytes.
             action: The executed Action object.
@@ -50,15 +50,15 @@ class TraceService:
             action_type = getattr(action, "action_type", "unknown")
             if hasattr(action_type, "value"):
                 action_type = action_type.value
-                
+
             filename = f"step_{step_number}_{action_type}_{timestamp}.png"
-            
+
             path = self.__path_manager.get_trace_path(
                 package_name=package_name,
                 session_id=session_id,
                 filename=filename,
             )
-            
+
             # ImageAnnotator handles the actual drawing and saving
             ImageAnnotator.trace(
                 image_data=image_data,
@@ -67,6 +67,6 @@ class TraceService:
                 coords=coords,
                 label=getattr(action, "to_description", lambda: "Action")(),
             )
-            
+
         except Exception as exception:
             logger.warning(f"Failed to save trace: {exception}")

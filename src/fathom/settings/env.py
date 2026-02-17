@@ -22,9 +22,7 @@ class FathomSettings(BaseSettings):
     vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
     vertex_project_id: Optional[str] = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT", "GCP_PROJECT"
-        ),
+        validation_alias=AliasChoices("VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT", "GCP_PROJECT"),
     )
 
     google_application_credentials: Optional[str] = Field(

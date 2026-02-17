@@ -1,23 +1,23 @@
+"""
+Structured Gemini prompt builder using GCC-inspired context tiers.
+"""
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from fathom.core.prompts.base import PromptBuilder
-from fathom.schemas.context import UserGuidance
 from fathom.core.prompts.templates import (
-    ACTION_RULES,
     COMMON_RULES,
     CONFIDENCE_RULES,
     COORD_RULES,
-    PRECISION_RULES,
     TOOL_GUIDANCE,
-    UI_RULES,
 )
 
 
 class GeminiPromptBuilder(PromptBuilder):
     """
-    Structured Gemini prompt builder.
+    Structured Gemini prompt builder that formats hierarchical context.
     """
 
     def build(
@@ -27,7 +27,6 @@ class GeminiPromptBuilder(PromptBuilder):
     ) -> str:
         """
         Build stable system prompt for tool-based UI execution.
-        EXCLUDES dynamic history/memory to enable Context Caching.
         """
 
         contextual_rules = self.__get_contextual_rules(intent=intent, hints=hints)
@@ -51,48 +50,48 @@ class GeminiPromptBuilder(PromptBuilder):
 
     def build_user_context(
         self,
-        history: Optional[Any] = None,
+        context: Dict[str, Any],
         memory: Optional[Dict[str, str]] = None,
-        guidance: Optional[List[UserGuidance]] = None,
     ) -> str:
         """
-        Build dynamic user context string.
+        Build dynamic user context string from GCC-inspired tiers.
         """
-
-        ledger = self.__get_ledger_segment(memory=memory)
-        interaction_context = self.__format_interaction_history(history=history)
 
         parts = []
 
+        # 1. Priority Guidance (HITL)
+        guidance = context.get("guidance", [])
         if guidance:
-            # Format user instructions prominently
-            instructions = [f"- {item.content}" for item in guidance]
-            guidance_text = "USER INSTRUCTIONS (PRIORITY):\n" + "\n".join(instructions)
-            parts.append(guidance_text)
+            instructions = [f"- {item}" for item in guidance]
+            parts.append("USER INSTRUCTIONS (PRIORITY):\n" + "\n".join(instructions))
 
+        # 2. Roadmap & Milestones
+        milestones = context.get("milestones", [])
+        if milestones:
+            parts.append("COMPLETED MILESTONES:\n" + "\n".join(f"- {m}" for m in milestones))
+
+        # 3. Memory Ledger
+        ledger = self.__get_ledger_segment(memory=memory)
         if ledger:
             parts.append(ledger)
 
+        # 4. Execution Trace (Interaction History)
+        trace = context.get("trace", [])
+        interaction_context = self.__format_trace(trace=trace)
         if interaction_context:
             parts.append(interaction_context)
 
         return "\n\n".join(parts)
 
     def __get_persona(self) -> str:
-        """
-        Core identity.
-        """
-
+        """Core identity."""
         return (
             "You are a Mobile UI expert agent. "
             "Ground all interactions using normalized coordinates (0-1000)."
         )
 
     def __get_contextual_rules(self, intent: str, hints: Optional[Dict[str, Any]]) -> str:
-        """
-        High-priority contextual rules.
-        """
-
+        """High-priority contextual rules."""
         rules: List[str] = []
 
         if hints and hints.get("use_xml"):
@@ -106,19 +105,10 @@ class GeminiPromptBuilder(PromptBuilder):
                 "- CRITICAL SEQ: Use 'tap' to gain focus on the input field, followed by 'type'."
             )
 
-        if hints and hints.get("needs_navigation"):
-            target = str(hints.get("target_screen", "target screen"))
-            rules.append(
-                f"- NAVIGATION: Move toward '{target}' before actioning intent-specific UI."
-            )
-
         return "RULES:\n" + "\n".join(rules) if rules else ""
 
     def __get_conditional_notes(self, intent: str, hints: Optional[Dict[str, Any]]) -> str:
-        """
-        Add concise behavior notes derived from intent/hints.
-        """
-
+        """Add concise behavior notes."""
         notes: List[str] = []
         intent_lower = intent.lower()
 
@@ -129,107 +119,46 @@ class GeminiPromptBuilder(PromptBuilder):
         if "search" in intent_lower and any(k in intent_lower for k in ["tap", "select", "click"]):
             notes.append("- SEARCH FLOW: If suggestions are visible, type then tap suggestion.")
 
-        if not hints or not hints.get("requires_repeat_all"):
-            notes.append(
-                "- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly."
-            )
-
-        if not notes:
-            return ""
+        notes.append("- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly.")
 
         return "NOTES:\n" + "\n".join(notes)
 
     def __get_ledger_segment(self, memory: Optional[Dict[str, str]]) -> str:
-        """
-        High-density ledger memory.
-        """
-
+        """High-density ledger memory."""
         if not memory:
             return ""
-
-        # Format: [KEY:VAL]
         items = [f"{key}:{value}" for key, value in memory.items()]
         return f"LEDGER: [{', '.join(items)}]"
 
-    def __format_interaction_history(self, history: Optional[Any]) -> str:
-        """
-        Compact interaction history to reduce repeated actions.
-        """
-
-        if isinstance(history, str):
-            return history
-
-        if not history or not isinstance(history, list):
+    def __format_trace(self, trace: List[Dict[str, Any]]) -> str:
+        """Formats the GCC trace into a readable interaction history."""
+        if not trace:
             return ""
 
-        recent = history[-8:]
-        lines: List[str] = []
-        avoided: List[str] = []
+        recent = trace[-8:]
+        lines = []
+        avoided = []
 
-        for index, item in enumerate(recent, 1):
-            action = str(item.get("action_type", "tap"))
-            target = str(item.get("element_text") or item.get("target") or "unknown")
-            success = bool(item.get("success", True))
-            lines.append(f"{index}. {target} ({action}) -> {'ok' if success else 'failed'}")
-            if target != "unknown":
-                avoided.append(target)
+        for index, entry in enumerate(recent, 1):
+            observation = entry.get("observation", "Unknown screen")
+            action = entry.get("action", {})
+
+            # Action might be dict or object
+            if isinstance(action, dict):
+                desc = action.get("target", "unknown")
+                type_ = action.get("action_type", "tap")
+            else:
+                desc = getattr(action, "target", "unknown")
+                type_ = getattr(action, "action_type", "tap")
+                if hasattr(type_, "value"):
+                    type_ = type_.value
+
+            lines.append(f"{index}. {observation} -> {type_.upper()}:{desc}")
+            if desc != "unknown":
+                avoided.append(desc)
 
         block = "INTERACTION HISTORY:\n" + "\n".join(lines)
         if avoided:
             block += f"\nAvoid repeats when possible: {', '.join(avoided[:6])}"
 
         return block
-
-    def build_next_step_prompt(
-        self, user_intent: str, interaction_history: Optional[List[Dict[str, Any]]] = None
-    ) -> str:
-        """
-        Build focused prompt for stuck/next-step recovery.
-        """
-
-        interaction_context = self.__format_interaction_history(history=interaction_history)
-
-        return (
-            "Task: Intent appears stuck. Propose ONE best action to progress.\n"
-            f"User intent: {user_intent}\n"
-            f"{interaction_context}\n\n"
-            "RULES:\n"
-            f"- {COORD_RULES}\n"
-            f"- {CONFIDENCE_RULES}\n"
-            f"- {UI_RULES['dropdown']}\n"
-            f"- {UI_RULES['goal_lock']}\n"
-            f"- {PRECISION_RULES['input']}\n"
-            f"- {PRECISION_RULES['text']}\n"
-            f"- {ACTION_RULES['scroll']}\n"
-            f"- {ACTION_RULES['wait']}\n"
-            "Respond using tool schema only."
-        )
-
-    def build_action_verification_prompt(self, intent: str) -> str:
-        """
-        Build strict action+screen alignment verification prompt.
-        """
-
-        return (
-            "Task: Verify action alignment and screen context.\n"
-            f"User Intent: {intent}\n"
-            "Check: (1) screen is on-intent, (2) action marker targets correct UI.\n"
-            "If blocker overlays appear (permissions, cookie prompts, login wall, updates), mark misaligned.\n"
-            "Use validate_state to report evidence."
-        )
-
-    def build_intent_generation_prompt(
-        self, image_size: Tuple[int, int], app_context: Optional[str] = None
-    ) -> str:
-        """
-        Build prompt for exploration-style screen intent generation.
-        """
-
-        width, height = image_size
-        context = f"App context: {app_context}\n" if app_context else ""
-
-        return (
-            "Task: Generate intents for all interactive elements on this screen.\n"
-            f"{context}Screen size: {width}x{height}\n"
-            "Output each intent with normalized bbox and predicted next state."
-        )

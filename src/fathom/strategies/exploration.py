@@ -59,22 +59,22 @@ class ExplorationStrategy:
             workflow_id=workflow_id,
             package_name=package_name,
         )
-        
+
         self.__graph = build_exploration_graph(context=self.__graph_context)
 
     async def execute(self, max_steps: int) -> ExecutionResult:
         """Execute exploration."""
         start_time = time.time()
-        
+
         try:
             await self.__graph.ainvoke({})
-            
+
             duration = int((time.time() - start_time) * 1000)
             return ExecutionResult(
                 success=True,
                 duration=duration,
             )
-            
+
         except Exception as exception:
             logger.exception(f"Exploration failed: {exception}")
             duration = int((time.time() - start_time) * 1000)

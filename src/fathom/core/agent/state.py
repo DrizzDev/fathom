@@ -178,38 +178,11 @@ class AgentState:
         """Set the last error message."""
         self.__last_error = error
 
-    def get_smart_context(self, max_history: int = 5) -> str:
+    def get_history(self, limit: int = 5) -> List[Dict[str, Any]]:
         """
-        Structured context for LLM — current state + recent history + errors.
-        Ported from interactive_testing state manager.
+        Returns recent action history as structured items.
         """
-        lines = ["=== CURRENT STATE ==="]
-
-        if self.__current_screen:
-            # Use activity name if available, or just generic
-            screen_name = self.__current_screen.activity or "Unknown Screen"
-            lines.append(f"Current Screen: {screen_name}")
-
-        # Known knowledge
-        if self.__knowledge:
-            lines.append("Known Facts:")
-            for key, value in self.__knowledge.items():
-                lines.append(f"- {key}: {value}")
-
-        lines.append(f"\n=== RECENT HISTORY (Last {max_history}) ===")
-        # Get recent items from action history
-        recent = self.__action_history.get_history_items()[-max_history:]
-
-        for index, item in enumerate(recent):
-            status = "[OK]" if item["success"] else "[FAIL]"
-            action_description = f"{item['type']}:{item['target']}"
-            lines.append(f"{index + 1}. {status} {action_description}")
-
-        if self.__last_error:
-            lines.append(f"\n[WARN] LAST ERROR: {self.__last_error}")
-
-        lines.append("=== END STATE ===")
-        return "\n".join(lines)
+        return self.__action_history.get_history_items()[-limit:]
 
     def record_step(self, result: StepResult) -> None:
         """

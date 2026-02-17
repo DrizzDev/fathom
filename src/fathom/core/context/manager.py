@@ -9,15 +9,18 @@ This module provides the ContextManager which maintains:
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from fathom.schemas.orchestration import ExecutionContext, ExecutionRoadmap
 from fathom.schemas.context import UserGuidance
+from fathom.schemas.orchestration import ExecutionContext, ExecutionRoadmap
 
 if TYPE_CHECKING:
     from fathom.interfaces.memory import MemoryPort
     from fathom.schemas.actions import Action
+
+logger = logging.getLogger(__name__)
 
 
 class ContextManager:
@@ -27,7 +30,7 @@ class ContextManager:
     Tiers:
     - roadmap: Original intent + milestones (high-level plan)
     - milestones: Summaries of completed sub-goals (compressed progress)
-    - trace: Fine-grained OTA log (every Observe-Thought-Action cycle)
+    - trace: Fine-grained OTA (Observe-Thought-Action) log
     """
 
     def __init__(self, memory: MemoryPort, workflow_id: Optional[str] = None) -> None:
@@ -58,6 +61,8 @@ class ContextManager:
             "action": action.model_dump() if hasattr(action, "model_dump") else str(object=action),
         }
         self.__trace.append(entry)
+        # Log trace commit for visibility
+        logger.debug(f"[H3] Context Trace Commit | Trace size: {len(self.__trace)} | Action: {action}")
 
     async def branch(self, milestone: str) -> None:
         """
@@ -66,6 +71,7 @@ class ContextManager:
         self.__milestones.append(milestone)
         # Clear trace for the next phase
         self.__trace = []
+        logger.info(f"[H2] Milestone Reached | {milestone} | Trace cleared")
 
     async def recall(self, tier: str) -> Any:
         """
@@ -97,10 +103,15 @@ class ContextManager:
         instruction = UserGuidance(content=guidance, step_number=step)
         self.__user_guidance.append(instruction)
 
+        # Log detailed injection
+        logger.info(
+            f"[H1] Context Injection | Source: HITL | Step: {step} | "
+            f"Content: '{guidance}' | Total Guidance Items: {len(self.__user_guidance)}"
+        )
+
         # Persist guidance to memory
         await self.__memory.set(
-            key=f"user_guidance_{len(self.__user_guidance)}", 
-            value=instruction.model_dump_json()
+            key=f"user_guidance_{len(self.__user_guidance)}", value=instruction.model_dump_json()
         )
 
     def get_user_guidance(self) -> List[UserGuidance]:
@@ -109,7 +120,9 @@ class ContextManager:
 
     def clear_user_guidance(self) -> None:
         """Clear all pending user guidance."""
+        count = len(self.__user_guidance)
         self.__user_guidance.clear()
+        logger.info(f"[H3] Context Cleared | Removed {count} guidance items")
 
     @property
     def context(self) -> ExecutionContext:

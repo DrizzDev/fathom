@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from logging import getLogger
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 
@@ -50,7 +50,7 @@ class IntentStrategy:
     ) -> None:
         self.__intent = intent
         self.__workflow_id = workflow_id
-        
+
         # Initialize Graph Context
         self.__graph_context = GraphContext(
             intent=intent,
@@ -66,38 +66,34 @@ class IntentStrategy:
             workflow_id=workflow_id,
             package_name=package_name,
         )
-        
+
         self.__graph = build_intent_graph(context=self.__graph_context)
 
     async def execute(self, max_steps: int) -> ExecutionResult:
         """Execute intent-based workflow."""
         start_time = time.time()
-        
+
         # Configuration for checkpointing
         config = {"configurable": {"thread_id": self.__workflow_id}}
-        
+
         try:
             # Stream execution to allow HITL intervention between nodes
             async for event in self.__graph.astream({}, config=config):
-                
                 # Check for control signals (Pause/Interrupt)
                 signal_type = await self.__graph_context.signal.check_signal()
-                
+
                 if signal_type:
                     # Block execution until user resumes
                     await self.__graph_context.signal.wait_for_resume()
-                    
+
                     # Check if user injected new context/instruction
                     if hasattr(self.__graph_context.signal, "get_injected_context"):
                         injected = self.__graph_context.signal.get_injected_context()
                         if injected:
                             logger.info(f"Injecting user context: {injected}")
                             # Update graph state dynamically
-                            await self.__graph.aupdate_state(
-                                config, 
-                                {"injected_context": injected}
-                            )
-                
+                            await self.__graph.aupdate_state(config, {"injected_context": injected})
+
                 # Check cancellation
                 if self.__graph_context.is_cancelled:
                     logger.warning("Graph execution cancelled by user")
@@ -107,9 +103,9 @@ class IntentStrategy:
             final_state = await self.__graph.aget_state(config)
             success = self.__graph_context.agent_state.is_complete
             error = final_state.values.get("completion_reason")
-            
+
             duration = int((time.time() - start_time) * 1000)
-            
+
             return ExecutionResult(
                 success=success,
                 duration=duration,

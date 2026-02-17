@@ -4,14 +4,10 @@ Graph nodes for exploration execution.
 
 from __future__ import annotations
 
-import asyncio
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict
 
 from fathom.constants import ActionType
-from fathom.schemas.actions import Action
-from fathom.schemas.exploration import BFSQueueEntry
-from fathom.schemas.results import ActionResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.strategies.graph.context import GraphContext
@@ -30,11 +26,11 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
             return {**state, "is_complete": True}
 
         start_time = time.time()
-        
+
         try:
             screenshot_bytes = await context.device.capture_screen()
             width, height = await context.device.get_screen_size()
-            
+
             try:
                 activity = await context.device.get_current_package()
             except Exception:
@@ -61,9 +57,11 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
 
             # Compute Hash
             import hashlib
+
             from fathom.constants.execution import VISUAL_HASH_LENGTH
+
             visual_hash = hashlib.sha256(screen.image).hexdigest()[:VISUAL_HASH_LENGTH]
-            
+
             screen_state = ScreenState(
                 visual_hash=visual_hash,
                 activity=screen.activity,
@@ -73,9 +71,9 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
                 ).hexdigest()[:VISUAL_HASH_LENGTH],
                 structural_hash="0" * VISUAL_HASH_LENGTH,
             )
-            
+
             is_new = context.agent_state.update_screen(screen=screen_state)
-            
+
             return {
                 **state,
                 "capture": screen,
@@ -85,7 +83,7 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
                 "step_result": None,
                 "action": None,
             }
-            
+
         except Exception:
             return {**state, "is_complete": True, "completion_reason": "Capture failed"}
 
@@ -101,24 +99,28 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
             return {**state, "content_exhausted": True}
 
         start = time.time()
-        
+
         # Use Vision Service to find *unexplored* elements.
         # Ideally we pass context about what we've already done on this screen.
         # KnowledgeGraph (context.knowledge) stores this?
         # GraphContext doesn't expose KG lookup directly?
         # We'll use agent_state history for now.
-        
+
         analysis = await context.vision.analyze(
             intent="Explore this app. Find a unique interactive element that hasn't been clicked yet.",
             capture=capture,
             context=context.agent_state.build_context().get("compact_history"),
         )
-        
+
         # If no action found or action is "complete", mark exhausted
         exhausted = False
-        if analysis.is_goal_complete or not analysis.action or analysis.action.action_type == ActionType.COMPLETE:
+        if (
+            analysis.is_goal_complete
+            or not analysis.action
+            or analysis.action.action_type == ActionType.COMPLETE
+        ):
             exhausted = True
-            
+
         return {
             **state,
             "action": analysis.action if not exhausted else None,
@@ -139,7 +141,7 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
         start = time.time()
         size = await context.device.get_screen_size()
         converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
-        
+
         # Execute logic (simplified tap/scroll)
         success = False
         try:
@@ -149,7 +151,7 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
                     await context.device.tap(x=x, y=y)
                     success = True
             elif action.action_type == ActionType.SCROLL:
-                x1, y1, x2, y2 = size[0]//2, size[1]//2 + 300, size[0]//2, size[1]//2 - 300
+                x1, y1, x2, y2 = size[0] // 2, size[1] // 2 + 300, size[0] // 2, size[1] // 2 - 300
                 await context.device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
                 success = True
             elif action.action_type == ActionType.BACK:
@@ -159,13 +161,13 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
             success = False
 
         duration = time.time() - start
-        
+
         step = Step(
             action=action,
             step_number=context.agent_state.step_count,
             screen_hash=state.get("screen_state").visual_hash if state.get("screen_state") else "0",
         )
-        
+
         step_result = StepResult(
             step=step,
             success=success,
@@ -193,22 +195,22 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
         # Update Exploration Graph
         if state.get("screen_state"):
             context.exploration_graph.add_screen(state.get("screen_state"))
-            
+
         if step_result.success and step_result.pre_hash and step_result.step.action:
-             context.exploration_graph.record_transition(
-                 origin=step_result.pre_hash,
-                 destination="0", # Post hash not available yet?
-                 action=step_result.step.action.to_description()
-             )
+            context.exploration_graph.record_transition(
+                origin=step_result.pre_hash,
+                destination="0",  # Post hash not available yet?
+                action=step_result.step.action.to_description(),
+            )
 
         # Record
         context.agent_state.record_step(result=step_result)
         context.history.save_step(result=step_result, intent="exploration")
-        
+
         # Determine next phase (Simplified BFS logic)
         # In a real impl, we'd check if screen changed, add to queue, etc.
         # For now, we rely on the loop.
-        
+
         # Check max steps
         if context.agent_state.step_count >= context.max_steps:
             return {**state, "is_complete": True, "completion_reason": "Max steps"}

@@ -12,12 +12,12 @@ from google import genai
 from google.genai import types
 from google.oauth2 import service_account
 
+from fathom.adapters.llm.cache import CacheService
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.exceptions import VisionError
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import GeminiConfig
 from fathom.schemas.results import GenerateResult
-from fathom.adapters.llm.cache import CacheService
 
 logger = getLogger(__name__)
 

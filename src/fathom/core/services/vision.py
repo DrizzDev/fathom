@@ -10,15 +10,16 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
+from fathom.core.context.manager import ContextManager
 from fathom.core.definitions import ToolRegistry
+from fathom.core.prompts.factory import PromptFactory
+from fathom.core.services.audit import AuditService
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.storage import StoragePort
-from fathom.core.prompts.factory import PromptFactory
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
-from fathom.schemas.context import UserGuidance
 from fathom.utils.image import ImageProcessor
 
 logger = getLogger(__name__)
@@ -38,6 +39,7 @@ class VisionService:
         version: str = "pro",
         session_id: str = "default",
         package_name: str = "unknown_app",
+        auditor: Optional[AuditService] = None,
     ) -> None:
         """Initialize vision service."""
         self.__llm = llm
@@ -46,6 +48,7 @@ class VisionService:
         self.__version = version
         self.__session_id = session_id
         self.__package_name = package_name
+        self.__auditor = auditor or AuditService()
 
         # Use the original prompt builder factory
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
@@ -54,12 +57,11 @@ class VisionService:
         self,
         intent: str,
         capture: ScreenCapture,
+        context_manager: ContextManager,
         *,
         use_xml: bool = False,
-        context: Optional[str] = None,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
-        guidance: Optional[List[UserGuidance]] = None,
     ) -> AnalysisResult:
         """Coordinates the analysis flow mirroring GeminiVisionTool strictly."""
         # Background persistence (original logic)
@@ -71,21 +73,30 @@ class VisionService:
         start = time.time()
         knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
         retrieval = time.time() - start
-
-        # 2. PROMPT & TOOL SCOPING
-        # Static Prompt (Cacheable)
-        hints = {"use_xml": use_xml}
-
-        instruction = self.__builder.build(
-            intent=intent,
-            hints=hints,
+        
+        # Log memory stats
+        memory_store = knowledge.get("memory_store", {})
+        prev_actions = knowledge.get("previous_actions", [])
+        logger.debug(
+            f"[H3] Memory Retrieval | visual_hash={fingerprint[:6]} | "
+            f"memories={len(memory_store)} | "
+            f"experiences={len(prev_actions)} | "
+            f"duration={retrieval:.3f}s"
         )
 
-        # Dynamic context
+        # 2. PROMPT & TOOL SCOPING
+        instruction = self.__builder.build(
+            intent=intent,
+            hints={"use_xml": use_xml},
+        )
+
+        # Dynamic context from ContextManager (GCC-Inspired)
+        full_context = context_manager.get_full_context()
+        logger.debug(f"[H3] Vision Input Context | guidance={full_context.get('guidance')} | trace_len={len(full_context.get('trace', []))}")
+        
         dynamic_context = self.__builder.build_user_context(
-            history=context,
-            memory=knowledge.get("memory_store", []),  # Adapted to new Port structure
-            guidance=guidance,
+            context=full_context,
+            memory=knowledge.get("memory_store", {}),
         )
 
         tools = self.__scope_tools(intent=intent)
@@ -101,6 +112,9 @@ class VisionService:
             failures=failures,
         )
 
+        # Log prompt context for visibility
+        self.__auditor.log_prompt(payload=payload, instruction=instruction)
+
         # 4. EXECUTION
         commence = time.time()
         response = await self.__llm.generate(
@@ -110,6 +124,10 @@ class VisionService:
         )
         duration = time.time() - commence
 
+        # Log Raw LLM output
+        raw_text = response.text[:200].replace('\n', ' ') if response.text else "No text"
+        logger.debug(f"[H3] LLM Response | Duration: {duration:.3f}s | Raw: {raw_text}...")
+
         # 5. PARSE & ENRICH
         parser = ToolResponseParser()
         analysis = parser.parse(response)
@@ -117,10 +135,10 @@ class VisionService:
         # Update metrics & metadata
         if response.metrics:
             analysis.metrics.update(response.metrics)
-            
+
         # Expose payload for debugging/audit
         analysis.metadata["prompt_payload"] = [
-            str(p) if not isinstance(p, (dict, bytes)) else "Image(...)" for p in payload
+            str(item) if not isinstance(item, (dict, bytes)) else "Image(...)" for item in payload
         ]
         analysis.metadata["system_instruction"] = instruction
 

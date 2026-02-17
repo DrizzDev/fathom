@@ -6,12 +6,12 @@ from typing import Any, Dict, Optional
 
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
+from fathom.core.context.manager import ContextManager
+from fathom.core.services.vision import VisionService
 from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
-from fathom.schemas.context import UserGuidance
-from fathom.core.services.vision import VisionService
 
 logger = getLogger(name=__name__)
 
@@ -43,11 +43,10 @@ class StepPlanner:
         state: AgentState,
         reasoner: Reasoner,
         capture: ScreenCapture,
+        context_manager: ContextManager,
         *,
         use_xml: bool = False,
-        additional_context: Optional[str] = None,
         elements: Optional[Dict[str, Any]] = None,
-        guidance: Optional[List[UserGuidance]] = None,
     ) -> PlanResult:
         """
         Plan the next step based on current state.
@@ -67,8 +66,7 @@ class StepPlanner:
                 step=None, is_complete=False, reason="Max steps or recovery exhausted"
             )
 
-        # IMMEDIATE RECOVERY: If we are stuck, don't ask the LLM again.
-        # This breaks the loop by forcing a navigation change (BACK/SCROLL/HOME).
+        # IMMEDIATE RECOVERY
         if state.is_stuck:
             completion_error = None
             completion_signal = False
@@ -97,13 +95,6 @@ class StepPlanner:
                     step_number=state.step_count,
                 )
 
-        context = state.build_context()
-        history_context = str(object=context.get("compact_history", "None"))
-
-        full_context = history_context
-        if additional_context:
-            full_context = f"{additional_context}\n{history_context}"
-
         from typing import List, cast
 
         analysis = await self.__vision.analyze(
@@ -111,9 +102,8 @@ class StepPlanner:
             capture=capture,
             elements=elements,
             intent=state.intent,
-            context=full_context,
-            failures=cast("List[str]", context.get("relevant_failures", [])),
-            guidance=guidance,
+            context_manager=context_manager,
+            failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
 
         completion = reasoner.analyze_completion(
