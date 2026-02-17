@@ -25,6 +25,7 @@ from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.interfaces.summarization import SummarizationPort
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
 
@@ -50,6 +51,7 @@ class GraphContext:
         path_manager: SharedPathManager,
         *,
         knowledge: Optional[KnowledgePort] = None,
+        summarizer: Optional[SummarizationPort] = None,
         max_steps: int = 20,
         use_xml: bool = False,
         workflow_id: str = "default",
@@ -79,7 +81,13 @@ class GraphContext:
         self.__agent_state = AgentState(intent=intent, max_steps=max_steps)
         self.__reasoner = Reasoner(intent=intent)
         self.__metrics = ExecutionMetrics()
-        self.__context_manager = ContextManager(memory=memory, workflow_id=workflow_id)
+        
+        # GCC Context Manager with optional summarizer
+        self.__context_manager = ContextManager(
+            memory=memory, 
+            workflow_id=workflow_id,
+            summarizer=summarizer
+        )
 
         # --- Application Services ---
         self.__auditor = auditor or AuditService()

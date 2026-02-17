@@ -355,6 +355,15 @@ class IntentNodeProvider:
             action=step_result.step.action,
         )
 
+        # GCC Branching: If trace gets too long, compress into a milestone
+        # This keeps the 'hot' context window small (O(1)) and efficient.
+        full_context = self.__context.context_manager.get_full_context()
+        trace = full_context.get("trace", [])
+        if len(trace) >= 5:
+            # Trigger non-blocking semantic summarization
+            # This ensures O(1) latency on the main execution path (P0)
+            await self.__context.context_manager.branch()
+
         self.__context.auditor.log_step(
             plan=state.get("plan"),
             state=state.get("screen_state"),

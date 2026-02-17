@@ -85,15 +85,17 @@ class VisionService:
         )
 
         # 2. PROMPT & TOOL SCOPING
+        # Dynamic context from ContextManager (GCC-Inspired)
+        full_context = context_manager.get_full_context()
+        guidance = full_context.get('guidance')
+        
+        logger.debug(
+            f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
+        )
+
         instruction = self.__builder.build(
             intent=intent,
             hints={"use_xml": use_xml},
-        )
-
-        # Dynamic context from ContextManager (GCC-Inspired)
-        full_context = context_manager.get_full_context()
-        logger.debug(
-            f"[H3] Vision Input Context | guidance={full_context.get('guidance')} | trace_len={len(full_context.get('trace', []))}"
         )
 
         dynamic_context = self.__builder.build_user_context(

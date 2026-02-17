@@ -52,6 +52,10 @@ class IntentStrategy:
         self.__workflow_id = workflow_id
 
         # Initialize Graph Context
+        # Dependency Injection: LLMSummarizer for GCC branching
+        from fathom.adapters.summarization.llm import LLMSummarizer
+        summarizer = LLMSummarizer(llm=llm)
+
         self.__graph_context = GraphContext(
             intent=intent,
             device=device,
@@ -61,6 +65,7 @@ class IntentStrategy:
             telemetry=telemetry,
             signal=signal,
             path_manager=path_manager,
+            summarizer=summarizer,
             max_steps=max_steps,
             use_xml=use_xml,
             workflow_id=workflow_id,

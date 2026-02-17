@@ -59,27 +59,43 @@ class GeminiPromptBuilder(PromptBuilder):
 
         parts = []
 
-        # 1. Priority Guidance (HITL)
-        guidance = context.get("guidance", [])
-        if guidance:
-            instructions = [f"- {item}" for item in guidance]
-            parts.append("USER INSTRUCTIONS (PRIORITY):\n" + "\n".join(instructions))
-
-        # 2. Roadmap & Milestones
-        milestones = context.get("milestones", [])
-        if milestones:
-            parts.append("COMPLETED MILESTONES:\n" + "\n".join(f"- {m}" for m in milestones))
-
-        # 3. Memory Ledger
+        # 1. Memory Ledger (Factual Memory)
         ledger = self.__get_ledger_segment(memory=memory)
         if ledger:
-            parts.append(ledger)
+            parts.append(f"<MEMORY_LEDGER>\n{ledger}\n</MEMORY_LEDGER>")
 
-        # 4. Execution Trace (Interaction History)
+        # 2. Roadmap & Milestones (Tier 2 Context)
+        milestones = context.get("milestones", [])
+        if milestones:
+            parts.append(
+                "<MILESTONES>\n" 
+                + "\n".join(f"- {m}" for m in milestones) + 
+                "\n</MILESTONES>"
+            )
+
+        # 3. Execution Trace (Tier 3 Context - The Hot Suffix)
         trace = context.get("trace", [])
         interaction_context = self.__format_trace(trace=trace)
         if interaction_context:
-            parts.append(interaction_context)
+            parts.append(f"<CURRENT_TRACE>\n{interaction_context}\n</CURRENT_TRACE>")
+
+        # 4. Priority Guidance (HITL) - The "System Override"
+        # Placed LAST to ensure maximum recency bias and adherence
+        guidance = context.get("guidance", [])
+        if guidance:
+            instructions = [f"- {item}" for item in guidance]
+            parts.append(
+                "<SYSTEM_OVERRIDE>\n"
+                "  <INSTRUCTION>\n" 
+                + "\n".join(f"    {inst}" for inst in instructions) + "\n"
+                "  </INSTRUCTION>\n"
+                "  <WARNING>\n"
+                "    This is a meta-instruction for the agent's behavior.\n"
+                "    Do NOT treat this as content to be typed or searched.\n"
+                "    You MUST adjust your plan to comply with this override.\n"
+                "  </WARNING>\n"
+                "</SYSTEM_OVERRIDE>"
+            )
 
         return "\n\n".join(parts)
 
@@ -128,7 +144,7 @@ class GeminiPromptBuilder(PromptBuilder):
         if not memory:
             return ""
         items = [f"{key}:{value}" for key, value in memory.items()]
-        return f"LEDGER: [{', '.join(items)}]"
+        return f"[{', '.join(items)}]"
 
     def __format_trace(self, trace: List[Dict[str, Any]]) -> str:
         """Formats the GCC trace into a readable interaction history."""
