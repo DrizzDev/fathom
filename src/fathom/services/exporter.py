@@ -122,6 +122,60 @@ class ScriptExporter:
         overlap = meaningful & intent_words
         return len(overlap) >= len(meaningful) * 0.5
 
+    _SCREEN_RE = re.compile(
+        r"(?:the\s+)?(\w+(?:\s+\w+)?)\s+(screen|page)\b",
+        re.IGNORECASE,
+    )
+    _LABEL_STOP = frozenset(
+        {
+            "a",
+            "an",
+            "the",
+            "any",
+            "some",
+            "no",
+            "or",
+            "and",
+            "this",
+            "that",
+            "on",
+            "in",
+            "at",
+            "to",
+            "of",
+            "is",
+            "it",
+            "my",
+            "its",
+        }
+    )
+
+    @staticmethod
+    def _extract_goal_label(goal_state: str) -> str:
+        """Derive a concise validation label from a potentially long intent.
+
+        Short strings (<=60 chars, no sentence-ending punctuation) are
+        returned as-is.  Longer intent strings are scanned for a
+        "screen/page" reference which is title-cased into a label like
+        "Payment Screen".  Returns empty string when nothing useful can
+        be extracted.
+        """
+        if not goal_state:
+            return ""
+
+        trimmed = goal_state.strip().rstrip(".")
+        if len(trimmed) <= 60 and "." not in trimmed:
+            return trimmed
+
+        matches = ScriptExporter._SCREEN_RE.findall(goal_state)
+        for name, kind in reversed(matches):
+            cleaned = name.strip()
+            words = cleaned.lower().split()
+            if len(cleaned) > 1 and not any(w in ScriptExporter._LABEL_STOP for w in words):
+                return f"{cleaned.title()} {kind.strip().title()}"
+
+        return ""
+
     @staticmethod
     def _resolve_target(step: Union[StepResult, Dict[str, Any]]) -> str:
         """
@@ -238,10 +292,9 @@ class ScriptExporter:
             step = step_results[i]
             action_type_val = ScriptExporter._get_action_type(step)
 
-            # --- Detect start of a swipe sequence ---
             if action_type_val in ScriptExporter._SWIPE_ACTIONS:
                 swipe_direction = action_type_val
-                # Skip all consecutive swipes of the same direction
+                swipe_start = i
                 while (
                     i < n
                     and ScriptExporter._get_action_type(step_results[i])
@@ -249,11 +302,14 @@ class ScriptExporter:
                 ):
                     i += 1
 
-                # Find the target of the NEXT non-swipe step (lookahead)
                 if i < n:
                     next_target = ScriptExporter._resolve_target(step_results[i])
                 else:
-                    next_target = goal_state or "the target"
+                    next_target = (
+                        ScriptExporter._infer_scroll_target(step_results, swipe_start, i)
+                        or ScriptExporter._extract_goal_label(goal_state)
+                        or "the target"
+                    )
 
                 label = ScriptExporter._swipe_direction_label(swipe_direction)
                 lines.append(f"{label} until {next_target} is visible")
@@ -314,14 +370,19 @@ class ScriptExporter:
             last_action_type = ScriptExporter._get_action_type(step_results[-1])
 
             if last_action_type not in ("complete", "verify_goal_completion"):
-                if goal_state:
-                    lines.append(f"Validate {goal_state} is visible")
+                last_target = ScriptExporter._resolve_target(step_results[-1])
+                last_target_usable = last_target and last_target.lower() not in _GENERIC_TARGETS
+
+                goal_label = ScriptExporter._extract_goal_label(goal_state)
+
+                if last_target_usable and ScriptExporter._is_intent_target(last_target, goal_state):
+                    lines.append(f"Validate {last_target} is visible")
+                elif goal_label:
+                    lines.append(f"Validate {goal_label} is visible")
+                elif last_target_usable:
+                    lines.append(f"Validate {last_target} is visible")
                 else:
-                    last_target = ScriptExporter._resolve_target(step_results[-1])
-                    if last_target and last_target.lower() not in _GENERIC_TARGETS:
-                        lines.append(f"Validate {last_target} is visible")
-                    else:
-                        lines.append("Validate Goal State is visible")
+                    lines.append("Validate Goal State is visible")
 
         return "\n".join(lines) + "\n"
 
@@ -351,6 +412,41 @@ class ScriptExporter:
             return f"Validate {target} (Goal complete)"
         else:
             return f"{action_type.replace('_', ' ').capitalize()} on {target}"
+
+    _SCROLL_VERB_RE = re.compile(
+        r"(?:find|look(?:ing)?\s+for|search(?:ing)?\s+for)\s+(.+?)(?:\.|,\s|;|$)",
+        re.IGNORECASE,
+    )
+    _PROPER_PHRASE_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[a-z]+)*(?:\s+[A-Z][a-z]+)+)")
+
+    @staticmethod
+    def _infer_scroll_target(
+        steps: Sequence[Union[StepResult, Dict[str, Any]]],
+        start: int,
+        end: int,
+    ) -> str:
+        """Infer what the user was scrolling to find from swipe rationales.
+
+        Uses a two-pass extraction: first isolates the clause after
+        "find/look for/search for", then extracts a proper-noun phrase
+        (e.g. "Mango flavored Mogu Mogu") from it.
+        """
+        for j in range(start, min(end, start + 5)):
+            step = steps[j]
+            if isinstance(step, StepResult):
+                rationale = step.step.action.rationale or ""
+            else:
+                rationale = str(step.get("rationale") or "")
+            if not rationale:
+                continue
+            verb_match = ScriptExporter._SCROLL_VERB_RE.search(rationale)
+            if not verb_match:
+                continue
+            clause = verb_match.group(1)
+            product_match = ScriptExporter._PROPER_PHRASE_RE.search(clause)
+            if product_match:
+                return product_match.group(1).strip()
+        return ""
 
     @staticmethod
     def _infer_wait_subject(rationale: Optional[str]) -> str:
