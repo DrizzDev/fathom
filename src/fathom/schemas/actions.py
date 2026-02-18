@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -103,6 +103,16 @@ class Action(BaseModel):
     condition: Optional[str] = Field(
         default=None,
         description="Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
+    )
+
+    # Script export classification (VLM-provided; optional; fallback is TargetClassifier)
+    target_type: Optional[Literal["stable", "positional", "dynamic"]] = Field(
+        default=None,
+        description="How the target should be referenced in exported scripts: stable (fixed label), positional (ordinal in list), or dynamic (content that may change). Leave unset if unsure.",
+    )
+    script_target: Optional[str] = Field(
+        default=None,
+        description="When target_type is positional or dynamic, the exact phrase for script export (e.g. 'the first search result', 'the promotional banner'). Omit for stable.",
     )
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)

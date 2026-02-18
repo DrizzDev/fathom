@@ -22,6 +22,7 @@ class UXService:
             "store_memory": "Memory",
             "recall_memory": "Memory",
             "execute_ui": "UI Actions",
+            "complete_goal": "Goal Status",
             "verify_goal": "Goal Status",
             "validate_state": "Verification",
         }
@@ -40,15 +41,20 @@ class UXService:
         if message := args.get("assistant_message", ""):
             grid.add_row("Reasoning:", message)
 
-        if actions := args.get("actions", []):
-            types = [item.get("action_type", "?") for item in actions]
-            grid.add_row("Actions:", ", ".join(types))
+        if screen_desc := args.get("screen_description", ""):
+            grid.add_row("Screen:", screen_desc)
+
+        if action := args.get("action", {}):
+            grid.add_row("Action:", action.get("action_type", "?"))
 
         if condition_met := args.get("condition_met"):
             status = "[bold green]YES[/bold green]" if condition_met else "[bold red]NO[/bold red]"
             grid.add_row("Validated:", status)
 
-        if args.get("goal_completed"):
+        if (evidence := args.get("evidence", "")) and tool_name in ("complete_goal", "verify_goal"):
+            grid.add_row("Evidence:", evidence)
+
+        if args.get("goal_completed") or tool_name == "complete_goal":
             grid.add_row("Status:", "[bold green]GOAL ACHIEVED[/bold green]")
 
         title = f"[bold white]{tool_name}[/bold white] [dim]{duration:.2f}s[/dim]"

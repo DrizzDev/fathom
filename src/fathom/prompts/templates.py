@@ -84,11 +84,94 @@ STRICT FORMAT: Return only valid tool calls using provided schema fields.
 
 TOOL_GUIDANCE = """
 TOOL SELECTION & VALIDATION:
-- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, zoom).
+- execute_ui: PRIMARY tool for physical UI interactions (tap, type, swipe, scroll, wait, zoom).
+  * Use this for ALL device interactions. Do NOT include goal completion here.
+  * ALWAYS set screen_description: goal-relevant screen state in ≤15 words.
   * Evaluate is_valid and validation_reason for EVERY action.
   * If action is risky/ambiguous, set is_valid=False and explain.
-  * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
-    DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
+  * COMMAND NAMING: In 'target' and 'natural_language_target':
+    - Use GENERIC, RELATIVE DESCRIPTIONS. Describe WHAT it is functionally.
+    - DO NOT use IDs like 'edt_cvv' or 'button_23'.
+    - LIST/COLLECTION ITEMS: When tapping an item in a list, grid, carousel, or search results,
+      use POSITIONAL references: 'the 1st search result', 'the 2nd card', 'the 3rd item in the list'.
+      Do NOT use the item's specific content text (e.g., avoid 'Optimum Nutrition protein powder').
+    - UNIQUE UI ELEMENTS: For buttons, tabs, inputs, toggles, use their visible label
+      (e.g., 'Submit button', 'Search tab', 'CVV input field').
+  * TARGET CLASSIFICATION (action.target_type + action.script_target):
+    Set these to help generate reusable test scripts that survive content changes.
+    - target_type='stable': Permanent UI element (button, tab, input). Omit script_target.
+    - target_type='positional': Item in a list/grid/carousel/search results.
+      Set script_target to ordinal reference: 'the first search result', 'the second card'.
+    - target_type='dynamic': Changing content not in a list (banner, notification).
+      Set script_target to generic description: 'the promotional banner'.
+    - Omit both fields if uncertain.
+- complete_goal: DEDICATED completion signal. Call this ONLY when the screen proves the goal is done.
+  * Do NOT call this while there are still actions to perform.
+  * Provide visual evidence from the current screen.
 - validate_state: Use for explicit state checks when no immediate UI action is required.
-- verify_goal: Use for explicit completion checks.
+- verify_goal: Use for explicit completion checks with detailed evidence.
 """
+
+TOOL_SCHEMAS = {
+    "execute_ui": (
+        "execute_ui: assistant_message (str), action (object with {action_type, rationale, is_valid}; "
+        "optional: target_name, bbox {x,y,width,height,coord_system}, text_to_type, confidence 0.0-1.0, "
+        "validation_reason, target_type (enum: stable/positional/dynamic), script_target (str)). "
+        "screen_description (str, goal-relevant screen state ≤15 words). "
+        "Optional: content_exhausted (bool), memory_updates (dict)."
+    ),
+    "complete_goal": "complete_goal: assistant_message (str), evidence (str).",
+    "validate_state": (
+        "validate_state: assistant_message (str), condition_to_verify (str), condition_met (bool), "
+        "evidence (str), goal_completed (bool)."
+    ),
+    "verify_goal": (
+        "verify_goal: assistant_message (str), goal_completed (bool), current_screen (str), evidence (str)."
+    ),
+    "store_memory": (
+        "store_memory: category (enum: 'visited','progress','state','data'), "
+        "item (str, snake_case identifier), value (str), assistant_message (str). "
+        "Key is formed as category.item (e.g., visited.carousel_card_1)."
+    ),
+    "recall_memory": (
+        "recall_memory: category (enum: 'visited','progress','state','data'), "
+        "item (str, snake_case identifier), assistant_message (str). "
+        "Use the EXACT same category and item from the corresponding store_memory call."
+    ),
+}
+
+MODE_TOOLS = {
+    "default": [
+        "execute_ui",
+        "complete_goal",
+        "validate_state",
+        "verify_goal",
+        "store_memory",
+        "recall_memory",
+    ],
+    "interaction": ["execute_ui", "complete_goal", "store_memory", "recall_memory"],
+    "discovery": ["execute_ui", "complete_goal", "store_memory"],
+    "verification": [
+        "execute_ui",
+        "complete_goal",
+        "validate_state",
+        "verify_goal",
+        "store_memory",
+        "recall_memory",
+    ],
+    "exploration": ["execute_ui"],
+}
+
+
+def build_output_schema(mode: str) -> str:
+    """
+    Assemble the output schema block for a given mode.
+    Maps mode to available tools and returns schema-anchored instructions.
+    """
+    tool_names = MODE_TOOLS.get(mode, MODE_TOOLS["default"])
+    schemas = [TOOL_SCHEMAS[t] for t in tool_names if t in TOOL_SCHEMAS]
+    header = (
+        "OUTPUT SCHEMA — You MUST respond with exactly ONE tool call. Never output plain text or markdown.\n"
+        "Select the appropriate tool and provide ALL required fields:\n\n"
+    )
+    return header + "\n\n".join(schemas)

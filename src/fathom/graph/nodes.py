@@ -524,21 +524,41 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
 
         step = step_result.step
 
-        # Classify target
+        # Extract screen_description from plan metadata for classifier context
+        screen_description = ""
+        if plan and plan.metadata:
+            tool_args = plan.metadata.get("tool_args", {})
+            screen_description = str(tool_args.get("screen_description", ""))
+
+        # Classification: prefer VLM-provided target_type/script_target; fallback to classifier
         generalized_target = None
-        target_text = step.action.natural_language_target or step.action.target
-        if target_text:
-            try:
-                generalized_target = await ctx.classifier.classify_and_generalize(
-                    target=target_text, intent=ctx.intent, rationale=step.action.rationale
-                )
-                if generalized_target == target_text:
-                    generalized_target = None
-            except Exception as e:
-                logger.warning(f"Target classification failed: {e}")
+        is_positional = False
+        target_type = getattr(step.action, "target_type", None)
+        script_target = getattr(step.action, "script_target", None)
+
+        if target_type in ("positional", "dynamic") and script_target:
+            generalized_target = script_target.strip()
+            is_positional = target_type == "positional"
+        else:
+            target_text = step.action.natural_language_target or step.action.target
+            if target_text:
+                try:
+                    classification = await ctx.classifier.classify_and_generalize(
+                        target=target_text,
+                        intent=ctx.intent,
+                        rationale=step.action.rationale,
+                        screen_description=screen_description,
+                    )
+                    if classification.description != target_text:
+                        generalized_target = classification.description
+                        is_positional = classification.is_positional
+                except Exception as e:
+                    logger.warning(f"Target classification failed: {e}")
 
         if generalized_target:
-            step_result = step_result.model_copy(update={"generalized_target": generalized_target})
+            step_result = step_result.model_copy(
+                update={"generalized_target": generalized_target, "is_positional": is_positional}
+            )
 
         # Record in agent state
         ctx.agent_state.record_step(result=step_result)

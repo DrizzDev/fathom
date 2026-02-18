@@ -20,6 +20,15 @@ class Ledger(ILedger):
         self.__path = Path(database_path)
         self.__path.parent.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def normalize_key(key: str) -> str:
+        """
+        Normalizes a memory key: lowercase, strip whitespace, replace spaces
+        with underscores. Acts as a safety net for consistent key matching.
+        """
+
+        return key.strip().lower().replace(" ", "_")
+
     async def __initialize(self) -> None:
         """
         Initializes the ledger table.
@@ -38,28 +47,30 @@ class Ledger(ILedger):
 
     async def set(self, key: str, value: str) -> None:
         """
-        Stores a ledger entry.
+        Stores a ledger entry. Key is normalized before writing.
         """
 
         await self.__initialize()
+        normalized = self.normalize_key(key)
 
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO entries (key, value, updated_at) VALUES (?, ?, ?)",
-                (key, value, int(time.time())),
+                (normalized, value, int(time.time())),
             )
             await db.commit()
 
     async def get(self, key: str) -> Optional[str]:
         """
-        Retrieves a value by key.
+        Retrieves a value by key. Key is normalized before lookup.
         """
 
         await self.__initialize()
+        normalized = self.normalize_key(key)
 
         async with (
             aiosqlite.connect(self.__path) as db,
-            db.execute("SELECT value FROM entries WHERE key = ?", (key,)) as cursor,
+            db.execute("SELECT value FROM entries WHERE key = ?", (normalized,)) as cursor,
         ):
             row = await cursor.fetchone()
             return row[0] if row else None

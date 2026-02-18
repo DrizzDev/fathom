@@ -1,14 +1,76 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional, Sequence, Union
 
 from fathom.schemas.steps import StepResult
+
+_ORDINAL_MAP = {
+    "1st": "first",
+    "2nd": "second",
+    "3rd": "third",
+    "4th": "fourth",
+    "5th": "fifth",
+    "6th": "sixth",
+    "7th": "seventh",
+    "8th": "eighth",
+    "9th": "ninth",
+    "10th": "tenth",
+}
+
+_NUMERIC_ORDINAL_RE = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b", re.IGNORECASE)
 
 
 class ScriptExporter:
     """
     Service for exporting execution history to natural language scripts.
     """
+
+    @staticmethod
+    def _normalize_positional(target: str) -> str:
+        """Standardize ordinal formatting in positional target descriptions.
+
+        Converts numeric ordinals (1st, 2nd, 3rd) to word ordinals
+        (first, second, third) and ensures a leading 'the' article
+        for consistency. Only transforms targets that look positional.
+
+        Examples:
+            '1st search result'       -> 'the first search result'
+            'the 2nd card'            -> 'the second card'
+            'third item in the list'  -> 'the third item in the list'
+            'Submit button'           -> 'Submit button'  (unchanged)
+        """
+        if not target:
+            return target
+
+        text = target.strip()
+
+        def _replace_numeric(match: "re.Match[str]") -> str:
+            full = match.group(0).lower()
+            return _ORDINAL_MAP.get(full, full)
+
+        normalized = _NUMERIC_ORDINAL_RE.sub(_replace_numeric, text)
+
+        word_ordinals = (
+            "first",
+            "second",
+            "third",
+            "fourth",
+            "fifth",
+            "sixth",
+            "seventh",
+            "eighth",
+            "ninth",
+            "tenth",
+        )
+        stripped = re.sub(r"^(?:the|a|an)\s+", "", normalized, flags=re.IGNORECASE).strip().lower()
+        is_positional = any(stripped.startswith(o) for o in word_ordinals)
+
+        if not is_positional:
+            return target
+
+        without_article = re.sub(r"^(?:the|a|an)\s+", "", normalized, flags=re.IGNORECASE).strip()
+        return f"the {without_article}"
 
     @staticmethod
     def _is_intent_target(target: str, intent: str) -> bool:
@@ -61,16 +123,18 @@ class ScriptExporter:
     def _resolve_target(step: Union[StepResult, Dict[str, Any]]) -> str:
         """
         Resolve the description for a target.
-        Uses the pre-computed 'generalized_target' if available (dynamic).
+        Uses the pre-computed 'generalized_target' if available (dynamic/positional).
         Otherwise uses the specific target text (stable).
+        Normalizes positional ordinals for consistency.
         """
         if isinstance(step, StepResult):
             if step.generalized_target:
-                return step.generalized_target
+                return ScriptExporter._normalize_positional(step.generalized_target)
             target = step.step.action.natural_language_target or step.step.action.target
         else:
             if step.get("generalized_target"):
-                return str(step.get("generalized_target") or "")
+                raw = str(step.get("generalized_target") or "")
+                return ScriptExporter._normalize_positional(raw)
             target = step.get("natural_language_target") or step.get("target") or ""
 
         return target or "element"

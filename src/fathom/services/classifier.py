@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -10,10 +11,18 @@ from google.oauth2 import service_account
 from fathom.settings.env import FathomSettings
 
 
+@dataclass(frozen=True)
+class ClassificationResult:
+    """Result of target classification with type metadata."""
+
+    description: str
+    is_positional: bool = False
+
+
 class TargetClassifier:
     """
-    Uses an LLM to classify UI targets as 'Stable' or 'Dynamic'
-    and generates generalized descriptions for dynamic elements.
+    Uses an LLM to classify UI targets as 'Stable', 'Dynamic', or 'Positional'
+    and generates generalized/positional descriptions accordingly.
     Uses generic text generation, not function calling.
     """
 
@@ -22,7 +31,8 @@ class TargetClassifier:
         self.__client: Optional[genai.Client] = None
         self.__model = "gemini-2.5-flash-lite"
         self.__initialize_client()
-        self.__cache: Dict[str, str] = {}
+        self.__cache: Dict[str, ClassificationResult] = {}
+        self.__goal_cache: Dict[str, str] = {}
 
     def __initialize_client(self) -> None:
         try:
@@ -52,28 +62,34 @@ class TargetClassifier:
             print(f"DEBUG: Classifier Init Failed: {e}")
             self.__client = None
 
-    async def classify_and_generalize(self, target: str, intent: str, rationale: str = "") -> str:
+    async def classify_and_generalize(
+        self, target: str, intent: str, rationale: str = "", screen_description: str = ""
+    ) -> ClassificationResult:
         """
-        Determines if a target is dynamic.
-        Returns the ORIGINAL target if stable (or matched in intent).
-        Returns a GENERALIZED description if dynamic.
+        Determines if a target is stable, dynamic, or a positional list item.
+        Returns a ClassificationResult with the resolved description and
+        whether the target is a positional/ordinal reference.
         """
         if not target or not self.__client:
-            return target
+            return ClassificationResult(description=target)
 
         cache_key = hashlib.md5(
-            f"{target}:{intent}:{rationale}".encode(), usedforsecurity=False
+            f"{target}:{intent}:{rationale}:{screen_description}".encode(),
+            usedforsecurity=False,
         ).hexdigest()
         if cache_key in self.__cache:
             return self.__cache[cache_key]
 
+        screen_line = f'\nScreen Description: "{screen_description}"' if screen_description else ""
+
         prompt = f"""
 You are an expert mobile test automation engineer.
-Your goal is to decide if a specific UI element text should be preserved (STABLE) or generalized (DYNAMIC) for a test script.
+Your goal is to decide how a UI element should be referenced in a reusable test script.
+The script must work across different runs even when list content changes.
 
 User Intent: "{intent}"
 Target Text: "{target}"
-Rationale: "{rationale}"
+Rationale: "{rationale}"{screen_line}
 
 Instructions:
 1. CHECK INTENT: Is the "Target Text" explicitly mentioned or strongly implied by the "User Intent"?
@@ -81,26 +97,35 @@ Instructions:
    - NO -> Continue to step 2.
 
 2. CHECK VAGUE: Is the "Target Text" generic or unhelpful (e.g. "a visible item", "element", "the button", "result")?
-   - YES -> Use the Rationale to generate a specific, descriptive name (e.g. "the second card", "the apply button", "the doctor profile"). Output DYNAMIC: <specific_description>.
+   - YES -> Use the Rationale and Screen Description to generate a specific description. Continue to step 3.
    - NO -> Continue to step 3.
 
-3. CHECK TYPE: Is the text specific content that might change (dynamic) or a permanent UI element (stable)?
-   - Content (e.g. "Tomorrow 10:00 AM", "Search Output") -> Output DYNAMIC + generic description (e.g. "the first time slot").
+3. CHECK LIST CONTEXT: Is the target an item inside a list, grid, carousel, or search results?
+   Use the Screen Description and Rationale to determine this.
+   - YES -> Output POSITIONAL with an ordinal reference describing the item's position and collection type.
+     Use natural ordinals: "the first search result", "the second card", "the third doctor listing".
+     NEVER include the item's specific content (names, times, prices).
+   - NO -> Continue to step 4.
+
+4. CHECK TYPE: Is the text specific content that might change (dynamic) or a permanent UI element (stable)?
+   - Content (e.g. "Tomorrow 10:00 AM", "Dr. Jane Smith") -> Output DYNAMIC + generic description.
    - Permanent UI (e.g. "Login", "Settings", "Filter") -> Output STABLE.
 
-4. DYNAMIC OUTPUT: If dynamic/vague, provide a clear, natural language description.
-
-Format:
+Format (output ONLY one of these lines):
 - STABLE
+- POSITIONAL: <ordinal_description>
 - DYNAMIC: <generalized_description>
 
 IMPORTANT: Do not output reasoning or explanation. Output ONLY the classification line.
 
 Examples:
-(Intent: "Book", Target: "a visible item", Rationale: "Tapping the second card") -> DYNAMIC: the second card
-(Intent: "Book", Target: "Tomorrow 10:00 AM") -> DYNAMIC: the first time slot
+(Intent: "Search protein", Target: "Optimum Nutrition WGS", Screen: "Search results with product list", Rationale: "Tapping the first result") -> POSITIONAL: the first search result
+(Intent: "Browse doctors", Target: "Dr. Jane Smith", Screen: "Doctor listing with cards", Rationale: "Selecting the top doctor") -> POSITIONAL: the first doctor card
+(Intent: "Book", Target: "a visible item", Rationale: "Tapping the second card") -> POSITIONAL: the second card
+(Intent: "Book", Target: "Tomorrow 10:00 AM", Screen: "Time slot picker", Rationale: "Selecting first slot") -> POSITIONAL: the first time slot
 (Intent: "Play Aditi Shah", Target: "Aditi Shah Sleep Meditation") -> STABLE
-(Intent: "Browse", Target: "Aditi Shah") -> DYNAMIC: the second item
+(Intent: "Login", Target: "Submit button") -> STABLE
+(Intent: "Browse", Target: "Featured banner", Screen: "Home screen with promotional banner") -> DYNAMIC: the promotional banner
 
 Answer:
 """
@@ -110,31 +135,27 @@ Answer:
             )
             text = (response.text or "").strip()
 
-            # Parse response - look for the classification line
-            final_description = target
-            found = False
+            result = ClassificationResult(description=target)
 
             for line in text.splitlines():
                 line = line.strip()
                 if line.startswith("STABLE"):
-                    final_description = target
-                    found = True
+                    result = ClassificationResult(description=target)
+                    break
+                elif line.startswith("POSITIONAL:"):
+                    desc = line.split("POSITIONAL:", 1)[1].strip()
+                    result = ClassificationResult(description=desc, is_positional=True)
                     break
                 elif line.startswith("DYNAMIC:"):
-                    final_description = line.split("DYNAMIC:", 1)[1].strip()
-                    found = True
+                    desc = line.split("DYNAMIC:", 1)[1].strip()
+                    result = ClassificationResult(description=desc)
                     break
 
-            if not found:
-                # If no clear prefix found, check if the whole text is likely the description?
-                # Safer to fallback to target unless we are sure.
-                pass
-
-            self.__cache[cache_key] = final_description
-            return final_description
+            self.__cache[cache_key] = result
+            return result
 
         except Exception:
-            return target
+            return ClassificationResult(description=target)
 
     async def infer_goal_state(self, intent: str) -> str:
         """
@@ -145,8 +166,8 @@ Answer:
             return "Goal State"
 
         cache_key = hashlib.md5(f"GOAL:{intent}".encode(), usedforsecurity=False).hexdigest()
-        if cache_key in self.__cache:
-            return self.__cache[cache_key]
+        if cache_key in self.__goal_cache:
+            return self.__goal_cache[cache_key]
 
         prompt = f"""
 You are an expert test automation engineer.
@@ -176,7 +197,7 @@ Goal State:
             if "Goal State:" in goal_state:
                 goal_state = goal_state.split("Goal State:", 1)[1].strip()
 
-            self.__cache[cache_key] = goal_state
+            self.__goal_cache[cache_key] = goal_state
             return str(goal_state)
 
         except Exception as e:

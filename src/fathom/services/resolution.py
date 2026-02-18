@@ -22,7 +22,7 @@ class ReferenceResolutionService:
 
     def __init__(self, ledger: ILedger) -> None:
         self.__ledger = ledger
-        self.__pattern = re.compile(r"\$(memory|env)\.([a-zA-Z0-9_]+)")
+        self.__pattern = re.compile(r"\$(memory|env)\.([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*)")
 
     async def resolve(self, action: Action) -> Action:
         """

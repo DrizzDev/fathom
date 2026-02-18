@@ -172,7 +172,7 @@ class StepPlanner:
             )
 
         completion = reasoner.analyze_completion(
-            analysis=analysis, screen_description=capture.activity
+            analysis=analysis, screen_description=analysis.screen_description
         )
 
         action = self.__select_action(state=state, reasoner=reasoner, analysis=analysis)

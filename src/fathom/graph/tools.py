@@ -12,7 +12,7 @@ logic interprets them.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
@@ -62,19 +62,28 @@ class UIActionInput(BaseModel):
         default=None,
         description="Reasoning for validity judgment",
     )
+    target_type: Optional[Literal["stable", "positional", "dynamic"]] = Field(
+        default=None,
+        description="Optional. Script export classification: stable, positional, or dynamic. Omit if unsure.",
+    )
+    script_target: Optional[str] = Field(
+        default=None,
+        description="Optional. When target_type is positional/dynamic, exact phrase for script (e.g. 'the first search result').",
+    )
 
 
 class ExecuteUIInput(BaseModel):
     """Input for the execute_ui tool."""
 
     assistant_message: str = Field(
-        description="Reasoning behind these actions",
+        description="Reasoning behind this action",
     )
-    actions: List[UIActionInput] = Field(
-        description="Ordered list of UI actions to execute",
+    action: UIActionInput = Field(
+        description="The UI action to execute",
     )
-    goal_completed: bool = Field(
-        description="True if the user's goal is fully achieved after these actions",
+    screen_description: Optional[str] = Field(
+        default=None,
+        description="Goal-relevant screen state in ≤15 words",
     )
     content_exhausted: Optional[bool] = Field(
         default=None,
@@ -83,6 +92,17 @@ class ExecuteUIInput(BaseModel):
     memory_updates: Optional[Dict[str, str]] = Field(
         default=None,
         description="Key-value pairs to persist in memory",
+    )
+
+
+class CompleteGoalInput(BaseModel):
+    """Input for the complete_goal tool."""
+
+    assistant_message: str = Field(
+        description="Explanation of why the goal is considered complete",
+    )
+    evidence: str = Field(
+        description="Visual evidence from the current screen proving the goal is complete",
     )
 
 
@@ -108,7 +128,13 @@ class VerifyGoalInput(BaseModel):
 class StoreMemoryInput(BaseModel):
     """Input for the store_memory tool."""
 
-    key: str = Field(description="Memory key")
+    category: str = Field(
+        description="Kind of information: 'visited', 'progress', 'state', or 'data'",
+    )
+    item: str = Field(
+        description="Identifier for the specific thing, in snake_case. "
+        "Examples: 'carousel_card_1', 'checkout_step', 'product_price'",
+    )
     value: str = Field(description="Value to store")
     assistant_message: str = Field(description="Explanation of what is being saved")
 
@@ -116,7 +142,13 @@ class StoreMemoryInput(BaseModel):
 class RecallMemoryInput(BaseModel):
     """Input for the recall_memory tool."""
 
-    key: str = Field(description="Memory key to retrieve")
+    category: str = Field(
+        description="Category used when storing: 'visited', 'progress', 'state', or 'data'",
+    )
+    item: str = Field(
+        description="Item identifier used when storing, in snake_case. "
+        "Examples: 'carousel_card_1', 'checkout_step', 'product_price'",
+    )
     assistant_message: str = Field(description="Why this information is needed")
 
 
@@ -126,19 +158,40 @@ class RecallMemoryInput(BaseModel):
 @tool(args_schema=ExecuteUIInput)
 def execute_ui(
     assistant_message: str,
-    actions: List[Dict[str, Any]],
-    goal_completed: bool,
+    action: Dict[str, Any],
+    screen_description: Optional[str] = None,
     content_exhausted: Optional[bool] = None,
     memory_updates: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Execute a sequence of UI actions on the device to achieve a specific sub-goal or the final goal."""
+    """Execute a UI action on the device (tap, type, scroll, swipe, etc.).
+
+    Use this tool for ALL physical interactions with the app UI.
+    Do NOT use this to signal goal completion — use complete_goal instead.
+    """
 
     return {
         "assistant_message": assistant_message,
-        "actions": actions,
-        "goal_completed": goal_completed,
+        "action": action,
+        "screen_description": screen_description,
         "content_exhausted": content_exhausted,
         "memory_updates": memory_updates,
+    }
+
+
+@tool(args_schema=CompleteGoalInput)
+def complete_goal(
+    assistant_message: str,
+    evidence: str,
+) -> Dict[str, Any]:
+    """Signal that the user's goal has been fully achieved.
+
+    Call this ONLY when the current screen state proves the goal is complete.
+    Do NOT call this while there are still actions to perform — use execute_ui instead.
+    """
+
+    return {
+        "assistant_message": assistant_message,
+        "evidence": evidence,
     }
 
 
@@ -180,14 +233,20 @@ def verify_goal(
 
 @tool(args_schema=StoreMemoryInput)
 def store_memory(
-    key: str,
+    category: str,
+    item: str,
     value: str,
     assistant_message: str,
 ) -> Dict[str, Any]:
-    """Store important information or progress in memory."""
+    """Store important information or progress in memory.
+
+    Use category + item to form a structured key (e.g., category='visited', item='card_1').
+    Do NOT use this for transient observations already visible on screen.
+    """
 
     return {
-        "key": key,
+        "category": category,
+        "item": item,
         "value": value,
         "assistant_message": assistant_message,
     }
@@ -195,20 +254,26 @@ def store_memory(
 
 @tool(args_schema=RecallMemoryInput)
 def recall_memory(
-    key: str,
+    category: str,
+    item: str,
     assistant_message: str,
 ) -> Dict[str, Any]:
-    """Retrieve previously stored information from memory."""
+    """Retrieve previously stored information from memory.
+
+    Use the exact same category and item that were used when storing.
+    Do NOT use this when the needed information is already visible on screen.
+    """
 
     return {
-        "key": key,
+        "category": category,
+        "item": item,
         "assistant_message": assistant_message,
     }
 
 
 # ── Registry helper ─────────────────────────────────────────────────────
 
-ALL_TOOLS = [execute_ui, validate_state, verify_goal, store_memory, recall_memory]
+ALL_TOOLS = [execute_ui, complete_goal, validate_state, verify_goal, store_memory, recall_memory]
 
 
 def get_tools_for_mode(mode: str) -> List[Any]:
@@ -219,7 +284,7 @@ def get_tools_for_mode(mode: str) -> List[Any]:
     Mirrors the scoping logic in ``GeminiVisionTool.__scope_tools``.
     """
 
-    base = [execute_ui, store_memory]
+    base = [execute_ui, complete_goal, store_memory]
 
     if mode == "default":
         return base + [recall_memory, validate_state, verify_goal]
@@ -231,7 +296,7 @@ def get_tools_for_mode(mode: str) -> List[Any]:
         return base + [validate_state, verify_goal, recall_memory]
 
     if mode == "exploration":
-        # Exploration only needs execute_ui; matches GeminiVisionTool.__scope_tools
+        # Exploration only needs execute_ui; no goal completion signaling
         return [execute_ui]
 
     # discovery — minimal

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any
+from typing import Any, Literal, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.exceptions import VisionError
@@ -18,7 +18,7 @@ class ToolResponseParser(IResponseParser):
     """
 
     # Primary tools produce the AnalysisResult; side-effect tools merge into it.
-    __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state"}
+    __PRIMARY_TOOLS = {"execute_ui", "complete_goal", "verify_goal", "validate_state"}
     __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
 
     def parse(self, response: Any) -> AnalysisResult:
@@ -101,6 +101,8 @@ class ToolResponseParser(IResponseParser):
 
         if name == "verify_goal":
             return self.__parse_goal_verification(arguments=arguments)
+        elif name == "complete_goal":
+            return self.__parse_goal_completion(arguments=arguments)
         elif name == "execute_ui":
             return self.__parse_execution(arguments=arguments)
         elif name == "validate_state":
@@ -155,22 +157,46 @@ class ToolResponseParser(IResponseParser):
             screen_description="State validation step",
         )
 
+    def __parse_goal_completion(self, arguments: Any) -> AnalysisResult:
+        """
+        Parses the complete_goal tool arguments.
+
+        This is the dedicated completion signal — always sets is_goal_complete=True.
+        """
+
+        reason = str(arguments.get("assistant_message", ""))
+        evidence = str(arguments.get("evidence", ""))
+
+        return AnalysisResult(
+            action=Action(
+                confidence=1.0,
+                rationale=f"{reason} | Evidence: {evidence}",
+                target="Goal Completion",
+                action_type=ActionType.COMPLETE,
+            ),
+            alternatives=[],
+            reasoning=reason,
+            is_goal_complete=True,
+            screen_description="Goal completion signal",
+        )
+
     def __parse_execution(self, arguments: Any) -> AnalysisResult:
         """
         Parses the execute_ui tool arguments.
+
+        execute_ui no longer carries goal_completed — that responsibility
+        belongs to the dedicated complete_goal tool.
         """
 
-        actions = arguments.get("actions", [])
+        data = arguments.get("action", {})
         message = str(arguments.get("assistant_message", ""))
-        completed = bool(arguments.get("goal_completed", False))
         content_exhausted = bool(arguments.get("content_exhausted", False))
+        screen_desc = str(arguments.get("screen_description", "")) or ""
 
-        if not actions:
-            return self.__create_fallback_result(message=message, completed=completed)
+        if not data:
+            return self.__create_fallback_result(message=message)
 
-        # Currently processing only the first action
         bounds = None
-        data = actions[0]
         serialization = data.get("bbox")
 
         if serialization:
@@ -192,6 +218,20 @@ class ToolResponseParser(IResponseParser):
         wait = data.get("wait_duration") or data.get("wait_duration_ms")
         target_name = data.get("target_name") or data.get("element_name") or "UI Element"
 
+        # Optional VLM-provided script export classification
+        raw_target_type = (data.get("target_type") or "").strip().lower()
+        target_type: Optional[Literal["stable", "positional", "dynamic"]] = (
+            cast("Literal['stable', 'positional', 'dynamic']", raw_target_type)
+            if raw_target_type in ("stable", "positional", "dynamic")
+            else None
+        )
+        script_target_raw = data.get("script_target")
+        script_target = (
+            str(script_target_raw).strip()
+            if script_target_raw and str(script_target_raw).strip()
+            else None
+        )
+
         action = Action(
             bounds=bounds,
             target=target_name,
@@ -207,16 +247,36 @@ class ToolResponseParser(IResponseParser):
             validation_reason=str(data.get("validation_reason"))
             if data.get("validation_reason")
             else None,
+            target_type=target_type,
+            script_target=script_target,
         )
 
         return AnalysisResult(
             action=action,
             alternatives=[],
             reasoning=message,
-            is_goal_complete=completed,
+            is_goal_complete=False,
             content_exhausted=content_exhausted,
-            screen_description="Tool-based analysis",
+            screen_description=screen_desc if screen_desc else "Tool-based analysis",
         )
+
+    @staticmethod
+    def __build_memory_key(arguments: Any) -> str:
+        """
+        Constructs a normalized composite memory key from category + item.
+
+        Falls back to legacy 'key' field for backward compatibility.
+        """
+
+        category = str(arguments.get("category", "")).strip().lower()
+        item = str(arguments.get("item", "")).strip().lower().replace(" ", "_")
+
+        if category and item:
+            return f"{category}.{item}"
+
+        # Backward compat: fall back to legacy freeform 'key' if present
+        legacy = str(arguments.get("key", "")).strip().lower().replace(" ", "_")
+        return legacy
 
     def __parse_memory_storage(self, arguments: Any) -> AnalysisResult:
         """
@@ -224,7 +284,7 @@ class ToolResponseParser(IResponseParser):
         """
 
         reason = str(arguments.get("assistant_message", ""))
-        key = str(arguments.get("key", ""))
+        key = self.__build_memory_key(arguments)
         value = str(arguments.get("value", ""))
 
         return AnalysisResult(
@@ -247,7 +307,7 @@ class ToolResponseParser(IResponseParser):
         """
 
         reason = str(arguments.get("assistant_message", ""))
-        key = str(arguments.get("key", ""))
+        key = self.__build_memory_key(arguments)
 
         return AnalysisResult(
             action=Action(

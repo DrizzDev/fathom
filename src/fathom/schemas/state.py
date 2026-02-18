@@ -168,24 +168,48 @@ class LoopDetector(BaseModel):
 class ActionHistory(BaseModel):
     """
     Tracks action history for context building with token optimization.
+
+    Supports optional progressive summarization: when a
+    ``StepSummarizer`` is attached via ``set_summarizer()``, items
+    evicted from the bounded deque are fed into the summarizer
+    rather than silently dropped.
     """
 
     max_size: int = Field(default=10, description="Maximum history size")
 
     __failure_count: int = PrivateAttr(default=0)
     __actions: Deque[Dict[str, Any]] = PrivateAttr(default_factory=lambda: deque(maxlen=10))
+    __summarizer: Optional[Any] = PrivateAttr(default=None)
 
     model_config = ConfigDict(frozen=True)
 
     def model_post_init(self, __context: Any) -> None:
         object.__setattr__(self, "_ActionHistory__actions", deque(maxlen=self.max_size))
 
+    def set_summarizer(self, summarizer: Any) -> None:
+        """
+        Attach a ``StepSummarizer`` to capture evicted items.
+
+        Must be called after construction because Pydantic frozen
+        models require ``object.__setattr__`` for mutation.
+        """
+
+        object.__setattr__(self, "_ActionHistory__summarizer", summarizer)
+
     def record_action(
         self, action: Action, success: bool, activity: str, screen_changed: bool = True
     ) -> None:
         """
         Record an action with its outcome and associated activity.
+
+        When the deque is full, the oldest item is captured by the
+        attached summarizer (if any) before it is evicted.
         """
+
+        # Capture the item about to be evicted by the bounded deque
+        if self.__summarizer is not None and len(self.__actions) == self.__actions.maxlen:
+            evicted = self.__actions[0]
+            self.__summarizer.ingest(evicted)
 
         self.__actions.append(
             {
@@ -216,6 +240,31 @@ class ActionHistory(BaseModel):
             parts.append(f"{action['type']}:{action['target']}:{result_indicator}")
 
         return " | ".join(parts) if parts else "None"
+
+    def get_summarized_context(self) -> str:
+        """
+        Returns full tiered context: compressed older steps + recent raw steps.
+
+        Structure (attention-aware placement):
+            Middle: ``=== EARLIER STEPS (Summarized) ===`` — phase summaries
+            End:    ``=== RECENT STEPS ===``              — raw compact history
+
+        Falls back to ``get_compact_history()`` when no summarizer is
+        attached, preserving backward compatibility.
+        """
+
+        parts: List[str] = []
+
+        if self.__summarizer is not None:
+            summary = self.__summarizer.history.format_context()
+            if summary:
+                parts.append(summary)
+
+        compact = self.get_compact_history()
+        if compact and compact != "None":
+            parts.append(f"=== RECENT STEPS ===\n{compact}")
+
+        return "\n".join(parts) if parts else "None"
 
     def get_context(self) -> List[str]:
         """
@@ -253,6 +302,26 @@ class ActionHistory(BaseModel):
             "failure": self.__failure_count,
             "success": total_count - self.__failure_count,
         }
+
+    def get_raw_actions(self) -> List[Dict[str, Any]]:
+        """
+        Returns a copy of all raw action records for checkpoint serialization.
+        """
+
+        return [dict(action) for action in self.__actions]
+
+    def restore_actions(self, records: List[Dict[str, Any]]) -> None:
+        """
+        Bulk-load action records into the deque during checkpoint restoration.
+
+        Bypasses the summarizer eviction path because the summarizer
+        state is restored separately from its own checkpoint data.
+        """
+
+        for record in records:
+            self.__actions.append(record)
+            if not record.get("success", True):
+                object.__setattr__(self, "_ActionHistory__failure_count", self.__failure_count + 1)
 
     def has_repeated_failure(self, action: Action) -> bool:
         """

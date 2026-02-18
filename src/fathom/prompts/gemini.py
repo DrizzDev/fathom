@@ -12,6 +12,7 @@ from fathom.prompts.templates import (
     PRECISION_RULES,
     TOOL_GUIDANCE,
     UI_RULES,
+    build_output_schema,
 )
 
 
@@ -46,12 +47,7 @@ class GeminiPromptBuilder(PromptBuilder):
             self.__get_persona(),
             TOOL_GUIDANCE,
             COMMON_RULES,
-            (
-                "OUTPUT REQUIREMENTS:\n"
-                f"- {COORD_RULES}\n"
-                f"- {CONFIDENCE_RULES}\n"
-                "- Return tool call(s) only, with schema-valid fields."
-            ),
+            build_output_schema(mode="default"),
         ]
         return "\n\n".join([part for part in parts if part.strip()])
 
@@ -165,7 +161,7 @@ class GeminiPromptBuilder(PromptBuilder):
 
         if not hints or not hints.get("requires_repeat_all"):
             notes.append(
-                "- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly."
+                "- COMPLETE CHECK: If goal appears fully achieved, call complete_goal with evidence."
             )
 
         if not notes:
@@ -236,7 +232,9 @@ class GeminiPromptBuilder(PromptBuilder):
             f"- {PRECISION_RULES['text']}\n"
             f"- {ACTION_RULES['scroll']}\n"
             f"- {ACTION_RULES['wait']}\n"
-            "Respond using tool schema only."
+            "You MUST respond with a tool call only. Use execute_ui with required fields: "
+            "assistant_message (str), action (object with {action_type, rationale, is_valid}). "
+            "Never output plain text."
         )
 
     def build_action_verification_prompt(self, intent: str) -> str:
@@ -278,12 +276,9 @@ class GeminiPromptBuilder(PromptBuilder):
             COMMON_RULES,  # Keep standard rules for now
             (
                 "MODE: DISCOVERY (Navigation & Scanning)\n"
-                "Prioritize scrolling and swiping to find elements.\n"
-                "OUTPUT REQUIREMENTS:\n"
-                f"- {COORD_RULES}\n"
-                f"- {CONFIDENCE_RULES}\n"
-                "- Return tool call(s) only."
+                "Prioritize scrolling and swiping to find elements."
             ),
+            build_output_schema(mode="discovery"),
         ]
         return "\n\n".join([part for part in parts if part.strip()])
 
@@ -298,12 +293,9 @@ class GeminiPromptBuilder(PromptBuilder):
             (
                 "MODE: VERIFICATION (Strict Checking)\n"
                 "Use 'validate_state' or 'verify_goal'.\n"
-                "Be extremely strict with evidence.\n"
-                "OUTPUT REQUIREMENTS:\n"
-                f"- {COORD_RULES}\n"
-                f"- {CONFIDENCE_RULES}\n"
-                "- Return tool call(s) only."
+                "Be extremely strict with evidence."
             ),
+            build_output_schema(mode="verification"),
         ]
         return "\n\n".join([part for part in parts if part.strip()])
 
@@ -333,5 +325,6 @@ class GeminiPromptBuilder(PromptBuilder):
             "- Do NOT repeat actions listed in 'ALREADY TRIED FROM THIS SCREEN'.\n"
             "- Prefer elements that are likely to navigate to a new screen (buttons, tabs, links).\n\n"
             "OUTPUT: Return ONE execute_ui tool call targeting the best untried element, "
-            "or set content_exhausted=true if no untried elements remain."
+            "or set content_exhausted=true if no untried elements remain.\n\n"
+            + build_output_schema(mode="exploration")
         )

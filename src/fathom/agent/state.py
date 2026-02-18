@@ -8,6 +8,7 @@ from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import ActionHistory, LoopDetector
 from fathom.schemas.steps import StepResult
+from fathom.services.summarizer import StepSummarizer
 
 logger = getLogger(__name__)
 
@@ -32,6 +33,7 @@ class AgentState:
         max_steps: int = 100,
         loop_threshold: int = 3,
         context_window: int = 10,
+        enable_summarization: bool = True,
     ) -> None:
         """
         Initialize agent state.
@@ -41,6 +43,9 @@ class AgentState:
             max_steps: Maximum steps before giving up.
             loop_threshold: Screen repetitions before stuck detection.
             context_window: Number of recent items to keep in context.
+            enable_summarization: When True, items evicted from the
+                action history deque are compressed into progressive
+                phase summaries instead of being silently dropped.
         """
 
         self.__step_count = 0
@@ -52,6 +57,12 @@ class AgentState:
             window_size=context_window,
         )
         self.__action_history = ActionHistory(max_size=context_window)
+
+        # Progressive summarization: captures evicted deque items
+        self.__summarizer: Optional[StepSummarizer] = None
+        if enable_summarization:
+            self.__summarizer = StepSummarizer(phase_size=context_window)
+            self.__action_history.set_summarizer(self.__summarizer)
 
         self.__seen_screens: List[ScreenState] = []
         self.__current_screen: Optional[ScreenState] = None
@@ -212,24 +223,33 @@ class AgentState:
 
     def get_smart_context(self, max_history: int = 5) -> str:
         """
-        Structured context for LLM — current state + recent history + errors.
-        Ported from interactive_testing state manager.
+        Structured context for LLM — current state + progress + recent history + errors.
+
+        When progressive summarization is enabled, a ``=== PROGRESS ===``
+        section with key milestones is included between state and history.
+        This occupies a high-attention position (near the start of the
+        context string) and gives the model a quick orientation of what
+        has been accomplished so far.
         """
+
         lines = ["=== CURRENT STATE ==="]
 
         if self.__current_screen:
-            # Use activity name if available, or just generic
             screen_name = self.__current_screen.activity or "Unknown Screen"
             lines.append(f"Current Screen: {screen_name}")
 
-        # Known knowledge
         if self.__knowledge:
             lines.append("Known Facts:")
             for key, value in self.__knowledge.items():
                 lines.append(f"- {key}: {value}")
 
+        # Progress milestones from the summarizer (high-attention position)
+        if self.__summarizer and self.__summarizer.history.milestones:
+            lines.append("\n=== PROGRESS ===")
+            for milestone in self.__summarizer.history.milestones[-5:]:
+                lines.append(f"✓ {milestone}")
+
         lines.append(f"\n=== RECENT HISTORY (Last {max_history}) ===")
-        # Get recent items from action history
         recent = self.__action_history.get_history_items()[-max_history:]
 
         for index, item in enumerate(recent):
@@ -333,6 +353,12 @@ class AgentState:
     def build_context(self) -> Dict[str, object]:
         """
         Build context for vision-language model with token optimization.
+
+        When progressive summarization is enabled, ``compact_history``
+        contains a tiered string with phase summaries of older steps
+        followed by raw recent steps.  This goes into the dynamic
+        user-content payload (position [4] in ``__build_payload``),
+        preserving the cached system-instruction boundary.
         """
 
         current_activity = self.__current_screen.activity if self.__current_screen else "unknown"
@@ -343,7 +369,7 @@ class AgentState:
             "max_steps": self.__max_steps,
             "step_count": self.__step_count,
             "unique_screens_seen": len(self.__seen_screens),
-            "compact_history": self.__action_history.get_compact_history(),
+            "compact_history": self.__action_history.get_summarized_context(),
             "relevant_failures": self.__action_history.get_activity_failures(
                 current_activity=current_activity
             ),
@@ -366,11 +392,20 @@ class AgentState:
         """
         Serialize state for checkpointing.
 
+        Includes the full context summary so that a restored agent
+        retains LLM-visible memory of all prior steps — not just raw
+        counters.  The checkpoint contains:
+
+        - Core scalars (step_count, completion state)
+        - Seen screens for deduplication
+        - Recent action records from the deque
+        - Full summarizer state (milestones, phases, buffer)
+
         Returns:
             Dictionary suitable for JSON serialization.
         """
 
-        return {
+        checkpoint: Dict[str, object] = {
             "intent": self.__intent,
             "max_steps": self.__max_steps,
             "step_count": self.__step_count,
@@ -378,8 +413,14 @@ class AgentState:
             "completion_reason": self.__completion_reason,
             "action_stats": self.__action_history.get_stats(),
             "action_context": self.__action_history.get_context(),
+            "recent_actions": self.__action_history.get_raw_actions(),
             "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
         }
+
+        if self.__summarizer is not None:
+            checkpoint["summarizer"] = self.__summarizer.to_dict()
+
+        return checkpoint
 
     def __restore_from_data(
         self,
@@ -387,6 +428,8 @@ class AgentState:
         is_complete: bool,
         completion_reason: Optional[str],
         seen_screens: List[Dict[str, Any]],
+        recent_actions: Optional[List[Dict[str, Any]]] = None,
+        summarizer_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -399,16 +442,30 @@ class AgentState:
         for data in seen_screens:
             self.__seen_screens.append(ScreenState(**data))
 
+        # Restore the summarizer from checkpoint data
+        if summarizer_data and self.__summarizer is not None:
+            restored = StepSummarizer.from_dict(summarizer_data)
+            self.__summarizer._history = restored._history
+            self.__summarizer._buffer = restored._buffer
+            self.__summarizer._step_offset = restored._step_offset
+
+        # Restore recent actions into the deque (bypassing summarizer)
+        if recent_actions:
+            self.__action_history.restore_actions(recent_actions)
+
     @classmethod
     def from_checkpoint(cls, data: Dict[str, object]) -> "AgentState":
         """
         Restore state from checkpoint.
 
+        Reconstructs the full agent context including progressive
+        summaries, so the LLM retains memory of all prior steps.
+
         Args:
             data: Checkpoint data from to_checkpoint().
 
         Returns:
-            Restored AgentState.
+            Restored AgentState with full context memory.
         """
 
         max_steps_value = data.get("max_steps")
@@ -430,11 +487,67 @@ class AgentState:
         if isinstance(screens_value, list):
             seen_screens = [dict(screen) for screen in screens_value]
 
+        recent_actions: Optional[List[Dict[str, Any]]] = None
+        actions_value = data.get("recent_actions")
+        if isinstance(actions_value, list):
+            recent_actions = [dict(record) for record in actions_value]
+
+        summarizer_data: Optional[Dict[str, Any]] = None
+        summarizer_value = data.get("summarizer")
+        if isinstance(summarizer_value, dict):
+            summarizer_data = dict(summarizer_value)
+
         state.__restore_from_data(
             step_count=step_count,
             is_complete=is_complete,
             seen_screens=seen_screens,
             completion_reason=completion_reason,
+            recent_actions=recent_actions,
+            summarizer_data=summarizer_data,
         )
 
         return state
+
+    def bootstrap_from_history(self, history_records: List[Dict[str, Any]]) -> None:
+        """
+        Bootstrap the summarizer from persisted history records.
+
+        Fallback recovery path: when no checkpoint summarizer data
+        exists but the on-disk history JSON is available, replay all
+        records through the summarizer to reconstruct the context.
+
+        Each record should have the same shape as the HistoryService
+        JSON entries: ``action_type``, ``target``, ``success``,
+        ``screen_changed``, etc.
+
+        Args:
+            history_records: List of step records from ``assets/history/{id}.json``.
+        """
+
+        if self.__summarizer is None:
+            logger.warning("bootstrap_from_history called but summarizer is disabled")
+            return
+
+        for record in history_records:
+            self.__summarizer.ingest(
+                {
+                    "type": str(record.get("action_type", "tap")).upper(),
+                    "target": record.get("natural_language_target") or record.get("target", "UI"),
+                    "success": bool(record.get("success", True)),
+                    "screen_changed": bool(record.get("screen_changed", True)),
+                    "activity": record.get("activity", "unknown"),
+                    "full_description": (
+                        f"{str(record.get('action_type', 'tap')).upper()} on "
+                        f"{record.get('natural_language_target') or record.get('target', 'UI')}"
+                    ),
+                }
+            )
+
+        # Flush any remaining buffered records
+        self.__summarizer.flush()
+
+        logger.info(
+            f"Bootstrapped summarizer from {len(history_records)} history records "
+            f"({len(self.__summarizer.history.phase_summaries)} phases, "
+            f"{len(self.__summarizer.history.milestones)} milestones)"
+        )
