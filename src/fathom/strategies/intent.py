@@ -17,6 +17,7 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.executor import GraphExecutor
+from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExecutionResult
@@ -43,11 +44,12 @@ class IntentStrategy:
         telemetry: TelemetryPort,
         summarizer: SummarizationPort,
         path_manager: SharedPathManager,
+        configuration: FathomConfiguration,
         *,
-        max_steps: int = 20,
-        use_xml: bool = False,
-        workflow_id: str = "default",
-        package_name: str = "unknown_app",
+        max_steps: int,
+        use_xml: bool,
+        workflow_id: str,
+        package_name: str,
         realignment: Optional[RealignmentPolicy] = None,
     ) -> None:
         self.__intent = intent
@@ -60,14 +62,15 @@ class IntentStrategy:
             device=device,
             memory=memory,
             signal=signal,
-            use_xml=use_xml,
             storage=storage,
-            max_steps=max_steps,
             telemetry=telemetry,
             summarizer=summarizer,
+            path_manager=path_manager,
+            configuration=configuration,
+            use_xml=use_xml,
+            max_steps=max_steps,
             workflow_id=workflow_id,
             realignment=realignment,
-            path_manager=path_manager,
             package_name=package_name,
         )
 
@@ -80,12 +83,11 @@ class IntentStrategy:
             interrupt_before=[NodeName.ANALYZE, NodeName.EXECUTE],
         )
 
-    async def execute(self, max_steps: int) -> ExecutionResult:
+    async def execute(self) -> ExecutionResult:
         """
         Execute intent-based workflow via specialized executor.
         """
 
-        _ = max_steps
         start_time = time.time()
 
         try:

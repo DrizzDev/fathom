@@ -286,6 +286,7 @@ class WorkflowRequest(BaseModel):
     """
 
     intent: str = Field(..., description="User goal")
+    device_serial: Optional[str] = Field(default=None, description="Device serial number")
     package_name: str = Field(default="unknown_app", description="Target application package")
     session_id: str = Field(
         default_factory=lambda: uuid.uuid4().hex[:8], description="Unique session ID"
@@ -300,5 +301,3 @@ class WorkflowRequest(BaseModel):
     )
 
     realignment: RealignmentPolicy = Field(default_factory=RealignmentPolicy)
-    prompt_version: Optional[str] = Field(default=None, description="Prompt variant")
-    device_serial: Optional[str] = Field(default=None, description="Specific device to target")

@@ -4,18 +4,16 @@ import asyncio
 import hashlib
 import logging
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional
 
 from fathom.constants import ActionType
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
-from fathom.schemas.actions import Bounds
 from fathom.schemas.results import ActionResult, AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
-from fathom.utils.coordinates import CoordinateConverter
 
 logger = logging.getLogger(__name__)
 
@@ -30,17 +28,18 @@ class IntentNodeProvider:
         """
         Initialize provider with shared context.
         """
+
         self.__context = context
 
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
         Capture the screen and update state.
         """
-
-        _ = state
-
         if self.__context.is_cancelled:
-            return {"is_complete": True, "completion_reason": "Cancelled"}
+            return {
+                "is_complete": True,
+                "completion_reason": "Cancelled",
+            }
 
         start_time = time.time()
 
@@ -48,48 +47,58 @@ class IntentNodeProvider:
             # Parallel Snapshot (Screenshot + XML) via DevicePort
             screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
 
-            if not screenshot_bytes:
+            if not screenshot_bytes or len(screenshot_bytes) == 0:
+                self.__context.telemetry.error("Ground: Empty screenshot captured")
                 return {
                     "capture": None,
-                    "is_complete": False,
                     "completion_reason": "Empty screenshot captured",
+                    "is_complete": True,
                 }
 
             width, height = await self.__context.device.get_dimensions()
+
+            # Validate dimensions
+            if width <= 0 or height <= 0:
+                self.__context.telemetry.error(f"Ground: Invalid dimensions {width}x{height}")
+                return {
+                    "capture": None,
+                    "completion_reason": f"Invalid dimensions: {width}x{height}",
+                    "is_complete": True,
+                }
 
             # Get current package
             try:
                 activity = await self.__context.device.get_current_package()
             except Exception as exception:
-                activity = "unknown"
                 self.__context.telemetry.warning(
-                    "Failed to get current package", error=str(exception)
+                    f"Ground: Failed to get current package: {exception}"
                 )
+                activity = "unknown"
 
             # Persist capture
             storage_id = await self.__context.storage.save(
                 data=screenshot_bytes,
                 metadata={
                     "type": "screenshots",
-                    "package_name": activity,
-                    "timestamp": time.time(),
                     "activity_name": activity,
+                    "package_name": activity,
                     "session_id": self.__context.workflow_id,
+                    "timestamp": time.time(),
                 },
             )
 
             screen = ScreenCapture(
+                image=screenshot_bytes,
                 width=width,
                 height=height,
                 activity=activity,
-                image=screenshot_bytes,
                 timestamp=int(time.time() * 1000),
                 metadata={"storage_id": storage_id},
             )
 
             # XML Dump if enabled
-            elements = None
             xml_content_str = xml_content if xml_content else None
+            elements = None
 
             if self.__context.use_xml and xml_content_str:
                 dump_start = time.time()
@@ -104,10 +113,10 @@ class IntentNodeProvider:
                 ) = await self.__context.hierarchy.process_xml_and_screen(
                     screen=screen,
                     xml=xml_content_str,
-                    package_name=activity,
-                    action_type=ActionType.TAP,
-                    session_id=self.__context.workflow_id,
                     path_manager=self.__context.path_manager,
+                    package_name=activity,
+                    session_id=self.__context.workflow_id,
+                    action_type=ActionType.TAP,
                 )
                 self.__context.metrics.record(
                     operation="hierarchy_processing", duration=time.time() - process_start
@@ -116,6 +125,7 @@ class IntentNodeProvider:
                 if annotated_screen:
                     screen = annotated_screen
 
+            # Update Agent State
             visual_hash = hashlib.sha256(screen.image).hexdigest()[:VISUAL_HASH_LENGTH]
 
             screen_state = ScreenState(
@@ -135,37 +145,38 @@ class IntentNodeProvider:
 
             # Reset per-step fields
             return {
-                "analysis": None,
                 "capture": screen,
-                "step_result": None,
-                "elements": elements,
-                "planned_step": None,
                 "screen_state": screen_state,
                 "is_new_screen": is_new_screen,
                 "xml_content": xml_content_str,
+                "elements": elements,
                 "grounding_duration": duration,
+                "planned_step": None,
+                "step_result": None,
+                "analysis": None,
             }
 
         except Exception as exception:
             self.__context.telemetry.error(f"Grounding failed: {exception}")
             return {
                 "capture": None,
-                "is_complete": False,
                 "completion_reason": f"Grounding failed: {exception}",
+                "is_complete": True,
             }
 
     async def analyze(self, state: IntentGraphState) -> IntentGraphState:
         """
         Plan the next step using the Agent Planner.
         """
-
         if self.__context.is_cancelled:
             return {"is_complete": True}
 
-        capture: Optional[ScreenCapture] = state.get("capture")
-
-        if not capture:
+        # Use type guard to satisfy MyPy
+        screen_capture = state.get("capture")
+        if not screen_capture or not isinstance(screen_capture, ScreenCapture):
             return {"should_retry": True}
+
+        capture: ScreenCapture = screen_capture
 
         # Check injected context
         state_injected = state.get("injected_context")
@@ -180,12 +191,17 @@ class IntentNodeProvider:
 
         start_time = time.time()
 
+        raw_elements = state.get("elements")
+        elements: Optional[Dict[str, Any]] = None
+        if isinstance(raw_elements, dict):
+            elements = raw_elements
+
         plan = await self.__context.planner.plan_step(
-            capture=capture,
-            use_xml=self.__context.use_xml,
-            elements=state.get("elements"),
             state=self.__context.agent_state,
             reasoner=self.__context.reasoner,
+            use_xml=self.__context.use_xml,
+            capture=capture,
+            elements=elements,
             context_manager=self.__context.context_manager,
         )
 
@@ -194,9 +210,9 @@ class IntentNodeProvider:
 
         if plan.metrics:
             self.__context.metrics.record_tokens(
-                cached=int(plan.metrics.get("cached_tokens", 0)),
                 prompt=int(plan.metrics.get("prompt_tokens", 0)),
                 completion=int(plan.metrics.get("completion_tokens", 0)),
+                cached=int(plan.metrics.get("cached_tokens", 0)),
             )
 
         if plan.step:
@@ -206,31 +222,34 @@ class IntentNodeProvider:
                 step_number=self.__context.agent_state.step_count + 1,
             )
 
-        completion_reason = plan.reason if plan.is_complete else state.get("completion_reason")
-
         return {
             "plan": plan,
-            "injected_context": None,
             "planned_step": plan.step,
-            "analysis_duration": duration,
             "is_complete": plan.is_complete,
+            "completion_reason": plan.reason
+            if plan.is_complete
+            else state.get("completion_reason"),
             "should_retry": plan.should_retry,
-            "completion_reason": completion_reason,
+            "analysis_duration": duration,
+            "injected_context": None,
         }
 
     async def execute(self, state: IntentGraphState) -> IntentGraphState:
         """
-        Execute the planned action.
+        Execute the planned action via ActionExecutor.
         """
-
         if self.__context.is_cancelled:
             return {"is_complete": True}
 
-        step: Optional[Step] = state.get("planned_step")
-        capture: Optional[ScreenCapture] = state.get("capture")
+        # Type guards for planned_step and capture
+        current_step = state.get("planned_step")
+        screen_capture = state.get("capture")
 
-        if not step or not capture:
+        if not isinstance(current_step, Step) or not isinstance(screen_capture, ScreenCapture):
             return {}
+
+        step: Step = current_step
+        capture: ScreenCapture = screen_capture
 
         start_time = time.time()
 
@@ -238,95 +257,55 @@ class IntentNodeProvider:
         resolved_action = await self.__context.resolution.resolve(action=step.action)
         step = step.model_copy(update={"action": resolved_action})
 
-        # Physical Execution
-        size = await self.__context.device.get_dimensions()
-        converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
+        # Determine package name from state for tracing
+        package_name = "unknown"
+        current_screen = state.get("screen_state")
+        if isinstance(current_screen, ScreenState) and current_screen.activity:
+            package_name = current_screen.activity
 
-        action = step.action
-        device_result = ActionResult(success=False, duration=0)
-        coords: Optional[Tuple[int, ...]] = None
+        # Delegate to ActionExecutor
+        execution_result = await self.__context.action_executor.act(
+            step=step,
+            pre_capture=capture,
+            package_name=package_name,
+            session_id=self.__context.workflow_id,
+        )
 
+        # Wait for screen stability after action
+        await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
+
+        # Capture post-execution screen to compute post_hash
         try:
-            if action.action_type == ActionType.TAP:
-                if action.bounds:
-                    coords = converter.center_to_pixels(bounds=action.bounds)
-                    x, y = coords
-                else:
-                    x, y = size[0] // 2, size[1] // 2
-                    coords = (x, y)
-                device_result = await self.__context.device.tap(x=x, y=y)
-
-            elif action.action_type == ActionType.TYPE:
-                if action.bounds:
-                    coords = converter.center_to_pixels(bounds=action.bounds)
-                    x, y = coords
-                    await self.__context.device.tap(x=x, y=y)
-                device_result = await self.__context.device.type(text=action.text or "")
-
-            elif "swipe" in action.action_type.value:
-                direction = "up"
-                if "_" in action.action_type.value:
-                    direction = action.action_type.value.split("_")[1]
-
-                bounds = action.bounds or Bounds(x=200, y=200, width=600, height=600)
-                coords = converter.swipe_coordinates(bounds=bounds, direction=direction)
-                x1, y1, x2, y2 = coords
-                device_result = await self.__context.device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
-
-            elif action.action_type == ActionType.SCROLL:
-                x1, y1, x2, y2 = size[0] // 2, size[1] // 2 + 300, size[0] // 2, size[1] // 2 - 300
-                coords = (x1, y1, x2, y2)
-                device_result = await self.__context.device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
-
-            elif action.action_type in (ActionType.BACK, ActionType.HOME):
-                if action.action_type == ActionType.BACK:
-                    device_result = await self.__context.device.back()
-                else:
-                    device_result = await self.__context.device.home()
-
-            elif action.action_type == ActionType.WAIT:
-                await asyncio.sleep((action.wait_duration or 1000) / 1000)
-                device_result = ActionResult(success=True, duration=action.wait_duration or 1000)
-
-            # Tracing
-            if coords:
-                screen_state: Optional[ScreenState] = state.get("screen_state")
-
-                if screen_state and screen_state.activity:
-                    package_name = screen_state.activity
-                else:
-                    package_name = "unknown"
-
-                # Background persistence
-                asyncio.create_task(
-                    asyncio.to_thread(
-                        self.__context.trace.save,
-                        action=action,
-                        coords=coords,
-                        image_data=capture.image,
-                        package_name=package_name,
-                        session_id=self.__context.workflow_id,
-                        step_number=self.__context.agent_state.step_count,
-                    )
-                )
-
+            post_screenshot, _ = await self.__context.device.get_snapshot()
+            post_hash = (
+                hashlib.sha256(post_screenshot).hexdigest()[:VISUAL_HASH_LENGTH]
+                if post_screenshot
+                else "0"
+            )
         except Exception as exception:
-            device_result = ActionResult(success=False, duration=0, error=str(exception))
+            self.__context.telemetry.warning(f"Execute: Failed to capture post-screen: {exception}")
+            post_hash = "0"
 
         duration = time.time() - start_time
         self.__context.metrics.record(operation="action", duration=duration)
 
-        current_screen_state: Optional[ScreenState] = state.get("screen_state")
-        pre_hash = current_screen_state.visual_hash if current_screen_state else "0"
+        current_screen_state = state.get("screen_state")
+        pre_hash = (
+            current_screen_state.visual_hash
+            if isinstance(current_screen_state, ScreenState)
+            else "0"
+        )
+
+        screen_changed = pre_hash != post_hash
 
         step_result = StepResult(
             step=step,
-            post_hash="0",
             pre_hash=pre_hash,
-            screen_changed=True,
-            error=device_result.error,
-            success=device_result.success,
+            post_hash=post_hash,
+            success=execution_result.success,
             duration=int(duration * 1000),
+            error=execution_result.error,
+            screen_changed=screen_changed,
         )
 
         return {
@@ -338,21 +317,22 @@ class IntentNodeProvider:
         """
         Record the execution result.
         """
-
         if self.__context.is_cancelled:
             return {"is_complete": True}
 
-        step_result: Optional[StepResult] = state.get("step_result")
-        if not step_result:
+        result = state.get("step_result")
+        if not isinstance(result, StepResult):
             return {}
+
+        step_result: StepResult = result
 
         self.__context.agent_state.record_step(result=step_result)
         self.__context.history.save_step(result=step_result, intent=self.__context.intent)
 
         await self.__context.memory.store_experience(
-            success=step_result.success,
-            action=step_result.step.action,
             visual_hash=step_result.pre_hash,
+            action=step_result.step.action,
+            success=step_result.success,
         )
 
         # Commit cycle to ContextManager (GCC Trace)
@@ -360,46 +340,58 @@ class IntentNodeProvider:
             f"[H3] Committing to trace | thought={step_result.step.action.rationale[:50]}..."
         )
 
-        analysis: Optional[AnalysisResult] = state.get("analysis")
+        analysis_result = state.get("analysis")
+        analysis: Optional[AnalysisResult] = None
+        if isinstance(analysis_result, AnalysisResult):
+            analysis = analysis_result
+
         observation = f"Screen: {step_result.pre_hash[:8]}"
         if analysis and analysis.screen_description:
             observation += f" | Content: {analysis.screen_description[:100]}..."
 
         await self.__context.context_manager.commit(
             observation=observation,
-            action=step_result.step.action,
             thought=step_result.step.action.rationale,
+            action=step_result.step.action,
         )
 
         # GCC Branching
         full_context = self.__context.context_manager.get_full_context()
         trace = full_context.get("trace", [])
-
         if len(trace) >= 5:
             await self.__context.context_manager.branch()
 
         # Audit logging
-        plan: Optional[PlanResult] = state.get("plan")
-        is_new_screen: Optional[bool] = state.get("is_new_screen")
-        screen_state: Optional[ScreenState] = state.get("screen_state")
+        execution_plan = state.get("plan")
+        current_screen = state.get("screen_state")
+        is_new_screen = state.get("is_new_screen")
 
-        if plan and screen_state and is_new_screen is not None:
-            analysis_duration: float = state.get("analysis_duration", 0.0)
-            grounding_duration: float = state.get("grounding_duration", 0.0)
-            execution_duration: float = state.get("execution_duration", 0.0)
+        if (
+            isinstance(execution_plan, PlanResult)
+            and isinstance(current_screen, ScreenState)
+            and isinstance(is_new_screen, bool)
+        ):
+            plan: PlanResult = execution_plan
+            screen_state: ScreenState = current_screen
+            is_new: bool = is_new_screen
+
+            # Explicit float conversion for metrics
+            analysis_duration = float(state.get("analysis_duration") or 0.0)
+            grounding_duration = float(state.get("grounding_duration") or 0.0)
+            execution_duration = float(state.get("execution_duration") or 0.0)
 
             self.__context.auditor.log_step(
                 plan=plan,
                 state=screen_state,
-                hierarchy_duration=0.0,
-                is_new_screen=is_new_screen,
-                analysis_duration=analysis_duration,
-                grounding_duration=grounding_duration,
-                execution_duration=execution_duration,
+                result=ActionResult(success=step_result.success, duration=step_result.duration),
+                is_new_screen=is_new,
                 is_stuck=self.__context.agent_state.is_stuck,
                 step_count=self.__context.agent_state.step_count,
+                analysis_duration=analysis_duration,
+                grounding_duration=grounding_duration,
+                hierarchy_duration=0.0,
+                execution_duration=execution_duration,
                 total_duration=grounding_duration + analysis_duration + execution_duration,
-                result=ActionResult(success=step_result.success, duration=step_result.duration),
             )
 
         # Check max steps
@@ -413,16 +405,22 @@ class IntentNodeProvider:
         return {}
 
 
-def build_intent_nodes(context: GraphContext) -> Dict[str, Callable[..., Any]]:
+class IntentGraphFactory:
     """
-    Builds the node functions for the intent graph.
+    Factory for building the Intent Node functions.
+    Wraps node logic to prevent standalone functions and cleaner imports.
     """
 
-    provider = IntentNodeProvider(context=context)
+    @staticmethod
+    def build(context: GraphContext) -> Dict[str, Callable[..., Any]]:
+        """
+        Builds the node functions for the intent graph.
+        """
+        provider = IntentNodeProvider(context=context)
 
-    return {
-        NodeName.RECORD: provider.record,
-        NodeName.GROUND: provider.ground,
-        NodeName.ANALYZE: provider.analyze,
-        NodeName.EXECUTE: provider.execute,
-    }
+        return {
+            NodeName.GROUND: provider.ground,
+            NodeName.ANALYZE: provider.analyze,
+            NodeName.EXECUTE: provider.execute,
+            NodeName.RECORD: provider.record,
+        }

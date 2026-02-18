@@ -115,7 +115,8 @@ class ActionExecutor:
 
         # Handle non-interactive actions immediately
         if action.action_type == ActionType.WAIT:
-            await asyncio.sleep(delay=1.0)
+            delay = (action.wait_duration or 1000) / 1000.0
+            await asyncio.sleep(delay=delay)
             return (
                 ExecutionResult(success=True, duration=int((time.time() - start_time) * 1000)),
                 None,
@@ -137,7 +138,7 @@ class ActionExecutor:
             elif action.action_type == ActionType.TYPE:
                 device_result, coords = await self.__execute_type(action, converter, width, height)
 
-            elif action.action_type == ActionType.SWIPE:
+            elif action.action_type.value.startswith(ActionType.SWIPE.lower()):
                 device_result, coords = await self.__execute_swipe(action, converter, width, height)
 
             elif action.action_type == ActionType.SCROLL:
@@ -226,12 +227,34 @@ class ActionExecutor:
         Helper Method To Execute `SWIPE` Command
         """
 
-        if action.bounds:
-            x1, y1, x2, y2 = converter.swipe_coordinates(bounds=action.bounds, direction="up")
+        if "_" in action.action_type.value:
+            direction = action.action_type.value.split("_")[-1]
         else:
+            direction = "up"
+
+        if action.bounds:
+            x1, y1, x2, y2 = converter.swipe_coordinates(bounds=action.bounds, direction=direction)
+        else:
+            # Full screen swipe if no bounds
             cx, cy = width // 2, height // 2
-            x1, y1 = cx, cy + 300
-            x2, y2 = cx, cy - 300
+            offset = 300  # Reasonable default swipe distance
+
+            if direction == "up":
+                x1, y1 = cx, cy + offset
+                x2, y2 = cx, cy - offset
+            elif direction == "down":
+                x1, y1 = cx, cy - offset
+                x2, y2 = cx, cy + offset
+            elif direction == "left":
+                x1, y1 = cx + offset, cy
+                x2, y2 = cx - offset, cy
+            elif direction == "right":
+                x1, y1 = cx - offset, cy
+                x2, y2 = cx + offset, cy
+            else:
+                # Default to up
+                x1, y1 = cx, cy + offset
+                x2, y2 = cx, cy - offset
 
         coords = (x1, y1, x2, y2)
         result = await self.__device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
@@ -241,13 +264,14 @@ class ActionExecutor:
         self, width: int, height: int
     ) -> Tuple[ActionResult, Tuple[int, ...]]:
         """
-        Helper Method To Execute `SCROLL` Command
+        Helper Method To Execute `SCROLL` Command (Default Scroll Down)
         """
 
         cx, cy = width // 2, height // 2
 
-        x1, y1 = cx, cy + 200
-        x2, y2 = cx, cy - 200
+        # Scroll down content = Swipe UP
+        x1, y1 = cx, cy + 300
+        x2, y2 = cx, cy - 300
         coords = (x1, y1, x2, y2)
 
         result = await self.__device.swipe(
@@ -268,8 +292,16 @@ class ActionExecutor:
             x, y = width // 2, height // 2
 
         coords = (x, y)
-        result = await self.__device.tap(x=x, y=y)
-        return result, coords
+
+        # Note: ADB tap doesn't simulate long press?
+        _ = await self.__device.tap(x=x, y=y)
+        # ADB long press is usually: input swipe x y x y duration
+        # My ADBDevice adapter only has tap/swipe.
+        # FIX: Use swipe with 0 distance and long duration for long press.
+        # But wait, ADBDevice doesn't have explicit long_press.
+        # I'll implement it as a static swipe for 1000ms.
+        long_press_result = await self.__device.swipe(x1=x, y1=y, x2=x, y2=y, duration=1000)
+        return long_press_result, coords
 
     def __schedule_trace(
         self,

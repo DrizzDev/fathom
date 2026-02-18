@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from pathlib import Path  # noqa: TC003
 from typing import Dict, Optional
 
 import aiosqlite
@@ -15,9 +15,13 @@ class Ledger(ILedger):
     Separated from the core Knowledge Graph logic.
     """
 
-    def __init__(self, database_path: str = "assets/memory/ledger.db") -> None:
+    def __init__(self, database_path: Path) -> None:
+        """
+        Initialize ledger with explicit database path.
+        """
+
         self.__initialized = False
-        self.__path = Path(database_path)
+        self.__path = database_path
         self.__path.parent.mkdir(parents=True, exist_ok=True)
 
     async def __initialize(self) -> None:

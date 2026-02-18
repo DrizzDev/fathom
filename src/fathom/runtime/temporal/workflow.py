@@ -7,88 +7,15 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 
-@workflow.defn
-class FathomWorkflow:
+class FathomBaseWorkflow:
     """
-    Temporal workflow for executing Fathom tasks with HITL support.
+    Base state and signals for Fathom workflows.
     """
 
     def __init__(self) -> None:
-        """
-        Initialize workflow state.
-        """
-
         self.__paused = False
         self.__cancelled = False
         self.__injected_context: Optional[str] = None
-
-    @workflow.run  # type: ignore[untyped-decorator]
-    async def run(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute Fathom intent with HITL support.
-        """
-
-        workflow.logger.info(
-            f"Starting Fathom workflow for session {request.get('session_id')} "
-            f"with intent: {request.get('intent')}"
-        )
-
-        try:
-            result = await workflow.execute_activity(
-                activity="EXECUTE_INTENT",
-                args=[request, workflow.info().workflow_id],
-                start_to_close_timeout=timedelta(minutes=30),
-                heartbeat_timeout=timedelta(seconds=30),
-                retry_policy=RetryPolicy(
-                    maximum_attempts=1,
-                ),
-            )
-
-            workflow.logger.info(
-                f"Workflow completed successfully: {result.get('steps')} steps in "
-                f"{result.get('duration')}ms"
-            )
-            return dict(result)
-
-        except Exception as exception:
-            workflow.logger.exception(f"Workflow failed: {exception}")
-            return {
-                "steps": 0,
-                "duration": 0,
-                "metrics": None,
-                "success": False,
-                "error": str(exception),
-            }
-
-    @workflow.run  # type: ignore[untyped-decorator]
-    async def run_exploration(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute Fathom exploration with HITL support.
-        """
-
-        workflow.logger.info(f"Starting Fathom exploration with payload {request}")
-
-        try:
-            result = await workflow.execute_activity(
-                activity="EXECUTE_EXPLORATION",
-                args=[request, workflow.info().workflow_id],
-                start_to_close_timeout=timedelta(minutes=30),
-                heartbeat_timeout=timedelta(seconds=30),
-                retry_policy=RetryPolicy(maximum_attempts=1),
-            )
-
-            workflow.logger.info(f"Exploration completed: {result.get('steps')} steps")
-            return dict(result)
-
-        except Exception as exception:
-            workflow.logger.exception(f"Exploration failed: {exception}")
-            return {
-                "steps": 0,
-                "duration": 0,
-                "metrics": None,
-                "success": False,
-                "error": str(exception),
-            }
 
     @workflow.signal  # type: ignore[untyped-decorator]
     async def pause(self) -> None:
@@ -111,7 +38,7 @@ class FathomWorkflow:
     @workflow.signal  # type: ignore[untyped-decorator]
     async def inject(self, context: str) -> None:
         """
-        Signal to inject user context/guidance.
+        Signal to inject user context.
         """
 
         workflow.logger.info(f"Received inject signal with context: {context}")
@@ -148,3 +75,83 @@ class FathomWorkflow:
         self.__injected_context = None
 
         return context
+
+
+@workflow.defn(name="FathomWorkflow")
+class FathomWorkflow(FathomBaseWorkflow):
+    """
+    Temporal workflow for executing Fathom intent tasks.
+    """
+
+    @workflow.run  # type: ignore[untyped-decorator]
+    async def run(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute Fathom intent with HITL support.
+        """
+
+        workflow.logger.info(
+            f"Starting Fathom intent workflow for session {request.get('session_id')} "
+            f"with intent: {request.get('intent')}"
+        )
+
+        try:
+            result = await workflow.execute_activity(
+                activity="EXECUTE_INTENT",
+                args=[workflow.info().workflow_id, request],
+                start_to_close_timeout=timedelta(minutes=30),
+                heartbeat_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+
+            workflow.logger.info(
+                f"Workflow completed successfully: {result.get('steps')} steps in "
+                f"{result.get('duration')}ms"
+            )
+            return dict(result)
+
+        except Exception as exception:
+            workflow.logger.exception(f"Workflow failed: {exception}")
+            return {
+                "steps": 0,
+                "duration": 0,
+                "metrics": None,
+                "success": False,
+                "error": str(exception),
+            }
+
+
+@workflow.defn(name="FathomExplorationWorkflow")
+class FathomExplorationWorkflow(FathomBaseWorkflow):
+    """
+    Temporal workflow for executing Fathom autonomous exploration.
+    """
+
+    @workflow.run  # type: ignore[untyped-decorator]
+    async def run(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute Fathom exploration with HITL support.
+        """
+
+        workflow.logger.info(f"Starting Fathom exploration with payload {request}")
+
+        try:
+            result = await workflow.execute_activity(
+                activity="EXECUTE_EXPLORATION",
+                args=[workflow.info().workflow_id, request],
+                start_to_close_timeout=timedelta(minutes=30),
+                heartbeat_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+
+            workflow.logger.info(f"Exploration completed: {result.get('steps')} steps")
+            return dict(result)
+
+        except Exception as exception:
+            workflow.logger.exception(f"Exploration failed: {exception}")
+            return {
+                "steps": 0,
+                "duration": 0,
+                "metrics": None,
+                "success": False,
+                "error": str(exception),
+            }

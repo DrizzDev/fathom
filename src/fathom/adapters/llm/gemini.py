@@ -65,19 +65,28 @@ class GeminiLLM(LLMPort):
         project = self.__configuration.project_id
         location = self.__configuration.location or "global"
 
-        if self.__configuration.credentials_path:
-            path = Path(self.__configuration.credentials_path)
-            if path.exists():
-                self.__credentials = service_account.Credentials.from_service_account_file(
-                    filename=str(path),
+        if self.__configuration.credentials:
+            if isinstance(self.__configuration.credentials, dict):
+                self.__credentials = service_account.Credentials.from_service_account_info(
+                    info=self.__configuration.credentials,
                     scopes=["https://www.googleapis.com/auth/cloud-platform"],
                 )
                 if not project:
                     project = getattr(self.__credentials, "project_id", None)
-            else:
-                logger.warning(f"Credential file not found at: {path}")
 
-        http_options = {"timeout": self.__configuration.timeout * 1000}  # ms
+            elif isinstance(self.__configuration.credentials, str):
+                path = Path(self.__configuration.credentials)
+                if path.exists():
+                    self.__credentials = service_account.Credentials.from_service_account_file(
+                        filename=str(path),
+                        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                    )
+                    if not project:
+                        project = getattr(self.__credentials, "project_id", None)
+                else:
+                    logger.warning(f"Credential file not found at: {path}")
+
+        http_options = {"timeout": self.__configuration.timeout * 1000}
 
         try:
             if self.__configuration.api_key:
@@ -202,11 +211,12 @@ class GeminiLLM(LLMPort):
                     logger.warning(
                         f"Quota exceeded (429). Pausing before retry {attempt + 1}/{max_retries}..."
                     )
-                    jitter = random.random() * 5.0  # nosec
-                    delay = 30.0 + jitter
+                    jitter = random.random() * 2.0  # nosec
+                    # Use configured backoff for rate limits
+                    delay = (self.__configuration.rate_limit_backoff * (attempt + 1)) + jitter
                 else:
                     jitter = random.random() * 0.5  # nosec
-                    delay = (1.0 * (2**attempt)) + jitter  # Using 1.0s base delay
+                    delay = (self.__configuration.retry_delay * (2**attempt)) + jitter
 
                 await asyncio.sleep(delay=delay)
 

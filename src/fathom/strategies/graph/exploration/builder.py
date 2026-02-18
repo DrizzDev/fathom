@@ -1,75 +1,94 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import List, Optional
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
+from fathom.constants.graph import NodeName
+from fathom.interfaces.graph import GraphBuilder
 from fathom.strategies.graph.context import GraphContext
-from fathom.strategies.graph.exploration.nodes import build_exploration_nodes
+from fathom.strategies.graph.exploration.nodes import ExplorationGraphFactory
 from fathom.strategies.graph.exploration.state import ExplorationGraphState
 
-if TYPE_CHECKING:
-    from langgraph.graph.state import CompiledStateGraph
 
-
-def build_exploration_graph(
-    context: GraphContext,
-) -> CompiledStateGraph:
+class ExplorationGraphBuilder(GraphBuilder):
     """
-    Builds the Exploration Execution Graph.
+    Constructs the LangGraph workflow for autonomous application exploration.
     """
 
-    nodes = build_exploration_nodes(context=context)
+    def __init__(self, context: GraphContext) -> None:
+        self.__context = context
 
-    workflow = StateGraph(ExplorationGraphState)
+    def build(
+        self,
+        interrupt_before: Optional[List[str]] = None,
+        checkpointer: Optional[BaseCheckpointSaver] = None,
+    ) -> CompiledStateGraph:
+        """
+        Builds and compiles the exploration graph.
+        """
 
-    workflow.add_node("ground", nodes["ground"])
-    workflow.add_node("bfs_route", nodes["bfs_route"])
-    workflow.add_node("scan", nodes["scan"])
-    workflow.add_node("execute", nodes["execute"])
-    workflow.add_node("navigate", nodes["navigate"])
-    workflow.add_node("record", nodes["record"])
+        workflow = StateGraph(ExplorationGraphState)
+        nodes = ExplorationGraphFactory.build(self.__context)
 
-    workflow.set_entry_point("ground")
+        # 1. Add Nodes
+        workflow.add_node(NodeName.GROUND, nodes[NodeName.GROUND])
 
-    workflow.add_edge("ground", "bfs_route")
+        workflow.add_node(NodeName.SCAN, nodes[NodeName.SCAN])
+        workflow.add_node(NodeName.EXECUTE, nodes[NodeName.EXECUTE])
 
-    def route_bfs(state: ExplorationGraphState) -> Literal["scan", "navigate", "end"]:
-        phase = state.get("bfs_phase", "scan")
-        if context.is_cancelled:
-            return "end"
-        if state.get("is_complete"):
-            return "end"
+        workflow.add_node(NodeName.RECORD, nodes[NodeName.RECORD])
+        workflow.add_node(NodeName.NAVIGATE, nodes[NodeName.NAVIGATE])
+        workflow.add_node(NodeName.BFS_ROUTE, nodes[NodeName.BFS_ROUTE])
 
-        if phase == "scan":
-            return "scan"
-        return "navigate"  # Fallback/TODO
+        # 2. Define Entry & Edges
+        workflow.set_entry_point(NodeName.GROUND)
+        workflow.add_edge(NodeName.GROUND, NodeName.SCAN)
 
-    workflow.add_conditional_edges("bfs_route", route_bfs, ["scan", "navigate", "end"])
+        workflow.add_conditional_edges(
+            NodeName.SCAN,
+            self.__route_after_scan,
+            {
+                NodeName.EXECUTE: NodeName.EXECUTE,
+                NodeName.BFS_ROUTE: NodeName.BFS_ROUTE,
+            },
+        )
 
-    def route_scan(state: ExplorationGraphState) -> Literal["execute", "bfs_route", "end"]:
-        if context.is_cancelled:
-            return "end"
+        workflow.add_edge(NodeName.EXECUTE, NodeName.RECORD)
+
+        workflow.add_conditional_edges(
+            NodeName.RECORD,
+            self.__route_after_record,
+            {
+                NodeName.END: NodeName.END,
+                NodeName.GROUND: NodeName.GROUND,
+            },
+        )
+
+        # BFS specific navigation edges
+        workflow.add_edge(NodeName.BFS_ROUTE, NodeName.NAVIGATE)
+        workflow.add_edge(NodeName.NAVIGATE, NodeName.GROUND)
+
+        return workflow.compile(checkpointer=checkpointer, interrupt_before=interrupt_before)
+
+    def __route_after_scan(self, state: ExplorationGraphState) -> str:
+        """
+        Route after scan based on content exhaustion.
+        """
 
         if state.get("content_exhausted"):
-            # Switch phase? For now just loop or end.
-            return "end"  # Stop if screen exhausted (simple version)
+            return NodeName.BFS_ROUTE
 
-        if not state.get("action"):
-            return "bfs_route"
+        return NodeName.EXECUTE
 
-        return "execute"
+    def __route_after_record(self, state: ExplorationGraphState) -> str:
+        """
+        Route after record based on completion status.
+        """
 
-    workflow.add_conditional_edges("scan", route_scan, ["execute", "bfs_route", "end"])
+        if state.get("is_complete"):
+            return NodeName.END
 
-    workflow.add_edge("execute", "record")
-    workflow.add_edge("navigate", "record")
-
-    def route_record(state: ExplorationGraphState) -> Literal["ground", "end"]:
-        if state.get("is_complete") or context.is_cancelled:
-            return "end"
-        return "ground"
-
-    workflow.add_conditional_edges("record", route_record, ["ground", "end"])
-
-    return workflow.compile()
+        return NodeName.GROUND

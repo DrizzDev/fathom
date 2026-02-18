@@ -1,32 +1,25 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Literal, Optional
+from typing import List, Optional, cast
 
-from langgraph.graph import END, StateGraph
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.graph import StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
-from fathom.constants.graph import GraphKey, NodeName
+from fathom.constants.graph import NodeName
+from fathom.constants.state import CommonStateKey, IntentStateKey
 from fathom.interfaces.graph import GraphBuilder
-from fathom.strategies.graph.intent.nodes import build_intent_nodes
+from fathom.strategies.graph.context import GraphContext
+from fathom.strategies.graph.intent.nodes import IntentGraphFactory
 from fathom.strategies.graph.state import IntentGraphState
-
-if TYPE_CHECKING:
-    from langgraph.checkpoint.base import BaseCheckpointSaver
-    from langgraph.graph.state import CompiledStateGraph
-
-    from fathom.strategies.graph.context import GraphContext
 
 
 class IntentGraphBuilder(GraphBuilder):
     """
-    Builder class for the Intent Execution Graph.
-    Implements clean separation of node definition, routing, and compilation.
+    Constructs the LangGraph workflow for intent execution.
     """
 
     def __init__(self, context: GraphContext) -> None:
-        """
-        Initialize builder with shared graph context.
-        """
-
         self.__context = context
 
     def build(
@@ -35,82 +28,65 @@ class IntentGraphBuilder(GraphBuilder):
         checkpointer: Optional[BaseCheckpointSaver] = None,
     ) -> CompiledStateGraph:
         """
-        Builds and compiles the Intent Execution Graph.
+        Builds and compiles the graph.
         """
 
-        # 1. Build Nodes
-        nodes = build_intent_nodes(context=self.__context)
-
-        # 2. Define Workflow
-        workflow = StateGraph(state_schema=IntentGraphState)
+        workflow = StateGraph(IntentGraphState)
+        nodes = IntentGraphFactory.build(context=self.__context)
 
         workflow.add_node(NodeName.GROUND, nodes[NodeName.GROUND])
         workflow.add_node(NodeName.ANALYZE, nodes[NodeName.ANALYZE])
         workflow.add_node(NodeName.EXECUTE, nodes[NodeName.EXECUTE])
         workflow.add_node(NodeName.RECORD, nodes[NodeName.RECORD])
 
-        # 3. Define Edges
-        workflow.set_entry_point(key=NodeName.GROUND)
+        workflow.set_entry_point(NodeName.GROUND)
+        workflow.add_edge(NodeName.GROUND, NodeName.ANALYZE)
 
-        workflow.add_edge(start_key=NodeName.GROUND, end_key=NodeName.ANALYZE)
-
-        # Conditional Routing
         workflow.add_conditional_edges(
-            source=NodeName.ANALYZE,
-            path=self.__route_after_analyze,
-            path_map={
-                NodeName.END: END,
+            NodeName.ANALYZE,
+            self.__route_after_analyze,
+            {
+                NodeName.END: NodeName.END,
                 NodeName.GROUND: NodeName.GROUND,
                 NodeName.EXECUTE: NodeName.EXECUTE,
             },
         )
 
-        workflow.add_edge(start_key=NodeName.EXECUTE, end_key=NodeName.RECORD)
+        workflow.add_edge(NodeName.EXECUTE, NodeName.RECORD)
 
         workflow.add_conditional_edges(
-            source=NodeName.RECORD,
-            path=self.__route_after_record,
-            path_map={NodeName.GROUND: NodeName.GROUND, NodeName.END: END},
+            NodeName.RECORD,
+            self.__route_after_record,
+            {
+                NodeName.END: NodeName.END,
+                NodeName.GROUND: NodeName.GROUND,
+            },
         )
 
-        # 4. Compile with injected dependencies
-        return workflow.compile(
-            checkpointer=checkpointer,
-            interrupt_before=interrupt_before or [],
-        )
+        return workflow.compile(checkpointer=checkpointer, interrupt_before=interrupt_before)
 
-    def __route_after_analyze(
-        self, state: IntentGraphState
-    ) -> Literal[NodeName.EXECUTE, NodeName.GROUND, NodeName.END]:
+    def __route_after_analyze(self, state: IntentGraphState) -> str:
         """
-        Routes execution after analysis node.
+        Route after analyze based on completion and retry status.
         """
 
-        if state.get(GraphKey.IS_COMPLETE):
+        if state.get(cast("str", CommonStateKey.IS_COMPLETE)):
             return NodeName.END
 
-        if state.get(GraphKey.SHOULD_RETRY):
+        if state.get(cast("str", IntentStateKey.SHOULD_RETRY)):
             return NodeName.GROUND
 
-        if not state.get(GraphKey.PLANNED_STEP):
-            return NodeName.END
+        if not state.get(cast("str", IntentStateKey.PLANNED_STEP)):
+            return NodeName.GROUND
 
         return NodeName.EXECUTE
 
-    def __route_after_record(
-        self, state: IntentGraphState
-    ) -> Literal[NodeName.GROUND, NodeName.END]:
+    def __route_after_record(self, state: IntentGraphState) -> str:
         """
-        Routes execution after recording node.
+        Route after record based on completion status.
         """
 
-        if state.get(GraphKey.IS_COMPLETE):
-            return NodeName.END
-
-        if self.__context.agent_state.step_count >= self.__context.max_steps:
-            return NodeName.END
-
-        if self.__context.is_cancelled:
+        if state.get(cast("str", CommonStateKey.IS_COMPLETE)):
             return NodeName.END
 
         return NodeName.GROUND

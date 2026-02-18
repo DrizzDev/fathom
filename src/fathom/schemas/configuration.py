@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -20,13 +20,17 @@ class LLMConfiguration(BaseModel):
     # Provider-specific settings (GCP/Azure/OpenAI specific)
     project_id: Optional[str] = Field(default=None, description="Project identifier")
     location: Optional[str] = Field(default=None, description="Deployment location/region")
-    credentials_path: Optional[str] = Field(default=None, description="Path to credential JSON")
+    credentials: Optional[Union[str, Dict[str, Any]]] = Field(
+        default=None,
+        description="Credentials as file path (str) or JSON object (dict)",
+    )
 
     # Common hyper-parameters
     max_retries: int = Field(default=3, description="Maximum retry attempts")
     temperature: float = Field(default=0.0, description="Sampling temperature")
     timeout: float = Field(default=60.0, description="Request timeout in seconds")
     retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
+    rate_limit_backoff: float = Field(default=5.0, description="Base backoff for rate limit errors")
 
     # Backend storage (for artifacts like image caching)
     storage_bucket: Optional[str] = Field(
@@ -66,7 +70,7 @@ class DeviceConfiguration(BaseModel):
     # Connectivity Details
     session_id: Optional[str] = Field(default=None, description="Remote session identifier")
     provider_url: Optional[str] = Field(default=None, description="Remote provider endpoint")
-    serial: Optional[str] = Field(default=None, description="Local serial or remote identifier")
+    serial_number: Optional[str] = Field(default=None, description="Device serial identifier")
     authentication_token: Optional[str] = Field(
         default=None, description="Access token for remote provider"
     )
@@ -84,6 +88,27 @@ class ExplorationConfiguration(BaseModel):
     timeout: int = Field(default=300, description="Global timeout for the run")
     random_seed: Optional[int] = Field(
         default=None, description="Seed for deterministic exploration"
+    )
+
+    # Tap action boundaries
+    tap_margin_x: int = Field(
+        default=50,
+        description="Minimum horizontal distance from screen edges to avoid system UI elements",
+    )
+    tap_margin_y: int = Field(
+        default=100,
+        description="Minimum vertical distance from screen edges to avoid status/navigation bars",
+    )
+    tap_max_x: int = Field(
+        default=950,
+        description="Maximum X coordinate for exploratory taps to stay within safe bounds",
+    )
+    tap_max_y: int = Field(
+        default=900,
+        description="Maximum Y coordinate for exploratory taps to stay within safe bounds",
+    )
+    tap_target_size: int = Field(
+        default=50, description="Size of tap target bounding box for action generation"
     )
 
 

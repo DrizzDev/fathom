@@ -147,7 +147,7 @@ class FathomActivities:
         llm_configuration = LLMConfiguration(
             location=planner_configuration.get("location"),
             project_id=planner_configuration.get("project_id"),
-            credentials_path=planner_configuration.get("credentials_path"),
+            credentials=planner_configuration.get("credentials"),
             model=planner_configuration.get("model", "gemini-2.0-flash-exp"),
         )
 
@@ -162,7 +162,7 @@ class FathomActivities:
                 authentication_token=request.get("auth_token"),
             )
         else:
-            device_configuration = DeviceConfiguration(type="LOCAL", serial=session_id)
+            device_configuration = DeviceConfiguration(type="LOCAL", serial_number=session_id)
 
         return {"device": device_configuration, "llm": llm_configuration}
 
@@ -181,8 +181,8 @@ class FathomActivities:
 
         return (
             Fathom.builder()
-            .device(device=device_adapter)
-            .signal(signal=signal_adapter)
-            .llm(llm=GeminiLLM(configuration=llm_configuration))
+            .with_device(port=device_adapter)
+            .with_signal(port=signal_adapter)
+            .with_llm(port=GeminiLLM(configuration=llm_configuration))
             .build()
         )

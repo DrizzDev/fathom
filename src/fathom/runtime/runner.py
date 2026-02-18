@@ -19,6 +19,7 @@ from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExplorationResult, IntentResult
+from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
 
 
@@ -27,8 +28,7 @@ class FathomRunner:
     Executes Fathom workflows with configured ports.
 
     This is the main execution orchestrator that wires together all ports
-    and coordinates the execution of automation workflows using the new
-    hexagonal architecture.
+    and coordinates the execution of automation workflows using hexagonal architecture.
 
     The runner:
     - Wires ExecutionEngine and ContextManager
@@ -100,24 +100,18 @@ class FathomRunner:
     async def run_intent(
         self,
         intent: str,
-        max_steps: int = 20,
+        max_steps: int = 100,
         use_xml: bool = False,
         request_id: Optional[str] = None,
-        device_serial: Optional[str] = None,
-        prompt_version: Optional[str] = None,
         realignment: Optional[RealignmentPolicy] = None,
     ) -> IntentResult:
         """
         Execute intent-based workflow.
         """
 
-        _ = device_serial
-        _ = prompt_version
-
         start_time = time.time()
         workflow_id = request_id or uuid.uuid4().hex[:8]
 
-        # Fetch package name from device at start
         try:
             package_name = await self.__device.get_current_package()
         except Exception as exception:
@@ -126,12 +120,18 @@ class FathomRunner:
                 "Failed to get package name, using fallback", error=str(exception)
             )
 
+        if self.__device.configuration:
+            device_serial = self.__device.configuration.serial_number
+        else:
+            device_serial = None
+
         self.__telemetry.info(
             "Starting intent workflow",
             intent=intent,
             max_steps=max_steps,
             workflow_id=workflow_id,
             package_name=package_name,
+            device_serial=device_serial,
         )
 
         # Initialize context
@@ -150,6 +150,7 @@ class FathomRunner:
             realignment=realignment,
             package_name=package_name,
             telemetry=self.__telemetry,
+            configuration=self.__config,
             path_manager=self.__path_manager,
             summarizer=LLMSummarizer(llm=self.__llm),
             max_steps=max_steps or self.__config.intent.max_steps,
@@ -159,7 +160,7 @@ class FathomRunner:
 
         try:
             # Execute strategy
-            execution_result = await strategy.execute(max_steps=max_steps)
+            execution_result = await strategy.execute()
 
             # Get progress info
             progress = strategy.get_progress()
@@ -173,20 +174,20 @@ class FathomRunner:
 
             # Build IntentResult
             duration = time.time() - start_time
+            completion_reason = "Completed successfully" if execution_result.success else "Failed"
 
             result = IntentResult(
-                success=execution_result.success,
-                completion_reason=execution_result.error
-                or ("Completed successfully" if execution_result.success else "Failed"),
-                workflow_id=workflow_id,
-                status="completed" if execution_result.success else "failed",
-                duration=duration,
                 intent=intent,
+                metrics=metrics,
+                duration=duration,
+                workflow_id=workflow_id,
+                error=execution_result.error,
+                memory_summary=memory_summary,
+                success=execution_result.success,
+                completion_reason=completion_reason,
                 steps_taken=progress.get("step_count", 0),
                 steps_executed=progress.get("step_count", 0),
-                metrics=metrics,
-                memory_summary=memory_summary,
-                error=execution_result.error,
+                status="completed" if execution_result.success else "failed",
             )
 
             self.__telemetry.info(
@@ -203,23 +204,12 @@ class FathomRunner:
 
     async def run_exploration(
         self,
-        max_steps: int = 50,
+        max_steps: int = 100,
         request_id: Optional[str] = None,
-        device_serial: Optional[str] = None,
     ) -> ExplorationResult:
         """
         Execute exploration workflow.
-
-        Args:
-            max_steps: Maximum exploration steps
-            request_id: Optional workflow ID
-            device_serial: Device serial (unused, kept for compatibility)
-
-        Returns:
-            ExplorationResult with discovery metrics
         """
-
-        _ = device_serial
 
         start_time = time.time()
         workflow_id = request_id or uuid.uuid4().hex[:8]
@@ -233,19 +223,22 @@ class FathomRunner:
                 "Failed to get package name, using fallback", error=str(exception)
             )
 
+        if self.__device.configuration:
+            device_serial = self.__device.configuration.serial_number
+        else:
+            device_serial = None
+
         self.__telemetry.info(
             "Starting exploration workflow",
             max_steps=max_steps,
             workflow_id=workflow_id,
             package_name=package_name,
+            device_serial=device_serial,
         )
 
         # Initialize context
         self.__context_manager = ContextManager(memory=self.__memory, workflow_id=workflow_id)
         self.__context_manager.set_roadmap(intent="Explore application structure")
-
-        # Create and execute strategy
-        from fathom.strategies.exploration import ExplorationStrategy
 
         strategy = ExplorationStrategy(
             llm=self.__llm,
@@ -256,9 +249,10 @@ class FathomRunner:
             workflow_id=workflow_id,
             package_name=package_name,
             telemetry=self.__telemetry,
+            configuration=self.__config,
             path_manager=self.__path_manager,
-            timeout=self.__config.exploration.timeout,
             seed=self.__config.exploration.random_seed,
+            timeout=float(self.__config.exploration.timeout),
             max_steps=max_steps or self.__config.exploration.max_steps,
         )
 
@@ -266,9 +260,7 @@ class FathomRunner:
 
         try:
             # Execute strategy
-            execution_result = await strategy.execute(
-                max_steps=max_steps or self.__config.exploration.max_steps
-            )
+            execution_result = await strategy.execute()
 
             # Get progress info
             progress = strategy.get_progress()
@@ -340,8 +332,10 @@ class FathomRunner:
         Cleanup resources.
         """
 
-        # Cleanup LLM resources
-        await self.__llm.cleanup()
+        try:
+            await self.__llm.cleanup()
+        except Exception as exception:
+            self.__telemetry.warning(f"LLM cleanup failed: {exception}")
 
         self.__telemetry.info("Runner cleanup completed")
 

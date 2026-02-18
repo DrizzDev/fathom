@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from logging import getLogger
 from typing import Any, Dict, Optional
@@ -11,10 +12,11 @@ from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.results import ExecutionResult
 from fathom.strategies.graph.context import GraphContext
-from fathom.strategies.graph.exploration.builder import build_exploration_graph
+from fathom.strategies.graph.exploration.builder import ExplorationGraphBuilder
 
 logger = getLogger(name=__name__)
 
@@ -26,6 +28,12 @@ class ExplorationStrategy:
 
     def __init__(
         self,
+        max_steps: int,
+        timeout: float,
+        workflow_id: str,
+        package_name: str,
+        seed: Optional[int],
+        *,
         llm: LLMPort,
         device: DevicePort,
         memory: MemoryPort,
@@ -33,15 +41,17 @@ class ExplorationStrategy:
         storage: StoragePort,
         telemetry: TelemetryPort,
         path_manager: SharedPathManager,
-        *,
-        max_steps: int = 100,
-        timeout: float = 3600.0,
-        seed: Optional[int] = None,
-        workflow_id: str = "exploration",
-        package_name: str = "unknown_app",
+        configuration: FathomConfiguration,
     ) -> None:
+        self.__seed = seed
+        self.__timeout = timeout
+        intent = "Explore application"
+
+        # Exploration strategy doesn't use XML grounding (uses visual-only approach)
         self.__graph_context = GraphContext(
             llm=llm,
+            intent=intent,
+            use_xml=False,
             device=device,
             signal=signal,
             memory=memory,
@@ -51,25 +61,35 @@ class ExplorationStrategy:
             workflow_id=workflow_id,
             package_name=package_name,
             path_manager=path_manager,
-            intent="Explore application",
+            configuration=configuration,
         )
 
-        self.__graph = build_exploration_graph(context=self.__graph_context)
+        builder = ExplorationGraphBuilder(context=self.__graph_context)
+        self.__graph = builder.build()
 
-    async def execute(self, max_steps: int) -> ExecutionResult:
+    async def execute(self) -> ExecutionResult:
         """
-        Execute exploration.
+        Execute exploration with timeout.
         """
 
-        _ = max_steps
         start_time = time.time()
 
         try:
-            await self.__graph.ainvoke({})
+            # Execute with timeout if configured
+            if self.__timeout > 0:
+                await asyncio.wait_for(self.__graph.ainvoke({}), timeout=self.__timeout)
+            else:
+                await self.__graph.ainvoke({})
 
             duration = int((time.time() - start_time) * 1000)
             return ExecutionResult(success=True, duration=duration)
 
+        except asyncio.TimeoutError:
+            logger.warning(f"Exploration timed out after {self.__timeout}s")
+            duration = int((time.time() - start_time) * 1000)
+            return ExecutionResult(
+                success=False, duration=duration, error=f"Timeout after {self.__timeout}s"
+            )
         except Exception as exception:
             logger.exception(f"Exploration failed: {exception}")
             duration = int((time.time() - start_time) * 1000)

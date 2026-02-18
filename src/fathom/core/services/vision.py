@@ -10,8 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
-from fathom.core.definitions import ToolRegistry
 from fathom.core.prompts.factory import PromptFactory
+from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.audit import AuditService
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort

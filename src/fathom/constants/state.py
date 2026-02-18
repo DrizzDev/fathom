@@ -1,41 +1,75 @@
 from enum import StrEnum
 
 
-class StateKey(StrEnum):
+class CommonStateKey(StrEnum):
     """
-    Keys for IntentGraphState dictionary.
+    Common state keys shared across all graph states.
     """
 
     # Configuration
-    INTENT = "intent"
-    USE_XML = "use_xml"
-    MAX_STEPS = "max_steps"
+    MAX_STEPS = "MAX_STEPS"
 
     # Execution
-    STEP_NUMBER = "step_number"
-    IS_COMPLETE = "is_complete"
-    COMPLETION_REASON = "completion_reason"
-
-    SHOULD_RETRY = "should_retry"
-    INJECTED_CONTEXT = "injected_context"
+    STEP_NUMBER = "STEP_NUMBER"
+    IS_COMPLETE = "IS_COMPLETE"
+    COMPLETION_REASON = "COMPLETION_REASON"
 
     # Artifacts
-    CAPTURE = "capture"
-    SCREEN_STATE = "screen_state"
-    IS_NEW_SCREEN = "is_new_screen"
-
-    ELEMENTS = "elements"
-    XML_CONTENT = "xml_content"
+    CAPTURE = "CAPTURE"
+    SCREEN_STATE = "SCREEN_STATE"
+    IS_NEW_SCREEN = "IS_NEW_SCREEN"
 
     # Analysis
-    PLAN = "plan"
-    ANALYSIS = "analysis"
-    PLANNED_STEP = "planned_step"
+    ANALYSIS = "ANALYSIS"
 
     # Execution Result
-    STEP_RESULT = "step_result"
+    STEP_RESULT = "STEP_RESULT"
 
     # Metrics
-    ANALYSIS_DURATION = "analysis_duration"
-    GROUNDING_DURATION = "grounding_duration"
-    EXECUTION_DURATION = "execution_duration"
+    ANALYSIS_DURATION = "ANALYSIS_DURATION"
+    GROUNDING_DURATION = "GROUNDING_DURATION"
+    EXECUTION_DURATION = "EXECUTION_DURATION"
+
+
+class IntentStateKey(StrEnum):
+    """
+    Intent-specific state keys for IntentGraphState.
+    """
+
+    # Configuration
+    INTENT = "INTENT"
+    USE_XML = "USE_XML"
+
+    # Execution
+    SHOULD_RETRY = "SHOULD_RETRY"
+    INJECTED_CONTEXT = "INJECTED_CONTEXT"
+
+    # Artifacts
+    ELEMENTS = "ELEMENTS"
+    XML_CONTENT = "XML_CONTENT"
+
+    # Analysis
+    PLAN = "PLAN"
+    PLANNED_STEP = "PLANNED_STEP"
+
+
+class ExplorationStateKey(StrEnum):
+    """
+    Exploration-specific state keys for ExplorationGraphState.
+    """
+
+    # BFS State
+    BFS_PHASE = "BFS_PHASE"
+    BFS_QUEUE = "BFS_QUEUE"
+    VISITED_HASHES = "VISITED_HASHES"
+    CURRENT_PATH = "CURRENT_PATH"
+    PENDING_NAV = "PENDING_NAV"
+    SCANNING_HASH = "SCANNING_HASH"
+    ROOT_HASH = "ROOT_HASH"
+
+    # Scan artifacts
+    ACTION = "ACTION"
+    CONTENT_EXHAUSTED = "CONTENT_EXHAUSTED"
+
+    # History
+    STEP_RESULTS = "STEP_RESULTS"

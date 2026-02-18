@@ -1,45 +1,68 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import logging
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict
 
 from fathom.constants import ActionType
+from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.constants.state import CommonStateKey as CKey
+from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.exploration.state import ExplorationGraphState
-from fathom.utils.coordinates import CoordinateConverter
+
+logger = logging.getLogger(__name__)
 
 
-def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., Any]]:
+class ExplorationNodeProvider:
     """
-    Builds the node functions for the exploration graph.
+    Provides LangGraph nodes for application exploration.
+    Encapsulates dependencies and shared private logic.
     """
 
-    async def ground_node(state: ExplorationGraphState) -> ExplorationGraphState:
-        """Capture screen and update state."""
-        if context.is_cancelled:
-            return {**state, "is_complete": True}
+    def __init__(self, context: GraphContext) -> None:
+        """
+        Initialize provider with shared context.
+        """
+
+        self.__context = context
+
+    async def ground(self, state: ExplorationGraphState) -> ExplorationGraphState:
+        """
+        Capture screen and update state.
+        """
+
+        if self.__context.is_cancelled:
+            result = ExplorationGraphState(**state)
+            result[CKey.IS_COMPLETE] = True
+            result[CKey.COMPLETION_REASON] = "Cancelled"
+            return result
 
         start_time = time.time()
 
         try:
-            screenshot_bytes = await context.device.capture_screen()
-            width, height = await context.device.get_dimensions()
+            screenshot_bytes = await self.__context.device.capture_screen()
+            width, height = await self.__context.device.get_dimensions()
 
             try:
-                activity = await context.device.get_current_package()
+                activity = await self.__context.device.get_current_package()
             except Exception as exception:
-                context.telemetry.warning("Failed to get current package", error=str(exception))
                 activity = "unknown"
+                self.__context.telemetry.warning(
+                    "Failed to get current package", error=str(exception)
+                )
 
-            storage_id = await context.storage.save(
+            storage_id = await self.__context.storage.save(
                 data=screenshot_bytes,
                 metadata={
                     "type": "screenshot",
                     "package_name": activity,
-                    "session_id": context.workflow_id,
                     "timestamp": time.time(),
+                    "session_id": self.__context.workflow_id,
                 },
             )
 
@@ -51,11 +74,6 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
                 timestamp=int(time.time() * 1000),
                 metadata={"storage_id": storage_id},
             )
-
-            # Compute Hash
-            import hashlib
-
-            from fathom.constants.execution import VISUAL_HASH_LENGTH
 
             visual_hash = hashlib.sha256(screen.image).hexdigest()[:VISUAL_HASH_LENGTH]
 
@@ -69,43 +87,49 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
                 structural_hash="0" * VISUAL_HASH_LENGTH,
             )
 
-            is_new = context.agent_state.update_screen(screen=screen_state)
+            is_new = self.__context.agent_state.update_screen(screen=screen_state)
 
-            return {
-                **state,
-                "capture": screen,
-                "screen_state": screen_state,
-                "is_new_screen": is_new,
-                "grounding_duration": time.time() - start_time,
-                "step_result": None,
-                "action": None,
-            }
+            result = ExplorationGraphState(**state)
+            result[CKey.CAPTURE] = screen
+            result[CKey.SCREEN_STATE] = screen_state
+            result[CKey.IS_NEW_SCREEN] = is_new
+            result[CKey.GROUNDING_DURATION] = time.time() - start_time
+            result[CKey.STEP_RESULT] = None
+            result[EKey.ACTION] = None
+            return result
 
-        except Exception:
-            return {**state, "is_complete": True, "completion_reason": "Capture failed"}
+        except Exception as exception:
+            logger.error(f"Exploration grounding failed: {exception}")
+            result = ExplorationGraphState(**state)
+            result[CKey.IS_COMPLETE] = True
+            result[CKey.COMPLETION_REASON] = "Capture failed"
+            return result
 
-    async def scan_node(state: ExplorationGraphState) -> ExplorationGraphState:
+    async def scan(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
         Scan the screen using Vision Service to find next action.
         """
-        if context.is_cancelled:
-            return {**state, "is_complete": True}
 
-        capture: Optional[ScreenCapture] = state.get("capture")
+        if self.__context.is_cancelled:
+            result = ExplorationGraphState()
+            result[CKey.IS_COMPLETE] = True
+            return result
+
+        capture = state.get_capture()
         if not capture:
-            return {**state, "content_exhausted": True}
+            result = ExplorationGraphState(**state)
+            result[EKey.CONTENT_EXHAUSTED] = True
+            return result
 
         start = time.time()
 
-        # Update: VisionService.analyze now requires context_manager
-        analysis = await context.vision.analyze(
-            intent="Explore this app. Find a unique interactive element that hasn't been clicked yet.",
+        analysis = await self.__context.vision.analyze(
+            intent="Explore this app. Find a unique interactive element.",
             capture=capture,
-            context_manager=context.context_manager,
+            context_manager=self.__context.context_manager,
             tracking_note=None,
         )
 
-        # If no action found or action is "complete", mark exhausted
         exhausted = False
         if (
             analysis.is_goal_complete
@@ -114,122 +138,233 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
         ):
             exhausted = True
 
-        return {
-            **state,
-            "action": analysis.action if not exhausted else None,
-            "analysis": analysis,
-            "content_exhausted": exhausted,
-            "analysis_duration": time.time() - start,
-        }
+        result = ExplorationGraphState(**state)
+        result[EKey.ACTION] = analysis.action if not exhausted else None
+        result[CKey.ANALYSIS] = analysis
+        result[EKey.CONTENT_EXHAUSTED] = exhausted
+        result[CKey.ANALYSIS_DURATION] = time.time() - start
+        return result
 
-    async def execute_node(state: ExplorationGraphState) -> ExplorationGraphState:
-        """Execute the action."""
-        if context.is_cancelled:
-            return {**state, "is_complete": True}
+    async def execute(self, state: ExplorationGraphState) -> ExplorationGraphState:
+        """
+        Execute the action via ActionExecutor.
+        """
 
-        action = state.get("action")
-        if not action:
+        if self.__context.is_cancelled:
+            result = ExplorationGraphState()
+            result[CKey.IS_COMPLETE] = True
+            return result
+
+        action = state.get_action()
+        capture = state.get_capture()
+
+        if not action or not capture:
             return state
 
-        start = time.time()
-        size = await context.device.get_dimensions()
-        converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
+        start_time = time.time()
 
-        # Execute logic (simplified tap/scroll)
-        success = False
-        try:
-            if action.action_type == ActionType.TAP:
-                if action.bounds:
-                    x, y = converter.center_to_pixels(bounds=action.bounds)
-                    await context.device.tap(x=x, y=y)
-                    success = True
-            elif action.action_type == ActionType.SCROLL:
-                x1, y1, x2, y2 = (
-                    size[0] // 2,
-                    size[1] // 2 + 300,
-                    size[0] // 2,
-                    size[1] // 2 - 300,
-                )
-                await context.device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
-                success = True
-            elif action.action_type == ActionType.BACK:
-                await context.device.back()
-                success = True
-        except Exception:
-            success = False
-
-        duration = time.time() - start
-
-        screen_state: Optional[ScreenState] = state.get("screen_state")
-        screen_hash = screen_state.visual_hash if screen_state else "0"
-
+        # Step construction for ActionExecutor
         step = Step(
             action=action,
-            step_number=context.agent_state.step_count,
-            screen_hash=screen_hash,
+            step_number=self.__context.agent_state.step_count,
+            screen_hash="0",
         )
+
+        package_name = "unknown"
+        screen_state = state.get_screen_state()
+        if screen_state and screen_state.activity:
+            package_name = screen_state.activity
+
+        # Delegate to ActionExecutor for consistent retries and tracing
+        execution_result = await self.__context.action_executor.act(
+            step=step,
+            pre_capture=capture,
+            package_name=package_name,
+            session_id=self.__context.workflow_id,
+        )
+
+        # Post-action stability wait
+        await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
+
+        duration = time.time() - start_time
 
         step_result = StepResult(
             step=step,
-            success=success,
+            success=execution_result.success,
             duration=int(duration * 1000),
             screen_changed=True,
-            pre_hash=step.screen_hash,
+            pre_hash=screen_state.visual_hash if screen_state else "0",
             post_hash="0",
         )
 
-        return {
-            **state,
-            "step_result": step_result,
-            "execution_duration": duration,
-        }
+        result = ExplorationGraphState(**state)
+        result[CKey.STEP_RESULT] = step_result
+        result[CKey.EXECUTION_DURATION] = duration
+        return result
 
-    async def record_node(state: ExplorationGraphState) -> ExplorationGraphState:
-        """Record result and update queues."""
-        if context.is_cancelled:
-            return {**state, "is_complete": True}
+    async def record(self, state: ExplorationGraphState) -> ExplorationGraphState:
+        """
+        Record result and update queues.
+        """
 
-        step_result: Optional[StepResult] = state.get("step_result")
+        if self.__context.is_cancelled:
+            result = ExplorationGraphState()
+            result[CKey.IS_COMPLETE] = True
+            return result
+
+        step_result = state.get_step_result()
         if not step_result:
             return state
 
-        # Update Exploration Graph
-        screen_state: Optional[ScreenState] = state.get("screen_state")
-        if screen_state:
-            context.exploration_graph.add_screen(screen_state)
+        screen_state = state.get_screen_state()
+        if isinstance(screen_state, ScreenState):
+            self.__context.exploration_graph.add_screen(screen_state)
 
         if step_result.success and step_result.pre_hash and step_result.step.action:
-            context.exploration_graph.record_transition(
+            self.__context.exploration_graph.record_transition(
                 origin=step_result.pre_hash,
-                destination="0",  # Post hash not available yet
+                destination="0",
                 action=step_result.step.action.to_description(),
             )
 
-        # Record
-        context.agent_state.record_step(result=step_result)
-        context.history.save_step(result=step_result, intent="exploration")
+        self.__context.agent_state.record_step(result=step_result)
+        self.__context.history.save_step(result=step_result, intent="exploration")
 
-        # Check max steps
-        if context.agent_state.step_count >= context.max_steps:
-            return {**state, "is_complete": True, "completion_reason": "Max steps"}
+        if self.__context.agent_state.step_count >= self.__context.max_steps:
+            result = ExplorationGraphState(**state)
+            result[CKey.IS_COMPLETE] = True
+            result[CKey.COMPLETION_REASON] = "Max steps"
+            return result
 
         return state
 
-    async def navigate_node(state: ExplorationGraphState) -> ExplorationGraphState:
-        """Navigate to target screen (placeholder for BFS navigation)."""
-        # For now, just reset to SCAN phase
-        return {**state, "bfs_phase": "scan"}
+    async def navigate(self, state: ExplorationGraphState) -> ExplorationGraphState:
+        """
+        Navigate to target screen using BFS path.
+        Executes actions from pending_nav queue to reach unexplored screens.
+        """
 
-    async def bfs_route_node(state: ExplorationGraphState) -> ExplorationGraphState:
-        """Decide next phase."""
-        # Simple logic: If exhausted, maybe try navigation or end.
-        return state
+        if self.__context.is_cancelled:
+            result = ExplorationGraphState(**state)
+            result[CKey.IS_COMPLETE] = True
+            return result
 
-    return {
-        "ground": ground_node,
-        "scan": scan_node,
-        "execute": execute_node,
-        "record": record_node,
-        "navigate": navigate_node,
-        "bfs_route": bfs_route_node,
-    }
+        pending_nav = state.get(EKey.PENDING_NAV, [])
+
+        # If no pending navigation, we're done with this path
+        if not pending_nav:
+            result = ExplorationGraphState(**state)
+            result[EKey.BFS_PHASE] = "scan"
+            return result
+
+        # Pop the next action to execute
+        action_dict = pending_nav[0]
+        remaining_nav = pending_nav[1:]
+
+        # Reconstruct Action from dict
+        from fathom.schemas.actions import Action
+
+        action = Action(**action_dict)
+
+        # Execute the navigation action
+        step = Step(
+            action=action,
+            screen_hash="0",
+            step_number=self.__context.agent_state.step_count,
+        )
+
+        capture = state.get_capture()
+        if not capture:
+            result = ExplorationGraphState(**state)
+            result[EKey.BFS_PHASE] = "scan"
+            return result
+
+        await self.__context.action_executor.act(
+            step=step,
+            pre_capture=capture,
+            session_id=self.__context.workflow_id,
+            package_name=self.__context.package_name,
+        )
+
+        # Wait for stability
+        await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
+
+        # Update state with remaining navigation
+        result = ExplorationGraphState(**state)
+        result[EKey.PENDING_NAV] = remaining_nav
+        result[EKey.BFS_PHASE] = "scan" if not remaining_nav else "navigate"
+
+        return result
+
+    async def bfs_route(self, state: ExplorationGraphState) -> ExplorationGraphState:
+        """
+        Decide next BFS phase based on exploration state.
+        Routes between scanning current screen, returning to parent, or advancing to new screen.
+        """
+
+        if self.__context.is_cancelled:
+            result = ExplorationGraphState(**state)
+            result[CKey.IS_COMPLETE] = True
+            return result
+
+        # Get BFS state
+        visited_hashes = state.get(EKey.VISITED_HASHES, set())
+
+        # If current screen is exhausted, try to find next unexplored screen
+        if state.is_content_exhausted():
+            # Look for unexplored screens in the graph
+            unexplored = []
+            for hash_val, node in self.__context.exploration_graph.nodes.items():
+                if hash_val not in visited_hashes and node.should_explore():
+                    unexplored.append(hash_val)
+
+            if unexplored:
+                # Pick the first unexplored screen
+                target_hash = unexplored[0]
+
+                # Find path to target (simplified - just mark as visited)
+                # In a full implementation, this would use BFS to find the shortest path
+                visited_hashes.add(target_hash)
+
+                result = ExplorationGraphState(**state)
+                result[EKey.SCANNING_HASH] = target_hash
+                result[EKey.VISITED_HASHES] = visited_hashes
+                result[EKey.BFS_PHASE] = "navigate"
+                result[EKey.PENDING_NAV] = []  # Would contain path actions in full implementation
+                return result
+            else:
+                # No more screens to explore
+                result = ExplorationGraphState(**state)
+                result[CKey.IS_COMPLETE] = True
+                result[CKey.COMPLETION_REASON] = "All screens explored"
+                return result
+
+        # Continue scanning current screen
+        result = ExplorationGraphState(**state)
+        result[EKey.BFS_PHASE] = "scan"
+        return result
+
+
+class ExplorationGraphFactory:
+    """
+    Factory for building the Exploration Node functions.
+    """
+
+    @staticmethod
+    def build(context: GraphContext) -> Dict[str, Callable[..., Any]]:
+        """
+        Builds the node functions for the exploration graph.
+        """
+
+        from fathom.constants.graph import NodeName
+
+        provider = ExplorationNodeProvider(context=context)
+
+        return {
+            NodeName.SCAN: provider.scan,
+            NodeName.RECORD: provider.record,
+            NodeName.GROUND: provider.ground,
+            NodeName.EXECUTE: provider.execute,
+            NodeName.NAVIGATE: provider.navigate,
+            NodeName.BFS_ROUTE: provider.bfs_route,
+        }

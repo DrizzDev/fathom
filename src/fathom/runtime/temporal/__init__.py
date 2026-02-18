@@ -8,14 +8,15 @@ Installation:
     pip install fathom[temporal]
 
 Usage:
-    from fathom.runtime.temporal import FathomWorkflow
+    from fathom.runtime.temporal import FathomWorkflow, FathomActivities
 
     # Register with Temporal worker
+    activities = FathomActivities()
     worker = Worker(
         client,
         task_queue="fathom-tasks",
         workflows=[FathomWorkflow],
-        activities=[execute_fathom_intent, execute_fathom_exploration],
+        activities=[activities.execute_intent, activities.execute_exploration],
     )
 """
 
@@ -27,8 +28,8 @@ try:
 
     TEMPORAL_AVAILABLE = bool(workflow)
 except ImportError:
-    TEMPORAL_AVAILABLE = False
     workflow = None
+    TEMPORAL_AVAILABLE = False
 
 if TEMPORAL_AVAILABLE:
     from .activities import FathomActivities

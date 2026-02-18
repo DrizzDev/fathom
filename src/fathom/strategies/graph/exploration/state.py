@@ -1,52 +1,63 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, TypedDict
+from typing import Any, Optional
 
+from fathom.constants.state import CommonStateKey, ExplorationStateKey
 from fathom.schemas.actions import Action
-from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import StepResult
 
 
-class ExplorationGraphState(TypedDict, total=False):
+class ExplorationGraphState(dict[str, Any]):
     """
     State flowing through the Exploration Graph.
     """
 
-    # --- Configuration ---
-    max_steps: int
+    def __init__(self, **kwargs: Any) -> None:
+        """
+        Initialize exploration graph state.
+        """
 
-    # --- Execution State ---
-    step_number: int
-    is_complete: bool
-    completion_reason: Optional[str]
+        super().__init__(**kwargs)
 
-    # BFS State
-    bfs_phase: str  # "scan", "return", "advance"
-    bfs_queue: List[Dict[str, Any]]  # serialized BFSQueueEntry
-    visited_hashes: List[str]
-    current_path: List[Tuple[str, Dict[str, Any]]]  # (hash, serialized_action)
-    pending_nav: List[Dict[str, Any]]  # serialized Action
-    scanning_hash: Optional[str]
-    root_hash: Optional[str]
+    def get_capture(self) -> Optional[ScreenCapture]:
+        """
+        Get capture from state.
+        """
 
-    # --- Artefacts ---
-    capture: Optional[ScreenCapture]
-    screen_state: Optional[ScreenState]
-    is_new_screen: bool
+        return self.get(CommonStateKey.CAPTURE)
 
-    # Scan artefacts
-    action: Optional[Action]
-    analysis: Optional[AnalysisResult]
-    content_exhausted: bool
+    def get_screen_state(self) -> Optional[ScreenState]:
+        """
+        Get screen state from state.
+        """
 
-    # Execution
-    step_result: Optional[StepResult]
+        return self.get(CommonStateKey.SCREEN_STATE)
 
-    # History
-    step_results: List[StepResult]
+    def get_action(self) -> Optional[Action]:
+        """
+        Get action from state.
+        """
 
-    # Metrics
-    grounding_duration: float
-    execution_duration: float
-    analysis_duration: float
+        return self.get(ExplorationStateKey.ACTION)
+
+    def get_step_result(self) -> Optional[StepResult]:
+        """
+        Get step result from state.
+        """
+
+        return self.get(CommonStateKey.STEP_RESULT)
+
+    def is_complete(self) -> bool:
+        """
+        Check if execution is complete.
+        """
+
+        return bool(self.get(CommonStateKey.IS_COMPLETE, False))
+
+    def is_content_exhausted(self) -> bool:
+        """
+        Check if content is exhausted.
+        """
+
+        return bool(self.get(ExplorationStateKey.CONTENT_EXHAUSTED, False))

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fathom.base.paths import SharedPathManager
-from fathom.infrastructure.memory.ledger import Ledger
-from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
+from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.interfaces.memory import MemoryPort
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
@@ -15,15 +13,13 @@ class SQLiteMemory(MemoryPort):
     SQLite adapter for memory persistence.
     """
 
-    def __init__(self, path_manager: SharedPathManager) -> None:
+    def __init__(self, ledger: ILedger, provider: IMemoryProvider) -> None:
         """
-        Initialize SQLite memory adapter.
+        Initialize SQLite memory adapter with injected providers.
         """
 
-        self.__ledger = Ledger(database_path=str(path_manager.get_ledger_db_path()))
-        self.__provider = SQLiteMemoryProvider(
-            database_path=str(path_manager.get_knowledge_db_path())
-        )
+        self.__ledger = ledger
+        self.__provider = provider
 
     async def set(self, *, key: str, value: str) -> None:
         """
