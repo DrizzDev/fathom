@@ -186,6 +186,10 @@ class StepExecutor:
             duration_ms = int((time.time() - start_time) * 1000)
             return ExecutionResult(success=True, duration=duration_ms)
 
+        if action.action_type in (ActionType.SAVE_MEMORY, ActionType.RETRIEVE_MEMORY):
+            duration_ms = int((time.time() - start_time) * 1000)
+            return ExecutionResult(success=True, duration=duration_ms)
+
         # Execute device actions
         try:
             device_result = None

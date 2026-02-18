@@ -162,6 +162,7 @@ class StepPlanner:
         # false stuck detection from repeated swipes on an unchanged screen.
         if analysis.content_exhausted:
             state.reset_loop_detector()
+            state.mark_complete(reason="Content exhaustion signaled by model")
             return PlanResult(
                 step=None,
                 is_complete=True,

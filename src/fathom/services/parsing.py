@@ -19,6 +19,7 @@ class ToolResponseParser(IResponseParser):
 
     # Primary tools produce the AnalysisResult; side-effect tools merge into it.
     __PRIMARY_TOOLS = {"execute_ui", "complete_goal", "verify_goal", "validate_state"}
+    __COMPLETION_TOOLS = {"complete_goal", "verify_goal"}
     __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
 
     def parse(self, response: Any) -> AnalysisResult:
@@ -58,6 +59,12 @@ class ToolResponseParser(IResponseParser):
             for fc in function_calls:
                 if fc.name in self.__PRIMARY_TOOLS:
                     if primary_call is None:
+                        primary_call = fc
+                    elif (
+                        fc.name in self.__COMPLETION_TOOLS
+                        and primary_call.name not in self.__COMPLETION_TOOLS
+                    ):
+                        side_effects.append(primary_call)
                         primary_call = fc
                     else:
                         logger.warning(f"Multiple primary tools called; ignoring extra: {fc.name}")

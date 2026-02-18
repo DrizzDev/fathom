@@ -427,6 +427,44 @@ def build_exploration_nodes(
 
         pre_hash = screen_state.visual_hash if screen_state else "0"
 
+        # Handle memory-only actions (no device interaction needed)
+        if action.action_type == ActionType.SAVE_MEMORY:
+            if action.memory_updates:
+                for key, value in action.memory_updates.items():
+                    await ctx.ledger.set(key=key, value=value)
+            return {
+                **state,
+                "step_result": StepResult(
+                    step=Step(
+                        action=action, screen_hash=pre_hash, step_number=ctx.agent_state.step_count
+                    ),
+                    error=None,
+                    pre_hash=pre_hash,
+                    success=True,
+                    duration=0,
+                    post_hash=pre_hash,
+                    screen_changed=False,
+                ),
+                "execution_duration": 0.0,
+            }
+
+        if action.action_type == ActionType.RETRIEVE_MEMORY:
+            return {
+                **state,
+                "step_result": StepResult(
+                    step=Step(
+                        action=action, screen_hash=pre_hash, step_number=ctx.agent_state.step_count
+                    ),
+                    error=None,
+                    pre_hash=pre_hash,
+                    success=True,
+                    duration=0,
+                    post_hash=pre_hash,
+                    screen_changed=False,
+                ),
+                "execution_duration": 0.0,
+            }
+
         # UX rendering
         ctx.ux_service.render_fallback(
             reasoning=action.rationale,
