@@ -174,11 +174,14 @@ class ExecutionContext(BaseModel):
         ]
 
     def get_history_summary(self) -> List[str]:
-        """Get summary of previous actions."""
+        """
+        Get summary of previous actions.
+        """
+
         return [
-            f"Step {s.step_number}: {s.metadata.get('action', 'unknown')} "
-            f"({'Success' if s.success else 'Failed'})"
-            for s in self.steps
+            f"Step {step.step_number}: {step.metadata.get('action', 'unknown')} "
+            f"({'Success' if step.success else 'Failed'})"
+            for step in self.steps
         ]
 
     def to_checkpoint(self) -> Dict[str, Any]:
@@ -225,7 +228,9 @@ class ExecutionContext(BaseModel):
 
 
 class ExecutionRoadmap(BaseModel):
-    """Roadmap for intent-based execution."""
+    """
+    Roadmap for intent-based execution.
+    """
 
     intent: str = Field(..., description="Goal intent")
     steps: List[str] = Field(default_factory=list, description="Planned steps")
@@ -257,60 +262,43 @@ class RunnerResult(BaseModel):
 
     workflow_result: WorkflowResult = Field(..., description="Outcome of the workflow")
     execution_context: ExecutionContext = Field(..., description="Details of the execution run")
+
     checkpoints_saved: int = Field(default=0, description="Number of saved checkpoints")
     total_duration: float = Field(default=0.0, description="Total run time in seconds")
 
 
 class RealignmentPolicy(BaseModel):
     """
-
-
     Defines the agent's behavior when course-correction is required.
-
-
     """
-
-    immediate: bool = Field(
-        default=True, description="If True, clears pending plans to re-evaluate state immediately"
-    )
 
     budget: int = Field(
         default=3, description="Maximum allowed consecutive re-plans to prevent exhaustion"
+    )
+    immediate: bool = Field(
+        default=True, description="If True, clears pending plans to re-evaluate state immediately"
     )
 
 
 class WorkflowRequest(BaseModel):
     """
-
-
     Request entity for starting a workflow.
-
-
-    Ensures consistent field naming across the system.
-
-
     """
 
     intent: str = Field(..., description="User goal")
-
+    package_name: str = Field(default="unknown_app", description="Target application package")
     session_id: str = Field(
         default_factory=lambda: uuid.uuid4().hex[:8], description="Unique session ID"
     )
 
-    package_name: str = Field(default="unknown_app", description="Target application package")
-
     max_steps: int = Field(default=20, description="Step limit")
-
     use_xml: bool = Field(default=False, description="Enable XML grounding")
 
     interactive: bool = Field(default=False, description="Enable HITL mode")
-
     signal_type: str = Field(
         default="interactive", description="Type of signal adapter (interactive/socket)"
     )
 
     realignment: RealignmentPolicy = Field(default_factory=RealignmentPolicy)
-
-    device_serial: Optional[str] = Field(default=None, description="Specific device to target")
-
     prompt_version: Optional[str] = Field(default=None, description="Prompt variant")
+    device_serial: Optional[str] = Field(default=None, description="Specific device to target")

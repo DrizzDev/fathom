@@ -6,8 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ScreenState(BaseModel):
-    """Immutable screen state representation.
-
+    """
+    Immutable screen state representation.
     Uses a hybrid 3-layer hashing approach for efficient screen comparison.
     """
 
@@ -19,6 +19,7 @@ class ScreenState(BaseModel):
     activity_hash: str = Field(description="Hash of activity name")
     structural_hash: str = Field(description="Hash of screen structure")
     visual_hash: str = Field(description="Perceptual hash (pHash) of screen")
+
     xml_hash: Optional[str] = Field(default=None, description="Semantic structural hash of XML")
     interaction_hash: Optional[str] = Field(
         default=None, description="Hash of interactive elements"
@@ -45,8 +46,8 @@ class ScreenState(BaseModel):
         if (
             self.xml_hash
             and other.xml_hash
-            and self.xml_hash != "0000000000000000"
             and self.xml_hash != other.xml_hash
+            and self.xml_hash != "0000000000000000"
         ):
             return False
 

@@ -43,13 +43,14 @@ class ExecutionEngine:
         max_retries: int = DEFAULT_MAX_RETRIES,
         stability_wait: float = DEFAULT_STABILITY_WAIT / 1000.0,  # Convert ms to seconds
     ) -> None:
-        self.__device = device
         self.__llm = llm
+        self.__device = device
         self.__memory = memory
         self.__signal = signal
         self.__storage = storage
         self.__telemetry = telemetry
         self.__path_manager = path_manager
+
         self.__max_retries = max_retries
         self.__stability_wait = stability_wait
 
@@ -58,21 +59,22 @@ class ExecutionEngine:
         self.__action_executor = ActionExecutor(
             device=device,
             telemetry=telemetry,
-            path_manager=path_manager,
             max_retries=max_retries,
+            path_manager=path_manager,
         )
 
     async def execute_step(
         self,
         step: Step,
         *,
-        pre_capture: Optional[ScreenCapture] = None,
-        package_name: str = "unknown_app",
         session_id: str = "default",
+        package_name: str = "unknown_app",
+        pre_capture: Optional[ScreenCapture] = None,
     ) -> StepResult:
         """
         Execute one step of the execution DAG.
         """
+
         start_time = time.time()
 
         try:
@@ -96,9 +98,9 @@ class ExecutionEngine:
             # Phase 4: Act
             result = await self.__action_executor.act(
                 step=step,
+                session_id=session_id,
                 pre_capture=pre_capture,
                 package_name=package_name,
-                session_id=session_id,
             )
 
             # Wait for screen stability
@@ -108,8 +110,8 @@ class ExecutionEngine:
 
             # Phase 5: Learn
             await self.__learn(
-                visual_hash=pre_hash,
                 action=step.action,
+                visual_hash=pre_hash,
                 success=result.success,
             )
 
@@ -121,9 +123,9 @@ class ExecutionEngine:
                 step=step,
                 duration=duration,
                 pre_hash=pre_hash,
+                error=result.error,
                 post_hash=post_hash,
                 success=result.success,
-                error=result.error,
                 screen_changed=screen_changed,
             )
 
@@ -158,37 +160,45 @@ class ExecutionEngine:
             raise ExecutionError(f"Step {step.step_number} failed unexpectedly") from exception
 
     async def __check_signal(self) -> Optional[str]:
-        """Phase 1: Check for HITL control signals."""
+        """
+        Phase 1: Check for HITL control signals.
+        """
+
         signal = await self.__signal.check_signal()
 
         if signal == SignalType.PAUSE.value:
             self.__telemetry.info("Execution paused by signal")
+
             await self.__signal.wait_for_resume()
             self.__telemetry.info("Execution resumed")
 
-            if hasattr(self.__signal, "get_injected_context"):
-                injected = self.__signal.get_injected_context()
-                if injected:
-                    self.__telemetry.info("Context injected by user", context=injected)
-                    return injected
+            if hasattr(self.__signal, "get_injected_context") and (
+                injected := self.__signal.get_injected_context()
+            ):
+                self.__telemetry.info("Context injected by user", context=injected)
+                return injected
 
         elif signal == SignalType.INJECT.value:
             self.__telemetry.info("Injection signal received")
-            if hasattr(self.__signal, "get_injected_context"):
-                injected = self.__signal.get_injected_context()
-                if injected:
-                    self.__telemetry.info("Context injected", context=injected)
-                    return injected
+
+            if hasattr(self.__signal, "get_injected_context") and (
+                injected := self.__signal.get_injected_context()
+            ):
+                self.__telemetry.info("Context injected", context=injected)
+                return injected
 
         return None
 
     async def __learn(self, visual_hash: str, action: Action, success: bool) -> None:
-        """Phase 5: Store experience in memory."""
+        """
+        Phase 5: Store experience in memory.
+        """
+
         try:
             await self.__memory.store_experience(
-                visual_hash=visual_hash,
                 action=action,
                 success=success,
+                visual_hash=visual_hash,
             )
         except PortError as exception:
             self.__telemetry.warning(
@@ -197,11 +207,14 @@ class ExecutionEngine:
             )
 
     def __checkpoint(self, step_result: StepResult) -> None:
-        """Phase 6: Log execution state."""
+        """
+        Phase 6: Log execution state.
+        """
+
         self.__telemetry.info(
             "Step completed",
-            step_number=step_result.step.step_number,
             success=step_result.success,
             duration_ms=step_result.duration,
+            step_number=step_result.step.step_number,
             action=step_result.step.action.action_type.value,
         )

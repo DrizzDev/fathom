@@ -1,7 +1,3 @@
-"""
-Graph state definitions for LangGraph workflows.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, TypedDict
@@ -13,43 +9,31 @@ from fathom.schemas.steps import Step, StepResult
 
 class IntentGraphState(TypedDict, total=False):
     """
-    State flowing through the Intent Execution Graph.
-    Strictly typed and serializable.
+    State flowing through the Intent Execution Graph. Strictly typed and serializable.
     """
 
-    # --- Configuration ---
     intent: str
-    max_steps: int
     use_xml: bool
-
-    # --- Execution State ---
+    max_steps: int
     step_number: int
     is_complete: bool
-    completion_reason: Optional[str]
     should_retry: bool
     injected_context: Optional[str]
+    completion_reason: Optional[str]
 
-    # --- Artefacts (Per Step) ---
+    is_new_screen: bool
     capture: Optional[ScreenCapture]
     screen_state: Optional[ScreenState]
-    is_new_screen: bool
 
-    # Hierarchy processing
     xml_content: Optional[str]
-    elements: Optional[Dict[str, Any]]  # Label map
+    elements: Optional[Dict[str, Any]]
 
-    # Analysis
-    analysis: Optional[AnalysisResult]  # Full analysis result
     plan: Optional[PlanResult]
     planned_step: Optional[Step]
-
-    # Execution
-    step_result: Optional[StepResult]
-
-    # --- History ---
     step_results: List[StepResult]
+    step_result: Optional[StepResult]
+    analysis: Optional[AnalysisResult]
 
-    # --- Metrics ---
-    grounding_duration: float
     analysis_duration: float
     execution_duration: float
+    grounding_duration: float

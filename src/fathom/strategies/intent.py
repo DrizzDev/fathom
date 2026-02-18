@@ -1,7 +1,3 @@
-"""
-Intent-based execution strategy using LangGraph.
-"""
-
 from __future__ import annotations
 
 import time
@@ -27,8 +23,8 @@ from fathom.schemas.results import ExecutionResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 
-logger = getLogger(name=__name__)
 console = Console()
+logger = getLogger(name=__name__)
 
 
 class IntentStrategy:
@@ -39,15 +35,15 @@ class IntentStrategy:
     def __init__(
         self,
         intent: str,
-        *,
-        device: DevicePort,
         llm: LLMPort,
+        device: DevicePort,
         memory: MemoryPort,
+        signal: SignalPort,
         storage: StoragePort,
         telemetry: TelemetryPort,
-        signal: SignalPort,
         summarizer: SummarizationPort,
         path_manager: SharedPathManager,
+        *,
         max_steps: int = 20,
         use_xml: bool = False,
         workflow_id: str = "default",
@@ -59,20 +55,20 @@ class IntentStrategy:
 
         # Initialize Graph Context with injected summarizer
         self.__graph_context = GraphContext(
+            llm=llm,
             intent=intent,
             device=device,
-            llm=llm,
             memory=memory,
-            storage=storage,
-            telemetry=telemetry,
             signal=signal,
-            path_manager=path_manager,
-            summarizer=summarizer,
-            max_steps=max_steps,
             use_xml=use_xml,
+            storage=storage,
+            max_steps=max_steps,
+            telemetry=telemetry,
+            summarizer=summarizer,
             workflow_id=workflow_id,
-            package_name=package_name,
             realignment=realignment,
+            path_manager=path_manager,
+            package_name=package_name,
         )
 
         # 1. Build Graph with Interrupts (Injected dependency: MemorySaver)
@@ -85,7 +81,11 @@ class IntentStrategy:
         )
 
     async def execute(self, max_steps: int) -> ExecutionResult:
-        """Execute intent-based workflow via specialized executor."""
+        """
+        Execute intent-based workflow via specialized executor.
+        """
+
+        _ = max_steps
         start_time = time.time()
 
         try:
@@ -125,7 +125,10 @@ class IntentStrategy:
             )
 
     def get_progress(self) -> Dict[str, Any]:
-        """Get execution progress."""
+        """
+        Get execution progress.
+        """
+
         return {
             "intent": self.__intent,
             "step_count": self.__graph_context.agent_state.step_count,
@@ -133,9 +136,15 @@ class IntentStrategy:
         }
 
     def get_metrics(self) -> ExecutionMetrics:
-        """Get execution metrics."""
+        """
+        Get execution metrics.
+        """
+
         return self.__graph_context.metrics
 
     def cancel(self) -> None:
-        """Cancel the execution."""
+        """
+        Cancel the execution.
+        """
+
         self.__graph_context.cancel()

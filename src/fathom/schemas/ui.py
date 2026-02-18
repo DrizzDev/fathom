@@ -43,10 +43,18 @@ class UIBounds(BaseModel):
 
     @property
     def width(self) -> float:
+        """
+        Returns width of the bound
+        """
+
         return self.x2 - self.x1
 
     @property
     def height(self) -> float:
+        """
+        Returns height of the bound
+        """
+
         return self.y2 - self.y1
 
     @property

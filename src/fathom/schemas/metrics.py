@@ -38,9 +38,9 @@ class ExecutionMetrics(BaseModel):
     action: OperationMetric = Field(default_factory=OperationMetric)
 
     # Token usage tracking
+    cached_tokens: int = Field(default=0, description="Tokens served from cache")
     prompt_tokens: int = Field(default=0, description="Total prompt tokens consumed")
     completion_tokens: int = Field(default=0, description="Total completion tokens consumed")
-    cached_tokens: int = Field(default=0, description="Tokens served from cache")
 
     @property
     def total_tokens(self) -> int:
@@ -50,9 +50,10 @@ class ExecutionMetrics(BaseModel):
         """
         Accumulates token usage from an LLM call.
         """
+
+        self.cached_tokens += cached
         self.prompt_tokens += prompt
         self.completion_tokens += completion
-        self.cached_tokens += cached
 
     def record(self, operation: str, duration: float) -> None:
         """
@@ -61,8 +62,8 @@ class ExecutionMetrics(BaseModel):
 
         metric = getattr(self, operation, None)
         if metric and isinstance(metric, OperationMetric):
-            metric.total_duration += duration
             metric.call_count += 1
+            metric.total_duration += duration
 
     def to_report_dict(self) -> Dict[str, Dict[str, float]]:
         """
@@ -82,24 +83,27 @@ class ExecutionMetrics(BaseModel):
             "Action": {"avg": self.action.average, "total": self.action.total_duration},
             "Analysis": {"avg": self.analysis.average, "total": self.analysis.total_duration},
             "Tokens": {
+                "total": self.total_tokens,
+                "cached": self.cached_tokens,
                 "prompt": self.prompt_tokens,
                 "completion": self.completion_tokens,
-                "cached": self.cached_tokens,
-                "total": self.total_tokens,
             },
         }
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert metrics to dictionary for result objects."""
+        """
+        Convert metrics to dictionary for result objects.
+        """
+
         return {
-            "screenshot_count": self.screenshot.call_count,
-            "screenshot_total_ms": int(self.screenshot.total_duration * 1000),
-            "analysis_count": self.analysis.call_count,
-            "analysis_total_ms": int(self.analysis.total_duration * 1000),
-            "action_count": self.action.call_count,
-            "action_total_ms": int(self.action.total_duration * 1000),
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
-            "cached_tokens": self.cached_tokens,
             "total_tokens": self.total_tokens,
+            "cached_tokens": self.cached_tokens,
+            "prompt_tokens": self.prompt_tokens,
+            "action_count": self.action.call_count,
+            "analysis_count": self.analysis.call_count,
+            "completion_tokens": self.completion_tokens,
+            "screenshot_count": self.screenshot.call_count,
+            "action_total": int(self.action.total_duration * 1000),
+            "analysis_total": int(self.analysis.total_duration * 1000),
+            "screenshot_total": int(self.screenshot.total_duration * 1000),
         }

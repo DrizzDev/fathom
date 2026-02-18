@@ -1,22 +1,17 @@
-"""
-Auditor service for execution tracking and visualization.
-"""
-
 from __future__ import annotations
 
 import time
 from collections import deque
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-if TYPE_CHECKING:
-    from fathom.core.context.manager import ContextManager
-    from fathom.schemas.results import ActionResult, PlanResult
-    from fathom.schemas.screens import ScreenState
+from fathom.core.context.manager import ContextManager
+from fathom.schemas.results import ActionResult, PlanResult
+from fathom.schemas.screens import ScreenState
 
 
 class AuditService:
@@ -25,15 +20,18 @@ class AuditService:
     """
 
     def __init__(self, *, console: Optional[Console] = None) -> None:
-        """Initialize auditor with injected or default console."""
+        """
+        Initialize auditor with injected or default console.
+        """
+
         self.__console = console or Console()
-        # Use deque with maxlen for efficient memory management
         self.__memory_audit_trail: deque[Dict[str, Any]] = deque(maxlen=1000)
 
     def log_context(self, manager: ContextManager) -> None:
         """
         Visualizes the current three-tier execution context.
         """
+
         full_context = manager.get_full_context()
 
         # 1. Build Roadmap Table
@@ -46,8 +44,7 @@ class AuditService:
         roadmap_table.add_row("Intent:", escape(str(object=intent)))
 
         # 2. Build Guidance Block
-        guidance = manager.get_user_guidance()
-        if guidance:
+        if guidance := manager.get_user_guidance():
             guidance_panel = Table.grid(padding=(0, 1))
             for instruction in guidance:
                 time_str = time.strftime("%H:%M:%S", time.localtime(instruction.timestamp))
@@ -69,9 +66,10 @@ class AuditService:
         summary.add_column(style="dim")
         summary.add_column()
 
-        milestones = full_context.get("milestones", [])
-        if milestones:
-            summary.add_row("Milestones:", ", ".join(escape(str(m)) for m in milestones))
+        if milestones := full_context.get("milestones", []):
+            summary.add_row(
+                "Milestones:", ", ".join(escape(str(milestone)) for milestone in milestones)
+            )
 
         trace = full_context.get("trace", [])
         summary.add_row("Trace Size:", f"{len(trace)} cycles recorded")
@@ -88,6 +86,7 @@ class AuditService:
         """
         Visualizes the exact prompt being sent to the LLM.
         """
+
         sanitized_payload = self.__sanitize_recursive(data=payload)
 
         prompt_table = Table.grid(padding=(0, 1))
@@ -95,8 +94,8 @@ class AuditService:
         prompt_table.add_column()
 
         for index, item in enumerate(sanitized_payload):
+            content = str(item)
             label = f"Part {index + 1}:"
-            content = str(object=item)
 
             # Highlight instructions if they appear in text parts
             if "USER INSTRUCTIONS" in content:
@@ -133,7 +132,12 @@ class AuditService:
         """
         Prints the detailed audit for a single execution step.
         """
+
+        _ = analysis_duration
+        _ = execution_duration
+
         audit_grid = Table.grid(padding=(0, 2))
+
         audit_grid.add_column(style="dim")
         audit_grid.add_column(justify="right")
 
@@ -161,6 +165,7 @@ class AuditService:
             # Token usage
             prompt_t = int(plan.metrics.get("prompt_tokens", 0))
             completion_t = int(plan.metrics.get("completion_tokens", 0))
+
             if prompt_t or completion_t:
                 token_info = f"{prompt_t + completion_t:,} (P:{prompt_t:,} | C:{completion_t:,})"
                 audit_grid.add_row("Tokens:", f"[dim]{token_info}[/dim]")
@@ -196,16 +201,25 @@ class AuditService:
             self.__console.print(Panel(action_info, title="Brain Reasoning", border_style="yellow"))
 
     def __format_ms(self, seconds: float = 0, milliseconds: float = 0) -> str:
-        """Format time elegantly."""
+        """
+        Format time elegantly.
+        """
+
         total_ms = (seconds * 1000) + milliseconds
         return f"{total_ms / 1000.0:.2f}s [{total_ms:.0f}ms]"
 
     def __sanitize_recursive(self, data: Any) -> Any:
-        """Recursively replaces bytes and large objects for logging."""
+        """
+        Recursively replaces bytes and large objects for logging.
+        """
+
         if isinstance(data, bytes):
             return f"<binary data: {len(data)} bytes>"
+
         if isinstance(data, dict):
-            return {k: self.__sanitize_recursive(data=v) for k, v in data.items()}
+            return {key: self.__sanitize_recursive(data=value) for key, value in data.items()}
+
         if isinstance(data, (list, tuple)):
             return [self.__sanitize_recursive(data=item) for item in data]
+
         return data

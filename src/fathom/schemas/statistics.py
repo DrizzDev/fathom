@@ -12,8 +12,8 @@ class CacheStats(BaseModel):
 
     hits: int = Field(default=0, description="Number of cache hits")
     misses: int = Field(default=0, description="Number of cache misses")
-    creates: int = Field(default=0, description="Number of new caches created")
     evictions: int = Field(default=0, description="Number of caches evicted")
+    creates: int = Field(default=0, description="Number of new caches created")
 
     @property
     def hit_rate(self) -> float:

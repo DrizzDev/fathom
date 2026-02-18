@@ -1,5 +1,3 @@
-"""UI processing module - moved from tools/vision/processing."""
-
 from fathom.processing.annotator import ImageAnnotator
 from fathom.processing.drawer import BoundsGenerator
 from fathom.processing.geometry import GeometryUtils

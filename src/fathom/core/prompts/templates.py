@@ -1,7 +1,3 @@
-"""
-Shared prompt templates and rules for agent reasoning.
-"""
-
 from __future__ import annotations
 
 from types import MappingProxyType

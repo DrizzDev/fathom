@@ -39,14 +39,17 @@ class StrategyResult(BaseModel):
     Result from strategy execution.
     """
 
-    step_result: Optional[StepResult] = Field(default=None, description="Result of the step")
-    status: StrategyStatus = Field(description="Execution status")
     message: str = Field(description="Status message")
+    status: StrategyStatus = Field(description="Execution status")
     should_checkpoint: bool = Field(default=False, description="Whether to save state")
+    step_result: Optional[StepResult] = Field(default=None, description="Result of the step")
 
     @property
     def is_terminal(self) -> bool:
-        """Checks if status is terminal."""
+        """
+        Checks if status is terminal.
+        """
+
         return self.status in (StrategyStatus.COMPLETE, StrategyStatus.ERROR)
 
 
@@ -55,15 +58,17 @@ class WorkflowResult(BaseModel):
     Base class for workflow outcomes.
     """
 
-    success: bool = Field(default=False, description="Whether workflow achieved goal")
-    completion_reason: str = Field(default="", description="Reason for finishing")
-    workflow_id: str = Field(default="", description="Unique ID")
     status: str = Field(default="unknown")
+    workflow_id: str = Field(default="", description="Unique ID")
+    completion_reason: str = Field(default="", description="Reason for finishing")
+    success: bool = Field(default=False, description="Whether workflow achieved goal")
+
     duration: float = Field(default=0.0)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
     steps_executed: int = Field(default=0)
-    step_results: List[StepResult] = Field(default_factory=list)
     error: Optional[str] = Field(default=None)
+    step_results: List[StepResult] = Field(default_factory=list)
 
 
 class IntentResult(WorkflowResult):
@@ -74,6 +79,7 @@ class IntentResult(WorkflowResult):
     intent: str = Field(default="", description="The intent executed")
     steps_taken: int = Field(ge=0, description="Number of steps executed")
     final_screen: Optional[Any] = Field(default=None, description="Final state")
+
     metrics: Dict[str, Dict[str, float]] = Field(
         default_factory=dict, description="Execution metrics"
     )
@@ -90,8 +96,10 @@ class ExplorationResult(WorkflowResult):
     unique_screens: int = Field(ge=0, description="Unique screens discovered")
     total_actions: int = Field(ge=0, description="Total actions performed")
     total_transitions: int = Field(ge=0, description="Total transitions")
-    coverage_percentage: float = Field(ge=0.0, le=100.0, description="App coverage")
+
     discovered_activities: List[str] = Field(default_factory=list)
+    coverage_percentage: float = Field(ge=0.0, le=100.0, description="App coverage")
+
     screen_graph: Dict[str, List[str]] = Field(default_factory=dict)
 
 
@@ -102,8 +110,8 @@ class ActionResult(BaseModel):
 
     success: bool = Field(description="Execution status")
     duration: int = Field(ge=0, description="Duration in milliseconds")
-    output: Optional[str] = Field(default=None, description="Command output")
     error: Optional[str] = Field(default=None, description="Error details")
+    output: Optional[str] = Field(default=None, description="Command output")
 
 
 class ExecutionResult(BaseModel):
@@ -115,8 +123,10 @@ class ExecutionResult(BaseModel):
 
     success: bool = Field(..., description="Whether the execution was successful")
     duration: int = Field(..., description="Duration of execution in milliseconds")
+
     pre_hash: str = Field(default="", description="Visual hash before execution")
     post_hash: str = Field(default="", description="Visual hash after execution")
+
     error: Optional[str] = Field(default=None, description="Error message if failed")
     screen_changed: bool = Field(default=False, description="Whether the screen changed")
 
@@ -145,7 +155,9 @@ class PlanResult(BaseModel):
 
 
 class GenerateResult(BaseModel):
-    """Raw result from LLM generation."""
+    """
+    Raw result from LLM generation.
+    """
 
     content: str = Field(default="", description="Text content from LLM")
     tool_calls: List[Any] = Field(default_factory=list, description="Structured tool calls")

@@ -1,5 +1,3 @@
-"""Vision service for high-level UI reasoning."""
-
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +8,7 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
+from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
 from fathom.core.definitions import ToolRegistry
 from fathom.core.prompts.factory import PromptFactory
@@ -28,7 +27,6 @@ logger = getLogger(__name__)
 class VisionService:
     """
     Service that orchestrates the LLM interaction for UI perception and reasoning.
-    Mirrors original GeminiVisionTool logic strictly.
     """
 
     def __init__(
@@ -41,7 +39,10 @@ class VisionService:
         package_name: str = "unknown_app",
         auditor: Optional[AuditService] = None,
     ) -> None:
-        """Initialize vision service."""
+        """
+        Initialize vision service.
+        """
+
         self.__llm = llm
         self.__memory = memory
         self.__storage = storage
@@ -59,12 +60,15 @@ class VisionService:
         capture: ScreenCapture,
         context_manager: ContextManager,
         *,
-        tracking_note: Optional[str] = None,
         use_xml: bool = False,
+        tracking_note: Optional[str] = None,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
-        """Coordinates the analysis flow mirroring GeminiVisionTool strictly."""
+        """
+        Coordinates the analysis flow mirroring GeminiVisionTool strictly.
+        """
+
         # Background persistence (original logic)
         asyncio.create_task(self.__persist(data=capture.image, activity=capture.activity))
 
@@ -78,6 +82,7 @@ class VisionService:
         # Log memory stats
         memory_store = knowledge.get("memory_store", {})
         prev_actions = knowledge.get("previous_actions", [])
+
         logger.debug(
             f"[H3] Memory Retrieval | visual_hash={fingerprint[:6]} | "
             f"memories={len(memory_store)} | "
@@ -101,8 +106,8 @@ class VisionService:
 
         dynamic_context = self.__builder.build_user_context(
             history=full_context,
-            memory=knowledge.get("memory_store", {}),
             tracking_note=tracking_note,
+            memory=knowledge.get("memory_store", {}),
         )
 
         tools = self.__scope_tools(intent=intent)
@@ -111,11 +116,11 @@ class VisionService:
         manifest = self.__format_elements(elements=elements)
         payload = self.__build_payload(
             intent=intent,
-            screen=capture.image,
-            knowledge=knowledge,
-            context=dynamic_context,
             manifest=manifest,
             failures=failures,
+            knowledge=knowledge,
+            screen=capture.image,
+            context=dynamic_context,
         )
 
         # Log prompt context for visibility
@@ -124,9 +129,9 @@ class VisionService:
         # 4. EXECUTION
         commence = time.time()
         response = await self.__llm.generate(
+            tools=tools,
             prompt=payload,
             system_instruction=instruction,
-            tools=tools,
         )
         duration = time.time() - commence
 
@@ -160,8 +165,8 @@ class VisionService:
                 timestamp=int(time.time() * 1000),
                 activity_hash=hashlib.md5(  # nosec
                     capture.activity.encode(), usedforsecurity=False
-                ).hexdigest()[:16],
-                structural_hash="0" * 16,
+                ).hexdigest()[:VISUAL_HASH_LENGTH],
+                structural_hash="0" * VISUAL_HASH_LENGTH,
             ),
             description=analysis.screen_description,
         )
@@ -175,12 +180,15 @@ class VisionService:
         context_manager: ContextManager,
         tracking_note: Optional[str] = None,
     ) -> bool:
-        """Check if intent is complete."""
+        """
+        Check if intent is complete.
+        """
+
         result = await self.analyze(
             intent=intent,
             capture=capture,
-            context_manager=context_manager,
             tracking_note=tracking_note,
+            context_manager=context_manager,
         )
         return result.is_goal_complete
 
@@ -189,11 +197,15 @@ class VisionService:
         intent: str,
         screen: bytes,
         knowledge: Dict[str, Any],
-        context: Optional[str] = None,
+        *,
         manifest: str = "N/A",
+        context: Optional[str] = None,
         failures: Optional[List[str]] = None,
     ) -> List[Any]:
-        """Assembles request with token-locality (strictly mirrored)."""
+        """
+        Assembles request with token-locality (strictly mirrored).
+        """
+
         payload: List[Any] = [f"Goal: {intent}"]
 
         if knowledge.get("description"):
@@ -218,20 +230,27 @@ class VisionService:
         return payload
 
     def __format_elements(self, elements: Optional[Dict[str, Any]]) -> str:
-        """Converts label map to grounding manifest (strictly mirrored)."""
+        """
+        Converts label map to grounding manifest (strictly mirrored).
+        """
+
         if not elements:
             return "N/A"
 
         lines = []
+
         for label, info in elements.items():
             if label.startswith("__"):
                 continue
+
             kind = str(info.get("class", "View")).split(".")[-1]
             value = f"[{label}] {kind}"
             text = str(info.get("text", "")).strip()
             detail = str(info.get("content-desc", "")).strip()
+
             if text:
                 value += f" | text: '{text}'"
+
             if detail:
                 value += f" | description: '{detail}'"
             lines.append(value)
@@ -239,7 +258,10 @@ class VisionService:
         return "\n".join(lines) if lines else "No interactive elements found."
 
     def __scope_tools(self, intent: str) -> Dict[str, Any]:
-        """Dynamically selects tools (strictly mirrored)."""
+        """
+        Dynamically selects tools (strictly mirrored).
+        """
+
         allowed = {"execute_ui", "store_memory", "recall_memory"}
         if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):
             allowed.update({"validate_state", "verify_goal"})
@@ -247,13 +269,17 @@ class VisionService:
         definitions = ToolRegistry.get_all_definitions()
         return {
             "function_declarations": [
-                d for d in definitions["function_declarations"] if d["name"] in allowed
+                definition
+                for definition in definitions["function_declarations"]
+                if definition["name"] in allowed
             ]
         }
 
     async def __persist(self, data: bytes, activity: str) -> None:
-        """Background persistence."""
-        # Use current activity (package) for folder organization if available
+        """
+        Background persistence.
+        """
+
         package = activity if activity and activity != "unknown" else self.__package_name
 
         with contextlib.suppress(Exception):
@@ -261,8 +287,8 @@ class VisionService:
                 data=data,
                 metadata={
                     "type": "screenshots",
-                    "activity_name": activity,
                     "package_name": package,
+                    "activity_name": activity,
                     "session_id": self.__session_id,
                 },
             )

@@ -1,5 +1,3 @@
-"""Storage port interface for artifact persistence."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -7,7 +5,9 @@ from typing import Any, Dict, Optional
 
 
 class StoragePort(ABC):
-    """Abstract interface for artifact persistence."""
+    """
+    Abstract interface for artifact persistence.
+    """
 
     @abstractmethod
     async def save(self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
@@ -21,4 +21,5 @@ class StoragePort(ABC):
         Returns:
             Storage identifier (path, URL, etc.)
         """
+
         raise NotImplementedError

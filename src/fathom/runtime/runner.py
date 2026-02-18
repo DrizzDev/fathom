@@ -1,27 +1,25 @@
-"""Fathom execution runner."""
-
 from __future__ import annotations
 
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 
+from fathom.adapters.summarization.llm import LLMSummarizer
+from fathom.base.paths import SharedPathManager
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
+from fathom.interfaces.device import DevicePort
+from fathom.interfaces.knowledge import KnowledgePort
+from fathom.interfaces.llm import LLMPort
+from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.signal import SignalPort
+from fathom.interfaces.storage import StoragePort
+from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
+from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExplorationResult, IntentResult
-
-if TYPE_CHECKING:
-    from fathom.base.paths import SharedPathManager
-    from fathom.interfaces.device import DevicePort
-    from fathom.interfaces.knowledge import KnowledgePort
-    from fathom.interfaces.llm import LLMPort
-    from fathom.interfaces.memory import MemoryPort
-    from fathom.interfaces.signal import SignalPort
-    from fathom.interfaces.storage import StoragePort
-    from fathom.interfaces.telemetry import TelemetryPort
-    from fathom.schemas.exploration import ExplorationGraph
+from fathom.strategies.intent import IntentStrategy
 
 
 class FathomRunner:
@@ -42,34 +40,26 @@ class FathomRunner:
     def __init__(
         self,
         *,
-        device: DevicePort,
         llm: LLMPort,
+        device: DevicePort,
         memory: MemoryPort,
-        knowledge: KnowledgePort,
         signal: SignalPort,
         storage: StoragePort,
+        knowledge: KnowledgePort,
         telemetry: TelemetryPort,
         path_manager: SharedPathManager,
         config: Optional[FathomConfiguration] = None,
     ) -> None:
         """
         Initialize runner with all configured ports.
-
-        Args:
-            device: Device port for mobile device interactions
-            llm: LLM port for reasoning and analysis
-            memory: Memory port for session state and cross-run memory
-            knowledge: Knowledge port for application knowledge graph
-            signal: Signal port for human-in-the-loop control
-            storage: Storage port for artifact persistence
-            telemetry: Telemetry port for logging and observability
-            path_manager: Shared path manager for trace storage
-            config: Optional configuration (uses defaults if not provided)
         """
-        self.__device = device
+
         self.__llm = llm
+        self.__device = device
+
         self.__memory = memory
         self.__knowledge = knowledge
+
         self.__signal = signal
         self.__storage = storage
         self.__telemetry = telemetry
@@ -78,8 +68,8 @@ class FathomRunner:
 
         # Wire core components
         self.__engine = ExecutionEngine(
-            device=device,
             llm=llm,
+            device=device,
             memory=memory,
             signal=signal,
             storage=storage,
@@ -90,6 +80,22 @@ class FathomRunner:
 
         # Track current workflow for cancellation
         self.__current_strategy: Optional[object] = None
+
+    @property
+    def engine(self) -> ExecutionEngine:
+        """
+        Get the execution engine.
+        """
+
+        return self.__engine
+
+    @property
+    def context(self) -> Optional[ContextManager]:
+        """
+        Get the context manager.
+        """
+
+        return self.__context_manager
 
     async def run_intent(
         self,
@@ -103,30 +109,22 @@ class FathomRunner:
     ) -> IntentResult:
         """
         Execute intent-based workflow.
-
-        Args:
-            intent: User intent to accomplish
-            max_steps: Maximum execution steps
-            use_xml: Whether to use XML hierarchy
-            request_id: Optional workflow ID
-            device_serial: Device serial (unused, kept for compatibility)
-            prompt_version: Prompt version (unused, kept for compatibility)
-            realignment: Configuration for HITL re-planning behavior
-
-        Returns:
-            IntentResult with execution outcome and metrics
         """
-        workflow_id = request_id or uuid.uuid4().hex[:8]
+
+        _ = device_serial
+        _ = prompt_version
+
         start_time = time.time()
+        workflow_id = request_id or uuid.uuid4().hex[:8]
 
         # Fetch package name from device at start
         try:
             package_name = await self.__device.get_current_package()
         except Exception as exception:
+            package_name = "unknown_app"
             self.__telemetry.warning(
                 "Failed to get package name, using fallback", error=str(exception)
             )
-            package_name = "unknown_app"
 
         self.__telemetry.info(
             "Starting intent workflow",
@@ -141,26 +139,21 @@ class FathomRunner:
         self.__context_manager.set_roadmap(intent=intent)
 
         # Create and execute strategy
-        from fathom.adapters.summarization.llm import LLMSummarizer
-        from fathom.strategies.intent import IntentStrategy
-
-        summarizer = LLMSummarizer(llm=self.__llm)
-
         strategy = IntentStrategy(
             intent=intent,
-            device=self.__device,
             llm=self.__llm,
+            device=self.__device,
             memory=self.__memory,
-            storage=self.__storage,
-            telemetry=self.__telemetry,
             signal=self.__signal,
-            summarizer=summarizer,
+            storage=self.__storage,
+            workflow_id=workflow_id,
+            realignment=realignment,
+            package_name=package_name,
+            telemetry=self.__telemetry,
             path_manager=self.__path_manager,
+            summarizer=LLMSummarizer(llm=self.__llm),
             max_steps=max_steps or self.__config.intent.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
-            workflow_id=workflow_id,
-            package_name=package_name,
-            realignment=realignment,
         )
         self.__current_strategy = strategy
 
@@ -198,9 +191,9 @@ class FathomRunner:
 
             self.__telemetry.info(
                 "Intent workflow completed",
+                duration=duration,
                 success=result.success,
                 steps_taken=result.steps_taken,
-                duration=duration,
             )
 
             return result
@@ -225,17 +218,20 @@ class FathomRunner:
         Returns:
             ExplorationResult with discovery metrics
         """
-        workflow_id = request_id or uuid.uuid4().hex[:8]
+
+        _ = device_serial
+
         start_time = time.time()
+        workflow_id = request_id or uuid.uuid4().hex[:8]
 
         # Fetch package name from device at start
         try:
             package_name = await self.__device.get_current_package()
         except Exception as exception:
+            package_name = "unknown_app"
             self.__telemetry.warning(
                 "Failed to get package name, using fallback", error=str(exception)
             )
-            package_name = "unknown_app"
 
         self.__telemetry.info(
             "Starting exploration workflow",
@@ -252,19 +248,20 @@ class FathomRunner:
         from fathom.strategies.exploration import ExplorationStrategy
 
         strategy = ExplorationStrategy(
-            device=self.__device,
             llm=self.__llm,
+            device=self.__device,
             memory=self.__memory,
-            storage=self.__storage,
-            telemetry=self.__telemetry,
             signal=self.__signal,
+            storage=self.__storage,
+            workflow_id=workflow_id,
+            package_name=package_name,
+            telemetry=self.__telemetry,
             path_manager=self.__path_manager,
-            max_steps=max_steps or self.__config.exploration.max_steps,
             timeout=self.__config.exploration.timeout,
             seed=self.__config.exploration.random_seed,
-            package_name=package_name,
-            workflow_id=workflow_id,
+            max_steps=max_steps or self.__config.exploration.max_steps,
         )
+
         self.__current_strategy = strategy
 
         try:
@@ -297,26 +294,26 @@ class FathomRunner:
             duration = time.time() - start_time
 
             result = ExplorationResult(
-                success=execution_result.success,
-                completion_reason="Exploration completed",
-                workflow_id=workflow_id,
-                status="completed" if execution_result.success else "failed",
                 duration=duration,
-                steps_executed=progress.get("steps", 0),
-                unique_screens=unique_screens,
-                total_actions=stats.get("total_actions", 0),
-                total_transitions=stats.get("total_transitions", 0),
-                coverage_percentage=coverage_percentage,
-                discovered_activities=discovered_activities,
+                workflow_id=workflow_id,
                 screen_graph=screen_graph,
                 error=execution_result.error,
+                unique_screens=unique_screens,
+                success=execution_result.success,
+                steps_executed=progress.get("steps", 0),
+                coverage_percentage=coverage_percentage,
+                completion_reason="Exploration completed",
+                discovered_activities=discovered_activities,
+                total_actions=stats.get("total_actions", 0),
+                total_transitions=stats.get("total_transitions", 0),
+                status="completed" if execution_result.success else "failed",
             )
 
             self.__telemetry.info(
                 "Exploration workflow completed",
-                unique_screens=result.unique_screens,
-                total_actions=result.total_actions,
                 duration=duration,
+                total_actions=result.total_actions,
+                unique_screens=result.unique_screens,
             )
 
             return result
@@ -325,9 +322,13 @@ class FathomRunner:
             self.__current_strategy = None
 
     def cancel(self) -> None:
-        """Cancel the currently running workflow."""
+        """
+        Cancel the currently running workflow.
+        """
+
         if self.__current_strategy:
             self.__telemetry.warning("Workflow cancellation requested")
+
             # Call cancel method on strategy if it has one
             if hasattr(self.__current_strategy, "cancel"):
                 self.__current_strategy.cancel()
@@ -335,14 +336,20 @@ class FathomRunner:
                 self.__telemetry.warning("Strategy does not support cancellation")
 
     async def cleanup(self) -> None:
-        """Cleanup resources."""
+        """
+        Cleanup resources.
+        """
+
         # Cleanup LLM resources
         await self.__llm.cleanup()
 
         self.__telemetry.info("Runner cleanup completed")
 
     async def __get_memory_summary(self) -> Dict[str, Any]:
-        """Get memory summary from memory port."""
+        """
+        Get memory summary from memory port.
+        """
+
         try:
             # Get all knowledge from memory provider
             knowledge = await self.__memory.get_all_knowledge()
@@ -366,25 +373,29 @@ class FathomRunner:
 
             return {
                 "screens": screens_formatted,
-                "experience_count": experience_count,
                 "total_screens": len(screens),
+                "experience_count": experience_count,
             }
         except Exception as exception:
             self.__telemetry.warning(f"Failed to get memory summary: {exception}")
             return {
                 "screens": [],
-                "experience_count": 0,
                 "total_screens": 0,
+                "experience_count": 0,
             }
 
     def __export_graph(self, graph: ExplorationGraph) -> Dict[str, Any]:
-        """Export exploration graph to dictionary."""
+        """
+        Export exploration graph to dictionary.
+        """
+
         try:
             nodes_dict = {}
+
             for fingerprint, node in graph.nodes.items():
                 nodes_dict[fingerprint] = {
-                    "activity": node.activity,
                     "visits": node.visits,
+                    "activity": node.activity,
                     "actions": list(node.actions),
                     "transitions": node.transitions,
                 }
@@ -402,13 +413,3 @@ class FathomRunner:
         except Exception as exception:
             self.__telemetry.warning(f"Failed to export graph: {exception}")
             return {}
-
-    @property
-    def engine(self) -> ExecutionEngine:
-        """Get the execution engine."""
-        return self.__engine
-
-    @property
-    def context(self) -> Optional[ContextManager]:
-        """Get the context manager."""
-        return self.__context_manager

@@ -1,5 +1,3 @@
-"""Parser for LLM tool responses."""
-
 from __future__ import annotations
 
 from logging import getLogger
@@ -19,13 +17,14 @@ class ToolResponseParser:
     """
 
     # Primary tools produce the AnalysisResult; side-effect tools merge into it.
-    __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state"}
     __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
+    __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state"}
 
     def parse(self, response: GenerateResult) -> AnalysisResult:
         """
         Parses tool calls from a GenerateResult.
         """
+
         try:
             # GenerateResult already has tool_calls extracted by the adapter
             function_calls = response.tool_calls
@@ -83,16 +82,22 @@ class ToolResponseParser:
         """
         Routes a tool call to the appropriate parser.
         """
+
         if name == "verify_goal":
             return self.__parse_goal_verification(arguments=arguments)
+
         elif name == "execute_ui":
             return self.__parse_execution(arguments=arguments)
+
         elif name == "validate_state":
             return self.__parse_state_validation(arguments=arguments)
+
         elif name == "store_memory":
             return self.__parse_memory_storage(arguments=arguments)
+
         elif name == "recall_memory":
             return self.__parse_memory_retrieval(arguments=arguments)
+
         else:
             raise VisionError(f"Unknown function call: {name}")
 
@@ -100,6 +105,7 @@ class ToolResponseParser:
         """
         Parses the verify_goal tool arguments.
         """
+
         reason = str(arguments.get("assistant_message", ""))
         completed = bool(arguments.get("goal_completed", False))
 
@@ -120,6 +126,7 @@ class ToolResponseParser:
         """
         Parses the validate_state tool arguments.
         """
+
         evidence = str(arguments.get("evidence", ""))
         reason = str(arguments.get("assistant_message", ""))
 
@@ -140,6 +147,7 @@ class ToolResponseParser:
         """
         Parses the execute_ui tool arguments.
         """
+
         actions = arguments.get("actions", [])
         message = str(arguments.get("assistant_message", ""))
         completed = bool(arguments.get("goal_completed", False))
@@ -147,9 +155,9 @@ class ToolResponseParser:
         if not actions:
             return self.__create_fallback_result(message=message, completed=completed)
 
+        bounds = None
         data = actions[0]
         serialization = data.get("bbox")
-        bounds = None
 
         if serialization:
             bounds = Bounds(
@@ -168,23 +176,24 @@ class ToolResponseParser:
         # Support variations from different prompt/model versions
         text = data.get("text") or data.get("text_to_type")
         wait = data.get("wait_duration") or data.get("wait_duration_ms")
+        validation_reason = (
+            str(data.get("validation_reason")) if data.get("validation_reason") else None
+        )
         target_name = data.get("target_name") or data.get("element_name") or "UI Element"
 
         action = Action(
             bounds=bounds,
             target=target_name,
-            natural_language_target=target_name,
-            memory_updates=arguments.get("memory_updates"),
             action_type=action_type,
             text=str(text) if text else None,
-            wait_duration=int(wait) if wait else None,
+            natural_language_target=target_name,
+            validation_reason=validation_reason,
             rationale=str(data.get("rationale", "")),
-            confidence=float(data.get("confidence", 1.0)),
-            label_id=str(data.get("label_id")) if data.get("label_id") else None,
             is_valid=bool(data.get("is_valid", True)),
-            validation_reason=str(data.get("validation_reason"))
-            if data.get("validation_reason")
-            else None,
+            wait_duration=int(wait) if wait else None,
+            confidence=float(data.get("confidence", 1.0)),
+            memory_updates=arguments.get("memory_updates"),
+            label_id=str(data.get("label_id")) if data.get("label_id") else None,
         )
 
         return AnalysisResult(
@@ -199,17 +208,18 @@ class ToolResponseParser:
         """
         Parses memory storage tool call.
         """
-        reason = str(arguments.get("assistant_message", ""))
+
         key = str(arguments.get("key", ""))
         value = str(arguments.get("value", ""))
+        reason = str(arguments.get("assistant_message", ""))
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
                 rationale=reason,
                 memory_updates={key: value},
-                target=f"Memory Store: {key}={value}",
                 action_type=ActionType.WAIT,
+                target=f"Memory Store: {key}={value}",
             ),
             alternatives=[],
             reasoning=reason,
@@ -221,8 +231,9 @@ class ToolResponseParser:
         """
         Parses memory retrieval tool call.
         """
-        reason = str(arguments.get("assistant_message", ""))
+
         key = str(arguments.get("key", ""))
+        reason = str(arguments.get("assistant_message", ""))
 
         return AnalysisResult(
             action=Action(
@@ -241,6 +252,7 @@ class ToolResponseParser:
         """
         Creates a generic wait result when parsing fails or no action is found.
         """
+
         return AnalysisResult(
             action=Action(
                 confidence=0.0,

@@ -149,6 +149,7 @@ class LoopDetector(BaseModel):
         """
 
         prev_size = len(self.__recent_screens)
+
         self.__recent_screens.clear()
         self.__recent_actions.clear()
         self.__recovery_attempts = 0
@@ -186,16 +187,21 @@ class InteractionTracker(BaseModel):
         Returns a semantic note about current interaction repetition if significant.
         Example: "Consecutive swipe_up: 3"
         """
+
         if self.__consecutive_count > 1 and self.__last_action_type:
             return f"Consecutive {self.__last_action_type}: {self.__consecutive_count}"
+
         return None
 
     def get_stats(self) -> Dict[str, Any]:
-        """Returns raw tracking data."""
+        """
+        Returns raw tracking data.
+        """
+
         return {
-            "consecutive": self.__consecutive_count,
             "last_type": self.__last_action_type,
             "totals": dict(self.__total_counters),
+            "consecutive": self.__consecutive_count,
         }
 
 
@@ -256,6 +262,7 @@ class ActionHistory(BaseModel):
         """
         Returns raw list of history items for smart context.
         """
+
         return list(self.__actions)
 
     def get_activity_failures(self, current_activity: str) -> List[str]:

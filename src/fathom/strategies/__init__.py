@@ -1,5 +1,3 @@
-"""Execution strategies for Fathom."""
-
 from __future__ import annotations
 
 from fathom.strategies.exploration import ExplorationStrategy

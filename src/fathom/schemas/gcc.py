@@ -1,8 +1,3 @@
-"""
-Domain schemas for Generative Context Construction (GCC).
-Strictly typed to support a versioned, navigable memory hierarchy.
-"""
-
 from __future__ import annotations
 
 import time
@@ -17,11 +12,12 @@ class ExecutionRecord(BaseModel):
     Tier 3: Individual Observe-Thought-Action (OTA) cycle.
     """
 
-    record_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
-    timestamp: float = Field(default_factory=time.time)
-    observation: str
     thought: str
+    observation: str
     action: Dict[str, Any]
+
+    timestamp: float = Field(default_factory=time.time)
+    record_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
 
 
 class CommitNode(BaseModel):
@@ -30,8 +26,9 @@ class CommitNode(BaseModel):
     Encapsulates a summarized segment of the execution log.
     """
 
-    commit_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
     parent_id: Optional[str] = None
+    commit_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+
     summary: str
     timestamp: float = Field(default_factory=time.time)
     metadata: Dict[str, Any] = Field(default_factory=dict)

@@ -25,7 +25,7 @@ from __future__ import annotations
 try:
     from temporalio import workflow
 
-    TEMPORAL_AVAILABLE = True
+    TEMPORAL_AVAILABLE = bool(workflow)
 except ImportError:
     TEMPORAL_AVAILABLE = False
     workflow = None
@@ -50,6 +50,7 @@ def check_temporal_available() -> None:
     Raises:
         ImportError: If temporalio is not installed
     """
+
     if not TEMPORAL_AVAILABLE:
         raise ImportError(
             "Temporal integration requires the 'temporalio' package. "

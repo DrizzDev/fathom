@@ -1,5 +1,3 @@
-"""Device port interface for mobile device interactions."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -10,7 +8,9 @@ from fathom.schemas.results import ActionResult
 
 
 class DevicePort(ABC):
-    """Abstract interface for mobile device interactions."""
+    """
+    Abstract interface for mobile device interactions.
+    """
 
     @property
     @abstractmethod

@@ -30,6 +30,7 @@ class ImageAnnotator:
         """
         Gets the width and height of a text string for a given font.
         """
+
         try:
             bbox = draw.textbbox((0, 0), text, font=font)
             if isinstance(bbox, (tuple, list)) and len(bbox) == 4:
@@ -46,6 +47,7 @@ class ImageAnnotator:
         """
         Pre-loads all required font sizes into a cache once.
         """
+
         cache = {}
         step = abs(step) if step != 0 else 2
         requested_sizes = set(range(default_size, min_size - 1, -step)) | {
@@ -99,6 +101,7 @@ class ImageAnnotator:
         """
         Finds the largest font from the cache that fits the label inside the box.
         """
+
         if width <= 0 or height <= 0:
             return None
 
@@ -127,6 +130,7 @@ class ImageAnnotator:
         """
         Calculates the best 'outside' position.
         """
+
         padding = 8
         text_width, text_height = cls.__get_text_size(draw, label, font)
 
@@ -178,6 +182,7 @@ class ImageAnnotator:
         """
         Draws the label and connector.
         """
+
         if draw_connector_line and final_label_box:
             try:
                 point_on_label, point_on_box = GeometryUtils.get_line_endpoints(
@@ -209,6 +214,7 @@ class ImageAnnotator:
         Draw action indicator on image for background verification.
         coords: (x, y) for tap/type, or (x1, y1, x2, y2) for swipe/scroll.
         """
+
         try:
             import io
 
@@ -281,6 +287,7 @@ class ImageAnnotator:
         """
         Annotate an image with bounding boxes and labels.
         """
+
         font_name = "arial.ttf"
         font_size = int(kwargs.get("font_size", 24))
         min_font_size = int(kwargs.get("min_font_size", 10))

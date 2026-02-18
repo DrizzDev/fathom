@@ -10,7 +10,6 @@ from fathom.constants import ActionType
 class Bounds(BaseModel):
     """
     Bounds for UI elements.
-    Expected to be normalized (0-1000 scale) but supports raw pixels for robustness.
     """
 
     x: int = Field(ge=0, le=5000, description="Top-left X coordinate")

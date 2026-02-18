@@ -1,7 +1,3 @@
-"""
-Graph nodes for exploration execution.
-"""
-
 from __future__ import annotations
 
 import time

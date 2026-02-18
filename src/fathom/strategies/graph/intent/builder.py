@@ -1,7 +1,3 @@
-"""
-Graph builder for intent execution.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Literal, Optional
@@ -30,12 +26,13 @@ class IntentGraphBuilder(GraphBuilder):
         """
         Initialize builder with shared graph context.
         """
+
         self.__context = context
 
     def build(
         self,
-        checkpointer: Optional[BaseCheckpointSaver] = None,
         interrupt_before: Optional[List[str]] = None,
+        checkpointer: Optional[BaseCheckpointSaver] = None,
     ) -> CompiledStateGraph:
         """
         Builds and compiles the Intent Execution Graph.
@@ -62,9 +59,9 @@ class IntentGraphBuilder(GraphBuilder):
             source=NodeName.ANALYZE,
             path=self.__route_after_analyze,
             path_map={
-                NodeName.EXECUTE: NodeName.EXECUTE,
-                NodeName.GROUND: NodeName.GROUND,
                 NodeName.END: END,
+                NodeName.GROUND: NodeName.GROUND,
+                NodeName.EXECUTE: NodeName.EXECUTE,
             },
         )
 
@@ -85,7 +82,10 @@ class IntentGraphBuilder(GraphBuilder):
     def __route_after_analyze(
         self, state: IntentGraphState
     ) -> Literal[NodeName.EXECUTE, NodeName.GROUND, NodeName.END]:
-        """Routes execution after analysis node."""
+        """
+        Routes execution after analysis node.
+        """
+
         if state.get(GraphKey.IS_COMPLETE):
             return NodeName.END
 
@@ -100,7 +100,10 @@ class IntentGraphBuilder(GraphBuilder):
     def __route_after_record(
         self, state: IntentGraphState
     ) -> Literal[NodeName.GROUND, NodeName.END]:
-        """Routes execution after recording node."""
+        """
+        Routes execution after recording node.
+        """
+
         if state.get(GraphKey.IS_COMPLETE):
             return NodeName.END
 

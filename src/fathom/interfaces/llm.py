@@ -1,5 +1,3 @@
-"""LLM port interface for language model interactions."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -12,12 +10,17 @@ PromptPart = Union[str, bytes, Dict[str, str]]
 
 
 class LLMPort(ABC):
-    """Abstract interface for language model interactions."""
+    """
+    Abstract interface for language model interactions.
+    """
 
     @property
     @abstractmethod
     def model_name(self) -> str:
-        """Name of the model being used."""
+        """
+        Name of the model being used.
+        """
+
         raise NotImplementedError
 
     @abstractmethod
@@ -25,8 +28,8 @@ class LLMPort(ABC):
         self,
         *,
         prompt: Sequence[PromptPart],
-        system_instruction: Optional[str] = None,
         tools: Optional[Dict[str, Any]] = None,
+        system_instruction: Optional[str] = None,
     ) -> GenerateResult:
         """
         Generate response from LLM.
@@ -39,9 +42,13 @@ class LLMPort(ABC):
         Returns:
             GenerateResult with content and tool calls
         """
+
         raise NotImplementedError
 
     @abstractmethod
     async def cleanup(self) -> None:
-        """Release resources."""
+        """
+        Release resources.
+        """
+
         raise NotImplementedError

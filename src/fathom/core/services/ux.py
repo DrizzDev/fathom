@@ -1,5 +1,3 @@
-"""UX service for console rendering."""
-
 from __future__ import annotations
 
 from logging import getLogger
@@ -7,12 +5,14 @@ from logging import getLogger
 from rich.console import Console
 from rich.panel import Panel
 
-logger = getLogger(__name__)
 console = Console()
+logger = getLogger(__name__)
 
 
 class UXService:
-    """Service for rendering agent state and actions to the console."""
+    """
+    Service for rendering agent state and actions to the console.
+    """
 
     def render_fallback(
         self,
@@ -20,7 +20,10 @@ class UXService:
         action: str,
         step_number: int,
     ) -> None:
-        """Render a reasoning and action panel."""
+        """
+        Render a reasoning and action panel.
+        """
+
         console.print(f"[bold]Step {step_number}[/bold]")
         console.print(Panel(reasoning, title="🤔 Reasoning", border_style="blue"))
         # Action is usually printed by the execution logic or adapter

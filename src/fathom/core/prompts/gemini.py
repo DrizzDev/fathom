@@ -1,7 +1,3 @@
-"""
-Structured Gemini prompt builder using GCC-inspired context tiers.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -69,27 +65,24 @@ class GeminiPromptBuilder(PromptBuilder):
             parts.append(f"<CADENCE_NOTE>\n{tracking_note}\n</CADENCE_NOTE>")
 
         # 1. Memory Ledger (Factual Memory)
-        ledger = self.__get_ledger_segment(memory=memory)
-        if ledger:
+        if ledger := self.__get_ledger_segment(memory=memory):
             parts.append(f"<MEMORY_LEDGER>\n{ledger}\n</MEMORY_LEDGER>")
 
         # 2. Roadmap & Milestones (Tier 2 Context)
-        milestones = context.get("milestones", [])
-        if milestones:
+        if milestones := context.get("milestones", []):
             parts.append(
-                "<MILESTONES>\n" + "\n".join(f"- {m}" for m in milestones) + "\n</MILESTONES>"
+                "<MILESTONES>\n" + "\n".join(f"- {text}" for text in milestones) + "\n</MILESTONES>"
             )
 
         # 3. Execution Trace (Tier 3 Context - The Hot Suffix)
         trace = context.get("trace", [])
-        interaction_context = self.__format_trace(trace=trace)
-        if interaction_context:
+
+        if interaction_context := self.__format_trace(trace=trace):
             parts.append(f"<CURRENT_TRACE>\n{interaction_context}\n</CURRENT_TRACE>")
 
         # 4. Priority Guidance (HITL) - The "System Override"
         # Placed LAST to ensure maximum recency bias and adherence
-        guidance = context.get("guidance", [])
-        if guidance:
+        if guidance := context.get("guidance", []):
             instructions = [f"- {item}" for item in guidance]
             parts.append(
                 "<SYSTEM_OVERRIDE>\n"
@@ -106,14 +99,20 @@ class GeminiPromptBuilder(PromptBuilder):
         return "\n\n".join(parts)
 
     def __get_persona(self) -> str:
-        """Core identity."""
+        """
+        Core identity.
+        """
+
         return (
             "You are a Mobile UI expert agent. "
             "Ground all interactions using normalized coordinates (0-1000)."
         )
 
     def __get_contextual_rules(self, intent: str, hints: Optional[Dict[str, Any]]) -> str:
-        """High-priority contextual rules."""
+        """
+        High-priority contextual rules.
+        """
+
         rules: List[str] = []
 
         if hints and hints.get("use_xml"):
@@ -130,7 +129,10 @@ class GeminiPromptBuilder(PromptBuilder):
         return "RULES:\n" + "\n".join(rules) if rules else ""
 
     def __get_conditional_notes(self, intent: str, hints: Optional[Dict[str, Any]]) -> str:
-        """Add concise behavior notes."""
+        """
+        Add concise behavior notes.
+        """
+
         notes: List[str] = []
         intent_lower = intent.lower()
 
@@ -146,24 +148,31 @@ class GeminiPromptBuilder(PromptBuilder):
         return "NOTES:\n" + "\n".join(notes)
 
     def __get_ledger_segment(self, memory: Optional[Dict[str, str]]) -> str:
-        """High-density ledger memory."""
+        """
+        High-density ledger memory.
+        """
+
         if not memory:
             return ""
+
         items = [f"{key}:{value}" for key, value in memory.items()]
         return f"[{', '.join(items)}]"
 
     def __format_trace(self, trace: List[Dict[str, Any]]) -> str:
-        """Formats the GCC trace into a readable interaction history."""
+        """
+        Formats the GCC trace into a readable interaction history.
+        """
+
         if not trace:
             return ""
 
-        recent = trace[-8:]
         lines = []
         avoided = []
+        recent = trace[-8:]
 
         for index, entry in enumerate(recent, 1):
-            observation = entry.get("observation", "Unknown screen")
             action = entry.get("action", {})
+            observation = entry.get("observation", "Unknown screen")
 
             # Action might be dict or object
             if isinstance(action, dict):

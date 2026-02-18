@@ -1,15 +1,10 @@
-"""
-Interface for Graph Builders.
-"""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, List, Optional
+from typing import List, Optional
 
-if TYPE_CHECKING:
-    from langgraph.checkpoint.base import BaseCheckpointSaver
-    from langgraph.graph.state import CompiledStateGraph
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.graph.state import CompiledStateGraph
 
 
 class GraphBuilder(ABC):
@@ -21,8 +16,8 @@ class GraphBuilder(ABC):
     @abstractmethod
     def build(
         self,
-        checkpointer: Optional[BaseCheckpointSaver] = None,
         interrupt_before: Optional[List[str]] = None,
+        checkpointer: Optional[BaseCheckpointSaver] = None,
     ) -> CompiledStateGraph:
         """
         Builds and compiles the graph.
@@ -34,4 +29,5 @@ class GraphBuilder(ABC):
         Returns:
             CompiledStateGraph: The ready-to-execute graph.
         """
+
         raise NotImplementedError

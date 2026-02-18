@@ -1,7 +1,3 @@
-"""
-Interface for summarization services.
-"""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -24,4 +20,5 @@ class SummarizationPort(ABC):
         Returns:
             A single sentence summarizing the progress and state change.
         """
+
         raise NotImplementedError

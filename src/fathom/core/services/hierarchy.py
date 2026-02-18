@@ -1,13 +1,12 @@
-"""Hierarchy service for UI structure analysis."""
-
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET  # nosec
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+from fathom.base.paths import SharedPathManager
 from fathom.constants import ActionType
 from fathom.interfaces.device import DevicePort
 from fathom.processing.annotator import ImageAnnotator
@@ -15,38 +14,43 @@ from fathom.processing.drawer import BoundsGenerator
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
 
-if TYPE_CHECKING:
-    from fathom.base.paths import SharedPathManager
-
 logger = getLogger(__name__)
 
 
 class HierarchyService:
     """
-    Service responsible for UI hierarchy analysis.
-    Optimized for high-speed grounding.
+    Service responsible for UI hierarchy analysis. Optimized for high-speed grounding.
     """
 
     def __init__(self, device: DevicePort) -> None:
-        """Initialize hierarchy service with device port."""
+        """
+        Initialize hierarchy service with device port."""
+
         self.__device = device
         self.__label_map: Dict[str, Any] = {}
 
     @property
     def label_map(self) -> Dict[str, Any]:
-        """Returns current label mapping."""
+        """
+        Returns current label mapping.
+        """
+
         return self.__label_map.copy()
 
     async def process_xml_and_screen(
         self,
-        screen: ScreenCapture,
         xml: str,
-        path_manager: SharedPathManager,
-        package_name: str,
+        screen: ScreenCapture,
+        *,
         session_id: str,
+        package_name: str,
+        path_manager: SharedPathManager,
         action_type: Optional[ActionType] = None,
     ) -> Tuple[Optional[ScreenCapture], Dict[str, Any]]:
-        """Processes XML and screen data to identify UI elements."""
+        """
+        Processes XML and screen data to identify UI elements.
+        """
+
         start_time = datetime.now()
         xml_size_kb = len(xml.encode("utf-8")) / 1024
 
@@ -93,6 +97,7 @@ class HierarchyService:
 
             # Inject metadata
             new_metadata = capture.metadata.copy()
+
             new_metadata["xml_path"] = str(xml_path)
             new_metadata["path"] = str(annotated_result)
             capture = capture.model_copy(update={"metadata": new_metadata})
@@ -107,16 +112,23 @@ class HierarchyService:
             return screen, {}
 
     def __save_file(self, path: Path, data: bytes, mode: str = "wb") -> None:
-        """Helper to save file."""
+        """
+        Helper to save file.
+        """
+
         with path.open(mode) as handle:
             handle.write(data)
 
     def __parse_elements(
         self, xml: str, image_path: Path, action: Optional[ActionType]
     ) -> List[LabeledElement]:
-        """Identifies elements from XML."""
+        """
+        Identifies elements from XML.
+        """
+
         start = xml.find("<")
         end = xml.rfind(">")
+
         if start != -1 and end != -1:
             xml = xml[start : end + 1]
 
@@ -129,14 +141,20 @@ class HierarchyService:
     def __annotate(
         self, source: Path, destination: Path, elements: List[LabeledElement]
     ) -> Optional[Path]:
-        """Annotates image with identified elements."""
+        """
+        Annotates image with identified elements.
+        """
+
         path = ImageAnnotator.annotate(
             image_path=str(source), output_path=str(destination), elements=elements
         )
         return Path(path) if path else None
 
     def __build_capture(self, original: ScreenCapture, path: Path) -> ScreenCapture:
-        """Builds capture object from annotated image."""
+        """
+        Builds capture object from annotated image.
+        """
+
         with path.open("rb") as handle:
             return ScreenCapture(
                 image=handle.read(),

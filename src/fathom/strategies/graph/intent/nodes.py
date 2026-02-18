@@ -1,15 +1,13 @@
-"""
-Graph nodes for intent execution.
-"""
-
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from fathom.constants import ActionType
+from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
 from fathom.schemas.actions import Bounds
 from fathom.schemas.results import ActionResult, AnalysisResult, PlanResult
@@ -29,13 +27,18 @@ class IntentNodeProvider:
     """
 
     def __init__(self, context: GraphContext) -> None:
-        """Initialize provider with shared context."""
+        """
+        Initialize provider with shared context.
+        """
         self.__context = context
 
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
         Capture the screen and update state.
         """
+
+        _ = state
+
         if self.__context.is_cancelled:
             return {"is_complete": True, "completion_reason": "Cancelled"}
 
@@ -48,8 +51,8 @@ class IntentNodeProvider:
             if not screenshot_bytes:
                 return {
                     "capture": None,
-                    "completion_reason": "Empty screenshot captured",
                     "is_complete": False,
+                    "completion_reason": "Empty screenshot captured",
                 }
 
             width, height = await self.__context.device.get_dimensions()
@@ -58,35 +61,35 @@ class IntentNodeProvider:
             try:
                 activity = await self.__context.device.get_current_package()
             except Exception as exception:
+                activity = "unknown"
                 self.__context.telemetry.warning(
                     "Failed to get current package", error=str(exception)
                 )
-                activity = "unknown"
 
             # Persist capture
             storage_id = await self.__context.storage.save(
                 data=screenshot_bytes,
                 metadata={
                     "type": "screenshots",
-                    "activity_name": activity,
                     "package_name": activity,
-                    "session_id": self.__context.workflow_id,
                     "timestamp": time.time(),
+                    "activity_name": activity,
+                    "session_id": self.__context.workflow_id,
                 },
             )
 
             screen = ScreenCapture(
-                image=screenshot_bytes,
                 width=width,
                 height=height,
                 activity=activity,
+                image=screenshot_bytes,
                 timestamp=int(time.time() * 1000),
                 metadata={"storage_id": storage_id},
             )
 
             # XML Dump if enabled
-            xml_content_str = xml_content if xml_content else None
             elements = None
+            xml_content_str = xml_content if xml_content else None
 
             if self.__context.use_xml and xml_content_str:
                 dump_start = time.time()
@@ -101,10 +104,10 @@ class IntentNodeProvider:
                 ) = await self.__context.hierarchy.process_xml_and_screen(
                     screen=screen,
                     xml=xml_content_str,
-                    path_manager=self.__context.path_manager,
                     package_name=activity,
-                    session_id=self.__context.workflow_id,
                     action_type=ActionType.TAP,
+                    session_id=self.__context.workflow_id,
+                    path_manager=self.__context.path_manager,
                 )
                 self.__context.metrics.record(
                     operation="hierarchy_processing", duration=time.time() - process_start
@@ -112,11 +115,6 @@ class IntentNodeProvider:
 
                 if annotated_screen:
                     screen = annotated_screen
-
-            # Update Agent State
-            import hashlib
-
-            from fathom.constants.execution import VISUAL_HASH_LENGTH
 
             visual_hash = hashlib.sha256(screen.image).hexdigest()[:VISUAL_HASH_LENGTH]
 
@@ -137,33 +135,35 @@ class IntentNodeProvider:
 
             # Reset per-step fields
             return {
+                "analysis": None,
                 "capture": screen,
+                "step_result": None,
+                "elements": elements,
+                "planned_step": None,
                 "screen_state": screen_state,
                 "is_new_screen": is_new_screen,
                 "xml_content": xml_content_str,
-                "elements": elements,
                 "grounding_duration": duration,
-                "planned_step": None,
-                "step_result": None,
-                "analysis": None,
             }
 
         except Exception as exception:
             self.__context.telemetry.error(f"Grounding failed: {exception}")
             return {
                 "capture": None,
-                "completion_reason": f"Grounding failed: {exception}",
                 "is_complete": False,
+                "completion_reason": f"Grounding failed: {exception}",
             }
 
     async def analyze(self, state: IntentGraphState) -> IntentGraphState:
         """
         Plan the next step using the Agent Planner.
         """
+
         if self.__context.is_cancelled:
             return {"is_complete": True}
 
         capture: Optional[ScreenCapture] = state.get("capture")
+
         if not capture:
             return {"should_retry": True}
 
@@ -181,11 +181,11 @@ class IntentNodeProvider:
         start_time = time.time()
 
         plan = await self.__context.planner.plan_step(
+            capture=capture,
+            use_xml=self.__context.use_xml,
+            elements=state.get("elements"),
             state=self.__context.agent_state,
             reasoner=self.__context.reasoner,
-            use_xml=self.__context.use_xml,
-            capture=capture,
-            elements=state.get("elements"),
             context_manager=self.__context.context_manager,
         )
 
@@ -194,9 +194,9 @@ class IntentNodeProvider:
 
         if plan.metrics:
             self.__context.metrics.record_tokens(
+                cached=int(plan.metrics.get("cached_tokens", 0)),
                 prompt=int(plan.metrics.get("prompt_tokens", 0)),
                 completion=int(plan.metrics.get("completion_tokens", 0)),
-                cached=int(plan.metrics.get("cached_tokens", 0)),
             )
 
         if plan.step:
@@ -206,27 +206,29 @@ class IntentNodeProvider:
                 step_number=self.__context.agent_state.step_count + 1,
             )
 
+        completion_reason = plan.reason if plan.is_complete else state.get("completion_reason")
+
         return {
             "plan": plan,
-            "planned_step": plan.step,
-            "is_complete": plan.is_complete,
-            "completion_reason": plan.reason
-            if plan.is_complete
-            else state.get("completion_reason"),
-            "should_retry": plan.should_retry,
-            "analysis_duration": duration,
             "injected_context": None,
+            "planned_step": plan.step,
+            "analysis_duration": duration,
+            "is_complete": plan.is_complete,
+            "should_retry": plan.should_retry,
+            "completion_reason": completion_reason,
         }
 
     async def execute(self, state: IntentGraphState) -> IntentGraphState:
         """
         Execute the planned action.
         """
+
         if self.__context.is_cancelled:
             return {"is_complete": True}
 
         step: Optional[Step] = state.get("planned_step")
         capture: Optional[ScreenCapture] = state.get("capture")
+
         if not step or not capture:
             return {}
 
@@ -288,18 +290,20 @@ class IntentNodeProvider:
 
             # Tracing
             if coords:
-                package_name = "unknown"
                 screen_state: Optional[ScreenState] = state.get("screen_state")
+
                 if screen_state and screen_state.activity:
                     package_name = screen_state.activity
+                else:
+                    package_name = "unknown"
 
                 # Background persistence
                 asyncio.create_task(
                     asyncio.to_thread(
                         self.__context.trace.save,
-                        image_data=capture.image,
                         action=action,
                         coords=coords,
+                        image_data=capture.image,
                         package_name=package_name,
                         session_id=self.__context.workflow_id,
                         step_number=self.__context.agent_state.step_count,
@@ -317,12 +321,12 @@ class IntentNodeProvider:
 
         step_result = StepResult(
             step=step,
-            pre_hash=pre_hash,
             post_hash="0",
+            pre_hash=pre_hash,
+            screen_changed=True,
+            error=device_result.error,
             success=device_result.success,
             duration=int(duration * 1000),
-            error=device_result.error,
-            screen_changed=True,
         )
 
         return {
@@ -334,6 +338,7 @@ class IntentNodeProvider:
         """
         Record the execution result.
         """
+
         if self.__context.is_cancelled:
             return {"is_complete": True}
 
@@ -345,9 +350,9 @@ class IntentNodeProvider:
         self.__context.history.save_step(result=step_result, intent=self.__context.intent)
 
         await self.__context.memory.store_experience(
-            visual_hash=step_result.pre_hash,
-            action=step_result.step.action,
             success=step_result.success,
+            action=step_result.step.action,
+            visual_hash=step_result.pre_hash,
         )
 
         # Commit cycle to ContextManager (GCC Trace)
@@ -362,38 +367,39 @@ class IntentNodeProvider:
 
         await self.__context.context_manager.commit(
             observation=observation,
-            thought=step_result.step.action.rationale,
             action=step_result.step.action,
+            thought=step_result.step.action.rationale,
         )
 
         # GCC Branching
         full_context = self.__context.context_manager.get_full_context()
         trace = full_context.get("trace", [])
+
         if len(trace) >= 5:
             await self.__context.context_manager.branch()
 
         # Audit logging
         plan: Optional[PlanResult] = state.get("plan")
-        screen_state: Optional[ScreenState] = state.get("screen_state")
         is_new_screen: Optional[bool] = state.get("is_new_screen")
+        screen_state: Optional[ScreenState] = state.get("screen_state")
 
         if plan and screen_state and is_new_screen is not None:
-            analysis_dur: float = state.get("analysis_duration", 0.0)
-            grounding_dur: float = state.get("grounding_duration", 0.0)
-            execution_dur: float = state.get("execution_duration", 0.0)
+            analysis_duration: float = state.get("analysis_duration", 0.0)
+            grounding_duration: float = state.get("grounding_duration", 0.0)
+            execution_duration: float = state.get("execution_duration", 0.0)
 
             self.__context.auditor.log_step(
                 plan=plan,
                 state=screen_state,
-                result=ActionResult(success=step_result.success, duration=step_result.duration),
+                hierarchy_duration=0.0,
                 is_new_screen=is_new_screen,
+                analysis_duration=analysis_duration,
+                grounding_duration=grounding_duration,
+                execution_duration=execution_duration,
                 is_stuck=self.__context.agent_state.is_stuck,
                 step_count=self.__context.agent_state.step_count,
-                analysis_duration=analysis_dur,
-                grounding_duration=grounding_dur,
-                hierarchy_duration=0.0,
-                execution_duration=execution_dur,
-                total_duration=grounding_dur + analysis_dur + execution_dur,
+                total_duration=grounding_duration + analysis_duration + execution_duration,
+                result=ActionResult(success=step_result.success, duration=step_result.duration),
             )
 
         # Check max steps
@@ -411,11 +417,12 @@ def build_intent_nodes(context: GraphContext) -> Dict[str, Callable[..., Any]]:
     """
     Builds the node functions for the intent graph.
     """
+
     provider = IntentNodeProvider(context=context)
 
     return {
+        NodeName.RECORD: provider.record,
         NodeName.GROUND: provider.ground,
         NodeName.ANALYZE: provider.analyze,
         NodeName.EXECUTE: provider.execute,
-        NodeName.RECORD: provider.record,
     }

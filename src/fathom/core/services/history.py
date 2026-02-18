@@ -1,5 +1,3 @@
-"""History service for persisting execution traces."""
-
 from __future__ import annotations
 
 import json
@@ -114,8 +112,8 @@ class HistoryService:
         Generates a natural language test script with smart validation.
         """
 
-        lines = []
         step_number = 1
+        lines = []
         path = self.__directory / "script.txt"
 
         for index, record in enumerate(iterable=history):

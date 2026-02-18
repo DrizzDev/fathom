@@ -1,18 +1,13 @@
-"""
-Runtime executor for LangGraph workflows.
-"""
-
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 
-if TYPE_CHECKING:
-    from langgraph.graph.state import CompiledStateGraph
+from langgraph.graph.state import CompiledStateGraph
 
-    from fathom.strategies.graph.context import GraphContext
+from fathom.strategies.graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
 
@@ -25,26 +20,22 @@ class GraphExecutor:
 
     def __init__(
         self,
-        graph: CompiledStateGraph,
-        context: GraphContext,
         thread_id: str,
+        context: GraphContext,
+        graph: CompiledStateGraph,
         invalidate_on_injection: bool = True,
     ) -> None:
         """
         Initialize executor.
-
-        Args:
-            graph: The compiled LangGraph to execute.
-            context: Shared graph context for services and signals.
-            thread_id: Persistence thread ID.
-            invalidate_on_injection: If True, clears pending plans when context is injected.
         """
+
         self.__graph = graph
         self.__context = context
         self.__thread_id = thread_id
         self.__invalidate_on_injection = invalidate_on_injection
-        self.__config = {"configurable": {"thread_id": self.__thread_id}}
+
         self.__replan_count = 0
+        self.__config = {"configurable": {"thread_id": self.__thread_id}}
 
     async def run(self) -> None:
         """
@@ -107,7 +98,10 @@ class GraphExecutor:
             current_input = None
 
     async def __stream_graph(self, input_val: Optional[Dict[str, Any]]) -> None:
-        """Wrapper to stream graph events."""
+        """
+        Wrapper to stream graph events.
+        """
+
         async for event in self.__graph.astream(input_val, config=self.__config):
             # Log node transitions for visibility
             if isinstance(event, dict):
@@ -118,6 +112,7 @@ class GraphExecutor:
         """
         Processes HITL signals at graph breakpoints.
         """
+
         # Log interrupt check for visibility
         logger.debug(f"Executor: Checking signal at interrupt ({source})")
 
@@ -131,8 +126,7 @@ class GraphExecutor:
         await self.__context.signal.wait_for_resume()
 
         # Check for context injection using strict interface
-        injected = self.__context.signal.get_injected_context()
-        if injected:
+        if injected := self.__context.signal.get_injected_context():
             await self.__inject_context(content=injected)
 
         logger.info("Executor: Resuming execution")
@@ -141,6 +135,7 @@ class GraphExecutor:
         """
         Injects user guidance into both ContextManager and Graph State.
         """
+
         current_step = self.__context.agent_state.step_count
         logger.info(f"Executor: Injecting user context at Step {current_step}: '{content}'")
 
@@ -166,7 +161,6 @@ class GraphExecutor:
             logger.info("Executor: Invalidating pending plan to force re-planning")
             update_dict["plan"] = None
             update_dict["planned_step"] = None
-            # Force router to send us back to 'ground' instead of 'end'
             update_dict["should_retry"] = True
         else:
             logger.info("Executor: Preserving pending plan (if any)")

@@ -31,15 +31,6 @@ from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepRecord, StepResult
 from fathom.schemas.ui import LabeledElement, UIBounds
 
-# Backward compatibility aliases
-ADBConfig = ADBConfiguration
-ExecutionConfig = ExecutionConfiguration
-ExplorationStrategyConfig = ExplorationConfiguration
-FathomConfig = FathomConfiguration
-GeminiConfig = LLMConfiguration
-IntentStrategyConfig = IntentConfiguration
-WorkflowConfig = ExecutionConfiguration
-
 __all__ = [
     "ADBConfig",
     "ADBConfiguration",

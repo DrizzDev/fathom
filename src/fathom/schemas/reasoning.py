@@ -34,13 +34,16 @@ class CompletionSignal(BaseModel):
 
         if self.llm_confidence >= 0.8:
             score += 0.5
+
         elif self.llm_confidence >= 0.5:
             score += 0.25
 
         if self.keyword_match:
             score += 0.3
+
         if self.success_indicator:
             score += 0.15
+
         if self.expected_screen:
             score += 0.1
 
