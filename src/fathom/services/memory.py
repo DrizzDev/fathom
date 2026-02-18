@@ -146,7 +146,10 @@ class MemoryService:
                 (visual_hash,),
             ) as cursor:
                 async for row in cursor:
-                    action_data = json.loads(row[0])
+                    try:
+                        action_data = json.loads(row[0])
+                    except (json.JSONDecodeError, TypeError):
+                        continue
                     previous_actions = knowledge.get("previous_actions")
                     if isinstance(previous_actions, list):
                         previous_actions.append(

@@ -72,13 +72,19 @@ def _build_screen_names(graph_data: Dict[str, Any]) -> Dict[str, str]:
         target = (edge.get("action_target") or "").strip()
         if not target or action_type == "back":
             continue
-        incoming[edge["destination_hash"]].append(target)
-        outgoing[edge["source_hash"]].append(target)
+        dst = edge.get("destination_hash")
+        src = edge.get("source_hash")
+        if dst:
+            incoming[dst].append(target)
+        if src:
+            outgoing[src].append(target)
 
     names: Dict[str, str] = {}
 
     for node in nodes:
-        vhash = node["visual_hash"]
+        vhash = node.get("visual_hash")
+        if not vhash:
+            continue
 
         # 1. Real description?
         desc = (node.get("description") or "").strip()
@@ -204,7 +210,9 @@ class GraphExportService:
         ]
 
         for node in graph_data.get("nodes", []):
-            vhash = node["visual_hash"]
+            vhash = node.get("visual_hash")
+            if not vhash:
+                continue
             name = screen_names.get(vhash, vhash[:8])
             label = _node_label(name, node, max_len=50).replace('"', '\\"')
             visits = node.get("visit_count", 0)
@@ -214,8 +222,10 @@ class GraphExportService:
         lines.append("")
 
         for edge in graph_data.get("edges", []):
-            src = edge["source_hash"]
-            dst = edge["destination_hash"]
+            src = edge.get("source_hash")
+            dst = edge.get("destination_hash")
+            if not src or not dst:
+                continue
             label = _edge_label(edge, max_target=30).replace('"', '\\"')
             lines.append(f'  "{src}" -> "{dst}" [label="{label}"];')
 
@@ -232,8 +242,10 @@ class GraphExportService:
 
         node_ids: Dict[str, str] = {}
         for i, node in enumerate(graph_data.get("nodes", [])):
+            vhash = node.get("visual_hash")
+            if not vhash:
+                continue
             node_id = f"S{i}"
-            vhash = node["visual_hash"]
             node_ids[vhash] = node_id
 
             name = screen_names.get(vhash, vhash[:8])
@@ -242,8 +254,8 @@ class GraphExportService:
             lines.append(f'  {node_id}["{label}"]')
 
         for edge in graph_data.get("edges", []):
-            src = node_ids.get(edge["source_hash"])
-            dst = node_ids.get(edge["destination_hash"])
+            src = node_ids.get(edge.get("source_hash", ""))
+            dst = node_ids.get(edge.get("destination_hash", ""))
             if not src or not dst:
                 continue
 
@@ -311,7 +323,9 @@ class GraphExportService:
         # ── Build graph ──────────────────────────────────────────────
         known_hashes: set[str] = set()
         for node in nodes:
-            vhash = node["visual_hash"]
+            vhash = node.get("visual_hash")
+            if not vhash:
+                continue
             known_hashes.add(vhash)
             friendly_act = _friendly_activity(node.get("activity", "unknown"))
             name = screen_names.get(vhash, vhash[:8])
@@ -320,8 +334,10 @@ class GraphExportService:
             G.add_node(vhash, label=label, visits=visits, activity=friendly_act)
 
         for edge in edges:
-            src = edge["source_hash"]
-            dst = edge["destination_hash"]
+            src = edge.get("source_hash")
+            dst = edge.get("destination_hash")
+            if not src or not dst:
+                continue
             # Skip edges referencing nodes we don't know about to avoid
             # networkx auto-creating attribute-less nodes.
             if src not in known_hashes or dst not in known_hashes:

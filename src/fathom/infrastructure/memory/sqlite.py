@@ -195,6 +195,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
             "description": None,
             "previous_actions": [],
             "transitions": [],
+            "visit_count": 0,
         }
 
         async with aiosqlite.connect(self.__path) as db:

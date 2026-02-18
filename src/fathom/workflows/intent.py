@@ -128,6 +128,16 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
                 self.__completion_reason = "Workflow cancelled by user"
                 break
 
+            if self.has_exceeded_timeout():
+                self.__completion_reason = "Workflow total timeout exceeded"
+                logger.warning("Intent workflow exceeded total timeout")
+                break
+
+            if self.has_exceeded_steps():
+                self.__completion_reason = "Workflow max steps exceeded"
+                logger.warning("Intent workflow exceeded max steps")
+                break
+
             # Race step execution against cancellation
             step_task = asyncio.create_task(self.__strategy.execute_step())
             cancel_waiter = asyncio.create_task(self.cancel_event.wait())
@@ -275,20 +285,14 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         """Map graph terminal state to IntentResult."""
 
         if cancelled or final_state is None:
-            # Use whatever the agent state recorded before cancellation
-            step_results = (
-                list(node_ctx.agent_state.results)
-                if hasattr(node_ctx.agent_state, "results")
-                else []
-            )
             return IntentResult(
                 metrics=node_ctx.metrics.to_report_dict(),
                 success=False,
                 intent=self.__original_intent,
-                steps_taken=len(step_results),
+                steps_taken=node_ctx.agent_state.step_count,
                 final_screen=self.__final_screen,
                 completion_reason=self.__completion_reason or "Workflow cancelled by user",
-                step_results=step_results,
+                step_results=[],
             )
 
         success = final_state.get("is_complete", False)

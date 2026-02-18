@@ -313,4 +313,4 @@ class StepPlanner:
         """
 
         data = f"{capture.activity}:{len(capture.image)}".encode()
-        return hashlib.md5(string=data, usedforsecurity=False).hexdigest()[:16]
+        return hashlib.md5(data, usedforsecurity=False).hexdigest()[:16]

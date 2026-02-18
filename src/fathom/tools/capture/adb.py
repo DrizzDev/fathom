@@ -94,9 +94,9 @@ class ADBCaptureTool(CaptureTool):
         """
 
         visual_hashes = self.__compute_hashes(image_data=capture.image)
-        activity_hash = hashlib.md5(
-            string=capture.activity.encode(), usedforsecurity=False
-        ).hexdigest()[:8]
+        activity_hash = hashlib.md5(capture.activity.encode(), usedforsecurity=False).hexdigest()[
+            :8
+        ]
 
         return ScreenState(
             visual_hash=visual_hashes[0],
@@ -132,7 +132,7 @@ class ADBCaptureTool(CaptureTool):
         process = await asyncio.create_subprocess_exec(
             *arguments, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
         )
-        stdout, _ = await asyncio.wait_for(fut=process.communicate(), timeout=5.0)
+        stdout, _ = await asyncio.wait_for(fut=process.communicate(), timeout=self.__config.timeout)
         return stdout
 
     async def __get_current_activity(self) -> str:
@@ -147,7 +147,9 @@ class ADBCaptureTool(CaptureTool):
             process = await asyncio.create_subprocess_exec(
                 *arguments, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
             )
-            stdout, _ = await asyncio.wait_for(fut=process.communicate(), timeout=2.0)
+            stdout, _ = await asyncio.wait_for(
+                fut=process.communicate(), timeout=self.__config.timeout
+            )
             if stdout:
                 import re
 

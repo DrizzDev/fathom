@@ -95,7 +95,7 @@ class GeminiVisionTool(VisionTool):
         fingerprint = (
             capture.state.visual_hash
             if capture.state
-            else hashlib.md5(string=capture.image, usedforsecurity=False).hexdigest()[:16]
+            else hashlib.md5(capture.image, usedforsecurity=False).hexdigest()[:16]
         )
 
         start = time.time()

@@ -22,24 +22,32 @@ class ImageProcessor:
         """
         try:
             with Image.open(io.BytesIO(image_data)) as opened:
-                # Calculate new dimensions maintaining aspect ratio
                 width, height = opened.size
-                if width > max_dimension or height > max_dimension:
+                needs_resize = width > max_dimension or height > max_dimension
+
+                if needs_resize:
                     if width > height:
                         new_width = max_dimension
                         new_height = int(height * (max_dimension / width))
                     else:
                         new_height = max_dimension
                         new_width = int(width * (max_dimension / height))
-
-                    to_save = opened.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    resized = opened.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 else:
-                    to_save = opened
+                    resized = None
 
-                # Compress
-                buffer = io.BytesIO()
-                to_save.convert("RGB").save(buffer, format="JPEG", quality=quality, optimize=True)
-                return buffer.getvalue()
+                source = resized if resized is not None else opened
+                try:
+                    converted = source.convert("RGB")
+                    try:
+                        buffer = io.BytesIO()
+                        converted.save(buffer, format="JPEG", quality=quality, optimize=True)
+                        return buffer.getvalue()
+                    finally:
+                        converted.close()
+                finally:
+                    if resized is not None:
+                        resized.close()
         except Exception as exception:
             logger.warning(f"Image optimization failed, using original: {exception}")
             return image_data

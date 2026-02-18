@@ -154,6 +154,15 @@ class LoopDetector(BaseModel):
         self.__recovery_attempts = 0
         logger.info(f"LoopDetector.reset: cleared {prev_size} screens")
 
+    @property
+    def recovery_attempts(self) -> int:
+        """Current number of recovery attempts."""
+        return self.__recovery_attempts
+
+    @recovery_attempts.setter
+    def recovery_attempts(self, value: int) -> None:
+        self.__recovery_attempts = value
+
     def signal_content_exhausted(self) -> None:
         """
         Model indicated scrollable content is exhausted.
@@ -163,6 +172,7 @@ class LoopDetector(BaseModel):
         logger.info("LoopDetector: Content exhausted signal received, resetting.")
         self.__recent_screens.clear()
         self.__recent_actions.clear()
+        self.__recovery_attempts = 0
 
 
 class ActionHistory(BaseModel):

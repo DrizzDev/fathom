@@ -7,6 +7,7 @@ from typing import Optional
 from fathom.agent.planner import CoordinateConverter
 from fathom.constants import ActionType
 from fathom.exceptions import ToolError
+from fathom.schemas.actions import Bounds
 from fathom.schemas.orchestration import ExecutionContext
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.screens import ScreenCapture
@@ -178,7 +179,8 @@ class StepExecutor:
 
         # Handle special actions that don't need device interaction
         if action.action_type == ActionType.WAIT:
-            await asyncio.sleep(delay=1.0)
+            wait_ms = action.wait_duration or 1000
+            await asyncio.sleep(delay=wait_ms / 1000.0)
             duration_ms = int((time.time() - start_time) * 1000)
             return ExecutionResult(success=True, duration=duration_ms)
 
@@ -231,10 +233,20 @@ class StepExecutor:
 
             elif action.action_type == ActionType.SCROLL:
                 cx, cy = width // 2, height // 2
-                # Scroll down (swipe up)
                 device_result = await self.__device.swipe(
                     x1=cx, y1=cy + 200, x2=cx, y2=cy - 200, duration=500
                 )
+
+            elif action.action_type in (
+                ActionType.SWIPE_UP,
+                ActionType.SWIPE_DOWN,
+                ActionType.SWIPE_LEFT,
+                ActionType.SWIPE_RIGHT,
+            ):
+                direction = action.action_type.value.split("_")[1]
+                bounds = action.bounds or Bounds(x=200, y=200, width=600, height=600)
+                x1, y1, x2, y2 = converter.swipe_coordinates(bounds=bounds, direction=direction)
+                device_result = await self.__device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
 
             elif action.action_type == ActionType.LONG_PRESS:
                 if action.bounds:

@@ -141,6 +141,7 @@ class GeminiLLMClient(IVisionProvider):
         config_args: Dict[str, Any] = {
             "candidate_count": 1,
             "temperature": self.__configuration.temperature,
+            "max_output_tokens": self.__configuration.max_output_tokens,
             "automatic_function_calling": {"disable": True},
         }
 

@@ -112,8 +112,17 @@ async def execute_device_action(device: DeviceTool, action: Action) -> ActionRes
     if action.action_type == ActionType.HOME:
         return await device.home()
 
-    # Fallback for unrecognized action types
-    return await device.execute(request=action.model_dump())
+    if action.action_type in (
+        ActionType.COMPLETE,
+        ActionType.SAVE_MEMORY,
+        ActionType.RETRIEVE_MEMORY,
+    ):
+        return ActionResult(success=True, duration=0)
+
+    logger.warning("Unrecognized action type: %s", action.action_type)
+    return ActionResult(
+        success=False, duration=0, error=f"Unrecognized action type: {action.action_type}"
+    )
 
 
 async def get_action_coordinates(device: DeviceTool, action: Action) -> Tuple[int, ...]:

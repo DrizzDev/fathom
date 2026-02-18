@@ -492,9 +492,13 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
             }
 
         # Physical action
-        coordinates = await get_action_coordinates(ctx.device, step.action)
-        await _trace_background(ctx, step.action, capture.image, coordinates)
-        action_result = await execute_device_action(ctx.device, step.action)
+        try:
+            coordinates = await get_action_coordinates(ctx.device, step.action)
+            await _trace_background(ctx, step.action, capture.image, coordinates)
+            action_result = await execute_device_action(ctx.device, step.action)
+        except Exception as exc:
+            logger.exception("Device action failed with exception")
+            action_result = ActionResult(success=False, duration=0, error=str(exc))
 
         if step.action.memory_updates:
             for key, value in step.action.memory_updates.items():
@@ -567,14 +571,15 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
         # Record in agent state
         ctx.agent_state.record_step(result=step_result)
 
-        # Persist experience asynchronously
-        asyncio.create_task(
-            ctx.memory.store_experience(
+        # Persist experience (best-effort, exceptions logged)
+        try:
+            await ctx.memory.store_experience(
                 action=step.action,
                 success=step_result.success,
                 visual_hash=step_result.pre_hash,
             )
-        )
+        except Exception as exc:
+            logger.warning("Failed to store experience: %s", exc)
 
         # Compute absolute center for history export
         center: Optional[List[int]] = None
@@ -585,7 +590,11 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
             center = [cx, cy]
 
         ctx.history.set_package_name(ctx.current_package)
-        ctx.history.save_step(result=step_result, absolute_center=center)
+        ctx.history.save_step(
+            result=step_result,
+            absolute_center=center,
+            activity=screen_state.activity if screen_state else None,
+        )
 
         # Audit
         if screen_state:
@@ -714,6 +723,7 @@ def _build_step_result(
         post_hash="0",
         screen_changed=True,
         success=result.success,
+        error=result.error,
         pre_hash=screen_state.visual_hash if screen_state else "0",
         duration=int((time.time() - step_start) * 1000),
         generalized_target=None,

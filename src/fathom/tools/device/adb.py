@@ -233,7 +233,7 @@ class ADBDeviceTool(DeviceTool):
             return await self.home()
 
         if name == "wait":
-            duration = int(str(request.get("duration", 1000)))
+            duration = int(str(request.get("wait_duration") or request.get("duration") or 1000))
             await asyncio.sleep(duration / 1000)
             return ActionResult(success=True, duration=duration)
 

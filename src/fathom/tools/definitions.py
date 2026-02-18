@@ -68,7 +68,7 @@ class ToolRegistry:
                                     "wait",
                                     "home",
                                     "back",
-                                    "enter",
+                                    "long_press",
                                 ],
                             },
                             "rationale": {

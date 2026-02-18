@@ -61,15 +61,20 @@ class ReferenceResolutionService:
             return text
 
         resolved_text = text
+        unresolved: list[str] = []
 
         for source, key in matches:
             value = await self.__fetch_value(source, key)
+            token = f"${source}.{key}"
             if value:
-                # Replace strict match $source.key
-                token = f"${source}.{key}"
                 resolved_text = resolved_text.replace(token, str(value))
             else:
-                logger.warning(f"Could not resolve reference: ${source}.{key}")
+                logger.warning(f"Could not resolve reference: {token}")
+                resolved_text = resolved_text.replace(token, "")
+                unresolved.append(token)
+
+        if unresolved:
+            logger.warning("Unresolved references replaced with empty string: %s", unresolved)
 
         return resolved_text
 

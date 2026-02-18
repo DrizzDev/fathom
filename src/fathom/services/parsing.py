@@ -34,9 +34,30 @@ class ToolResponseParser(IResponseParser):
         try:
             candidates = response.candidates
             if not candidates:
-                raise VisionError("No candidates in response")
+                block_reason = getattr(response, "prompt_feedback", None)
+                reason_str = str(block_reason) if block_reason else "unknown"
+                logger.warning(f"Response blocked (no candidates): {reason_str}")
+                return self.__create_fallback_result(
+                    message=f"Response blocked by safety filter: {reason_str}"
+                )
 
             candidate = candidates[0]
+
+            _BLOCKED_REASONS = {
+                "SAFETY",
+                "RECITATION",
+                "BLOCKLIST",
+                "PROHIBITED_CONTENT",
+                2,
+                3,
+                4,
+                5,
+            }
+            if candidate.finish_reason in _BLOCKED_REASONS:
+                logger.warning(f"Response blocked by content filter: {candidate.finish_reason}")
+                return self.__create_fallback_result(
+                    message=f"Content filtered: {candidate.finish_reason}"
+                )
 
             if candidate.finish_reason not in (None, "STOP", 1):
                 logger.warning(f"Model failed to finish normally: {candidate.finish_reason}")
@@ -55,6 +76,8 @@ class ToolResponseParser(IResponseParser):
             # Separate primary vs side-effect tool calls
             primary_call = None
             side_effects = []
+            demoted_physical: Any = None
+            completion_result: Optional[AnalysisResult] = None
 
             for fc in function_calls:
                 if fc.name in self.__PRIMARY_TOOLS:
@@ -64,6 +87,7 @@ class ToolResponseParser(IResponseParser):
                         fc.name in self.__COMPLETION_TOOLS
                         and primary_call.name not in self.__COMPLETION_TOOLS
                     ):
+                        demoted_physical = primary_call
                         side_effects.append(primary_call)
                         primary_call = fc
                     else:
@@ -73,6 +97,23 @@ class ToolResponseParser(IResponseParser):
                 else:
                     logger.warning(f"Unknown tool call ignored: {fc.name}")
 
+            # When a physical action was demoted in favor of a completion tool,
+            # use the physical action as primary so it executes, and mark
+            # is_goal_complete on the result from the completion call.
+            if demoted_physical is not None and primary_call is not None:
+                logger.info(
+                    "Completion tool %s co-occurred with physical action %s; "
+                    "executing physical action and marking goal complete",
+                    primary_call.name,
+                    demoted_physical.name,
+                )
+                completion_result = self.__dispatch_parse(
+                    name=primary_call.name, arguments=primary_call.args
+                )
+                primary_call = demoted_physical
+                side_effects = [fc for fc in side_effects if fc is not demoted_physical]
+                # We'll merge the completion signal below after parsing primary.
+
             # If no primary tool, use the first side-effect as fallback
             if not primary_call:
                 primary_call = side_effects.pop(0) if side_effects else function_calls[0]
@@ -81,6 +122,15 @@ class ToolResponseParser(IResponseParser):
             result = self.__dispatch_parse(name=primary_call.name, arguments=primary_call.args)
             result.metadata["tool_name"] = primary_call.name
             result.metadata["tool_args"] = dict(primary_call.args)
+
+            # If completion was demoted, propagate is_goal_complete onto the physical result
+            if demoted_physical is not None:
+                result = result.model_copy(update={"is_goal_complete": True})
+                if completion_result and completion_result.action.memory_updates:
+                    merged = dict(result.action.memory_updates or {})
+                    merged.update(completion_result.action.memory_updates)
+                    action = result.action.model_copy(update={"memory_updates": merged})
+                    result = result.model_copy(update={"action": action})
 
             # Process side-effect tool calls (merge memory updates)
             if side_effects:
@@ -220,6 +270,9 @@ class ToolResponseParser(IResponseParser):
         except ValueError:
             action_type = ActionType.WAIT
 
+        if action_type in (ActionType.INFER, ActionType.UNKNOWN):
+            action_type = ActionType.WAIT
+
         updates = arguments.get("memory_updates")
         text = data.get("text") or data.get("text_to_type")
         wait = data.get("wait_duration") or data.get("wait_duration_ms")
@@ -248,7 +301,7 @@ class ToolResponseParser(IResponseParser):
             text=str(text) if text else None,
             wait_duration=int(wait) if wait else None,
             rationale=str(data.get("rationale", "")),
-            confidence=float(data.get("confidence", 1.0)),
+            confidence=self.__safe_float(data.get("confidence", 1.0), default=1.0),
             label_id=str(data.get("label_id")) if data.get("label_id") else None,
             is_valid=bool(data.get("is_valid", True)),
             validation_reason=str(data.get("validation_reason"))
@@ -266,6 +319,13 @@ class ToolResponseParser(IResponseParser):
             content_exhausted=content_exhausted,
             screen_description=screen_desc if screen_desc else "Tool-based analysis",
         )
+
+    @staticmethod
+    def __safe_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
 
     @staticmethod
     def __build_memory_key(arguments: Any) -> str:

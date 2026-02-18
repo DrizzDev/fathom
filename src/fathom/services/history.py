@@ -32,14 +32,19 @@ class HistoryService:
         if package_name:
             self.__package_name = package_name
 
-    def save_step(self, result: StepResult, absolute_center: Optional[List[int]] = None) -> None:
+    def save_step(
+        self,
+        result: StepResult,
+        absolute_center: Optional[List[int]] = None,
+        activity: Optional[str] = None,
+    ) -> None:
         """
         Saves a single step result to the workflow history files.
         """
 
         history_data = self.__load_history()
 
-        record = result.to_record(absolute_center=absolute_center).model_dump()
+        record = result.to_record(absolute_center=absolute_center, activity=activity).model_dump()
         record["timestamp"] = int(time.time() * 1000)
 
         history_data["history"].append(record)

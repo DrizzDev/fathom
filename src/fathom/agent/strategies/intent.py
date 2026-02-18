@@ -240,7 +240,7 @@ class IntentStrategy(ExecutionStrategy):
                     logger.warning(f"Target classification failed: {e}")
 
         # 5. RECORDING & AUDIT
-        step_result = self.__record_result(
+        step_result = await self.__record_result(
             step=step,
             state=state,
             result=result,
@@ -470,7 +470,7 @@ class IntentStrategy(ExecutionStrategy):
 
         return result, time.time() - start, center
 
-    def __record_result(
+    async def __record_result(
         self,
         step: Step,
         step_start: float,
@@ -496,15 +496,19 @@ class IntentStrategy(ExecutionStrategy):
         )
         self.__state.record_step(result=step_result)
 
-        asyncio.create_task(
-            coro=self.__memory.store_experience(
+        try:
+            await self.__memory.store_experience(
                 action=step.action,
                 success=result.success,
                 visual_hash=step_result.pre_hash,
             )
-        )
+        except Exception as exc:
+            logger.warning("Failed to store experience: %s", exc)
+
         self.__history.set_package_name(self.__current_package)
-        self.__history.save_step(result=step_result, absolute_center=coordinates)
+        self.__history.save_step(
+            result=step_result, absolute_center=coordinates, activity=state.activity
+        )
         return step_result
 
     async def should_continue(self) -> bool:
@@ -674,8 +678,17 @@ class IntentStrategy(ExecutionStrategy):
             ActionType.SWIPE_RIGHT,
             ActionType.SWIPE_UP,
             ActionType.SWIPE_DOWN,
+            ActionType.SCROLL,
+            ActionType.SWIPE,
         ):
-            direction = action.action_type.value.split("_")[1]
+            direction_map = {
+                ActionType.SCROLL: "up",
+                ActionType.SWIPE: "up",
+            }
+            if action.action_type in direction_map:
+                direction = direction_map[action.action_type]
+            else:
+                direction = action.action_type.value.split("_")[1]
             coords = converter.swipe_coordinates(
                 bounds=action.bounds or Bounds(x=200, y=200, width=600, height=600),
                 direction=direction,
@@ -688,10 +701,25 @@ class IntentStrategy(ExecutionStrategy):
             await asyncio.sleep(delay=duration / 1000.0)
             return ActionResult(success=True, duration=duration)
 
+        if action.action_type == ActionType.LONG_PRESS:
+            if not action.bounds:
+                return ActionResult(
+                    success=False,
+                    duration=0,
+                    error="Long press requires bounds",
+                )
+            x, y = converter.center_to_pixels(bounds=action.bounds)
+            return await self.__device.long_press(x=x, y=y)
+
         if action.action_type == ActionType.BACK:
             return await self.__device.back()
 
         if action.action_type == ActionType.HOME:
             return await self.__device.home()
 
-        return await self.__device.execute(request=action.model_dump())
+        logger.warning("Unhandled action type in classic strategy: %s", action.action_type.value)
+        return ActionResult(
+            success=False,
+            duration=0,
+            error=f"Unsupported action type: {action.action_type.value}",
+        )

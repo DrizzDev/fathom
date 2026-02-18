@@ -30,6 +30,9 @@ class CompletionSignal(BaseModel):
         - Expected screen: low weight (may be intermediate)
         """
 
+        if self.success_indicator:
+            return True
+
         score = 0.0
 
         if self.llm_confidence >= 0.8:
@@ -39,8 +42,6 @@ class CompletionSignal(BaseModel):
 
         if self.keyword_match:
             score += 0.3
-        if self.success_indicator:
-            score += 0.15
         if self.expected_screen:
             score += 0.1
 

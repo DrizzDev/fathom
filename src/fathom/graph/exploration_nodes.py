@@ -33,7 +33,7 @@ from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.prompts.modes import PromptMode
 from fathom.schemas.actions import Action
 from fathom.schemas.metrics import ExecutionMetrics
-from fathom.schemas.results import AnalysisResult
+from fathom.schemas.results import ActionResult, AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.services.audit import AuditService
@@ -481,11 +481,19 @@ def build_exploration_nodes(
         step_start = time.time()
 
         # Tracing (same as intent graph)
-        coordinates = await get_action_coordinates(ctx.device, action)
-        await _trace_exploration(ctx, action, capture.image, coordinates)
+        try:
+            coordinates = await get_action_coordinates(ctx.device, action)
+            await _trace_exploration(ctx, action, capture.image, coordinates)
 
-        # Execute with proper coordinate conversion
-        action_result = await execute_device_action(device=ctx.device, action=action)
+            # Execute with proper coordinate conversion
+            action_result = await execute_device_action(device=ctx.device, action=action)
+        except Exception as exc:
+            logger.exception("Device action failed with exception")
+            action_result = ActionResult(success=False, duration=0, error=str(exc))
+
+        if action.memory_updates:
+            for key, value in action.memory_updates.items():
+                await ctx.ledger.set(key=key, value=value)
 
         execution_duration = time.time() - step_start
         ctx.metrics.record(operation="action", duration=execution_duration)
@@ -544,6 +552,13 @@ def build_exploration_nodes(
                     "Could not recover to target package %s — terminating",
                     ctx.target_package,
                 )
+                ctx.agent_state.record_step(result=step_result)
+                if action:
+                    ctx.history.save_step(
+                        result=step_result,
+                        absolute_center=None,
+                        activity=screen_state.activity if screen_state else None,
+                    )
                 return {
                     **state,
                     "is_complete": True,
@@ -580,15 +595,16 @@ def build_exploration_nodes(
                 destination_hash=post_hash,
             )
 
-        # Persist experience to memory provider
+        # Persist experience (best-effort, exceptions logged)
         if action:
-            asyncio.create_task(
-                ctx.memory.store_experience(
+            try:
+                await ctx.memory.store_experience(
                     action=action,
                     success=step_result.success,
                     visual_hash=pre_hash,
                 )
-            )
+            except Exception as exc:
+                logger.warning("Failed to store experience: %s", exc)
 
         # History export (same as intent graph)
         center: Optional[List[int]] = None
@@ -598,7 +614,11 @@ def build_exploration_nodes(
             cx, cy = converter.center_to_pixels(bounds=action.bounds)
             center = [cx, cy]
 
-        ctx.history.save_step(result=step_result, absolute_center=center)
+        ctx.history.save_step(
+            result=step_result,
+            absolute_center=center,
+            activity=screen_state.activity if screen_state else None,
+        )
 
         # Audit (same as intent graph)
         if screen_state:
@@ -619,8 +639,12 @@ def build_exploration_nodes(
         if ctx.phase == BFSPhase.SCAN:
             if pre_hash != post_hash:
                 # Navigated to a different screen — enqueue if new
+                new_path = (
+                    list(ctx.current_path) + [(pre_hash, action)]
+                    if action
+                    else list(ctx.current_path)
+                )
                 if post_is_new and post_hash not in ctx.fully_scanned and action:
-                    new_path = list(ctx.current_path) + [(pre_hash, action)]
                     ctx.bfs_queue.append(
                         BFSQueueEntry(
                             screen_hash=post_hash,
@@ -637,17 +661,24 @@ def build_exploration_nodes(
                         len(ctx.bfs_queue),
                     )
 
+                # Track that we're now on the new screen
+                ctx.current_path = new_path
+
                 # Must return to scanning screen
                 ctx.phase = BFSPhase.RETURN
             # else: stayed on same screen — remain in SCAN
 
         elif ctx.phase == BFSPhase.RETURN:
             if post_hash == ctx.scanning_hash:
-                # Successfully returned
+                # Successfully returned — restore path to scanning screen
+                ctx.current_path = _path_to_screen(ctx, ctx.scanning_hash)
                 ctx.phase = BFSPhase.SCAN
                 logger.debug("BACK returned to scanning screen %s", post_hash[:8])
             else:
-                # BACK overshot — switch to ADVANCE for re-navigation
+                # BACK overshot — update current_path by popping the last hop
+                if ctx.current_path:
+                    ctx.current_path = ctx.current_path[:-1]
+                # Switch to ADVANCE for re-navigation
                 ctx.phase = BFSPhase.ADVANCE
                 logger.warning(
                     "BACK overshot: expected %s, got %s — switching to ADVANCE",
@@ -665,6 +696,7 @@ def build_exploration_nodes(
                 # Ran out of nav actions — start scanning wherever we landed
                 ctx.phase = BFSPhase.SCAN
                 ctx.scanning_hash = post_hash
+                ctx.current_path = _path_to_screen(ctx, post_hash)
                 logger.debug("Nav exhausted, scanning landed screen %s", post_hash[:8])
 
         # Check step limit
@@ -779,6 +811,22 @@ def make_route_after_record(
 
 
 # ── Private helpers ─────────────────────────────────────────────────────
+
+
+def _path_to_screen(
+    ctx: ExplorationNodeContext,
+    screen_hash: Optional[str],
+) -> List[Tuple[str, Action]]:
+    """Best-effort path reconstruction for a screen we've already visited."""
+    if not screen_hash or screen_hash == ctx.root_hash:
+        return []
+    # Check the BFS queue for any entry targeting this screen
+    for entry in ctx.bfs_queue:
+        if entry.screen_hash == screen_hash:
+            return list(entry.path_from_root)
+    # Fallback: when returning from a child, path to scanning screen is current_path minus last hop
+    # (current_path at this point is the path to the child we left, not to the screen we landed on)
+    return list(ctx.current_path[:-1])
 
 
 def _compute_navigation(

@@ -48,7 +48,11 @@ class StepResult(BaseModel):
         description="Whether the generalized_target is a positional/ordinal reference",
     )
 
-    def to_record(self, absolute_center: Optional[List[int]] = None) -> "StepRecord":
+    def to_record(
+        self,
+        absolute_center: Optional[List[int]] = None,
+        activity: Optional[str] = None,
+    ) -> "StepRecord":
         """
         Converts the result into a serializable record for persistence.
         """
@@ -73,6 +77,7 @@ class StepResult(BaseModel):
             natural_language_target=self.step.action.natural_language_target,
             generalized_target=self.generalized_target,
             is_positional=self.is_positional,
+            activity=activity,
         )
 
 
@@ -103,6 +108,8 @@ class StepRecord(BaseModel):
     success: bool = Field(description="Execution status")
     screen_changed: bool = Field(description="Visual transition status")
     duration: int = Field(ge=0, description="Duration in milliseconds")
+
+    activity: Optional[str] = Field(default=None, description="Android activity at time of action")
 
     bounds: Optional[List[int]] = Field(
         default=None, description="Normalized [x1, y1, x2, y2] bounds"

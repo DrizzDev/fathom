@@ -28,7 +28,7 @@ ACTION_RULES = {
         "WAIT: ONLY for active loading (skeleton, spinner, 'Loading...' text). "
         "NOT for sparse screens with visible text/buttons. Include wait_duration_ms (default 2000ms)."
     ),
-    "zoom": "ZOOM: 'zoom_in' to enlarge, 'zoom_out' to shrink. Target the relevant region.",
+    "zoom": "",
     "type": (
         "CRITICAL - TAP BEFORE TYPE: Always tap input first to gain focus. "
         "Then generate 'type' with text_to_type. "
@@ -77,14 +77,13 @@ ACTIONS:
 - {ACTION_RULES["type"]}
 - {ACTION_RULES["scroll"]}
 - {ACTION_RULES["wait"]}
-- {ACTION_RULES["zoom"]}
 
 STRICT FORMAT: Return only valid tool calls using provided schema fields.
 """
 
 TOOL_GUIDANCE = """
 TOOL SELECTION & VALIDATION:
-- execute_ui: PRIMARY tool for physical UI interactions (tap, type, swipe, scroll, wait, zoom).
+- execute_ui: PRIMARY tool for physical UI interactions (tap, type, swipe, scroll, wait).
   * Use this for ALL device interactions. Do NOT include goal completion here.
   * ALWAYS set screen_description: goal-relevant screen state in ≤15 words.
   * Evaluate is_valid and validation_reason for EVERY action.

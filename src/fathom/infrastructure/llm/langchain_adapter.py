@@ -28,7 +28,7 @@ class _FunctionCallShim:
 
     def __init__(self, tool_call: Dict[str, Any]) -> None:
         self.name: str = tool_call["name"]
-        self.args: Dict[str, Any] = tool_call.get("args", {})
+        self.args: Dict[str, Any] = tool_call.get("args") or {}
 
 
 class LangChainLLMClient(IVisionProvider):
@@ -50,6 +50,7 @@ class LangChainLLMClient(IVisionProvider):
         self.__genai_client: Any = None  # Raw genai.Client for caching
         self.__cache: Optional[CacheService] = None
         self.__credentials: Any = None
+        self.__resolved_project: Optional[str] = None
 
         # Background model readiness — set once __create_model finishes
         self.__model_ready = threading.Event()
@@ -100,7 +101,7 @@ class LangChainLLMClient(IVisionProvider):
 
                 self.__model = ChatVertexAI(
                     model_name=self.__configuration.model,
-                    project=self.__configuration.project_id,
+                    project=self.__resolved_project or self.__configuration.project_id,
                     location=self.__configuration.location or "global",
                     temperature=self.__configuration.temperature,
                     max_output_tokens=self.__configuration.max_output_tokens,
@@ -150,6 +151,8 @@ class LangChainLLMClient(IVisionProvider):
             project = os.environ.get("GEMINI_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
 
         http_options: Any = {"timeout": self.__configuration.timeout * 1000}  # ms
+
+        self.__resolved_project = project
 
         if self.__configuration.api_key:
             self.__genai_client = genai.Client(
@@ -269,6 +272,7 @@ class LangChainLLMClient(IVisionProvider):
         config = types.GenerateContentConfig(
             candidate_count=1,
             temperature=self.__configuration.temperature,
+            max_output_tokens=self.__configuration.max_output_tokens,
             automatic_function_calling={"disable": True},
             cached_content=cache_name,
         )

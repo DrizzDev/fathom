@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from logging import getLogger
@@ -64,6 +65,7 @@ class CacheService:
 
         self.__cached_content: Optional[Any] = None
         self.__content_hash: Optional[str] = None
+        self.__lock = asyncio.Lock()
 
         self.stats = CacheStats()
 
@@ -84,56 +86,60 @@ class CacheService:
 
         current_hash = self.__compute_hash(instruction=system_instruction, tools=tools)
 
-        # Cache hit: same content, cache exists
+        # Fast path (no lock needed for read-only hit check)
         if self.__cached_content and self.__content_hash == current_hash:
             self.stats.hits += 1
             logger.debug(f"Cache hit (hash={current_hash[:8]})")
             return str(self.__cached_content.name)
 
-        # Cache miss: content changed or no cache
-        self.stats.misses += 1
-
-        # Evict stale cache if content changed
-        if self.__cached_content and self.__content_hash != current_hash:
-            self.stats.evictions += 1
-            logger.info(
-                f"Cache invalidated (old={self.__content_hash[:8] if self.__content_hash else '?'}, new={current_hash[:8]})"
-            )
-            await self.__evict()
-
-        try:
-            if hasattr(self.__client, "aio") and hasattr(self.__client.aio, "caches"):
-                tool_list = []
-                if tools:
-                    tool_list.append({"function_declarations": tools})
-
-                config = {
-                    "tools": tool_list,
-                    "ttl": f"{self.__ttl_minutes * 60}s",
-                    "tool_config": {"function_calling_config": {"mode": "ANY"}},
-                    "contents": [Content(role="user", parts=[{"text": system_instruction}])],
-                }
-
-                self.__cached_content = await self.__client.aio.caches.create(
-                    model=self.__model_name, config=config
-                )
-                self.__content_hash = current_hash
-                self.stats.creates += 1
-
-                logger.info(
-                    f"Created context cache: {self.__cached_content.name} (hash={current_hash[:8]})"
-                )
+        async with self.__lock:
+            # Re-check after acquiring lock (another coroutine may have created it)
+            if self.__cached_content and self.__content_hash == current_hash:
+                self.stats.hits += 1
                 return str(self.__cached_content.name)
 
-        except Exception as exception:
-            if "minimum token count" in str(exception):
-                logger.debug(f"Skipping cache: {exception}")
-            else:
-                logger.warning(f"Failed to create cache: {exception}")
+            # Cache miss: content changed or no cache
+            self.stats.misses += 1
+
+            # Evict stale cache if content changed
+            if self.__cached_content and self.__content_hash != current_hash:
+                self.stats.evictions += 1
+                logger.info(
+                    f"Cache invalidated (old={self.__content_hash[:8] if self.__content_hash else '?'}, new={current_hash[:8]})"
+                )
+                await self.__evict()
+
+            try:
+                if hasattr(self.__client, "aio") and hasattr(self.__client.aio, "caches"):
+                    tool_list = []
+                    if tools:
+                        tool_list.append({"function_declarations": tools})
+
+                    config = {
+                        "tools": tool_list,
+                        "ttl": f"{self.__ttl_minutes * 60}s",
+                        "tool_config": {"function_calling_config": {"mode": "ANY"}},
+                        "contents": [Content(role="user", parts=[{"text": system_instruction}])],
+                    }
+
+                    self.__cached_content = await self.__client.aio.caches.create(
+                        model=self.__model_name, config=config
+                    )
+                    self.__content_hash = current_hash
+                    self.stats.creates += 1
+
+                    logger.info(
+                        f"Created context cache: {self.__cached_content.name} (hash={current_hash[:8]})"
+                    )
+                    return str(self.__cached_content.name)
+
+            except Exception as exception:
+                if "minimum token count" in str(exception):
+                    logger.debug(f"Skipping cache: {exception}")
+                else:
+                    logger.warning(f"Failed to create cache: {exception}")
 
             return None
-
-        return None
 
     async def delete_cache(self) -> None:
         """
@@ -174,4 +180,4 @@ class CacheService:
         if tools:
             payload += json.dumps(tools, sort_keys=True)
 
-        return hashlib.sha256(payload.encode(), usedforsecurity=False).hexdigest()[:16]
+        return hashlib.sha256(payload.encode(), usedforsecurity=False).hexdigest()

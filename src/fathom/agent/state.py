@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Set
 
@@ -416,6 +417,13 @@ class AgentState:
             "action_context": self.__action_history.get_context(),
             "recent_actions": self.__action_history.get_raw_actions(),
             "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
+            "current_screen": self.__current_screen.model_dump() if self.__current_screen else None,
+            "last_action_type": self.__last_action_type.value if self.__last_action_type else None,
+            "last_action_description": self.__last_action_description,
+            "last_error": self.__last_error,
+            "loop_detector": {
+                "recovery_attempts": self.__loop_detector.recovery_attempts,
+            },
         }
 
         if self.__summarizer is not None:
@@ -431,6 +439,11 @@ class AgentState:
         seen_screens: List[Dict[str, Any]],
         recent_actions: Optional[List[Dict[str, Any]]] = None,
         summarizer_data: Optional[Dict[str, Any]] = None,
+        current_screen: Optional[Dict[str, Any]] = None,
+        last_action_type: Optional[str] = None,
+        last_action_description: Optional[str] = None,
+        last_error: Optional[str] = None,
+        loop_detector_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -442,6 +455,21 @@ class AgentState:
 
         for data in seen_screens:
             self.__seen_screens.append(ScreenState(**data))
+
+        if current_screen:
+            self.__current_screen = ScreenState(**current_screen)
+
+        if last_action_type:
+            with contextlib.suppress(ValueError):
+                self.__last_action_type = ActionType(last_action_type)
+
+        self.__last_action_description = last_action_description
+        self.__last_error = last_error
+
+        if loop_detector_data:
+            recovery = loop_detector_data.get("recovery_attempts", 0)
+            if isinstance(recovery, (int, float)):
+                self.__loop_detector.recovery_attempts = int(recovery)
 
         # Restore the summarizer from checkpoint data
         if summarizer_data and self.__summarizer is not None:
@@ -498,6 +526,25 @@ class AgentState:
         if isinstance(summarizer_value, dict):
             summarizer_data = dict(summarizer_value)
 
+        current_screen: Optional[Dict[str, Any]] = None
+        screen_value = data.get("current_screen")
+        if isinstance(screen_value, dict):
+            current_screen = dict(screen_value)
+
+        last_action_type_val = data.get("last_action_type")
+        last_action_type_str = str(last_action_type_val) if last_action_type_val else None
+
+        last_action_desc_val = data.get("last_action_description")
+        last_action_desc = str(last_action_desc_val) if last_action_desc_val else None
+
+        last_error_val = data.get("last_error")
+        last_error = str(last_error_val) if last_error_val else None
+
+        loop_detector_data: Optional[Dict[str, Any]] = None
+        loop_val = data.get("loop_detector")
+        if isinstance(loop_val, dict):
+            loop_detector_data = dict(loop_val)
+
         state.__restore_from_data(
             step_count=step_count,
             is_complete=is_complete,
@@ -505,6 +552,11 @@ class AgentState:
             completion_reason=completion_reason,
             recent_actions=recent_actions,
             summarizer_data=summarizer_data,
+            current_screen=current_screen,
+            last_action_type=last_action_type_str,
+            last_action_description=last_action_desc,
+            last_error=last_error,
+            loop_detector_data=loop_detector_data,
         )
 
         return state
