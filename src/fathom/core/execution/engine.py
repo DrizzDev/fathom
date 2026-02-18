@@ -13,10 +13,9 @@ from typing import Optional
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import DEFAULT_MAX_RETRIES, DEFAULT_STABILITY_WAIT, SignalType
-from fathom.core.exceptions import ExecutionError, PortError
+from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.perception import PerceptionService
-from fathom.exceptions import ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort

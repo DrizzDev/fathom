@@ -4,7 +4,7 @@ from datetime import datetime
 from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from fathom.exceptions import VisionError
+from fathom.core.exceptions import VisionError
 from fathom.interfaces import IImageStorage
 
 if TYPE_CHECKING:

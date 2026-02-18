@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 
 import httpx
 
-from fathom.core.exceptions import PortError
+from fathom.core.exceptions import DeviceError, PortError
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.configuration import ADBConfiguration, DeviceConfiguration
 from fathom.schemas.remote import RemoteInteractionRequest
@@ -67,8 +67,7 @@ class RemoteDeviceAdapter(DevicePort):
             data = response.content
 
             if len(data) < 8:
-                logger.error("Snapshot response too short for header")
-                return b"", None
+                raise DeviceError("Snapshot response too short for header")
 
             header = data[:8]
             image_length, width, height = struct.unpack("!IHH", header)
@@ -77,8 +76,7 @@ class RemoteDeviceAdapter(DevicePort):
 
             image_end = 8 + image_length
             if len(data) < image_end:
-                logger.error("Snapshot response truncated (image)")
-                return b"", None
+                raise DeviceError("Snapshot response truncated (image)")
 
             image_bytes = data[8:image_end]
             xml_bytes = data[image_end:]
@@ -86,12 +84,13 @@ class RemoteDeviceAdapter(DevicePort):
             return image_bytes, xml_bytes.decode("utf-8", errors="ignore")
 
         except httpx.HTTPError as exception:
-            logger.error(f"Remote snapshot failed: {exception}")
-            return b"", None
+            raise DeviceError(f"Remote snapshot failed: {exception}") from exception
+
+        except DeviceError:
+            raise
 
         except Exception as exception:
-            logger.error(f"Snapshot parsing error: {exception}")
-            return b"", None
+            raise DeviceError(f"Snapshot parsing error: {exception}") from exception
 
     async def tap(self, *, x: int, y: int) -> ActionResult:
         """
@@ -160,10 +159,20 @@ class RemoteDeviceAdapter(DevicePort):
                 self.__cached_dimensions = (int(width), int(height))
                 return self.__cached_dimensions
 
-        except Exception as exception:
-            logger.error(f"Failed to fetch remote dimensions: {exception}")
+            raise DeviceError("Get dimensions: Response missing width or height fields")
 
-        return (1080, 1920)
+        except httpx.HTTPError as exception:
+            raise DeviceError(
+                f"Get dimensions: Failed to fetch from remote: {exception}"
+            ) from exception
+
+        except DeviceError:
+            raise
+
+        except Exception as exception:
+            raise DeviceError(
+                f"Get dimensions: Failed to parse response: {exception}"
+            ) from exception
 
     async def capture_screen(self) -> bytes:
         """
@@ -179,11 +188,20 @@ class RemoteDeviceAdapter(DevicePort):
             if buffer := response.json().get("content", {}).get("base64"):
                 return base64.b64decode(buffer)
 
-            logger.error("No base64 data in screenshot response")
-            return b""
+            raise DeviceError("Capture screen: No base64 data in screenshot response")
+
+        except httpx.HTTPError as exception:
+            raise DeviceError(
+                f"Capture screen: Remote screenshot failed: {exception}"
+            ) from exception
+
+        except DeviceError:
+            raise
+
         except Exception as exception:
-            logger.error(f"Remote screenshot failed: {exception}")
-            return b""
+            raise DeviceError(
+                f"Capture screen: Failed to decode screenshot: {exception}"
+            ) from exception
 
     async def dump_hierarchy(self) -> Optional[str]:
         """
@@ -199,9 +217,17 @@ class RemoteDeviceAdapter(DevicePort):
 
             xml_content = data.get("content", {}).get("xml")
             return str(xml_content) if xml_content is not None else None
+
+        except httpx.HTTPError as exception:
+            raise DeviceError(f"Dump hierarchy: Remote XML dump failed: {exception}") from exception
+
+        except DeviceError:
+            raise
+
         except Exception as exception:
-            logger.error(f"Remote XML dump failed: {exception}")
-            return None
+            raise DeviceError(
+                f"Dump hierarchy: Failed to parse XML response: {exception}"
+            ) from exception
 
     async def get_current_package(self) -> str:
         """
@@ -216,9 +242,19 @@ class RemoteDeviceAdapter(DevicePort):
 
             package = response.json().get("content", {}).get("package", "unknown_app")
             return str(package)
+
+        except httpx.HTTPError as exception:
+            raise DeviceError(
+                f"Get current package: Remote package check failed: {exception}"
+            ) from exception
+
+        except DeviceError:
+            raise
+
         except Exception as exception:
-            logger.error(f"Remote package check failed: {exception}")
-            return "unknown_app"
+            raise DeviceError(
+                f"Get current package: Failed to parse package response: {exception}"
+            ) from exception
 
     async def wait_for_device(self, *, timeout: float) -> bool:
         """

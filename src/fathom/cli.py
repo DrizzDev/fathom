@@ -22,7 +22,7 @@ from fathom.adapters.storage.local import LocalStorage
 from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.logger import BaseLogger
 from fathom.base.paths import SharedPathManager
-from fathom.exceptions import FathomError
+from fathom.core.exceptions import FathomError
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.builder import Fathom
 from fathom.runtime.factories import DeviceFactory

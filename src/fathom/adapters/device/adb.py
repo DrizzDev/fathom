@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 
 from rich.console import Console
 
+from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.configuration import ADBConfiguration
 from fathom.schemas.results import ActionResult
@@ -109,16 +110,23 @@ class ADBDevice(DevicePort):
 
         result = await self.__shell(command="wm size", capture_output=True)
 
-        if not result.success or not result.output:
-            logger.exception("Failed to capture screen dimension")
+        if not result.success:
+            raise DeviceError(
+                f"Get dimensions: Failed to get screen dimensions: {result.error or 'Unknown error'}"
+            )
 
-        if result.output and (match := re.search(r"(\d+)x(\d+)", result.output)):
+        if not result.output:
+            raise DeviceError("Get dimensions: Screen dimension command returned empty output")
+
+        if match := re.search(r"(\d+)x(\d+)", result.output):
             width = int(match.group(1))
             height = int(match.group(2))
             self.__cached_size = (width, height)
             return width, height
 
-        return (1080, 1920)
+        raise DeviceError(
+            f"Get dimensions: Failed to parse screen dimensions from output: {result.output}"
+        )
 
     async def capture_screen(self) -> bytes:
         """
@@ -134,18 +142,30 @@ class ADBDevice(DevicePort):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(
+            stdout, stderr = await asyncio.wait_for(
                 fut=process.communicate(),
                 timeout=self.__configuration.command_timeout,
             )
-            return stdout if process.returncode == 0 and stdout else b""
+
+            if process.returncode != 0:
+                error_msg = stderr.decode().strip() if stderr else "Unknown error"
+                raise DeviceError(f"Screenshot capture failed: {error_msg}")
+
+            if not stdout:
+                raise DeviceError("Screenshot capture returned empty data")
+
+            return stdout
+
         except asyncio.TimeoutError as exception:
-            logger.error(f"Screenshot capture timed out: {exception}")
-            return b""
+            raise DeviceError(
+                f"Screenshot capture timed out after {self.__configuration.command_timeout}s"
+            ) from exception
+
+        except DeviceError:
+            raise
 
         except Exception as exception:
-            logger.error(f"Screenshot capture failed: {exception}")
-            return b""
+            raise DeviceError(f"Screenshot capture failed: {exception}") from exception
 
         finally:
             # Ensure process is terminated if still running
@@ -165,14 +185,20 @@ class ADBDevice(DevicePort):
             command="dumpsys activity activities | grep mResumedActivity", capture_output=True
         )
 
-        if (
-            result.success
-            and result.output
-            and (match := re.search(r"u0\s+([a-zA-Z0-9_.]+)/", result.output))
-        ):
+        if not result.success:
+            raise DeviceError(
+                f"Get current package: Failed to get current package: {result.error or 'Unknown error'}"
+            )
+
+        if not result.output:
+            raise DeviceError("Get current package: Package query returned empty output")
+
+        if match := re.search(r"u0\s+([a-zA-Z0-9_.]+)/", result.output):
             return match.group(1)
 
-        return "unknown_app"
+        raise DeviceError(
+            f"Get current package: Failed to parse package name from output: {result.output}"
+        )
 
     async def wait_for_device(self, *, timeout: float = 30.0) -> bool:
         """
@@ -200,7 +226,9 @@ class ADBDevice(DevicePort):
         dump_result = await self.__shell(command=dump_command)
 
         if not dump_result.success:
-            return None
+            raise DeviceError(
+                f"Dump hierarchy: Failed to dump UI hierarchy: {dump_result.error or 'Unknown error'}"
+            )
 
         cat_arguments = self.__build_arguments(parts=["exec-out", "cat", path])
 
@@ -210,10 +238,27 @@ class ADBDevice(DevicePort):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(fut=process.communicate(), timeout=5.0)
-            return stdout.decode("utf-8", errors="ignore") if stdout else None
-        except Exception:
-            return None
+            stdout, stderr = await asyncio.wait_for(fut=process.communicate(), timeout=5.0)
+
+            if process.returncode != 0:
+                error_msg = stderr.decode().strip() if stderr else "Unknown error"
+                raise DeviceError(f"Dump hierarchy: Failed to read hierarchy file: {error_msg}")
+
+            if not stdout:
+                raise DeviceError("Dump hierarchy: Hierarchy dump returned empty data")
+
+            return stdout.decode("utf-8", errors="ignore")
+
+        except asyncio.TimeoutError as exception:
+            raise DeviceError("Dump hierarchy: Hierarchy dump timed out after 5s") from exception
+
+        except DeviceError:
+            raise
+
+        except Exception as exception:
+            raise DeviceError(
+                f"Dump hierarchy: Failed to dump hierarchy: {exception}"
+            ) from exception
 
     async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """

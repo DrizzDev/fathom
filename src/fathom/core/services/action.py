@@ -13,8 +13,7 @@ from fathom.constants import (
     DEFAULT_SWIPE_DURATION,
     ActionType,
 )
-from fathom.core.exceptions import ExecutionError, PortError
-from fathom.exceptions import ToolError
+from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.processing.annotator import ImageAnnotator

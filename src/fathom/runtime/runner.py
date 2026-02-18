@@ -122,7 +122,10 @@ class FathomRunner:
         # Fetch package name from device at start
         try:
             package_name = await self.__device.get_current_package()
-        except Exception:
+        except Exception as exception:
+            self.__telemetry.warning(
+                "Failed to get package name, using fallback", error=str(exception)
+            )
             package_name = "unknown_app"
 
         self.__telemetry.info(
@@ -228,7 +231,10 @@ class FathomRunner:
         # Fetch package name from device at start
         try:
             package_name = await self.__device.get_current_package()
-        except Exception:
+        except Exception as exception:
+            self.__telemetry.warning(
+                "Failed to get package name, using fallback", error=str(exception)
+            )
             package_name = "unknown_app"
 
         self.__telemetry.info(

@@ -33,7 +33,8 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
 
             try:
                 activity = await context.device.get_current_package()
-            except Exception:
+            except Exception as exception:
+                context.telemetry.warning("Failed to get current package", error=str(exception))
                 activity = "unknown"
 
             storage_id = await context.storage.save(

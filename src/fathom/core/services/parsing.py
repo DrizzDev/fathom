@@ -6,7 +6,7 @@ from logging import getLogger
 from typing import Any
 
 from fathom.constants import ActionType
-from fathom.exceptions import VisionError
+from fathom.core.exceptions import VisionError
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.results import AnalysisResult, GenerateResult
 

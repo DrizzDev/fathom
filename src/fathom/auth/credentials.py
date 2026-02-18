@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
-from fathom.exceptions import FathomError
+from fathom.core.exceptions import FathomError
 from fathom.settings.env import FathomSettings
 
 

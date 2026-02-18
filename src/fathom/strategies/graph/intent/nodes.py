@@ -57,7 +57,10 @@ class IntentNodeProvider:
             # Get current package
             try:
                 activity = await self.__context.device.get_current_package()
-            except Exception:
+            except Exception as exception:
+                self.__context.telemetry.warning(
+                    "Failed to get current package", error=str(exception)
+                )
                 activity = "unknown"
 
             # Persist capture

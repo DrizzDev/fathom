@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from google.cloud import storage
 
-from fathom.exceptions import VisionError
+from fathom.core.exceptions import VisionError
 from fathom.interfaces import IImageStorage
 from fathom.schemas.configuration import LLMConfiguration
 
