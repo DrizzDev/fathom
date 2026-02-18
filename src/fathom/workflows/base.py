@@ -3,9 +3,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 
-from fathom.constants import WorkflowStatus
 from fathom.schemas.configuration import WorkflowConfig
-from fathom.schemas.results import WorkflowResult
 from fathom.schemas.steps import StepResult
 
 T = TypeVar("T")
@@ -17,11 +15,8 @@ class BaseWorkflow(ABC, Generic[T]):
 
     Workflows encapsulate:
     - Execution logic for a specific automation type
-    - State management and checkpointing
     - Progress tracking and reporting
     - Error handling and recovery
-
-    Designed for sync execution now, extensible to Temporal later.
     """
 
     def __init__(
@@ -40,13 +35,11 @@ class BaseWorkflow(ABC, Generic[T]):
         self.__workflow_id = workflow_id
         self.__configuration = configuration or WorkflowConfig()
 
-        self.__status = WorkflowStatus.PENDING
         self.__end_time: Optional[float] = None
         self.__start_time: Optional[float] = None
 
         self.__cancelled = False
         self.__cancel_event = asyncio.Event()
-        self.__error: Optional[str] = None
         self.__step_results: List[StepResult] = []
 
     @property
@@ -66,14 +59,6 @@ class BaseWorkflow(ABC, Generic[T]):
         return self.__configuration
 
     @property
-    def status(self) -> WorkflowStatus:
-        """
-        Current workflow status.
-        """
-
-        return self.__status
-
-    @property
     def steps_executed(self) -> int:
         """
         Number of steps executed.
@@ -88,14 +73,6 @@ class BaseWorkflow(ABC, Generic[T]):
         """
 
         return self.__step_results.copy()
-
-    @property
-    def is_running(self) -> bool:
-        """
-        Whether workflow is currently running.
-        """
-
-        return self.__status == WorkflowStatus.RUNNING
 
     @property
     def elapsed(self) -> float:
@@ -137,56 +114,6 @@ class BaseWorkflow(ABC, Generic[T]):
 
         raise NotImplementedError
 
-    async def run(self) -> WorkflowResult:
-        """
-        Run the workflow with lifecycle management.
-
-        Handles:
-        - Status transitions
-        - Timing
-        - Error capture
-        - Result construction
-
-        Returns:
-            WorkflowResult with execution details.
-        """
-
-        self.__start_time = time.time()
-        self.__status = WorkflowStatus.RUNNING
-
-        try:
-            await self.execute()
-
-            if self.__cancelled:
-                self.__status = WorkflowStatus.CANCELLED
-            else:
-                self.__status = WorkflowStatus.COMPLETED
-
-        except asyncio.CancelledError:
-            self.__status = WorkflowStatus.CANCELLED
-            self.__cancelled = True
-
-        except TimeoutError as exception:
-            self.__status = WorkflowStatus.TIMEOUT
-            self.__error = str(exception)
-
-        except Exception as exception:
-            self.__status = WorkflowStatus.FAILED
-            self.__error = str(exception)
-
-        finally:
-            self.__end_time = time.time()
-
-        return WorkflowResult(
-            error=self.__error,
-            status=self.__status,
-            duration=self.elapsed,
-            metadata=self.get_progress(),
-            workflow_id=self.__workflow_id,
-            steps_executed=self.steps_executed,
-            step_results=self.__step_results.copy(),
-        )
-
     def record_step(self, result: StepResult) -> None:
         """
         Record a completed step.
@@ -227,13 +154,6 @@ class BaseWorkflow(ABC, Generic[T]):
 
         return self.__cancel_event
 
-    def should_checkpoint(self) -> bool:
-        """
-        Check if a checkpoint should be taken.
-        """
-
-        return (self.steps_executed % self.__configuration.checkpoint_interval) == 0
-
     def has_exceeded_timeout(self) -> bool:
         """
         Check if total timeout has been exceeded.
@@ -247,21 +167,3 @@ class BaseWorkflow(ABC, Generic[T]):
         """
 
         return self.steps_executed >= self.__configuration.max_steps
-
-    def get_checkpoint(self) -> Dict[str, Any]:
-        """
-        Get checkpoint data for persistence.
-
-        Returns:
-            Serializable checkpoint dictionary.
-        """
-
-        return {
-            "workflow_type": self.name,
-            "status": self.__status.value,
-            "progress": self.get_progress(),
-            "elapsed_seconds": self.elapsed,
-            "workflow_id": self.__workflow_id,
-            "steps_executed": self.steps_executed,
-            "configuration": self.__configuration.model_dump(),
-        }

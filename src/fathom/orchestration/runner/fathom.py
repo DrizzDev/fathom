@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fathom.exceptions import FathomError
-from fathom.infrastructure.llm import GeminiLLMClient
+from fathom.infrastructure.llm.langchain_adapter import LangChainLLMClient
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
@@ -33,9 +33,8 @@ class FathomRunner:
     Main entry point for executing Fathom workflows.
     Orchestrates the wiring of infrastructure, tools, and strategies.
 
-    When ``settings.use_langgraph`` is ``True``, uses the LangChain model
-    adapter and passes the flag through to :class:`IntentWorkflow` so it
-    executes via the LangGraph StateGraph.
+    All workflows execute via LangGraph StateGraphs using the LangChain
+    model adapter.
     """
 
     def __init__(self, settings: FathomSettings) -> None:
@@ -112,7 +111,6 @@ class FathomRunner:
             vision=self.__vision_orchestrator,
             configuration=workflow_configuration,
             capture=ADBCaptureTool(config=ADBCaptureConfig(device_serial=serial)),
-            use_langgraph=self.__settings.use_langgraph,
         )
 
         # 4. Execution
@@ -199,7 +197,6 @@ class FathomRunner:
             capture=ADBCaptureTool(config=ADBCaptureConfig(device_serial=serial)),
             configuration=WorkflowConfig(max_steps=max_steps, package_name=package_name),
             knowledge_graph=self.__knowledge_graph,
-            use_langgraph=self.__settings.use_langgraph,
             target_package=package_name,
         )
         self.__current_workflow = workflow
@@ -227,9 +224,6 @@ class FathomRunner:
     ) -> GeminiVisionTool:
         """
         Builds the Gemini-based vision orchestrator.
-
-        When ``settings.use_langgraph`` is enabled, uses
-        :class:`LangChainLLMClient` instead of the direct Gemini SDK client.
         """
 
         llm_configuration = GeminiConfig(
@@ -240,13 +234,7 @@ class FathomRunner:
             credentials_path=self.__settings.google_application_credentials,
         )
 
-        client: IVisionProvider
-        if self.__settings.use_langgraph:
-            from fathom.infrastructure.llm.langchain_adapter import LangChainLLMClient
-
-            client = LangChainLLMClient(configuration=llm_configuration)
-        else:
-            client = GeminiLLMClient(configuration=llm_configuration)
+        client: IVisionProvider = LangChainLLMClient(configuration=llm_configuration)
 
         if not self.__ledger:
             raise FathomError(message="Ledger not initialized")

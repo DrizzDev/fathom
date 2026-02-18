@@ -170,20 +170,37 @@ class ScriptExporter:
         return mapping.get(action_type, "Scroll")
 
     @staticmethod
-    def _is_app_launch(step: Union[StepResult, Dict[str, Any]], index: int) -> bool:
-        """Detect whether a step is the initial app-launch tap."""
-        if index != 0:
-            return False
-        action_type = ScriptExporter._get_action_type(step)
-        if action_type != "tap":
-            return False
-        if isinstance(step, StepResult):
-            raw = (
-                step.step.action.natural_language_target or step.step.action.target or ""
-            ).lower()
-        else:
-            raw = (step.get("natural_language_target") or step.get("target") or "").lower()
-        return "app" in raw or "icon" in raw
+    def _get_activity(step: Union[StepResult, Dict[str, Any]]) -> str:
+        """Extract the activity string from a step (empty string if absent)."""
+        if isinstance(step, dict):
+            return str(step.get("activity") or "")
+        return ""
+
+    @staticmethod
+    def _find_app_launch_boundary(
+        steps: Sequence[Union[StepResult, Dict[str, Any]]],
+        package_name: str,
+    ) -> int:
+        """Find the index of the first step that runs inside the target package.
+
+        Returns the index of the first step whose ``activity`` starts with
+        *package_name*, or ``0`` if the app is already active from the start
+        (or activity data is unavailable).  All steps before this index are
+        considered "opening the app" actions and should be suppressed in
+        favour of a single ``OPEN_APP`` directive.
+
+        A safety cap of 10 prevents suppressing large portions of the history
+        if something unexpected happened.
+        """
+        _MAX_LAUNCH_STEPS = 10
+        prefix = package_name + "/"
+        for j, step in enumerate(steps):
+            if j > _MAX_LAUNCH_STEPS:
+                return 0
+            activity = ScriptExporter._get_activity(step)
+            if activity.startswith(prefix) or activity == package_name:
+                return j
+        return 0
 
     @staticmethod
     def export(
@@ -201,22 +218,25 @@ class ScriptExporter:
         Args:
             step_results: List of executed step results.
             goal_state: Optional specific goal state for final validation.
-            package_name: Android package name. When set, the first tap-on-
-                app-icon step is replaced with ``OPEN_APP <package_name>``.
+            package_name: Android package name. When set, all steps that
+                precede the first in-app activity are suppressed and replaced
+                with a single ``OPEN_APP <package_name>`` directive.
         """
         lines: list[str] = []
         n = len(step_results)
         i = 0
+        launch_boundary = 0
+
+        # Detect app-launch boundary: suppress all pre-launch steps and emit OPEN_APP
+        if package_name:
+            launch_boundary = ScriptExporter._find_app_launch_boundary(step_results, package_name)
+            if launch_boundary > 0:
+                lines.append(f"OPEN_APP {package_name}")
+                i = launch_boundary
 
         while i < n:
             step = step_results[i]
             action_type_val = ScriptExporter._get_action_type(step)
-
-            # Replace the app-launch tap with a deterministic OPEN_APP command
-            if package_name and ScriptExporter._is_app_launch(step, i):
-                lines.append(f"OPEN_APP {package_name}")
-                i += 1
-                continue
 
             # --- Detect start of a swipe sequence ---
             if action_type_val in ScriptExporter._SWIPE_ACTIONS:
@@ -243,7 +263,7 @@ class ScriptExporter:
             target = ScriptExporter._resolve_target(step)
 
             # --- Smart Validation: insert when previous step caused a screen change ---
-            if i > 0 and action_type_val != "wait":
+            if i > 0 and i > launch_boundary and action_type_val != "wait":
                 prev = step_results[i - 1]
                 prev_action_type = ScriptExporter._get_action_type(prev)
                 prev_changed = (

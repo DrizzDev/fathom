@@ -9,7 +9,6 @@ if TYPE_CHECKING:
     from fathom.graph.nodes import NodeContext
 
 from fathom.agent.planner import StepPlanner
-from fathom.agent.strategies.intent import IntentStrategy
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.configuration import WorkflowConfig
 from fathom.schemas.results import IntentResult
@@ -26,13 +25,9 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
     """
     Workflow for executing a specific intent.
 
-    Orchestrates the full execution of a goal-directed automation:
-    1. Decompose complex intent into atomic sub-intents
-    2. Execute each sub-intent sequentially using IntentStrategy
-    3. Return combined result
-
-    When ``use_langgraph=True``, the execution loop is replaced by a
-    LangGraph StateGraph that drives the same underlying components.
+    Orchestrates the full execution of a goal-directed automation
+    using a LangGraph StateGraph that drives planning, analysis,
+    resolution, execution, and recording nodes.
     """
 
     def __init__(
@@ -45,7 +40,6 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         memory: IMemoryProvider,
         *,
         configuration: Optional[WorkflowConfig] = None,
-        use_langgraph: bool = False,
     ) -> None:
         """
         Initialize intent workflow.
@@ -58,23 +52,9 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         self.__memory = memory
         self.__capture = capture
         self.__original_intent = intent
-        self.__use_langgraph = use_langgraph
 
         self.__package_name = configuration.package_name if configuration else ""
         self.__planner = StepPlanner(vision_tool=vision)
-        # Create strategy immediately since we no longer decompose
-        self.__strategy = IntentStrategy(
-            intent=intent,
-            device=device,
-            memory=memory,
-            planner=self.__planner,
-            capture=capture,
-            workflow_id=workflow_id,
-            step_timeout=configuration.step_timeout if configuration else 30.0,
-            use_xml=configuration.use_xml_bounding_boxes if configuration else False,
-            max_steps=configuration.max_steps if configuration else 10,
-            package_name=self.__package_name,
-        )
 
         self.__completion_reason = ""
         self.__final_screen: Optional[ScreenCapture] = None
@@ -97,109 +77,10 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
 
     async def execute(self) -> IntentResult:
         """
-        Execute the intent workflow.
-
-        Delegates to the LangGraph StateGraph when ``use_langgraph`` is
-        ``True``; otherwise falls back to the original strategy loop.
+        Execute the intent workflow via the LangGraph StateGraph.
         """
 
-        logger.info(
-            f"Executing intent: {self.__original_intent} (langgraph={self.__use_langgraph})"
-        )
-
-        if self.__use_langgraph:
-            return await self.__execute_langgraph()
-
-        return await self.__execute_classic()
-
-    # ── Classic path (original strategy loop) ──────────────────────────
-
-    async def __execute_classic(self) -> IntentResult:
-        """Original while-loop strategy execution.
-
-        Each step is wrapped in a race against the ``cancel_event`` so that
-        an in-flight LLM call or device interaction is cancelled within
-        milliseconds of the user pressing Ctrl+C, rather than waiting for
-        the entire step to complete.
-        """
-
-        while await self.__strategy.should_continue():
-            if self.is_cancelled():
-                self.__completion_reason = "Workflow cancelled by user"
-                break
-
-            if self.has_exceeded_timeout():
-                self.__completion_reason = "Workflow total timeout exceeded"
-                logger.warning("Intent workflow exceeded total timeout")
-                break
-
-            if self.has_exceeded_steps():
-                self.__completion_reason = "Workflow max steps exceeded"
-                logger.warning("Intent workflow exceeded max steps")
-                break
-
-            # Race step execution against cancellation
-            step_task = asyncio.create_task(self.__strategy.execute_step())
-            cancel_waiter = asyncio.create_task(self.cancel_event.wait())
-
-            done, _pending = await asyncio.wait(
-                {step_task, cancel_waiter},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            if cancel_waiter in done and step_task not in done:
-                logger.info("Classic execution: cancel received mid-step, aborting")
-                step_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await step_task
-                self.__completion_reason = "Workflow cancelled by user"
-                break
-
-            # Clean up cancel waiter
-            cancel_waiter.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await cancel_waiter
-
-            result = step_task.result()
-
-            if result.step_result:
-                self.record_step(result=result.step_result)
-
-            if result.is_terminal:
-                if result.status == result.status.ERROR:
-                    logger.warning(f"Intent failed: {result.message}")
-                break
-
-        # Finalize
-        success = self.__strategy.state.is_complete
-
-        if not self.__completion_reason:
-            if success:
-                self.__completion_reason = "Goal successfully achieved"
-            else:
-                self.__completion_reason = "Execution failed or timed out"
-
-        return IntentResult(
-            metrics=self.__strategy.metrics,
-            success=success,
-            intent=self.__original_intent,
-            steps_taken=self.steps_executed,
-            final_screen=self.__final_screen,
-            completion_reason=self.__completion_reason,
-            step_results=self.recorded_steps,
-        )
-
-    # ── LangGraph path ─────────────────────────────────────────────────
-
-    async def __execute_langgraph(self) -> IntentResult:
-        """Execute using a LangGraph StateGraph.
-
-        The graph invocation is wrapped in an asyncio task so that when
-        ``cancel()`` is called (via SIGINT), a monitor coroutine can cancel
-        the task immediately rather than waiting for the current node to
-        finish.  Each graph node also checks ``ctx.is_cancelled`` at entry
-        for belt-and-suspenders safety.
-        """
+        logger.info(f"Executing intent: {self.__original_intent}")
 
         from fathom.graph.intent_graph import build_intent_graph
 
@@ -229,7 +110,6 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             "should_retry": False,
         }
 
-        # Run ainvoke in a task so we can cancel it from the monitor
         graph_task = asyncio.create_task(
             compiled_graph.ainvoke(
                 initial_state,
@@ -240,7 +120,6 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             )
         )
 
-        # Monitor: wait for either graph completion or cancellation
         cancel_waiter = asyncio.create_task(self.cancel_event.wait())
 
         done, pending = await asyncio.wait(
@@ -249,33 +128,30 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
         )
 
         if cancel_waiter in done and graph_task not in done:
-            # Cancellation was requested — cancel the in-flight graph task
             logger.info("LangGraph execution cancelled by user, cancelling task")
             graph_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await graph_task
 
-            # Build a partial result from whatever node_ctx recorded
             self.__completion_reason = "Workflow cancelled by user"
-            return self.__build_langgraph_result(
+            return self.__build_result(
                 node_ctx=node_ctx,
                 final_state=None,
                 cancelled=True,
             )
 
-        # Clean up the cancel waiter if graph finished first
         cancel_waiter.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await cancel_waiter
 
         final_state = graph_task.result()
-        return self.__build_langgraph_result(
+        return self.__build_result(
             node_ctx=node_ctx,
             final_state=final_state,
             cancelled=False,
         )
 
-    def __build_langgraph_result(
+    def __build_result(
         self,
         node_ctx: NodeContext,
         final_state: Optional[Dict[str, Any]],
@@ -317,27 +193,14 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             step_results=step_results,
         )
 
-    async def __should_continue(self) -> bool:
-        """
-        Required by base but unused in our overridden execute loop.
-        """
-
-        return not self.is_cancelled() and not (
-            self.__strategy and self.__strategy.state.is_complete
-        )
-
     def get_progress(self) -> Dict[str, Any]:
         """
         Get progress for the intent workflow.
         """
 
-        progress = {
+        return {
             "elapsed": self.elapsed,
             "intent": self.__original_intent,
             "steps_executed": self.steps_executed,
             "max_steps": self.configuration.max_steps,
         }
-        if self.__strategy:
-            progress["strategy"] = self.__strategy.get_progress()
-
-        return progress

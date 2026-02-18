@@ -8,12 +8,6 @@ from fathom.schemas.configuration import (
     HasherConfig,
     WorkflowConfig,
 )
-from fathom.schemas.orchestration import (
-    ExecutionContext,
-    RunnerConfig,
-    RunnerResult,
-    StepContext,
-)
 from fathom.schemas.results import (
     ActionResult,
     AnalysisResult,
@@ -35,7 +29,6 @@ __all__ = [
     "ActionResult",
     "AnalysisResult",
     "Bounds",
-    "ExecutionContext",
     "ExecutionResult",
     "ExplorationResult",
     "GeminiConfig",
@@ -43,12 +36,9 @@ __all__ = [
     "IntentResult",
     "LabeledElement",
     "PlanResult",
-    "RunnerConfig",
-    "RunnerResult",
     "ScreenCapture",
     "ScreenState",
     "Step",
-    "StepContext",
     "StepRecord",
     "StepResult",
     "StrategyResult",

@@ -40,9 +40,6 @@ class FathomSettings(BaseSettings):
     # Workflow default limits
     max_steps: int = Field(default=100, alias="MAX_STEPS")
 
-    # LangGraph integration
-    use_langgraph: bool = Field(default=True, alias="USE_LANGGRAPH")
-
     # Environment file support
     model_config = SettingsConfigDict(
         extra="ignore",

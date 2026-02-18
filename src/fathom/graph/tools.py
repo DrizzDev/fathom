@@ -3,7 +3,7 @@ LangChain tool wrappers for Fathom's VLM tool definitions.
 
 These tools are **schema-only** — they exist so that the LLM can produce
 structured tool-call outputs.  Actual device execution is performed by
-:class:`~fathom.orchestration.executor.StepExecutor` inside the graph's
+:func:`~fathom.utils.execution.execute_device_action` inside the graph's
 ``execute`` node.
 
 The tool functions simply return their arguments as-is; the graph routing

@@ -244,12 +244,6 @@ def main() -> int:
         default=None,
         help="Version of prompt/toolset to use",
     )
-    run_parser.add_argument(
-        "--langgraph",
-        action="store_true",
-        help="Use LangGraph StateGraph for orchestration (requires langgraph extras)",
-    )
-
     explore_parser = subparsers.add_parser("explore", help="Run app exploration")
     explore_parser.add_argument(
         "--package", "-p", type=str, help="Target package name to explore (e.g. com.example.app)"
@@ -268,9 +262,6 @@ def main() -> int:
 
     if hasattr(args, "verbose") and args.verbose:
         settings.log_level = "DEBUG"
-
-    if hasattr(args, "langgraph") and args.langgraph:
-        settings.use_langgraph = True
 
     BaseLogger.configure(settings)
 

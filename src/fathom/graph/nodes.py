@@ -2,7 +2,7 @@
 LangGraph node functions for the Fathom intent-execution graph.
 
 Each function is a **thin adapter** that delegates to the existing Fathom
-components (``StepPlanner``, ``StepExecutor``, ``AgentState``, etc.).
+components (``StepPlanner``, ``AgentState``, etc.).
 Mutable objects that don't belong in the LangGraph ``TypedDict`` state
 (deques, services, etc.) are captured via a shared :class:`NodeContext`
 closure that is constructed once and injected into each node factory.

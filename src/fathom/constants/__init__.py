@@ -31,15 +31,6 @@ class ActionType(StrEnum):
     UNKNOWN = "unknown"
 
 
-class FlowType(StrEnum):
-    """
-    Type of execution flow.
-    """
-
-    INTENT = "intent"
-    EXPLORATION = "exploration"
-
-
 class WorkflowStatus(StrEnum):
     """
     Status of workflow execution.

@@ -116,12 +116,20 @@ class ToolResponseParser(IResponseParser):
 
             # If no primary tool, use the first side-effect as fallback
             if not primary_call:
-                primary_call = side_effects.pop(0) if side_effects else function_calls[0]
+                if side_effects:
+                    primary_call = side_effects.pop(0)
+                else:
+                    # All tool calls were unknown — return a safe fallback
+                    names = [fc.name for fc in function_calls]
+                    logger.warning("No recognized tool calls found: %s", names)
+                    return self.__create_fallback_result(
+                        message=f"Unrecognized tool calls: {', '.join(names)}"
+                    )
 
             # Parse primary tool call
             result = self.__dispatch_parse(name=primary_call.name, arguments=primary_call.args)
             result.metadata["tool_name"] = primary_call.name
-            result.metadata["tool_args"] = dict(primary_call.args)
+            result.metadata["tool_args"] = dict(primary_call.args or {})
 
             # If completion was demoted, propagate is_goal_complete onto the physical result
             if demoted_physical is not None:

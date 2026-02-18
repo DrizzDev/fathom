@@ -74,6 +74,7 @@ class ExplorationNodeContext:
         memory: IMemoryProvider,
         *,
         max_steps: int = 100,
+        timeout: float = 3600.0,
         workflow_id: str = "default",
         cancel_event: Optional[asyncio.Event] = None,
         target_package: Optional[str] = None,
@@ -84,6 +85,8 @@ class ExplorationNodeContext:
         self.knowledge_graph = knowledge_graph
         self.memory = memory
         self.max_steps = max_steps
+        self.timeout = timeout
+        self.start_time = time.time()
         self.target_package = target_package
         self._cancel_event = cancel_event or asyncio.Event()
 
@@ -543,29 +546,40 @@ def build_exploration_nodes(
 
         # ── Package scope enforcement ───────────────────────────────
         if ctx.target_package:
-            recovered = await ensure_target_package(
-                device=ctx.device,
-                target_package=ctx.target_package,
-            )
-            if not recovered:
-                logger.error(
-                    "Could not recover to target package %s — terminating",
-                    ctx.target_package,
+            pre_recovery_pkg = await ctx.device.get_current_package()
+            needs_recovery = pre_recovery_pkg != ctx.target_package
+
+            if needs_recovery:
+                recovered = await ensure_target_package(
+                    device=ctx.device,
+                    target_package=ctx.target_package,
                 )
-                ctx.agent_state.record_step(result=step_result)
-                if action:
-                    ctx.history.save_step(
-                        result=step_result,
-                        absolute_center=None,
-                        activity=screen_state.activity if screen_state else None,
+                if not recovered:
+                    logger.error(
+                        "Could not recover to target package %s — terminating",
+                        ctx.target_package,
                     )
-                return {
-                    **state,
-                    "is_complete": True,
-                    "completion_reason": (
-                        f"Left target package {ctx.target_package} and could not recover"
-                    ),
-                }
+                    ctx.agent_state.record_step(result=step_result)
+                    if action:
+                        ctx.history.save_step(
+                            result=step_result,
+                            absolute_center=None,
+                            activity=screen_state.activity if screen_state else None,
+                        )
+                    return {
+                        **state,
+                        "is_complete": True,
+                        "completion_reason": (
+                            f"Left target package {ctx.target_package} and could not recover"
+                        ),
+                    }
+
+                # Recovery succeeded but we don't know our position in the app.
+                # Reset BFS navigation state so the next cycle re-orients.
+                ctx.pending_nav.clear()
+                ctx.current_path = []
+                ctx.phase = BFSPhase.SCAN
+                logger.info("BFS state reset after package recovery")
 
         # Re-capture post-state
         post_capture = await ctx.capture_tool.capture()
@@ -802,6 +816,12 @@ def make_route_after_record(
             return "done"
 
         if not ctx.agent_state.can_continue:
+            ctx.audit_service.print_session_summary()
+            return "done"
+
+        elapsed = time.time() - ctx.start_time
+        if elapsed >= ctx.timeout:
+            logger.info("Exploration timeout reached (%.0fs >= %.0fs)", elapsed, ctx.timeout)
             ctx.audit_service.print_session_summary()
             return "done"
 
