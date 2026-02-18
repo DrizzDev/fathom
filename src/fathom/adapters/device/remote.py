@@ -32,9 +32,9 @@ class RemoteDeviceAdapter(DevicePort):
         if not configuration.provider_url or not configuration.session_id:
             raise PortError("Remote device requires provider_url and session_id")
 
-        self.__url = configuration.provider_url.rstrip("/")
         self.__session = configuration.session_id
         self.__token = configuration.authentication_token
+        self.__url = configuration.provider_url.rstrip("/")
 
         self.__adb_config = ADBConfiguration(serial_number=self.__session)
 
@@ -145,6 +145,7 @@ class RemoteDeviceAdapter(DevicePort):
             return self.__cached_dimensions
 
         request = RemoteInteractionRequest(action="GET_DIMENSIONS")
+
         try:
             response = await self.__client.post("/action", json=request.model_dump())
             response.raise_for_status()

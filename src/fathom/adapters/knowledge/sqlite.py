@@ -1,5 +1,3 @@
-"""SQLite knowledge adapter - implements knowledge graph using SQLite and rustworkx."""
-
 from __future__ import annotations
 
 import json
@@ -19,7 +17,6 @@ if TYPE_CHECKING:
 class SQLiteKnowledge(KnowledgePort):
     """
     SQLite adapter for application knowledge graph.
-
     Uses SQLite for persistence and rustworkx for graph operations.
     """
 
@@ -27,30 +24,32 @@ class SQLiteKnowledge(KnowledgePort):
         self,
         path_manager: Optional[SharedPathManager] = None,
         *,
-        database_path: str = "assets/memory/knowledge_graph.db",
+        database_path: str = "assets/memory/knowledge.db",
     ) -> None:
-        """Initialize SQLite knowledge adapter."""
+        """
+        Initialize SQLite knowledge adapter.
+        """
+
         if path_manager:
-            # We can use memory_path and append specific filename
-            # SharedPathManager has get_knowledge_db_path? No, only for memory/ledger.
-            # But memory_path returns path to 'memory' dir.
-            # Let's use that.
             self.__path = path_manager.memory_path / "knowledge_graph.db"
         else:
             self.__path = Path(database_path)
 
         self.__initialized = False
         self.__path.parent.mkdir(parents=True, exist_ok=True)
+
         self.__graph: Optional[rx.PyDiGraph] = None
         self.__screen_to_node: Dict[str, int] = {}
 
     async def __initialize(self) -> None:
-        """Initialize the database schema and load graph."""
+        """
+        Initialize the database schema and load graph.
+        """
+
         if self.__initialized:
             return
 
         async with aiosqlite.connect(self.__path) as db:
-            # Create tables
             await db.execute(
                 "CREATE TABLE IF NOT EXISTS screens (screen_id TEXT PRIMARY KEY, metadata TEXT)"
             )
@@ -66,9 +65,12 @@ class SQLiteKnowledge(KnowledgePort):
         self.__initialized = True
 
     async def __load_graph(self) -> None:
-        """Load graph structure from database."""
-        self.__graph = rx.PyDiGraph()
+        """
+        Load graph structure from database.
+        """
+
         self.__screen_to_node = {}
+        self.__graph = rx.PyDiGraph()
 
         async with aiosqlite.connect(self.__path) as db:
             # Load screens as nodes
@@ -86,15 +88,22 @@ class SQLiteKnowledge(KnowledgePort):
             ) as cursor:
                 async for row in cursor:
                     from_screen, to_screen, action_json = row
+
                     if from_screen in self.__screen_to_node and to_screen in self.__screen_to_node:
-                        from_idx = self.__screen_to_node[from_screen]
-                        to_idx = self.__screen_to_node[to_screen]
+                        to_index = self.__screen_to_node[to_screen]
+                        from_index = self.__screen_to_node[from_screen]
                         action_data = json.loads(action_json) if action_json else {}
+
                         if self.__graph is not None:
-                            self.__graph.add_edge(from_idx, to_idx, action_data)
+                            self.__graph.add_edge(
+                                parent=from_index, child=to_index, edge=action_data
+                            )
 
     async def add_screen(self, *, screen_id: str, metadata: Dict[str, Any]) -> None:
-        """Add screen node to graph."""
+        """
+        Add screen node to graph.
+        """
+
         await self.__initialize()
 
         # Add to database
@@ -109,16 +118,21 @@ class SQLiteKnowledge(KnowledgePort):
         if screen_id not in self.__screen_to_node:
             if self.__graph is None:
                 raise RuntimeError("Knowledge graph not initialized")
+
             node_idx = self.__graph.add_node({"screen_id": screen_id, **metadata})
             self.__screen_to_node[screen_id] = node_idx
 
     async def add_transition(self, *, from_screen: str, to_screen: str, action: Action) -> None:
-        """Add transition edge between screens."""
+        """
+        Add transition edge between screens.
+        """
+
         await self.__initialize()
 
         # Ensure both screens exist
         if from_screen not in self.__screen_to_node:
             await self.add_screen(screen_id=from_screen, metadata={})
+
         if to_screen not in self.__screen_to_node:
             await self.add_screen(screen_id=to_screen, metadata={})
 
@@ -131,60 +145,72 @@ class SQLiteKnowledge(KnowledgePort):
             await db.commit()
 
         # Add to in-memory graph
-        from_idx = self.__screen_to_node[from_screen]
-        to_idx = self.__screen_to_node[to_screen]
+        to_index = self.__screen_to_node[to_screen]
+        from_index = self.__screen_to_node[from_screen]
+
         if self.__graph is None:
             raise RuntimeError("Knowledge graph not initialized")
-        self.__graph.add_edge(from_idx, to_idx, action.model_dump())
+
+        self.__graph.add_edge(parent=from_index, child=to_index, edge=action.model_dump())
 
     async def find_path(self, *, from_screen: str, to_screen: str) -> Optional[List[Action]]:
-        """Find action sequence to reach target screen."""
+        """
+        Find action sequence to reach target screen.
+        """
+
         await self.__initialize()
 
         if from_screen not in self.__screen_to_node or to_screen not in self.__screen_to_node:
             return None
 
-        from_idx = self.__screen_to_node[from_screen]
-        to_idx = self.__screen_to_node[to_screen]
+        to_index = self.__screen_to_node[to_screen]
+        from_index = self.__screen_to_node[from_screen]
 
         try:
             # Use Dijkstra's algorithm to find shortest path
             if self.__graph is None:
                 raise RuntimeError("Knowledge graph not initialized")
+
             path_indices = rx.dijkstra_shortest_paths(
-                self.__graph, from_idx, target=to_idx, weight_fn=lambda _: 1
+                self.__graph, source=from_index, target=to_index, weight_fn=lambda _: 1
             )
 
-            if to_idx not in path_indices:
+            if to_index not in path_indices:
                 return None
 
             # Extract actions from path
-            path = path_indices[to_idx]
             actions = []
-            for i in range(len(path) - 1):
-                edge_data = self.__graph.get_edge_data(path[i], path[i + 1])
-                if edge_data:
-                    actions.append(Action(**edge_data))
+            path = path_indices[to_index]
+
+            for index in range(len(path) - 1):
+                if data := self.__graph.get_edge_data(path[index], path[index + 1]):
+                    actions.append(Action(**data))
 
             return actions if actions else None
         except Exception:
             return None
 
     async def get_neighbors(self, *, screen_id: str) -> List[str]:
-        """Get screens reachable from given screen."""
+        """
+        Get screens reachable from given screen.
+        """
+
         await self.__initialize()
 
         if screen_id not in self.__screen_to_node:
             return []
 
         node_idx = self.__screen_to_node[screen_id]
+
         if self.__graph is None:
             raise RuntimeError("Knowledge graph not initialized")
-        neighbor_indices = self.__graph.successor_indices(node_idx)
 
         neighbors = []
-        for neighbor_idx in neighbor_indices:
-            node_data = self.__graph.get_node_data(neighbor_idx)
+        neighbor_indices = self.__graph.successor_indices(node_idx)
+
+        for index in neighbor_indices:
+            node_data = self.__graph.get_node_data(index)
+
             if node_data and "screen_id" in node_data:
                 neighbors.append(node_data["screen_id"])
 

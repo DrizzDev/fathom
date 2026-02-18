@@ -1,10 +1,3 @@
-"""
-Core execution engine implementing DAG-based execution flow.
-
-This module contains the ExecutionEngine which orchestrates the seven-phase
-execution cycle: SignalCheck → Perceive → Reason → Act → Learn → Checkpoint → Evaluate
-"""
-
 from __future__ import annotations
 
 import asyncio

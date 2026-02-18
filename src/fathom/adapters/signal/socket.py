@@ -1,8 +1,3 @@
-"""
-Socket-based signal adapter for remote/API control.
-Ideal for headless deployments (Temporal workers, containers) and scalable architecture.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -17,8 +12,8 @@ from rich.panel import Panel
 from fathom.constants import SignalType
 from fathom.interfaces.signal import SignalPort
 
-logger = logging.getLogger(__name__)
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 class SocketSignal(SignalPort):
@@ -34,10 +29,12 @@ class SocketSignal(SignalPort):
         Args:
             socket_path: Path for UDS (Unix) or host:port for TCP.
         """
+
         self.__socket_path = socket_path
         self.__server: Optional[asyncio.AbstractServer] = None
-        self.__injected_context: Optional[str] = None
+
         self.__pause_requested = False
+        self.__injected_context: Optional[str] = None
 
         # High-performance async primitives for O(1) notification
         self.__pause_event = asyncio.Event()
@@ -47,7 +44,10 @@ class SocketSignal(SignalPort):
         self.__setup_server()
 
     def __setup_server(self) -> None:
-        """Starts the async socket server."""
+        """
+        Starts the async socket server.
+        """
+
         try:
             # Clean up old socket if exists
             socket_file = Path(self.__socket_path)
@@ -64,7 +64,7 @@ class SocketSignal(SignalPort):
                 Panel.fit(
                     f"[bold yellow]Socket Control Active[/bold yellow]\n"
                     f"Listening on: [cyan]{self.__socket_path}[/cyan]\n\n"
-                    "[bold red]DO NOT TYPE IN THIS TERMINAL.[/bold red]\n"
+                    "[bold red]DO NOT TYPE IN CURRENT TERMINAL.[/bold red]\n"
                     "Open a NEW terminal window to send commands:\n\n"
                     f'  [green]Pause:[/green]   echo \'{{"cmd": "pause"}}\' | nc -U {self.__socket_path}\n'
                     f'  [green]Resume:[/green]  echo \'{{"cmd": "resume"}}\' | nc -U {self.__socket_path}\n'
@@ -79,7 +79,10 @@ class SocketSignal(SignalPort):
             logger.error(f"Failed to start signal server: {exception}")
 
     async def __start_serving(self) -> None:
-        """Internal server starter."""
+        """
+        Internal server starter.
+        """
+
         self.__server = await asyncio.start_unix_server(
             self.__handle_client,
             path=self.__socket_path,
@@ -91,9 +94,9 @@ class SocketSignal(SignalPort):
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         """
-        Handles individual client connections.
-        Expects line-delimited JSON.
+        Handles individual client connections. Expects line-delimited JSON.
         """
+
         try:
             while not reader.at_eof():
                 line = await reader.readline()
@@ -115,7 +118,10 @@ class SocketSignal(SignalPort):
     async def __process_payload(
         self, payload: Dict[str, Any], writer: asyncio.StreamWriter
     ) -> None:
-        """Dispatches commands with zero-latency notifications."""
+        """
+        Dispatches commands with zero-latency notifications.
+        """
+
         cmd = payload.get("cmd", "").lower()
 
         if cmd == "pause":
@@ -150,10 +156,11 @@ class SocketSignal(SignalPort):
 
         await writer.drain()
 
-    # --- SignalPort Implementation ---
-
     async def check_signal(self) -> Optional[str]:
-        """Non-blocking check for an active pause signal."""
+        """
+        Non-blocking check for an active pause signal.
+        """
+
         return SignalType.ASK.value if self.__pause_requested else None
 
     async def wait_for_pause(self) -> None:
@@ -161,6 +168,7 @@ class SocketSignal(SignalPort):
         Efficiently blocks until a pause signal is received via socket.
         Zero CPU usage - task is parked until __pause_event.set() is called.
         """
+
         if self.__pause_requested:
             return
 
@@ -168,7 +176,10 @@ class SocketSignal(SignalPort):
         await self.__pause_event.wait()
 
     async def wait_for_resume(self) -> None:
-        """Blocks until resume/inject command received."""
+        """
+        Blocks until resume/inject command received.
+        """
+
         logger.info("Waiting for remote command (RESUME/INJECT/CANCEL)...")
 
         while True:
@@ -188,13 +199,19 @@ class SocketSignal(SignalPort):
                 raise KeyboardInterrupt("Remote cancellation")
 
     def get_injected_context(self) -> Optional[str]:
-        """Atomic retrieval and consumption of context."""
+        """
+        Atomic retrieval and consumption of context.
+        """
+
         context = self.__injected_context
         self.__injected_context = None
         return context
 
     async def ask(self, *, prompt: str) -> str:
-        """Requests human input via the remote control channel."""
+        """
+        Requests human input via the remote control channel.
+        """
+
         logger.info(f"Agent Request: {prompt}")
 
         while True:

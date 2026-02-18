@@ -1,4 +1,3 @@
-"""Execution engine for Fathom core."""
 
 from __future__ import annotations
 

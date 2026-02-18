@@ -215,9 +215,9 @@ class StepPlanner:
             memories=memories,
             metrics=metrics or {},
             metadata=metadata or {},
-            reason=action.rationale or ("Step planned" if not is_recovery else "Recovery step"),
             is_valid_action=action.is_valid,
             validation_reasoning=action.validation_reason,
+            reason=action.rationale or ("Step planned" if not is_recovery else "Recovery step"),
         )
 
     def __build_step(

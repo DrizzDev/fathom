@@ -63,6 +63,7 @@ class AgentState:
         # Enhanced state fields
         self.__knowledge: Dict[str, Any] = {}
         self.__current_screen_name: Optional[str] = None
+
         self.__last_error: Optional[str] = None
         self.__last_action_description: Optional[str] = None
 
@@ -120,6 +121,14 @@ class AgentState:
 
         return self.__current_screen
 
+    @property
+    def tracking_note(self) -> Optional[str]:
+        """
+        Provides semantic feedback on interaction cadence.
+        """
+
+        return self.__interaction_tracker.get_cadence_note()
+
     def __is_new_screen(self, screen: ScreenState) -> bool:
         """
         Check if screen is new.
@@ -140,6 +149,7 @@ class AgentState:
 
         previous_screen = self.__current_screen
         self.__current_screen = screen
+
         # Fuzzy matching for seen screens
         is_new_screen = self.__is_new_screen(screen)
 
@@ -172,23 +182,25 @@ class AgentState:
         return is_new_screen
 
     def set_knowledge(self, key: str, value: Any) -> None:
-        """Set a fact in knowledge base."""
+        """
+        Set a fact in knowledge base.
+        """
+
         self.__knowledge[key] = value
 
     def set_last_error(self, error: str) -> None:
-        """Set the last error message."""
+        """
+        Set the last error message.
+        """
+
         self.__last_error = error
 
     def get_history(self, limit: int = 5) -> List[Dict[str, Any]]:
         """
         Returns recent action history as structured items.
         """
-        return self.__action_history.get_history_items()[-limit:]
 
-    @property
-    def tracking_note(self) -> Optional[str]:
-        """Provides semantic feedback on interaction cadence."""
-        return self.__interaction_tracker.get_cadence_note()
+        return self.__action_history.get_history_items()[-limit:]
 
     def record_step(self, result: StepResult) -> None:
         """

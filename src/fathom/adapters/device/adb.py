@@ -315,8 +315,8 @@ class ADBDevice(DevicePort):
 
             return ActionResult(
                 success=True,
-                output=stdout.decode().strip() if stdout else None,
                 duration=duration,
+                output=stdout.decode().strip() if stdout else None,
             )
 
         except Exception as exception:

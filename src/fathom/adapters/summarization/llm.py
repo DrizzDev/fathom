@@ -1,7 +1,3 @@
-"""
-LLM-based summarization adapter.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -19,13 +15,17 @@ class LLMSummarizer(SummarizationPort):
     """
 
     def __init__(self, llm: LLMPort) -> None:
-        """Initialize with an LLM provider."""
+        """
+        Initialize with an LLM provider.
+        """
+
         self.__llm = llm
 
     async def summarize_trace(self, trace: List[Dict[str, Any]]) -> str:
         """
         Generates a semantic summary of the trace using the LLM.
         """
+
         if not trace:
             return "No actions performed."
 

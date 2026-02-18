@@ -14,17 +14,13 @@ class LLMConfiguration(BaseModel):
     provider: Literal["gemini", "openai", "anthropic", "vertex_ai"] = Field(
         default="gemini", description="LLM provider name"
     )
-    model: str = Field(default="gemini-2.0-flash-exp", description="Model identifier")
+    model: str = Field(default="gemini-2.5-flash-lite", description="Model identifier")
     api_key: Optional[str] = Field(default=None, description="API access key")
 
     # Provider-specific settings (GCP/Azure/OpenAI specific)
+    project_id: Optional[str] = Field(default=None, description="Project identifier")
     location: Optional[str] = Field(default=None, description="Deployment location/region")
-    project_id: Optional[str] = Field(
-        default=None, description="Project identifier (if applicable)"
-    )
-    credentials_path: Optional[str] = Field(
-        default=None, description="Path to authentication artifacts"
-    )
+    credentials_path: Optional[str] = Field(default=None, description="Path to credential JSON")
 
     # Common hyper-parameters
     max_retries: int = Field(default=3, description="Maximum retry attempts")
@@ -33,7 +29,9 @@ class LLMConfiguration(BaseModel):
     retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
 
     # Backend storage (for artifacts like image caching)
-    storage_bucket: Optional[str] = Field(default=None, description="Cloud storage bucket name")
+    storage_bucket: Optional[str] = Field(
+        default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"
+    )
 
     # Extension hook for arbitrary provider settings
     parameters: Dict[str, Any] = Field(

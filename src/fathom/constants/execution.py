@@ -1,5 +1,3 @@
-"""Execution engine constants."""
-
 from __future__ import annotations
 
 from enum import StrEnum
@@ -22,23 +20,28 @@ DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
 
 
 class SignalType(StrEnum):
-    """HITL control signals."""
+    """
+    HITL control signals.
+    """
 
+    ASK = "ASK"
+    STOP = "STOP"
     PAUSE = "PAUSE"
     RESUME = "RESUME"
     INJECT = "INJECT"
-    ASK = "ASK"
-    STOP = "STOP"
     CONTINUE = "CONTINUE"
+    CANCELLED = "CANCELLED"
 
 
 class ExecutionPhase(StrEnum):
-    """Execution DAG phases."""
+    """
+    Execution DAG phases.
+    """
 
-    SIGNAL_CHECK = "signal_check"
-    PERCEIVE = "perceive"
-    REASON = "reason"
-    ACT = "act"
-    LEARN = "learn"
-    CHECKPOINT = "checkpoint"
-    EVALUATE = "evaluate"
+    ACT = "ACT"
+    LEARN = "LEARN"
+    REASON = "REASON"
+    PERCEIVE = "PERCEIVE"
+    EVALUATE = "EVALUATE"
+    CHECKPOINT = "CHECKPOINT"
+    SIGNAL_CHECK = "SIGNAL_CHECK"

@@ -1,5 +1,3 @@
-"""Interactive signal adapter for high-concurrency, non-blocking HITL control."""
-
 from __future__ import annotations
 
 import asyncio
@@ -27,13 +25,16 @@ class InteractiveSignal(SignalPort):
     """
 
     # Global input bus for all concurrent instances
-    __input_bus: ClassVar[asyncio.Queue[str]] = asyncio.Queue()
     __listener_active: ClassVar[bool] = False
+    __input_bus: ClassVar[asyncio.Queue[str]] = asyncio.Queue()
 
     def __init__(self) -> None:
-        """Initialize high-scale interactive signal adapter."""
-        self.__injected_context: Optional[str] = None
+        """
+        Initialize high-scale interactive signal adapter.
+        """
+
         self.__pause_requested = False
+        self.__injected_context: Optional[str] = None
 
         # Ensure the global listener is registered in the current event loop
         self.__ensure_listener()
@@ -43,7 +44,10 @@ class InteractiveSignal(SignalPort):
 
     @classmethod
     def __ensure_listener(cls) -> None:
-        """Registers the singleton TTY listener with the event loop."""
+        """
+        Registers the singleton TTY listener with the event loop.
+        """
+
         if cls.__listener_active:
             return
 
@@ -64,9 +68,9 @@ class InteractiveSignal(SignalPort):
         Kernel callback triggered when stdin has data available.
         Invoked on the main event loop thread.
         """
+
         # Since the kernel notified us, this read will not block.
-        line = sys.stdin.readline()
-        if line:
+        if line := sys.stdin.readline():
             # Dispatch to the global async bus
             # We use call_soon because we are in a low-level callback
             asyncio.get_running_loop().call_soon(cls.__input_bus.put_nowait, line.strip())
@@ -76,6 +80,7 @@ class InteractiveSignal(SignalPort):
         Non-blocking check of the global input bus.
         Identifies high-priority 'pause' signals for immediate interruption.
         """
+
         while not self.__input_bus.empty():
             cmd = self.__input_bus.get_nowait().lower()
             if cmd == "pause":
@@ -87,9 +92,9 @@ class InteractiveSignal(SignalPort):
 
     async def wait_for_pause(self) -> None:
         """
-        Efficiently parks the task until a pause signal arrives on the bus.
-        Consumes zero CPU cycles while waiting.
+        Efficiently parks the task until a pause signal arrives on the bus. Consumes zero CPU cycles while waiting.
         """
+
         if self.__pause_requested:
             return
 
@@ -107,6 +112,7 @@ class InteractiveSignal(SignalPort):
         """
         Orchestrates the HITL state machine during paused execution.
         """
+
         self.__render_pause_menu()
 
         while True:
@@ -119,8 +125,10 @@ class InteractiveSignal(SignalPort):
             if choice == "1":
                 self.__handle_resume()
                 break
+
             elif choice == "2":
                 await self.__handle_injection()
+
             elif choice == "3":
                 console.print("\n[bold red]❌ EXECUTION CANCELLED BY USER[/bold red]\n")
                 raise KeyboardInterrupt("User cancelled execution")
@@ -128,13 +136,19 @@ class InteractiveSignal(SignalPort):
                 console.print(f"[yellow]Invalid choice '{choice}'.[/yellow]\n")
 
     def get_injected_context(self) -> Optional[str]:
-        """Atomically retrieves and clears any injected context."""
+        """
+        Atomically retrieves and clears any injected context.
+        """
+
         context = self.__injected_context
         self.__injected_context = None
         return context
 
     async def ask(self, *, prompt: str) -> str:
-        """Standardized human-agent interaction via async bus."""
+        """
+        Standardized human-agent interaction via async bus.
+        """
+
         console.print(f"\n[bold yellow]❓ Agent Question[/bold yellow]\n[cyan]{prompt}[/cyan]")
         console.print("[bold]Your answer:[/bold] ", end="")
         sys.stdout.flush()
@@ -143,10 +157,12 @@ class InteractiveSignal(SignalPort):
         console.print(f"[green]✓[/green] Recorded: [italic]{answer}[/italic]\n")
         return answer
 
-    # --- UI & Lifecycle ---
-
     def __render_instructions(self) -> None:
-        console.print("\n[bold cyan]🤝 Senior Architect HITL Mode Active[/bold cyan]")
+        """
+        Log Instructions
+        """
+
+        console.print("\n[bold cyan]HITL Mode Active[/bold cyan]")
         console.print(
             Panel.fit(
                 "Type [bold cyan]pause[/bold cyan] and press [bold cyan]Enter[/bold cyan] to interrupt.\n"
@@ -157,6 +173,10 @@ class InteractiveSignal(SignalPort):
         )
 
     def __render_pause_menu(self) -> None:
+        """
+        Render Menu (For Pause)
+        """
+
         console.print(
             "\n" + "=" * 70 + "\n[bold yellow]⏸️  EXECUTION PAUSED[/bold yellow]\n" + "=" * 70
         )
@@ -164,22 +184,37 @@ class InteractiveSignal(SignalPort):
             console.print(f"[bold cyan]📝 Context:[/bold cyan] {self.__injected_context}\n")
 
     def __render_options(self) -> None:
+        """
+        Renders HITL Options
+        """
+
         console.print("[1] Resume | [2] Inject Context | [3] Cancel\n[bold]Choice:[/bold] ", end="")
         sys.stdout.flush()
 
     def __handle_resume(self) -> None:
+        """
+        Handler For Resume Event
+        """
+
         self.__pause_requested = False
         console.print("\n[bold green]▶️  RESUMING[/bold green]\n" + "=" * 70)
 
     async def __handle_injection(self) -> None:
+        """
+        Handler For Injection Event
+        """
+
         console.print("\n[bold]Enter instruction:[/bold]")
         sys.stdout.flush()
-        context = await self.__input_bus.get()
-        if context:
+
+        if context := await self.__input_bus.get():
             self.__injected_context = context.strip("'\"")
             console.print(f"[green]✓ Recorded:[/green] {self.__injected_context}\n")
 
     def __del__(self) -> None:
-        """Cleanup singleton listener if this was the last instance (Optional)."""
+        """
+        Cleanup singleton listener if this was the last instance (Optional).
+        """
+
         # In a CLI, stdin listener typically stays for the process lifetime.
         pass

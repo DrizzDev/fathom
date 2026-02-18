@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from google.genai.types import Content
 
+from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.schemas.statistics import CacheStats
 
 logger = getLogger(__name__)
@@ -26,12 +27,13 @@ class CacheService:
             model_name: The model name to cache for.
             ttl_minutes: Time-to-live for cached content in minutes.
         """
+
         self.__client = client
         self.__model_name = model_name
         self.__ttl_minutes = ttl_minutes
 
-        self.__cached_content: Optional[Any] = None
         self.__content_hash: Optional[str] = None
+        self.__cached_content: Optional[Any] = None
 
         self.stats = CacheStats()
 
@@ -67,6 +69,7 @@ class CacheService:
             logger.info(
                 f"Cache invalidated (old={self.__content_hash[:8] if self.__content_hash else '?'}, new={current_hash[:8]})"
             )
+
             await self.__evict()
 
         try:
@@ -85,8 +88,9 @@ class CacheService:
                 self.__cached_content = await self.__client.aio.caches.create(
                     model=self.__model_name, config=config
                 )
-                self.__content_hash = current_hash
+
                 self.stats.creates += 1
+                self.__content_hash = current_hash
 
                 logger.info(
                     f"Created context cache: {self.__cached_content.name} (hash={current_hash[:8]})"
@@ -122,8 +126,8 @@ class CacheService:
             except Exception as exception:
                 logger.warning(f"Failed to delete cache: {exception}")
             finally:
-                self.__cached_content = None
                 self.__content_hash = None
+                self.__cached_content = None
 
     @staticmethod
     def __compute_hash(instruction: str, tools: Optional[List[Dict[str, Any]]] = None) -> str:
@@ -139,7 +143,10 @@ class CacheService:
         """
 
         payload = instruction
+
         if tools:
             payload += json.dumps(tools, sort_keys=True)
 
-        return hashlib.sha256(payload.encode(), usedforsecurity=False).hexdigest()[:16]
+        return hashlib.sha256(payload.encode(), usedforsecurity=False).hexdigest()[
+            :VISUAL_HASH_LENGTH
+        ]

@@ -1,7 +1,3 @@
-"""
-Constants for the Generative Context Construction (GCC) framework.
-"""
-
 from enum import StrEnum
 
 
@@ -20,7 +16,7 @@ class GCCCommand(StrEnum):
     Formal operations supported by the Git-Context-Controller.
     """
 
+    MERGE = "MERGE"
     COMMIT = "COMMIT"
     BRANCH = "BRANCH"
-    MERGE = "MERGE"
     CONTEXT = "CONTEXT"
