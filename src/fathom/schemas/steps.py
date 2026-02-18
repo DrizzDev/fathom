@@ -21,7 +21,7 @@ class Step(BaseModel):
     is_conditional: bool = Field(
         default=False, description="Whether this step is a recovery attempt"
     )
-    condition: Optional[str] = Field(default=None, description="Optional condition for the step")
+    condition: Optional[str] = Field(default=None, description="Condition for IF block")
 
 
 class StepResult(BaseModel):
@@ -40,8 +40,19 @@ class StepResult(BaseModel):
 
     duration: int = Field(ge=0, description="Execution duration in milliseconds")
     error: Optional[str] = Field(default=None, description="Error details if execution failed")
+    generalized_target: Optional[str] = Field(
+        default=None, description="Generalized description if target is dynamic or positional"
+    )
+    is_positional: bool = Field(
+        default=False,
+        description="Whether the generalized_target is a positional/ordinal reference",
+    )
 
-    def to_record(self, absolute_center: Optional[List[int]] = None) -> "StepRecord":
+    def to_record(
+        self,
+        absolute_center: Optional[List[int]] = None,
+        activity: Optional[str] = None,
+    ) -> "StepRecord":
         """
         Converts the result into a serializable record for persistence.
         """
@@ -64,6 +75,9 @@ class StepResult(BaseModel):
             rationale=self.step.action.rationale,
             action_type=self.step.action.action_type.value,
             natural_language_target=self.step.action.natural_language_target,
+            generalized_target=self.generalized_target,
+            is_positional=self.is_positional,
+            activity=activity,
         )
 
 
@@ -81,12 +95,21 @@ class StepRecord(BaseModel):
     natural_language_target: Optional[str] = Field(
         default=None, description="Human-friendly name of the target element"
     )
+    generalized_target: Optional[str] = Field(
+        default=None, description="Generalized description if target is dynamic or positional"
+    )
+    is_positional: bool = Field(
+        default=False,
+        description="Whether the generalized_target is a positional/ordinal reference",
+    )
     text: Optional[str] = Field(default=None, description="Typed text content")
     rationale: Optional[str] = Field(default=None, description="Reasoning for the action")
 
     success: bool = Field(description="Execution status")
     screen_changed: bool = Field(description="Visual transition status")
     duration: int = Field(ge=0, description="Duration in milliseconds")
+
+    activity: Optional[str] = Field(default=None, description="Android activity at time of action")
 
     bounds: Optional[List[int]] = Field(
         default=None, description="Normalized [x1, y1, x2, y2] bounds"
