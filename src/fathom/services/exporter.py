@@ -310,11 +310,12 @@ class ScriptExporter:
     def _get_condition(step: Union[StepResult, Dict[str, Any]]) -> Optional[str]:
         """
         Get the condition for a step, inferring from rationale if needed.
+        Uses resolved (generalized) target for wait conditions to avoid
+        generic fallbacks like "UI Element".
         """
         condition: Optional[str] = None
         rationale: Optional[str] = None
         action_type: str = "wait"
-        target: str = "element"
 
         if isinstance(step, StepResult):
             condition = getattr(step.step, "condition", None) or getattr(
@@ -322,12 +323,10 @@ class ScriptExporter:
             )
             rationale = step.step.action.rationale
             action_type = step.step.action.action_type.value.lower()
-            target = step.step.action.target
         else:
             condition = step.get("condition")
             rationale = step.get("rationale")
             action_type = str(step.get("action_type", "wait")).lower()
-            target = str(step.get("target", "element"))
 
         # Heuristic Inference
         if not condition and rationale:
@@ -341,8 +340,9 @@ class ScriptExporter:
             ):
                 condition = "Error message is displayed"
 
-        # Enforce Conditional Wait
+        # Enforce Conditional Wait — use resolved target (respects generalized_target)
         if action_type == "wait" and not condition:
-            condition = f"{target} is visible"
+            resolved = ScriptExporter._resolve_target(step)
+            condition = f"{resolved} is visible"
 
         return condition
