@@ -62,6 +62,7 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             step_timeout=configuration.step_timeout if configuration else 30.0,
             use_xml=configuration.use_xml_bounding_boxes if configuration else False,
             max_steps=configuration.max_steps if configuration else 10,
+            package_name=configuration.package_name if configuration else "",
         )
 
         self.__completion_reason = ""

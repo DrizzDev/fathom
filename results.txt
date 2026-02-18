@@ -1,0 +1,49 @@
+Tap on Snabbit app icon
+IF Snabbit logo is visible {
+    Wait for Snabbit logo
+}
+Tap on bathroom cleaning service option
+Validate Book Instant button is visible
+Tap on Book Instant button
+Validate Schedule for later button is visible
+Tap on Schedule for later button
+Validate back button is visible
+IF Error message is displayed {
+    Validate back button is visible
+    Tap on back button
+}
+IF Error message is displayed { Validate Book Instant button is visible }
+Tap on Book Instant button
+Validate Schedule for later button is visible
+Tap on Schedule for later button
+Validate back button is visible
+IF Error message is displayed {
+    Validate back button is visible
+    Tap on back button
+}
+IF Error message is displayed { Validate Book Instant button is visible }
+Tap on Book Instant button
+Validate Schedule for later button is visible
+Tap on Schedule for later button
+Validate back button is visible
+IF Error message is displayed {
+    Validate back button is visible
+    Tap on back button
+}
+IF Error message is displayed { Validate Book Instant button is visible }
+Tap on Book Instant button
+Validate Schedule for later button is visible
+Tap on Schedule for later button
+Validate Multiple tab is visible
+IF Error message is displayed {
+    Validate Multiple tab is visible
+    Tap on Multiple tab
+}
+IF Error message is displayed { Validate February 20th date is visible }
+Tap on February 20th date
+Validate February 22nd date is visible
+Tap on February 22nd date
+Validate Pay Now button is visible
+Tap on Pay Now button
+Scroll down until Payment Screen is visible
+Validate Payment Screen is visible

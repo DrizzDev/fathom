@@ -52,6 +52,7 @@ class IntentStrategy(ExecutionStrategy):
         use_xml: bool = False,
         step_timeout: float = 15.0,
         workflow_id: str = "default",
+        package_name: str = "",
     ) -> None:
         self.__intent = intent
         self.__planner = planner
@@ -72,7 +73,9 @@ class IntentStrategy(ExecutionStrategy):
         self.__audit_service = AuditService()
 
         self.__hierarchy = HierarchyService(device=device)
-        self.__history = HistoryService(workflow_id=workflow_id)
+        self.__history = HistoryService(
+            workflow_id=workflow_id, intent=intent, package_name=package_name
+        )
         self.__resolution = ReferenceResolutionService(ledger=self.__ledger)
 
         self.__start_time = time.time()
@@ -422,7 +425,7 @@ class IntentStrategy(ExecutionStrategy):
             )
         )
         self.__history.save_step(
-            result=step_result, absolute_center=coordinates, intent=self.__intent
+            result=step_result, absolute_center=coordinates, activity=state.activity
         )
         return step_result
 
@@ -494,9 +497,7 @@ class IntentStrategy(ExecutionStrategy):
         """
 
         size = await self.__device.get_screen_size()
-        converter = CoordinateConverter(
-            screen_width=size[0], screen_height=size[1], configuration=self.__device.configuration
-        )
+        converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
 
         if action.action_type in (
             ActionType.TAP,
@@ -563,9 +564,7 @@ class IntentStrategy(ExecutionStrategy):
         """
 
         size = await self.__device.get_screen_size()
-        converter = CoordinateConverter(
-            screen_width=size[0], screen_height=size[1], configuration=self.__device.configuration
-        )
+        converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
 
         if action.action_type == ActionType.TAP:
             coordinates = (

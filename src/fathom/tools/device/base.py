@@ -3,7 +3,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple
 
-from fathom.schemas.configuration import ADBConfig
 from fathom.schemas.results import ActionResult
 from fathom.tools.base import Tool
 
@@ -13,15 +12,6 @@ class DeviceTool(Tool[ActionResult], ABC):
     Abstract base for device interaction tools.
     Device tools execute actions on the target device.
     """
-
-    @property
-    @abstractmethod
-    def configuration(self) -> ADBConfig:
-        """
-        Returns the tool configuration.
-        """
-
-        raise NotImplementedError
 
     @property
     def name(self) -> str:

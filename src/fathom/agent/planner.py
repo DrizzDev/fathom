@@ -2,17 +2,87 @@ from __future__ import annotations
 
 import hashlib
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from fathom.agent.reasoner import Reasoner
 from fathom.agent.state import AgentState
-from fathom.schemas.actions import Action
+from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
 from fathom.tools.vision import VisionTool
 
 logger = getLogger(name=__name__)
+
+
+class CoordinateConverter:
+    """
+    Converts normalized coordinates to device pixels.
+    """
+
+    def __init__(self, screen_width: int, screen_height: int) -> None:
+        self.__width = screen_width
+        self.__height = screen_height
+
+    def to_pixels(self, bounds: Bounds) -> Tuple[int, int, int, int]:
+        """
+        Convert a bounding box to pixel coordinates.
+        """
+
+        return bounds.to_pixels(screen_width=self.__width, screen_height=self.__height)
+
+    def center_to_pixels(self, bounds: Bounds) -> Tuple[int, int]:
+        """
+        Convert a bounding box to its center pixel coordinates.
+        """
+
+        x, y, width, height = self.to_pixels(bounds=bounds)
+        return x + width // 2, y + height // 2
+
+    def swipe_coordinates(
+        self,
+        direction: str,
+        bounds: Bounds,
+    ) -> Tuple[int, int, int, int]:
+        """
+        Convert a bounding box and swipe direction to pixel coordinates.
+        """
+
+        x, y, width, height = self.to_pixels(bounds=bounds)
+        center_x, center_y = x + width // 2, y + height // 2
+
+        distance_x = int(width * 0.7)
+        distance_y = int(height * 0.7)
+
+        if direction == "up":
+            return (
+                center_x,
+                center_y + distance_y // 2,
+                center_x,
+                center_y - distance_y // 2,
+            )
+        elif direction == "down":
+            return (
+                center_x,
+                center_y - distance_y // 2,
+                center_x,
+                center_y + distance_y // 2,
+            )
+        elif direction == "left":
+            return (
+                center_x + distance_x // 2,
+                center_y,
+                center_x - distance_x // 2,
+                center_y,
+            )
+        elif direction == "right":
+            return (
+                center_x - distance_x // 2,
+                center_y,
+                center_x + distance_x // 2,
+                center_y,
+            )
+        return center_x, center_y, center_x, center_y
 
 
 class StepPlanner:
@@ -44,8 +114,8 @@ class StepPlanner:
         capture: ScreenCapture,
         *,
         use_xml: bool = False,
-        additional_context: Optional[str] = None,
         elements: Optional[Dict[str, Any]] = None,
+        additional_context: Optional[str] = None,
     ) -> PlanResult:
         """
         Plan the next step based on current state.
@@ -68,10 +138,9 @@ class StepPlanner:
         # IMMEDIATE RECOVERY: If we are stuck, don't ask the LLM again.
         # This breaks the loop by forcing a navigation change (BACK/SCROLL/HOME).
         if state.is_stuck:
-            completion_error = None
+            logger.warning(msg="Agent is stuck in a loop. Forcing recovery action.")
             completion_signal = False
-            logger.warning("Agent is stuck in a loop. Forcing recovery action.")
-
+            completion_error = None
             try:
                 completion_signal = await self.__vision.check_completion(
                     intent=state.intent, capture=capture

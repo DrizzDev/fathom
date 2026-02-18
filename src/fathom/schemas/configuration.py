@@ -20,9 +20,6 @@ class ADBConfig(BaseModel):
     command_timeout: float = Field(default=30.0, description="Command timeout in seconds")
     long_press_duration: int = Field(default=1000, description="Long press duration in ms")
 
-    swipe_distance: float = Field(default=0.7, description="Percentage of screen to swipe")
-    scroll_distance: float = Field(default=0.2, description="Percentage of screen height to scroll")
-
 
 class ADBCaptureConfig(BaseModel):
     """
@@ -101,3 +98,6 @@ class WorkflowConfig(BaseModel):
         default=False, description="Use XML hierarchy for bounding boxes"
     )
     package_name: str = Field(default="unknown_app", description="Target application package name")
+    export_path: Optional[str] = Field(
+        default="results.txt", description="Path to export execution script. None disables export."
+    )
