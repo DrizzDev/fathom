@@ -216,7 +216,7 @@ class ActionExecutor:
         if not focus_result.success:
             return focus_result, coords
 
-        result = await self.__device.type_text(text=action.text or "")
+        result = await self.__device.type(text=action.text or "")
         return result, coords
 
     async def __execute_swipe(

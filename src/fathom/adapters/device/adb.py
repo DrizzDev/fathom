@@ -19,7 +19,6 @@ logger = getLogger(__name__)
 class ADBDevice(DevicePort):
     """
     ADB adapter for Local Android devices.
-    This adapter wraps the existing ADB tool logic without modifications.
     """
 
     def __init__(
@@ -58,7 +57,7 @@ class ADBDevice(DevicePort):
         console.print(f"[bold cyan]🖱️  TAP[/bold cyan] at ([bold yellow]{x}, {y}[/bold yellow])")
         return await self.__shell(command=f"input tap {x} {y}")
 
-    async def type_text(self, *, text: str) -> ActionResult:
+    async def type(self, *, text: str) -> ActionResult:
         """
         Type text on device.
         """

@@ -30,7 +30,7 @@ class DevicePort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def type_text(self, *, text: str) -> ActionResult:
+    async def type(self, *, text: str) -> ActionResult:
         """
         Type text into focused element.
         """

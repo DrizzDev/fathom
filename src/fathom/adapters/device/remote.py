@@ -100,7 +100,7 @@ class RemoteDeviceAdapter(DevicePort):
         request = RemoteInteractionRequest(action="tap", x=x, y=y)
         return await self.__send_command(request)
 
-    async def type_text(self, *, text: str) -> ActionResult:
+    async def type(self, *, text: str) -> ActionResult:
         """
         Execute remote text input.
         """

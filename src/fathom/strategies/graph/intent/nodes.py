@@ -259,7 +259,7 @@ class IntentNodeProvider:
                     coords = converter.center_to_pixels(bounds=action.bounds)
                     x, y = coords
                     await self.__context.device.tap(x=x, y=y)
-                device_result = await self.__context.device.type_text(text=action.text or "")
+                device_result = await self.__context.device.type(text=action.text or "")
 
             elif "swipe" in action.action_type.value:
                 direction = "up"
