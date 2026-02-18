@@ -106,7 +106,7 @@ class ActionExecutor:
         action = step.action
         start_time = time.time()
 
-        screen_size = await self.__device.get_screen_size()
+        screen_size = await self.__device.get_dimensions()
         width, height = screen_size
 
         configuration = self.__device.configuration or ADBConfiguration()

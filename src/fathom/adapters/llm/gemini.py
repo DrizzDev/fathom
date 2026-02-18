@@ -4,7 +4,7 @@ import asyncio
 import random
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, Sequence, Union
 
 from google import genai
 from google.genai import types
@@ -101,9 +101,9 @@ class GeminiLLM(LLMPort):
     async def generate(
         self,
         *,
-        prompt: List[Any],
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
+        prompt: Sequence[Union[str, bytes, Dict[str, str]]],
     ) -> GenerateResult:
         """
         Main handler for LLM interaction.

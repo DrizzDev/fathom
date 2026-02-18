@@ -31,13 +31,12 @@ except ImportError:
     workflow = None
 
 if TEMPORAL_AVAILABLE:
-    from .activities import execute_fathom_exploration, execute_fathom_intent
+    from .activities import FathomActivities
     from .workflow import FathomWorkflow
 
     __all__ = [
         "FathomWorkflow",
-        "execute_fathom_intent",
-        "execute_fathom_exploration",
+        "FathomActivities",
         "TEMPORAL_AVAILABLE",
     ]
 else:

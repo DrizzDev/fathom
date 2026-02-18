@@ -52,7 +52,7 @@ class IntentNodeProvider:
                     "is_complete": False,
                 }
 
-            width, height = await self.__context.device.get_screen_size()
+            width, height = await self.__context.device.get_dimensions()
 
             # Get current package
             try:
@@ -234,7 +234,7 @@ class IntentNodeProvider:
         step = step.model_copy(update={"action": resolved_action})
 
         # Physical Execution
-        size = await self.__context.device.get_screen_size()
+        size = await self.__context.device.get_dimensions()
         converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
 
         action = step.action

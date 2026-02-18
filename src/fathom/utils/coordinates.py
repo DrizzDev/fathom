@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Tuple
 
 from fathom.schemas.actions import Bounds
-from fathom.schemas.configuration import ADBConfig
+from fathom.schemas.configuration import ADBConfiguration
 
 
 class CoordinateConverter:
@@ -12,7 +12,10 @@ class CoordinateConverter:
     """
 
     def __init__(
-        self, screen_width: int, screen_height: int, configuration: ADBConfig = ADBConfig()
+        self,
+        screen_width: int,
+        screen_height: int,
+        configuration: ADBConfiguration = ADBConfiguration(),
     ) -> None:
         """
         Initialize converter.

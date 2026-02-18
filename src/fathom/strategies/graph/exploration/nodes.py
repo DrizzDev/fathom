@@ -29,7 +29,7 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
 
         try:
             screenshot_bytes = await context.device.capture_screen()
-            width, height = await context.device.get_screen_size()
+            width, height = await context.device.get_dimensions()
 
             try:
                 activity = await context.device.get_current_package()
@@ -135,7 +135,7 @@ def build_exploration_nodes(context: GraphContext) -> Dict[str, Callable[..., An
             return state
 
         start = time.time()
-        size = await context.device.get_screen_size()
+        size = await context.device.get_dimensions()
         converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
 
         # Execute logic (simplified tap/scroll)

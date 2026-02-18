@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import struct
 import time
@@ -196,7 +197,8 @@ class RemoteDeviceAdapter(DevicePort):
             response.raise_for_status()
             data = response.json()
 
-            return data.get("content", {}).get("xml")
+            xml_content = data.get("content", {}).get("xml")
+            return str(xml_content) if xml_content is not None else None
         except Exception as exception:
             logger.error(f"Remote XML dump failed: {exception}")
             return None
@@ -212,7 +214,8 @@ class RemoteDeviceAdapter(DevicePort):
             response = await self.__client.post("/action", json=request.model_dump())
             response.raise_for_status()
 
-            return response.json().get("content", {}).get("package", "unknown_app")
+            package = response.json().get("content", {}).get("package", "unknown_app")
+            return str(package)
         except Exception as exception:
             logger.error(f"Remote package check failed: {exception}")
             return "unknown_app"

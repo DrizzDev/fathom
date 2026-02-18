@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
-from fathom.schemas.configuration import FathomConfig
+from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExplorationResult, IntentResult
 
@@ -50,7 +50,7 @@ class FathomRunner:
         storage: StoragePort,
         telemetry: TelemetryPort,
         path_manager: SharedPathManager,
-        config: Optional[FathomConfig] = None,
+        config: Optional[FathomConfiguration] = None,
     ) -> None:
         """
         Initialize runner with all configured ports.
@@ -74,7 +74,7 @@ class FathomRunner:
         self.__storage = storage
         self.__telemetry = telemetry
         self.__path_manager = path_manager
-        self.__config = config or FathomConfig()
+        self.__config = config or FathomConfiguration()
 
         # Wire core components
         self.__engine = ExecutionEngine(
@@ -153,8 +153,8 @@ class FathomRunner:
             signal=self.__signal,
             summarizer=summarizer,
             path_manager=self.__path_manager,
-            max_steps=max_steps or self.__config.intent_strategy.max_steps,
-            use_xml=use_xml if use_xml is not None else self.__config.intent_strategy.use_xml,
+            max_steps=max_steps or self.__config.intent.max_steps,
+            use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
             workflow_id=workflow_id,
             package_name=package_name,
             realignment=realignment,
@@ -253,9 +253,9 @@ class FathomRunner:
             telemetry=self.__telemetry,
             signal=self.__signal,
             path_manager=self.__path_manager,
-            max_steps=max_steps or self.__config.exploration_strategy.max_steps,
-            timeout=self.__config.exploration_strategy.timeout,
-            seed=self.__config.exploration_strategy.seed,
+            max_steps=max_steps or self.__config.exploration.max_steps,
+            timeout=self.__config.exploration.timeout,
+            seed=self.__config.exploration.random_seed,
             package_name=package_name,
             workflow_id=workflow_id,
         )
@@ -264,7 +264,7 @@ class FathomRunner:
         try:
             # Execute strategy
             execution_result = await strategy.execute(
-                max_steps=max_steps or self.__config.exploration_strategy.max_steps
+                max_steps=max_steps or self.__config.exploration.max_steps
             )
 
             # Get progress info

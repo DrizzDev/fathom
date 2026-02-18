@@ -50,6 +50,8 @@ class ADBConfiguration(BaseModel):
     serial_number: Optional[str] = Field(default=None, description="Target device serial")
     command_timeout: float = Field(default=10.0, description="Shell command timeout in seconds")
     swipe_duration: int = Field(default=300, description="Default swipe gesture duration in ms")
+    swipe_distance: float = Field(default=0.7, description="Percentage of screen to swipe")
+    scroll_distance: float = Field(default=0.2, description="Percentage of screen height to scroll")
 
 
 class DeviceConfiguration(BaseModel):

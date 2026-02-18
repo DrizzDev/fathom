@@ -37,7 +37,7 @@ class PerceptionService:
         """
 
         screenshot_bytes = await self.__device.capture_screen()
-        width, height = await self.__device.get_screen_size()
+        width, height = await self.__device.get_dimensions()
 
         # Get current activity
         try:

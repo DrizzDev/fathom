@@ -10,7 +10,7 @@ from google.cloud import storage
 
 from fathom.exceptions import VisionError
 from fathom.interfaces import IImageStorage
-from fathom.schemas.configuration import GeminiConfig
+from fathom.schemas.configuration import LLMConfiguration
 
 logger = getLogger(__name__)
 
@@ -20,7 +20,11 @@ class GCSImageStorage(IImageStorage):
     Handles uploading images to Google Cloud Storage.
     """
 
-    def __init__(self, configuration: GeminiConfig, credentials: Any) -> None:
+    def __init__(self, configuration: LLMConfiguration, credentials: Any) -> None:
+        """
+        Initialize GCS storage with configuration and credentials.
+        """
+
         self.__credentials = credentials
         self.__configuration = configuration
 
@@ -31,8 +35,8 @@ class GCSImageStorage(IImageStorage):
         """
 
         credentials = self.__credentials
-        bucket = self.__configuration.gcs_bucket
         project = self.__configuration.project_id
+        bucket = self.__configuration.storage_bucket
 
         def __upload_sync() -> str:
             """

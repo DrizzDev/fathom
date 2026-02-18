@@ -112,7 +112,7 @@ class ADBDevice(DevicePort):
         if not result.success or not result.output:
             logger.exception("Failed to capture screen dimension")
 
-        if match := re.search(r"(\d+)x(\d+)", result.output):
+        if result.output and (match := re.search(r"(\d+)x(\d+)", result.output)):
             width = int(match.group(1))
             height = int(match.group(2))
             self.__cached_size = (width, height)
