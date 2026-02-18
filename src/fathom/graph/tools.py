@@ -165,8 +165,10 @@ def execute_ui(
 ) -> Dict[str, Any]:
     """Execute a UI action on the device (tap, type, scroll, swipe, etc.).
 
-    Use this tool for ALL physical interactions with the app UI.
+    Use this for ALL physical interactions with the app UI.
     Do NOT use this to signal goal completion — use complete_goal instead.
+    Do NOT use this for state validation or screen checks without a UI action — use validate_state instead.
+    Do NOT use this for verifying goal completion — use verify_goal or complete_goal instead.
     """
 
     return {
@@ -187,6 +189,8 @@ def complete_goal(
 
     Call this ONLY when the current screen state proves the goal is complete.
     Do NOT call this while there are still actions to perform — use execute_ui instead.
+    Do NOT call this for intermediate progress checks — use validate_state instead.
+    Do NOT call this unless visual evidence of completion is on the CURRENT screen.
     """
 
     return {
@@ -203,7 +207,12 @@ def validate_state(
     evidence: str,
     goal_completed: bool,
 ) -> Dict[str, Any]:
-    """Verify if the screen state matches specific criteria."""
+    """Verify if the screen state matches specific criteria.
+
+    Use this when the intent implies checking, validating, or verifying something.
+    Do NOT use this when a UI action (tap, type, scroll) is needed — use execute_ui instead.
+    Do NOT use this for final goal completion — use complete_goal to signal done, or verify_goal for a detailed completion check.
+    """
 
     return {
         "assistant_message": assistant_message,
@@ -221,7 +230,11 @@ def verify_goal(
     current_screen: str,
     evidence: str,
 ) -> Dict[str, Any]:
-    """Verify if the user's overall goal has been fully completed."""
+    """Verify if the user's overall goal has been fully completed by checking the current screen state.
+
+    Do NOT use this for intermediate state checks (e.g., 'is the menu open?') — use validate_state instead.
+    Do NOT use this when there are still UI actions to perform — use execute_ui instead.
+    """
 
     return {
         "assistant_message": assistant_message,
@@ -238,10 +251,11 @@ def store_memory(
     value: str,
     assistant_message: str,
 ) -> Dict[str, Any]:
-    """Store important information or progress in memory.
+    """Store important information, progress, or state in memory to remember it later.
 
-    Use category + item to form a structured key (e.g., category='visited', item='card_1').
-    Do NOT use this for transient observations already visible on screen.
+    Use this to track what you've already done (e.g., category='visited', item='carousel_card_1').
+    Do NOT use this for transient observations already visible on screen — only store facts needed across multiple steps.
+    Do NOT use this for data that can be re-derived from the current screenshot.
     """
 
     return {
@@ -260,8 +274,10 @@ def recall_memory(
 ) -> Dict[str, Any]:
     """Retrieve previously stored information from memory.
 
-    Use the exact same category and item that were used when storing.
+    Use this to check your progress or recall specific details.
+    You MUST use the exact same category and item values that were used when storing.
     Do NOT use this when the needed information is already visible on screen.
+    Do NOT use this for keys you have not previously stored.
     """
 
     return {

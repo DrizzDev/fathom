@@ -293,7 +293,7 @@ class ToolResponseParser(IResponseParser):
                 rationale=reason,
                 memory_updates={key: value},
                 target=f"Memory Store: {key}={value}",
-                action_type=ActionType.WAIT,  # Placeholder, will be handled by strategy
+                action_type=ActionType.SAVE_MEMORY,
             ),
             alternatives=[],
             reasoning=reason,
@@ -313,7 +313,7 @@ class ToolResponseParser(IResponseParser):
             action=Action(
                 confidence=1.0,
                 rationale=reason,
-                action_type=ActionType.WAIT,
+                action_type=ActionType.RETRIEVE_MEMORY,
                 target=f"Memory Recall: {key}",
             ),
             alternatives=[],
