@@ -1,5 +1,3 @@
-"""Main CLI entry point for Fathom using hexagonal architecture."""
-
 from __future__ import annotations
 
 import argparse
@@ -14,18 +12,22 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from fathom.adapters.device.adb import ADBDevice
 from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
 from fathom.adapters.llm.gemini import GeminiLLM
 from fathom.adapters.memory.sqlite import SQLiteMemory
+from fathom.adapters.signal.interactive import InteractiveSignal
 from fathom.adapters.signal.noop import NoopSignal
+from fathom.adapters.signal.socket import SocketSignal
 from fathom.adapters.storage.local import LocalStorage
 from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.logger import BaseLogger
+from fathom.base.paths import SharedPathManager
 from fathom.exceptions import FathomError
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.builder import Fathom
+from fathom.runtime.factories import DeviceFactory
 from fathom.runtime.runner import FathomRunner
+from fathom.schemas.configuration import DeviceConfiguration, LLMConfiguration
 from fathom.schemas.orchestration import RealignmentPolicy, WorkflowRequest
 from fathom.settings.env import FathomSettings
 
@@ -34,16 +36,25 @@ logger = getLogger(__name__)
 
 
 class FathomCLI:
-    """Fathom CLI application using hexagonal architecture."""
+    """
+    Fathom CLI application using hexagonal architecture.
+    """
 
     def __init__(self, settings: FathomSettings) -> None:
-        """Initialize CLI with settings."""
-        self.settings = settings
+        """
+        Initialize CLI with settings.
+        """
+
+        self.__settings = settings
+
+        self.__cancelled = False
         self.runner: Optional[FathomRunner] = None
-        self._cancelled = False
 
     def __setup_signals(self) -> None:
-        """Configure signal handlers for graceful shutdown."""
+        """
+        Configure signal handlers for graceful shutdown.
+        """
+
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
                 loop = asyncio.get_running_loop()
@@ -52,17 +63,21 @@ class FathomCLI:
                 pass
 
     def __handle_interrupt(self) -> None:
-        """Handler called when a signal is received."""
+        """
+        Handler called when a signal is received.
+        """
+
         console.print("\n[bold yellow]Stopping gracefully... Please wait.[/bold yellow]")
-        self._cancelled = True
+        self.__cancelled = True
+
         if self.runner:
             self.runner.cancel()
 
-    async def run(
-        self,
-        request: WorkflowRequest,
-    ) -> int:
-        """Run an intent workflow with rich UI."""
+    async def run(self, request: WorkflowRequest) -> int:
+        """
+        Run an intent workflow with rich UI.
+        """
+
         self.__setup_signals()
 
         console.print(
@@ -72,38 +87,33 @@ class FathomCLI:
             )
         )
 
-        interactive_mode = request.interactive
         signal_adapter: SignalPort
+        interactive_mode = request.interactive
 
         try:
-            # Build runner with hexagonal architecture
-            serial = request.device_serial or self.settings.android_serial
-
-            from fathom.base.paths import SharedPathManager
-            from fathom.schemas.configuration import GeminiConfig
-
             # Initialize shared paths
-            path_manager = SharedPathManager(settings=self.settings)
+            path_manager = SharedPathManager(settings=self.__settings)
 
-            gemini_config = GeminiConfig(
-                model=self.settings.gemini_model,
-                api_key=self.settings.gemini_api_key,
-                location=self.settings.vertex_location,
-                project_id=self.settings.vertex_project_id,
-                credentials_path=self.settings.google_application_credentials,
+            # Build configurations
+            serial = request.device_serial or self.__settings.android_serial
+
+            device_configuration = DeviceConfiguration(type="LOCAL", serial=serial)
+
+            llm_configuration = LLMConfiguration(
+                model=self.__settings.gemini_model,
+                api_key=self.__settings.gemini_api_key,
+                location=self.__settings.vertex_location,
+                project_id=self.__settings.vertex_project_id,
+                credentials_path=self.__settings.google_application_credentials,
             )
 
             if interactive_mode:
                 signal_type = getattr(request, "signal_type", "interactive")
 
                 if signal_type == "socket":
-                    from fathom.adapters.signal.socket import SocketSignal
-
                     signal_adapter = SocketSignal()
                     console.print("[bold cyan]🔌 Socket-based control enabled[/bold cyan]")
                 else:
-                    from fathom.adapters.signal.interactive import InteractiveSignal
-
                     signal_adapter = InteractiveSignal()
                     console.print("[bold cyan]🤝 Interactive mode enabled[/bold cyan]")
 
@@ -111,15 +121,18 @@ class FathomCLI:
             else:
                 signal_adapter = NoopSignal()
 
+            # Create device adapter via factory
+            device_adapter = DeviceFactory.create(configuration=device_configuration)
+
             self.runner = (
                 Fathom.builder(path_manager=path_manager)
-                .device(device=ADBDevice(serial=serial))
-                .llm(llm=GeminiLLM(configuration=gemini_config))
-                .memory(memory=SQLiteMemory(path_manager=path_manager))
-                .knowledge(knowledge=SQLiteKnowledge(path_manager=path_manager))
+                .device(device=device_adapter)
                 .signal(signal=signal_adapter)
-                .storage(storage=LocalStorage(path_manager=path_manager))
                 .telemetry(telemetry=StructlogAdapter())
+                .llm(llm=GeminiLLM(configuration=llm_configuration))
+                .memory(memory=SQLiteMemory(path_manager=path_manager))
+                .storage(storage=LocalStorage(path_manager=path_manager))
+                .knowledge(knowledge=SQLiteKnowledge(path_manager=path_manager))
                 .build()
             )
 
@@ -127,19 +140,21 @@ class FathomCLI:
             if interactive_mode:
                 result = await self.runner.run_intent(
                     intent=request.intent,
-                    max_steps=request.max_steps,
                     use_xml=request.use_xml,
-                    prompt_version=request.prompt_version,
+                    max_steps=request.max_steps,
                     request_id=request.session_id,
+                    realignment=request.realignment,
+                    prompt_version=request.prompt_version,
                 )
             else:
                 with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
                     result = await self.runner.run_intent(
                         intent=request.intent,
-                        max_steps=request.max_steps,
                         use_xml=request.use_xml,
-                        prompt_version=request.prompt_version,
+                        max_steps=request.max_steps,
                         request_id=request.session_id,
+                        realignment=request.realignment,
+                        prompt_version=request.prompt_version,
                     )
 
             # Execution Summary
@@ -185,6 +200,7 @@ class FathomCLI:
                     token_table.add_row(
                         "Completion Tokens", f"{token_metrics.get('completion', 0):,.0f}"
                     )
+
                     token_table.add_row("Cached Tokens", f"{token_metrics.get('cached', 0):,.0f}")
                     token_table.add_row("Total Tokens", f"{token_metrics.get('total', 0):,.0f}")
 
@@ -219,31 +235,38 @@ class FathomCLI:
 
             if self.runner:
                 await self.runner.cleanup()
+
             return 0 if result.success else 1
 
         except (asyncio.CancelledError, KeyboardInterrupt):
             console.print("\n[bold red]Execution cancelled by user.[/bold red]")
+
             if self.runner:
                 await self.runner.cleanup()
+
             return 1
         except FathomError as exception:
             logger.error(f"CLI Error: {exception}")
             console.print(f"[bold red]Fathom Error:[/bold red] {escape(str(exception))}")
+
             if self.runner:
                 await self.runner.cleanup()
+
             return 1
         except Exception as exception:
             logger.exception("Unexpected error")
             console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")
+
             if self.runner:
                 await self.runner.cleanup()
+
             return 1
 
-    async def explore(
-        self,
-        request: WorkflowRequest,
-    ) -> int:
-        """Run an exploration workflow with rich UI."""
+    async def explore(self, request: WorkflowRequest) -> int:
+        """
+        Run an exploration workflow with rich UI.
+        """
+
         self.__setup_signals()
 
         console.print(
@@ -254,31 +277,33 @@ class FathomCLI:
         )
 
         try:
-            serial = request.device_serial or self.settings.android_serial
-
-            from fathom.base.paths import SharedPathManager
-            from fathom.schemas.configuration import GeminiConfig
+            serial = request.device_serial or self.__settings.android_serial
 
             # Initialize shared paths
-            path_manager = SharedPathManager(settings=self.settings)
+            path_manager = SharedPathManager(settings=self.__settings)
 
-            gemini_config = GeminiConfig(
-                model=self.settings.gemini_model,
-                api_key=self.settings.gemini_api_key,
-                location=self.settings.vertex_location,
-                project_id=self.settings.vertex_project_id,
-                credentials_path=self.settings.google_application_credentials,
+            llm_configuration = LLMConfiguration(
+                model=self.__settings.gemini_model,
+                api_key=self.__settings.gemini_api_key,
+                location=self.__settings.vertex_location,
+                project_id=self.__settings.vertex_project_id,
+                credentials_path=self.__settings.google_application_credentials,
             )
+
+            device_configuration = DeviceConfiguration(type="LOCAL", serial=serial)
+
+            # Create device adapter via factory
+            device_adapter = DeviceFactory.create(configuration=device_configuration)
 
             self.runner = (
                 Fathom.builder(path_manager=path_manager)
-                .device(device=ADBDevice(serial=serial))
-                .llm(llm=GeminiLLM(configuration=gemini_config))
-                .memory(memory=SQLiteMemory(path_manager=path_manager))
-                .knowledge(knowledge=SQLiteKnowledge(path_manager=path_manager))
                 .signal(signal=NoopSignal())
-                .storage(storage=LocalStorage(path_manager=path_manager))
+                .device(device=device_adapter)
                 .telemetry(telemetry=StructlogAdapter())
+                .llm(llm=GeminiLLM(configuration=llm_configuration))
+                .memory(memory=SQLiteMemory(path_manager=path_manager))
+                .storage(storage=LocalStorage(path_manager=path_manager))
+                .knowledge(knowledge=SQLiteKnowledge(path_manager=path_manager))
                 .build()
             )
 
@@ -300,24 +325,34 @@ class FathomCLI:
 
             if self.runner:
                 await self.runner.cleanup()
+
             return 0
 
         except (asyncio.CancelledError, KeyboardInterrupt):
             console.print("\n[bold red]Exploration cancelled by user.[/bold red]")
+
             if self.runner:
                 await self.runner.cleanup()
+
             return 1
         except Exception as exception:
             logger.exception("Unexpected error")
             console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")
+
             if self.runner:
                 await self.runner.cleanup()
+
             return 1
 
 
 def main() -> int:
-    """CLI entry point."""
-    parser = argparse.ArgumentParser(description="Fathom: AI-powered mobile automation agent")
+    """
+    CLI entry point.
+    """
+
+    parser = argparse.ArgumentParser(
+        description="Fathom: AI-powered mobile automation agent", allow_abbrev=False
+    )
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
     run_parser = subparsers.add_parser("run", help="Run an intent-based automation workflow")
@@ -396,18 +431,19 @@ def main() -> int:
             request = WorkflowRequest(
                 intent=args.intent,
                 use_xml=args.use_xml,
-                max_steps=args.max_steps,
-                device_serial=args.serial,
-                prompt_version=args.prompt_version,
-                interactive=args.interactive,
                 signal_type=args.signal,
                 realignment=realignment,
+                max_steps=args.max_steps,
+                device_serial=args.serial,
+                interactive=args.interactive,
+                prompt_version=args.prompt_version,
             )
             result = asyncio.run(cli.run(request=request))
             return result
+
         elif args.command == "explore":
             request = WorkflowRequest(
-                intent="Explore application structure",
+                intent="",
                 max_steps=args.max_steps,
                 device_serial=args.serial,
             )

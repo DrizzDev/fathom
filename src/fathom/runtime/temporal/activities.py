@@ -1,5 +1,3 @@
-"""Temporal activities for Fathom execution."""
-
 from __future__ import annotations
 
 from logging import getLogger
@@ -7,166 +5,184 @@ from typing import Any, Dict
 
 from temporalio import activity
 
+from fathom.adapters.llm.gemini import GeminiLLM
+from fathom.adapters.signal.temporal import TemporalSignalAdapter
+from fathom.runtime.builder import Fathom
+from fathom.runtime.factories import DeviceFactory
+from fathom.schemas.configuration import DeviceConfiguration, LLMConfiguration
+
 logger = getLogger(__name__)
 
 
-@activity.defn  # type: ignore[untyped-decorator]
-async def execute_fathom_intent(
-    request: Dict[str, Any],
-    workflow_id: str,
-) -> Dict[str, Any]:
+class FathomActivities:
     """
-    Activity to execute Fathom intent.
-
-    This runs as a Temporal activity so it can be monitored, cancelled,
-    and send heartbeats to indicate progress.
-
-    Args:
-        request: Agent run request
-        workflow_id: Temporal workflow ID for signal coordination
-
-    Returns:
-        Execution result dictionary
+    Temporal activities implementation for Fathom agent tasks.
+    Encapsulates execution logic for intent and exploration workflows.
     """
-    from fathom.adapters.device.adb import ADBDevice
-    from fathom.adapters.llm.gemini import GeminiLLM
-    from fathom.adapters.signal.temporal import TemporalSignalAdapter
-    from fathom.runtime.builder import Fathom
-    from fathom.schemas.configuration import GeminiConfig
 
-    activity.logger.info(f"Starting Fathom intent execution for workflow {workflow_id}")
+    @activity.defn(name="EXECUTE_INTENT")  # type: ignore[untyped-decorator]
+    async def execute_intent(
+        self,
+        workflow_id: str,
+        request: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Execute an intent-based workflow.
 
-    # Extract configuration
-    planner_config = request.get("planner_configuration", {})
+        Args:
+            request: Activity input parameters.
+            workflow_id: ID of the parent workflow.
 
-    gemini_config = GeminiConfig(
-        model=planner_config.get("model", "gemini-2.0-flash-exp"),
-        project_id=planner_config.get("project_id"),
-        location=planner_config.get("location"),
-        credentials_path=None,  # Assume auth handled via environment or other means for now
-    )
+        Returns:
+            Execution results.
+        """
 
-    # Create Temporal signal adapter
-    signal_adapter = TemporalSignalAdapter(workflow_id=workflow_id)
+        activity.logger.info(f"Starting Fathom intent execution for workflow {workflow_id}")
 
-    # Build runner using the fluent builder
-    runner = (
-        Fathom.builder()
-        .device(device=ADBDevice(serial=request["session_id"]))
-        .llm(llm=GeminiLLM(configuration=gemini_config))
-        .signal(signal=signal_adapter)
-        .build()
-    )
+        configuration = self.__build_configurations(request=request)
 
-    try:
-        # Send heartbeat to indicate activity is alive
-        activity.heartbeat("Starting execution")
-
-        # Execute intent
-        result = await runner.run_intent(
-            intent=request["intent"],
-            max_steps=request.get("max_steps", 20),
-            use_xml=request.get("use_xml", False),
-            request_id=workflow_id,
+        runner = self.__build_runner(
+            workflow_id=workflow_id,
+            llm_configuration=configuration["llm"],
+            device_configuration=configuration["device"],
         )
 
-        # Send final heartbeat
-        activity.heartbeat(f"Completed: {result.steps_taken} steps")
+        try:
+            activity.heartbeat("Starting execution")
 
-        # Convert result to dict
-        return {
-            "success": result.success,
-            "steps": result.steps_taken,
-            "duration": result.duration,
-            "error": result.error,
-            "metrics": result.metrics if result.metrics else None,
-        }
+            result = await runner.run_intent(
+                request_id=workflow_id,
+                intent=request["intent"],
+                use_xml=request.get("use_xml", False),
+                max_steps=request.get("max_steps", 100),
+            )
 
-    except Exception as exception:
-        activity.logger.exception(f"Fathom execution failed: {exception}")
-        return {
-            "success": False,
-            "error": str(exception),
-            "steps": 0,
-            "duration": 0,
-            "metrics": None,
-        }
+            activity.heartbeat(f"Completed: {result.steps_taken} steps")
 
-    finally:
-        await runner.cleanup()
+            return {
+                "error": result.error,
+                "success": result.success,
+                "steps": result.steps_taken,
+                "duration": result.duration,
+                "metrics": result.metrics if result.metrics else None,
+            }
 
+        except Exception as exception:
+            activity.logger.exception(f"Fathom execution failed: {exception}")
+            return {
+                "steps": 0,
+                "duration": 0,
+                "metrics": None,
+                "success": False,
+                "error": str(exception),
+            }
 
-@activity.defn  # type: ignore[untyped-decorator]
-async def execute_fathom_exploration(
-    request: Dict[str, Any],
-    workflow_id: str,
-) -> Dict[str, Any]:
-    """
-    Activity to execute Fathom exploration.
+        finally:
+            await runner.cleanup()
 
-    Args:
-        request: Exploration request
-        workflow_id: Temporal workflow ID
+    @activity.defn(name="EXECUTE_EXPLORATION")  # type: ignore[untyped-decorator]
+    async def execute_exploration(
+        self,
+        workflow_id: str,
+        request: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Execute an autonomous exploration workflow.
 
-    Returns:
-        Execution result dictionary
-    """
-    from fathom.adapters.device.adb import ADBDevice
-    from fathom.adapters.llm.gemini import GeminiLLM
-    from fathom.adapters.signal.temporal import TemporalSignalAdapter
-    from fathom.runtime.builder import Fathom
-    from fathom.schemas.configuration import GeminiConfig
+        Args:
+            request: Activity input parameters.
+            workflow_id: ID of the parent workflow.
 
-    activity.logger.info(f"Starting Fathom exploration for workflow {workflow_id}")
+        Returns:
+            Exploration results.
+        """
 
-    # Extract configuration
-    planner_config = request.get("planner_configuration", {})
+        activity.logger.info(f"Starting Fathom exploration for workflow {workflow_id}")
 
-    gemini_config = GeminiConfig(
-        model=planner_config.get("model", "gemini-2.0-flash-exp"),
-        project_id=planner_config.get("project_id"),
-        location=planner_config.get("location"),
-    )
+        configuration = self.__build_configurations(request=request)
 
-    # Create Temporal signal adapter
-    signal_adapter = TemporalSignalAdapter(workflow_id=workflow_id)
-
-    # Build runner
-    runner = (
-        Fathom.builder()
-        .device(device=ADBDevice(serial=request["session_id"]))
-        .llm(llm=GeminiLLM(configuration=gemini_config))
-        .signal(signal=signal_adapter)
-        .build()
-    )
-
-    try:
-        activity.heartbeat("Starting exploration")
-
-        # Execute exploration
-        result = await runner.run_exploration(
-            max_steps=request.get("max_steps", 50), request_id=workflow_id
+        runner = self.__build_runner(
+            workflow_id=workflow_id,
+            llm_configuration=configuration["llm"],
+            device_configuration=configuration["device"],
         )
 
-        activity.heartbeat(f"Completed: {result.steps_executed} steps")
+        try:
+            activity.heartbeat("Starting exploration")
 
-        return {
-            "success": result.success,
-            "steps": result.steps_executed,
-            "duration": result.duration,
-            "error": result.error,
-            "metrics": None,  # ExplorationResult doesn't have metrics yet in this schema
-        }
+            result = await runner.run_exploration(
+                max_steps=request.get("max_steps", 50), request_id=workflow_id
+            )
 
-    except Exception as exception:
-        activity.logger.exception(f"Exploration failed: {exception}")
-        return {
-            "success": False,
-            "error": str(exception),
-            "steps": 0,
-            "duration": 0,
-            "metrics": None,
-        }
+            activity.heartbeat(f"Completed: {result.steps_executed} steps")
 
-    finally:
-        await runner.cleanup()
+            return {
+                "metrics": None,
+                "error": result.error,
+                "success": result.success,
+                "duration": result.duration,
+                "steps": result.steps_executed,
+            }
+
+        except Exception as exception:
+            activity.logger.exception(f"Exploration failed: {exception}")
+            return {
+                "steps": 0,
+                "duration": 0,
+                "metrics": None,
+                "success": False,
+                "error": str(exception),
+            }
+
+        finally:
+            await runner.cleanup()
+
+    def __build_configurations(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Constructs configuration objects from request dictionary.
+        """
+
+        planner_configuration = request.get("planner_configuration", {})
+
+        llm_configuration = LLMConfiguration(
+            location=planner_configuration.get("location"),
+            project_id=planner_configuration.get("project_id"),
+            credentials_path=planner_configuration.get("credentials_path"),
+            model=planner_configuration.get("model", "gemini-2.0-flash-exp"),
+        )
+
+        enricher_url = request.get("enricher_url")
+        session_id = request.get("session_id", "default_session")
+
+        if enricher_url:
+            device_configuration = DeviceConfiguration(
+                type="REMOTE",
+                session_id=session_id,
+                provider_url=enricher_url,
+                authentication_token=request.get("auth_token"),
+            )
+        else:
+            device_configuration = DeviceConfiguration(type="LOCAL", serial=session_id)
+
+        return {"device": device_configuration, "llm": llm_configuration}
+
+    def __build_runner(
+        self,
+        workflow_id: str,
+        llm_configuration: LLMConfiguration,
+        device_configuration: DeviceConfiguration,
+    ) -> Any:
+        """
+        Instantiates the Fathom runner with configured adapters.
+        """
+
+        signal_adapter = TemporalSignalAdapter(workflow_id=workflow_id)
+        device_adapter = DeviceFactory.create(configuration=device_configuration)
+
+        return (
+            Fathom.builder()
+            .device(device=device_adapter)
+            .signal(signal=signal_adapter)
+            .llm(llm=GeminiLLM(configuration=llm_configuration))
+            .build()
+        )

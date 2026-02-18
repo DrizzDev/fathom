@@ -46,7 +46,7 @@ class DevicePort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_screen_size(self) -> Tuple[int, int]:
+    async def get_dimensions(self) -> Tuple[int, int]:
         """Get screen dimensions (width, height)."""
         raise NotImplementedError
 

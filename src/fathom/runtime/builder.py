@@ -1,192 +1,141 @@
-"""Fluent builder API for Fathom configuration."""
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
+from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
+from fathom.adapters.memory.sqlite import SQLiteMemory
+from fathom.adapters.signal.noop import NoopSignal
+from fathom.adapters.storage.local import LocalStorage
+from fathom.adapters.telemetry.structlog import StructlogAdapter
+from fathom.base.paths import SharedPathManager
 from fathom.core.exceptions import ConfigurationError
+from fathom.interfaces.device import DevicePort
+from fathom.interfaces.knowledge import KnowledgePort
+from fathom.interfaces.llm import LLMPort
+from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.signal import SignalPort
+from fathom.interfaces.storage import StoragePort
+from fathom.interfaces.telemetry import TelemetryPort
+from fathom.runtime.runner import FathomRunner
 from fathom.schemas.configuration import (
-    ExecutionConfig,
-    ExplorationStrategyConfig,
-    FathomConfig,
-    IntentStrategyConfig,
+    ExecutionConfiguration,
+    ExplorationConfiguration,
+    FathomConfiguration,
+    IntentConfiguration,
 )
-
-if TYPE_CHECKING:
-    from fathom.base.paths import SharedPathManager
-    from fathom.interfaces.device import DevicePort
-    from fathom.interfaces.knowledge import KnowledgePort
-    from fathom.interfaces.llm import LLMPort
-    from fathom.interfaces.memory import MemoryPort
-    from fathom.interfaces.signal import SignalPort
-    from fathom.interfaces.storage import StoragePort
-    from fathom.interfaces.telemetry import TelemetryPort
-    from fathom.runtime.runner import FathomRunner
+from fathom.settings.env import FathomSettings
 
 
 class FathomBuilder:
     """
     Fluent builder for Fathom configuration.
-
     Methods are order-independent. Validation happens at build().
     """
 
     def __init__(self, path_manager: Optional[SharedPathManager] = None) -> None:
-        """Initialize builder with no ports configured."""
+        """
+        Initialize builder with no ports configured.
+        """
+
         self.__device: Optional[DevicePort] = None
+
         self.__llm: Optional[LLMPort] = None
         self.__memory: Optional[MemoryPort] = None
         self.__knowledge: Optional[KnowledgePort] = None
+
         self.__signal: Optional[SignalPort] = None
         self.__storage: Optional[StoragePort] = None
         self.__telemetry: Optional[TelemetryPort] = None
-        self.__config: FathomConfig = FathomConfig()
-        self.__path_manager = path_manager
+
+        self.__config: FathomConfiguration = FathomConfiguration()
+        self.__path_manager = path_manager or SharedPathManager(settings=FathomSettings())
 
     def device(self, device: DevicePort) -> FathomBuilder:
         """
         Configure device port (plug-and-play).
-
-        Accepts any implementation of DevicePort interface:
-        - ADBDevice: Android Debug Bridge
-        - Custom: Your own device implementation
-
-        Args:
-            device: Device port implementation
-
-        Returns:
-            Self for method chaining
         """
+
         self.__device = device
         return self
 
     def llm(self, llm: LLMPort) -> FathomBuilder:
         """
         Configure LLM port (plug-and-play).
-
-        Accepts any implementation of LLMPort interface:
-        - GeminiLLM: Google Gemini
-        - OpenAILLM: OpenAI GPT
-        - Custom: Your own LLM implementation
-
-        Args:
-            llm: LLM port implementation
-
-        Returns:
-            Self for method chaining
         """
+
         self.__llm = llm
         return self
 
     def memory(self, memory: MemoryPort) -> FathomBuilder:
         """
         Configure memory port (plug-and-play).
-
-        Accepts any implementation of MemoryPort interface:
-        - SQLiteMemory: Local SQLite storage (default)
-        - RedisMemory: Redis-based storage
-        - Custom: Your own memory implementation
-
-        Args:
-            memory: Memory port implementation
-
-        Returns:
-            Self for method chaining
         """
+
         self.__memory = memory
         return self
 
     def knowledge(self, knowledge: KnowledgePort) -> FathomBuilder:
         """
         Configure knowledge port (plug-and-play).
-
-        Accepts any implementation of KnowledgePort interface:
-        - SQLiteKnowledge: Local SQLite storage (default)
-        - VectorKnowledge: Vector database storage
-        - Custom: Your own knowledge implementation
-
-        Args:
-            knowledge: Knowledge port implementation
-
-        Returns:
-            Self for method chaining
         """
+
         self.__knowledge = knowledge
         return self
 
     def signal(self, signal: SignalPort) -> FathomBuilder:
         """
         Configure signal port (plug-and-play).
-
-        Accepts any implementation of SignalPort interface:
-        - InteractiveSignal: Terminal-based HITL
-        - TemporalSignalAdapter: Temporal workflow signals
-        - NoopSignal: No HITL (default)
-        - Custom: Your own signal implementation
-
-        Args:
-            signal: Signal port implementation
-
-        Returns:
-            Self for method chaining
         """
+
         self.__signal = signal
         return self
 
     def storage(self, storage: StoragePort) -> FathomBuilder:
         """
         Configure storage port (plug-and-play).
-
-        Accepts any implementation of StoragePort interface:
-        - LocalStorage: Local filesystem storage (default)
-        - S3Storage: AWS S3 storage
-        - Custom: Your own storage implementation
-
-        Args:
-            storage: Storage port implementation
-
-        Returns:
-            Self for method chaining
         """
+
         self.__storage = storage
         return self
 
     def telemetry(self, telemetry: TelemetryPort) -> FathomBuilder:
         """
         Configure telemetry port (plug-and-play).
-
-        Accepts any implementation of TelemetryPort interface:
-        - StructlogAdapter: Structured logging (default)
-        - DatadogAdapter: Datadog APM
-        - Custom: Your own telemetry implementation
-
-        Args:
-            telemetry: Telemetry port implementation
-
-        Returns:
-            Self for method chaining
         """
+
         self.__telemetry = telemetry
         return self
 
-    def config(self, config: FathomConfig) -> FathomBuilder:
-        """Configure Fathom settings."""
+    def config(self, config: FathomConfiguration) -> FathomBuilder:
+        """
+        Configure Fathom settings.
+        """
+
         self.__config = config
         return self
 
-    def execution_config(self, config: ExecutionConfig) -> FathomBuilder:
-        """Configure execution engine settings."""
-        self.__config.execution = config
+    def execution_config(self, config: ExecutionConfiguration) -> FathomBuilder:
+        """
+        Configure execution engine settings.
+        """
+
+        self.__config.engine = config
         return self
 
-    def intent_config(self, config: IntentStrategyConfig) -> FathomBuilder:
-        """Configure intent strategy settings."""
-        self.__config.intent_strategy = config
+    def intent_config(self, config: IntentConfiguration) -> FathomBuilder:
+        """
+        Configure intent strategy settings.
+        """
+
+        self.__config.intent = config
         return self
 
-    def exploration_config(self, config: ExplorationStrategyConfig) -> FathomBuilder:
-        """Configure exploration strategy settings."""
-        self.__config.exploration_strategy = config
+    def exploration_config(self, config: ExplorationConfiguration) -> FathomBuilder:
+        """
+        Configure exploration strategy settings.
+        """
+
+        self.__config.exploration = config
         return self
 
     def build(self) -> FathomRunner:
@@ -201,15 +150,6 @@ class FathomBuilder:
         Raises:
             ConfigurationError: If required ports (device, llm) are not configured
         """
-        # Import here to avoid circular dependency
-        from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
-        from fathom.adapters.memory.sqlite import SQLiteMemory
-        from fathom.adapters.signal.noop import NoopSignal
-        from fathom.adapters.storage.local import LocalStorage
-        from fathom.adapters.telemetry.structlog import StructlogAdapter
-        from fathom.base.paths import SharedPathManager
-        from fathom.runtime.runner import FathomRunner
-        from fathom.settings.env import FathomSettings
 
         # Ensure path manager exists
         if not self.__path_manager:
@@ -218,38 +158,48 @@ class FathomBuilder:
         # Validate required ports
         if not self.__device:
             raise ConfigurationError("Device port is required. Call .device() before .build()")
+
         if not self.__llm:
             raise ConfigurationError("LLM port is required. Call .llm() before .build()")
 
         # Apply defaults for optional ports
         if not self.__memory:
             self.__memory = SQLiteMemory(path_manager=self.__path_manager)
+
         if not self.__knowledge:
             self.__knowledge = SQLiteKnowledge(path_manager=self.__path_manager)
-        if not self.__signal:
-            self.__signal = NoopSignal()
+
         if not self.__storage:
             self.__storage = LocalStorage(path_manager=self.__path_manager)
+
+        if not self.__signal:
+            self.__signal = NoopSignal()
+
         if not self.__telemetry:
             self.__telemetry = StructlogAdapter()
 
         return FathomRunner(
-            device=self.__device,
             llm=self.__llm,
+            config=self.__config,
             memory=self.__memory,
-            knowledge=self.__knowledge,
+            device=self.__device,
             signal=self.__signal,
             storage=self.__storage,
+            knowledge=self.__knowledge,
             telemetry=self.__telemetry,
             path_manager=self.__path_manager,
-            config=self.__config,
         )
 
 
 class Fathom:
-    """Main entry point for Fathom library."""
+    """
+    Main entry point for Fathom library.
+    """
 
     @staticmethod
     def builder(path_manager: Optional[SharedPathManager] = None) -> FathomBuilder:
-        """Create a new builder instance."""
+        """
+        Create a new builder instance.
+        """
+
         return FathomBuilder(path_manager=path_manager)

@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 from rich.console import Console
 
 from fathom.interfaces.device import DevicePort
-from fathom.schemas.configuration import ADBConfig
+from fathom.schemas.configuration import ADBConfiguration
 from fathom.schemas.results import ActionResult
 
 console = Console()
@@ -17,14 +17,15 @@ logger = getLogger(__name__)
 
 class ADBDevice(DevicePort):
     """
-    ADB adapter for Android devices.
-
+    ADB adapter for Local Android devices.
     This adapter wraps the existing ADB tool logic without modifications.
-    All methods are copied from tools/device/adb.py to preserve exact behavior.
     """
 
     def __init__(
-        self, *, serial: Optional[str] = None, configuration: Optional[ADBConfig] = None
+        self,
+        *,
+        serial: Optional[str] = None,
+        configuration: Optional[ADBConfiguration] = None,
     ) -> None:
         """
         Initialize ADB device adapter.
@@ -32,13 +33,16 @@ class ADBDevice(DevicePort):
 
         if configuration:
             self.__configuration = configuration
+
         else:
-            self.__configuration = ADBConfig(device_serial=serial) if serial else ADBConfig()
+            self.__configuration = (
+                ADBConfiguration(serial_number=serial) if serial else ADBConfiguration()
+            )
 
         self.__cached_size: Optional[Tuple[int, int]] = None
 
     @property
-    def configuration(self) -> ADBConfig:
+    def configuration(self) -> ADBConfiguration:
         """
         Returns the tool configuration.
         """
@@ -95,7 +99,7 @@ class ADBDevice(DevicePort):
         console.print("[bold cyan]🏠  HOME[/bold cyan] button")
         return await self.__keyevent(keycode=3)
 
-    async def get_screen_size(self) -> Tuple[int, int]:
+    async def get_dimensions(self) -> Tuple[int, int]:
         """
         Get device screen dimensions.
         """
@@ -104,8 +108,9 @@ class ADBDevice(DevicePort):
             return self.__cached_size
 
         result = await self.__shell(command="wm size", capture_output=True)
+
         if not result.success or not result.output:
-            return (1080, 1920)
+            logger.exception("Failed to capture screen dimension")
 
         if match := re.search(r"(\d+)x(\d+)", result.output):
             width = int(match.group(1))
@@ -137,9 +142,11 @@ class ADBDevice(DevicePort):
         except asyncio.TimeoutError as exception:
             logger.error(f"Screenshot capture timed out: {exception}")
             return b""
+
         except Exception as exception:
             logger.error(f"Screenshot capture failed: {exception}")
             return b""
+
         finally:
             # Ensure process is terminated if still running
             if process and process.returncode is None:
@@ -196,6 +203,7 @@ class ADBDevice(DevicePort):
             return None
 
         cat_arguments = self.__build_arguments(parts=["exec-out", "cat", path])
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *cat_arguments,
@@ -282,9 +290,9 @@ class ADBDevice(DevicePort):
         Builds full command list.
         """
 
-        cmd = [self.__configuration.adb_path]
-        if self.__configuration.device_serial:
-            cmd.extend(["-s", self.__configuration.device_serial])
+        cmd = [self.__configuration.executable_path]
+        if self.__configuration.serial_number:
+            cmd.extend(["-s", self.__configuration.serial_number])
 
         cmd.extend(parts)
         return cmd

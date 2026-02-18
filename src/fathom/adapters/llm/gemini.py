@@ -1,12 +1,10 @@
-"""Gemini LLM adapter - wraps existing Gemini client logic."""
-
 from __future__ import annotations
 
 import asyncio
 import random
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional
 
 from google import genai
 from google.genai import types
@@ -16,7 +14,7 @@ from fathom.adapters.llm.cache import CacheService
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.exceptions import VisionError
 from fathom.interfaces.llm import LLMPort
-from fathom.schemas.configuration import GeminiConfig
+from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.results import GenerateResult
 
 logger = getLogger(__name__)
@@ -32,28 +30,38 @@ class GeminiLLM(LLMPort):
         *,
         api_key: Optional[str] = None,
         model: str = "gemini-2.0-flash-exp",
-        configuration: Optional[GeminiConfig] = None,
+        configuration: Optional[LLMConfiguration] = None,
     ) -> None:
-        """Initialize Gemini LLM adapter."""
+        """
+        Initialize Gemini LLM adapter.
+        """
+
         if configuration:
             self.__configuration = configuration
         else:
-            self.__configuration = GeminiConfig(api_key=api_key, model=model)
+            self.__configuration = LLMConfiguration(api_key=api_key, model=model)
 
         self.__client: Optional[Any] = None
         self.__credentials: Optional[Any] = None
-        self.__cache: Optional[CacheService] = None
+
         self.__parser = ToolResponseParser()
+        self.__cache: Optional[CacheService] = None
 
         self.__initialize()
 
     @property
     def model_name(self) -> str:
-        """Name of the model being used."""
+        """
+        Name of the model being used.
+        """
+
         return self.__configuration.model
 
     def __initialize(self) -> None:
-        """Initialize client."""
+        """
+        Initialize client.
+        """
+
         project = self.__configuration.project_id
         location = self.__configuration.location or "global"
 
@@ -93,11 +101,14 @@ class GeminiLLM(LLMPort):
     async def generate(
         self,
         *,
-        prompt: Sequence[Union[str, bytes, Dict[str, str]]],
-        system_instruction: Optional[str] = None,
+        prompt: List[Any],
         tools: Optional[Dict[str, Any]] = None,
+        system_instruction: Optional[str] = None,
     ) -> GenerateResult:
-        """Main handler for LLM interaction."""
+        """
+        Main handler for LLM interaction.
+        """
+
         if not self.__client:
             raise VisionError("Client not ready")
 
@@ -110,14 +121,18 @@ class GeminiLLM(LLMPort):
 
         # Wrap content parts correctly for SDK
         parts = []
+
         for item in prompt:
             if isinstance(item, bytes):  # It's an image
                 if not item:
                     raise VisionError("Received empty image data for analysis")
+
                 mime_type = self.__detect_mime(data=item)
                 parts.append(types.Part.from_bytes(data=item, mime_type=mime_type))
+
             elif isinstance(item, str):
                 parts.append(types.Part.from_text(text=item))
+
             else:
                 parts.append(item)
 
@@ -130,6 +145,7 @@ class GeminiLLM(LLMPort):
         if not cache_name:
             if system_instruction:
                 config_args["system_instruction"] = [{"text": system_instruction}]
+
             if tools:
                 config_args["tools"] = [tools]
                 config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
@@ -137,8 +153,8 @@ class GeminiLLM(LLMPort):
             config_args["cached_content"] = cache_name
 
         config = types.GenerateContentConfig(**config_args)
-
         max_retries = self.__configuration.max_retries
+
         for attempt in range(max_retries + 1):
             try:
                 response = await self.__client.aio.models.generate_content(
@@ -150,6 +166,7 @@ class GeminiLLM(LLMPort):
                 # Extract content
                 content = ""
                 tool_calls = []
+
                 if response.candidates:
                     candidate = response.candidates[0]
                     if candidate.content and candidate.content.parts:
@@ -162,6 +179,7 @@ class GeminiLLM(LLMPort):
                 # Extract token usage
                 metrics = {}
                 usage = getattr(response, "usage_metadata", None)
+
                 if usage:
                     metrics["prompt_tokens"] = float(getattr(usage, "prompt_token_count", 0) or 0)
                     metrics["completion_tokens"] = float(
@@ -195,19 +213,29 @@ class GeminiLLM(LLMPort):
         raise VisionError("Unreachable")
 
     async def cleanup(self) -> None:
-        """Cleanup resources."""
+        """
+        Cleanup resources.
+        """
+
         if self.__cache:
             await self.__cache.delete_cache()
 
     @staticmethod
     def __detect_mime(data: bytes) -> str:
-        """Detect common image formats from file signatures."""
+        """
+        Detect common image formats from file signatures.
+        """
+
         if data.startswith(b"\x89PNG\r\n\x1a\n"):
             return "image/png"
+
         if data.startswith(b"\xff\xd8\xff"):
             return "image/jpeg"
+
         if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
             return "image/gif"
+
         if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP":
             return "image/webp"
+
         return "image/jpeg"
