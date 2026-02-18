@@ -102,6 +102,7 @@ class ExplorationNodeContext:
         self.history = HistoryService(
             workflow_id=workflow_id,
             intent="exploration",
+            package_name=target_package or "",
         )
 
         # ── BFS state (mutable, lives on context not graph dict) ──────

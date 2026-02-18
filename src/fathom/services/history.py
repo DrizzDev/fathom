@@ -19,12 +19,18 @@ class HistoryService:
     Generates structured JSON logs and YAML test scripts.
     """
 
-    def __init__(self, workflow_id: str, intent: str = "") -> None:
+    def __init__(self, workflow_id: str, intent: str = "", package_name: str = "") -> None:
         self.__workflow_id = workflow_id
         self.__intent = intent
+        self.__package_name = package_name
         self.__base_directory = Path("assets/history")
         self.__base_directory.mkdir(parents=True, exist_ok=True)
         self.goal_state: str = ""
+
+    def set_package_name(self, package_name: str) -> None:
+        """Update the package name used for script export (e.g. after the app launches)."""
+        if package_name:
+            self.__package_name = package_name
 
     def save_step(self, result: StepResult, absolute_center: Optional[List[int]] = None) -> None:
         """
@@ -102,7 +108,11 @@ class HistoryService:
         from fathom.services.exporter import ScriptExporter
 
         path = self.__base_directory / f"{self.__workflow_id}.txt"
-        content = ScriptExporter.export(step_results=history, goal_state=self.goal_state)
+        content = ScriptExporter.export(
+            step_results=history,
+            goal_state=self.goal_state,
+            package_name=self.__package_name,
+        )
 
         # Overwrite file with full, improved script
         with path.open(mode="w") as handle:

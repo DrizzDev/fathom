@@ -76,7 +76,11 @@ class IntentStrategy(ExecutionStrategy):
         self.__audit_service = AuditService()
 
         self.__hierarchy = HierarchyService(device=device)
-        self.__history = HistoryService(workflow_id=workflow_id, intent=intent)
+        self.__history = HistoryService(
+            workflow_id=workflow_id,
+            intent=intent,
+            package_name=package_name,
+        )
         self.__resolution = ReferenceResolutionService(ledger=self.__ledger)
         self.__classifier = TargetClassifier()
 
@@ -499,6 +503,7 @@ class IntentStrategy(ExecutionStrategy):
                 visual_hash=step_result.pre_hash,
             )
         )
+        self.__history.set_package_name(self.__current_package)
         self.__history.save_step(result=step_result, absolute_center=coordinates)
         return step_result
 

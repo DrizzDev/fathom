@@ -133,7 +133,11 @@ class NodeContext:
         self.ux_service = UXService()
         self.audit_service = AuditService()
         self.hierarchy = HierarchyService(device=device)
-        self.history = HistoryService(workflow_id=workflow_id, intent=intent)
+        self.history = HistoryService(
+            workflow_id=workflow_id,
+            intent=intent,
+            package_name=package_name,
+        )
         self.resolution = ReferenceResolutionService(ledger=self.ledger)
         self.classifier = TargetClassifier()
 
@@ -580,6 +584,7 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
             cx, cy = converter.center_to_pixels(bounds=step.action.bounds)
             center = [cx, cy]
 
+        ctx.history.set_package_name(ctx.current_package)
         ctx.history.save_step(result=step_result, absolute_center=center)
 
         # Audit

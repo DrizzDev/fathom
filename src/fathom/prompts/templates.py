@@ -102,8 +102,11 @@ TOOL SELECTION & VALIDATION:
     - target_type='stable': Permanent UI element (button, tab, input). Omit script_target.
     - target_type='positional': Item in a list/grid/carousel/search results.
       Set script_target to ordinal reference: 'the first search result', 'the second card'.
-    - target_type='dynamic': Changing content not in a list (banner, notification).
-      Set script_target to generic description: 'the promotional banner'.
+    - target_type='dynamic': Changing content not in a list (banner, notification, loading state).
+      Set script_target to generic description: 'the promotional banner', 'app loading screen'.
+    - WAIT ACTIONS: Always set target_type='dynamic' and script_target describing what you are
+      waiting for (e.g. 'app loading screen', 'ad player', 'content to load'). Never leave
+      target_name as 'UI Element' for wait actions.
     - Omit both fields if uncertain.
 - complete_goal: DEDICATED completion signal. Call this ONLY when the screen proves the goal is done.
   * Do NOT call this while there are still actions to perform.

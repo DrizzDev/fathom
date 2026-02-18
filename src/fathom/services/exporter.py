@@ -21,6 +21,9 @@ _ORDINAL_MAP = {
 _NUMERIC_ORDINAL_RE = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b", re.IGNORECASE)
 
 
+_GENERIC_TARGETS = frozenset({"element", "ui element", "none", "a visible item"})
+
+
 class ScriptExporter:
     """
     Service for exporting execution history to natural language scripts.
@@ -167,9 +170,26 @@ class ScriptExporter:
         return mapping.get(action_type, "Scroll")
 
     @staticmethod
+    def _is_app_launch(step: Union[StepResult, Dict[str, Any]], index: int) -> bool:
+        """Detect whether a step is the initial app-launch tap."""
+        if index != 0:
+            return False
+        action_type = ScriptExporter._get_action_type(step)
+        if action_type != "tap":
+            return False
+        if isinstance(step, StepResult):
+            raw = (
+                step.step.action.natural_language_target or step.step.action.target or ""
+            ).lower()
+        else:
+            raw = (step.get("natural_language_target") or step.get("target") or "").lower()
+        return "app" in raw or "icon" in raw
+
+    @staticmethod
     def export(
         step_results: Sequence[Union[StepResult, Dict[str, Any]]],
         goal_state: str = "",
+        package_name: str = "",
     ) -> str:
         """
         Export steps to a natural language test script.
@@ -181,6 +201,8 @@ class ScriptExporter:
         Args:
             step_results: List of executed step results.
             goal_state: Optional specific goal state for final validation.
+            package_name: Android package name. When set, the first tap-on-
+                app-icon step is replaced with ``OPEN_APP <package_name>``.
         """
         lines: list[str] = []
         n = len(step_results)
@@ -189,6 +211,12 @@ class ScriptExporter:
         while i < n:
             step = step_results[i]
             action_type_val = ScriptExporter._get_action_type(step)
+
+            # Replace the app-launch tap with a deterministic OPEN_APP command
+            if package_name and ScriptExporter._is_app_launch(step, i):
+                lines.append(f"OPEN_APP {package_name}")
+                i += 1
+                continue
 
             # --- Detect start of a swipe sequence ---
             if action_type_val in ScriptExporter._SWIPE_ACTIONS:
@@ -226,7 +254,7 @@ class ScriptExporter:
                 if (
                     prev_changed
                     and prev_action_type not in ("wait", *ScriptExporter._SWIPE_ACTIONS)
-                    and target.lower() not in ("element", "ui element", "none", "a visible item")
+                    and target.lower() not in _GENERIC_TARGETS
                 ):
                     val_line = f"Validate {target} is visible"
                     prev_condition = ScriptExporter._get_condition(prev)
@@ -239,18 +267,21 @@ class ScriptExporter:
             if isinstance(step, StepResult):
                 action = step.step.action
                 text = action.text
+                rationale = action.rationale
             else:
                 text = step.get("text")
+                rationale = str(step.get("rationale", ""))
+
+            # For wait actions with generic targets, derive a better subject
+            if action_type_val == "wait" and target.lower() in _GENERIC_TARGETS:
+                target = ScriptExporter._infer_wait_subject(rationale)
 
             description = ScriptExporter._build_description(action_type_val, target, text)
 
             # Wrap in IF block with Pre-Action Validation
             if condition:
                 lines.append(f"IF {condition} {{")
-                if (
-                    target.lower() not in ("element", "ui element", "none", "a visible item")
-                    and action_type_val != "wait"
-                ):
+                if target.lower() not in _GENERIC_TARGETS and action_type_val != "wait":
                     lines.append(f"    Validate {target} is visible")
                 lines.append(f"    {description}")
                 lines.append("}")
@@ -267,12 +298,7 @@ class ScriptExporter:
                     lines.append(f"Validate {goal_state} is visible")
                 else:
                     last_target = ScriptExporter._resolve_target(step_results[-1])
-                    if last_target and last_target.lower() not in (
-                        "element",
-                        "ui element",
-                        "none",
-                        "a visible item",
-                    ):
+                    if last_target and last_target.lower() not in _GENERIC_TARGETS:
                         lines.append(f"Validate {last_target} is visible")
                     else:
                         lines.append("Validate Goal State is visible")
@@ -305,6 +331,27 @@ class ScriptExporter:
             return f"Validate {target} (Goal complete)"
         else:
             return f"{action_type.replace('_', ' ').capitalize()} on {target}"
+
+    @staticmethod
+    def _infer_wait_subject(rationale: Optional[str]) -> str:
+        """Derive a human-readable wait subject from the step rationale.
+
+        Used when the VLM produced a generic target like "UI Element" for
+        a wait action.  Returns a concise phrase suitable for both the IF
+        condition and the Wait description.
+        """
+        if not rationale:
+            return "screen to load"
+
+        lower = str(rationale).lower()
+
+        if "ad" in lower and ("play" in lower or "finish" in lower or "skip" in lower):
+            return "ad to finish"
+
+        if "splash" in lower or "load" in lower or "main interface" in lower:
+            return "app to finish loading"
+
+        return "screen to load"
 
     @staticmethod
     def _get_condition(step: Union[StepResult, Dict[str, Any]]) -> Optional[str]:
@@ -340,9 +387,13 @@ class ScriptExporter:
             ):
                 condition = "Error message is displayed"
 
-        # Enforce Conditional Wait — use resolved target (respects generalized_target)
+        # Enforce Conditional Wait
         if action_type == "wait" and not condition:
             resolved = ScriptExporter._resolve_target(step)
-            condition = f"{resolved} is visible"
+            if resolved.lower() in _GENERIC_TARGETS:
+                subject = ScriptExporter._infer_wait_subject(rationale)
+                condition = f"{subject} is visible"
+            else:
+                condition = f"{resolved} is visible"
 
         return condition
