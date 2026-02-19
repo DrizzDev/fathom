@@ -16,7 +16,6 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.runtime.executor import GraphExecutor
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.orchestration import RealignmentPolicy
@@ -87,6 +86,8 @@ class IntentStrategy:
         """
         Execute intent-based workflow via specialized executor.
         """
+
+        from fathom.runtime.executor import GraphExecutor
 
         start_time = time.time()
 
