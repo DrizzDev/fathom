@@ -86,23 +86,18 @@ TOOL SELECTION & VALIDATION:
   * If action is risky/ambiguous, set is_valid=False and explain.
   * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
     DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
-  * MEMORY UPDATES: Use memory_updates field to track progress (e.g., {'selected_days': 'Mon,Tue,Fri', 'date_range_set': 'true'}).
+  * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.
+    Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}
+    ALWAYS use this to "tick off" requirements from the user's goal as you complete them.
 - validate_state: Use for explicit state checks when no immediate UI action is required.
 - verify_goal: Use for explicit completion checks.
-- store_memory: PROACTIVELY store important progress/state to remember across screens.
-  * Use when completing a sub-goal (e.g., 'selected_days', 'entered_payment_info')
-  * Use when making important selections (e.g., 'service_type', 'time_slot')
-  * Keys should be descriptive (e.g., 'schedule_configured', 'payment_method_selected')
+- store_memory: Secondary tool. Use ONLY for saving complex text data that doesn't fit in execute_ui.
 - recall_memory: Check what you've already done to avoid repeating actions.
-  * Use when unsure if you've completed a step
-  * Use when returning to a previous screen
-  * Use to verify progress before proceeding
 
 MEMORY STRATEGY:
-- Store progress IMMEDIATELY after completing each sub-goal
-- Recall memory BEFORE starting new actions to check what's already done
-- Use memory to maintain state across screen transitions
-- Memory persists across the entire workflow - use it to avoid repeating work
+- The system has NO implicit memory of what you "meant" to do. You MUST write it down.
+- If you select 'Monday', you MUST write memory_updates={'monday': 'selected'}.
+- If you don't write it, you WILL forget it when the screen changes.
 """
 
 # Summarization system instruction (for GCC milestone creation)

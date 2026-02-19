@@ -335,6 +335,12 @@ class IntentNodeProvider:
         if isinstance(current_screen, ScreenState) and current_screen.activity:
             package_name = current_screen.activity
 
+        # Process memory updates (Side-effects from tool calls)
+        if step.action.memory_updates:
+            logger.info(f"[NODE: EXECUTE] Processing memory updates: {step.action.memory_updates}")
+            for key, value in step.action.memory_updates.items():
+                await self.__context.memory.set(key=key, value=str(value))
+
         # Delegate to ActionExecutor
         logger.info(f"[NODE: EXECUTE] Calling action executor for {step.action.action_type.value}")
         execution_result = await self.__context.action_executor.act(
@@ -428,14 +434,6 @@ class IntentNodeProvider:
             action=step_result.step.action,
             success=step_result.success,
         )
-
-        # Store memory updates from action (if any)
-        if step_result.step.action.memory_updates:
-            logger.info(
-                f"[NODE: RECORD] Storing memory updates: {step_result.step.action.memory_updates}"
-            )
-            for key, value in step_result.step.action.memory_updates.items():
-                await self.__context.memory.set(key=key, value=value)
 
         # Commit cycle to ContextManager (GCC Trace)
         logger.debug(

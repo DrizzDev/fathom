@@ -87,10 +87,12 @@ class VisionService:
         memory_store = knowledge.get("memory_store", {})
         prev_actions = knowledge.get("previous_actions", [])
 
-        logger.debug(
-            f"[H3] Memory Retrieval | visual_hash={fingerprint[:6]} | "
+        logger.info(
+            f"[VISION] Memory Retrieved | "
+            f"visual_hash={fingerprint[:6]} | "
             f"screen_memories={len(memory_store)} | "
             f"persistent_memories={len(all_memory)} | "
+            f"persistent_keys={list(all_memory.keys())} | "
             f"experiences={len(prev_actions)} | "
             f"duration={retrieval:.3f}s"
         )
