@@ -9,7 +9,6 @@ from temporalio import activity, workflow
 
 from fathom.constants import SignalType
 from fathom.interfaces.signal import SignalPort
-from fathom.runtime.temporal.workflow import FathomWorkflow
 
 logger = getLogger(__name__)
 
@@ -54,6 +53,8 @@ class TemporalSignalAdapter(SignalPort):
         """
         Query current workflow state.
         """
+
+        from fathom.runtime.temporal.workflow import FathomWorkflow
 
         try:
             handle = await self.__get_workflow_handle()
@@ -152,6 +153,8 @@ class TemporalSignalAdapter(SignalPort):
         """
         Get injected context from workflow.
         """
+
+        from fathom.runtime.temporal.workflow import FathomWorkflow
 
         try:
             state = asyncio.run(self.__query_workflow_state())
