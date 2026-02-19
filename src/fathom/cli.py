@@ -1,9 +1,12 @@
 import argparse
 import asyncio
+import os
 import signal
 import sys
 from logging import getLogger
 from typing import Any, Optional
+
+os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 
 from rich.console import Console
 from rich.panel import Panel
@@ -235,7 +238,13 @@ def main() -> int:
     run_parser.add_argument("intent", type=str, help="The goal description")
     run_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
     run_parser.add_argument("--api-key", "-k", type=str, help="Gemini API Key")
-    run_parser.add_argument("--max-steps", type=int, default=100, help="Maximum steps allowed")
+    run_parser.add_argument(
+        "--max-steps",
+        "-ms",
+        type=int,
+        default=None,
+        help="Maximum steps (default: MAX_STEPS env or 100)",
+    )
     run_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     run_parser.add_argument("--use-xml", "-x", action="store_true", help="Use XML bounding boxes")
     run_parser.add_argument(
@@ -248,7 +257,13 @@ def main() -> int:
     explore_parser.add_argument(
         "--package", "-p", type=str, help="Target package name to explore (e.g. com.example.app)"
     )
-    explore_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
+    explore_parser.add_argument(
+        "--max-steps",
+        "-ms",
+        type=int,
+        default=None,
+        help="Maximum exploration steps (default: EXPLORE_MAX_STEPS env or 50)",
+    )
     explore_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
     explore_parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enable verbose output"
@@ -279,20 +294,24 @@ def main() -> int:
 
     try:
         if args.command == "run":
+            run_steps = args.max_steps if args.max_steps is not None else settings.max_steps
             result = asyncio.run(
                 cli.run(
                     intent=args.intent,
                     use_xml=args.use_xml,
-                    max_steps=args.max_steps,
+                    max_steps=run_steps,
                     device_serial=args.serial,
                     prompt_version=args.prompt_version,
                 )
             )
             return result
         elif args.command == "explore":
+            explore_steps = (
+                args.max_steps if args.max_steps is not None else settings.explore_max_steps
+            )
             return asyncio.run(
                 cli.explore(
-                    max_steps=args.max_steps,
+                    max_steps=explore_steps,
                     device_serial=args.serial,
                     package_name=args.package,
                 )

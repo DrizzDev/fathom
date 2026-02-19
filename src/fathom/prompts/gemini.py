@@ -301,30 +301,25 @@ class GeminiPromptBuilder(PromptBuilder):
 
     def __build_exploration_prompt(self) -> str:
         """
-        Exploration Mode: BFS-driven systematic app mapping.
+        Exploration Mode: systematic app mapping (depth-first).
 
         The VLM identifies ONE untried interactive element per call.
-        It uses the exploration context (already-tried actions from the KG)
-        to avoid repeats and signals content_exhausted when all visible
-        interactive elements have been tried.
+        Uses exploration context (already-tried actions from the KG) to avoid
+        repeats; signals content_exhausted when all visible interactive
+        elements on the current screen have been tried.
         """
         return (
-            "You are a Mobile App Explorer. Your job is to systematically discover "
-            "all screens and features of a mobile application.\n\n"
-            "TASK: Look at the screenshot and identify ONE interactive element that "
-            "has NOT been tried yet (based on the exploration context provided). "
-            "Tap that element using execute_ui.\n\n"
+            "Mobile App Explorer: discover all screens and features.\n\n"
+            "TASK: Identify ONE interactive element not yet tried (see context). "
+            "Tap it via execute_ui.\n\n"
             "RULES:\n"
-            "- Ground all coordinates using normalized (0-1000) scale.\n"
-            "- Prioritize buttons, tabs, links, icons, and menu items.\n"
-            "- Avoid decorative/non-interactive elements (text labels, images, dividers).\n"
-            "- Set screen_description to a brief (1-2 sentence) description of what this screen shows.\n"
-            "- If ALL visible interactive elements have already been tried (listed in "
-            "'ALREADY TRIED FROM THIS SCREEN'), set content_exhausted=true and describe "
-            "what you see. Do NOT invent or repeat actions.\n"
-            "- Do NOT repeat actions listed in 'ALREADY TRIED FROM THIS SCREEN'.\n"
-            "- Prefer elements that are likely to navigate to a new screen (buttons, tabs, links).\n\n"
-            "OUTPUT: Return ONE execute_ui tool call targeting the best untried element, "
-            "or set content_exhausted=true if no untried elements remain.\n\n"
+            "- Coordinates: normalized (0-1000). bbox x,y = TOP-LEFT corner of element.\n"
+            "- Prioritize: buttons, tabs, links, icons, menu items.\n"
+            "- Avoid: labels, images, dividers.\n"
+            "- Set screen_description: brief (1-2 sentence) screen summary.\n"
+            "- If every visible interactive element is in 'ALREADY TRIED FROM THIS SCREEN', "
+            "set content_exhausted=true and describe the screen. Do NOT repeat or invent actions.\n"
+            "- Prefer elements that navigate to new screens (buttons, tabs, links).\n\n"
+            "OUTPUT: ONE execute_ui call (one untried element) or content_exhausted=true if none remain.\n\n"
             + build_output_schema(mode="exploration")
         )

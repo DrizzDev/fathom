@@ -39,6 +39,7 @@ class FathomSettings(BaseSettings):
 
     # Workflow default limits
     max_steps: int = Field(default=100, alias="MAX_STEPS")
+    explore_max_steps: int = Field(default=50, alias="EXPLORE_MAX_STEPS")
 
     # Environment file support
     model_config = SettingsConfigDict(

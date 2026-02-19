@@ -11,6 +11,15 @@ from fathom.schemas.screens import ScreenState
 
 logger = getLogger(__name__)
 
+# Cap "ALREADY TRIED" list in VLM context to bound token usage (per-screen).
+MAX_TRIED_IN_CONTEXT = 25
+
+# Maximum Hamming distance (in bits, out of 256 for a 16×16 dHash) for two
+# visual hashes to be considered the same logical screen.  12 bits ≈ 95%
+# similarity — safely merges minor pixel variations (status-bar clock, cursor
+# blink, animation frames) while keeping genuinely different screens apart.
+HAMMING_THRESHOLD = 12
+
 
 @dataclass
 class GraphNode:
@@ -51,7 +60,41 @@ class KnowledgeGraph:
         self.__provider = SQLiteMemoryProvider(database_path=database_path)
         self.__nodes: Dict[str, GraphNode] = {}
         self.__edges: Dict[str, List[GraphEdge]] = {}  # source_hash -> edges
+        self.__hash_aliases: Dict[str, str] = {}  # raw_hash -> canonical_hash
         self.__loaded = False
+
+    # ── Fuzzy hash resolution ─────────────────────────────────────
+
+    @staticmethod
+    def _hamming_distance(hash1: str, hash2: str) -> int:
+        if len(hash1) != len(hash2):
+            return 256
+        try:
+            return bin(int(hash1, 16) ^ int(hash2, 16)).count("1")
+        except ValueError:
+            return 256
+
+    def _resolve_canonical(self, visual_hash: str) -> str:
+        """Map *visual_hash* to an existing node within HAMMING_THRESHOLD."""
+        if visual_hash in self.__nodes:
+            return visual_hash
+        if visual_hash in self.__hash_aliases:
+            return self.__hash_aliases[visual_hash]
+
+        best_hash: Optional[str] = None
+        best_distance = HAMMING_THRESHOLD + 1
+
+        for existing_hash in self.__nodes:
+            d = self._hamming_distance(visual_hash, existing_hash)
+            if d < best_distance:
+                best_distance = d
+                best_hash = existing_hash
+
+        if best_hash is not None and best_distance <= HAMMING_THRESHOLD:
+            self.__hash_aliases[visual_hash] = best_hash
+            return best_hash
+
+        return visual_hash
 
     @property
     def provider(self) -> SQLiteMemoryProvider:
@@ -77,38 +120,72 @@ class KnowledgeGraph:
         """
         Hydrates the in-memory graph from the SQLite database.
         Call this once at the start of a run to pick up knowledge from prior runs.
+
+        Performs fuzzy deduplication during load so that screens whose
+        visual hashes differ by ≤ HAMMING_THRESHOLD bits are merged into
+        a single canonical node.
         """
 
+        raw_screen_count = 0
         screens = await self.__provider.get_all_screens()
         for screen in screens:
-            node = GraphNode(
-                visual_hash=screen["visual_hash"],
-                activity=screen["activity"],
-                description=screen["description"],
-                first_seen=screen["first_seen"],
-                last_seen=screen["last_seen"],
-                visit_count=screen["visit_count"] or 0,
-            )
-            self.__nodes[node.visual_hash] = node
+            raw_screen_count += 1
+            raw_hash = screen["visual_hash"]
+            canonical = self._resolve_canonical(raw_hash)
+            existing = self.__nodes.get(canonical)
+
+            if existing and canonical != raw_hash:
+                existing.visit_count += screen["visit_count"] or 0
+                existing.last_seen = max(existing.last_seen or 0, screen["last_seen"] or 0)
+                if not existing.description and screen["description"]:
+                    existing.description = screen["description"]
+            else:
+                node = GraphNode(
+                    visual_hash=canonical,
+                    activity=screen["activity"],
+                    description=screen["description"],
+                    first_seen=screen["first_seen"],
+                    last_seen=screen["last_seen"],
+                    visit_count=screen["visit_count"] or 0,
+                )
+                self.__nodes[canonical] = node
 
         transitions = await self.__provider.get_all_transitions()
         for t in transitions:
-            edge = GraphEdge(
-                source_hash=t["source_hash"],
-                destination_hash=t["destination_hash"],
-                action_type=t["action_type"],
-                action_target=t["action_target"] or "",
-                count=t["count"] or 1,
-                first_seen=t["first_seen"],
-                last_seen=t["last_seen"],
-            )
-            self.__edges.setdefault(edge.source_hash, []).append(edge)
+            src = self._resolve_canonical(t["source_hash"])
+            dst = self._resolve_canonical(t["destination_hash"])
+            action_type = t["action_type"]
+            action_target = t["action_target"] or ""
+
+            edges = self.__edges.setdefault(src, [])
+            merged = False
+            for edge in edges:
+                if edge.action_type == action_type and edge.action_target == action_target:
+                    edge.destination_hash = dst
+                    edge.count += t["count"] or 1
+                    edge.last_seen = max(edge.last_seen or 0, t["last_seen"] or 0)
+                    merged = True
+                    break
+            if not merged:
+                edges.append(
+                    GraphEdge(
+                        source_hash=src,
+                        destination_hash=dst,
+                        action_type=action_type,
+                        action_target=action_target,
+                        count=t["count"] or 1,
+                        first_seen=t["first_seen"],
+                        last_seen=t["last_seen"],
+                    )
+                )
 
         self.__loaded = True
         logger.info(
-            "Knowledge graph loaded: %d screens, %d transitions",
+            "Knowledge graph loaded: %d raw → %d canonical screens, %d transitions  (aliases=%d)",
+            raw_screen_count,
             self.node_count,
             self.edge_count,
+            len(self.__hash_aliases),
         )
 
     async def add_screen(
@@ -119,14 +196,19 @@ class KnowledgeGraph:
         """
         Registers a screen observation. Persists to SQLite and updates the
         in-memory cache. Increments visit_count on repeat visits.
+
+        Uses fuzzy hash matching: if *state.visual_hash* is within
+        HAMMING_THRESHOLD of an existing node, the observation is merged
+        into that canonical node instead of creating a duplicate.
         """
 
         # Persist to SQLite (handles upsert + visit_count increment)
         await self.__provider.store_observation(screen=state, description=description)
 
-        # Update in-memory cache
+        # Resolve to canonical hash for in-memory dedup
+        canonical = self._resolve_canonical(state.visual_hash)
         now = int(time.time())
-        existing = self.__nodes.get(state.visual_hash)
+        existing = self.__nodes.get(canonical)
 
         if existing:
             existing.visit_count += 1
@@ -155,14 +237,17 @@ class KnowledgeGraph:
         """
         Records a screen-to-screen transition. Persists to SQLite and
         updates the in-memory edge cache. Deduplicates by
-        (source_hash, action_type, action_target).
+        (canonical_source, action_type, action_target).
         """
 
-        # Persist to SQLite
+        canonical_src = self._resolve_canonical(source_hash)
+        canonical_dst = self._resolve_canonical(destination_hash)
+
+        # Persist to SQLite (uses canonical hashes for cleaner storage)
         await self.__provider.store_transition(
-            source_hash=source_hash,
+            source_hash=canonical_src,
             action=action,
-            destination_hash=destination_hash,
+            destination_hash=canonical_dst,
         )
 
         # Update in-memory cache
@@ -174,18 +259,18 @@ class KnowledgeGraph:
         action_target = action.natural_language_target or action.target or ""
         now = int(time.time())
 
-        edges = self.__edges.setdefault(source_hash, [])
+        edges = self.__edges.setdefault(canonical_src, [])
         for edge in edges:
             if edge.action_type == action_type and edge.action_target == action_target:
-                edge.destination_hash = destination_hash
+                edge.destination_hash = canonical_dst
                 edge.count += 1
                 edge.last_seen = now
                 return
 
         edges.append(
             GraphEdge(
-                source_hash=source_hash,
-                destination_hash=destination_hash,
+                source_hash=canonical_src,
+                destination_hash=canonical_dst,
                 action_type=action_type,
                 action_target=action_target,
                 count=1,
@@ -199,7 +284,23 @@ class KnowledgeGraph:
         Returns all outgoing transition edges from a screen.
         """
 
-        return list(self.__edges.get(visual_hash, []))
+        return list(self.__edges.get(self._resolve_canonical(visual_hash), []))
+
+    def get_inbound_edge(self, destination_hash: str) -> Optional[Tuple[str, GraphEdge]]:
+        """
+        Returns the first inbound edge leading to *destination_hash*.
+
+        Returns a ``(source_hash, edge)`` tuple, or ``None`` if no
+        inbound transition is known.  Used by DFS orphan-recovery to
+        locate a path to an unexplored screen.
+        """
+
+        canonical_dst = self._resolve_canonical(destination_hash)
+        for source_hash, edges in self.__edges.items():
+            for edge in edges:
+                if edge.destination_hash == canonical_dst:
+                    return source_hash, edge
+        return None
 
     def get_unexplored_screens(self, max_visits: int = 2) -> List[GraphNode]:
         """
@@ -214,14 +315,25 @@ class KnowledgeGraph:
         Returns a single screen node, or None if unknown.
         """
 
-        return self.__nodes.get(visual_hash)
+        return self.__nodes.get(self._resolve_canonical(visual_hash))
 
     def has_screen(self, visual_hash: str) -> bool:
         """
-        Checks whether a screen has been seen before.
+        Checks whether a screen (or a fuzzy match) has been seen before.
         """
 
-        return visual_hash in self.__nodes
+        return self._resolve_canonical(visual_hash) in self.__nodes
+
+    def resolve_hash(self, visual_hash: str) -> str:
+        """
+        Public API: resolve a raw visual hash to its canonical form.
+
+        Callers that compare hashes directly (e.g. ``pre != post``) should
+        resolve both sides through this method first so that minor pixel
+        variations are collapsed.
+        """
+
+        return self._resolve_canonical(visual_hash)
 
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -251,7 +363,7 @@ class KnowledgeGraph:
         description stored on the destination screen node (or ``None``).
         """
 
-        edges = self.__edges.get(visual_hash, [])
+        edges = self.__edges.get(self._resolve_canonical(visual_hash), [])
         result: List[Tuple[str, str, Optional[str]]] = []
         for edge in edges:
             dest_node = self.__nodes.get(edge.destination_hash)
@@ -263,25 +375,33 @@ class KnowledgeGraph:
         self,
         current_hash: Optional[str] = None,
         *,
-        bfs_queue_size: int = 0,
+        depth: Optional[int] = None,
+        parent_description: Optional[str] = None,
     ) -> str:
         """
         Formats the current knowledge graph state as LLM-readable context
-        for the BFS exploration prompt.
+        for the exploration prompt (DFS or BFS).
 
         The output is injected into the VLM user payload so the model knows
         which actions have already been tried on the current screen and can
         pick an untried element (or signal ``content_exhausted``).
+
+        For DFS: pass depth (path length from root) and parent_description
+        (description of the screen we navigated from) when available.
         """
 
         lines: List[str] = []
 
         lines.append(f"EXPLORED SO FAR: {self.node_count} screens, {self.edge_count} transitions")
 
-        if bfs_queue_size > 0:
-            lines.append(f"BFS QUEUE: {bfs_queue_size} screens pending")
+        if depth is not None:
+            lines.append(f"DEPTH: {depth}")
+
+        if parent_description:
+            lines.append(f"PARENT SCREEN: {parent_description}")
 
         if current_hash:
+            current_hash = self._resolve_canonical(current_hash)
             node = self.__nodes.get(current_hash)
             if node and node.description:
                 lines.append(f"CURRENT SCREEN: {node.description}")
@@ -289,13 +409,16 @@ class KnowledgeGraph:
             tried = self.get_tried_actions(current_hash)
             if tried:
                 lines.append("ALREADY TRIED FROM THIS SCREEN:")
-                for action_type, action_target, dest_desc in tried:
+                excess = len(tried) - MAX_TRIED_IN_CONTEXT
+                for action_type, action_target, dest_desc in tried[:MAX_TRIED_IN_CONTEXT]:
                     entry = f"- {action_type}"
                     if action_target:
                         entry += f' "{action_target}"'
                     if dest_desc:
                         entry += f" -> {dest_desc}"
                     lines.append(entry)
+                if excess > 0:
+                    lines.append(f"... and {excess} more tried")
             else:
                 lines.append("ALREADY TRIED FROM THIS SCREEN: (none -- this is a fresh screen)")
 

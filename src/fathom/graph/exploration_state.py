@@ -1,8 +1,8 @@
 """
-LangGraph state for the BFS exploration graph.
+LangGraph state for the DFS exploration graph.
 
-Parallel to :class:`FathomGraphState` but tailored for the BFS
-exploration workflow.  Heavy mutable objects (BFS queue, knowledge
+Parallel to :class:`FathomGraphState` but tailored for the DFS
+exploration workflow.  Heavy mutable objects (DFS path, knowledge
 graph, services) live on the :class:`ExplorationNodeContext` closure,
 not in this dict.
 """
@@ -25,7 +25,7 @@ class ExplorationGraphState(TypedDict, total=False):
 
     Design decisions mirror :class:`FathomGraphState`:
     - ``total=False`` so nodes only set the fields they produce.
-    - BFS mutable state (queue, paths, sets) lives on the context closure.
+    - DFS mutable state (path, sets) lives on the context closure.
     - Only serializable, lightweight values flow through the graph dict.
     """
 
@@ -38,8 +38,8 @@ class ExplorationGraphState(TypedDict, total=False):
     screen_state: Optional[ScreenState]
     is_new_screen: bool
 
-    # ── BFS phase routing ──────────────────────────────────────────────
-    bfs_phase: str  # "scan", "return", "advance"
+    # ── DFS phase routing ──────────────────────────────────────────────
+    bfs_phase: str  # "scan", "backtrack", "advance"
 
     # ── Scan / VLM artefacts ───────────────────────────────────────────
     action: Optional[Action]

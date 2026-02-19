@@ -115,9 +115,40 @@ class ExplorationGraph:
     Retained for backward compatibility; new code should use KnowledgeGraph.
     """
 
+    HAMMING_THRESHOLD = 12
+
     def __init__(self) -> None:
         self.__nodes: Dict[str, ScreenNode] = {}
         self.__edges: List[Tuple[str, str, str]] = []
+        self.__hash_aliases: Dict[str, str] = {}
+
+    @staticmethod
+    def _hamming_distance(hash1: str, hash2: str) -> int:
+        if len(hash1) != len(hash2):
+            return 256
+        try:
+            return bin(int(hash1, 16) ^ int(hash2, 16)).count("1")
+        except ValueError:
+            return 256
+
+    def _resolve_canonical(self, visual_hash: str) -> str:
+        if visual_hash in self.__nodes:
+            return visual_hash
+        if visual_hash in self.__hash_aliases:
+            return self.__hash_aliases[visual_hash]
+
+        best_hash = None
+        best_distance = self.HAMMING_THRESHOLD + 1
+        for existing_hash in self.__nodes:
+            d = self._hamming_distance(visual_hash, existing_hash)
+            if d < best_distance:
+                best_distance = d
+                best_hash = existing_hash
+
+        if best_hash is not None and best_distance <= self.HAMMING_THRESHOLD:
+            self.__hash_aliases[visual_hash] = best_hash
+            return best_hash
+        return visual_hash
 
     @property
     def nodes(self) -> Dict[str, ScreenNode]:
@@ -135,12 +166,16 @@ class ExplorationGraph:
 
         return self.__edges
 
+    def resolve_hash(self, visual_hash: str) -> str:
+        """Public API: resolve a raw hash to its canonical form."""
+        return self._resolve_canonical(visual_hash)
+
     def add_screen(self, state: ScreenState) -> ScreenNode:
         """
-        Adds or updates a screen.
+        Adds or updates a screen, using fuzzy hash matching.
         """
 
-        key = state.visual_hash
+        key = self._resolve_canonical(state.visual_hash)
         if key not in self.__nodes:
             self.__nodes[key] = ScreenNode(fingerprint=key, activity=state.activity)
 
@@ -151,13 +186,18 @@ class ExplorationGraph:
 
     def record_transition(self, origin: str, destination: str, action: str) -> None:
         """
-        Records a transition.
+        Records a transition using canonical hashes.
         """
 
-        if origin in self.__nodes:
-            self.__nodes[origin].record_action(description=action, destination=destination)
+        canonical_origin = self._resolve_canonical(origin)
+        canonical_dest = self._resolve_canonical(destination)
 
-        self.__edges.append((origin, action, destination))
+        if canonical_origin in self.__nodes:
+            self.__nodes[canonical_origin].record_action(
+                description=action, destination=canonical_dest
+            )
+
+        self.__edges.append((canonical_origin, action, canonical_dest))
 
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -248,21 +288,28 @@ class ActionGenerator:
 
 
 # ---------------------------------------------------------------------------
-# BFS data structures
+# DFS data structures
 # ---------------------------------------------------------------------------
 
 
 class BFSPhase(Enum):
     """
-    State machine phases for BFS-driven exploration.
+    State machine phases for DFS-driven exploration.
 
-    SCAN    — On the target screen. VLM identifies and taps the next untried element.
-    RETURN  — The last action navigated away. Press BACK to return.
-    ADVANCE — Current screen fully scanned. Navigate to next screen in BFS queue.
+    SCAN      — On the target screen. VLM identifies and taps the next untried
+                element.  If the tap navigates to a new screen, DFS follows it
+                (stays in SCAN on the new screen).
+    BACKTRACK — Current screen fully scanned.  Press BACK to return to the
+                parent screen.  If the parent is also exhausted, keep
+                backtracking until we find a screen with untried elements.
+    ADVANCE   — Recovery only.  When BACKTRACK reaches the root and all
+                screens on the DFS path are scanned, but the KG has orphaned
+                unexplored screens that were skipped (e.g. due to BACK
+                overshooting), navigate to them via path replay.
     """
 
     SCAN = "scan"
-    RETURN = "return"
+    BACKTRACK = "backtrack"
     ADVANCE = "advance"
 
 
@@ -283,19 +330,20 @@ class BFSQueueEntry:
 
 
 # ---------------------------------------------------------------------------
-# BFS Exploration Strategy
+# DFS Exploration Strategy
 # ---------------------------------------------------------------------------
 
 
 class ExplorationStrategy(ExecutionStrategy):
     """
-    BFS-driven strategy for autonomous application mapping.
+    DFS-driven strategy for autonomous application mapping.
 
-    Uses a breadth-first traversal to systematically discover all screens
-    reachable from the starting screen. At each screen, the VLM identifies
-    interactive elements; the strategy taps each one, records the
-    destination, presses BACK, and repeats until all elements are tried.
-    Then it navigates to the next screen in the BFS queue.
+    Uses a depth-first traversal to systematically discover all screens
+    reachable from the starting screen.  At each screen the VLM identifies
+    untried interactive elements; tapping an element that navigates to a
+    new screen causes the strategy to follow it (go deeper).  When a
+    screen is exhausted the strategy backtracks via BACK until it finds a
+    screen with untried elements.
 
     When no VisionTool or KnowledgeGraph is provided, falls back to the
     legacy random ActionGenerator behaviour for backward compatibility.
@@ -331,7 +379,7 @@ class ExplorationStrategy(ExecutionStrategy):
         self.__last: Optional[Action] = None
         self.__current: Optional[ScreenState] = None
 
-        # --- BFS state ---
+        # --- DFS state ---
         self.__bfs_enabled = vision is not None and knowledge_graph is not None
         self.__bfs_queue: Deque[BFSQueueEntry] = deque()
         self.__phase: BFSPhase = BFSPhase.SCAN
@@ -373,8 +421,8 @@ class ExplorationStrategy(ExecutionStrategy):
         """
         Executes one discovery step.
 
-        When BFS is enabled (VisionTool + KnowledgeGraph present) the step
-        is governed by the BFS state machine. Otherwise falls back to the
+        When DFS is enabled (VisionTool + KnowledgeGraph present) the step
+        is governed by the DFS state machine. Otherwise falls back to the
         legacy random-action approach.
         """
 
@@ -394,8 +442,8 @@ class ExplorationStrategy(ExecutionStrategy):
         if (time.time() - self.__start) >= self.__timeout:
             return False
 
-        # BFS-specific: exploration is complete when queue is empty and no
-        # pending navigation remains after the current screen is scanned.
+        # DFS-specific: exploration is complete when the recovery queue is
+        # empty and no pending navigation remains.
         return not (
             self.__bfs_enabled
             and self.__phase == BFSPhase.ADVANCE
@@ -450,37 +498,37 @@ class ExplorationStrategy(ExecutionStrategy):
         )
 
     # ------------------------------------------------------------------
-    # BFS Step Execution
+    # DFS Step Execution
     # ------------------------------------------------------------------
 
     def __require_bfs_deps(self) -> Tuple[VisionTool, KnowledgeGraph]:
-        """Verify BFS dependencies are initialised and return them narrowed.
+        """Verify DFS dependencies are initialised and return them narrowed.
 
         Returns the non-``None`` vision tool and knowledge graph so callers
         get properly narrowed types for mypy.
 
         Raises ``RuntimeError`` when called without vision or knowledge
-        graph — both are required for BFS-driven exploration.
+        graph — both are required for DFS-driven exploration.
         """
 
         if self.__vision is None or self.__knowledge_graph is None:
             raise RuntimeError(
-                "BFS exploration requires both a VisionTool and a "
+                "DFS exploration requires both a VisionTool and a "
                 "KnowledgeGraph, but one or both are None."
             )
         return self.__vision, self.__knowledge_graph
 
     async def __execute_bfs_step(self) -> StrategyResult:
         """
-        Single BFS step dispatched by phase.
+        Single DFS step dispatched by phase.
         """
 
         self.__require_bfs_deps()  # validates; individual methods also narrow
 
         if self.__phase == BFSPhase.SCAN:
             return await self.__execute_scan()
-        elif self.__phase == BFSPhase.RETURN:
-            return await self.__execute_return()
+        elif self.__phase == BFSPhase.BACKTRACK:
+            return await self.__execute_backtrack()
         else:
             return await self.__execute_advance()
 
@@ -498,7 +546,7 @@ class ExplorationStrategy(ExecutionStrategy):
 
         capture = await self.__capture.capture()
         state = self.__capture.compute_state(capture=capture)
-        fingerprint = state.visual_hash
+        fingerprint = self.__graph.resolve_hash(state.visual_hash)
 
         # First step ever — establish root
         if self.__root_hash is None:
@@ -509,10 +557,15 @@ class ExplorationStrategy(ExecutionStrategy):
         self.__graph.add_screen(state=state)
         await kg.add_screen(state=state)
 
-        # Build exploration context for VLM
+        # Build exploration context for VLM (DFS: depth + parent for flow awareness)
+        parent_hash = self.__current_path[-1][0] if self.__current_path else None
+        parent_node = kg.nodes.get(parent_hash) if parent_hash and kg else None
+        parent_description = parent_node.description if parent_node else None
+
         kg_context = kg.build_exploration_context(
             current_hash=fingerprint,
-            bfs_queue_size=len(self.__bfs_queue),
+            depth=len(self.__current_path),
+            parent_description=parent_description,
         )
 
         # Ask VLM for next untried element
@@ -530,17 +583,17 @@ class ExplorationStrategy(ExecutionStrategy):
         # VLM signals all elements exhausted on this screen
         if analysis.content_exhausted:
             self.__fully_scanned.add(fingerprint)
-            self.__phase = BFSPhase.ADVANCE
+            self.__phase = BFSPhase.BACKTRACK
             logger.info(
-                "Screen %s fully scanned, advancing BFS (queue=%d)",
+                "Screen %s fully scanned, backtracking (depth=%d)",
                 fingerprint[:8],
-                len(self.__bfs_queue),
+                len(self.__current_path),
             )
 
             self.__steps += 1
             return StrategyResult(
                 status=StrategyStatus.CONTINUE,
-                message=f"Screen {fingerprint[:8]} fully scanned, advancing BFS",
+                message=f"Screen {fingerprint[:8]} fully scanned, backtracking",
             )
 
         # Execute the VLM's recommended action with proper coordinate conversion
@@ -567,7 +620,7 @@ class ExplorationStrategy(ExecutionStrategy):
         # Capture post-state
         post_capture = await self.__capture.capture()
         post_state = self.__capture.compute_state(capture=post_capture)
-        post_hash = post_state.visual_hash
+        post_hash = self.__graph.resolve_hash(post_state.visual_hash)
 
         # Record transition in both graphs
         self.__graph.record_transition(
@@ -591,7 +644,7 @@ class ExplorationStrategy(ExecutionStrategy):
             screen_changed=fingerprint != post_hash,
         )
 
-        # Determine next phase
+        # Determine next phase (DFS: follow new screens instead of returning)
         if fingerprint != post_hash:
             # Navigated to a different screen
             is_new = not kg.has_screen(post_hash)
@@ -600,40 +653,44 @@ class ExplorationStrategy(ExecutionStrategy):
             self.__graph.add_screen(state=post_state)
             await kg.add_screen(state=post_state)
 
-            if is_new and post_hash not in self.__fully_scanned:
-                # Enqueue for future scanning
-                new_path = list(self.__current_path) + [(fingerprint, action)]
-                self.__bfs_queue.append(
-                    BFSQueueEntry(
-                        screen_hash=post_hash,
-                        parent_hash=fingerprint,
-                        action_from_parent=action,
-                        depth=len(new_path),
-                        path_from_root=new_path,
-                    )
-                )
-                logger.info(
-                    "Discovered new screen %s at depth %d (queue=%d)",
-                    post_hash[:8],
-                    len(new_path),
-                    len(self.__bfs_queue),
-                )
+            # Extend the DFS path
+            new_path = list(self.__current_path) + [(fingerprint, action)]
+            self.__current_path = new_path
 
-            # Need to return to the scanning screen
-            self.__phase = BFSPhase.RETURN
+            if post_hash in self.__fully_scanned:
+                # Already exhausted — backtrack immediately
+                self.__phase = BFSPhase.BACKTRACK
+                logger.debug(
+                    "Navigated to already-scanned screen %s, backtracking",
+                    post_hash[:8],
+                )
+            else:
+                # DFS: stay in SCAN on the new screen (go deeper)
+                self.__phase = BFSPhase.SCAN
+                if is_new:
+                    logger.info(
+                        "DFS: discovered new screen %s at depth %d",
+                        post_hash[:8],
+                        len(new_path),
+                    )
         # else: action stayed on same screen (e.g. scroll, dropdown) → stay in SCAN
 
         return StrategyResult(
             step_result=step_result,
             status=StrategyStatus.CONTINUE,
-            message=f"BFS scan: {action.to_description()}",
+            message=f"DFS scan: {action.to_description()}",
         )
 
-    # ---- RETURN ------------------------------------------------------
+    # ---- BACKTRACK ----------------------------------------------------
 
-    async def __execute_return(self) -> StrategyResult:
+    async def __execute_backtrack(self) -> StrategyResult:
         """
-        RETURN phase: press BACK to return to the screen being scanned.
+        BACKTRACK phase: press BACK to ascend the DFS tree.
+
+        After pressing BACK, checks where we landed:
+        - Screen with untried elements → switch to SCAN.
+        - Fully scanned screen with depth remaining → stay in BACKTRACK.
+        - Root fully scanned → check KG for orphaned screens → ADVANCE or DONE.
         """
 
         _, kg = self.__require_bfs_deps()
@@ -642,12 +699,12 @@ class ExplorationStrategy(ExecutionStrategy):
             confidence=1.0,
             target="back navigation",
             action_type=ActionType.BACK,
-            rationale="BFS: returning to scanning screen after probe",
+            rationale="DFS: backtracking from exhausted screen",
         )
 
         pre_capture = await self.__capture.capture()
         pre_state = self.__capture.compute_state(capture=pre_capture)
-        pre_hash = pre_state.visual_hash
+        pre_hash = self.__graph.resolve_hash(pre_state.visual_hash)
 
         step = Step(
             action=action,
@@ -670,7 +727,11 @@ class ExplorationStrategy(ExecutionStrategy):
 
         post_capture = await self.__capture.capture()
         post_state = self.__capture.compute_state(capture=post_capture)
-        post_hash = post_state.visual_hash
+        post_hash = self.__graph.resolve_hash(post_state.visual_hash)
+
+        # Register wherever we landed
+        self.__graph.add_screen(state=post_state)
+        await kg.add_screen(state=post_state)
 
         step_result = StepResult(
             step=step,
@@ -682,37 +743,83 @@ class ExplorationStrategy(ExecutionStrategy):
             screen_changed=pre_hash != post_hash,
         )
 
-        if post_hash == self.__scanning_hash:
-            # Successfully returned — continue scanning
+        # Pop from DFS path
+        if self.__current_path:
+            self.__current_path = self.__current_path[:-1]
+
+        if post_hash not in self.__fully_scanned:
+            # Landed on a screen with untried elements — scan it
             self.__phase = BFSPhase.SCAN
-            logger.debug("BACK returned to scanning screen %s", post_hash[:8])
+            logger.debug("BACKTRACK landed on unexplored screen %s", post_hash[:8])
+        elif self.__current_path:
+            # Still have depth — keep backtracking
+            self.__phase = BFSPhase.BACKTRACK
+            logger.debug("BACKTRACK: screen %s fully scanned, continuing up", post_hash[:8])
         else:
-            # BACK didn't return us to the expected screen.
-            # Register wherever we landed and let ADVANCE figure out navigation.
-            self.__graph.add_screen(state=post_state)
-            await kg.add_screen(state=post_state)
-            self.__phase = BFSPhase.ADVANCE
-            logger.warning(
-                "BACK overshot: expected %s, got %s — switching to ADVANCE",
-                (self.__scanning_hash or "?")[:8],
-                post_hash[:8],
-            )
+            # At root level, everything on the DFS path is scanned.
+            # Check KG for orphaned unexplored screens.
+            orphans = self.__find_orphaned_screens(kg)
+            if orphans:
+                for entry in orphans:
+                    self.__bfs_queue.append(entry)
+                self.__phase = BFSPhase.ADVANCE
+                logger.info(
+                    "DFS tree exhausted, %d orphaned screens found for recovery",
+                    len(orphans),
+                )
+            else:
+                return StrategyResult(
+                    step_result=step_result,
+                    status=StrategyStatus.COMPLETE,
+                    message="DFS exploration complete — all reachable screens scanned",
+                )
 
         return StrategyResult(
             step_result=step_result,
             status=StrategyStatus.CONTINUE,
-            message="BFS: press BACK to return",
+            message="DFS: backtracking",
         )
+
+    def __find_orphaned_screens(self, kg: KnowledgeGraph) -> List[BFSQueueEntry]:
+        """Find screens in the KG that are not in ``fully_scanned`` and
+        have a known path (recorded transitions) so we can navigate to them."""
+
+        orphans: List[BFSQueueEntry] = []
+        for visual_hash in kg.nodes:
+            if visual_hash in self.__fully_scanned:
+                continue
+            if visual_hash == self.__root_hash:
+                continue
+            result = kg.get_inbound_edge(visual_hash)
+            if result is None:
+                continue
+            source_hash, edge = result
+            action = Action(
+                confidence=1.0,
+                target=edge.action_target or "orphan recovery",
+                action_type=ActionType.TAP,
+                rationale="DFS recovery: navigate to orphaned screen",
+            )
+            orphans.append(
+                BFSQueueEntry(
+                    screen_hash=visual_hash,
+                    parent_hash=source_hash,
+                    action_from_parent=action,
+                    depth=1,
+                    path_from_root=[(source_hash, action)],
+                )
+            )
+        return orphans
 
     # ---- ADVANCE -----------------------------------------------------
 
     async def __execute_advance(self) -> StrategyResult:
         """
-        ADVANCE phase: navigate to the next screen in the BFS queue.
+        ADVANCE phase (recovery): navigate to an orphaned unexplored screen.
 
         Uses ``__pending_nav`` (a pre-computed list of actions) to replay
         the route.  When ``__pending_nav`` is empty, dequeues the next
-        BFS entry and computes the navigation sequence.
+        recovery entry and computes the navigation sequence.
         """
 
         self.__require_bfs_deps()  # validate; this method uses no direct kg/vision refs
@@ -721,12 +828,11 @@ class ExplorationStrategy(ExecutionStrategy):
         if self.__pending_nav:
             return await self.__execute_nav_action()
 
-        # Dequeue next BFS entry
+        # Dequeue next recovery entry
         if not self.__bfs_queue:
-            # BFS complete
             return StrategyResult(
                 status=StrategyStatus.COMPLETE,
-                message="BFS exploration complete — all reachable screens scanned",
+                message="DFS exploration complete — all reachable screens scanned",
             )
 
         entry = self.__bfs_queue.popleft()
@@ -737,7 +843,7 @@ class ExplorationStrategy(ExecutionStrategy):
             # Stay in ADVANCE to dequeue next
             return StrategyResult(
                 status=StrategyStatus.CONTINUE,
-                message=f"BFS: skipping already-scanned {entry.screen_hash[:8]}",
+                message=f"DFS recovery: skipping already-scanned {entry.screen_hash[:8]}",
             )
 
         # Compute navigation from current position to the target screen
@@ -759,7 +865,7 @@ class ExplorationStrategy(ExecutionStrategy):
         self.__phase = BFSPhase.SCAN
         return StrategyResult(
             status=StrategyStatus.CONTINUE,
-            message=f"BFS: already at target {entry.screen_hash[:8]}, scanning",
+            message=f"DFS recovery: already at target {entry.screen_hash[:8]}, scanning",
         )
 
     async def __execute_nav_action(self) -> StrategyResult:
@@ -771,7 +877,7 @@ class ExplorationStrategy(ExecutionStrategy):
 
         pre_capture = await self.__capture.capture()
         pre_state = self.__capture.compute_state(capture=pre_capture)
-        pre_hash = pre_state.visual_hash
+        pre_hash = self.__graph.resolve_hash(pre_state.visual_hash)
 
         step = Step(
             action=action,
@@ -794,7 +900,7 @@ class ExplorationStrategy(ExecutionStrategy):
 
         post_capture = await self.__capture.capture()
         post_state = self.__capture.compute_state(capture=post_capture)
-        post_hash = post_state.visual_hash
+        post_hash = self.__graph.resolve_hash(post_state.visual_hash)
 
         # Register screen
         self.__graph.add_screen(state=post_state)
@@ -820,7 +926,7 @@ class ExplorationStrategy(ExecutionStrategy):
         return StrategyResult(
             step_result=step_result,
             status=StrategyStatus.CONTINUE,
-            message=f"BFS navigate: {action.to_description()}",
+            message=f"DFS recovery navigate: {action.to_description()}",
         )
 
     # ------------------------------------------------------------------
@@ -868,7 +974,7 @@ class ExplorationStrategy(ExecutionStrategy):
                     confidence=1.0,
                     target="back navigation",
                     action_type=ActionType.BACK,
-                    rationale="BFS: navigating to common ancestor",
+                    rationale="DFS recovery: navigating to common ancestor",
                 )
             )
 
@@ -892,7 +998,7 @@ class ExplorationStrategy(ExecutionStrategy):
         capture = await self.__capture.capture()
         state = self.__capture.compute_state(capture=capture)
 
-        fingerprint = state.visual_hash
+        fingerprint = self.__graph.resolve_hash(state.visual_hash)
 
         # Update in-memory graph (backward compat)
         node = self.__graph.add_screen(state=state)
@@ -903,15 +1009,16 @@ class ExplorationStrategy(ExecutionStrategy):
             kg_node = await self.__knowledge_graph.add_screen(state=state)
 
         if self.__last and self.__current:
+            current_hash = self.__graph.resolve_hash(self.__current.visual_hash)
             self.__graph.record_transition(
                 destination=fingerprint,
-                origin=self.__current.visual_hash,
+                origin=current_hash,
                 action=self.__last.to_description(),
             )
             # Persist transition to knowledge graph
             if self.__knowledge_graph:
                 await self.__knowledge_graph.record_transition(
-                    source_hash=self.__current.visual_hash,
+                    source_hash=current_hash,
                     action=self.__last,
                     destination_hash=fingerprint,
                 )
@@ -949,14 +1056,15 @@ class ExplorationStrategy(ExecutionStrategy):
         post_capture = await self.__capture.capture()
         post_state = self.__capture.compute_state(capture=post_capture)
 
+        resolved_post = self.__graph.resolve_hash(post_state.visual_hash)
         step_result = StepResult(
             step=step,
             error=result.error,
             pre_hash=fingerprint,
             success=result.success,
             duration=result.duration,
-            post_hash=post_state.visual_hash,
-            screen_changed=fingerprint != post_state.visual_hash,
+            post_hash=resolved_post,
+            screen_changed=fingerprint != resolved_post,
         )
 
         return StrategyResult(

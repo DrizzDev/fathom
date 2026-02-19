@@ -1,5 +1,5 @@
 """
-LangGraph StateGraph for BFS exploration workflows.
+LangGraph StateGraph for DFS exploration workflows.
 
 Topology::
 
@@ -8,15 +8,15 @@ Topology::
     └───┬────┘
         │
     ┌───▼──────────┐
-    │  bfs_route   │──COMPLETE──→ END
+    │  dfs_route   │──COMPLETE──→ END
     └───┬──────────┘
         │
-        ├── SCAN ──→ scan ──→ execute ──→ record ──→ ground (loop)
-        │              └─exhausted──→ bfs_route
+        ├── SCAN ──────→ scan ──→ execute ──→ record ──→ ground (loop)
+        │                 └─exhausted──→ dfs_route
         │
-        ├── RETURN ──→ navigate ──→ record ──→ ground (loop)
+        ├── BACKTRACK ─→ navigate ──→ record ──→ ground (loop)
         │
-        └── ADVANCE ─→ navigate ──→ record ──→ ground (loop)
+        └── ADVANCE ──→ navigate ──→ record ──→ ground (recovery)
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def build_exploration_graph(
     target_package: Optional[str] = None,
 ) -> tuple["CompiledStateGraph[Any, Any, Any]", ExplorationNodeContext]:
     """
-    Build and compile a LangGraph :class:`StateGraph` for BFS exploration.
+    Build and compile a LangGraph :class:`StateGraph` for DFS exploration.
 
     Parameters
     ----------

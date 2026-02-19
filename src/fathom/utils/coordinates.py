@@ -28,10 +28,43 @@ class CoordinateConverter:
     def center_to_pixels(self, bounds: Bounds) -> Tuple[int, int]:
         """
         Get center point in pixel coordinates.
+
+        Gemini VLMs inconsistently report (x, y) as either the top-left
+        corner or the center of the bounding box.  We use boundary checks
+        on the normalized values to disambiguate:
+
+        - If top-left interpretation overflows (x+w > 1000) → must be center.
+        - If center interpretation underflows (x-w/2 < 0) → must be top-left.
+        - If both interpretations are geometrically valid → use x + w/4
+          (a quarter-offset compromise that always lands within the element).
         """
 
-        x, y, width, height = self.to_pixels(bounds=bounds)
-        return x + width // 2, y + height // 2
+        if not bounds.is_normalized:
+            x_px, y_px, w_px, h_px = self.to_pixels(bounds=bounds)
+            return x_px + w_px // 2, y_px + h_px // 2
+
+        x, y, w, h = bounds.x, bounds.y, bounds.width, bounds.height
+
+        cx_norm: float
+        if x + w > 1000:
+            cx_norm = x
+        elif x - w / 2 < 0:
+            cx_norm = x + w / 2
+        else:
+            cx_norm = x + w / 4
+
+        cy_norm: float
+        if y + h > 1000:
+            cy_norm = y
+        elif y - h / 2 < 0:
+            cy_norm = y + h / 2
+        else:
+            cy_norm = y + h / 4
+
+        cx = max(0, min(int(cx_norm * self.__width / 1000), self.__width))
+        cy = max(0, min(int(cy_norm * self.__height / 1000), self.__height))
+
+        return cx, cy
 
     def swipe_coordinates(
         self,
@@ -43,7 +76,7 @@ class CoordinateConverter:
         """
 
         x, y, width, height = self.to_pixels(bounds=bounds)
-        center_x, center_y = x + width // 2, y + height // 2
+        center_x, center_y = self.center_to_pixels(bounds=bounds)
 
         distance_x = int(width * 0.7)
         distance_y = int(height * 0.45)

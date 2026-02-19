@@ -2,7 +2,9 @@ from __future__ import annotations
 
 # Coordinate system and confidence guidance
 COORD_RULES = (
-    "COORDINATES: Use NORMALIZED coords (0-1000 grid). x=0,y=0 is top-left. "
+    "COORDINATES: Use NORMALIZED coords (0-1000 grid). "
+    "bbox.x and bbox.y MUST be the TOP-LEFT corner of the element bounding box. "
+    "width and height extend rightward and downward from that corner. "
     "Format: {x, y, width, height, coord_system:'normalized'}."
 )
 

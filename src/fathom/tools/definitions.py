@@ -81,12 +81,24 @@ class ToolRegistry:
                             },
                             "bbox": {
                                 "type": "OBJECT",
-                                "description": "Bounding box for the action (tap target). Use normalized coordinates (0-1000) whenever possible.",
+                                "description": "Bounding box for the action. x,y = TOP-LEFT corner of element. Use normalized (0-1000).",
                                 "properties": {
-                                    "x": {"type": "INTEGER"},
-                                    "y": {"type": "INTEGER"},
-                                    "width": {"type": "INTEGER"},
-                                    "height": {"type": "INTEGER"},
+                                    "x": {
+                                        "type": "INTEGER",
+                                        "description": "Top-left X coordinate of element bounding box (0-1000 normalized).",
+                                    },
+                                    "y": {
+                                        "type": "INTEGER",
+                                        "description": "Top-left Y coordinate of element bounding box (0-1000 normalized).",
+                                    },
+                                    "width": {
+                                        "type": "INTEGER",
+                                        "description": "Width extending rightward from x (0-1000 normalized).",
+                                    },
+                                    "height": {
+                                        "type": "INTEGER",
+                                        "description": "Height extending downward from y (0-1000 normalized).",
+                                    },
                                     "coord_system": {
                                         "type": "STRING",
                                         "enum": ["normalized", "pixel"],

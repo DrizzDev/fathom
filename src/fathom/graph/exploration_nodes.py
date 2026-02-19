@@ -1,17 +1,17 @@
 """
-LangGraph node functions for the BFS exploration graph.
+LangGraph node functions for the DFS exploration graph.
 
 Mirrors the architecture of :mod:`fathom.graph.nodes` (intent graph) but
-replaces the VLM planner + goal-reasoning loop with BFS-driven screen
+replaces the VLM planner + goal-reasoning loop with DFS-driven screen
 scanning.  All the same services (audit, history, tracing, metrics, UX)
 are reused identically.
 
 Topology::
 
-    ground → bfs_route ─── SCAN ───→ scan → execute → record → ground
-                       ├── RETURN ──→ navigate → record → ground
-                       ├── ADVANCE ─→ navigate → record → ground
-                       └── COMPLETE → END
+    ground → dfs_route ─── SCAN ──────→ scan → execute → record → ground
+                        ├── BACKTRACK ─→ navigate → record → ground
+                        ├── ADVANCE ──→ navigate → record → ground  (recovery)
+                        └── COMPLETE ──→ END
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ class ExplorationNodeContext:
     Shared mutable context for all exploration graph nodes.
 
     Parallel to :class:`~fathom.graph.nodes.NodeContext` but carries
-    BFS-specific state and the persistent :class:`KnowledgeGraph`.
+    DFS-specific state and the persistent :class:`KnowledgeGraph`.
     Reuses the same service classes for audit, history, tracing, etc.
     """
 
@@ -95,7 +95,7 @@ class ExplorationNodeContext:
         self.agent_state = AgentState(
             intent="Explore this app to discover all screens and features",
             max_steps=max_steps,
-            # Disable loop detection — BFS exploration deliberately revisits
+            # Disable loop detection — DFS exploration deliberately revisits
             # screens and the LoopDetector would falsely terminate the run.
             loop_threshold=999_999,
         )
@@ -108,7 +108,7 @@ class ExplorationNodeContext:
             package_name=target_package or "",
         )
 
-        # ── BFS state (mutable, lives on context not graph dict) ──────
+        # ── DFS state (mutable, lives on context not graph dict) ──────
         self.bfs_queue: Deque[BFSQueueEntry] = deque()
         self.phase: BFSPhase = BFSPhase.SCAN
         self.scanning_hash: Optional[str] = None
@@ -183,12 +183,14 @@ def build_exploration_nodes(
 
     async def bfs_route_node(state: ExplorationGraphState) -> ExplorationGraphState:
         """
-        Read the current BFS phase from the context and propagate it
+        Read the current DFS phase from the context and propagate it
         into the graph state for the conditional router to inspect.
         """
 
         screen_state: Optional[ScreenState] = state.get("screen_state")
-        fingerprint = screen_state.visual_hash if screen_state else None
+        fingerprint = (
+            ctx.knowledge_graph.resolve_hash(screen_state.visual_hash) if screen_state else None
+        )
 
         # First step — establish root
         if ctx.root_hash is None and fingerprint:
@@ -227,16 +229,21 @@ def build_exploration_nodes(
                 "analysis_duration": 0.0,
             }
 
-        fingerprint = screen_state.visual_hash
+        fingerprint = ctx.knowledge_graph.resolve_hash(screen_state.visual_hash)
         ctx.scanning_hash = fingerprint
 
         # Register screen in knowledge graph
         await ctx.knowledge_graph.add_screen(state=screen_state)
 
-        # Build exploration context for VLM
+        # Build exploration context for VLM (DFS: depth + parent for flow awareness)
+        parent_hash = ctx.current_path[-1][0] if ctx.current_path else None
+        parent_node = ctx.knowledge_graph.nodes.get(parent_hash) if parent_hash else None
+        parent_description = parent_node.description if parent_node else None
+
         kg_context = ctx.knowledge_graph.build_exploration_context(
             current_hash=fingerprint,
-            bfs_queue_size=len(ctx.bfs_queue),
+            depth=len(ctx.current_path),
+            parent_description=parent_description,
         )
 
         # Ask VLM for next untried element
@@ -259,11 +266,11 @@ def build_exploration_nodes(
         # VLM signals all elements exhausted
         if analysis.content_exhausted:
             ctx.fully_scanned.add(fingerprint)
-            ctx.phase = BFSPhase.ADVANCE
+            ctx.phase = BFSPhase.BACKTRACK
             logger.info(
-                "Screen %s fully scanned, advancing BFS (queue=%d)",
+                "Screen %s fully scanned, backtracking (depth=%d)",
                 fingerprint[:8],
-                len(ctx.bfs_queue),
+                len(ctx.current_path),
             )
             return {
                 **state,
@@ -296,9 +303,9 @@ def build_exploration_nodes(
 
     async def navigate_node(state: ExplorationGraphState) -> ExplorationGraphState:
         """
-        Execute navigation actions for RETURN (BACK) or ADVANCE (forward
-        replay) phases.  Consumes one action from ``ctx.pending_nav``
-        or synthesises a BACK action for RETURN.
+        Execute navigation actions for BACKTRACK (BACK) or ADVANCE
+        (recovery path replay) phases.  Synthesises a BACK action for
+        BACKTRACK; consumes from ``ctx.pending_nav`` for ADVANCE.
         """
 
         if ctx.is_cancelled:
@@ -309,22 +316,22 @@ def build_exploration_nodes(
             }
 
         # Determine action
-        if ctx.phase == BFSPhase.RETURN:
+        if ctx.phase == BFSPhase.BACKTRACK:
             action = Action(
                 confidence=1.0,
                 target="back navigation",
                 action_type=ActionType.BACK,
-                rationale="BFS: returning to scanning screen after probe",
+                rationale="DFS: backtracking from exhausted screen",
             )
         elif ctx.pending_nav:
             action = ctx.pending_nav.pop(0)
         else:
-            # ADVANCE with empty pending_nav — try to dequeue
+            # ADVANCE with empty pending_nav — try to dequeue recovery targets
             if not ctx.bfs_queue:
                 return {
                     **state,
                     "is_complete": True,
-                    "completion_reason": "BFS exploration complete — all reachable screens scanned",
+                    "completion_reason": "DFS exploration complete — all reachable screens scanned",
                 }
 
             entry = ctx.bfs_queue.popleft()
@@ -338,10 +345,10 @@ def build_exploration_nodes(
                 return {
                     **state,
                     "is_complete": True,
-                    "completion_reason": "BFS exploration complete — all reachable screens scanned",
+                    "completion_reason": "DFS exploration complete — all reachable screens scanned",
                 }
 
-            # Compute navigation
+            # Compute navigation to orphaned screen
             ctx.pending_nav = _compute_navigation(
                 current_path=ctx.current_path,
                 target_path=entry.path_from_root,
@@ -350,7 +357,7 @@ def build_exploration_nodes(
             ctx.current_path = list(entry.path_from_root)
 
             logger.info(
-                "ADVANCE to screen %s (depth=%d, nav_steps=%d)",
+                "ADVANCE (recovery) to screen %s (depth=%d, nav_steps=%d)",
                 entry.screen_hash[:8],
                 entry.depth,
                 len(ctx.pending_nav),
@@ -379,10 +386,10 @@ def build_exploration_nodes(
 
         step_start = time.time()
 
-        # Tracing
+        # Tracing (fire-and-forget — non-blocking)
         if capture:
             coordinates = await get_action_coordinates(ctx.device, action)
-            await _trace_exploration(ctx, action, capture.image, coordinates)
+            asyncio.create_task(_trace_exploration(ctx, action, capture.image, coordinates))
 
         action_result = await execute_device_action(device=ctx.device, action=action)
         execution_duration = time.time() - step_start
@@ -483,12 +490,11 @@ def build_exploration_nodes(
 
         step_start = time.time()
 
-        # Tracing (same as intent graph)
+        # Tracing (fire-and-forget — non-blocking)
         try:
             coordinates = await get_action_coordinates(ctx.device, action)
-            await _trace_exploration(ctx, action, capture.image, coordinates)
+            asyncio.create_task(_trace_exploration(ctx, action, capture.image, coordinates))
 
-            # Execute with proper coordinate conversion
             action_result = await execute_device_action(device=ctx.device, action=action)
         except Exception as exc:
             logger.exception("Device action failed with exception")
@@ -507,7 +513,7 @@ def build_exploration_nodes(
             pre_hash=pre_hash,
             success=action_result.success,
             duration=int(execution_duration * 1000),
-            post_hash="0",  # Filled in by record_node after stability wait + recapture
+            post_hash="0",  # Filled in by record_node after recapture
             screen_changed=True,
         )
 
@@ -522,7 +528,7 @@ def build_exploration_nodes(
     async def record_node(state: ExplorationGraphState) -> ExplorationGraphState:
         """
         Record the step result: update knowledge graph, agent state,
-        history, audit, and determine BFS phase transitions.
+        history, audit, and determine DFS phase transitions.
         """
 
         if ctx.is_cancelled:
@@ -540,9 +546,6 @@ def build_exploration_nodes(
             return state
 
         pre_hash = step_result.pre_hash
-
-        # Stability wait
-        await asyncio.sleep(0.5)
 
         # ── Package scope enforcement ───────────────────────────────
         if ctx.target_package:
@@ -575,16 +578,19 @@ def build_exploration_nodes(
                     }
 
                 # Recovery succeeded but we don't know our position in the app.
-                # Reset BFS navigation state so the next cycle re-orients.
+                # Reset DFS navigation state so the next cycle re-orients.
                 ctx.pending_nav.clear()
                 ctx.current_path = []
                 ctx.phase = BFSPhase.SCAN
-                logger.info("BFS state reset after package recovery")
+                logger.info("DFS state reset after package recovery")
 
         # Re-capture post-state
         post_capture = await ctx.capture_tool.capture()
         post_state = ctx.capture_tool.compute_state(capture=post_capture)
-        post_hash = post_state.visual_hash
+        post_hash = ctx.knowledge_graph.resolve_hash(post_state.visual_hash)
+
+        # Canonicalise pre_hash for consistent comparisons
+        pre_hash = ctx.knowledge_graph.resolve_hash(pre_hash)
 
         # Update step_result with actual post_hash
         step_result = step_result.model_copy(
@@ -594,47 +600,60 @@ def build_exploration_nodes(
             }
         )
 
-        # Record in agent state
+        # Record in agent state (sync, in-memory — fast)
         ctx.agent_state.record_step(result=step_result)
 
         # Check if post_hash is new BEFORE adding it to the KG
         post_is_new = not ctx.knowledge_graph.has_screen(post_hash)
 
-        # Persist to knowledge graph
-        await ctx.knowledge_graph.add_screen(state=post_state)
-        if action and pre_hash != "0":
-            await ctx.knowledge_graph.record_transition(
-                source_hash=pre_hash,
-                action=action,
-                destination_hash=post_hash,
-            )
+        # Start coordinate fetch early (overlaps with add_screen I/O)
+        size_task: Optional[asyncio.Task[Any]] = None
+        if action and action.bounds:
+            size_task = asyncio.create_task(ctx.device.get_screen_size())
 
-        # Persist experience (best-effort, exceptions logged)
+        # KG screen must complete first (transition + DFS logic depend on it)
+        await ctx.knowledge_graph.add_screen(state=post_state)
+
+        # Run independent writes in parallel
+        parallel_writes: List[Any] = []
+        if action and pre_hash != "0":
+            parallel_writes.append(
+                ctx.knowledge_graph.record_transition(
+                    source_hash=pre_hash,
+                    action=action,
+                    destination_hash=post_hash,
+                )
+            )
         if action:
-            try:
-                await ctx.memory.store_experience(
+            parallel_writes.append(
+                ctx.memory.store_experience(
                     action=action,
                     success=step_result.success,
                     visual_hash=pre_hash,
                 )
-            except Exception as exc:
-                logger.warning("Failed to store experience: %s", exc)
+            )
 
-        # History export (same as intent graph)
+        # Resolve coordinates then offload sync history I/O to thread
         center: Optional[List[int]] = None
-        if action and action.bounds:
-            size = await ctx.device.get_screen_size()
+        if size_task and action and action.bounds:
+            size = await size_task
             converter = CoordinateConverter(screen_width=size[0], screen_height=size[1])
             cx, cy = converter.center_to_pixels(bounds=action.bounds)
             center = [cx, cy]
 
-        ctx.history.save_step(
-            result=step_result,
-            absolute_center=center,
-            activity=screen_state.activity if screen_state else None,
+        activity = screen_state.activity if screen_state else None
+        parallel_writes.append(
+            asyncio.to_thread(
+                ctx.history.save_step,
+                result=step_result,
+                absolute_center=center,
+                activity=activity,
+            )
         )
 
-        # Audit (same as intent graph)
+        await asyncio.gather(*parallel_writes, return_exceptions=True)
+
+        # Audit (sync, in-memory append — negligible)
         if screen_state:
             ctx.audit_service.record_context(
                 knowledge={},
@@ -649,63 +668,73 @@ def build_exploration_nodes(
         results: List[StepResult] = list(state.get("step_results", []))
         results.append(step_result)
 
-        # ── BFS phase transitions ─────────────────────────────────
+        # ── DFS phase transitions ─────────────────────────────────
         if ctx.phase == BFSPhase.SCAN:
             if pre_hash != post_hash:
-                # Navigated to a different screen — enqueue if new
+                # Navigated to a different screen
                 new_path = (
                     list(ctx.current_path) + [(pre_hash, action)]
                     if action
                     else list(ctx.current_path)
                 )
-                if post_is_new and post_hash not in ctx.fully_scanned and action:
-                    ctx.bfs_queue.append(
-                        BFSQueueEntry(
-                            screen_hash=post_hash,
-                            parent_hash=pre_hash,
-                            action_from_parent=action,
-                            depth=len(new_path),
-                            path_from_root=new_path,
-                        )
-                    )
-                    logger.info(
-                        "Discovered new screen %s at depth %d (queue=%d)",
-                        post_hash[:8],
-                        len(new_path),
-                        len(ctx.bfs_queue),
-                    )
-
-                # Track that we're now on the new screen
                 ctx.current_path = new_path
 
-                # Must return to scanning screen
-                ctx.phase = BFSPhase.RETURN
+                if post_hash in ctx.fully_scanned:
+                    # Already exhausted — backtrack immediately
+                    ctx.phase = BFSPhase.BACKTRACK
+                    logger.debug(
+                        "Navigated to already-scanned screen %s, backtracking",
+                        post_hash[:8],
+                    )
+                else:
+                    # DFS: stay in SCAN on the new screen (go deeper)
+                    ctx.phase = BFSPhase.SCAN
+                    if post_is_new:
+                        logger.info(
+                            "DFS: discovered new screen %s at depth %d",
+                            post_hash[:8],
+                            len(new_path),
+                        )
             # else: stayed on same screen — remain in SCAN
 
-        elif ctx.phase == BFSPhase.RETURN:
-            if post_hash == ctx.scanning_hash:
-                # Successfully returned — restore path to scanning screen
-                ctx.current_path = _path_to_screen(ctx, ctx.scanning_hash)
+        elif ctx.phase == BFSPhase.BACKTRACK:
+            # We pressed BACK.  Pop from the DFS path.
+            if ctx.current_path:
+                ctx.current_path = ctx.current_path[:-1]
+
+            if post_hash not in ctx.fully_scanned:
+                # Landed on a screen with untried elements — scan it
                 ctx.phase = BFSPhase.SCAN
-                logger.debug("BACK returned to scanning screen %s", post_hash[:8])
-            else:
-                # BACK overshot — update current_path by popping the last hop
-                if ctx.current_path:
-                    ctx.current_path = ctx.current_path[:-1]
-                # Switch to ADVANCE for re-navigation
-                ctx.phase = BFSPhase.ADVANCE
-                logger.warning(
-                    "BACK overshot: expected %s, got %s — switching to ADVANCE",
-                    (ctx.scanning_hash or "?")[:8],
+                ctx.scanning_hash = post_hash
+                logger.debug("BACKTRACK landed on unexplored screen %s", post_hash[:8])
+            elif ctx.current_path:
+                # Still have depth — keep backtracking
+                ctx.phase = BFSPhase.BACKTRACK
+                logger.debug(
+                    "BACKTRACK: screen %s fully scanned, continuing up",
                     post_hash[:8],
                 )
+            else:
+                # At root level, everything on the DFS path is scanned.
+                # Check KG for orphaned unexplored screens.
+                orphans = _find_orphaned_screens(ctx)
+                if orphans:
+                    for entry in orphans:
+                        ctx.bfs_queue.append(entry)
+                    ctx.phase = BFSPhase.ADVANCE
+                    logger.info(
+                        "DFS tree exhausted, %d orphaned screens found for recovery",
+                        len(orphans),
+                    )
+                else:
+                    is_complete = True
 
         elif ctx.phase == BFSPhase.ADVANCE:
-            # Check if we arrived at the target
+            # Recovery navigation — check if we arrived at the target
             if post_hash == ctx.scanning_hash:
                 ctx.pending_nav.clear()
                 ctx.phase = BFSPhase.SCAN
-                logger.debug("Navigation complete, scanning %s", post_hash[:8])
+                logger.debug("Recovery navigation complete, scanning %s", post_hash[:8])
             elif not ctx.pending_nav:
                 # Ran out of nav actions — start scanning wherever we landed
                 ctx.phase = BFSPhase.SCAN
@@ -757,7 +786,7 @@ def make_route_after_ground(
 def make_route_after_bfs_route(
     ctx: ExplorationNodeContext,
 ) -> Callable[[ExplorationGraphState], str]:
-    """Router after bfs_route: dispatch by BFS phase."""
+    """Router after dfs_route: dispatch by exploration phase."""
 
     def route(state: ExplorationGraphState) -> str:
         if ctx.is_cancelled:
@@ -767,10 +796,10 @@ def make_route_after_bfs_route(
 
         if phase == "scan":
             return "scan"
-        elif phase == "return":
+        elif phase == "backtrack":
             return "navigate"
         elif phase == "advance":
-            # Check if BFS is complete
+            # Check if recovery queue is empty
             if not ctx.bfs_queue and not ctx.pending_nav:
                 ctx.audit_service.print_session_summary()
                 return "done"
@@ -791,7 +820,7 @@ def make_route_after_scan(
             return "done"
 
         if state.get("content_exhausted"):
-            # Screen fully scanned — loop back to bfs_route (now in ADVANCE)
+            # Screen fully scanned — loop back to dfs_route (now in BACKTRACK)
             return "bfs_route"
 
         if state.get("action") is None:
@@ -840,13 +869,56 @@ def _path_to_screen(
     """Best-effort path reconstruction for a screen we've already visited."""
     if not screen_hash or screen_hash == ctx.root_hash:
         return []
-    # Check the BFS queue for any entry targeting this screen
+    # Check the recovery queue for any entry targeting this screen
     for entry in ctx.bfs_queue:
         if entry.screen_hash == screen_hash:
             return list(entry.path_from_root)
-    # Fallback: when returning from a child, path to scanning screen is current_path minus last hop
-    # (current_path at this point is the path to the child we left, not to the screen we landed on)
+    # Fallback: current_path minus last hop
     return list(ctx.current_path[:-1])
+
+
+def _find_orphaned_screens(
+    ctx: ExplorationNodeContext,
+) -> List[BFSQueueEntry]:
+    """Find screens in the KG that are not in ``fully_scanned`` and have a
+    known inbound transition so we can attempt to navigate to them.
+
+    Used as a DFS recovery mechanism when BACKTRACK reaches root but the
+    knowledge graph contains screens that were discovered (via transitions)
+    but never fully scanned -- typically caused by BACK overshooting or
+    navigating to an already-scanned screen that had unexplored neighbours.
+    """
+
+    kg = ctx.knowledge_graph
+    orphans: List[BFSQueueEntry] = []
+
+    for visual_hash in kg.nodes:
+        if visual_hash in ctx.fully_scanned:
+            continue
+        if visual_hash == ctx.root_hash:
+            continue
+
+        result = kg.get_inbound_edge(visual_hash)
+        if result is None:
+            continue
+        source_hash, edge = result
+        action = Action(
+            confidence=1.0,
+            target=edge.action_target or "orphan recovery",
+            action_type=ActionType.TAP,
+            rationale="DFS recovery: navigate to orphaned screen",
+        )
+        orphans.append(
+            BFSQueueEntry(
+                screen_hash=visual_hash,
+                parent_hash=source_hash,
+                action_from_parent=action,
+                depth=1,
+                path_from_root=[(source_hash, action)],
+            )
+        )
+
+    return orphans
 
 
 def _compute_navigation(
@@ -877,7 +949,7 @@ def _compute_navigation(
                 confidence=1.0,
                 target="back navigation",
                 action_type=ActionType.BACK,
-                rationale="BFS: navigating to common ancestor",
+                rationale="DFS recovery: navigating to common ancestor",
             )
         )
 
@@ -895,7 +967,11 @@ async def _trace_exploration(
     image_data: bytes,
     coordinates: Tuple[int, ...],
 ) -> None:
-    """Write a visual trace image — same as the intent graph's _trace_background."""
+    """Write a visual trace image in a background thread (fire-and-forget).
+
+    The synchronous PIL work (decode, annotate, save) is offloaded to the
+    default ``ThreadPoolExecutor`` so it never blocks the event loop.
+    """
 
     if not coordinates:
         return
@@ -904,10 +980,17 @@ async def _trace_exploration(
         f"explore__{ctx.agent_state.step_count + 1}__{action.action_type.value}__{timestamp}.png"
     )
     path = f"assets/traces/{filename}"
-    ImageAnnotator.trace(
-        output_path=path,
-        coords=coordinates,
-        image_data=image_data,
-        label=action.to_description(),
-        action_type=action.action_type.value,
-    )
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: ImageAnnotator.trace(
+                output_path=path,
+                coords=coordinates,
+                image_data=image_data,
+                label=action.to_description(),
+                action_type=action.action_type.value,
+            ),
+        )
+    except Exception as exc:
+        logger.debug("Trace write failed (non-critical): %s", exc)

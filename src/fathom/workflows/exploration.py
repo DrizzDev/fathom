@@ -25,7 +25,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
     """
     Workflow for systematic application mapping.
 
-    Executes a LangGraph StateGraph that drives BFS exploration
+    Executes a LangGraph StateGraph that drives DFS exploration
     with full instrumentation (audit, history, tracing, metrics).
     """
 
