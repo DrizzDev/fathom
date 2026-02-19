@@ -250,10 +250,9 @@ class AgentState:
             for milestone in self.__summarizer.history.milestones[-5:]:
                 lines.append(f"✓ {milestone}")
 
-        if not self.__summarizer:
-            lines.append(f"\n=== RECENT HISTORY (Last {max_history}) ===")
-            recent = self.__action_history.get_history_items()[-max_history:]
-
+        recent = self.__action_history.get_history_items()[-max_history:]
+        if recent:
+            lines.append("\n=== RECENT STEPS ===")
             for index, item in enumerate(recent):
                 status = "[OK]" if item["success"] else "[FAIL]"
                 action_description = f"{item['type']}:{item['target']}"

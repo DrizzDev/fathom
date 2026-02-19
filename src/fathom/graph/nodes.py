@@ -756,10 +756,14 @@ async def _trace_background(
         f"step__{ctx.agent_state.step_count + 1}__{action.action_type.value}__{timestamp}.png"
     )
     path = f"assets/traces/{filename}"
-    ImageAnnotator.trace(
-        output_path=path,
-        coords=coordinates,
-        image_data=image_data,
-        label=action.to_description(),
-        action_type=action.action_type.value,
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: ImageAnnotator.trace(
+            output_path=path,
+            coords=coordinates,
+            image_data=image_data,
+            label=action.to_description(),
+            action_type=action.action_type.value,
+        ),
     )

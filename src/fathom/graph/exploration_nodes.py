@@ -320,12 +320,57 @@ def build_exploration_nodes(
 
         # Determine action
         if ctx.phase == BFSPhase.BACKTRACK:
-            action = Action(
-                confidence=1.0,
-                target="back navigation",
-                action_type=ActionType.BACK,
-                rationale="DFS: backtracking from exhausted screen",
-            )
+            if not ctx.current_path:
+                orphans = _find_orphaned_screens(ctx)
+                if orphans:
+                    for entry in orphans:
+                        ctx.bfs_queue.append(entry)
+                    ctx.phase = BFSPhase.ADVANCE
+                    logger.info(
+                        "BACKTRACK at root — skipping BACK, %d orphans queued for recovery",
+                        len(orphans),
+                    )
+                    if ctx.bfs_queue:
+                        entry = ctx.bfs_queue.popleft()
+                        while entry.screen_hash in ctx.fully_scanned and ctx.bfs_queue:
+                            entry = ctx.bfs_queue.popleft()
+                        if entry.screen_hash not in ctx.fully_scanned:
+                            ctx.pending_nav = _compute_navigation(
+                                current_path=ctx.current_path,
+                                target_path=entry.path_from_root,
+                            )
+                            ctx.scanning_hash = entry.screen_hash
+                            ctx.current_path = list(entry.path_from_root)
+                            if ctx.pending_nav:
+                                action = ctx.pending_nav.pop(0)
+                            else:
+                                ctx.phase = BFSPhase.SCAN
+                                return {**state, "bfs_phase": ctx.phase.value}
+                        else:
+                            return {
+                                **state,
+                                "is_complete": True,
+                                "completion_reason": "DFS complete — all reachable screens scanned",
+                            }
+                    else:
+                        return {
+                            **state,
+                            "is_complete": True,
+                            "completion_reason": "DFS complete — all reachable screens scanned",
+                        }
+                else:
+                    return {
+                        **state,
+                        "is_complete": True,
+                        "completion_reason": "DFS complete — all reachable screens scanned",
+                    }
+            else:
+                action = Action(
+                    confidence=1.0,
+                    target="back navigation",
+                    action_type=ActionType.BACK,
+                    rationale="DFS: backtracking from exhausted screen",
+                )
         elif ctx.pending_nav:
             action = ctx.pending_nav.pop(0)
         else:
@@ -697,13 +742,17 @@ def build_exploration_nodes(
 
         if ctx.phase == BFSPhase.SCAN:
             if pre_hash != post_hash:
-                # Navigated to a different screen
-                new_path = (
-                    list(ctx.current_path) + [(pre_hash, action)]
-                    if action
-                    else list(ctx.current_path)
-                )
-                ctx.current_path = new_path
+                is_back_action = action and action.action_type == ActionType.BACK
+                if is_back_action:
+                    if ctx.current_path:
+                        ctx.current_path = ctx.current_path[:-1]
+                else:
+                    new_path = (
+                        list(ctx.current_path) + [(pre_hash, action)]
+                        if action
+                        else list(ctx.current_path)
+                    )
+                    ctx.current_path = new_path
 
                 if post_hash in ctx.fully_scanned:
                     # Already exhausted — backtrack immediately
