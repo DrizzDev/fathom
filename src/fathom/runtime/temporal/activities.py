@@ -148,7 +148,7 @@ class FathomActivities:
             location=planner_configuration.get("location"),
             project_id=planner_configuration.get("project_id"),
             credentials=planner_configuration.get("credentials"),
-            model=planner_configuration.get("model", "gemini-2.5-flash-lite"),
+            model=planner_configuration.get("model", "gemini-3-flash-preview"),
         )
 
         enricher_url = request.get("enricher_url")
