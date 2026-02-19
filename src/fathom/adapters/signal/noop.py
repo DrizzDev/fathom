@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 from fathom.interfaces.signal import SignalPort
@@ -21,10 +22,11 @@ class NoopSignal(SignalPort):
     async def wait_for_pause(self) -> None:
         """
         Block until a pause signal is received.
-        No-op for autonomous mode (returns immediately).
+        In autonomous mode, pause signals never occur, so block forever.
         """
 
-        pass
+        # Block forever - pause signals never happen in autonomous mode
+        await asyncio.Event().wait()
 
     async def wait_for_resume(self) -> None:
         """
@@ -37,8 +39,6 @@ class NoopSignal(SignalPort):
         """
         Request human input - returns empty string for autonomous mode.
         """
-
-        _: str = prompt
 
         return ""
 

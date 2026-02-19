@@ -23,6 +23,7 @@ class GraphExecutor:
         thread_id: str,
         context: GraphContext,
         graph: CompiledStateGraph,
+        has_interrupts: bool = True,
         invalidate_on_injection: bool = True,
     ) -> None:
         """
@@ -32,6 +33,7 @@ class GraphExecutor:
         self.__graph = graph
         self.__context = context
         self.__thread_id = thread_id
+        self.__has_interrupts = has_interrupts
         self.__invalidate_on_injection = invalidate_on_injection
 
         self.__replan_count = 0
@@ -43,10 +45,33 @@ class GraphExecutor:
         Processes interrupts and resumes until completion or cancellation.
         """
 
-        # Start with empty input for fresh run
+        # For autonomous mode (no interrupts), run graph to completion in one call
+        if not self.__has_interrupts:
+            logger.info("Executor: Running in autonomous mode (no interrupts)")
+
+            try:
+                async for event in self.__graph.astream({}, config=self.__config):
+                    if self.__context.is_cancelled:
+                        logger.warning("Executor: Workflow cancelled during execution")
+                        break
+                    # Log node transitions
+                    if isinstance(event, dict):
+                        for node, _output in event.items():
+                            logger.debug(f"Executor: Node '{node}' completed")
+            except Exception as exception:
+                logger.error(f"Executor: Graph execution failed: {exception}")
+                raise
+            return
+
+        # Interactive mode with interrupts - use loop for pause/resume
         current_input: Optional[Dict[str, Any]] = {}
 
         while True:
+            # Check cancellation before starting any graph execution
+            if self.__context.is_cancelled:
+                logger.warning(f"Executor: Workflow {self.__thread_id} cancelled before execution")
+                break
+
             # Race Condition: Run Graph vs Wait for Pause
             # We wrap the graph stream in a task to allow cancellation
             stream_task = asyncio.create_task(self.__stream_graph(current_input))
@@ -72,11 +97,19 @@ class GraphExecutor:
 
             # Case B: Graph Execution Finished (Step or Workflow)
             pause_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pause_task
+
             try:
                 await stream_task
             except Exception as exception:
                 logger.error(f"Executor: Graph stream failed: {exception}")
                 raise
+
+            # Check cancellation after graph execution
+            if self.__context.is_cancelled:
+                logger.warning(f"Executor: Workflow {self.__thread_id} cancelled after execution")
+                break
 
             # Check Graph State
             snapshot = await self.__graph.aget_state(self.__config)
@@ -89,7 +122,7 @@ class GraphExecutor:
             # Check for HITL signals one last time
             await self.__handle_interrupt(source="breakpoint")
 
-            # Check cancellation
+            # Check cancellation after interrupt handling
             if self.__context.is_cancelled:
                 logger.warning(f"Executor: Workflow {self.__thread_id} cancelled")
                 break

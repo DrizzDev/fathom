@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import List, Optional, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -12,6 +13,8 @@ from fathom.interfaces.graph import GraphBuilder
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.nodes import IntentGraphFactory
 from fathom.strategies.graph.state import IntentGraphState
+
+logger = logging.getLogger(__name__)
 
 
 class IntentGraphBuilder(GraphBuilder):
@@ -70,15 +73,29 @@ class IntentGraphBuilder(GraphBuilder):
         Route after analyze based on completion and retry status.
         """
 
-        if state.get(cast("str", CommonStateKey.IS_COMPLETE)):
+        is_complete = state.get(cast("str", CommonStateKey.IS_COMPLETE))
+        should_retry = state.get(cast("str", IntentStateKey.SHOULD_RETRY))
+        planned_step = state.get(cast("str", IntentStateKey.PLANNED_STEP))
+
+        logger.info(
+            f"[ROUTING] After ANALYZE: is_complete={is_complete}, "
+            f"should_retry={should_retry}, has_planned_step={planned_step is not None}, "
+            f"planned_step_type={type(planned_step).__name__}"
+        )
+
+        if is_complete:
+            logger.info("[ROUTING] -> END (is_complete=True)")
             return NodeName.END
 
-        if state.get(cast("str", IntentStateKey.SHOULD_RETRY)):
+        if should_retry:
+            logger.info("[ROUTING] -> GROUND (should_retry=True)")
             return NodeName.GROUND
 
-        if not state.get(cast("str", IntentStateKey.PLANNED_STEP)):
+        if not planned_step:
+            logger.info(f"[ROUTING] -> GROUND (no planned_step, value={planned_step})")
             return NodeName.GROUND
 
+        logger.info("[ROUTING] -> EXECUTE")
         return NodeName.EXECUTE
 
     def __route_after_record(self, state: IntentGraphState) -> str:

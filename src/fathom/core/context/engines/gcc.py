@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from logging import getLogger
 from typing import Any, Dict, List, Optional
 
 from fathom.interfaces.context import ContextEngine
 from fathom.schemas.gcc import BranchState, CommitNode, ExecutionRecord
+
+logger = getLogger(__name__)
 
 
 class GitContextEngine(ContextEngine):
@@ -44,9 +47,15 @@ class GitContextEngine(ContextEngine):
         self.__commit_nodes[new_node.commit_id] = new_node
         branch.head_id = new_node.commit_id
 
-        # Once committed, the active log for this segment is cleared
-        # (This is called after background summarization finishes)
+        logger.info(
+            f"[GCC] commit() called: shadow_buffer_length_before={len(self.__shadow_buffer)}"
+        )
+
+        # Clear shadow_buffer after creating milestone
+        # The milestone now represents the summarized context
         self.__shadow_buffer.clear()
+
+        logger.info("[GCC] commit(): cleared shadow_buffer")
 
     async def branch(self, *, branch_name: str) -> None:
         """
@@ -64,12 +73,21 @@ class GitContextEngine(ContextEngine):
         Construct the three-tier reasoning hierarchy.
         """
 
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         branch = self.__branches[self.__current_branch]
 
+        trace = [record.model_dump() for record in (self.__shadow_buffer + branch.log)]
+
+        logger.info(
+            f"[GCC] get_context(): shadow_buffer_length={len(self.__shadow_buffer)}, branch.log_length={len(branch.log)}, total_trace_length={len(trace)}"
+        )
+
         return {
+            "trace": trace,  # Merge shadow + active log to ensure no context gaps
             "milestones": self.__get_commit_chain(head_id=branch.head_id),
-            # Merge shadow + active log to ensure no context gaps
-            "trace": [record.model_dump() for record in (self.__shadow_buffer + branch.log)],
         }
 
     def __get_commit_chain(self, *, head_id: Optional[str]) -> List[str]:
@@ -128,9 +146,22 @@ class GitContextEngine(ContextEngine):
         Atomically moves logs to shadow buffer and returns them for summarization.
         """
 
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         branch = self.__branches[self.__current_branch]
         segment = list(branch.log)
+
+        logger.info(
+            f"[GCC] prepare_summarization(): branch.log_length={len(branch.log)}, shadow_buffer_length_before={len(self.__shadow_buffer)}"
+        )
+
         self.__shadow_buffer.extend(segment)
         branch.log.clear()
+
+        logger.info(
+            f"[GCC] prepare_summarization(): shadow_buffer_length_after={len(self.__shadow_buffer)}, branch.log_length_after={len(branch.log)}"
+        )
 
         return [record.model_dump() for record in segment]

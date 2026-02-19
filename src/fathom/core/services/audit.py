@@ -170,6 +170,20 @@ class AuditService:
                 token_info = f"{prompt_t + completion_t:,} (P:{prompt_t:,} | C:{completion_t:,})"
                 audit_grid.add_row("Tokens:", f"[dim]{token_info}[/dim]")
 
+        # Add confidence score
+        if plan.step and plan.step.action:
+            confidence_pct = plan.step.action.confidence * 100
+            confidence_color = (
+                "green"
+                if plan.step.action.confidence >= 0.7
+                else "yellow"
+                if plan.step.action.confidence >= 0.4
+                else "red"
+            )
+            audit_grid.add_row(
+                "Confidence:", f"[{confidence_color}]{confidence_pct:.1f}%[/{confidence_color}]"
+            )
+
         audit_grid.add_row("ADB Command:", self.__format_ms(milliseconds=result.duration))
 
         audit_grid.add_row(

@@ -12,28 +12,28 @@ class IntentGraphState(TypedDict, total=False):
     State flowing through the Intent Execution Graph. Strictly typed and serializable.
     """
 
-    intent: str
-    use_xml: bool
-    max_steps: int
-    step_number: int
-    is_complete: bool
-    should_retry: bool
-    injected_context: Optional[str]
-    completion_reason: Optional[str]
+    INTENT: str
+    USE_XML: bool
+    MAX_STEPS: int
+    STEP_NUMBER: int
+    IS_COMPLETE: bool
+    SHOULD_RETRY: bool
+    INJECTED_CONTEXT: Optional[str]
+    COMPLETION_REASON: Optional[str]
 
-    is_new_screen: bool
-    capture: Optional[ScreenCapture]
-    screen_state: Optional[ScreenState]
+    IS_NEW_SCREEN: bool
+    CAPTURE: Optional[ScreenCapture]
+    SCREEN_STATE: Optional[ScreenState]
 
-    xml_content: Optional[str]
-    elements: Optional[Dict[str, Any]]
+    XML_CONTENT: Optional[str]
+    ELEMENTS: Optional[Dict[str, Any]]
 
-    plan: Optional[PlanResult]
-    planned_step: Optional[Step]
-    step_results: List[StepResult]
-    step_result: Optional[StepResult]
-    analysis: Optional[AnalysisResult]
+    PLAN: Optional[PlanResult]
+    PLANNED_STEP: Optional[Step]
+    STEP_RESULTS: List[StepResult]
+    STEP_RESULT: Optional[StepResult]
+    ANALYSIS: Optional[AnalysisResult]
 
-    analysis_duration: float
-    execution_duration: float
-    grounding_duration: float
+    ANALYSIS_DURATION: float
+    EXECUTION_DURATION: float
+    GROUNDING_DURATION: float

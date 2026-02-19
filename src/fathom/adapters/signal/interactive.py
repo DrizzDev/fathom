@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from typing import ClassVar, Optional
 
@@ -11,6 +12,7 @@ from fathom.constants import SignalType
 from fathom.interfaces.signal import SignalPort
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 class InteractiveSignal(SignalPort):
@@ -35,6 +37,14 @@ class InteractiveSignal(SignalPort):
 
         self.__pause_requested = False
         self.__injected_context: Optional[str] = None
+
+        # Clear any stale data from the shared input bus
+        while not self.__input_bus.empty():
+            try:
+                stale_cmd = self.__input_bus.get_nowait()
+                logger.warning(f"InteractiveSignal: Cleared stale command from bus: '{stale_cmd}'")
+            except asyncio.QueueEmpty:
+                break
 
         # Ensure the global listener is registered in the current event loop
         self.__ensure_listener()
@@ -95,18 +105,30 @@ class InteractiveSignal(SignalPort):
         Efficiently parks the task until a pause signal arrives on the bus. Consumes zero CPU cycles while waiting.
         """
 
+        # If already paused, don't wait again (prevents infinite loop)
         if self.__pause_requested:
+            logger.warning(
+                f"wait_for_pause: Already paused (__pause_requested={self.__pause_requested}), returning immediately"
+            )
             return
 
+        logger.debug("wait_for_pause: Waiting for pause command from input bus...")
         while True:
             # Task is parked by the OS/Event-Loop until data hits stdin
             cmd = await self.__input_bus.get()
+            logger.debug(f"wait_for_pause: Received command from bus: '{cmd}'")
             if cmd.lower() == "pause":
                 self.__pause_requested = True
                 console.print("\n[bold yellow]⏸️  Pause requested - interrupting...[/bold yellow]\n")
                 sys.stdout.flush()
                 await asyncio.sleep(0)  # Yield to ensure UI update propagates
                 return
+            else:
+                # Ignore non-pause commands while waiting for pause
+                logger.debug(
+                    f"wait_for_pause: Ignoring non-pause command: '{cmd}', continuing to wait..."
+                )
+                continue
 
     async def wait_for_resume(self) -> None:
         """
@@ -196,6 +218,7 @@ class InteractiveSignal(SignalPort):
         Handler For Resume Event
         """
 
+        logger.info(f"InteractiveSignal: Clearing pause flag (was: {self.__pause_requested})")
         self.__pause_requested = False
         console.print("\n[bold green]▶️  RESUMING[/bold green]\n" + "=" * 70)
 

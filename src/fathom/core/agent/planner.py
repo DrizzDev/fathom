@@ -151,6 +151,11 @@ class StepPlanner:
         if not reasoner.should_accept_action(
             action=action, has_failed_before=state.should_avoid_action(action=action)
         ):
+            logger.warning(
+                f"Action rejected by reasoner: {action.to_description()} "
+                f"(confidence={action.confidence:.2f}, "
+                f"has_failed_before={state.should_avoid_action(action=action)})"
+            )
             return PlanResult(
                 step=None,
                 is_complete=False,

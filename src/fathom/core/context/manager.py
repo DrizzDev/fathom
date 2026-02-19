@@ -151,6 +151,11 @@ class ContextManager:
         action_data = action.model_dump() if hasattr(action, "model_dump") else {"raw": str(action)}
 
         await self.__engine.record(observation=observation, thought=thought, action=action_data)
+
+        # Log trace length after record
+        trace_len = len(self.__engine.get_context().get("trace", []))
+        logger.info(f"[ContextManager] After record: trace_length={trace_len}")
+
         # Non-blocking persist
         await self.__enqueue_persist()
 
@@ -159,6 +164,10 @@ class ContextManager:
         Triggers non-blocking semantic compression (The GCC COMMIT logic).
         Offloads summarization to a background task to maintain Zero Latency (P0).
         """
+
+        logger.info(
+            f"[ContextManager] branch() called, trace_length_before={len(self.__engine.get_context().get('trace', []))}"
+        )
 
         # 1. Prepare engine for background work
         # (GitContextEngine moves active log to shadow buffer)
@@ -170,12 +179,19 @@ class ContextManager:
         if not segment:
             return
 
+        logger.info(
+            f"[ContextManager] After prepare_summarization: segment_length={len(segment)}, trace_length={len(self.__engine.get_context().get('trace', []))}"
+        )
+
         # 2. Persist structural change immediately (non-blocking)
         await self.__enqueue_persist()
 
         # 3. Offload intelligence
         if not self.__summarizer:
             await self.__engine.commit(summary=f"Captured {len(segment)} steps.")
+            logger.info(
+                f"[ContextManager] After commit (no summarizer): trace_length={len(self.__engine.get_context().get('trace', []))}"
+            )
             await self.__enqueue_persist()
             return
 
@@ -189,12 +205,20 @@ class ContextManager:
         """
 
         try:
+            logger.info(
+                f"[ContextManager] __async_summarize() started: segment_length={len(segment)}"
+            )
+
             if self.__summarizer:
                 summary = await self.__summarizer.summarize_trace(trace=segment)
+                logger.info("[ContextManager] Summarization complete, calling commit()")
                 await self.__engine.commit(summary=summary)
             else:
                 await self.__engine.commit(summary=f"Captured {len(segment)} steps.")
 
+            logger.info(
+                f"[ContextManager] After commit in __async_summarize: trace_length={len(self.__engine.get_context().get('trace', []))}"
+            )
             await self.__enqueue_persist()
         except Exception as exception:
             logger.error(f"Context: Background summarization failed: {exception}")

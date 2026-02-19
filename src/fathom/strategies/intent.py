@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from langgraph.checkpoint.memory import MemorySaver
 from rich.console import Console
 
+from fathom.adapters.signal.noop import NoopSignal
 from fathom.base.paths import SharedPathManager
 from fathom.constants.graph import NodeName
 from fathom.interfaces.device import DevicePort
@@ -61,25 +62,30 @@ class IntentStrategy:
             device=device,
             memory=memory,
             signal=signal,
+            use_xml=use_xml,
             storage=storage,
             telemetry=telemetry,
-            summarizer=summarizer,
-            path_manager=path_manager,
-            configuration=configuration,
-            use_xml=use_xml,
             max_steps=max_steps,
+            summarizer=summarizer,
             workflow_id=workflow_id,
             realignment=realignment,
             package_name=package_name,
+            path_manager=path_manager,
+            configuration=configuration,
         )
 
         # 1. Build Graph with Interrupts (Injected dependency: MemorySaver)
         builder = IntentGraphBuilder(context=self.__graph_context)
 
-        # We interrupt before critical decision points to allow HITL via Strategy Loop
+        # Use checkpointer only for interactive mode (with interrupts)
+        # Autonomous mode doesn't need checkpointing
+
+        interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE]
+        checkpointer = None if isinstance(signal, NoopSignal) else MemorySaver()
+
         self.__graph = builder.build(
-            checkpointer=MemorySaver(),
-            interrupt_before=[NodeName.ANALYZE, NodeName.EXECUTE],
+            checkpointer=checkpointer,
+            interrupt_before=interrupt_nodes,
         )
 
     async def execute(self) -> ExecutionResult:
@@ -99,6 +105,7 @@ class IntentStrategy:
                 context=self.__graph_context,
                 thread_id=self.__workflow_id,
                 invalidate_on_injection=self.__graph_context.realignment.immediate,
+                has_interrupts=not isinstance(self.__graph_context.signal, NoopSignal),
             )
 
             await executor.run()
@@ -121,11 +128,7 @@ class IntentStrategy:
         except Exception as exception:
             logger.exception(f"Intent strategy execution failed: {exception}")
             duration = int((time.time() - start_time) * 1000)
-            return ExecutionResult(
-                success=False,
-                duration=duration,
-                error=str(exception),
-            )
+            return ExecutionResult(success=False, duration=duration, error=str(exception))
 
     def get_progress(self) -> Dict[str, Any]:
         """
