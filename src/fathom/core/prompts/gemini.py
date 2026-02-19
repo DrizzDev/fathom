@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fathom.core.prompts.base import PromptBuilder
@@ -9,6 +10,8 @@ from fathom.core.prompts.templates import (
     COORD_RULES,
     TOOL_GUIDANCE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiPromptBuilder(PromptBuilder):
@@ -64,9 +67,17 @@ class GeminiPromptBuilder(PromptBuilder):
         if tracking_note:
             parts.append(f"<CADENCE_NOTE>\n{tracking_note}\n</CADENCE_NOTE>")
 
-        # 1. Memory Ledger (Factual Memory)
+        # 1. Memory Ledger (Factual Memory - PERSISTENT ACROSS SCREENS)
         if ledger := self.__get_ledger_segment(memory=memory):
-            parts.append(f"<MEMORY_LEDGER>\n{ledger}\n</MEMORY_LEDGER>")
+            parts.append(
+                f"<MEMORY_LEDGER>\n"
+                f"Persistent memory (use store_memory/recall_memory tools):\n"
+                f"{ledger}\n"
+                f"</MEMORY_LEDGER>"
+            )
+            logger.debug(f"[H3] Memory Ledger Added | ledger_length={len(ledger)}")
+        else:
+            logger.debug("[H3] No Memory Ledger | memory is empty or None")
 
         # 2. Roadmap & Milestones (Tier 2 Context)
         if milestones := context.get("milestones", []):
@@ -168,7 +179,7 @@ class GeminiPromptBuilder(PromptBuilder):
 
         lines = []
         avoided = []
-        recent = trace[-8:]
+        recent = trace[-50:]
 
         for index, entry in enumerate(recent, 1):
             action = entry.get("action", {})
@@ -190,6 +201,6 @@ class GeminiPromptBuilder(PromptBuilder):
 
         block = "INTERACTION HISTORY:\n" + "\n".join(lines)
         if avoided:
-            block += f"\nAvoid repeats when possible: {', '.join(avoided[:6])}"
+            block += f"\nAvoid repeats when possible: {', '.join(avoided[:20])}"
 
         return block

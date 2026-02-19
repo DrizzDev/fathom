@@ -77,6 +77,10 @@ class VisionService:
 
         start = time.time()
         knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
+
+        # Retrieve ALL persistent memory (cross-screen)
+        all_memory = await self.__memory.get_all()
+
         retrieval = time.time() - start
 
         # Log memory stats
@@ -85,7 +89,8 @@ class VisionService:
 
         logger.debug(
             f"[H3] Memory Retrieval | visual_hash={fingerprint[:6]} | "
-            f"memories={len(memory_store)} | "
+            f"screen_memories={len(memory_store)} | "
+            f"persistent_memories={len(all_memory)} | "
             f"experiences={len(prev_actions)} | "
             f"duration={retrieval:.3f}s"
         )
@@ -104,10 +109,18 @@ class VisionService:
             hints={"use_xml": use_xml},
         )
 
+        # Pass ALL persistent memory (not just screen-specific)
         dynamic_context = self.__builder.build_user_context(
             history=full_context,
             tracking_note=tracking_note,
-            memory=knowledge.get("memory_store", {}),
+            memory=all_memory,  # Cross-screen persistent memory
+        )
+
+        logger.debug(
+            f"[H3] Dynamic Context Built | "
+            f"has_memory={bool(all_memory)} | "
+            f"memory_keys={list(all_memory.keys()) if all_memory else []} | "
+            f"context_length={len(dynamic_context)}"
         )
 
         tools = self.__scope_tools(intent=intent)

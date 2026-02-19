@@ -86,6 +86,32 @@ TOOL SELECTION & VALIDATION:
   * If action is risky/ambiguous, set is_valid=False and explain.
   * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
     DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
+  * MEMORY UPDATES: Use memory_updates field to track progress (e.g., {'selected_days': 'Mon,Tue,Fri', 'date_range_set': 'true'}).
 - validate_state: Use for explicit state checks when no immediate UI action is required.
 - verify_goal: Use for explicit completion checks.
+- store_memory: PROACTIVELY store important progress/state to remember across screens.
+  * Use when completing a sub-goal (e.g., 'selected_days', 'entered_payment_info')
+  * Use when making important selections (e.g., 'service_type', 'time_slot')
+  * Keys should be descriptive (e.g., 'schedule_configured', 'payment_method_selected')
+- recall_memory: Check what you've already done to avoid repeating actions.
+  * Use when unsure if you've completed a step
+  * Use when returning to a previous screen
+  * Use to verify progress before proceeding
+
+MEMORY STRATEGY:
+- Store progress IMMEDIATELY after completing each sub-goal
+- Recall memory BEFORE starting new actions to check what's already done
+- Use memory to maintain state across screen transitions
+- Memory persists across the entire workflow - use it to avoid repeating work
 """
+
+# Summarization system instruction (for GCC milestone creation)
+SUMMARIZATION_SYSTEM = """You are an expert at analyzing mobile UI automation execution traces.
+
+Your task is to create a structured milestone summary that helps an AI agent understand:
+1. What was accomplished in this segment
+2. Key actions that led to success
+3. Any challenges or failures encountered
+
+Focus on STATE CHANGES and OUTCOMES, not routine navigation.
+Be concise but informative - the agent needs to quickly understand progress."""

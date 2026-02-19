@@ -236,6 +236,7 @@ class ContextManager:
             "intent": self.__roadmap_intent,
             "trace": engine_context.get("trace", []),
             "milestones": engine_context.get("milestones", []),
+            "active_count": engine_context.get("active_count", 0),
             "guidance": [guidance.content for guidance in self.__user_guidance],
         }
 

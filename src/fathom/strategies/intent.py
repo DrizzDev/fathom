@@ -80,7 +80,7 @@ class IntentStrategy:
         # Use checkpointer only for interactive mode (with interrupts)
         # Autonomous mode doesn't need checkpointing
 
-        interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE]
+        interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE.value]
         checkpointer = None if isinstance(signal, NoopSignal) else MemorySaver()
 
         self.__graph = builder.build(

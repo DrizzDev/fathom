@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# mypy: disable-error-code="misc"
 import asyncio
 import hashlib
 import logging
@@ -280,14 +281,17 @@ class IntentNodeProvider:
         # Log what will happen next based on routing logic
         if plan.is_complete:
             logger.info("[NODE: ANALYZE] -> Will route to END (is_complete=True)")
+
         elif plan.should_retry:
             logger.info("[NODE: ANALYZE] -> Will route to GROUND (should_retry=True)")
+
         elif not plan.step:
             logger.info("[NODE: ANALYZE] -> Will route to GROUND (no planned_step)")
+
         else:
             logger.info("[NODE: ANALYZE] -> Will route to EXECUTE")
 
-        return result
+        return result  # type: ignore[return-value]
 
     async def execute(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -425,6 +429,14 @@ class IntentNodeProvider:
             success=step_result.success,
         )
 
+        # Store memory updates from action (if any)
+        if step_result.step.action.memory_updates:
+            logger.info(
+                f"[NODE: RECORD] Storing memory updates: {step_result.step.action.memory_updates}"
+            )
+            for key, value in step_result.step.action.memory_updates.items():
+                await self.__context.memory.set(key=key, value=value)
+
         # Commit cycle to ContextManager (GCC Trace)
         logger.debug(
             f"[H3] Committing to trace | thought={step_result.step.action.rationale[:50]}..."
@@ -445,13 +457,16 @@ class IntentNodeProvider:
             action=step_result.step.action,
         )
 
-        # GCC Branching - only branch after more steps to preserve context
+        # GCC Branching - Semantic compression for long-running workflows
+        # Threshold: 15 steps balances context freshness with compression benefits
+        # For 100-150 step workflows, this creates ~7-10 milestones
         full_context = self.__context.context_manager.get_full_context()
-        trace = full_context.get("trace", [])
-        # Increase threshold to 10 to reduce frequent context loss
-        if len(trace) >= 10:
-            await self.__context.context_manager.branch()
+        active_count = full_context.get("active_count", 0)
 
+        BRANCHING_THRESHOLD = 15
+        if active_count >= BRANCHING_THRESHOLD:
+            logger.info(f"[NODE: RECORD] Triggering GCC branch: active_count={active_count}")
+            await self.__context.context_manager.branch()
         # Audit logging
         execution_plan = state.get(IntentStateKey.PLAN)
         current_screen = state.get(CommonStateKey.SCREEN_STATE)
@@ -463,20 +478,36 @@ class IntentNodeProvider:
             and isinstance(is_new_screen, bool)
         ):
             # Explicit float conversion for metrics
-            analysis_duration = float(state.get(CommonStateKey.ANALYSIS_DURATION) or 0.0)
-            grounding_duration = float(state.get(CommonStateKey.GROUNDING_DURATION) or 0.0)
-            execution_duration = float(state.get(CommonStateKey.EXECUTION_DURATION) or 0.0)
+            analysis_duration_raw = state.get(CommonStateKey.ANALYSIS_DURATION) or 0.0
+            grounding_duration_raw = state.get(CommonStateKey.GROUNDING_DURATION) or 0.0
+            execution_duration_raw = state.get(CommonStateKey.EXECUTION_DURATION) or 0.0
+
+            analysis_duration = (
+                float(analysis_duration_raw)
+                if isinstance(analysis_duration_raw, (int, float, str))
+                else 0.0
+            )
+            grounding_duration = (
+                float(grounding_duration_raw)
+                if isinstance(grounding_duration_raw, (int, float, str))
+                else 0.0
+            )
+            execution_duration = (
+                float(execution_duration_raw)
+                if isinstance(execution_duration_raw, (int, float, str))
+                else 0.0
+            )
 
             self.__context.auditor.log_step(
                 plan=execution_plan,
                 state=current_screen,
+                hierarchy_duration=0.0,
                 is_new_screen=is_new_screen,
+                analysis_duration=analysis_duration,
+                execution_duration=execution_duration,
+                grounding_duration=grounding_duration,
                 is_stuck=self.__context.agent_state.is_stuck,
                 step_count=self.__context.agent_state.step_count,
-                analysis_duration=analysis_duration,
-                grounding_duration=grounding_duration,
-                hierarchy_duration=0.0,
-                execution_duration=execution_duration,
                 total_duration=grounding_duration + analysis_duration + execution_duration,
                 result=ActionResult(success=step_result.success, duration=step_result.duration),
             )

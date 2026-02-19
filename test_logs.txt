@@ -149,7 +149,7 @@
 [1;91mValueError: [0mNo checkpointer set
 
 2026-02-19T09:10:51.959228Z [info     ] Intent workflow completed      [fathom]
-   Execution Summary    
+   Execution Summary
 ┏━━━━━━━━━━━━━┳━━━━━━━━┓
 ┃ Metric      ┃ Value  ┃
 ┡━━━━━━━━━━━━━╇━━━━━━━━┩
@@ -157,7 +157,7 @@
 │ Reason      │ Failed │
 │ Steps Taken │ 0      │
 └─────────────┴────────┘
-                      Timing Audit                      
+                      Timing Audit
 ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
 ┃ Operation            ┃ Total Time (s) ┃ Avg/Step (s) ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
@@ -167,7 +167,7 @@
 │ Action               │          0.00s │        0.00s │
 │ Analysis             │          9.90s │        9.90s │
 └──────────────────────┴────────────────┴──────────────┘
-   Resource Usage (Tokens)   
+   Resource Usage (Tokens)
 ┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
 ┃ Metric            ┃ Value ┃
 ┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
@@ -176,7 +176,7 @@
 │ Cached Tokens     │ 1,245 │
 │ Total Tokens      │ 3,137 │
 └───────────────────┴───────┘
-                        Agent Knowledge Graph (Brain)                         
+                        Agent Knowledge Graph (Brain)
 ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┓
 ┃ Screen Hash  ┃ Activity                              ┃ Agent Description   ┃
 ┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━┩
