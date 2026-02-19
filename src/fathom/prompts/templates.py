@@ -94,4 +94,7 @@ TOOL ROUTING:
 - store_memory / recall_memory: Persistent cross-step memory (use same category+item keys).
 """
 
-RESPONSE_DIRECTIVE = "RESPONSE: Exactly ONE tool call. No plain text or markdown."
+RESPONSE_DIRECTIVE = (
+    "RESPONSE: Return one primary tool call (execute_ui, complete_goal, validate_state, or verify_goal). "
+    "You MAY include store_memory or recall_memory alongside the primary call. No plain text or markdown."
+)

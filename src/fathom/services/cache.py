@@ -65,6 +65,7 @@ class CacheService:
 
         self.__cached_content: Optional[Any] = None
         self.__content_hash: Optional[str] = None
+        self.__uncacheable_hash: Optional[str] = None
         self.__lock = asyncio.Lock()
 
         self.stats = CacheStats()
@@ -86,6 +87,9 @@ class CacheService:
 
         current_hash = self.__compute_hash(instruction=system_instruction, tools=tools)
 
+        if self.__uncacheable_hash == current_hash:
+            return None
+
         # Fast path (no lock needed for read-only hit check)
         if self.__cached_content and self.__content_hash == current_hash:
             self.stats.hits += 1
@@ -100,6 +104,9 @@ class CacheService:
 
             # Cache miss: content changed or no cache
             self.stats.misses += 1
+
+            if self.__uncacheable_hash and self.__uncacheable_hash != current_hash:
+                self.__uncacheable_hash = None
 
             # Evict stale cache if content changed
             if self.__cached_content and self.__content_hash != current_hash:
@@ -135,7 +142,8 @@ class CacheService:
 
             except Exception as exception:
                 if "minimum token count" in str(exception):
-                    logger.debug(f"Skipping cache: {exception}")
+                    self.__uncacheable_hash = current_hash
+                    logger.debug(f"Skipping cache (below minimum): {exception}")
                 else:
                     logger.warning(f"Failed to create cache: {exception}")
 

@@ -232,9 +232,6 @@ def build_exploration_nodes(
         fingerprint = ctx.knowledge_graph.resolve_hash(screen_state.visual_hash)
         ctx.scanning_hash = fingerprint
 
-        # Register screen in knowledge graph
-        await ctx.knowledge_graph.add_screen(state=screen_state)
-
         # Build exploration context for VLM (DFS: depth + parent for flow awareness)
         parent_hash = ctx.current_path[-1][0] if ctx.current_path else None
         parent_node = ctx.knowledge_graph.nodes.get(parent_hash) if parent_hash else None
@@ -257,11 +254,17 @@ def build_exploration_nodes(
         analysis_duration = time.time() - start
         ctx.metrics.record(operation="analysis", duration=analysis_duration)
 
-        # Persist VLM screen description
-        if analysis.screen_description:
-            await ctx.knowledge_graph.add_screen(
-                state=screen_state, description=analysis.screen_description
+        if analysis.metrics:
+            ctx.metrics.record_tokens(
+                prompt=int(analysis.metrics.get("prompt_tokens", 0)),
+                completion=int(analysis.metrics.get("completion_tokens", 0)),
+                cached=int(analysis.metrics.get("cached_tokens", 0)),
             )
+
+        # Register screen + persist VLM description in a single add_screen call
+        await ctx.knowledge_graph.add_screen(
+            state=screen_state, description=analysis.screen_description
+        )
 
         # VLM signals all elements exhausted
         if analysis.content_exhausted:
@@ -664,11 +667,34 @@ def build_exploration_nodes(
                 action_description=action.to_description() if action else "unknown",
             )
 
+            analysis: Optional[AnalysisResult] = state.get("analysis")
+            grounding_dur = state.get("grounding_duration", 0.0)
+            analysis_dur = state.get("analysis_duration", 0.0)
+            execution_dur = state.get("execution_duration", 0.0)
+            total_dur = grounding_dur + analysis_dur + execution_dur
+
+            ctx.audit_service.log_exploration_step(
+                is_stuck=ctx.agent_state.is_stuck,
+                step_count=ctx.agent_state.step_count,
+                state=screen_state,
+                is_new_screen=state.get("is_new_screen", False),
+                result=ActionResult(success=step_result.success, duration=step_result.duration),
+                total_duration=total_dur,
+                analysis_duration=analysis_dur,
+                execution_duration=execution_dur,
+                grounding_duration=grounding_dur,
+                analysis=analysis,
+                phase=ctx.phase.value,
+                depth=len(ctx.current_path),
+            )
+
         # Append to accumulated results
         results: List[StepResult] = list(state.get("step_results", []))
         results.append(step_result)
 
         # ── DFS phase transitions ─────────────────────────────────
+        is_complete = False
+
         if ctx.phase == BFSPhase.SCAN:
             if pre_hash != post_hash:
                 # Navigated to a different screen
@@ -742,8 +768,15 @@ def build_exploration_nodes(
                 ctx.current_path = _path_to_screen(ctx, post_hash)
                 logger.debug("Nav exhausted, scanning landed screen %s", post_hash[:8])
 
-        # Check step limit
-        is_complete = ctx.agent_state.step_count >= ctx.max_steps
+        # Check step limit (merge with DFS completion signal)
+        is_complete = is_complete or ctx.agent_state.step_count >= ctx.max_steps
+
+        if is_complete and ctx.agent_state.step_count >= ctx.max_steps:
+            completion_reason = "Max steps reached"
+        elif is_complete:
+            completion_reason = "DFS complete — all screens scanned"
+        else:
+            completion_reason = None
 
         return {
             **state,
@@ -752,7 +785,7 @@ def build_exploration_nodes(
             "step_number": ctx.agent_state.step_count,
             "bfs_phase": ctx.phase.value,
             "is_complete": is_complete,
-            "completion_reason": "Max steps reached" if is_complete else None,
+            "completion_reason": completion_reason,
         }
 
     return {
@@ -902,11 +935,17 @@ def _find_orphaned_screens(
         if result is None:
             continue
         source_hash, edge = result
+
+        try:
+            resolved_action_type = ActionType(edge.action_type)
+        except (ValueError, KeyError):
+            resolved_action_type = ActionType.TAP
+
         action = Action(
             confidence=1.0,
             target=edge.action_target or "orphan recovery",
-            action_type=ActionType.TAP,
-            rationale="DFS recovery: navigate to orphaned screen",
+            action_type=resolved_action_type,
+            rationale=f"DFS recovery: navigate to orphaned screen via {resolved_action_type.value}",
         )
         orphans.append(
             BFSQueueEntry(

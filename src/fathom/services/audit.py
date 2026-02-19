@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from fathom.schemas.results import ActionResult, PlanResult
+from fathom.schemas.results import ActionResult, AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
 
 
@@ -127,6 +127,120 @@ class AuditService:
         elif reasoning:
             self.__console.print(
                 Panel(f"[italic]{reasoning}[/italic]", title="LLM Reasoning", border_style="yellow")
+            )
+            self.__console.print("")
+
+    def log_exploration_step(
+        self,
+        is_stuck: bool,
+        step_count: int,
+        state: ScreenState,
+        is_new_screen: bool,
+        result: ActionResult,
+        total_duration: float,
+        analysis_duration: float,
+        execution_duration: float,
+        grounding_duration: float,
+        analysis: Optional[AnalysisResult] = None,
+        phase: str = "scan",
+        depth: int = 0,
+    ) -> None:
+        """
+        Prints a detailed audit table for a single exploration step.
+
+        Mirrors :meth:`log_step` but accepts an :class:`AnalysisResult`
+        (from the VLM scan) instead of a :class:`PlanResult`, and includes
+        DFS-specific metadata (phase, depth).
+        """
+
+        audit = Table.grid(padding=(0, 2))
+        audit.add_column(style="dim")
+        audit.add_column(justify="right")
+
+        status_icon = "🆕" if is_new_screen else "🔄"
+        audit.add_row(
+            "Screen Status:",
+            f"{status_icon} {state.visual_hash[:12]} ({state.activity})",
+        )
+
+        phase_icons = {"scan": "🔍", "backtrack": "⬆️", "advance": "➡️"}
+        audit.add_row(
+            "DFS Phase:",
+            f"{phase_icons.get(phase, '❓')} {phase.upper()} (depth={depth})",
+        )
+
+        if is_stuck:
+            audit.add_row("[bold red]Loop Detected:[/bold red]", "YES")
+
+        audit.add_row("Grounding:", self.__format_time(milliseconds=grounding_duration * 1000))
+
+        if analysis and analysis.metrics:
+            metrics = analysis.metrics
+            if "memory_retrieval" in metrics:
+                audit.add_row(
+                    "Memory Retrieval:",
+                    self.__format_time(milliseconds=metrics["memory_retrieval"] * 1000),
+                )
+            if "llm_analysis" in metrics:
+                audit.add_row(
+                    "LLM Core Analysis:",
+                    self.__format_time(milliseconds=metrics["llm_analysis"] * 1000),
+                )
+
+            prompt_t = int(metrics.get("prompt_tokens", 0))
+            completion_t = int(metrics.get("completion_tokens", 0))
+            cached_t = int(metrics.get("cached_tokens", 0))
+            if prompt_t or completion_t:
+                total_t = prompt_t + completion_t
+                token_str = f"{total_t:,} (prompt: {prompt_t:,} | completion: {completion_t:,}"
+                if cached_t:
+                    token_str += f" | cached: {cached_t:,}"
+                token_str += ")"
+                audit.add_row("Tokens:", f"[dim]{token_str}[/dim]")
+
+        audit.add_row("Total Analysis:", self.__format_time(milliseconds=analysis_duration * 1000))
+        audit.add_row("ADB Execution:", self.__format_time(milliseconds=result.duration))
+
+        overhead = (execution_duration * 1000) - result.duration
+        audit.add_row("Overhead:", self.__format_time(milliseconds=overhead))
+
+        audit.add_row(
+            "[bold white]Total Step Time:[/bold white]",
+            f"[bold cyan]{self.__format_time(milliseconds=total_duration * 1000)}[/bold cyan]",
+        )
+
+        if analysis and analysis.metrics and "cache_hits" in analysis.metrics:
+            hits = int(analysis.metrics.get("cache_hits", 0))
+            misses = int(analysis.metrics.get("cache_misses", 0))
+            audit.add_row("Cache:", f"hits: {hits} | misses: {misses}")
+
+        self.__console.print("")
+        self.__console.print(
+            Panel(
+                renderable=audit,
+                border_style="dim",
+                title_align="right",
+                title=f"Explore Step {step_count} Audit",
+            )
+        )
+
+        # Print reasoning and action details
+        if analysis:
+            reasoning = analysis.reasoning
+            action = analysis.action
+            action_panel = Table.grid(padding=(0, 2))
+            action_panel.add_column(style="bold yellow")
+            action_panel.add_column()
+
+            action_panel.add_row("Action:", action.action_type.value)
+            action_panel.add_row("Target:", action.target or "N/A")
+            action_panel.add_row("Rationale:", reasoning)
+
+            if analysis.screen_description:
+                action_panel.add_row("Screen:", analysis.screen_description[:120])
+
+            self.__console.print(
+                Panel(action_panel, title="VLM Reasoning & Action", border_style="yellow")
             )
             self.__console.print("")
 

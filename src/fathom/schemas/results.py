@@ -104,6 +104,9 @@ class ExplorationResult(WorkflowResult):
         default_factory=dict,
         description="Accumulated knowledge graph snapshot (nodes, edges, stats)",
     )
+    metrics: Dict[str, Dict[str, float]] = Field(
+        default_factory=dict, description="Execution metrics (timing, tokens)"
+    )
 
 
 class ActionResult(BaseModel):

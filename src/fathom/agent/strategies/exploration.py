@@ -794,11 +794,15 @@ class ExplorationStrategy(ExecutionStrategy):
             if result is None:
                 continue
             source_hash, edge = result
+            try:
+                _resolved_type = ActionType(edge.action_type)
+            except (ValueError, KeyError):
+                _resolved_type = ActionType.TAP
             action = Action(
                 confidence=1.0,
                 target=edge.action_target or "orphan recovery",
-                action_type=ActionType.TAP,
-                rationale="DFS recovery: navigate to orphaned screen",
+                action_type=_resolved_type,
+                rationale=f"DFS recovery: navigate to orphaned screen via {_resolved_type.value}",
             )
             orphans.append(
                 BFSQueueEntry(

@@ -76,6 +76,7 @@ class UXService:
         Renders a simple thinking block for non-tool actions.
         """
 
+        self.__console.print("")
         self.__console.print(
             Panel(
                 renderable=f"[cyan]Reasoning:[/cyan] {reasoning}\n[yellow]Action:[/yellow] {action}",

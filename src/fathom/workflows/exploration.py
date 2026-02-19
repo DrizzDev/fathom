@@ -161,6 +161,8 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
 
         kg = node_ctx.knowledge_graph
 
+        metrics_report = node_ctx.metrics.to_report_dict()
+
         if cancelled or final_state is None:
             stats = kg.get_stats()
             unique = stats.get("unique_screens", 0)
@@ -175,6 +177,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
                 total_transitions=stats.get("total_transitions", 0),
                 discovered_activities=stats.get("activities", []),
                 knowledge_graph=kg.export_json(),
+                metrics=metrics_report,
             )
 
         step_results = final_state.get("step_results", [])
@@ -186,7 +189,12 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         unexplored = stats.get("unexplored", 0)
         coverage = ((unique - unexplored) / unique * 100) if unique > 0 else 0.0
 
+        completion_reason = final_state.get("completion_reason", "")
+        is_complete = final_state.get("is_complete", False)
+
         return ExplorationResult(
+            success=bool(is_complete and unique > 0),
+            completion_reason=str(completion_reason) if completion_reason else "",
             unique_screens=unique,
             screen_graph=kg.export_json(),
             coverage_percentage=coverage,
@@ -194,6 +202,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
             total_transitions=stats.get("total_transitions", 0),
             discovered_activities=stats.get("activities", []),
             knowledge_graph=kg.export_json(),
+            metrics=metrics_report,
         )
 
     def get_progress(self) -> Dict[str, Any]:
