@@ -10,9 +10,9 @@ from fathom.prompts.templates import (
     CONFIDENCE_RULES,
     COORD_RULES,
     PRECISION_RULES,
+    RESPONSE_DIRECTIVE,
     TOOL_GUIDANCE,
     UI_RULES,
-    build_output_schema,
 )
 
 
@@ -47,7 +47,7 @@ class GeminiPromptBuilder(PromptBuilder):
             self.__get_persona(),
             TOOL_GUIDANCE,
             COMMON_RULES,
-            build_output_schema(mode="default"),
+            RESPONSE_DIRECTIVE,
         ]
         return "\n\n".join([part for part in parts if part.strip()])
 
@@ -98,10 +98,7 @@ class GeminiPromptBuilder(PromptBuilder):
         Core identity.
         """
 
-        return (
-            "You are a Mobile UI expert agent. "
-            "Ground all interactions using normalized coordinates (0-1000)."
-        )
+        return "You are a Mobile UI expert agent."
 
     def __get_contextual_rules(self, intent: str, hints: Optional[Dict[str, Any]]) -> str:
         """
@@ -194,21 +191,14 @@ class GeminiPromptBuilder(PromptBuilder):
 
         recent = history[-8:]
         lines: List[str] = []
-        avoided: List[str] = []
 
         for index, item in enumerate(recent, 1):
             action = str(item.get("action_type", "tap"))
             target = str(item.get("element_text") or item.get("target") or "unknown")
             success = bool(item.get("success", True))
-            lines.append(f"{index}. {target} ({action}) -> {'ok' if success else 'failed'}")
-            if target != "unknown":
-                avoided.append(target)
+            lines.append(f"{index}. {target} ({action}) -> {'ok' if success else 'fail'}")
 
-        block = "INTERACTION HISTORY:\n" + "\n".join(lines)
-        if avoided:
-            block += f"\nAvoid repeats when possible: {', '.join(avoided[:6])}"
-
-        return block
+        return "ACTIONS:\n" + "\n".join(lines)
 
     def build_next_step_prompt(
         self, user_intent: str, interaction_history: Optional[List[Dict[str, Any]]] = None
@@ -278,7 +268,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 "MODE: DISCOVERY (Navigation & Scanning)\n"
                 "Prioritize scrolling and swiping to find elements."
             ),
-            build_output_schema(mode="discovery"),
+            RESPONSE_DIRECTIVE,
         ]
         return "\n\n".join([part for part in parts if part.strip()])
 
@@ -295,7 +285,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 "Use 'validate_state' or 'verify_goal'.\n"
                 "Be extremely strict with evidence."
             ),
-            build_output_schema(mode="verification"),
+            RESPONSE_DIRECTIVE,
         ]
         return "\n\n".join([part for part in parts if part.strip()])
 
@@ -321,5 +311,5 @@ class GeminiPromptBuilder(PromptBuilder):
             "set content_exhausted=true and describe the screen. Do NOT repeat or invent actions.\n"
             "- Prefer elements that navigate to new screens (buttons, tabs, links).\n\n"
             "OUTPUT: ONE execute_ui call (one untried element) or content_exhausted=true if none remain.\n\n"
-            + build_output_schema(mode="exploration")
+            + RESPONSE_DIRECTIVE
         )

@@ -252,34 +252,30 @@ class GeminiVisionTool(VisionTool):
 
         payload: List[Any] = [instructions]
 
-        # 1. State Memory (Specific to this screen hash)
         if knowledge.get("description"):
-            payload.append(f"Screen Info: {knowledge['description']}")
+            payload.append(f"SCREEN: {knowledge['description']}")
 
         if history := knowledge.get("previous_actions", []):
-            payload.append(f"Past actions on this specific screen: {json.dumps(obj=history)}")
+            payload.append(f"TRIED: {json.dumps(obj=history)}")
 
-        # 1b. Navigation Map (Known transitions from this screen)
         if transitions := knowledge.get("transitions", []):
             nav_lines = []
             for t in transitions:
                 desc = t.get("destination_description")
-                if desc:  # Only include transitions with known destinations
+                if desc:
                     target = t.get("action_target") or "unknown"
                     nav_lines.append(f'- {t["action_type"]} "{target}" -> {desc}')
             if nav_lines:
-                payload.append("Known navigation from this screen:\n" + "\n".join(nav_lines))
+                payload.append("NAV:\n" + "\n".join(nav_lines))
 
-        # 2. Dynamic Session Context (Changes every step)
         if context:
-            payload.append(f"Recent turns (global): {context}")
+            payload.append(f"HISTORY: {context}")
 
         if failures:
-            payload.append(f"Failures on this activity: {', '.join(failures)}")
+            payload.append(f"FAILURES: {', '.join(failures)}")
 
-        # 3. Element Manifest (If present)
         if manifest != "N/A":
-            payload.append(f"Element Manifest: {manifest}")
+            payload.append(f"ELEMENTS: {manifest}")
 
         # 4. Image (Most dynamic, must be last)
         optimized = ImageProcessor.optimize_for_vision(image_data=screen)

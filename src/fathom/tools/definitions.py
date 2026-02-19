@@ -36,19 +36,13 @@ class ToolRegistry:
 
         return {
             "name": "execute_ui",
-            "description": (
-                "Execute a UI action on the device (tap, type, scroll, swipe, etc.). "
-                "Use this for ALL physical interactions with the app UI. "
-                "Do NOT use this to signal goal completion — use complete_goal instead. "
-                "Do NOT use this for state validation or screen checks without a UI action — use validate_state instead. "
-                "Do NOT use this for verifying goal completion — use verify_goal or complete_goal instead."
-            ),
+            "description": "Execute a physical UI action on the device.",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
                     "assistant_message": {
                         "type": "STRING",
-                        "description": "A message to the user explaining the reasoning behind this action.",
+                        "description": "Reasoning behind this action.",
                     },
                     "action": {
                         "type": "OBJECT",
@@ -56,7 +50,7 @@ class ToolRegistry:
                         "properties": {
                             "action_type": {
                                 "type": "STRING",
-                                "description": "The type of action to perform.",
+                                "description": "Action type.",
                                 "enum": [
                                     "tap",
                                     "type",
@@ -73,88 +67,73 @@ class ToolRegistry:
                             },
                             "rationale": {
                                 "type": "STRING",
-                                "description": "Why this specific action is being taken.",
+                                "description": "Why this action.",
                             },
                             "target_name": {
                                 "type": "STRING",
-                                "description": "Descriptive name of the element (e.g., 'search bar', 'bathroom cleaning service option').",
+                                "description": "Generic element name (e.g., 'search bar').",
                             },
                             "bbox": {
                                 "type": "OBJECT",
-                                "description": "Bounding box for the action. x,y = TOP-LEFT corner of element. Use normalized (0-1000).",
+                                "description": "Bounding box. See COORDINATES in system prompt.",
                                 "properties": {
                                     "x": {
                                         "type": "INTEGER",
-                                        "description": "Top-left X coordinate of element bounding box (0-1000 normalized).",
+                                        "description": "Top-left X.",
                                     },
                                     "y": {
                                         "type": "INTEGER",
-                                        "description": "Top-left Y coordinate of element bounding box (0-1000 normalized).",
+                                        "description": "Top-left Y.",
                                     },
                                     "width": {
                                         "type": "INTEGER",
-                                        "description": "Width extending rightward from x (0-1000 normalized).",
+                                        "description": "Width from x.",
                                     },
                                     "height": {
                                         "type": "INTEGER",
-                                        "description": "Height extending downward from y (0-1000 normalized).",
-                                    },
-                                    "coord_system": {
-                                        "type": "STRING",
-                                        "enum": ["normalized", "pixel"],
-                                        "description": "Coordinate system used. Defaults to normalized (0-1000).",
+                                        "description": "Height from y.",
                                     },
                                 },
                             },
                             "text_to_type": {
                                 "type": "STRING",
-                                "description": "Text to type (only for 'type' action).",
+                                "description": "Text to type (for 'type' action only).",
                             },
                             "confidence": {
                                 "type": "NUMBER",
-                                "description": "Confidence level (0.0-1.0) for this action.",
+                                "description": "Confidence (0.0-1.0).",
                             },
                             "is_valid": {
                                 "type": "BOOLEAN",
-                                "description": "Self-correction: Is this action valid given the current screen state?",
+                                "description": "Is this action valid for the current screen?",
                             },
                             "validation_reason": {
                                 "type": "STRING",
-                                "description": "Reasoning for the validity judgment.",
+                                "description": "Validity reasoning.",
                             },
                             "target_type": {
                                 "type": "STRING",
-                                "description": (
-                                    "Optional. How this target should be referenced in exported scripts: "
-                                    "'stable' (fixed UI label, e.g. Login, Settings), "
-                                    "'positional' (ordinal in list/carousel, e.g. the first search result), "
-                                    "'dynamic' (content that may change, e.g. the promotional banner). "
-                                    "Leave unset if unsure; the system will classify later."
-                                ),
+                                "description": "Script reference type. See TOOL ROUTING.",
                                 "enum": ["stable", "positional", "dynamic"],
                             },
                             "script_target": {
                                 "type": "STRING",
-                                "description": (
-                                    "Optional. When target_type is 'positional' or 'dynamic', set this to the exact phrase "
-                                    "for script export (e.g. 'the first search result', 'the second card', 'the promotional banner'). "
-                                    "Use natural ordinals. Omit when target_type is 'stable' or when not classifying."
-                                ),
+                                "description": "Ordinal or generic phrase for script export.",
                             },
                         },
                         "required": ["action_type", "rationale", "is_valid"],
                     },
                     "screen_description": {
                         "type": "STRING",
-                        "description": "Goal-relevant screen state in ≤15 words (e.g., 'Settings page with Wi-Fi and Bluetooth toggles visible').",
+                        "description": "Goal-relevant screen state in ≤15 words.",
                     },
                     "content_exhausted": {
                         "type": "BOOLEAN",
-                        "description": "Set to true if you can visually confirm that the scrollable content (carousel, list) has reached its end and no new items will appear on further swiping.",
+                        "description": "True if scrollable content fully exhausted.",
                     },
                     "memory_updates": {
                         "type": "OBJECT",
-                        "description": "Optional key-value pairs to update in persistent memory. Use this to track progress (e.g., 'visited_card1': 'true').",
+                        "description": "Key-value pairs for persistent memory updates.",
                     },
                 },
                 "required": ["assistant_message", "action"],
@@ -172,23 +151,17 @@ class ToolRegistry:
 
         return {
             "name": "complete_goal",
-            "description": (
-                "Signal that the user's goal has been fully achieved. "
-                "Call this ONLY when the current screen state proves the goal is complete. "
-                "Do NOT call this while there are still actions to perform — use execute_ui instead. "
-                "Do NOT call this for intermediate progress checks — use validate_state instead. "
-                "Do NOT call this unless visual evidence of completion is on the CURRENT screen."
-            ),
+            "description": "Signal goal fully achieved. Requires visual evidence on current screen.",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
                     "assistant_message": {
                         "type": "STRING",
-                        "description": "Explanation of why the goal is considered complete.",
+                        "description": "Why the goal is complete.",
                     },
                     "evidence": {
                         "type": "STRING",
-                        "description": "Visual evidence from the current screen proving the goal is complete.",
+                        "description": "Visual evidence from current screen.",
                     },
                 },
                 "required": ["assistant_message", "evidence"],
@@ -203,34 +176,29 @@ class ToolRegistry:
 
         return {
             "name": "validate_state",
-            "description": (
-                "Verify if the screen state matches specific criteria. "
-                "Use this when the intent implies checking, validating, or verifying something. "
-                "Do NOT use this when a UI action (tap, type, scroll) is needed — use execute_ui instead. "
-                "Do NOT use this for final goal completion — use complete_goal to signal done, or verify_goal for a detailed completion check."
-            ),
+            "description": "Check if screen state matches specific criteria without acting.",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
                     "assistant_message": {
                         "type": "STRING",
-                        "description": "Explanation of the verification result.",
+                        "description": "Verification result explanation.",
                     },
                     "condition_to_verify": {
                         "type": "STRING",
-                        "description": "The condition being verified (e.g., 'Settings screen is open').",
+                        "description": "Condition being checked.",
                     },
                     "condition_met": {
                         "type": "BOOLEAN",
-                        "description": "True if the condition is met based on the visual evidence.",
+                        "description": "True if condition is met.",
                     },
                     "evidence": {
                         "type": "STRING",
-                        "description": "Visual evidence supporting the conclusion.",
+                        "description": "Visual evidence.",
                     },
                     "goal_completed": {
                         "type": "BOOLEAN",
-                        "description": "True if the user's high-level goal is fully achieved after this validation.",
+                        "description": "True if high-level goal fully achieved.",
                     },
                 },
                 "required": [
@@ -251,29 +219,25 @@ class ToolRegistry:
 
         return {
             "name": "verify_goal",
-            "description": (
-                "Verify if the user's overall goal has been fully completed by checking the current screen state. "
-                "Do NOT use this for intermediate state checks (e.g., 'is the menu open?') — use validate_state instead. "
-                "Do NOT use this when there are still UI actions to perform — use execute_ui instead."
-            ),
+            "description": "Detailed check if overall goal is fully completed.",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
                     "assistant_message": {
                         "type": "STRING",
-                        "description": "Explanation of the goal completion status.",
+                        "description": "Goal completion status.",
                     },
                     "goal_completed": {
                         "type": "BOOLEAN",
-                        "description": "True if the overall goal is FULLY completed based on screen state.",
+                        "description": "True if goal FULLY completed.",
                     },
                     "current_screen": {
                         "type": "STRING",
-                        "description": "The actual screen currently displayed.",
+                        "description": "Current screen displayed.",
                     },
                     "evidence": {
                         "type": "STRING",
-                        "description": "Visual evidence proving goal completion.",
+                        "description": "Visual evidence of completion.",
                     },
                 },
                 "required": [
@@ -293,41 +257,26 @@ class ToolRegistry:
 
         return {
             "name": "store_memory",
-            "description": (
-                "Store important information, progress, or state in memory to remember it later. "
-                "Use this to track what you've already done (e.g., category='visited', item='carousel_card_1'). "
-                "Do NOT use this for transient observations already visible on screen — only store facts needed across multiple steps. "
-                "Do NOT use this for data that can be re-derived from the current screenshot."
-            ),
+            "description": "Store facts needed across steps. Only for cross-step persistence.",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
                     "category": {
                         "type": "STRING",
-                        "description": (
-                            "The kind of information being stored. "
-                            "Use 'visited' for elements/screens already interacted with, "
-                            "'progress' for step tracking in a flow, "
-                            "'state' for captured app state facts (e.g., toggle on/off, current tab), "
-                            "'data' for extracted values (e.g., price, name, count)."
-                        ),
+                        "description": "visited | progress | state | data.",
                         "enum": ["visited", "progress", "state", "data"],
                     },
                     "item": {
                         "type": "STRING",
-                        "description": (
-                            "Identifier for the specific thing being stored, in snake_case. "
-                            "Examples: 'carousel_card_1', 'checkout_step', 'product_price', 'search_query'. "
-                            "Use the SAME item name when recalling later."
-                        ),
+                        "description": "snake_case identifier (use same key to recall).",
                     },
                     "value": {
                         "type": "STRING",
-                        "description": "The information to store.",
+                        "description": "Information to store.",
                     },
                     "assistant_message": {
                         "type": "STRING",
-                        "description": "Explanation of what is being saved.",
+                        "description": "What is being saved.",
                     },
                 },
                 "required": ["category", "item", "value", "assistant_message"],
@@ -342,36 +291,22 @@ class ToolRegistry:
 
         return {
             "name": "recall_memory",
-            "description": (
-                "Retrieve previously stored information from memory. "
-                "Use this to check your progress or recall specific details. "
-                "You MUST use the exact same category and item values that were used when storing. "
-                "Do NOT use this when the needed information is already visible on screen. "
-                "Do NOT use this for keys you have not previously stored."
-            ),
+            "description": "Retrieve previously stored memory. Use exact same category+item keys.",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
                     "category": {
                         "type": "STRING",
-                        "description": (
-                            "The category used when storing: "
-                            "'visited', 'progress', 'state', or 'data'. "
-                            "Must match the category used in the corresponding store_memory call."
-                        ),
+                        "description": "Must match store_memory category.",
                         "enum": ["visited", "progress", "state", "data"],
                     },
                     "item": {
                         "type": "STRING",
-                        "description": (
-                            "The item identifier used when storing, in snake_case. "
-                            "Examples: 'carousel_card_1', 'checkout_step', 'product_price'. "
-                            "Must match the item used in the corresponding store_memory call."
-                        ),
+                        "description": "Must match store_memory item (snake_case).",
                     },
                     "assistant_message": {
                         "type": "STRING",
-                        "description": "Why this information is being retrieved.",
+                        "description": "Why recalling.",
                     },
                 },
                 "required": ["category", "item", "assistant_message"],
