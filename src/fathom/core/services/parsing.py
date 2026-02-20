@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 from logging import getLogger
-from typing import Any
+from typing import Any, Optional
 
 from fathom.constants import ActionType
 from fathom.core.exceptions import VisionError
@@ -18,7 +19,7 @@ class ToolResponseParser:
 
     # Primary tools produce the AnalysisResult; side-effect tools merge into it.
     __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
-    __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state"}
+    __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state", "ask_user"}
 
     def parse(self, response: GenerateResult) -> AnalysisResult:
         """
@@ -175,7 +176,12 @@ class ToolResponseParser:
 
         # Support variations from different prompt/model versions
         text = data.get("text") or data.get("text_to_type")
-        wait = data.get("wait_duration") or data.get("wait_duration_ms")
+        wait_duration: Optional[float] = data.get("wait_duration")
+
+        if wait_duration is not None:
+            with contextlib.suppress(ValueError, TypeError):
+                wait_duration = float(wait_duration)
+
         validation_reason = (
             str(data.get("validation_reason")) if data.get("validation_reason") else None
         )
@@ -185,12 +191,12 @@ class ToolResponseParser:
             bounds=bounds,
             target=target_name,
             action_type=action_type,
+            wait_duration=wait_duration,
             text=str(text) if text else None,
-            natural_language_target=target_name,
             validation_reason=validation_reason,
+            natural_language_target=target_name,
             rationale=str(data.get("rationale", "")),
             is_valid=bool(data.get("is_valid", True)),
-            wait_duration=int(wait) if wait else None,
             confidence=float(data.get("confidence", 1.0)),
             memory_updates=arguments.get("memory_updates"),
             label_id=str(data.get("label_id")) if data.get("label_id") else None,

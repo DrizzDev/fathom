@@ -112,6 +112,7 @@ class GraphContext:
             llm=llm,
             memory=memory,
             storage=storage,
+            use_cache=configuration.llm.use_cache,
             auditor=self.__auditor,
             session_id=workflow_id,
             package_name=package_name,

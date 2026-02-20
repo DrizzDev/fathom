@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from logging import getLogger
 from typing import Any, Dict, Optional
 
 from fathom.adapters.summarization.llm import LLMSummarizer
@@ -21,6 +22,8 @@ from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
+
+logger = getLogger(__name__)
 
 
 class FathomRunner:
@@ -116,7 +119,7 @@ class FathomRunner:
             package_name = await self.__device.get_current_package()
         except Exception as exception:
             package_name = "unknown_app"
-            self.__telemetry.warning(
+            await self.__telemetry.warning(
                 "Failed to get package name, using fallback", error=str(exception)
             )
 
@@ -125,7 +128,7 @@ class FathomRunner:
         else:
             device_serial = None
 
-        self.__telemetry.info(
+        await self.__telemetry.info(
             "Starting intent workflow",
             intent=intent,
             max_steps=max_steps,
@@ -190,7 +193,7 @@ class FathomRunner:
                 status="completed" if execution_result.success else "failed",
             )
 
-            self.__telemetry.info(
+            await self.__telemetry.info(
                 "Intent workflow completed",
                 duration=duration,
                 success=result.success,
@@ -219,7 +222,7 @@ class FathomRunner:
             package_name = await self.__device.get_current_package()
         except Exception as exception:
             package_name = "unknown_app"
-            self.__telemetry.warning(
+            await self.__telemetry.warning(
                 "Failed to get package name, using fallback", error=str(exception)
             )
 
@@ -228,7 +231,7 @@ class FathomRunner:
         else:
             device_serial = None
 
-        self.__telemetry.info(
+        await self.__telemetry.info(
             "Starting exploration workflow",
             max_steps=max_steps,
             workflow_id=workflow_id,
@@ -280,7 +283,7 @@ class FathomRunner:
             )
 
             # Export graph structure
-            screen_graph = self.__export_graph(graph=graph)
+            screen_graph = await self.__export_graph(graph=graph)
 
             # Build ExplorationResult
             duration = time.time() - start_time
@@ -301,7 +304,7 @@ class FathomRunner:
                 status="completed" if execution_result.success else "failed",
             )
 
-            self.__telemetry.info(
+            await self.__telemetry.info(
                 "Exploration workflow completed",
                 duration=duration,
                 total_actions=result.total_actions,
@@ -319,13 +322,13 @@ class FathomRunner:
         """
 
         if self.__current_strategy:
-            self.__telemetry.warning("Workflow cancellation requested")
+            logger.warning("Workflow cancellation requested")
 
             # Call cancel method on strategy if it has one
             if hasattr(self.__current_strategy, "cancel"):
                 self.__current_strategy.cancel()
             else:
-                self.__telemetry.warning("Strategy does not support cancellation")
+                logger.warning("Strategy does not support cancellation")
 
     async def cleanup(self) -> None:
         """
@@ -335,9 +338,9 @@ class FathomRunner:
         try:
             await self.__llm.cleanup()
         except Exception as exception:
-            self.__telemetry.warning(f"LLM cleanup failed: {exception}")
+            await self.__telemetry.warning(f"LLM cleanup failed: {exception}")
 
-        self.__telemetry.info("Runner cleanup completed")
+        await self.__telemetry.info("Runner cleanup completed")
 
     async def __get_memory_summary(self) -> Dict[str, Any]:
         """
@@ -371,14 +374,14 @@ class FathomRunner:
                 "experience_count": experience_count,
             }
         except Exception as exception:
-            self.__telemetry.warning(f"Failed to get memory summary: {exception}")
+            await self.__telemetry.warning(f"Failed to get memory summary: {exception}")
             return {
                 "screens": [],
                 "total_screens": 0,
                 "experience_count": 0,
             }
 
-    def __export_graph(self, graph: ExplorationGraph) -> Dict[str, Any]:
+    async def __export_graph(self, graph: ExplorationGraph) -> Dict[str, Any]:
         """
         Export exploration graph to dictionary.
         """
@@ -405,5 +408,5 @@ class FathomRunner:
                 "stats": graph.get_stats(),
             }
         except Exception as exception:
-            self.__telemetry.warning(f"Failed to export graph: {exception}")
+            await self.__telemetry.warning(f"Failed to export graph: {exception}")
             return {}

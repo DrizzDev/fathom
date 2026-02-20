@@ -34,6 +34,8 @@ class VisionService:
         llm: LLMPort,
         memory: MemoryPort,
         storage: StoragePort,
+        *,
+        use_cache: bool,
         version: str = "pro",
         session_id: str = "default",
         package_name: str = "unknown_app",
@@ -46,7 +48,9 @@ class VisionService:
         self.__llm = llm
         self.__memory = memory
         self.__storage = storage
+
         self.__version = version
+        self.__use_cache = use_cache
         self.__session_id = session_id
         self.__package_name = package_name
         self.__auditor = auditor or AuditService()
@@ -59,6 +63,8 @@ class VisionService:
         intent: str,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        screen_width: int,
+        screen_height: int,
         *,
         use_xml: bool = False,
         tracking_note: Optional[str] = None,
@@ -79,7 +85,25 @@ class VisionService:
         knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
 
         # Retrieve ALL persistent memory (cross-screen)
-        all_memory = await self.__memory.get_all()
+        all_memory_raw = await self.__memory.get_all()
+
+        # FILTER OUT system state keys (GCC context dumps)
+        # This is a defensive measure to prevent pollution from reaching the prompt
+        all_memory = {
+            key: value
+            for key, value in all_memory_raw.items()
+            if not key.startswith(("context:", "ctx_v3:", "ctx_"))
+        }
+
+        # Log filtered entries for debugging
+        filtered_count = len(all_memory_raw) - len(all_memory)
+        if filtered_count > 0:
+            filtered_keys = [key for key in all_memory_raw if key not in all_memory]
+            logger.info(
+                f"[VISION] Filtered system memory | "
+                f"filtered_count={filtered_count} | "
+                f"filtered_keys={filtered_keys[:5]}"  # Show first 5
+            )
 
         retrieval = time.time() - start
 
@@ -108,7 +132,11 @@ class VisionService:
 
         instruction = self.__builder.build(
             intent=intent,
-            hints={"use_xml": use_xml},
+            hints={
+                "use_xml": use_xml,
+                "screen_width": screen_width,
+                "screen_height": screen_height,
+            },
         )
 
         # Pass ALL persistent memory (not just screen-specific)
@@ -146,6 +174,7 @@ class VisionService:
         response = await self.__llm.generate(
             tools=tools,
             prompt=payload,
+            use_cache=self.__use_cache,
             system_instruction=instruction,
         )
         duration = time.time() - commence
@@ -191,6 +220,8 @@ class VisionService:
     async def check_completion(
         self,
         intent: str,
+        screen_width: int,
+        screen_height: int,
         capture: ScreenCapture,
         context_manager: ContextManager,
         tracking_note: Optional[str] = None,
@@ -202,6 +233,8 @@ class VisionService:
         result = await self.analyze(
             intent=intent,
             capture=capture,
+            screen_width=screen_width,
+            screen_height=screen_height,
             tracking_note=tracking_note,
             context_manager=context_manager,
         )
@@ -260,14 +293,34 @@ class VisionService:
 
             kind = str(info.get("class", "View")).split(".")[-1]
             value = f"[{label}] {kind}"
+
+            # Inject Ground Truth Bounds
+            if bounds_str := str(info.get("bounds", "")):
+                with contextlib.suppress(Exception):
+                    # Parse [x1,y1][x2,y2]
+                    parts = (
+                        bounds_str.replace("][", ",").replace("[", "").replace("]", "").split(",")
+                    )
+                    if len(parts) == 4:
+                        x1, y1, x2, y2 = map(int, parts)
+                        w, h = x2 - x1, y2 - y1
+                        value += f" ({x1},{y1},{w},{h})"
+
             text = str(info.get("text", "")).strip()
             detail = str(info.get("content-desc", "")).strip()
+
+            # if str(info.get("enabled", "true")).lower() == "false":
+            #     value += " [DISABLED]"
+
+            # if str(info.get("clickable", "false")).lower() == "true":
+            #     value += " [CLICKABLE]"
 
             if text:
                 value += f" | text: '{text}'"
 
             if detail:
                 value += f" | description: '{detail}'"
+
             lines.append(value)
 
         return "\n".join(lines) if lines else "No interactive elements found."

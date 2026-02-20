@@ -34,11 +34,24 @@ class CoordinateConverter:
 
     def center_to_pixels(self, bounds: Bounds) -> Tuple[int, int]:
         """
-        Get center point in pixel coordinates.
+        Get center point in pixel coordinates with high precision.
+        Calculates center in normalized space first to avoid rounding errors.
         """
 
-        x, y, width, height = self.to_pixels(bounds=bounds)
-        return x + width // 2, y + height // 2
+        if bounds.system == "pixel" or not bounds.is_normalized:
+            x, y, width, height = bounds.to_pixels(
+                screen_width=self.__width, screen_height=self.__height
+            )
+            return x + width // 2, y + height // 2
+
+        # High-precision calculation for normalized coordinates
+        norm_cx = bounds.x + (bounds.width / 2.0)
+        norm_cy = bounds.y + (bounds.height / 2.0)
+
+        px = int(norm_cx * self.__width / 1000.0)
+        py = int(norm_cy * self.__height / 1000.0)
+
+        return px, py
 
     def swipe_coordinates(
         self,

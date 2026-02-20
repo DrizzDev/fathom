@@ -292,7 +292,7 @@ class WorkflowRequest(BaseModel):
         default_factory=lambda: uuid.uuid4().hex[:8], description="Unique session ID"
     )
 
-    max_steps: int = Field(default=20, description="Step limit")
+    max_steps: int = Field(default=100, description="Step limit")
     use_xml: bool = Field(default=False, description="Enable XML grounding")
 
     interactive: bool = Field(default=False, description="Enable HITL mode")

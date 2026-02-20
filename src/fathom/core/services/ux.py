@@ -28,9 +28,6 @@ class UXService:
         Render the agent's thought process and planned action.
         """
 
-        # Create a layout for side-by-side or stacked view
-        # For simplicity in CLI flow, we use stacked panels
-
         # Reasoning Panel
         reasoning_panel = Panel(
             Text(reasoning, style="italic"),

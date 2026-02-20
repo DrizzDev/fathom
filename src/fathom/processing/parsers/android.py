@@ -220,6 +220,9 @@ class AndroidParser(PlatformParser):
 
         logger.info(f"Screen size: {width}x{height}")
 
+        root_bounds = root.get("bounds")
+        logger.info(f"Root XML bounds: {root_bounds}")
+
         skips = {
             "visibility": 0,
             "off_screen": 0,

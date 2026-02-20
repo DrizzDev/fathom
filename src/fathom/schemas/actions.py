@@ -85,9 +85,7 @@ class Action(BaseModel):
     label_id: Optional[str] = Field(default=None, description="Numeric label ID from XML grounding")
 
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
-    wait_duration: Optional[int] = Field(
-        default=None, description="Duration to wait in milliseconds"
-    )
+    wait_duration: Optional[float] = Field(default=None, description="Duration to wait in seconds")
     memory_updates: Optional[Dict[str, str]] = Field(
         default=None, description="Key-value pairs to store in persistent memory"
     )

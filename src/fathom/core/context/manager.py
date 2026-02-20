@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
@@ -81,7 +80,16 @@ class ContextManager:
     async def __persistence_worker(self) -> None:
         """
         Background worker that drains the persistence queue.
-        Ensures main execution loop is never blocked by I/O.
+
+        NOTE: GCC context persistence to Ledger is DISABLED.
+
+        Rationale:
+        - GCC context is internal system state, not user-actionable memory
+        - Storing it in Ledger causes memory pollution (thousands of tokens)
+        - GCC context is already available in-memory via get_full_context()
+        - If persistence is needed, use separate storage mechanism (not Ledger)
+
+        The queue draining logic is kept for potential future use with separate context storage.
         """
 
         while True:
@@ -89,6 +97,16 @@ class ContextManager:
                 # Wait for next state snapshot
                 state_data = await self.__persist_queue.get()
 
+                # GCC context is NOT persisted to Ledger
+                # Ledger is reserved for user-actionable memory only
+                # If you need GCC persistence, implement separate context storage
+
+                logger.debug(
+                    f"[ContextManager] Skipping GCC persistence to Ledger | "
+                    f"workflow_id={self.__workflow_id} | "
+                    f"state_keys={list(state_data.keys())}"
+                )
+                """
                 # Perform CPU-bound serialization in thread
                 json_data = await asyncio.to_thread(json.dumps, state_data)
 
@@ -97,6 +115,8 @@ class ContextManager:
                     key=f"context:v3:{self.__workflow_id}",
                     value=json_data,
                 )
+                """
+
                 self.__persist_queue.task_done()
 
             except asyncio.CancelledError:
@@ -107,8 +127,25 @@ class ContextManager:
     async def hydrate(self) -> None:
         """
         Restores the entire context hierarchy from the distributed store.
+
+        NOTE: GCC context hydration from Ledger is DISABLED.
+
+        Rationale:
+        - GCC context is NOT stored in Ledger (see __persistence_worker)
+        - Each session starts with fresh GCC context
+        - If persistence is needed, implement separate context storage
         """
 
+        # GCC context is NOT loaded from Ledger
+        # Each session starts fresh, If GCC persistence is required, implement separate context storage
+
+        logger.info(
+            f"[ContextManager] Starting fresh session | "
+            f"workflow_id={self.__workflow_id} | "
+            f"gcc_persistence=disabled"
+        )
+
+        """
         try:
             if state_raw := await self.__memory.get(key=f"context:v3:{self.__workflow_id}"):
                 data = await asyncio.to_thread(json.loads, state_raw)
@@ -122,6 +159,7 @@ class ContextManager:
             logger.info(f"Context: Hydrated session {self.__workflow_id}")
         except Exception as exception:
             logger.error(f"Context: Hydration failure: {exception}")
+        """
 
     async def __enqueue_persist(self) -> None:
         """

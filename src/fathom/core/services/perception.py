@@ -43,7 +43,7 @@ class PerceptionService:
         try:
             activity = await self.__device.get_current_package()
         except Exception as exception:
-            self.__telemetry.warning("Failed to get current package", error=str(exception))
+            await self.__telemetry.warning("Failed to get current package", error=str(exception))
             activity = "unknown"
 
         # Store screenshot artifact

@@ -46,8 +46,8 @@ class IntentStrategy:
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
         *,
-        max_steps: int,
         use_xml: bool,
+        max_steps: int,
         workflow_id: str,
         package_name: str,
         realignment: Optional[RealignmentPolicy] = None,
@@ -81,7 +81,7 @@ class IntentStrategy:
         # Autonomous mode doesn't need checkpointing
 
         interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE.value]
-        checkpointer = None if isinstance(signal, NoopSignal) else MemorySaver()
+        checkpointer = MemorySaver()
 
         self.__graph = builder.build(
             checkpointer=checkpointer,

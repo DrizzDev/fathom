@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from logging import getLogger
 import time
+from logging import getLogger
 from pathlib import Path  # noqa: TC003
 from typing import Any, Dict, Optional
 
@@ -46,6 +46,11 @@ class Ledger(ILedger):
     async def set(self, key: str, value: str) -> None:
         """
         Stores a ledger entry.
+
+        NOTE: System state keys are REJECTED to prevent memory pollution.
+
+        Ledger is reserved for user-actionable memory only.
+        System state (GCC context, internal state) should use separate storage.
         """
 
         if not key or not isinstance(key, str):
@@ -55,6 +60,20 @@ class Ledger(ILedger):
         if not isinstance(value, str):
             logger.error(f"[LEDGER] Invalid value type for key={key}: {type(value)}")
             raise ValueError(f"Value must be a string, got: {type(value)}")
+
+        # DEFENSIVE: Reject system state keys to prevent pollution
+        SYSTEM_KEY_PREFIXES = ("context:", "ctx_v3:", "ctx_")
+        if key.startswith(SYSTEM_KEY_PREFIXES):
+            logger.warning(
+                f"[LEDGER] REJECTED system key | "
+                f"key={key} | "
+                f"reason=Ledger is for user-actionable memory only"
+            )
+            raise ValueError(
+                f"System keys are not allowed in Ledger. "
+                f"Key '{key}' starts with forbidden prefix: {SYSTEM_KEY_PREFIXES}. "
+                f"Use separate storage for system state."
+            )
 
         await self.__initialize()
 

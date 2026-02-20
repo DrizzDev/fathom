@@ -94,6 +94,7 @@ class FathomCLI:
             device_configuration = DeviceConfiguration(type="LOCAL", serial_number=serial)
 
             llm_configuration = LLMConfiguration(
+                use_cache=getattr(self.__settings, "use_cache", True),
                 model=self.__settings.gemini_model,
                 api_key=self.__settings.gemini_api_key,
                 location=self.__settings.vertex_location,
@@ -270,6 +271,7 @@ class FathomCLI:
             path_manager = SharedPathManager(settings=self.__settings)
 
             llm_configuration = LLMConfiguration(
+                use_cache=getattr(self.__settings, "use_cache", True),
                 model=self.__settings.gemini_model,
                 api_key=self.__settings.gemini_api_key,
                 location=self.__settings.vertex_location,

@@ -43,6 +43,7 @@ class ActionType(StrEnum):
 
     INFER = "infer"
     UNKNOWN = "unknown"
+    ASK_USER = "ask_user"
 
 
 class FlowType(StrEnum):

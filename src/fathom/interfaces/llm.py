@@ -27,6 +27,7 @@ class LLMPort(ABC):
     async def generate(
         self,
         *,
+        use_cache: bool,
         prompt: Sequence[PromptPart],
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,

@@ -39,7 +39,7 @@ class GeminiLLM(LLMPort):
         if configuration:
             self.__configuration = configuration
         else:
-            self.__configuration = LLMConfiguration(api_key=api_key, model=model)
+            self.__configuration = LLMConfiguration(api_key=api_key, model=model, use_cache=True)
 
         self.__client: Optional[Any] = None
         self.__credentials: Optional[Any] = None
@@ -110,9 +110,10 @@ class GeminiLLM(LLMPort):
     async def generate(
         self,
         *,
+        prompt: Sequence[Union[str, bytes, Dict[str, str]]],
+        use_cache: bool,
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
-        prompt: Sequence[Union[str, bytes, Dict[str, str]]],
     ) -> GenerateResult:
         """
         Main handler for LLM interaction.
@@ -122,7 +123,7 @@ class GeminiLLM(LLMPort):
             raise VisionError("Client not ready")
 
         cache_name = None
-        if self.__cache and system_instruction:
+        if use_cache and self.__cache and system_instruction:
             cache_name = await self.__cache.get_cached_content(
                 system_instruction=system_instruction,
                 tools=tools.get("function_declarations") if tools else None,

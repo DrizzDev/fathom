@@ -36,6 +36,7 @@ class LLMConfiguration(BaseModel):
     storage_bucket: Optional[str] = Field(
         default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"
     )
+    use_cache: bool = Field(default=True, description="Whether to use context caching for the LLM")
 
     # Extension hook for arbitrary provider settings
     parameters: Dict[str, Any] = Field(
@@ -84,7 +85,7 @@ class ExplorationConfiguration(BaseModel):
     Configuration for application exploration strategy.
     """
 
-    max_steps: int = Field(default=50, description="Maximum exploration depth")
+    max_steps: int = Field(default=100, description="Maximum exploration depth")
     timeout: int = Field(default=300, description="Global timeout for the run")
     random_seed: Optional[int] = Field(
         default=None, description="Seed for deterministic exploration"
@@ -119,6 +120,10 @@ class IntentConfiguration(BaseModel):
 
     max_steps: int = Field(default=100, description="Step limit for goal achievement")
     use_xml_grounding: bool = Field(default=False, description="Enable structured XML analysis")
+    prompt_user_if_stuck: bool = Field(
+        default=True,
+        description="If True and in interactive mode, prompt the user for help when the agent detects a loop.",
+    )
 
 
 class ExecutionConfiguration(BaseModel):
@@ -132,6 +137,26 @@ class ExecutionConfiguration(BaseModel):
     )
 
 
+class TelemetryConfiguration(BaseModel):
+    """
+    Configuration for telemetry and logging adapters.
+    """
+
+    type: Literal["STRUCTLOG", "REDIS"] = Field(
+        default="STRUCTLOG", description="Telemetry adapter type"
+    )
+    connection_string: Optional[str] = Field(
+        default=None, description="Connection URL for streaming logs"
+    )
+    topic: Optional[str] = Field(
+        default=None,
+        description="Topic or channel pattern (e.g., enricher:commands:v1:logs:{session_id})",
+    )
+    session_id: Optional[str] = Field(
+        default=None, description="Session ID for channel interpolation"
+    )
+
+
 class FathomConfiguration(BaseModel):
     """
     Root configuration container for the Fathom runtime.
@@ -141,6 +166,7 @@ class FathomConfiguration(BaseModel):
     llm: LLMConfiguration = Field(default_factory=LLMConfiguration)
     device: DeviceConfiguration = Field(default_factory=DeviceConfiguration)
     engine: ExecutionConfiguration = Field(default_factory=ExecutionConfiguration)
+    telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
 
     intent: IntentConfiguration = Field(default_factory=IntentConfiguration)
     exploration: ExplorationConfiguration = Field(default_factory=ExplorationConfiguration)

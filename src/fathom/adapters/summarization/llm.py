@@ -136,6 +136,7 @@ class LLMSummarizer(SummarizationPort):
         try:
             result = await self.__llm.generate(
                 prompt=prompt,
+                use_cache=False,
                 tools=tool_definition,
                 system_instruction=SUMMARIZATION_SYSTEM,
             )

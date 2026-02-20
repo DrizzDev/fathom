@@ -10,6 +10,7 @@ from fathom.constants import ActionType
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
+from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.strategies.graph.context import GraphContext
@@ -52,7 +53,7 @@ class ExplorationNodeProvider:
                 activity = await self.__context.device.get_current_package()
             except Exception as exception:
                 activity = "unknown"
-                self.__context.telemetry.warning(
+                await self.__context.telemetry.warning(
                     "Failed to get current package", error=str(exception)
                 )
 
@@ -122,27 +123,32 @@ class ExplorationNodeProvider:
             return result
 
         start = time.time()
+        width, height = await self.__context.device.get_dimensions()
 
         analysis = await self.__context.vision.analyze(
-            intent="Explore this app. Find a unique interactive element.",
             capture=capture,
-            context_manager=self.__context.context_manager,
             tracking_note=None,
+            screen_width=width,
+            screen_height=height,
+            context_manager=self.__context.context_manager,
+            intent="Explore this app. Find a unique interactive element.",
         )
 
-        exhausted = False
         if (
             analysis.is_goal_complete
             or not analysis.action
             or analysis.action.action_type == ActionType.COMPLETE
         ):
             exhausted = True
+        else:
+            exhausted = False
 
         result = ExplorationGraphState(**state)
-        result[EKey.ACTION] = analysis.action if not exhausted else None
         result[CKey.ANALYSIS] = analysis
         result[EKey.CONTENT_EXHAUSTED] = exhausted
         result[CKey.ANALYSIS_DURATION] = time.time() - start
+        result[EKey.ACTION] = analysis.action if not exhausted else None
+
         return result
 
     async def execute(self, state: ExplorationGraphState) -> ExplorationGraphState:
@@ -166,14 +172,16 @@ class ExplorationNodeProvider:
         # Step construction for ActionExecutor
         step = Step(
             action=action,
-            step_number=self.__context.agent_state.step_count,
             screen_hash="0",
+            step_number=self.__context.agent_state.step_count,
         )
 
-        package_name = "unknown"
         screen_state = state.get_screen_state()
+
         if screen_state and screen_state.activity:
             package_name = screen_state.activity
+        else:
+            package_name = "unknown"
 
         # Delegate to ActionExecutor for consistent retries and tracing
         execution_result = await self.__context.action_executor.act(
@@ -190,16 +198,17 @@ class ExplorationNodeProvider:
 
         step_result = StepResult(
             step=step,
-            success=execution_result.success,
-            duration=int(duration * 1000),
-            screen_changed=True,
-            pre_hash=screen_state.visual_hash if screen_state else "0",
             post_hash="0",
+            screen_changed=True,
+            duration=int(duration * 1000),
+            success=execution_result.success,
+            pre_hash=screen_state.visual_hash if screen_state else "0",
         )
 
         result = ExplorationGraphState(**state)
         result[CKey.STEP_RESULT] = step_result
         result[CKey.EXECUTION_DURATION] = duration
+
         return result
 
     async def record(self, state: ExplorationGraphState) -> ExplorationGraphState:
@@ -222,8 +231,8 @@ class ExplorationNodeProvider:
 
         if step_result.success and step_result.pre_hash and step_result.step.action:
             self.__context.exploration_graph.record_transition(
-                origin=step_result.pre_hash,
                 destination="0",
+                origin=step_result.pre_hash,
                 action=step_result.step.action.to_description(),
             )
 
@@ -260,9 +269,6 @@ class ExplorationNodeProvider:
         # Pop the next action to execute
         action_dict = pending_nav[0]
         remaining_nav = pending_nav[1:]
-
-        # Reconstruct Action from dict
-        from fathom.schemas.actions import Action
 
         action = Action(**action_dict)
 

@@ -32,7 +32,7 @@ class GeminiPromptBuilder(PromptBuilder):
         conditional_notes = self.__get_conditional_notes(intent=intent, hints=hints)
 
         parts = [
-            self.__get_persona(),
+            self.__get_persona(hints=hints),
             TOOL_GUIDANCE,
             COMMON_RULES,
             contextual_rules,
@@ -41,6 +41,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 "OUTPUT REQUIREMENTS:\n"
                 f"- {COORD_RULES}\n"
                 f"- {CONFIDENCE_RULES}\n"
+                "- REQUIRED: You MUST include 'label_id' from manifest for every interaction.\n"
                 "- Return tool call(s) only, with schema-valid fields.\n"
                 f"\nGOAL: {intent}\nExecute next best step via tool."
             ),
@@ -62,10 +63,6 @@ class GeminiPromptBuilder(PromptBuilder):
         tracking_note: Optional[str] = kwargs.get("tracking_note")
 
         parts = []
-
-        # 0. Interaction Cadence (Deterministic Repetition Tracking)
-        if tracking_note:
-            parts.append(f"<CADENCE_NOTE>\n{tracking_note}\n</CADENCE_NOTE>")
 
         # 1. Memory Ledger (Factual Memory - PERSISTENT ACROSS SCREENS)
         if ledger := self.__get_ledger_segment(memory=memory):
@@ -92,7 +89,6 @@ class GeminiPromptBuilder(PromptBuilder):
             parts.append(f"<CURRENT_TRACE>\n{interaction_context}\n</CURRENT_TRACE>")
 
         # 4. Priority Guidance (HITL) - The "System Override"
-        # Placed LAST to ensure maximum recency bias and adherence
         if guidance := context.get("guidance", []):
             instructions = [f"- {item}" for item in guidance]
             parts.append(
@@ -107,12 +103,24 @@ class GeminiPromptBuilder(PromptBuilder):
                 "</SYSTEM_OVERRIDE>"
             )
 
+        # 5. Interaction Cadence (Deterministic Repetition Tracking)
+        # Placed LAST to ensure maximum recency bias and adherence when stuck
+        if tracking_note:
+            parts.append(f"<SYSTEM_ALERT>\nCRITICAL: {tracking_note}\n</SYSTEM_ALERT>")
+
         return "\n\n".join(parts)
 
-    def __get_persona(self) -> str:
+    def __get_persona(self, hints: Optional[Dict[str, Any]] = None) -> str:
         """
-        Core identity.
+        Core identity with screen resolution awareness.
         """
+
+        if hints and (w := hints.get("screen_width")) and (h := hints.get("screen_height")):
+            return (
+                f"You are a Mobile UI expert agent. Screen Resolution: {w}x{h}.\n"
+                "COORDINATE MODE: PIXEL. Use raw pixel values in 'bbox' and set coord_system='pixel'. "
+                "Do NOT normalize. Map visual elements directly to their x/y pixel locations."
+            )
 
         return (
             "You are a Mobile UI expert agent. "
@@ -155,6 +163,9 @@ class GeminiPromptBuilder(PromptBuilder):
             notes.append("- SEARCH FLOW: If suggestions are visible, type then tap suggestion.")
 
         notes.append("- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly.")
+        # notes.append(
+        #     "- DISABLED ELEMENTS: Do NOT interact with elements marked as '[DISABLED]' in the manifest."
+        # )
 
         return "NOTES:\n" + "\n".join(notes)
 
@@ -166,7 +177,17 @@ class GeminiPromptBuilder(PromptBuilder):
         if not memory:
             return ""
 
-        items = [f"{key}:{value}" for key, value in memory.items()]
+        # Filter out internal system keys to prevent context explosion
+        # KEEP: user_guidance, task state, user preferences
+        items = [
+            f"{key}:{value}"
+            for key, value in memory.items()
+            if not key.startswith(("context:", "ctx_v3:", "ctx_"))
+        ]
+
+        if not items:
+            return ""
+
         return f"[{', '.join(items)}]"
 
     def __format_trace(self, trace: List[Dict[str, Any]]) -> str:

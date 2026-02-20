@@ -21,6 +21,7 @@ class ToolRegistry:
                 cls.__verify_goal(),
                 cls.__store_memory(),
                 cls.__recall_memory(),
+                cls.__ask_user(),
             ]
         }
 
@@ -71,6 +72,10 @@ class ToolRegistry:
                                     "type": "STRING",
                                     "description": "Descriptive name of the element (e.g., 'search bar', 'bathroom cleaning service option').",
                                 },
+                                "label_id": {
+                                    "type": "STRING",
+                                    "description": "The ID of the element from the manifest (e.g. '4'). REQUIRED if the element is in the manifest.",
+                                },
                                 "bbox": {
                                     "type": "OBJECT",
                                     "description": "Bounding box for the action (tap target). Use normalized coordinates (0-1000) whenever possible.",
@@ -89,6 +94,10 @@ class ToolRegistry:
                                 "text_to_type": {
                                     "type": "STRING",
                                     "description": "Text to type (only for 'type' action).",
+                                },
+                                "wait_duration": {
+                                    "type": "NUMBER",
+                                    "description": "Duration to wait in seconds (e.g. 2.0, 5.0). Use this for 'wait' actions to specify how long to pause.",
                                 },
                                 "confidence": {
                                     "type": "NUMBER",
@@ -246,5 +255,30 @@ class ToolRegistry:
                     },
                 },
                 "required": ["key", "assistant_message"],
+            },
+        }
+
+    @staticmethod
+    def __ask_user() -> Dict[str, Any]:
+        """
+        Definition for ask_user tool.
+        """
+
+        return {
+            "name": "ask_user",
+            "description": "Ask the human user for clarification, guidance, or assistance when stuck or uncertain. Use this ONLY in interactive mode.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "question": {
+                        "type": "STRING",
+                        "description": "The specific question or request for the user.",
+                    },
+                    "context": {
+                        "type": "STRING",
+                        "description": "Context explaining what you were trying to do and why you need help.",
+                    },
+                },
+                "required": ["question"],
             },
         }

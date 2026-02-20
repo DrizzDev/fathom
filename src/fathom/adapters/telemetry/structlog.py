@@ -19,28 +19,28 @@ class StructlogAdapter(TelemetryPort):
 
         self.__logger = getLogger(name=logger_name)
 
-    def debug(self, message: str, **context: Any) -> None:
+    async def debug(self, message: str, **context: Any) -> None:
         """
         Log debug message with context.
         """
 
         self.__logger.debug(message, extra=context)
 
-    def info(self, message: str, **context: Any) -> None:
+    async def info(self, message: str, **context: Any) -> None:
         """
         Log info message with context.
         """
 
         self.__logger.info(message, extra=context)
 
-    def warning(self, message: str, **context: Any) -> None:
+    async def warning(self, message: str, **context: Any) -> None:
         """
         Log warning message with context.
         """
 
         self.__logger.warning(message, extra=context)
 
-    def error(self, message: str, **context: Any) -> None:
+    async def error(self, message: str, **context: Any) -> None:
         """
         Log error message with context.
         """

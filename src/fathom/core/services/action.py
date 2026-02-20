@@ -80,7 +80,7 @@ class ActionExecutor:
                 last_error = str(exception)
 
                 if attempt < self.__max_retries:
-                    self.__telemetry.warning(
+                    await self.__telemetry.warning(
                         "Device operation failed, retrying",
                         attempt=attempt + 1,
                         error=str(exception),
@@ -115,8 +115,7 @@ class ActionExecutor:
 
         # Handle non-interactive actions immediately
         if action.action_type == ActionType.WAIT:
-            delay = (action.wait_duration or 1000) / 1000.0
-            await asyncio.sleep(delay=delay)
+            await asyncio.sleep(delay=float(action.wait_duration or 1.0))
             return (
                 ExecutionResult(success=True, duration=int((time.time() - start_time) * 1000)),
                 None,
@@ -331,7 +330,8 @@ class ActionExecutor:
                     label=label_description,
                 )
             except Exception as exception:
-                self.__telemetry.warning(f"Tracing failed: {exception}")
+                # Use standard logger in background thread
+                logger.exception(f"Tracing failed: {exception}", stack_info=True)
 
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -358,4 +358,4 @@ class ActionExecutor:
             self.__background_tasks.add(task)
             task.add_done_callback(self.__background_tasks.discard)
         except Exception as exception:
-            self.__telemetry.warning(f"Failed to schedule tracing: {exception}")
+            logger.exception(f"Failed to schedule tracing: {exception}", stack_info=True)

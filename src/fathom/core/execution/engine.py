@@ -129,13 +129,13 @@ class ExecutionEngine:
                 screen_changed=screen_changed,
             )
 
-            self.__checkpoint(step_result=step_result)
+            await self.__checkpoint(step_result=step_result)
 
             return step_result
 
         except (ToolError, PortError) as exception:
             duration = int((time.time() - start_time) * 1000)
-            self.__telemetry.error(
+            await self.__telemetry.error(
                 "Step execution failed",
                 step_number=step.step_number,
                 error=str(exception),
@@ -152,7 +152,7 @@ class ExecutionEngine:
             )
         except Exception as exception:
             duration = int((time.time() - start_time) * 1000)
-            self.__telemetry.error(
+            await self.__telemetry.error(
                 "Unexpected error in step execution",
                 step_number=step.step_number,
                 error=str(exception),
@@ -167,24 +167,24 @@ class ExecutionEngine:
         signal = await self.__signal.check_signal()
 
         if signal == SignalType.PAUSE.value:
-            self.__telemetry.info("Execution paused by signal")
+            await self.__telemetry.info("Execution paused by signal")
 
             await self.__signal.wait_for_resume()
-            self.__telemetry.info("Execution resumed")
+            await self.__telemetry.info("Execution resumed")
 
             if hasattr(self.__signal, "get_injected_context") and (
                 injected := self.__signal.get_injected_context()
             ):
-                self.__telemetry.info("Context injected by user", context=injected)
+                await self.__telemetry.info("Context injected by user", context=injected)
                 return injected
 
         elif signal == SignalType.INJECT.value:
-            self.__telemetry.info("Injection signal received")
+            await self.__telemetry.info("Injection signal received")
 
             if hasattr(self.__signal, "get_injected_context") and (
                 injected := self.__signal.get_injected_context()
             ):
-                self.__telemetry.info("Context injected", context=injected)
+                await self.__telemetry.info("Context injected", context=injected)
                 return injected
 
         return None
@@ -201,17 +201,17 @@ class ExecutionEngine:
                 visual_hash=visual_hash,
             )
         except PortError as exception:
-            self.__telemetry.warning(
+            await self.__telemetry.warning(
                 "Failed to store experience",
                 error=str(exception),
             )
 
-    def __checkpoint(self, step_result: StepResult) -> None:
+    async def __checkpoint(self, step_result: StepResult) -> None:
         """
         Phase 6: Log execution state.
         """
 
-        self.__telemetry.info(
+        await self.__telemetry.info(
             "Step completed",
             success=step_result.success,
             duration_ms=step_result.duration,

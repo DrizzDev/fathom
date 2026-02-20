@@ -99,6 +99,13 @@ class AgentState:
 
         return self.__loop_detector.is_stuck()
 
+    def reset_stuck_state(self) -> None:
+        """
+        Clear the stuck loop state after human intervention.
+        """
+
+        self.__loop_detector.reset()
+
     @property
     def can_continue(self) -> bool:
         """

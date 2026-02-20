@@ -7,6 +7,7 @@ import logging
 import time
 from typing import Any, Callable, Dict, Optional
 
+from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
@@ -59,7 +60,7 @@ class IntentNodeProvider:
             screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
 
             if not screenshot_bytes or len(screenshot_bytes) == 0:
-                self.__context.telemetry.error("Ground: Empty screenshot captured")
+                await self.__context.telemetry.error("Ground: Empty screenshot captured")
                 logger.error("[NODE: GROUND] Empty screenshot captured")
                 return {
                     CommonStateKey.CAPTURE: None,
@@ -71,7 +72,7 @@ class IntentNodeProvider:
 
             # Validate dimensions
             if width <= 0 or height <= 0:
-                self.__context.telemetry.error(f"Ground: Invalid dimensions {width}x{height}")
+                await self.__context.telemetry.error(f"Ground: Invalid dimensions {width}x{height}")
                 logger.error(f"[NODE: GROUND] Invalid dimensions {width}x{height}")
                 return {
                     CommonStateKey.CAPTURE: None,
@@ -83,7 +84,7 @@ class IntentNodeProvider:
             try:
                 activity = await self.__context.device.get_current_package()
             except Exception as exception:
-                self.__context.telemetry.warning(
+                await self.__context.telemetry.warning(
                     f"Ground: Failed to get current package: {exception}"
                 )
                 activity = "unknown"
@@ -177,7 +178,7 @@ class IntentNodeProvider:
             }
 
         except Exception as exception:
-            self.__context.telemetry.error(f"Grounding failed: {exception}")
+            await self.__context.telemetry.error(f"Grounding failed: {exception}")
             logger.exception(f"[NODE: GROUND] Grounding failed: {exception}")
             return {
                 CommonStateKey.CAPTURE: None,
@@ -189,6 +190,7 @@ class IntentNodeProvider:
         """
         Plan the next step using the Agent Planner.
         """
+
         logger.info("=" * 80)
         logger.info("[NODE: ANALYZE] Starting analysis node")
 
@@ -198,6 +200,7 @@ class IntentNodeProvider:
 
         # Use type guard to satisfy MyPy
         screen_capture = state.get(CommonStateKey.CAPTURE)
+
         if not screen_capture or not isinstance(screen_capture, ScreenCapture):
             logger.error("[NODE: ANALYZE] No valid screen capture found, setting should_retry=True")
             return {IntentStateKey.SHOULD_RETRY: True}
@@ -205,8 +208,8 @@ class IntentNodeProvider:
         capture: ScreenCapture = screen_capture
 
         # Check injected context
-        state_injected = state.get(IntentStateKey.INJECTED_CONTEXT)
         current_step = self.__context.agent_state.step_count
+        state_injected = state.get(IntentStateKey.INJECTED_CONTEXT)
 
         guidance_snapshot = self.__context.context_manager.get_user_guidance()
         logger.debug(
@@ -216,19 +219,30 @@ class IntentNodeProvider:
         )
 
         start_time = time.time()
-
         raw_elements = state.get(IntentStateKey.ELEMENTS)
+
         elements: Optional[Dict[str, Any]] = None
         if isinstance(raw_elements, dict):
             elements = raw_elements
 
+        # Get Device Dimensions for Accurate Normalization (Strict)
+        width, height = await self.__context.device.get_dimensions()
+
+        # Determine interactive mode & config
+        is_interactive = not isinstance(self.__context.signal, NoopSignal)
+        prompt_if_stuck = self.__context.configuration.intent.prompt_user_if_stuck
+
         logger.info(f"[NODE: ANALYZE] Calling planner for step {current_step + 1}")
         plan = await self.__context.planner.plan_step(
-            state=self.__context.agent_state,
-            reasoner=self.__context.reasoner,
-            use_xml=self.__context.use_xml,
             capture=capture,
             elements=elements,
+            screen_width=width,
+            screen_height=height,
+            use_xml=self.__context.use_xml,
+            interactive_mode=is_interactive,
+            prompt_if_stuck=prompt_if_stuck,
+            state=self.__context.agent_state,
+            reasoner=self.__context.reasoner,
             context_manager=self.__context.context_manager,
         )
 
@@ -238,8 +252,8 @@ class IntentNodeProvider:
         if plan.metrics:
             self.__context.metrics.record_tokens(
                 prompt=int(plan.metrics.get("prompt_tokens", 0)),
-                completion=int(plan.metrics.get("completion_tokens", 0)),
                 cached=int(plan.metrics.get("cached_tokens", 0)),
+                completion=int(plan.metrics.get("completion_tokens", 0)),
             )
 
         # Log plan details
@@ -249,6 +263,13 @@ class IntentNodeProvider:
                 f"confidence={plan.step.action.confidence:.2f}, "
                 f"target={plan.step.action.target}"
             )
+
+            # Emit structured telemetry for streaming UI
+            await self.__context.telemetry.info(plan.reason or "No reasoning", type="REASONING")
+            await self.__context.telemetry.info(
+                plan.step.action.to_description(), type="PLANNED_ACTION"
+            )
+
             self.__context.ux.render_fallback(
                 reasoning=plan.reason or "No reasoning",
                 action=plan.step.action.to_description(),
@@ -297,6 +318,7 @@ class IntentNodeProvider:
         """
         Execute the planned action via ActionExecutor.
         """
+
         logger.info("=" * 80)
         logger.info("[NODE: EXECUTE] Starting execution node")
 
@@ -305,8 +327,8 @@ class IntentNodeProvider:
             return {CommonStateKey.IS_COMPLETE: True}
 
         # Type guards for planned_step and capture
-        current_step = state.get(IntentStateKey.PLANNED_STEP)
         screen_capture = state.get(CommonStateKey.CAPTURE)
+        current_step = state.get(IntentStateKey.PLANNED_STEP)
 
         if not isinstance(current_step, Step) or not isinstance(screen_capture, ScreenCapture):
             logger.error(
@@ -318,6 +340,13 @@ class IntentNodeProvider:
         step: Step = current_step
         capture: ScreenCapture = screen_capture
 
+        # Retrieve elements for Ground Truth resolution
+        raw_elements = state.get(IntentStateKey.ELEMENTS)
+
+        elements: Optional[Dict[str, Any]] = None
+        if isinstance(raw_elements, dict):
+            elements = raw_elements
+
         logger.info(
             f"[NODE: EXECUTE] Executing action: type={step.action.action_type.value}, "
             f"target={step.action.target}, confidence={step.action.confidence:.2f}"
@@ -325,15 +354,19 @@ class IntentNodeProvider:
 
         start_time = time.time()
 
-        # Resolve References
-        resolved_action = await self.__context.resolution.resolve(action=step.action)
+        # Resolve References & Snap to Label
+        resolved_action = await self.__context.resolution.resolve(
+            action=step.action, elements=elements
+        )
         step = step.model_copy(update={"action": resolved_action})
 
         # Determine package name from state for tracing
-        package_name = "unknown"
         current_screen = state.get(CommonStateKey.SCREEN_STATE)
+
         if isinstance(current_screen, ScreenState) and current_screen.activity:
             package_name = current_screen.activity
+        else:
+            package_name = "unknown"
 
         # Process memory updates (Side-effects from tool calls)
         if step.action.memory_updates:
@@ -341,14 +374,35 @@ class IntentNodeProvider:
             for key, value in step.action.memory_updates.items():
                 await self.__context.memory.set(key=key, value=str(value))
 
-        # Delegate to ActionExecutor
-        logger.info(f"[NODE: EXECUTE] Calling action executor for {step.action.action_type.value}")
-        execution_result = await self.__context.action_executor.act(
-            step=step,
-            pre_capture=capture,
-            package_name=package_name,
-            session_id=self.__context.workflow_id,
-        )
+        if step.action.action_type == ActionType.ASK_USER:
+            logger.info("[NODE: EXECUTE] Intercepting ASK_USER action for native HITL")
+            question = step.action.text or "I need human assistance to proceed."
+            user_response = await self.__context.signal.ask(prompt=question)
+
+            # Inject guidance to context manager
+            await self.__context.context_manager.inject_user_guidance(
+                guidance=user_response, step=self.__context.agent_state.step_count
+            )
+
+            # Clear stuck state so execution can resume with new guidance
+            self.__context.agent_state.reset_stuck_state()
+
+            from fathom.schemas.results import ExecutionResult
+
+            execution_result = ExecutionResult(
+                success=True, duration=int((time.time() - start_time) * 1000)
+            )
+        else:
+            # Delegate to ActionExecutor
+            logger.info(
+                f"[NODE: EXECUTE] Calling action executor for {step.action.action_type.value}"
+            )
+            execution_result = await self.__context.action_executor.act(
+                step=step,
+                pre_capture=capture,
+                package_name=package_name,
+                session_id=self.__context.workflow_id,
+            )
 
         logger.info(
             f"[NODE: EXECUTE] Action executed: success={execution_result.success}, "
@@ -360,14 +414,16 @@ class IntentNodeProvider:
 
         # Capture post-execution screen to compute post_hash
         try:
-            post_screenshot, _ = await self.__context.device.get_snapshot()
+            post_screenshot = await self.__context.device.capture_screen()
             post_hash = (
                 hashlib.sha256(post_screenshot).hexdigest()[:VISUAL_HASH_LENGTH]
                 if post_screenshot
                 else "0"
             )
         except Exception as exception:
-            self.__context.telemetry.warning(f"Execute: Failed to capture post-screen: {exception}")
+            await self.__context.telemetry.warning(
+                f"Execute: Failed to capture post-screen: {exception}"
+            )
             post_hash = "0"
 
         duration = time.time() - start_time
@@ -392,10 +448,10 @@ class IntentNodeProvider:
             step=step,
             pre_hash=pre_hash,
             post_hash=post_hash,
-            success=execution_result.success,
             duration=int(duration * 1000),
             error=execution_result.error,
             screen_changed=screen_changed,
+            success=execution_result.success,
         )
 
         return {
@@ -407,6 +463,7 @@ class IntentNodeProvider:
         """
         Record the execution result.
         """
+
         logger.info("=" * 80)
         logger.info("[NODE: RECORD] Starting record node")
 
@@ -430,9 +487,9 @@ class IntentNodeProvider:
         self.__context.history.save_step(result=step_result, intent=self.__context.intent)
 
         await self.__context.memory.store_experience(
-            visual_hash=step_result.pre_hash,
-            action=step_result.step.action,
             success=step_result.success,
+            action=step_result.step.action,
+            visual_hash=step_result.pre_hash,
         )
 
         # Commit cycle to ContextManager (GCC Trace)
@@ -441,6 +498,7 @@ class IntentNodeProvider:
         )
 
         analysis_result = state.get(CommonStateKey.ANALYSIS)
+
         analysis: Optional[AnalysisResult] = None
         if isinstance(analysis_result, AnalysisResult):
             analysis = analysis_result
@@ -451,8 +509,8 @@ class IntentNodeProvider:
 
         await self.__context.context_manager.commit(
             observation=observation,
-            thought=step_result.step.action.rationale,
             action=step_result.step.action,
+            thought=step_result.step.action.rationale,
         )
 
         # GCC Branching - Semantic compression for long-running workflows
@@ -465,6 +523,7 @@ class IntentNodeProvider:
         if active_count >= BRANCHING_THRESHOLD:
             logger.info(f"[NODE: RECORD] Triggering GCC branch: active_count={active_count}")
             await self.__context.context_manager.branch()
+
         # Audit logging
         execution_plan = state.get(IntentStateKey.PLAN)
         current_screen = state.get(CommonStateKey.SCREEN_STATE)

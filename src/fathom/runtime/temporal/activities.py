@@ -8,8 +8,12 @@ from temporalio import activity
 from fathom.adapters.llm.gemini import GeminiLLM
 from fathom.adapters.signal.temporal import TemporalSignalAdapter
 from fathom.runtime.builder import Fathom
-from fathom.runtime.factories import DeviceFactory
-from fathom.schemas.configuration import DeviceConfiguration, LLMConfiguration
+from fathom.runtime.factories import DeviceFactory, TelemetryFactory
+from fathom.schemas.configuration import (
+    DeviceConfiguration,
+    LLMConfiguration,
+    TelemetryConfiguration,
+)
 
 logger = getLogger(__name__)
 
@@ -45,6 +49,7 @@ class FathomActivities:
             workflow_id=workflow_id,
             llm_configuration=configuration["llm"],
             device_configuration=configuration["device"],
+            telemetry_configuration=configuration["telemetry"],
         )
 
         try:
@@ -78,6 +83,7 @@ class FathomActivities:
             }
 
         finally:
+            # Telemetry cleanup is handled by the adapter itself or GC in this simple case
             await runner.cleanup()
 
     @activity.defn(name="EXECUTE_EXPLORATION")  # type: ignore[untyped-decorator]
@@ -105,13 +111,14 @@ class FathomActivities:
             workflow_id=workflow_id,
             llm_configuration=configuration["llm"],
             device_configuration=configuration["device"],
+            telemetry_configuration=configuration["telemetry"],
         )
 
         try:
             activity.heartbeat("Starting exploration")
 
             result = await runner.run_exploration(
-                max_steps=request.get("max_steps", 50), request_id=workflow_id
+                max_steps=request.get("max_steps", 100), request_id=workflow_id
             )
 
             activity.heartbeat(f"Completed: {result.steps_executed} steps")
@@ -145,6 +152,7 @@ class FathomActivities:
         planner_configuration = request.get("planner_configuration", {})
 
         llm_configuration = LLMConfiguration(
+            use_cache=planner_configuration.get("use_cache", True),
             location=planner_configuration.get("location"),
             project_id=planner_configuration.get("project_id"),
             credentials=planner_configuration.get("credentials"),
@@ -164,13 +172,28 @@ class FathomActivities:
         else:
             device_configuration = DeviceConfiguration(type="LOCAL", serial_number=session_id)
 
-        return {"device": device_configuration, "llm": llm_configuration}
+        if redis_url := request.get("redis_url"):
+            telemetry_configuration = TelemetryConfiguration(
+                type="REDIS",
+                session_id=session_id,
+                connection_string=redis_url,
+                topic="enricher:commands:v1:logs:{session_id}",
+            )
+        else:
+            telemetry_configuration = TelemetryConfiguration(type="STRUCTLOG")
+
+        return {
+            "llm": llm_configuration,
+            "device": device_configuration,
+            "telemetry": telemetry_configuration,
+        }
 
     def __build_runner(
         self,
         workflow_id: str,
         llm_configuration: LLMConfiguration,
         device_configuration: DeviceConfiguration,
+        telemetry_configuration: TelemetryConfiguration,
     ) -> Any:
         """
         Instantiates the Fathom runner with configured adapters.
@@ -178,11 +201,13 @@ class FathomActivities:
 
         signal_adapter = TemporalSignalAdapter(workflow_id=workflow_id)
         device_adapter = DeviceFactory.create(configuration=device_configuration)
+        telemetry_adapter = TelemetryFactory.create(configuration=telemetry_configuration)
 
         return (
             Fathom.builder()
             .with_device(port=device_adapter)
             .with_signal(port=signal_adapter)
+            .with_telemetry(port=telemetry_adapter)
             .with_llm(port=GeminiLLM(configuration=llm_configuration))
             .build()
         )

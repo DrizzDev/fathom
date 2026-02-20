@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, cast
 
+from fathom.constants import ActionType
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
@@ -44,8 +45,12 @@ class StepPlanner:
         reasoner: Reasoner,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        screen_width: int,
+        screen_height: int,
         *,
         use_xml: bool = False,
+        prompt_if_stuck: bool = False,
+        interactive_mode: bool = False,
         elements: Optional[Dict[str, Any]] = None,
     ) -> PlanResult:
         """
@@ -62,9 +67,34 @@ class StepPlanner:
             if state.is_complete:
                 return PlanResult(step=None, is_complete=True, reason="Intent completed")
 
+            # NATIVE INTERCEPT: Autonomous recovery exhausted, yield to HITL if enabled
+            if state.is_stuck and interactive_mode and prompt_if_stuck:
+                logger.warning(
+                    "Agent exhausted recovery attempts. Yielding to native HITL intercept."
+                )
+                return PlanResult(
+                    step=self.__build_step(
+                        action=Action(
+                            confidence=1.0,
+                            target="ask_user",
+                            action_type=ActionType.ASK_USER,
+                            rationale="Native intercept: loop recovery exhausted.",
+                            text="I am stuck in a loop and cannot recover autonomously. What should I do next?",
+                        ),
+                        capture=capture,
+                        is_recovery=True,
+                        step_number=state.step_count,
+                    ),
+                    is_complete=False,
+                    reason="Native intercept for HITL due to exhausted recovery.",
+                )
+
             return PlanResult(
                 step=None, is_complete=False, reason="Max steps or recovery exhausted"
             )
+
+        # Default tracking note
+        current_tracking_note = state.tracking_note
 
         # IMMEDIATE RECOVERY
         if state.is_stuck:
@@ -74,8 +104,10 @@ class StepPlanner:
 
             try:
                 completion_signal = await self.__vision.check_completion(
-                    intent=state.intent,
                     capture=capture,
+                    intent=state.intent,
+                    screen_width=screen_width,
+                    screen_height=screen_height,
                     context_manager=context_manager,
                     tracking_note=state.tracking_note,
                 )
@@ -98,15 +130,15 @@ class StepPlanner:
                     step_number=state.step_count,
                 )
 
-        from typing import List, cast
-
         analysis = await self.__vision.analyze(
             use_xml=use_xml,
             capture=capture,
             elements=elements,
             intent=state.intent,
+            screen_width=screen_width,
+            screen_height=screen_height,
             context_manager=context_manager,
-            tracking_note=state.tracking_note,
+            tracking_note=current_tracking_note,
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
 
@@ -120,11 +152,12 @@ class StepPlanner:
             state.mark_complete(reason=completion.evidence)
 
             # If there's a valid physical action, we should execute it before finishing
-            step = None
             if action.action_type not in ("complete", "unknown", "wait"):
                 step = self.__build_step(
                     action=action, step_number=state.step_count, capture=capture
                 )
+            else:
+                step = None
 
             return PlanResult(
                 step=step,
@@ -192,7 +225,7 @@ class StepPlanner:
         return reasoner.select_best_action(
             primary=analysis.action,
             alternatives=analysis.alternatives,
-            failed_actions={str(object=failure) for failure in failures},
+            failed_actions={str(failure) for failure in failures},
         )
 
     def __build_plan_result(
