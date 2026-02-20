@@ -49,6 +49,7 @@ from fathom.utils.execution import (
     execute_device_action,
     get_action_coordinates,
 )
+from fathom.utils.hitl import prompt_human_review
 
 logger = getLogger(__name__)
 
@@ -130,6 +131,11 @@ class ExplorationNodeContext:
         """Async-friendly pause event."""
 
         return self._pause_event
+
+    def update_intent(self, intent: str) -> None:
+        """Update the exploration intent used in planning."""
+
+        self.agent_state.set_intent(intent)
 
 
 # ── Node factory ────────────────────────────────────────────────────────
@@ -255,7 +261,7 @@ def build_exploration_nodes(
         # Ask VLM for next untried element
         start = time.time()
         analysis: AnalysisResult = await ctx.vision.analyze(
-            intent="Explore this app to discover all screens and features",
+            intent=ctx.agent_state.intent,
             capture=capture,
             context=kg_context,
             mode=PromptMode.EXPLORATION,
@@ -435,9 +441,37 @@ def build_exploration_nodes(
         screen_state: Optional[ScreenState] = state.get("screen_state")
         pre_hash = screen_state.visual_hash if screen_state else "0"
 
-        if ctx.pause_event and not ctx.pause_event.is_set():
-            logger.info("navigate_node: paused, waiting for resume")
-            await ctx.pause_event.wait()
+        is_paused = ctx.pause_event and not ctx.pause_event.is_set()
+        if is_paused:
+            reviewed_action, intent_changed, exit_session = prompt_human_review(
+                action=action,
+                step_number=ctx.agent_state.step_count + 1,
+                screen_description=None,
+                current_intent=ctx.agent_state.intent,
+                update_intent=ctx.update_intent,
+            )
+            ctx.pause_event.set()
+
+            if exit_session:
+                ctx.agent_state.mark_complete("Session ended by user")
+                return {
+                    **state,
+                    "is_complete": True,
+                    "completion_reason": "Session ended by user",
+                    "step_result": None,
+                }
+
+            if intent_changed:
+                return {
+                    **state,
+                    "action": None,
+                    "analysis": None,
+                    "step_result": None,
+                    "completion_reason": "Intent updated by user",
+                }
+
+            if reviewed_action is not None and reviewed_action != action:
+                action = reviewed_action
 
         if ctx.is_cancelled:
             logger.info("navigate_node: cancelled after pause")
@@ -504,9 +538,39 @@ def build_exploration_nodes(
         if not action or not capture:
             return {**state, "step_result": None, "execution_duration": 0.0}
 
-        if ctx.pause_event and not ctx.pause_event.is_set():
-            logger.info("exploration execute_node: paused, waiting for resume")
-            await ctx.pause_event.wait()
+        is_paused = ctx.pause_event and not ctx.pause_event.is_set()
+        if is_paused:
+            analysis: Optional[AnalysisResult] = state.get("analysis")
+            screen_description = analysis.screen_description if analysis else None
+            reviewed_action, intent_changed, exit_session = prompt_human_review(
+                action=action,
+                step_number=ctx.agent_state.step_count + 1,
+                screen_description=screen_description,
+                current_intent=ctx.agent_state.intent,
+                update_intent=ctx.update_intent,
+            )
+            ctx.pause_event.set()
+
+            if exit_session:
+                ctx.agent_state.mark_complete("Session ended by user")
+                return {
+                    **state,
+                    "is_complete": True,
+                    "completion_reason": "Session ended by user",
+                    "step_result": None,
+                }
+
+            if intent_changed:
+                return {
+                    **state,
+                    "action": None,
+                    "analysis": None,
+                    "step_result": None,
+                    "completion_reason": "Intent updated by user",
+                }
+
+            if reviewed_action is not None and reviewed_action != action:
+                action = reviewed_action
 
         if ctx.is_cancelled:
             logger.info("exploration execute_node: cancelled after pause")
@@ -556,7 +620,7 @@ def build_exploration_nodes(
                 "execution_duration": 0.0,
             }
 
-        # UX rendering
+        # UX rendering (after HITL so edits are reflected)
         ctx.ux_service.render_fallback(
             reasoning=action.rationale,
             action=action.to_description(),

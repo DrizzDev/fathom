@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from logging import getLogger
-from typing import Any, Literal, Optional, cast
+from typing import Any, Dict, Literal, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.exceptions import VisionError
@@ -281,7 +282,7 @@ class ToolResponseParser(IResponseParser):
         if action_type in (ActionType.INFER, ActionType.UNKNOWN):
             action_type = ActionType.WAIT
 
-        updates = arguments.get("memory_updates")
+        updates = self.__coerce_memory_updates(arguments.get("memory_updates"))
         text = data.get("text") or data.get("text_to_type")
         wait = data.get("wait_duration") or data.get("wait_duration_ms")
         target_name = data.get("target_name") or data.get("element_name") or "UI Element"
@@ -334,6 +335,28 @@ class ToolResponseParser(IResponseParser):
             return float(value)
         except (ValueError, TypeError):
             return default
+
+    @staticmethod
+    def __coerce_memory_updates(value: Any) -> Optional[Dict[str, str]]:
+        if value is None:
+            return None
+
+        if isinstance(value, dict):
+            return {str(k): str(v) for k, v in value.items()}
+
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped == "[]":
+                return None
+            try:
+                loaded = json.loads(stripped)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(loaded, dict):
+                return {str(k): str(v) for k, v in loaded.items()}
+            return None
+
+        return None
 
     @staticmethod
     def __build_memory_key(arguments: Any) -> str:
