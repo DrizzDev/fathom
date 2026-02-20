@@ -63,6 +63,7 @@ def build_exploration_graph(
     workflow_id: str = "default",
     checkpointer: Optional[MemorySaver] = None,
     cancel_event: Optional[asyncio.Event] = None,
+    pause_event: Optional[asyncio.Event] = None,
     target_package: Optional[str] = None,
 ) -> tuple["CompiledStateGraph[Any, Any, Any]", ExplorationNodeContext]:
     """
@@ -109,6 +110,7 @@ def build_exploration_graph(
         max_steps=max_steps,
         workflow_id=workflow_id,
         cancel_event=cancel_event,
+        pause_event=pause_event,
         target_package=target_package,
     )
 

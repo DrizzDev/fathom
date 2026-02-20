@@ -20,6 +20,11 @@ class Reasoner:
     def __init__(self, intent: str) -> None:
         self.__intent = intent.lower()
 
+    def set_intent(self, intent: str) -> None:
+        """Update the intent used for fuzzy matching."""
+
+        self.__intent = intent.lower()
+
     def analyze_completion(
         self,
         analysis: AnalysisResult,

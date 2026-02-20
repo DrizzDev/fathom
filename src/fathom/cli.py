@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import contextlib
 import os
 import signal
 import sys
@@ -16,6 +17,7 @@ from fathom.base.logger import BaseLogger
 from fathom.exceptions import FathomError
 from fathom.orchestration.runner import FathomRunner
 from fathom.settings.env import FathomSettings
+from fathom.utils.cli_input import poll_input_line
 
 console = Console()
 logger = getLogger(__name__)
@@ -47,6 +49,14 @@ class FathomCLI:
             except (NotImplementedError, ValueError, RuntimeError):
                 pass
 
+        pause_sig = getattr(signal, "SIGUSR1", None)
+        if pause_sig:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.add_signal_handler(pause_sig, self.__handle_pause_toggle)
+            except (NotImplementedError, ValueError, RuntimeError):
+                pass
+
     def __handle_interrupt(self) -> None:
         """
         Handler called when a signal is received.
@@ -55,11 +65,39 @@ class FathomCLI:
         console.print("\n[bold yellow]Stopping gracefully... Please wait.[/bold yellow]")
         self.runner.cancel()
 
+    def __handle_pause_toggle(self) -> None:
+        """Toggle pause/resume for the active workflow."""
+
+        if self.runner.is_paused():
+            self.runner.resume()
+            console.print("\n[bold green]Resumed.[/bold green]")
+        else:
+            self.runner.pause()
+            console.print(
+                "\n[bold yellow]Paused. Type 'p' + Enter or send SIGUSR1 to resume.[/bold yellow]"
+            )
+
+    async def __listen_for_pause(self) -> None:
+        """Listen for pause/resume commands on stdin (p + Enter)."""
+
+        while True:
+            line = poll_input_line()
+            if line:
+                command = line.strip().lower()
+                if (
+                    command in ("p", "pause")
+                    or command in ("resume", "r")
+                    and self.runner.is_paused()
+                ):
+                    self.__handle_pause_toggle()
+            await asyncio.sleep(0.2)
+
     async def run(
         self,
         intent: str,
         max_steps: int = 100,
         device_serial: Optional[str] = None,
+        human_in_loop: bool = False,
         **kwargs: Any,
     ) -> int:
         """
@@ -74,88 +112,22 @@ class FathomCLI:
                 border_style="blue",
             )
         )
+        console.print(
+            "[dim]Pause/Resume: type 'p' + Enter or send SIGUSR1. HITL prompts show only while paused.[/dim]"
+        )
 
+        pause_task: Optional[asyncio.Task[None]] = None
         try:
-            with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
-                result = await self.runner.run_intent(
-                    intent=intent,
-                    max_steps=max_steps,
-                    device_serial=device_serial,
-                    use_xml=kwargs.get("use_xml", False),
-                    prompt_version=kwargs.get("prompt_version"),
-                )
-
-            # Execution Summary
-            table = Table(
-                title="Execution Summary", border_style="green" if result.success else "red"
+            pause_task = asyncio.create_task(self.__listen_for_pause())
+            console.print("[bold green]Agent working...[/bold green]")
+            result = await self.runner.run_intent(
+                intent=intent,
+                max_steps=max_steps,
+                device_serial=device_serial,
+                use_xml=kwargs.get("use_xml", False),
+                prompt_version=kwargs.get("prompt_version"),
+                human_in_loop=human_in_loop,
             )
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="magenta")
-
-            table.add_row(
-                "Status", "[green]Success[/green]" if result.success else "[red]Failed[/red]"
-            )
-            table.add_row("Reason", result.completion_reason)
-            table.add_row("Steps Taken", str(result.steps_taken))
-            console.print(table)
-
-            # Timing Audit
-            if result.metrics:
-                audit_table = Table(title="Timing Audit", border_style="blue")
-                audit_table.add_column("Operation", style="cyan")
-                audit_table.add_column("Total Time (s)", style="magenta", justify="right")
-                audit_table.add_column("Avg/Step (s)", style="yellow", justify="right")
-
-                token_metrics = result.metrics.get("Tokens")
-
-                for operation, data in result.metrics.items():
-                    if operation == "Tokens":
-                        continue
-
-                    total = data.get("total", 0.0)
-                    avg = data.get("avg", 0.0)
-                    audit_table.add_row(operation, f"{total:.2f}s", f"{avg:.2f}s")
-
-                console.print(audit_table)
-
-                if token_metrics:
-                    token_table = Table(title="Resource Usage (Tokens)", border_style="yellow")
-                    token_table.add_column("Metric", style="cyan")
-                    token_table.add_column("Value", style="magenta", justify="right")
-
-                    token_table.add_row("Prompt Tokens", f"{token_metrics.get('prompt', 0):,.0f}")
-                    token_table.add_row(
-                        "Completion Tokens", f"{token_metrics.get('completion', 0):,.0f}"
-                    )
-                    token_table.add_row("Cached Tokens", f"{token_metrics.get('cached', 0):,.0f}")
-                    token_table.add_row("Total Tokens", f"{token_metrics.get('total', 0):,.0f}")
-
-                    console.print(token_table)
-
-            # Memory / Knowledge Graph Summary
-            if result.memory_summary:
-                memory_table = Table(title="Agent Knowledge Graph (Brain)", border_style="cyan")
-                memory_table.add_column("Screen Hash", style="dim")
-                memory_table.add_column("Activity")
-                memory_table.add_column("Agent Description", style="italic")
-
-                screens = result.memory_summary.get("screens", [])
-                for screen in screens[:10]:  # Show last 10
-                    memory_table.add_row(
-                        screen["hash"], screen["activity"], screen["description"] or "Unidentified"
-                    )
-
-                experience_count = result.memory_summary.get("experience_count", 0)
-                console.print(memory_table)
-                console.print(
-                    f"[dim]Total learned experiences in brain:[/dim] [bold cyan]{experience_count}[/bold cyan]"
-                )
-
-            if not result.success:
-                console.print(f"[bold red]Failure Reason:[/bold red] {result.completion_reason}")
-
-            return 0 if result.success else 1
-
         except (asyncio.CancelledError, KeyboardInterrupt):
             console.print("\n[bold red]Execution cancelled by user.[/bold red]")
             return 1
@@ -167,6 +139,78 @@ class FathomCLI:
             logger.exception("Unexpected error")
             console.print(f"[bold red]Unexpected Error:[/bold red] {exception}")
             return 1
+        finally:
+            if pause_task:
+                pause_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pause_task
+
+        # Execution Summary
+        table = Table(title="Execution Summary", border_style="green" if result.success else "red")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="magenta")
+
+        table.add_row("Status", "[green]Success[/green]" if result.success else "[red]Failed[/red]")
+        table.add_row("Reason", result.completion_reason)
+        table.add_row("Steps Taken", str(result.steps_taken))
+        console.print(table)
+
+        # Timing Audit
+        if result.metrics:
+            audit_table = Table(title="Timing Audit", border_style="blue")
+            audit_table.add_column("Operation", style="cyan")
+            audit_table.add_column("Total Time (s)", style="magenta", justify="right")
+            audit_table.add_column("Avg/Step (s)", style="yellow", justify="right")
+
+            token_metrics = result.metrics.get("Tokens")
+
+            for operation, data in result.metrics.items():
+                if operation == "Tokens":
+                    continue
+
+                total = data.get("total", 0.0)
+                avg = data.get("avg", 0.0)
+                audit_table.add_row(operation, f"{total:.2f}s", f"{avg:.2f}s")
+
+            console.print(audit_table)
+
+            if token_metrics:
+                token_table = Table(title="Resource Usage (Tokens)", border_style="yellow")
+                token_table.add_column("Metric", style="cyan")
+                token_table.add_column("Value", style="magenta", justify="right")
+
+                token_table.add_row("Prompt Tokens", f"{token_metrics.get('prompt', 0):,.0f}")
+                token_table.add_row(
+                    "Completion Tokens", f"{token_metrics.get('completion', 0):,.0f}"
+                )
+                token_table.add_row("Cached Tokens", f"{token_metrics.get('cached', 0):,.0f}")
+                token_table.add_row("Total Tokens", f"{token_metrics.get('total', 0):,.0f}")
+
+                console.print(token_table)
+
+        # Memory / Knowledge Graph Summary
+        if result.memory_summary:
+            memory_table = Table(title="Agent Knowledge Graph (Brain)", border_style="cyan")
+            memory_table.add_column("Screen Hash", style="dim")
+            memory_table.add_column("Activity")
+            memory_table.add_column("Agent Description", style="italic")
+
+            screens = result.memory_summary.get("screens", [])
+            for screen in screens[:10]:  # Show last 10
+                memory_table.add_row(
+                    screen["hash"], screen["activity"], screen["description"] or "Unidentified"
+                )
+
+            experience_count = result.memory_summary.get("experience_count", 0)
+            console.print(memory_table)
+            console.print(
+                f"[dim]Total learned experiences in brain:[/dim] [bold cyan]{experience_count}[/bold cyan]"
+            )
+
+        if not result.success:
+            console.print(f"[bold red]Failure Reason:[/bold red] {result.completion_reason}")
+
+        return 0 if result.success else 1
 
     async def explore(
         self,
@@ -191,61 +235,17 @@ class FathomCLI:
                 border_style="blue",
             )
         )
+        console.print("[dim]Pause/Resume: type 'p' + Enter or send SIGUSR1.[/dim]")
 
+        pause_task: Optional[asyncio.Task[None]] = None
         try:
-            with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
-                result = await self.runner.run_exploration(
-                    max_steps=max_steps,
-                    device_serial=device_serial,
-                    package_name=package_name,
-                )
-
-            table = Table(title="Exploration Results", border_style="green")
-
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="magenta")
-
-            table.add_row("Unique Screens", str(result.unique_screens))
-            table.add_row("Total Actions", str(result.total_actions))
-            table.add_row("Total Transitions", str(result.total_transitions))
-            table.add_row("Coverage", f"{result.coverage_percentage:.1f}%")
-
-            console.print(table)
-
-            if result.metrics:
-                audit_table = Table(title="Timing Audit", border_style="blue")
-                audit_table.add_column("Operation", style="cyan")
-                audit_table.add_column("Total Time (s)", style="magenta", justify="right")
-                audit_table.add_column("Avg/Step (s)", style="yellow", justify="right")
-
-                token_metrics = result.metrics.get("Tokens")
-
-                for operation, data in result.metrics.items():
-                    if operation == "Tokens":
-                        continue
-
-                    total = data.get("total", 0.0)
-                    avg = data.get("avg", 0.0)
-                    audit_table.add_row(operation, f"{total:.2f}s", f"{avg:.2f}s")
-
-                console.print(audit_table)
-
-                if token_metrics:
-                    token_table = Table(title="Resource Usage (Tokens)", border_style="yellow")
-                    token_table.add_column("Metric", style="cyan")
-                    token_table.add_column("Value", style="magenta", justify="right")
-
-                    token_table.add_row("Prompt Tokens", f"{token_metrics.get('prompt', 0):,.0f}")
-                    token_table.add_row(
-                        "Completion Tokens", f"{token_metrics.get('completion', 0):,.0f}"
-                    )
-                    token_table.add_row("Cached Tokens", f"{token_metrics.get('cached', 0):,.0f}")
-                    token_table.add_row("Total Tokens", f"{token_metrics.get('total', 0):,.0f}")
-
-                    console.print(token_table)
-
-            return 0
-
+            pause_task = asyncio.create_task(self.__listen_for_pause())
+            console.print("[bold green]Exploring...[/bold green]")
+            result = await self.runner.run_exploration(
+                max_steps=max_steps,
+                device_serial=device_serial,
+                package_name=package_name,
+            )
         except (asyncio.CancelledError, KeyboardInterrupt):
             console.print("\n[bold red]Exploration cancelled by user.[/bold red]")
             return 1
@@ -257,6 +257,57 @@ class FathomCLI:
             logger.exception("Unexpected error")
             console.print(f"[bold red]Unexpected Error:[/bold red] {exception}")
             return 1
+        finally:
+            if pause_task:
+                pause_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pause_task
+
+        table = Table(title="Exploration Results", border_style="green")
+
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="magenta")
+
+        table.add_row("Unique Screens", str(result.unique_screens))
+        table.add_row("Total Actions", str(result.total_actions))
+        table.add_row("Total Transitions", str(result.total_transitions))
+        table.add_row("Coverage", f"{result.coverage_percentage:.1f}%")
+
+        console.print(table)
+
+        if result.metrics:
+            audit_table = Table(title="Timing Audit", border_style="blue")
+            audit_table.add_column("Operation", style="cyan")
+            audit_table.add_column("Total Time (s)", style="magenta", justify="right")
+            audit_table.add_column("Avg/Step (s)", style="yellow", justify="right")
+
+            token_metrics = result.metrics.get("Tokens")
+
+            for operation, data in result.metrics.items():
+                if operation == "Tokens":
+                    continue
+
+                total = data.get("total", 0.0)
+                avg = data.get("avg", 0.0)
+                audit_table.add_row(operation, f"{total:.2f}s", f"{avg:.2f}s")
+
+            console.print(audit_table)
+
+            if token_metrics:
+                token_table = Table(title="Resource Usage (Tokens)", border_style="yellow")
+                token_table.add_column("Metric", style="cyan")
+                token_table.add_column("Value", style="magenta", justify="right")
+
+                token_table.add_row("Prompt Tokens", f"{token_metrics.get('prompt', 0):,.0f}")
+                token_table.add_row(
+                    "Completion Tokens", f"{token_metrics.get('completion', 0):,.0f}"
+                )
+                token_table.add_row("Cached Tokens", f"{token_metrics.get('cached', 0):,.0f}")
+                token_table.add_row("Total Tokens", f"{token_metrics.get('total', 0):,.0f}")
+
+                console.print(token_table)
+
+        return 0
 
 
 def main() -> int:
@@ -286,6 +337,12 @@ def main() -> int:
         default=None,
         help="Version of prompt/toolset to use",
     )
+    run_parser.add_argument(
+        "--hitl",
+        action="store_true",
+        default=False,
+        help="Require human approval before executing device actions",
+    )
     explore_parser = subparsers.add_parser("explore", help="Run app exploration")
     explore_parser.add_argument(
         "--package", "-p", type=str, help="Target package name to explore (e.g. com.example.app)"
@@ -310,6 +367,8 @@ def main() -> int:
 
     if hasattr(args, "verbose") and args.verbose:
         settings.log_level = "DEBUG"
+    else:
+        settings.log_level = "WARNING"
 
     BaseLogger.configure(settings)
 
@@ -335,6 +394,7 @@ def main() -> int:
                     max_steps=run_steps,
                     device_serial=args.serial,
                     prompt_version=args.prompt_version,
+                    human_in_loop=args.hitl,
                 )
             )
             return result

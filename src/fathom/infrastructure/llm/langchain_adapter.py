@@ -97,14 +97,16 @@ class LangChainLLMClient(IVisionProvider):
                     timeout=self.__configuration.timeout,
                 )
             else:
-                from langchain_google_vertexai import ChatVertexAI
+                from langchain_google_genai import ChatGoogleGenerativeAI
 
-                self.__model = ChatVertexAI(
-                    model_name=self.__configuration.model,
-                    project=self.__resolved_project or self.__configuration.project_id,
-                    location=self.__configuration.location or "global",
+                self.__model = ChatGoogleGenerativeAI(
+                    model=self.__configuration.model,
                     temperature=self.__configuration.temperature,
                     max_output_tokens=self.__configuration.max_output_tokens,
+                    timeout=self.__configuration.timeout,
+                    vertexai=True,
+                    project=self.__resolved_project or self.__configuration.project_id,
+                    location=self.__configuration.location or "global",
                     credentials=self.__credentials,
                 )
         except Exception as exc:
@@ -273,7 +275,7 @@ class LangChainLLMClient(IVisionProvider):
             candidate_count=1,
             temperature=self.__configuration.temperature,
             max_output_tokens=self.__configuration.max_output_tokens,
-            automatic_function_calling={"disable": True},
+            automatic_function_calling={"disable": False},
             cached_content=cache_name,
         )
 

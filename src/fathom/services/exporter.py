@@ -226,6 +226,7 @@ class ScriptExporter:
         n = len(step_results)
         i = 0
         launch_boundary = 0
+        swipe_just_processed = False  # Track when we finish processing a swipe sequence
 
         # Detect app-launch boundary: suppress all pre-launch steps and emit OPEN_APP
         if package_name:
@@ -241,13 +242,11 @@ class ScriptExporter:
             # --- Detect start of a swipe sequence ---
             if action_type_val in ScriptExporter._SWIPE_ACTIONS:
                 swipe_direction = action_type_val
-                # Skip all consecutive swipes of the same direction
-                while (
-                    i < n
-                    and ScriptExporter._get_action_type(step_results[i])
-                    in ScriptExporter._SWIPE_ACTIONS
-                ):
-                    i += 1
+                # Skip all consecutive swipes of the SAME direction only
+                j = i + 1
+                while j < n and ScriptExporter._get_action_type(step_results[j]) == swipe_direction:
+                    j += 1
+                i = j
 
                 # Find the target of the NEXT non-swipe step (lookahead)
                 if i < n:
@@ -257,13 +256,20 @@ class ScriptExporter:
 
                 label = ScriptExporter._swipe_direction_label(swipe_direction)
                 lines.append(f"{label} until {next_target} is visible")
+                swipe_just_processed = True  # Mark that we just processed swipes
                 continue  # don't increment i again, already advanced
 
             # --- Resolve target for current step ---
             target = ScriptExporter._resolve_target(step)
 
             # --- Smart Validation: insert when previous step caused a screen change ---
-            if i > 0 and i > launch_boundary and action_type_val != "wait":
+            # Skip validation immediately after swipe sequences (swipe statement already includes "until X is visible")
+            if (
+                i > 0
+                and i > launch_boundary
+                and action_type_val != "wait"
+                and not swipe_just_processed
+            ):
                 prev = step_results[i - 1]
                 prev_action_type = ScriptExporter._get_action_type(prev)
                 prev_changed = (
@@ -281,6 +287,8 @@ class ScriptExporter:
                     if prev_condition:
                         val_line = f"IF {prev_condition} {{ {val_line} }}"
                     lines.append(val_line)
+
+            swipe_just_processed = False  # Reset flag for non-swipe actions
 
             condition = ScriptExporter._get_condition(step)
 

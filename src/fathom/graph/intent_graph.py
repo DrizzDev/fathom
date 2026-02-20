@@ -78,7 +78,9 @@ def build_intent_graph(
     workflow_id: str = "default",
     checkpointer: Optional[MemorySaver] = None,
     cancel_event: Optional[asyncio.Event] = None,
+    pause_event: Optional[asyncio.Event] = None,
     package_name: str = "",
+    human_in_loop: bool = False,
 ) -> tuple["CompiledStateGraph[Any, Any, Any]", NodeContext]:
     """
     Build and compile a LangGraph :class:`StateGraph` for intent execution.
@@ -133,7 +135,9 @@ def build_intent_graph(
         step_timeout=step_timeout,
         workflow_id=workflow_id,
         cancel_event=cancel_event,
+        pause_event=pause_event,
         package_name=package_name,
+        human_in_loop=human_in_loop,
     )
 
     # ── 2. Build node functions ────────────────────────────────────────

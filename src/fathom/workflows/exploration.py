@@ -97,6 +97,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
             max_steps=config.max_steps if config else 100,
             workflow_id=self.workflow_id,
             cancel_event=self.cancel_event,
+            pause_event=self.pause_event,
             target_package=self.__target_package,
         )
 

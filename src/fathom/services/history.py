@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from logging import getLogger
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
@@ -11,6 +12,8 @@ except ImportError:
     yaml = cast("Any", None)
 
 from fathom.schemas.steps import StepResult
+
+logger = getLogger(__name__)
 
 
 class HistoryService:
@@ -59,6 +62,7 @@ class HistoryService:
     def __load_history(self) -> Dict[str, Any]:
         """
         Loads existing history from disk.
+        Returns empty history if file doesn't exist or is corrupted.
         """
 
         path = self.__base_directory / f"{self.__workflow_id}.json"
@@ -68,8 +72,12 @@ class HistoryService:
             try:
                 with path.open(mode="r") as handle:
                     data = json.load(fp=handle)
-            except Exception:  # nosec
-                pass
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse history JSON from {path}: {e}")
+            except (IOError, OSError) as e:
+                logger.warning(f"Failed to read history file {path}: {e}")
+            except Exception as e:  # nosec
+                logger.warning(f"Unexpected error loading history from {path}: {e}", exc_info=True)
 
         return data
 

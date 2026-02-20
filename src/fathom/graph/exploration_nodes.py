@@ -77,6 +77,7 @@ class ExplorationNodeContext:
         timeout: float = 3600.0,
         workflow_id: str = "default",
         cancel_event: Optional[asyncio.Event] = None,
+        pause_event: Optional[asyncio.Event] = None,
         target_package: Optional[str] = None,
     ) -> None:
         self.device = device
@@ -89,6 +90,8 @@ class ExplorationNodeContext:
         self.start_time = time.time()
         self.target_package = target_package
         self._cancel_event = cancel_event or asyncio.Event()
+        self._pause_event = pause_event or asyncio.Event()
+        self._pause_event.set()
 
         # Reused services (adapted for exploration)
         self.ledger: ILedger = Ledger()
@@ -121,6 +124,12 @@ class ExplorationNodeContext:
     def is_cancelled(self) -> bool:
         """Fast non-blocking check for cancellation."""
         return self._cancel_event.is_set()
+
+    @property
+    def pause_event(self) -> asyncio.Event:
+        """Async-friendly pause event."""
+
+        return self._pause_event
 
 
 # ── Node factory ────────────────────────────────────────────────────────
@@ -426,6 +435,18 @@ def build_exploration_nodes(
         screen_state: Optional[ScreenState] = state.get("screen_state")
         pre_hash = screen_state.visual_hash if screen_state else "0"
 
+        if ctx.pause_event and not ctx.pause_event.is_set():
+            logger.info("navigate_node: paused, waiting for resume")
+            await ctx.pause_event.wait()
+
+        if ctx.is_cancelled:
+            logger.info("navigate_node: cancelled after pause")
+            return {
+                **state,
+                "step_result": None,
+                "execution_duration": 0.0,
+            }
+
         step = Step(
             action=action,
             screen_hash=pre_hash,
@@ -482,6 +503,18 @@ def build_exploration_nodes(
 
         if not action or not capture:
             return {**state, "step_result": None, "execution_duration": 0.0}
+
+        if ctx.pause_event and not ctx.pause_event.is_set():
+            logger.info("exploration execute_node: paused, waiting for resume")
+            await ctx.pause_event.wait()
+
+        if ctx.is_cancelled:
+            logger.info("exploration execute_node: cancelled after pause")
+            return {
+                **state,
+                "step_result": None,
+                "execution_duration": 0.0,
+            }
 
         pre_hash = screen_state.visual_hash if screen_state else "0"
 
@@ -746,6 +779,7 @@ def build_exploration_nodes(
                 if is_back_action:
                     if ctx.current_path:
                         ctx.current_path = ctx.current_path[:-1]
+                    new_path = list(ctx.current_path)
                 else:
                     new_path = (
                         list(ctx.current_path) + [(pre_hash, action)]

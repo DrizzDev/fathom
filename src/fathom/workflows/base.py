@@ -40,6 +40,8 @@ class BaseWorkflow(ABC, Generic[T]):
 
         self.__cancelled = False
         self.__cancel_event = asyncio.Event()
+        self.__pause_event = asyncio.Event()
+        self.__pause_event.set()
         self.__step_results: List[StepResult] = []
 
     @property
@@ -135,6 +137,30 @@ class BaseWorkflow(ABC, Generic[T]):
 
         self.__cancelled = True
         self.__cancel_event.set()
+
+    def pause(self) -> None:
+        """Pause workflow execution until resumed."""
+
+        self.__pause_event.clear()
+
+    def resume(self) -> None:
+        """Resume workflow execution after a pause."""
+
+        self.__pause_event.set()
+
+    def is_paused(self) -> bool:
+        """Check if workflow is currently paused."""
+
+        return not self.__pause_event.is_set()
+
+    @property
+    def pause_event(self) -> asyncio.Event:
+        """Async-friendly pause event.
+
+        Nodes can ``await pause_event.wait()`` to block until resumed.
+        """
+
+        return self.__pause_event
 
     def is_cancelled(self) -> bool:
         """

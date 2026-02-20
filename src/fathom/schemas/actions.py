@@ -49,23 +49,29 @@ class Bounds(BaseModel):
         """
         Converts coordinates to absolute device pixels.
         Handles both normalized and already-pixel coordinates.
+        Clamps results to valid device bounds.
         """
 
         # If explicitly told it's pixels, don't normalize
         if self.system == "pixel":
-            return self.x, self.y, self.width, self.height
-
+            x, y, w, h = self.x, self.y, self.width, self.height
         # Use heuristic if system is normalized (default)
-        if self.is_normalized:
-            x_pixel = int(self.x * screen_width / 1000)
-            y_pixel = int(self.y * screen_height / 1000)
-            width_pixel = int(self.width * screen_width / 1000)
-            height_pixel = int(self.height * screen_height / 1000)
+        elif self.is_normalized:
+            x = int(self.x * screen_width / 1000)
+            y = int(self.y * screen_height / 1000)
+            w = int(self.width * screen_width / 1000)
+            h = int(self.height * screen_height / 1000)
+        else:
+            # Fallback for large values that must be pixels
+            x, y, w, h = self.x, self.y, self.width, self.height
 
-            return x_pixel, y_pixel, width_pixel, height_pixel
+        # Clamp to valid device bounds to prevent out-of-screen taps/swipes
+        x = max(0, min(x, screen_width - 1))
+        y = max(0, min(y, screen_height - 1))
+        w = max(1, min(w, screen_width - x))
+        h = max(1, min(h, screen_height - y))
 
-        # Fallback for large values that must be pixels
-        return self.x, self.y, self.width, self.height
+        return x, y, w, h
 
 
 class Action(BaseModel):

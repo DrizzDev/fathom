@@ -84,3 +84,40 @@ class UXService:
                 border_style="blue",
             )
         )
+
+    def render_hitl_prompt(
+        self,
+        *,
+        step_number: int,
+        action: str,
+        rationale: str,
+        current_intent: Optional[str] = None,
+        screen_description: Optional[str] = None,
+        decision_keys: str = "a=approve, e=edit intent, r=exit session",
+    ) -> None:
+        """Render a styled HITL prompt panel."""
+
+        grid = Table.grid(padding=(0, 1))
+        grid.add_column(style="cyan", justify="right")
+        grid.add_column(style="white")
+
+        grid.add_row("Action:", action)
+        grid.add_row("Rationale:", rationale)
+        if current_intent:
+            grid.add_row("Intent:", current_intent)
+        if screen_description:
+            grid.add_row("Screen:", screen_description)
+
+        grid.add_row("Decision:", decision_keys)
+
+        self.__console.print("")
+        self.__console.print(
+            Panel(
+                title=f"[bold white]HITL Review[/bold white] [dim]Step {step_number}[/dim]",
+                renderable=grid,
+                border_style="magenta",
+                subtitle_align="right",
+                subtitle="[dim]Human-in-the-loop[/dim]",
+                expand=False,
+            )
+        )

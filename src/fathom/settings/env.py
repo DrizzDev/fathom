@@ -35,7 +35,7 @@ class FathomSettings(BaseSettings):
 
     # Logging settings
     log_json: bool = Field(default=False, alias="LOG_JSON")
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    log_level: str = Field(default="WARNING", alias="LOG_LEVEL")
 
     # Workflow default limits
     max_steps: int = Field(default=100, alias="MAX_STEPS")

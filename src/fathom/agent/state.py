@@ -94,6 +94,11 @@ class AgentState:
 
         return self.__intent
 
+    def set_intent(self, intent: str) -> None:
+        """Update the current intent."""
+
+        self.__intent = intent
+
     @property
     def step_count(self) -> int:
         """

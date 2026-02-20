@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from logging import getLogger
@@ -24,48 +25,52 @@ class MemoryService:
         self.__initialized = False
         self.__database_path = Path(database_path)
         self.__database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.__init_lock = asyncio.Lock()
 
     async def __ensure_initialized(self) -> None:
         """
         Initializes the database schema if it doesn't exist.
+        Uses a lock to prevent concurrent initialization attempts.
         """
 
-        if self.__initialized:
-            return
+        async with self.__init_lock:
+            # Re-check after acquiring lock (another coroutine may have initialized)
+            if self.__initialized:
+                return
 
-        async with aiosqlite.connect(self.__database_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS screens (
-                    visual_hash TEXT PRIMARY KEY,
-                    activity TEXT,
-                    description TEXT,
-                    last_seen INTEGER
-                )
-            """)
+            async with aiosqlite.connect(self.__database_path) as db:
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS screens (
+                        visual_hash TEXT PRIMARY KEY,
+                        activity TEXT,
+                        description TEXT,
+                        last_seen INTEGER
+                    )
+                """)
 
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS transitions (
-                    source_hash TEXT,
-                    action_json TEXT,
-                    destination_hash TEXT,
-                    PRIMARY KEY (source_hash, action_json)
-                )
-            """)
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS transitions (
+                        source_hash TEXT,
+                        action_json TEXT,
+                        destination_hash TEXT,
+                        PRIMARY KEY (source_hash, action_json)
+                    )
+                """)
 
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS experience (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    visual_hash TEXT,
-                    action_json TEXT,
-                    success BOOLEAN,
-                    rationale TEXT,
-                    timestamp INTEGER
-                )
-            """)
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS experience (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        visual_hash TEXT,
+                        action_json TEXT,
+                        success BOOLEAN,
+                        rationale TEXT,
+                        timestamp INTEGER
+                    )
+                """)
 
-            await db.commit()
+                await db.commit()
 
-        self.__initialized = True
+            self.__initialized = True
 
     async def record_observation(
         self, screen: ScreenState, description: Optional[str] = None

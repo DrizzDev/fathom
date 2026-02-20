@@ -41,6 +41,7 @@ from fathom.tools.device import DeviceTool
 from fathom.tools.vision.processing.annotator import ImageAnnotator
 from fathom.utils.coordinates import CoordinateConverter
 from fathom.utils.execution import execute_device_action, get_action_coordinates
+from fathom.utils.hitl import prompt_human_review
 
 logger = getLogger(__name__)
 
@@ -113,7 +114,15 @@ class NodeContext:
         step_timeout: float = 15.0,
         workflow_id: str = "default",
         cancel_event: Optional[asyncio.Event] = None,
+        pause_event: Optional[asyncio.Event] = None,
         package_name: str = "",
+        human_in_loop: bool = False,
+        human_review: Optional[
+            Callable[
+                [Action, int, Optional[str], str, Callable[[str], None]],
+                tuple[Optional[Action], bool, bool],
+            ]
+        ] = None,
     ) -> None:
         self.intent = intent
         self.planner = planner
@@ -123,7 +132,11 @@ class NodeContext:
         self.use_xml = use_xml
         self.max_steps = max_steps
         self._cancel_event = cancel_event or asyncio.Event()
+        self._pause_event = pause_event or asyncio.Event()
+        self._pause_event.set()
         self.current_package = package_name
+        self.human_in_loop = human_in_loop
+        self.human_review = human_review
 
         self.ledger: ILedger = Ledger()
         self.reasoner = Reasoner(intent=intent)
@@ -141,10 +154,23 @@ class NodeContext:
         self.resolution = ReferenceResolutionService(ledger=self.ledger)
         self.classifier = TargetClassifier()
 
+    def update_intent(self, intent: str) -> None:
+        """Update the shared intent across context and reasoning."""
+
+        self.intent = intent
+        self.agent_state.set_intent(intent)
+        self.reasoner.set_intent(intent)
+
     @property
     def is_cancelled(self) -> bool:
         """Fast non-blocking check for cancellation."""
         return self._cancel_event.is_set()
+
+    @property
+    def pause_event(self) -> asyncio.Event:
+        """Async-friendly pause event."""
+
+        return self._pause_event
 
 
 # ── Node factory ────────────────────────────────────────────────────────
@@ -447,24 +473,14 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
         if not step or not capture:
             return {**state, "step_result": None, "execution_duration": 0.0}
 
-        # UX rendering
-        if plan and plan.metadata.get("tool_name"):
-            ctx.ux_service.render_tool_call(
-                duration=analysis_duration,
-                args=plan.metadata["tool_args"],
-                tool_name=plan.metadata["tool_name"],
-            )
-        elif plan:
-            ctx.ux_service.render_fallback(
-                reasoning=step.action.rationale,
-                action=step.action.to_description(),
-                step_number=ctx.agent_state.step_count + 1,
-            )
-
-        step_start = time.time()
+        screen_description = ""
+        if plan and plan.metadata:
+            tool_args = plan.metadata.get("tool_args", {})
+            screen_description = str(tool_args.get("screen_description", ""))
 
         # Handle memory-only actions
         if step.action.action_type == ActionType.SAVE_MEMORY:
+            step_start = time.time()
             if step.action.memory_updates:
                 for key, value in step.action.memory_updates.items():
                     await ctx.ledger.set(key=key, value=value)
@@ -480,6 +496,7 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
             }
 
         if step.action.action_type == ActionType.RETRIEVE_MEMORY:
+            step_start = time.time()
             action_result = ActionResult(success=True, duration=0)
             execution_duration = time.time() - step_start
             ctx.metrics.record(operation="action", duration=execution_duration)
@@ -491,7 +508,87 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
                 "execution_duration": execution_duration,
             }
 
+        is_paused = ctx.pause_event and not ctx.pause_event.is_set()
+        if ctx.is_cancelled:
+            logger.info("execute_node: cancelled after pause")
+            return {
+                **state,
+                "step_result": None,
+                "execution_duration": 0.0,
+            }
+
+        if ctx.human_in_loop or is_paused:
+            if is_paused:
+                logger.info("execute_node: paused, awaiting human review")
+            review_fn = ctx.human_review or prompt_human_review
+            reviewed_action, intent_changed, exit_session = review_fn(
+                step.action,
+                ctx.agent_state.step_count + 1,
+                screen_description or None,
+                ctx.agent_state.intent,
+                ctx.update_intent,
+            )
+            if exit_session:
+                if is_paused:
+                    ctx.pause_event.set()
+                ctx.agent_state.mark_complete("Session ended by user")
+                return {
+                    **state,
+                    "step_result": None,
+                    "planned_step": None,
+                    "plan": None,
+                    "should_retry": False,
+                    "is_complete": True,
+                    "execution_duration": 0.0,
+                    "completion_reason": "Session ended by user",
+                }
+
+            if reviewed_action is None:
+                if is_paused:
+                    ctx.pause_event.set()
+                rejected = ActionResult(success=False, duration=0, error="Rejected by human")
+                return {
+                    **state,
+                    "step_result": _build_step_result(
+                        step, state.get("screen_state"), rejected, time.time()
+                    ),
+                    "execution_duration": 0.0,
+                }
+
+            if is_paused:
+                ctx.pause_event.set()
+
+            if intent_changed:
+                return {
+                    **state,
+                    "step_result": None,
+                    "planned_step": None,
+                    "plan": None,
+                    "should_retry": True,
+                    "is_complete": False,
+                    "execution_duration": 0.0,
+                    "completion_reason": "Intent updated by user",
+                }
+
+            if reviewed_action != step.action:
+                step = step.model_copy(update={"action": reviewed_action})
+
+        # UX rendering (after HITL so edits are reflected)
+        if plan and plan.metadata.get("tool_name"):
+            ctx.ux_service.render_tool_call(
+                duration=analysis_duration,
+                args=plan.metadata["tool_args"],
+                tool_name=plan.metadata["tool_name"],
+            )
+        elif plan:
+            ctx.ux_service.render_fallback(
+                reasoning=step.action.rationale,
+                action=step.action.to_description(),
+                step_number=ctx.agent_state.step_count + 1,
+            )
+
         # Physical action
+        step_start = time.time()
         try:
             coordinates = await get_action_coordinates(ctx.device, step.action)
             await _trace_background(ctx, step.action, capture.image, coordinates)

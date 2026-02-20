@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from logging import getLogger
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
@@ -82,9 +83,15 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
 
         logger.info(f"Executing intent: {self.__original_intent}")
 
+        from fathom.graph.checkpointer import build_checkpointer
         from fathom.graph.intent_graph import build_intent_graph
 
         config = self.configuration
+
+        checkpointer = None
+        if config and config.human_in_loop:
+            checkpoint_path = Path("assets/checkpoints/intent") / f"{self.workflow_id}.sqlite"
+            checkpointer = build_checkpointer(checkpoint_path)
 
         compiled_graph, node_ctx = build_intent_graph(
             intent=self.__original_intent,
@@ -96,8 +103,11 @@ class IntentWorkflow(BaseWorkflow[IntentResult]):
             use_xml=config.use_xml_bounding_boxes if config else False,
             step_timeout=config.step_timeout if config else 15.0,
             workflow_id=self.workflow_id,
+            checkpointer=checkpointer,
             cancel_event=self.cancel_event,
+            pause_event=self.pause_event,
             package_name=self.__package_name,
+            human_in_loop=config.human_in_loop if config else False,
         )
 
         initial_state = {

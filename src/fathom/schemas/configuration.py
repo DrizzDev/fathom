@@ -98,3 +98,7 @@ class WorkflowConfig(BaseModel):
         default=False, description="Use XML hierarchy for bounding boxes"
     )
     package_name: str = Field(default="unknown_app", description="Target application package name")
+    human_in_loop: bool = Field(
+        default=False,
+        description="Require human approval before executing each device action",
+    )

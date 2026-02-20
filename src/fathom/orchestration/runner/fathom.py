@@ -47,6 +47,25 @@ class FathomRunner:
 
         self.__current_workflow: Optional[BaseWorkflow[Any]] = None
 
+    def pause(self) -> None:
+        """Pause the current workflow if one is running."""
+
+        if self.__current_workflow:
+            self.__current_workflow.pause()
+
+    def resume(self) -> None:
+        """Resume the current workflow if one is running."""
+
+        if self.__current_workflow:
+            self.__current_workflow.resume()
+
+    def is_paused(self) -> bool:
+        """Return True when the current workflow is paused."""
+
+        if not self.__current_workflow:
+            return False
+        return self.__current_workflow.is_paused()
+
     async def run_intent(
         self,
         intent: str,
@@ -55,6 +74,7 @@ class FathomRunner:
         request_id: Optional[str] = None,
         device_serial: Optional[str] = None,
         prompt_version: Optional[str] = None,
+        human_in_loop: bool = False,
     ) -> IntentResult:
         """
         Run an intent-based workflow.
@@ -101,6 +121,7 @@ class FathomRunner:
             max_steps=max_steps,
             package_name=package_name,
             use_xml_bounding_boxes=use_xml,
+            human_in_loop=human_in_loop,
         )
 
         self.__current_workflow = IntentWorkflow(
@@ -306,21 +327,45 @@ class FathomRunner:
                 result.knowledge_graph = self.__knowledge_graph.export_json()
             return
 
+        # Safely get the current knowledge graph's database path
+        current_db = None
+        if self.__knowledge_graph and hasattr(self.__knowledge_graph, "provider"):
+            provider_path = getattr(self.__knowledge_graph.provider, "path", None)
+            if provider_path:
+                current_db = (
+                    Path(provider_path) if isinstance(provider_path, str) else provider_path
+                )
+
         # If the initial graph was loaded from the same DB, reuse it
-        if self.__knowledge_graph and Path(self.__knowledge_graph.provider.path) == final_db:
-            result.knowledge_graph = self.__knowledge_graph.export_json()
+        if current_db and current_db == final_db:
+            if self.__knowledge_graph:
+                result.knowledge_graph = self.__knowledge_graph.export_json()
             return
 
-        # Otherwise, load the knowledge graph from the final DB
+        # App changed or no prior knowledge graph — load from final DB
+        if current_db and current_db != final_db:
+            logger.info(
+                "Knowledge graph app mismatch: prior=%s, final=%s. Reloading from final DB.",
+                current_db,
+                final_db,
+            )
+
         try:
             kg = KnowledgeGraph(database_path=str(final_db))
             await kg.load()
             self.__knowledge_graph = kg
             result.knowledge_graph = kg.export_json()
-        except Exception:
-            logger.warning("Failed to load knowledge graph from %s", final_db, exc_info=True)
-            if self.__knowledge_graph:
+        except Exception as e:
+            logger.warning(
+                "Failed to load knowledge graph from %s: %s. Attaching prior knowledge.",
+                final_db,
+                e,
+                exc_info=True,
+            )
+            # Only attach prior knowledge graph if it's from the same app
+            if current_db == final_db and self.__knowledge_graph:
                 result.knowledge_graph = self.__knowledge_graph.export_json()
+            # else: no safe knowledge graph to attach, leave result.knowledge_graph unset
 
     def cancel(self) -> None:
         """

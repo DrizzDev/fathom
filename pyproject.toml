@@ -65,7 +65,7 @@ temporal = [
     "temporalio>=1.0.0",
 ]
 langgraph = [
-    "langgraph>=0.2.0",
+    "langgraph[sqlite]>=0.2.0",
     "langchain-core>=0.3.0",
     "langchain-google-genai>=2.0.0",
     "langchain-google-vertexai>=2.0.0",

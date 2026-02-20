@@ -101,10 +101,11 @@ def _build_screen_names(graph_data: Dict[str, Any]) -> Dict[str, str]:
             continue
 
         # 3. Infer from outgoing edges (summarise the screen's content)
+        # Take first 3 items in order (preserves frequency/appearance order)
+        # rather than sorting by length, which doesn't correlate with descriptiveness
         out = outgoing.get(vhash, [])
         if out:
-            # Take up to 3 most descriptive items
-            items = sorted(out, key=len, reverse=True)[:3]
+            items = out[:3]
             summary = ", ".join(_clean_target_as_screen_name(t) for t in items)
             names[vhash] = f"Screen: {summary}"
             continue
