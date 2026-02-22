@@ -7,6 +7,7 @@ from temporalio import activity
 
 from fathom.adapters.llm.gemini import GeminiLLM
 from fathom.adapters.signal.temporal import TemporalSignalAdapter
+from fathom.interfaces.signal import SignalPort
 from fathom.runtime.builder import Fathom
 from fathom.runtime.factories import DeviceFactory, TelemetryFactory
 from fathom.schemas.configuration import (
@@ -169,23 +170,30 @@ class FathomActivities:
         Constructs configuration objects from request dictionary.
         """
 
+        # 1. LLM Configuration Merging (Legacy + New)
+        llm_request_configuration = request.get("llm_config", {})
         planner_configuration = request.get("planner_configuration", {})
 
-        llm_configuration = LLMConfiguration(
-            location=planner_configuration.get("location"),
-            project_id=planner_configuration.get("project_id"),
-            credentials=planner_configuration.get("credentials"),
-            use_cache=planner_configuration.get("use_cache", True),
-            model=planner_configuration.get("model", "gemini-3-flash-preview"),
-            **(request.get("llm_config", {})),
-        )
+        # Populate parameters from legacy planner first
+        llm_parameters: Dict[str, Any] = {
+            "location": planner_configuration.get("location"),
+            "project_id": planner_configuration.get("project_id"),
+            "credentials": planner_configuration.get("credentials"),
+            "use_cache": planner_configuration.get("use_cache", True),
+            "model": planner_configuration.get("model", "gemini-3-flash-preview"),
+        }
 
-        enricher_url = request.get("enricher_url")
+        llm_parameters.update(llm_request_configuration)
+        llm_parameters = {key: value for key, value in llm_parameters.items() if value is not None}
+
+        llm_configuration = LLMConfiguration(**llm_parameters)
+
+        # 2. Device Configuration
         session_id = request.get("session_id", "default_session")
         identity = request.get("identity") or workflow_id
         execution_id = request.get("execution_id") or workflow_id
 
-        if enricher_url:
+        if enricher_url := request.get("enricher_url"):
             device_configuration = DeviceConfiguration(
                 type="REMOTE",
                 session_id=session_id,
@@ -237,11 +245,11 @@ class FathomActivities:
         from fathom.schemas.orchestration import RealignmentPolicy
 
         if interactive:
-            signal_adapter = TemporalSignalAdapter(
+            signal_adapter: SignalPort = TemporalSignalAdapter(
                 workflow_id=workflow_id, namespace=activity.info().namespace
             )
         else:
-            signal_adapter = NoopSignal()
+            signal_adapter: SignalPort = NoopSignal()
 
         device_adapter = DeviceFactory.create(configuration=device_configuration)
         telemetry_adapter = TelemetryFactory.create(configuration=telemetry_configuration)
