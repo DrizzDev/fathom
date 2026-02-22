@@ -55,6 +55,10 @@ class TemporalSignalAdapter(SignalPort):
         Query current workflow state via external handle.
         """
 
+        # Heartbeat to Temporal to signal activity is still alive
+        with contextlib.suppress(RuntimeError):
+            activity.heartbeat("Processing crawler step")
+
         try:
             handle = await self.__get_workflow_handle()
             # Use string name for query to avoid importing FathomWorkflow (circular dep)

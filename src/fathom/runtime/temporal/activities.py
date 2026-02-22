@@ -218,7 +218,6 @@ class FathomActivities:
         telemetry_configuration: TelemetryConfiguration,
         execution_configuration: ExecutionConfiguration,
         exploration_configuration: ExplorationConfiguration,
-        
         *,
         interactive: bool = True,
         realignment: Optional[Dict[str, Any]] = None,

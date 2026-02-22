@@ -102,8 +102,8 @@ class FathomWorkflow(FathomBaseWorkflow):
             result = await workflow.execute_activity(
                 activity="EXECUTE_INTENT",
                 args=[identity, request],
+                heartbeat_timeout=timedelta(seconds=120),
                 start_to_close_timeout=timedelta(minutes=30),
-                heartbeat_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
 
@@ -143,7 +143,7 @@ class FathomExplorationWorkflow(FathomBaseWorkflow):
                 activity="EXECUTE_EXPLORATION",
                 args=[workflow.info().workflow_id, request],
                 start_to_close_timeout=timedelta(minutes=30),
-                heartbeat_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=60),
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
 

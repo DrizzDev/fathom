@@ -49,10 +49,10 @@ class LoopDetector(BaseModel):
             f"recent_count={len(self.__recent_screens)} threshold={self.threshold}"
         )
 
+        # Store only the single most descriptive identifier to prevent set-size inflation
         if action_description:
             self.__recent_actions.append(action_description)
-
-        if action_type:
+        elif action_type:
             self.__recent_actions.append(action_type)
 
     def is_stuck(self) -> bool:

@@ -68,19 +68,18 @@ class RemoteDeviceAdapter(DevicePort):
 
             data = response.content
 
-            if len(data) < 8:
+            if len(data) < 4:
                 raise DeviceError("Snapshot response too short for header")
 
-            header = data[:8]
-            image_length, width, height = struct.unpack("!IHH", header)
+            # Binary Unpacking: [4b image_length][image][xml]
+            header = data[:4]
+            image_length = struct.unpack("!I", header)[0]
 
-            self.__cached_dimensions = (width, height)
-
-            image_end = 8 + image_length
+            image_end = 4 + image_length
             if len(data) < image_end:
                 raise DeviceError("Snapshot response truncated (image)")
 
-            image_bytes = data[8:image_end]
+            image_bytes = data[4:image_end]
             xml_bytes = data[image_end:]
 
             return image_bytes, xml_bytes.decode("utf-8", errors="ignore")
