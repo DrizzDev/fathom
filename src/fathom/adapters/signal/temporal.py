@@ -45,7 +45,8 @@ class TemporalSignalAdapter(SignalPort):
         """
 
         if self.__workflow_handle is None:
-            self.__workflow_handle = workflow.get_external_workflow_handle(self.__workflow_id)
+            # External handles can be retrieved from within an activity
+            self.__workflow_handle = activity.get_external_workflow_handle(self.__workflow_id)
 
         return self.__workflow_handle
 
