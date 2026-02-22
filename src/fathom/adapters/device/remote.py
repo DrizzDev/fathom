@@ -5,7 +5,7 @@ import base64
 import struct
 import time
 from logging import getLogger
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 import httpx
 
@@ -158,8 +158,7 @@ class RemoteDeviceAdapter(DevicePort):
             response = await self.__client.post("/action", json=request.model_dump())
             response.raise_for_status()
 
-            data = response.json()
-            payload = data.get("content", data)
+            payload = self.__parse_response(response.json())
 
             width = payload.get("width")
             height = payload.get("height")
@@ -196,7 +195,9 @@ class RemoteDeviceAdapter(DevicePort):
             response = await self.__client.post("/action", json=request.model_dump())
             response.raise_for_status()
 
-            if buffer := response.json().get("content", {}).get("base64"):
+            payload = self.__parse_response(response.json())
+
+            if buffer := payload.get("base64"):
                 return base64.b64decode(buffer)
 
             raise DeviceError("Capture screen: No base64 data in screenshot response")
@@ -224,9 +225,10 @@ class RemoteDeviceAdapter(DevicePort):
         try:
             response = await self.__client.post("/action", json=request.model_dump())
             response.raise_for_status()
-            data = response.json()
 
-            xml_content = data.get("content", {}).get("xml")
+            payload = self.__parse_response(response.json())
+
+            xml_content = payload.get("xml")
             return str(xml_content) if xml_content is not None else None
 
         except httpx.HTTPError as exception:
@@ -255,10 +257,9 @@ class RemoteDeviceAdapter(DevicePort):
 
             data = response.json()
             logger.info(f"Response of current package command: {data}")
-            # Extract from nested data field
-            payload = data.get("content", data)
-            nested_data = payload.get("data", {})
-            package = nested_data.get("package", "unknown_app")
+
+            payload = self.__parse_response(data)
+            package = payload.get("package", "unknown_app")
 
             return str(package)
 
@@ -289,6 +290,22 @@ class RemoteDeviceAdapter(DevicePort):
                 await asyncio.sleep(1.0)
 
         return False
+
+    def __parse_response(self, response_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Standardized JSend payload extractor.
+        """
+
+        # 1. Check for standard JSend 'data' field
+        if "data" in response_data and isinstance(response_data["data"], dict):
+            return cast("Dict[str, Any]", response_data["data"])
+
+        # 2. Fallback to legacy 'content' field
+        if "content" in response_data and isinstance(response_data["content"], dict):
+            return cast("Dict[str, Any]", response_data["content"])
+
+        # 3. Return the root if neither is present (direct response)
+        return response_data
 
     async def __send_command(self, request: RemoteInteractionRequest) -> ActionResult:
         """
