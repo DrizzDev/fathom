@@ -70,6 +70,7 @@ class DeviceConfiguration(BaseModel):
 
     # Connectivity Details
     session_id: Optional[str] = Field(default=None, description="Remote session identifier")
+    execution_id: Optional[str] = Field(default=None, description="Execution/Workflow identifier")
     provider_url: Optional[str] = Field(default=None, description="Remote provider endpoint")
     serial_number: Optional[str] = Field(default=None, description="Device serial identifier")
     authentication_token: Optional[str] = Field(

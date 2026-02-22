@@ -43,7 +43,7 @@ class FathomActivities:
 
         activity.logger.info(f"Starting Fathom intent execution for workflow {workflow_id}")
 
-        configuration = self.__build_configurations(request=request)
+        configuration = self.__build_configurations(workflow_id=workflow_id, request=request)
 
         runner = self.__build_runner(
             workflow_id=workflow_id,
@@ -105,7 +105,7 @@ class FathomActivities:
 
         activity.logger.info(f"Starting Fathom exploration for workflow {workflow_id}")
 
-        configuration = self.__build_configurations(request=request)
+        configuration = self.__build_configurations(workflow_id=workflow_id, request=request)
 
         runner = self.__build_runner(
             workflow_id=workflow_id,
@@ -144,7 +144,7 @@ class FathomActivities:
         finally:
             await runner.cleanup()
 
-    def __build_configurations(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    def __build_configurations(self, workflow_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
         """
         Constructs configuration objects from request dictionary.
         """
@@ -161,11 +161,13 @@ class FathomActivities:
 
         enricher_url = request.get("enricher_url")
         session_id = request.get("session_id", "default_session")
+        execution_id = request.get("execution_id") or workflow_id
 
         if enricher_url:
             device_configuration = DeviceConfiguration(
                 type="REMOTE",
                 session_id=session_id,
+                execution_id=execution_id,
                 provider_url=enricher_url,
                 authentication_token=request.get("auth_token"),
             )

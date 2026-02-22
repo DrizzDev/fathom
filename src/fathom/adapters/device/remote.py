@@ -33,6 +33,7 @@ class RemoteDeviceAdapter(DevicePort):
             raise PortError("Remote device requires provider_url and session_id")
 
         self.__session = configuration.session_id
+        self.__execution_id = configuration.execution_id
         self.__token = configuration.authentication_token
         self.__url = configuration.provider_url.rstrip("/")
 
@@ -61,7 +62,8 @@ class RemoteDeviceAdapter(DevicePort):
         """
 
         try:
-            response = await self.__client.post("/snapshot")
+            params = {"execution_id": self.__execution_id} if self.__execution_id else {}
+            response = await self.__client.post("/snapshot", params=params)
             response.raise_for_status()
 
             data = response.content
@@ -97,7 +99,7 @@ class RemoteDeviceAdapter(DevicePort):
         Execute remote tap.
         """
 
-        request = RemoteInteractionRequest(action="tap", x=x, y=y)
+        request = RemoteInteractionRequest(action="tap", x=x, y=y, execution_id=self.__execution_id)
         return await self.__send_command(request)
 
     async def type(self, *, text: str) -> ActionResult:
@@ -105,7 +107,7 @@ class RemoteDeviceAdapter(DevicePort):
         Execute remote text input.
         """
 
-        request = RemoteInteractionRequest(action="type", text=text)
+        request = RemoteInteractionRequest(action="type", text=text, execution_id=self.__execution_id)
         return await self.__send_command(request)
 
     async def swipe(
@@ -116,7 +118,7 @@ class RemoteDeviceAdapter(DevicePort):
         """
 
         request = RemoteInteractionRequest(
-            action="swipe", points=[x1, y1, x2, y2], extras={"duration": duration}
+            action="swipe", points=[x1, y1, x2, y2], extras={"duration": duration}, execution_id=self.__execution_id
         )
         return await self.__send_command(request)
 
@@ -125,7 +127,7 @@ class RemoteDeviceAdapter(DevicePort):
         Execute remote back press.
         """
 
-        request = RemoteInteractionRequest(action="back")
+        request = RemoteInteractionRequest(action="back", execution_id=self.__execution_id)
         return await self.__send_command(request)
 
     async def home(self) -> ActionResult:
@@ -133,7 +135,7 @@ class RemoteDeviceAdapter(DevicePort):
         Execute remote home press.
         """
 
-        request = RemoteInteractionRequest(action="home")
+        request = RemoteInteractionRequest(action="home", execution_id=self.__execution_id)
         return await self.__send_command(request)
 
     async def get_dimensions(self) -> Tuple[int, int]:
@@ -144,7 +146,7 @@ class RemoteDeviceAdapter(DevicePort):
         if self.__cached_dimensions:
             return self.__cached_dimensions
 
-        request = RemoteInteractionRequest(action="GET_DIMENSIONS")
+        request = RemoteInteractionRequest(action="GET_DIMENSIONS", execution_id=self.__execution_id)
 
         try:
             response = await self.__client.post("/action", json=request.model_dump())
@@ -180,7 +182,7 @@ class RemoteDeviceAdapter(DevicePort):
         Capture device screenshot.
         """
 
-        request = RemoteInteractionRequest(action="GET_SCREENSHOT")
+        request = RemoteInteractionRequest(action="GET_SCREENSHOT", execution_id=self.__execution_id)
 
         try:
             response = await self.__client.post("/action", json=request.model_dump())
@@ -209,7 +211,7 @@ class RemoteDeviceAdapter(DevicePort):
         Dump UI hierarchy to XML string.
         """
 
-        request = RemoteInteractionRequest(action="GET_XML")
+        request = RemoteInteractionRequest(action="GET_XML", execution_id=self.__execution_id)
 
         try:
             response = await self.__client.post("/action", json=request.model_dump())
@@ -235,7 +237,7 @@ class RemoteDeviceAdapter(DevicePort):
         Get current package.
         """
 
-        request = RemoteInteractionRequest(action="GET_CURRENT_PACKAGE")
+        request = RemoteInteractionRequest(action="GET_CURRENT_PACKAGE", execution_id=self.__execution_id)
 
         try:
             response = await self.__client.post("/action", json=request.model_dump())
