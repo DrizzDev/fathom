@@ -92,8 +92,8 @@ class IntentNodeProvider:
         start_time = time.time()
 
         try:
-            # Parallel Snapshot (Screenshot + XML) via DevicePort
-            screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
+            # Parallel Snapshot (Screenshot + XML + Dimensions) via DevicePort
+            screenshot_bytes, xml_content, dimensions = await self.__context.device.get_snapshot()
 
             if not screenshot_bytes or len(screenshot_bytes) == 0:
                 await self.__context.telemetry.error("Ground: Empty screenshot captured")
@@ -104,7 +104,7 @@ class IntentNodeProvider:
                     CommonStateKey.COMPLETION_REASON: "Empty screenshot captured",
                 }
 
-            width, height = await self.__context.device.get_dimensions()
+            width, height = dimensions
 
             # Validate dimensions
             if width <= 0 or height <= 0:
