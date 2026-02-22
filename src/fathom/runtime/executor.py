@@ -81,25 +81,21 @@ class GraphExecutor:
                 [stream_task, pause_task], return_when=asyncio.FIRST_COMPLETED
             )
 
+            # Clean up pending tasks immediately
+            for task in pending:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
             # Case A: Pause Requested
             if pause_task in done:
                 logger.info("Executor: Pause signal received during execution")
-
-                # Cancel the running graph step immediately
-                stream_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await stream_task
-
                 await self.__handle_interrupt(source="manual_pause")
                 # Resume loop (with current_input=None to continue from last checkpoint)
                 current_input = None
                 continue
 
             # Case B: Graph Execution Finished (Step or Workflow)
-            pause_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await pause_task
-
             try:
                 await stream_task
             except Exception as exception:

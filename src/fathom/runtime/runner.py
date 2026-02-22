@@ -95,6 +95,14 @@ class FathomRunner:
         return self.__engine
 
     @property
+    def device(self) -> DevicePort:
+        """
+        Get the device port.
+        """
+
+        return self.__device
+
+    @property
     def context(self) -> Optional[ContextManager]:
         """
         Get the context manager.
@@ -108,6 +116,7 @@ class FathomRunner:
         max_steps: int = 50,
         use_xml: bool = False,
         request_id: Optional[str] = None,
+        package_name: Optional[str] = None,
         realignment: Optional[RealignmentPolicy] = None,
     ) -> IntentResult:
         """
@@ -117,13 +126,15 @@ class FathomRunner:
         start_time = time.time()
         workflow_id = request_id or uuid.uuid4().hex[:8]
 
-        try:
-            package_name = await self.__device.get_current_package()
-        except Exception as exception:
-            package_name = "unknown_app"
-            await self.__telemetry.warning(
-                "Failed to get package name, using fallback", error=str(exception)
-            )
+        # Use provided package name or fetch from device
+        if not package_name:
+            try:
+                package_name = await self.__device.get_current_package()
+            except Exception as exception:
+                package_name = "unknown_app"
+                await self.__telemetry.warning(
+                    "Failed to get package name, using fallback", error=str(exception)
+                )
 
         if self.__device.configuration:
             device_serial = self.__device.configuration.serial_number
@@ -211,6 +222,7 @@ class FathomRunner:
         self,
         max_steps: int = 100,
         request_id: Optional[str] = None,
+        package_name: Optional[str] = None,
     ) -> ExplorationResult:
         """
         Execute exploration workflow.
@@ -219,14 +231,15 @@ class FathomRunner:
         start_time = time.time()
         workflow_id = request_id or uuid.uuid4().hex[:8]
 
-        # Fetch package name from device at start
-        try:
-            package_name = await self.__device.get_current_package()
-        except Exception as exception:
-            package_name = "unknown_app"
-            await self.__telemetry.warning(
-                "Failed to get package name, using fallback", error=str(exception)
-            )
+        # Use provided package name or fetch from device
+        if not package_name:
+            try:
+                package_name = await self.__device.get_current_package()
+            except Exception as exception:
+                package_name = "unknown_app"
+                await self.__telemetry.warning(
+                    "Failed to get package name, using fallback", error=str(exception)
+                )
 
         if self.__device.configuration:
             device_serial = self.__device.configuration.serial_number

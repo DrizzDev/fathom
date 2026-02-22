@@ -138,8 +138,16 @@ class FathomActivities:
         try:
             activity.heartbeat("Starting exploration")
 
+            # Fetch package name for accurate tracing/storage
+            try:
+                package_name = await runner.device.get_current_package()
+            except Exception:
+                package_name = "unknown_app"
+
             result = await runner.run_exploration(
-                max_steps=request.get("max_steps", 100), request_id=workflow_id
+                request_id=workflow_id,
+                package_name=package_name,
+                max_steps=request.get("max_steps", 100),
             )
 
             activity.heartbeat(f"Completed: {result.steps_executed} steps")
