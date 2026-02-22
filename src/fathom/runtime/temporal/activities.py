@@ -244,12 +244,14 @@ class FathomActivities:
         from fathom.adapters.signal.noop import NoopSignal
         from fathom.schemas.orchestration import RealignmentPolicy
 
+        signal_adapter: SignalPort
+
         if interactive:
-            signal_adapter: SignalPort = TemporalSignalAdapter(
-                workflow_id=workflow_id, namespace=activity.info().namespace
+            signal_adapter = TemporalSignalAdapter(
+                workflow_id=workflow_id, namespace=activity.info().workflow_namespace
             )
         else:
-            signal_adapter: SignalPort = NoopSignal()
+            signal_adapter = NoopSignal()
 
         device_adapter = DeviceFactory.create(configuration=device_configuration)
         telemetry_adapter = TelemetryFactory.create(configuration=telemetry_configuration)
