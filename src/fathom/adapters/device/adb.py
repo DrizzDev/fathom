@@ -259,27 +259,24 @@ class ADBDevice(DevicePort):
                 f"Dump hierarchy: Failed to dump hierarchy: {exception}"
             ) from exception
 
-    async def get_snapshot(self) -> Tuple[bytes, Optional[str], Tuple[int, int]]:
+    async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """
-        Capture atomic snapshot (Screenshot + XML + Dimensions) in parallel.
+        Capture atomic snapshot (Screenshot + XML) in parallel.
         """
 
         results = await asyncio.gather(
             self.capture_screen(),
             self.dump_hierarchy(),
-            self.get_dimensions(),
             return_exceptions=True,
         )
 
         image_result = results[0]
         xml_result = results[1]
-        dim_result = results[2]
 
         image = image_result if isinstance(image_result, bytes) else b""
         xml = xml_result if isinstance(xml_result, str) else None
-        dimensions = dim_result if isinstance(dim_result, tuple) else (1080, 1920)
 
-        return image, xml, dimensions
+        return image, xml
 
     # Helper methods copied from original tool
     async def __shell(self, command: str, *, capture_output: bool = False) -> ActionResult:

@@ -88,10 +88,10 @@ class DevicePort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_snapshot(self) -> Tuple[bytes, Optional[str], Tuple[int, int]]:
+    async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """
-        Capture atomic snapshot (Screenshot + XML + Dimensions).
-        Returns: (screenshot_bytes, xml_string, (width, height))
+        Capture atomic snapshot (Screenshot + XML).
+        Returns: (screenshot_bytes, xml_string)
         """
 
         raise NotImplementedError

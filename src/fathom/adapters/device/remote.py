@@ -56,7 +56,7 @@ class RemoteDeviceAdapter(DevicePort):
 
         return self.__adb_config
 
-    async def get_snapshot(self) -> Tuple[bytes, Optional[str], Tuple[int, int]]:
+    async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """
         Retrieve atomic snapshot (Screenshot + XML) from remote provider.
         """
@@ -68,23 +68,26 @@ class RemoteDeviceAdapter(DevicePort):
 
             data = response.content
 
-            if len(data) < 8:
+            if len(data) < 4:
                 raise DeviceError("Snapshot response too short for header")
 
-            # Binary Unpacking: [4b image_length][2b width][2b height][image][xml]
-            header = data[:8]
-            image_length, width, height = struct.unpack("!IHH", header)
+            # Binary Unpacking: [4b image_length][image][xml]
+            header = data[:4]
+            image_length = struct.unpack("!I", header)[0]
 
-            self.__cached_dimensions = (width, height)
-
-            image_end = 8 + image_length
+            image_end = 4 + image_length
             if len(data) < image_end:
                 raise DeviceError("Snapshot response truncated (image)")
 
-            image_bytes = data[8:image_end]
+            image_bytes = data[4:image_end]
             xml_bytes = data[image_end:]
 
-            return image_bytes, xml_bytes.decode("utf-8", errors="ignore"), (width, height)
+            image_header = image_bytes[:20].hex() if image_bytes else "EMPTY"
+            logger.info(
+                f"Received snapshot: Img={len(image_bytes)}b XML={len(xml_bytes)}b Header={image_header}"
+            )
+
+            return image_bytes, xml_bytes.decode("utf-8", errors="ignore")
 
         except httpx.HTTPError as exception:
             raise DeviceError(f"Remote snapshot failed: {exception}") from exception

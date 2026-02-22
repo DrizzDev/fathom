@@ -63,9 +63,16 @@ class FathomActivities:
         try:
             activity.heartbeat("Starting execution")
 
+            # Fetch package name for accurate tracing/storage
+            try:
+                package_name = await runner.device.get_current_package()
+            except Exception:
+                package_name = "unknown_app"
+
             result = await runner.run_intent(
                 request_id=workflow_id,
                 intent=request["intent"],
+                package_name=package_name,
                 use_xml=request.get("use_xml", False),
                 max_steps=request.get("max_steps", 100),
             )
@@ -229,9 +236,13 @@ class FathomActivities:
         from fathom.adapters.signal.noop import NoopSignal
         from fathom.schemas.orchestration import RealignmentPolicy
 
-        signal_adapter = (
-            TemporalSignalAdapter(workflow_id=workflow_id) if interactive else NoopSignal()
-        )
+        if interactive:
+            signal_adapter = TemporalSignalAdapter(
+                workflow_id=workflow_id, namespace=activity.info().namespace
+            )
+        else:
+            signal_adapter = NoopSignal()
+
         device_adapter = DeviceFactory.create(configuration=device_configuration)
         telemetry_adapter = TelemetryFactory.create(configuration=telemetry_configuration)
 

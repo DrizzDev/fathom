@@ -6,6 +6,7 @@ from logging import getLogger
 from typing import Any, Dict, Optional
 
 from temporalio import activity
+from temporalio.client import Client
 
 from fathom.constants import SignalType
 from fathom.interfaces.signal import SignalPort
@@ -16,20 +17,26 @@ logger = getLogger(__name__)
 class TemporalSignalAdapter(SignalPort):
     """
     Signal adapter that receives signals from Temporal workflows.
+    Uses an external client to bypass activity-restricted workflow context.
     """
 
-    def __init__(self, workflow_id: str) -> None:
+    def __init__(self, workflow_id: str, namespace: str = "default") -> None:
         """
         Initialize Temporal signal adapter.
 
         Args:
             workflow_id: The Temporal workflow ID
+            namespace: The Temporal namespace
         """
 
         self.__workflow_id = workflow_id
+        self.__namespace = namespace
+        self.__client: Optional[Client] = None
         self.__workflow_handle: Optional[Any] = None
 
-        logger.info(f"TemporalSignalAdapter initialized for workflow {workflow_id}")
+        logger.info(
+            f"TemporalSignalAdapter initialized for workflow {workflow_id} (ns: {namespace})"
+        )
 
     @property
     def workflow_id(self) -> str:
@@ -41,12 +48,23 @@ class TemporalSignalAdapter(SignalPort):
 
     async def __get_workflow_handle(self) -> Any:
         """
-        Get or create workflow handle for querying state.
+        Get or create workflow handle for querying state using a clean client.
         """
 
+        if self.__client is None:
+            # We connect a fresh client using the cluster address.
+            # This bypasses activity sandbox restrictions on the current task's handle.
+            import os
+
+            target = os.getenv("TEMPORAL_HOST", "localhost:7233")
+
+            self.__client = await Client.connect(
+                target=target,
+                namespace=self.__namespace,
+            )
+
         if self.__workflow_handle is None:
-            # External handles can be retrieved from within an activity
-            self.__workflow_handle = activity.get_external_workflow_handle(self.__workflow_id)
+            self.__workflow_handle = self.__client.get_workflow_handle(self.__workflow_id)
 
         return self.__workflow_handle
 
@@ -54,10 +72,6 @@ class TemporalSignalAdapter(SignalPort):
         """
         Query current workflow state via external handle.
         """
-
-        # Heartbeat to Temporal to signal activity is still alive
-        with contextlib.suppress(RuntimeError):
-            activity.heartbeat("Processing crawler step")
 
         try:
             handle = await self.__get_workflow_handle()
