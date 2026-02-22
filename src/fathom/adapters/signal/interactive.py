@@ -157,7 +157,7 @@ class InteractiveSignal(SignalPort):
             else:
                 console.print(f"[yellow]Invalid choice '{choice}'.[/yellow]\n")
 
-    def get_injected_context(self) -> Optional[str]:
+    async def get_injected_context(self) -> Optional[str]:
         """
         Atomically retrieves and clears any injected context.
         """
@@ -165,6 +165,20 @@ class InteractiveSignal(SignalPort):
         context = self.__injected_context
         self.__injected_context = None
         return context
+
+    async def is_pause_requested(self) -> bool:
+        """
+        Check if pause is requested.
+        """
+
+        return self.__pause_requested
+
+    async def has_injected_context(self) -> bool:
+        """
+        Check if there is injected context available.
+        """
+
+        return self.__injected_context is not None
 
     async def ask(self, *, prompt: str) -> str:
         """

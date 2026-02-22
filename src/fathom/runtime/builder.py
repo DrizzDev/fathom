@@ -17,6 +17,7 @@ from fathom.schemas.configuration import (
     FathomConfiguration,
     IntentConfiguration,
 )
+from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.settings.env import FathomSettings
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ class FathomBuilder:
         self.__signal: Optional[SignalPort] = None
         self.__storage: Optional[StoragePort] = None
         self.__telemetry: Optional[TelemetryPort] = None
+        self.__realignment: Optional[RealignmentPolicy] = None
 
         self.__path_manager = path_manager
         self.__config: FathomConfiguration = FathomConfiguration()
@@ -212,6 +214,20 @@ class FathomBuilder:
         self.__config.exploration = configuration
         return self
 
+    def with_realignment(self, policy: RealignmentPolicy) -> FathomBuilder:
+        """
+        Configure realignment policy.
+
+        Args:
+            policy: Realignment policy instance
+
+        Returns:
+            Builder instance for chaining
+        """
+
+        self.__realignment = policy
+        return self
+
     def build(self) -> FathomRunner:
         """
         Build configured Fathom instance.
@@ -255,6 +271,9 @@ class FathomBuilder:
         if not self.__telemetry:
             self.__telemetry = StructlogAdapter()
 
+        if not self.__realignment:
+            self.__realignment = RealignmentPolicy()
+
         return FathomRunner(
             llm=self.__llm,
             device=self.__device,
@@ -264,6 +283,7 @@ class FathomBuilder:
             storage=self.__storage,
             knowledge=self.__knowledge,
             telemetry=self.__telemetry,
+            realignment=self.__realignment,
             path_manager=self.__path_manager,
         )
 

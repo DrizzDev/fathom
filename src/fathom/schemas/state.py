@@ -28,7 +28,12 @@ class LoopDetector(BaseModel):
     __recent_actions: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=5))
     __recent_screens: Deque[ScreenState] = PrivateAttr(default_factory=lambda: deque(maxlen=5))
 
-    def record(self, screen: ScreenState, action_description: Optional[str] = None) -> None:
+    def record(
+        self,
+        screen: ScreenState,
+        action_description: Optional[str] = None,
+        action_type: Optional[str] = None,
+    ) -> None:
         """
         Record a screen state and optionally an action description.
         """
@@ -46,6 +51,9 @@ class LoopDetector(BaseModel):
 
         if action_description:
             self.__recent_actions.append(action_description)
+
+        if action_type:
+            self.__recent_actions.append(action_type)
 
     def is_stuck(self) -> bool:
         """

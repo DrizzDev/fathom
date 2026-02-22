@@ -172,18 +172,14 @@ class ExecutionEngine:
             await self.__signal.wait_for_resume()
             await self.__telemetry.info("Execution resumed")
 
-            if hasattr(self.__signal, "get_injected_context") and (
-                injected := self.__signal.get_injected_context()
-            ):
+            if injected := await self.__signal.get_injected_context():
                 await self.__telemetry.info("Context injected by user", context=injected)
                 return injected
 
         elif signal == SignalType.INJECT.value:
             await self.__telemetry.info("Injection signal received")
 
-            if hasattr(self.__signal, "get_injected_context") and (
-                injected := self.__signal.get_injected_context()
-            ):
+            if injected := await self.__signal.get_injected_context():
                 await self.__telemetry.info("Context injected", context=injected)
                 return injected
 

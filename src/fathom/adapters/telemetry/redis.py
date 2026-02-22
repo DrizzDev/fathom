@@ -30,6 +30,7 @@ class RedisTelemetryAdapter(TelemetryPort):
         if not configuration.session_id:
             raise ValueError("Redis telemetry requires 'session_id'.")
 
+        self.__identity = configuration.identity
         self.__session_id = configuration.session_id
         self.__channel = configuration.topic.format(session_id=self.__session_id)
         self.__redis = redis.from_url(configuration.connection_string, decode_responses=True)
@@ -48,6 +49,7 @@ class RedisTelemetryAdapter(TelemetryPort):
                 "color": color,
                 "source": "fathom",
                 "message": message,
+                "requestId": self.__identity,
                 "session_id": self.__session_id,
                 "timestamp": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
                 **context,

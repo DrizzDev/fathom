@@ -156,6 +156,7 @@ class TelemetryConfiguration(BaseModel):
     session_id: Optional[str] = Field(
         default=None, description="Session ID for channel interpolation"
     )
+    identity: Optional[str] = Field(default=None, description="Workflow identity for log routing")
 
 
 class FathomConfiguration(BaseModel):

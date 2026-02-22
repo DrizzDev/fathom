@@ -65,6 +65,7 @@ class AgentState:
         self.__current_screen_name: Optional[str] = None
 
         self.__last_error: Optional[str] = None
+        self.__last_action_type: Optional[str] = None
         self.__last_action_description: Optional[str] = None
 
     @property
@@ -184,7 +185,9 @@ class AgentState:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
 
         self.__loop_detector.record(
-            screen=screen, action_description=self.__last_action_description
+            screen=screen,
+            action_type=self.__last_action_type,
+            action_description=self.__last_action_description,
         )
         return is_new_screen
 
@@ -225,6 +228,8 @@ class AgentState:
             action=result.step.action, success=result.success, activity=activity
         )
         self.__interaction_tracker.record(action_type=result.step.action.action_type.value)
+
+        self.__last_action_type = result.step.action.action_type.value
         self.__last_action_description = result.step.action.to_description()
 
         logger.debug(

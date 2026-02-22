@@ -5,7 +5,7 @@ import contextlib
 from logging import getLogger
 from typing import Any, Dict, Optional
 
-from temporalio import activity, workflow
+from temporalio import activity
 
 from fathom.constants import SignalType
 from fathom.interfaces.signal import SignalPort
@@ -52,14 +52,14 @@ class TemporalSignalAdapter(SignalPort):
 
     async def __query_workflow_state(self) -> Dict[str, bool]:
         """
-        Query current workflow state.
+        Query current workflow state via external handle.
         """
-
-        from fathom.runtime.temporal.workflow import FathomWorkflow
 
         try:
             handle = await self.__get_workflow_handle()
-            response = await handle.query(FathomWorkflow.get_state)
+            # Use string name for query to avoid importing FathomWorkflow (circular dep)
+            # and to ensure it's treated as a pure external query.
+            response = await handle.query("get_state")
 
             return dict(response)
         except Exception as exception:
@@ -84,7 +84,7 @@ class TemporalSignalAdapter(SignalPort):
 
         return None
 
-    def is_pause_requested(self) -> bool:
+    async def is_pause_requested(self) -> bool:
         """
         Check if pause is requested.
 
@@ -93,9 +93,7 @@ class TemporalSignalAdapter(SignalPort):
         """
 
         try:
-            # Note: This is synchronous call to async method, risky but kept for now
-            # Better to make this method async in Port if possible.
-            state = asyncio.run(self.__query_workflow_state())
+            state = await self.__query_workflow_state()
             return state.get("paused", False)
         except Exception:
             return False
@@ -150,19 +148,18 @@ class TemporalSignalAdapter(SignalPort):
         )
         return ""
 
-    def get_injected_context(self) -> Optional[str]:
+    async def get_injected_context(self) -> Optional[str]:
         """
-        Get injected context from workflow.
+        Get injected context from workflow via external handle.
         """
-
-        from fathom.runtime.temporal.workflow import FathomWorkflow
 
         try:
-            state = asyncio.run(self.__query_workflow_state())
+            state = await self.__query_workflow_state()
 
             if state.get("has_context"):
-                handle = asyncio.run(self.__get_workflow_handle())
-                context = asyncio.run(handle.query(FathomWorkflow.get_injected_context))
+                handle = await self.__get_workflow_handle()
+                # Use string query name to avoid workflow context triggers
+                context = await handle.query("get_injected_context")
 
                 return str(context)
         except Exception as exception:
@@ -170,13 +167,13 @@ class TemporalSignalAdapter(SignalPort):
 
         return None
 
-    def has_injected_context(self) -> bool:
+    async def has_injected_context(self) -> bool:
         """
         Check if there's injected context available.
         """
 
         try:
-            state = asyncio.run(self.__query_workflow_state())
+            state = await self.__query_workflow_state()
             return state.get("has_context", False)
         except Exception:
             return False

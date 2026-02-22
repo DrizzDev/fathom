@@ -34,6 +34,42 @@ class IntentNodeProvider:
 
         self.__context = context
 
+    async def __is_cancelled(self) -> bool:
+        """
+        Consolidated check for execution cancellation.
+        """
+
+        if self.__context.is_cancelled:
+            return True
+
+        signal = await self.__context.signal.check_signal()
+        return signal == "CANCELLED"
+
+    async def __handle_hitl(self, current_step: int) -> None:
+        """
+        Orchestrates Human-In-The-Loop interruptions and context injection.
+        """
+
+        if isinstance(self.__context.signal, NoopSignal):
+            return
+
+        # 1. Check for Pause Request
+        if await self.__context.signal.is_pause_requested():
+            logger.info(
+                f"[HITL] Workflow {self.__context.workflow_id} is paused. "
+                "Waiting for resume/context."
+            )
+            await self.__context.signal.wait_for_resume()
+
+        # 2. Consume Injected Context
+        if await self.__context.signal.has_injected_context():
+            injected = await self.__context.signal.get_injected_context()
+            if injected:
+                logger.info(f"[HITL] Injected context received: {injected}")
+                await self.__context.context_manager.inject_user_guidance(
+                    guidance=injected, step=current_step
+                )
+
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
         Capture the screen and update state.
@@ -46,7 +82,7 @@ class IntentNodeProvider:
             f"[NODE: GROUND] Incoming state has planned_step: {state.get(IntentStateKey.PLANNED_STEP) is not None}"
         )
 
-        if self.__context.is_cancelled:
+        if await self.__is_cancelled():
             logger.warning("[NODE: GROUND] Execution cancelled")
             return {
                 CommonStateKey.IS_COMPLETE: True,
@@ -194,7 +230,7 @@ class IntentNodeProvider:
         logger.info("=" * 80)
         logger.info("[NODE: ANALYZE] Starting analysis node")
 
-        if self.__context.is_cancelled:
+        if await self.__is_cancelled():
             logger.warning("[NODE: ANALYZE] Execution cancelled")
             return {CommonStateKey.IS_COMPLETE: True}
 
@@ -228,9 +264,12 @@ class IntentNodeProvider:
         # Get Device Dimensions for Accurate Normalization (Strict)
         width, height = await self.__context.device.get_dimensions()
 
-        # Determine interactive mode & config
+        # Determine interactive mode & config for planner
         is_interactive = not isinstance(self.__context.signal, NoopSignal)
         prompt_if_stuck = self.__context.configuration.intent.prompt_user_if_stuck
+
+        # HITL: Check for pause request or context injection before planning
+        await self.__handle_hitl(current_step=current_step)
 
         logger.info(f"[NODE: ANALYZE] Calling planner for step {current_step + 1}")
         plan = await self.__context.planner.plan_step(
@@ -322,7 +361,7 @@ class IntentNodeProvider:
         logger.info("=" * 80)
         logger.info("[NODE: EXECUTE] Starting execution node")
 
-        if self.__context.is_cancelled:
+        if await self.__is_cancelled():
             logger.warning("[NODE: EXECUTE] Execution cancelled")
             return {CommonStateKey.IS_COMPLETE: True}
 
@@ -467,7 +506,7 @@ class IntentNodeProvider:
         logger.info("=" * 80)
         logger.info("[NODE: RECORD] Starting record node")
 
-        if self.__context.is_cancelled:
+        if await self.__is_cancelled():
             logger.warning("[NODE: RECORD] Execution cancelled")
             return {CommonStateKey.IS_COMPLETE: True}
 

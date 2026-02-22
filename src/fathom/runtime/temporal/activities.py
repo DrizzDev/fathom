@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict
+from typing import Any, Dict, Optional, cast
 
 from temporalio import activity
 
@@ -11,6 +11,9 @@ from fathom.runtime.builder import Fathom
 from fathom.runtime.factories import DeviceFactory, TelemetryFactory
 from fathom.schemas.configuration import (
     DeviceConfiguration,
+    ExecutionConfiguration,
+    ExplorationConfiguration,
+    IntentConfiguration,
     LLMConfiguration,
     TelemetryConfiguration,
 )
@@ -49,7 +52,12 @@ class FathomActivities:
             workflow_id=workflow_id,
             llm_configuration=configuration["llm"],
             device_configuration=configuration["device"],
+            intent_configuration=configuration["intent"],
+            interactive=request.get("interactive", True),
+            execution_configuration=configuration["engine"],
             telemetry_configuration=configuration["telemetry"],
+            exploration_configuration=configuration["exploration"],
+            realignment=cast("Optional[Dict[str, Any]]", request.get("realignment")),
         )
 
         try:
@@ -111,7 +119,12 @@ class FathomActivities:
             workflow_id=workflow_id,
             llm_configuration=configuration["llm"],
             device_configuration=configuration["device"],
+            intent_configuration=configuration["intent"],
+            interactive=request.get("interactive", True),
+            execution_configuration=configuration["engine"],
             telemetry_configuration=configuration["telemetry"],
+            exploration_configuration=configuration["exploration"],
+            realignment=cast("Optional[Dict[str, Any]]", request.get("realignment")),
         )
 
         try:
@@ -152,15 +165,17 @@ class FathomActivities:
         planner_configuration = request.get("planner_configuration", {})
 
         llm_configuration = LLMConfiguration(
-            use_cache=planner_configuration.get("use_cache", True),
             location=planner_configuration.get("location"),
             project_id=planner_configuration.get("project_id"),
             credentials=planner_configuration.get("credentials"),
+            use_cache=planner_configuration.get("use_cache", True),
             model=planner_configuration.get("model", "gemini-3-flash-preview"),
+            **(request.get("llm_config", {})),
         )
 
         enricher_url = request.get("enricher_url")
         session_id = request.get("session_id", "default_session")
+        identity = request.get("identity") or workflow_id
         execution_id = request.get("execution_id") or workflow_id
 
         if enricher_url:
@@ -177,6 +192,7 @@ class FathomActivities:
         if redis_url := request.get("redis_url"):
             telemetry_configuration = TelemetryConfiguration(
                 type="REDIS",
+                identity=identity,
                 session_id=session_id,
                 connection_string=redis_url,
                 topic="enricher:commands:v1:logs:{session_id}",
@@ -188,6 +204,9 @@ class FathomActivities:
             "llm": llm_configuration,
             "device": device_configuration,
             "telemetry": telemetry_configuration,
+            "intent": IntentConfiguration(**(request.get("intent_config", {}))),
+            "engine": ExecutionConfiguration(**(request.get("execution_config", {}))),
+            "exploration": ExplorationConfiguration(**(request.get("exploration_config", {}))),
         }
 
     def __build_runner(
@@ -195,21 +214,40 @@ class FathomActivities:
         workflow_id: str,
         llm_configuration: LLMConfiguration,
         device_configuration: DeviceConfiguration,
+        intent_configuration: IntentConfiguration,
         telemetry_configuration: TelemetryConfiguration,
+        execution_configuration: ExecutionConfiguration,
+        exploration_configuration: ExplorationConfiguration,
+        
+        *,
+        interactive: bool = True,
+        realignment: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """
         Instantiates the Fathom runner with configured adapters.
         """
 
-        signal_adapter = TemporalSignalAdapter(workflow_id=workflow_id)
+        from fathom.adapters.signal.noop import NoopSignal
+        from fathom.schemas.orchestration import RealignmentPolicy
+
+        signal_adapter = (
+            TemporalSignalAdapter(workflow_id=workflow_id) if interactive else NoopSignal()
+        )
         device_adapter = DeviceFactory.create(configuration=device_configuration)
         telemetry_adapter = TelemetryFactory.create(configuration=telemetry_configuration)
 
-        return (
+        builder = (
             Fathom.builder()
             .with_device(port=device_adapter)
             .with_signal(port=signal_adapter)
             .with_telemetry(port=telemetry_adapter)
+            .with_intent_config(configuration=intent_configuration)
             .with_llm(port=GeminiLLM(configuration=llm_configuration))
-            .build()
+            .with_execution_config(configuration=execution_configuration)
+            .with_exploration_config(configuration=exploration_configuration)
         )
+
+        if realignment:
+            builder.with_realignment(policy=RealignmentPolicy(**realignment))
+
+        return builder.build()

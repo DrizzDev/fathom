@@ -159,7 +159,7 @@ class GraphExecutor:
         await self.__context.signal.wait_for_resume()
 
         # Check for context injection using strict interface
-        if injected := self.__context.signal.get_injected_context():
+        if injected := await self.__context.signal.get_injected_context():
             await self.__inject_context(content=injected)
 
         logger.info("Executor: Resuming execution")

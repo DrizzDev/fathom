@@ -202,6 +202,7 @@ __marimo__/
 # Custom
 *.db
 .DS_Store
+logs/
 assets/
 secrets/
 documents/

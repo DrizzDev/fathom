@@ -95,9 +95,13 @@ class FathomWorkflow(FathomBaseWorkflow):
         )
 
         try:
+            # Ensure identity is in request for telemetry
+            identity = workflow.info().workflow_id
+            request["identity"] = identity
+
             result = await workflow.execute_activity(
                 activity="EXECUTE_INTENT",
-                args=[workflow.info().workflow_id, request],
+                args=[identity, request],
                 start_to_close_timeout=timedelta(minutes=30),
                 heartbeat_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=1),

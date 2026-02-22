@@ -52,6 +52,7 @@ class FathomRunner:
         telemetry: TelemetryPort,
         path_manager: SharedPathManager,
         config: Optional[FathomConfiguration] = None,
+        realignment: Optional[RealignmentPolicy] = None,
     ) -> None:
         """
         Initialize runner with all configured ports.
@@ -68,6 +69,7 @@ class FathomRunner:
         self.__telemetry = telemetry
         self.__path_manager = path_manager
         self.__config = config or FathomConfiguration()
+        self.__realignment = realignment or RealignmentPolicy()
 
         # Wire core components
         self.__engine = ExecutionEngine(
@@ -103,7 +105,7 @@ class FathomRunner:
     async def run_intent(
         self,
         intent: str,
-        max_steps: int = 100,
+        max_steps: int = 50,
         use_xml: bool = False,
         request_id: Optional[str] = None,
         realignment: Optional[RealignmentPolicy] = None,
@@ -150,12 +152,12 @@ class FathomRunner:
             signal=self.__signal,
             storage=self.__storage,
             workflow_id=workflow_id,
-            realignment=realignment,
             package_name=package_name,
             telemetry=self.__telemetry,
             configuration=self.__config,
             path_manager=self.__path_manager,
             summarizer=LLMSummarizer(llm=self.__llm),
+            realignment=realignment or self.__realignment,
             max_steps=max_steps or self.__config.intent.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
         )

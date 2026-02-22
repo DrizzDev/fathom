@@ -39,12 +39,28 @@ class SignalPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_injected_context(self) -> Optional[str]:
+    async def get_injected_context(self) -> Optional[str]:
         """
         Retrieve and consume injected user context.
 
         Returns:
             The context string if available, else None.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def is_pause_requested(self) -> bool:
+        """
+        Check if pause is currently requested.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def has_injected_context(self) -> bool:
+        """
+        Check if there is injected context available.
         """
 
         raise NotImplementedError

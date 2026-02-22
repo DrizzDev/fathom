@@ -42,21 +42,21 @@ class NoopSignal(SignalPort):
 
         return ""
 
-    def get_injected_context(self) -> Optional[str]:
+    async def get_injected_context(self) -> Optional[str]:
         """
         Get injected context - always returns None for autonomous mode.
         """
 
         return None
 
-    def has_injected_context(self) -> bool:
+    async def has_injected_context(self) -> bool:
         """
         Check if there's injected context - always returns False for autonomous mode.
         """
 
         return False
 
-    def is_pause_requested(self) -> bool:
+    async def is_pause_requested(self) -> bool:
         """
         Check if pause is requested - always returns False for autonomous mode.
         """

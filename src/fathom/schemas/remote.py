@@ -12,7 +12,9 @@ class RemoteInteractionRequest(BaseModel):
     """
 
     action: str = Field(description="Action type (tap, type, swipe, back, home)")
-    execution_id: Optional[str] = Field(default=None, description="The unique ID for the current execution/workflow.")
+    execution_id: Optional[str] = Field(
+        default=None, description="The unique ID for the current execution/workflow."
+    )
 
     x: Optional[int] = Field(default=None, description="Center X coordinate")
     y: Optional[int] = Field(default=None, description="Center Y coordinate")

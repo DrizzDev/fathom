@@ -107,7 +107,9 @@ class RemoteDeviceAdapter(DevicePort):
         Execute remote text input.
         """
 
-        request = RemoteInteractionRequest(action="type", text=text, execution_id=self.__execution_id)
+        request = RemoteInteractionRequest(
+            action="type", text=text, execution_id=self.__execution_id
+        )
         return await self.__send_command(request)
 
     async def swipe(
@@ -118,7 +120,10 @@ class RemoteDeviceAdapter(DevicePort):
         """
 
         request = RemoteInteractionRequest(
-            action="swipe", points=[x1, y1, x2, y2], extras={"duration": duration}, execution_id=self.__execution_id
+            action="swipe",
+            points=[x1, y1, x2, y2],
+            extras={"duration": duration},
+            execution_id=self.__execution_id,
         )
         return await self.__send_command(request)
 
@@ -146,7 +151,9 @@ class RemoteDeviceAdapter(DevicePort):
         if self.__cached_dimensions:
             return self.__cached_dimensions
 
-        request = RemoteInteractionRequest(action="GET_DIMENSIONS", execution_id=self.__execution_id)
+        request = RemoteInteractionRequest(
+            action="GET_DIMENSIONS", execution_id=self.__execution_id
+        )
 
         try:
             response = await self.__client.post("/action", json=request.model_dump())
@@ -182,7 +189,9 @@ class RemoteDeviceAdapter(DevicePort):
         Capture device screenshot.
         """
 
-        request = RemoteInteractionRequest(action="GET_SCREENSHOT", execution_id=self.__execution_id)
+        request = RemoteInteractionRequest(
+            action="GET_SCREENSHOT", execution_id=self.__execution_id
+        )
 
         try:
             response = await self.__client.post("/action", json=request.model_dump())
@@ -237,13 +246,21 @@ class RemoteDeviceAdapter(DevicePort):
         Get current package.
         """
 
-        request = RemoteInteractionRequest(action="GET_CURRENT_PACKAGE", execution_id=self.__execution_id)
+        request = RemoteInteractionRequest(
+            action="GET_CURRENT_PACKAGE", execution_id=self.__execution_id
+        )
 
         try:
             response = await self.__client.post("/action", json=request.model_dump())
             response.raise_for_status()
 
-            package = response.json().get("content", {}).get("package", "unknown_app")
+            data = response.json()
+            logger.info(f"Response of current package command: {data}")
+            # Extract from nested data field
+            payload = data.get("content", data)
+            nested_data = payload.get("data", {})
+            package = nested_data.get("package", "unknown_app")
+
             return str(package)
 
         except httpx.HTTPError as exception:
