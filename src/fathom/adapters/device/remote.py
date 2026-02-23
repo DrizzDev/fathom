@@ -41,7 +41,7 @@ class RemoteDeviceAdapter(DevicePort):
 
         self.__client = httpx.AsyncClient(
             http2=True,
-            timeout=30.0,
+            timeout=120.0,
             base_url=f"{self.__url}/sessions/{self.__session}/interaction",
             headers={"Authorization": f"Bearer {self.__token}"} if self.__token else {},
         )

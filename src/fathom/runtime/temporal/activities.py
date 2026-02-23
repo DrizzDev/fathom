@@ -202,6 +202,9 @@ class FathomActivities:
         session_id = request.get("session_id", "default_session")
         execution_id = request.get("execution_id") or workflow_id
 
+        # Use session_id as identity for telemetry.
+        identity = session_id
+
         if enricher_url := request.get("enricher_url"):
             device_configuration = DeviceConfiguration(
                 type="REMOTE",
@@ -216,7 +219,7 @@ class FathomActivities:
         if redis_url := request.get("redis_url"):
             telemetry_configuration = TelemetryConfiguration(
                 type="REDIS",
-                identity=session_id,
+                identity=identity,
                 session_id=session_id,
                 connection_string=redis_url,
                 topic="enricher:commands:v1:logs:{session_id}",

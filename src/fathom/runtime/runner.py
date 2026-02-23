@@ -126,6 +126,10 @@ class FathomRunner:
         start_time = time.time()
         workflow_id = request_id or uuid.uuid4().hex[:8]
 
+        # Synchronize telemetry identity with workflow_id for routing
+        if hasattr(self.__telemetry, "update_identity"):
+            self.__telemetry.update_identity(identity=workflow_id)
+
         # Use provided package name or fetch from device
         if not package_name:
             try:
@@ -230,6 +234,10 @@ class FathomRunner:
 
         start_time = time.time()
         workflow_id = request_id or uuid.uuid4().hex[:8]
+
+        # Synchronize telemetry identity with workflow_id for routing
+        if hasattr(self.__telemetry, "update_identity"):
+            self.__telemetry.update_identity(identity=workflow_id)
 
         # Use provided package name or fetch from device
         if not package_name:

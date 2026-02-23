@@ -100,7 +100,27 @@ class StepPlanner:
         if state.is_stuck:
             completion_error = None
             completion_signal = False
-            logger.warning("Agent is stuck in a loop. Forcing recovery action.")
+            logger.warning("Agent is stuck in a loop. Evaluating recovery options.")
+
+            # NATIVE INTERCEPT: Yield to HITL if enabled before attempting aggressive auto-recovery
+            if interactive_mode and prompt_if_stuck:
+                logger.warning("Agent is stuck. Yielding to native HITL intercept.")
+                return PlanResult(
+                    step=self.__build_step(
+                        action=Action(
+                            confidence=1.0,
+                            target="ask_user",
+                            action_type=ActionType.ASK_USER,
+                            rationale="Loop detected (Screen repeating). Requesting human intervention.",
+                            text="I have detected a loop and I'm repeating the same screen state. How should I proceed to break this cycle?",
+                        ),
+                        capture=capture,
+                        is_recovery=True,
+                        step_number=state.step_count,
+                    ),
+                    is_complete=False,
+                    reason="HITL intercept for loop detection.",
+                )
 
             try:
                 completion_signal = await self.__vision.check_completion(

@@ -156,7 +156,11 @@ class VisionService:
         tools = self.__scope_tools(intent=intent)
 
         # 3. CONTENT ASSEMBLY
+        manifest_start = time.time()
         manifest = self.__format_elements(elements=elements)
+        manifest_duration = time.time() - manifest_start
+
+        payload_start = time.time()
         payload = self.__build_payload(
             intent=intent,
             manifest=manifest,
@@ -164,6 +168,12 @@ class VisionService:
             knowledge=knowledge,
             screen=capture.image,
             context=dynamic_context,
+        )
+        payload_duration = time.time() - payload_start
+
+        # Log assembly performance
+        logger.info(
+            f"[VISION] Assembly | Manifest: {manifest_duration:.3f}s | Payload: {payload_duration:.3f}s"
         )
 
         # Log prompt context for visibility
@@ -181,7 +191,9 @@ class VisionService:
 
         # Log Raw LLM output
         raw_text = response.content[:200].replace("\n", " ") if response.content else "No text"
-        logger.debug(f"[H3] LLM Response | Duration: {duration:.3f}s | Raw: {raw_text}...")
+        logger.info(
+            f"[VISION] LLM Response | Duration: {duration:.3f}s | Model: {self.__llm.model_name} | Raw: {raw_text}..."
+        )
 
         # 5. PARSE & ENRICH
         parser = ToolResponseParser()
@@ -272,6 +284,7 @@ class VisionService:
             payload.append(f"Element Manifest: {manifest}")
 
         # Image must be last for KV-cache efficiency
+        # Optimization: Reduce resolution (768px) and quality (70) to improve latency
         optimized = ImageProcessor.optimize_for_vision(image_data=screen)
         payload.append(optimized)
 

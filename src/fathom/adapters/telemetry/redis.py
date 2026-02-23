@@ -30,12 +30,26 @@ class RedisTelemetryAdapter(TelemetryPort):
         if not configuration.session_id:
             raise ValueError("Redis telemetry requires 'session_id'.")
 
+        self.__configuration = configuration
         self.__identity = configuration.identity
         self.__session_id = configuration.session_id
         self.__channel = configuration.topic.format(session_id=self.__session_id)
         self.__redis = redis.from_url(configuration.connection_string, decode_responses=True)
 
         self.__logger = getLogger(name=logger_name)
+
+    def update_identity(self, identity: str) -> None:
+        """
+        Update the identity used for routing.
+        """
+
+        self.__identity = identity
+
+        # Re-interpolate channel in case identity is part of the pattern
+        if self.__configuration.topic:
+            self.__channel = self.__configuration.topic.format(
+                session_id=self.__session_id, identity=self.__identity
+            )
 
     async def __publish(self, level: str, message: str, color: str, **context: Any) -> None:
         """
