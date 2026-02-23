@@ -109,9 +109,9 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         data = json.loads(row[0])
                         knowledge["previous_actions"].append(
                             {
+                                "success": bool(row[1]),
                                 "action": data.get("action_type"),
                                 "target": data.get("target") or "element",
-                                "success": bool(row[1]),
                             }
                         )
                     except (json.JSONDecodeError, AttributeError):

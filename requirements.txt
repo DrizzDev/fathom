@@ -1,10 +1,12 @@
 # Core Dependencies
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
+opencv-python>=4.13.0.92
 aiohttp>=3.8.0
 structlog>=23.0.0
 
 h2>=4.1.0
+numpy>=2.4.2
 httpx>=0.28.1
 PyYAML>=6.0.0
 aiosqlite>=0.20.0

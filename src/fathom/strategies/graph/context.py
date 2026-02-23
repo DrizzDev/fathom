@@ -12,6 +12,7 @@ from fathom.core.services.action import ActionExecutor
 from fathom.core.services.audit import AuditService
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
+from fathom.core.services.perception import PerceptionService
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.trace import TraceService
 from fathom.core.services.ux import UXService
@@ -65,6 +66,7 @@ class GraphContext:
         metrics: Optional[ExecutionMetrics] = None,
         cancel_event: Optional[asyncio.Event] = None,
         hierarchy: Optional[HierarchyService] = None,
+        perception: Optional[PerceptionService] = None,
         summarizer: Optional[SummarizationPort] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_manager: Optional[ContextManager] = None,
@@ -102,6 +104,10 @@ class GraphContext:
 
         self.__reasoner = reasoner or Reasoner(intent=intent)
         self.__agent_state = agent_state or AgentState(intent=intent, max_steps=max_steps)
+
+        self.__perception = perception or PerceptionService(
+            device=device, storage=storage, telemetry=telemetry
+        )
 
         # GCC Context Manager with optional summarizer
         self.__context_manager = context_manager or ContextManager(
@@ -374,6 +380,14 @@ class GraphContext:
         Returns the UXService instance.
         """
         return self.__ux
+
+    @property
+    def perception(self) -> PerceptionService:
+        """
+        Returns the PerceptionService instance.
+        """
+
+        return self.__perception
 
     @property
     def resolution(self) -> ReferenceResolutionService:

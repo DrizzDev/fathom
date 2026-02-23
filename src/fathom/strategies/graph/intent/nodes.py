@@ -208,13 +208,17 @@ class IntentNodeProvider:
                 if annotated_screen:
                     screen = annotated_screen
 
-            # Update Agent State
-            visual_hash = hashlib.sha256(screen.image).hexdigest()[:VISUAL_HASH_LENGTH]
+            # Update Agent State with robust multi-layer hashing
+            xml_hash = self.__context.perception.compute_xml_hash(capture=screen)
+            visual_hash = self.__context.perception.compute_visual_hash(capture=screen)
+            interaction_hash = self.__context.perception.compute_interaction_hash(elements=elements)
 
             screen_state = ScreenState(
+                xml_hash=xml_hash,
                 visual_hash=visual_hash,
                 activity=screen.activity,
                 timestamp=screen.timestamp,
+                interaction_hash=interaction_hash,
                 activity_hash=hashlib.md5(
                     screen.activity.encode(), usedforsecurity=False
                 ).hexdigest()[:VISUAL_HASH_LENGTH],
@@ -513,11 +517,20 @@ class IntentNodeProvider:
 
         try:
             post_screenshot = await self.__context.device.capture_screen()
-            post_hash = (
-                hashlib.sha256(post_screenshot).hexdigest()[:VISUAL_HASH_LENGTH]
-                if post_screenshot
-                else pre_hash  # Fallback to pre_hash to indicate NO CHANGE on capture failure
-            )
+
+            if post_screenshot:
+                # Construct a temporary ScreenCapture for hashing, inheriting metadata from pre_capture
+                temp_capture = ScreenCapture(
+                    image=post_screenshot,
+                    width=capture.width,
+                    height=capture.height,
+                    activity=package_name,
+                    timestamp=int(time.time() * 1000),
+                )
+                post_hash = self.__context.perception.compute_visual_hash(capture=temp_capture)
+            else:
+                post_hash = pre_hash
+
         except Exception as exception:
             await self.__context.telemetry.warning(
                 f"Execute: Failed to capture post-screen: {exception}"
@@ -722,9 +735,7 @@ class IntentNodeProvider:
         execution_plan = state.get(IntentStateKey.PLAN)
         if isinstance(execution_plan, PlanResult) and execution_plan.is_complete:
             logger.info("[NODE: RECORD] Plan indicates completion. This is the final step.")
-            self.__context.agent_state.mark_complete(
-                reason=execution_plan.reason or "Completed"
-            )
+            self.__context.agent_state.mark_complete(reason=execution_plan.reason or "Completed")
             return {
                 CommonStateKey.IS_COMPLETE: True,
                 CommonStateKey.COMPLETION_REASON: execution_plan.reason,
