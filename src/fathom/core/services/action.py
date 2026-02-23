@@ -4,6 +4,7 @@ import asyncio
 import time
 from datetime import datetime
 from logging import getLogger
+from pathlib import Path
 from typing import Optional, Tuple
 
 from fathom.base.paths import SharedPathManager
@@ -15,6 +16,7 @@ from fathom.constants import (
 )
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.processing.annotator import ImageAnnotator
 from fathom.schemas.actions import Action
@@ -37,11 +39,14 @@ class ActionExecutor:
         device: DevicePort,
         telemetry: TelemetryPort,
         path_manager: SharedPathManager,
+        storage: Optional[StoragePort] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
     ) -> None:
         self.__device = device
         self.__telemetry = telemetry
         self.__max_retries = max_retries
+
+        self.__storage = storage
         self.__path_manager = path_manager
         self.__background_tasks: set[asyncio.Task[None]] = set()
 
@@ -314,7 +319,7 @@ class ActionExecutor:
         Schedules background trace annotation.
         """
 
-        def __trace(
+        async def __trace_and_upload(
             trace_path: str,
             action_type: str,
             image_data: bytes,
@@ -322,13 +327,29 @@ class ActionExecutor:
             coordinates: Tuple[int, ...],
         ) -> None:
             try:
-                ImageAnnotator.trace(
+                await asyncio.to_thread(
+                    ImageAnnotator.trace,
                     coords=coordinates,
                     image_data=image_data,
                     output_path=trace_path,
                     action_type=action_type,
                     label=label_description,
                 )
+
+                if self.__storage:
+                    with Path(trace_path).open("rb") as new_file:
+                        data = new_file.read()
+
+                    filename = Path(trace_path).name
+                    await self.__storage.save(
+                        data=data,
+                        metadata={
+                            "category": "traces",
+                            "filename": filename,
+                            "session_id": session_id,
+                            "package_name": package_name,
+                        },
+                    )
             except Exception as exception:
                 # Use standard logger in background thread
                 logger.exception(f"Tracing failed: {exception}", stack_info=True)
@@ -346,8 +367,7 @@ class ActionExecutor:
             )
 
             task = asyncio.create_task(
-                asyncio.to_thread(
-                    __trace,
+                __trace_and_upload(
                     coordinates=coords,
                     trace_path=trace_path,
                     image_data=pre_capture.image,

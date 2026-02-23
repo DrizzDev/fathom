@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -47,14 +47,32 @@ class LLMConfiguration(BaseModel):
     rate_limit_backoff: float = Field(default=5.0, description="Base backoff for rate limit errors")
 
     # Backend storage (for artifacts like image caching)
-    storage_bucket: Optional[str] = Field(
-        default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"
-    )
     use_cache: bool = Field(default=True, description="Whether to use context caching for the LLM")
 
     # Extension hook for arbitrary provider settings
     parameters: Dict[str, Any] = Field(
         default_factory=dict, description="Additional provider-specific parameters"
+    )
+
+
+class StorageConfiguration(BaseModel):
+    """
+    Configuration for artifact storage.
+    """
+
+    backends: List[Literal["LOCAL", "CLOUD"]] = Field(
+        default=["LOCAL"], description="Storage backends to enable"
+    )
+
+    storage_bucket: Optional[str] = Field(
+        default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"
+    )
+    project_id: Optional[str] = Field(
+        default=None, description="Project identifier for cloud storage"
+    )
+    credentials: Optional[Union[str, Dict[str, Any]]] = Field(
+        default=None,
+        description="Credentials as file path (str) or JSON object (dict)",
     )
 
 
@@ -182,6 +200,7 @@ class FathomConfiguration(BaseModel):
     llm: LLMConfiguration = Field(default_factory=LLMConfiguration)
     device: DeviceConfiguration = Field(default_factory=DeviceConfiguration)
     engine: ExecutionConfiguration = Field(default_factory=ExecutionConfiguration)
+    storage: StorageConfiguration = Field(default_factory=StorageConfiguration)
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
 
     intent: IntentConfiguration = Field(default_factory=IntentConfiguration)

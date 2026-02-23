@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import xml.etree.ElementTree as ET  # nosec
 from datetime import datetime
 from logging import getLogger
@@ -9,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ActionType
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.storage import StoragePort
 from fathom.processing.annotator import ImageAnnotator
 from fathom.processing.drawer import BoundsGenerator
 from fathom.schemas.screens import ScreenCapture
@@ -22,12 +24,27 @@ class HierarchyService:
     Service responsible for UI hierarchy analysis. Optimized for high-speed grounding.
     """
 
-    def __init__(self, device: DevicePort) -> None:
+    def __init__(self, device: DevicePort, storage: Optional[StoragePort] = None) -> None:
         """
-        Initialize hierarchy service with device port."""
+        Initialize hierarchy service with device port.
+        """
 
         self.__device = device
+        self.__storage = storage
         self.__label_map: Dict[str, Any] = {}
+        self.__background_tasks: set[asyncio.Task[Any]] = set()
+
+    def __fire_and_forget(self, coroutine: Any) -> None:
+        """
+        Schedules a coroutine as a background task.
+        """
+
+        try:
+            task = asyncio.create_task(coroutine)
+            self.__background_tasks.add(task)
+            task.add_done_callback(self.__background_tasks.discard)
+        except Exception as exception:
+            logger.warning(f"Failed to create background task: {exception}", stack_info=True)
 
     @property
     def label_map(self) -> Dict[str, Any]:
@@ -70,11 +87,38 @@ class HierarchyService:
             )
             self.__save_file(path=screenshot_path, data=screen.image, mode="wb")
 
+            if self.__storage:
+                self.__fire_and_forget(
+                    self.__storage.save(
+                        data=screen.image,
+                        metadata={
+                            "category": "screenshot",
+                            "session_id": session_id,
+                            "package_name": package_name,
+                            "filename": f"{filename_base}.png",
+                        },
+                    )
+                )
+
             # 2. Save Raw XML (using path manager)
             xml_path = path_manager.get_xml_path(
                 package_name=package_name, session_id=session_id, filename=f"{filename_base}.xml"
             )
-            self.__save_file(path=xml_path, data=xml.encode("utf-8"), mode="wb")
+            xml_bytes = xml.encode("utf-8")
+            self.__save_file(path=xml_path, data=xml_bytes, mode="wb")
+
+            if self.__storage:
+                self.__fire_and_forget(
+                    self.__storage.save(
+                        data=xml_bytes,
+                        metadata={
+                            "category": "xmls",
+                            "session_id": session_id,
+                            "package_name": package_name,
+                            "filename": f"{filename_base}.xml",
+                        },
+                    )
+                )
 
             # 3. Parse Elements
             elements = self.__parse_elements(
@@ -91,6 +135,22 @@ class HierarchyService:
 
             if not annotated_result:
                 return screen, self.__label_map.copy()
+
+            if self.__storage:
+                with annotated_result.open("rb") as handle:
+                    annotated_data = handle.read()
+
+                self.__fire_and_forget(
+                    self.__storage.save(
+                        data=annotated_data,
+                        metadata={
+                            "category": "annotated",
+                            "session_id": session_id,
+                            "package_name": package_name,
+                            "filename": f"{filename_base}.png",
+                        },
+                    )
+                )
 
             # 5. Build Result Capture
             capture = self.__build_capture(original=screen, path=annotated_result)

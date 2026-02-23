@@ -7,17 +7,20 @@ from temporalio import activity
 
 from fathom.adapters.llm.gemini import GeminiLLM
 from fathom.adapters.signal.temporal import TemporalSignalAdapter
+from fathom.base.paths import SharedPathManager
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.builder import Fathom
-from fathom.runtime.factories import DeviceFactory, TelemetryFactory
+from fathom.runtime.factories import DeviceFactory, StorageFactory, TelemetryFactory
 from fathom.schemas.configuration import (
     DeviceConfiguration,
     ExecutionConfiguration,
     ExplorationConfiguration,
     IntentConfiguration,
     LLMConfiguration,
+    StorageConfiguration,
     TelemetryConfiguration,
 )
+from fathom.settings.env import FathomSettings
 
 logger = getLogger(__name__)
 
@@ -56,6 +59,7 @@ class FathomActivities:
             interactive=request.get("interactive", True),
             device_configuration=configuration["device"],
             intent_configuration=configuration["intent"],
+            storage_configuration=configuration["storage"],
             execution_configuration=configuration["engine"],
             telemetry_configuration=configuration["telemetry"],
             exploration_configuration=configuration["exploration"],
@@ -68,8 +72,9 @@ class FathomActivities:
             # Fetch package name for accurate tracing/storage
             try:
                 package_name = await runner.device.get_current_package()
-            except Exception:
+            except Exception as exception:
                 package_name = "unknown_app"
+                logger.warning(f"Failed to fetch package name due to {exception}")
 
             result = await runner.run_intent(
                 request_id=workflow_id,
@@ -131,6 +136,7 @@ class FathomActivities:
             device_configuration=configuration["device"],
             intent_configuration=configuration["intent"],
             interactive=request.get("interactive", True),
+            storage_configuration=configuration["storage"],
             execution_configuration=configuration["engine"],
             telemetry_configuration=configuration["telemetry"],
             exploration_configuration=configuration["exploration"],
@@ -143,8 +149,9 @@ class FathomActivities:
             # Fetch package name for accurate tracing/storage
             try:
                 package_name = await runner.device.get_current_package()
-            except Exception:
+            except Exception as exception:
                 package_name = "unknown_app"
+                logger.warning(f"Failed to fetch package name due to {exception}")
 
             result = await runner.run_exploration(
                 request_id=workflow_id,
@@ -227,9 +234,25 @@ class FathomActivities:
         else:
             telemetry_configuration = TelemetryConfiguration(type="STRUCTLOG")
 
+        # Fallback to LLM config / planner config for legacy compatibility
+        storage_parameters: Dict[str, Any] = {
+            "backends": ["LOCAL", "CLOUD"],
+            "project_id": planner_configuration.get("project_id"),
+            "credentials": planner_configuration.get("credentials"),
+            "storage_bucket": llm_request_configuration.get("storage_bucket")
+            or planner_configuration.get("storage_bucket"),
+        }
+        storage_parameters.update(request.get("storage_config", {}))
+        storage_parameters = {
+            key: value for key, value in storage_parameters.items() if value is not None
+        }
+
+        storage_configuration = StorageConfiguration(**storage_parameters)
+
         return {
             "llm": llm_configuration,
             "device": device_configuration,
+            "storage": storage_configuration,
             "telemetry": telemetry_configuration,
             "intent": IntentConfiguration(**(request.get("intent_config", {}))),
             "engine": ExecutionConfiguration(**(request.get("execution_config", {}))),
@@ -243,6 +266,7 @@ class FathomActivities:
         llm_configuration: LLMConfiguration,
         device_configuration: DeviceConfiguration,
         intent_configuration: IntentConfiguration,
+        storage_configuration: StorageConfiguration,
         telemetry_configuration: TelemetryConfiguration,
         execution_configuration: ExecutionConfiguration,
         exploration_configuration: ExplorationConfiguration,
@@ -273,13 +297,21 @@ class FathomActivities:
         else:
             signal_adapter = NoopSignal()
 
+        path_manager = SharedPathManager(settings=FathomSettings())
         device_adapter = DeviceFactory.create(configuration=device_configuration)
         telemetry_adapter = TelemetryFactory.create(configuration=telemetry_configuration)
 
+        # Storage initialization (Always includes local + optional cloud)
+        storage_adapter = StorageFactory.create(
+            path_manager=path_manager,
+            configuration=storage_configuration,
+        )
+
         builder = (
-            Fathom.builder()
+            Fathom.builder(path_manager=path_manager)
             .with_device(port=device_adapter)
             .with_signal(port=signal_adapter)
+            .with_storage(port=storage_adapter)
             .with_telemetry(port=telemetry_adapter)
             .with_intent_config(configuration=intent_configuration)
             .with_llm(port=GeminiLLM(configuration=llm_configuration))

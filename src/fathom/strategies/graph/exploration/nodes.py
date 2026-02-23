@@ -61,17 +61,19 @@ class ExplorationNodeProvider:
                 data=screenshot_bytes,
                 metadata={
                     "type": "screenshot",
+                    "category": "screenshot",
                     "package_name": activity,
                     "timestamp": time.time(),
                     "session_id": self.__context.workflow_id,
+                    "filename": f"{int(time.time() * 1000)}__{activity}.png",
                 },
             )
 
             screen = ScreenCapture(
-                image=screenshot_bytes,
                 width=width,
                 height=height,
                 activity=activity,
+                image=screenshot_bytes,
                 timestamp=int(time.time() * 1000),
                 metadata={"storage_id": storage_id},
             )
@@ -237,7 +239,7 @@ class ExplorationNodeProvider:
             )
 
         self.__context.agent_state.record_step(result=step_result)
-        self.__context.history.save_step(result=step_result, intent="exploration")
+        await self.__context.history.save_step(result=step_result, intent="exploration")
 
         if self.__context.agent_state.step_count >= self.__context.max_steps:
             result = ExplorationGraphState(**state)

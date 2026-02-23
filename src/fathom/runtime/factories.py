@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from fathom.adapters.device.adb import ADBDevice
 from fathom.adapters.device.remote import RemoteDeviceAdapter
+from fathom.adapters.storage.cloud import CloudStorage
 from fathom.adapters.telemetry.redis import RedisTelemetryAdapter
 from fathom.adapters.telemetry.structlog import StructlogAdapter
+from fathom.base.paths import SharedPathManager
+from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import (
     ADBConfiguration,
     DeviceConfiguration,
+    StorageConfiguration,
     TelemetryConfiguration,
 )
 
@@ -47,3 +52,31 @@ class TelemetryFactory:
             return RedisTelemetryAdapter(configuration=configuration)
         else:
             return StructlogAdapter()
+
+
+class StorageFactory:
+    """
+    Factory for creating storage adapters based on configuration.
+    """
+
+    @staticmethod
+    def create(configuration: StorageConfiguration, path_manager: SharedPathManager) -> StoragePort:
+        """
+        Creates the appropriate StoragePort implementation.
+        """
+
+        from fathom.adapters.storage.composite import CompositeStorage
+        from fathom.adapters.storage.local import LocalStorage
+
+        storages: list[StoragePort] = []
+
+        if "LOCAL" in configuration.backends:
+            storages.append(LocalStorage(path_manager=path_manager))
+
+        if "CLOUD" in configuration.backends and configuration.storage_bucket:
+            storages.append(CloudStorage(storage=GCSImageStorage(configuration=configuration)))
+
+        if storages:
+            return CompositeStorage(storages=storages)
+
+        raise ValueError("Please provide at-least one backend for storage")

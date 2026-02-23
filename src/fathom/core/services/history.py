@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
+from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 try:
@@ -9,12 +11,14 @@ try:
 except ImportError:
     yaml = None
 
+from fathom.interfaces.storage import StoragePort
 from fathom.schemas.steps import StepResult
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from fathom.base.paths import SharedPathManager
+
+
+logger = getLogger(__name__)
 
 
 class HistoryService:
@@ -28,21 +32,39 @@ class HistoryService:
         workflow_id: str,
         package_name: str,
         path_manager: SharedPathManager,
+        storage: Optional[StoragePort] = None,
     ) -> None:
         self.__workflow_id = workflow_id
+        self.__package_name = package_name
+
+        self.__storage = storage
         self.__directory = path_manager.get_history_directory(
             package_name=package_name, session_id=workflow_id
         )
+        self.__background_tasks: set[asyncio.Task[Any]] = set()
 
-    def save_step(
+    def __fire_and_forget(self, coroutine: Any) -> None:
+        """
+        Schedules a coroutine as a background task.
+        """
+
+        try:
+            task = asyncio.create_task(coroutine)
+            self.__background_tasks.add(task)
+            task.add_done_callback(self.__background_tasks.discard)
+        except Exception as exception:
+            logger.exception(f"Failed to execute FAF task. Got exception {exception}")
+
+    async def save_step(
         self,
         result: StepResult,
         *,
         intent: str = "",
         absolute_center: Optional[List[int]] = None,
-    ) -> None:
+    ) -> str:
         """
         Saves a single step result and updates associated artifact files.
+        Returns the generated natural language script.
         """
 
         history = self.__load_history()
@@ -53,9 +75,9 @@ class HistoryService:
 
         history["history"].append(record)
 
-        self.__save_json(data=history)
-        self.__save_yaml(history=history["history"])
-        self.__update_script(history=history["history"], intent=intent)
+        await self.__save_json(data=history)
+        await self.__save_yaml(history=history["history"])
+        return await self.__update_script(history=history["history"], intent=intent)
 
     def __load_history(self) -> Dict[str, Any]:
         """
@@ -75,16 +97,31 @@ class HistoryService:
 
         return data
 
-    def __save_json(self, data: Dict[str, Any]) -> None:
+    async def __save_json(self, data: Dict[str, Any]) -> None:
         """
         Writes history to structured JSON format.
         """
 
         path = self.__directory / "history.json"
-        with path.open(mode="w") as handle:
-            json.dump(obj=data, fp=handle, indent=2)
 
-    def __save_yaml(self, history: List[Dict[str, Any]]) -> None:
+        json_data = json.dumps(obj=data, indent=2)
+        with path.open(mode="w") as handle:
+            handle.write(json_data)
+
+        if self.__storage:
+            self.__fire_and_forget(
+                self.__storage.save(
+                    data=json_data.encode("utf-8"),
+                    metadata={
+                        "category": "history",
+                        "filename": "history.json",
+                        "session_id": self.__workflow_id,
+                        "package_name": self.__package_name,
+                    },
+                )
+            )
+
+    async def __save_yaml(self, history: List[Dict[str, Any]]) -> None:
         """
         Generates a YAML representation of the execution.
         """
@@ -96,18 +133,32 @@ class HistoryService:
         ]
 
         if yaml:
-            with path.open(mode="w") as handle:
-                yaml.dump(
-                    indent=2,
-                    data=steps,
-                    stream=handle,
-                    sort_keys=False,
-                    default_flow_style=None,
-                )
+            yaml_data = yaml.dump(
+                data=steps,
+                indent=2,
+                sort_keys=False,
+                default_flow_style=False,
+            )
         else:
-            self.__write_manual_yaml(path=path, steps=steps)
+            yaml_data = self.__build_manual_yaml_string(steps=steps)
 
-    def __update_script(self, history: List[Dict[str, Any]], intent: str) -> None:
+        with path.open(mode="w") as handle:
+            handle.write(yaml_data)
+
+        if self.__storage:
+            self.__fire_and_forget(
+                self.__storage.save(
+                    data=yaml_data.encode("utf-8"),
+                    metadata={
+                        "category": "history",
+                        "filename": "history.yaml",
+                        "session_id": self.__workflow_id,
+                        "package_name": self.__package_name,
+                    },
+                )
+            )
+
+    async def __update_script(self, history: List[Dict[str, Any]], intent: str) -> str:
         """
         Generates a natural language test script with smart validation.
         """
@@ -144,8 +195,24 @@ class HistoryService:
             lines.append(f"{step_number}. {description}")
             step_number += 1
 
+        script_data = "\n".join(lines) + "\n"
         with path.open(mode="w") as handle:
-            handle.write("\n".join(lines) + "\n")
+            handle.write(script_data)
+
+        if self.__storage:
+            self.__fire_and_forget(
+                self.__storage.save(
+                    data=script_data.encode("utf-8"),
+                    metadata={
+                        "category": "history",
+                        "filename": "script.txt",
+                        "session_id": self.__workflow_id,
+                        "package_name": self.__package_name,
+                    },
+                )
+            )
+
+        return script_data
 
     def __resolve_script_target(self, target: str, intent: str, action: str) -> str:
         """
@@ -251,9 +318,9 @@ class HistoryService:
             },
         }
 
-    def __write_manual_yaml(self, path: Path, steps: List[Dict[str, Any]]) -> None:
+    def __build_manual_yaml_string(self, steps: List[Dict[str, Any]]) -> str:
         """
-        Fallback YAML writer if PyYAML is unavailable.
+        Fallback YAML writer if PyYAML is unavailable. Returns YAML string.
         """
 
         lines = []
@@ -274,5 +341,4 @@ class HistoryService:
             lines.append(f'    rationale: "{rationale}"')
             lines.append("")
 
-        with path.open(mode="w") as handle:
-            handle.write("\n".join(lines))
+        return "\n".join(lines)

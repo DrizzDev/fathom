@@ -90,10 +90,10 @@ class GraphContext:
         self.__max_steps = max_steps
         self.__workflow_id = workflow_id
         self.__package_name = package_name
+        self.__configuration = configuration
 
         self.__cancel_event = cancel_event or asyncio.Event()
         self.__realignment = realignment or RealignmentPolicy()
-        self.__configuration = configuration
 
         # Injected services with defaults for backward compatibility
         self.__ux = ux or UXService()
@@ -112,22 +112,24 @@ class GraphContext:
             llm=llm,
             memory=memory,
             storage=storage,
-            use_cache=configuration.llm.use_cache,
             auditor=self.__auditor,
             session_id=workflow_id,
             package_name=package_name,
+            use_cache=configuration.llm.use_cache,
         )
 
         self.__action_executor = action_executor or ActionExecutor(
             device=device,
+            storage=storage,
             telemetry=telemetry,
             path_manager=path_manager,
         )
 
-        self.__hierarchy = hierarchy or HierarchyService(device=device)
+        self.__hierarchy = hierarchy or HierarchyService(device=device, storage=storage)
         self.__planner = planner or StepPlanner(vision_tool=self.__vision)
 
         self.__history = history or HistoryService(
+            storage=storage,
             workflow_id=workflow_id,
             package_name=package_name,
             path_manager=path_manager,

@@ -89,6 +89,14 @@ class IntentNodeProvider:
                 CommonStateKey.COMPLETION_REASON: "Cancelled",
             }
 
+        current_step_num = self.__context.agent_state.step_count + 1
+
+        await self.__context.telemetry.info(
+            f"Grounding step {current_step_num}...",
+            type="STEP_STARTED",
+            step=current_step_num,
+        )
+
         start_time = time.time()
 
         try:
@@ -134,17 +142,22 @@ class IntentNodeProvider:
                 )
                 activity = "unknown"
 
-            # Persist capture
-            storage_id = await self.__context.storage.save(
-                data=screenshot_bytes,
-                metadata={
-                    "type": "screenshots",
-                    "timestamp": time.time(),
-                    "package_name": activity,
-                    "activity_name": activity,
-                    "session_id": self.__context.workflow_id,
-                },
+            # Persist capture in background to avoid blocking
+            asyncio.create_task(
+                self.__context.storage.save(
+                    data=screenshot_bytes,
+                    metadata={
+                        "category": "screenshot",
+                        "filename": f"{int(time.time() * 1000)}__{activity}.png",
+                        "type": "screenshots",
+                        "timestamp": time.time(),
+                        "package_name": activity,
+                        "activity_name": activity,
+                        "session_id": self.__context.workflow_id,
+                    },
+                )
             )
+            storage_id = "pending_background_upload"
 
             screen = ScreenCapture(
                 width=width,
@@ -573,16 +586,41 @@ class IntentNodeProvider:
         )
 
         self.__context.agent_state.record_step(result=step_result)
-        self.__context.history.save_step(result=step_result, intent=self.__context.intent)
+        script_data = await self.__context.history.save_step(
+            result=step_result, intent=self.__context.intent
+        )
 
         # Emit enriched telemetry for the UI to render full step details
         record = step_result.to_record()
+
+        # Calculate total duration for UI
+        analysis_duration_raw = state.get(CommonStateKey.ANALYSIS_DURATION) or 0.0
+        grounding_duration_raw = state.get(CommonStateKey.GROUNDING_DURATION) or 0.0
+        execution_duration_raw = state.get(CommonStateKey.EXECUTION_DURATION) or 0.0
+
+        analysis_duration = (
+            float(analysis_duration_raw)
+            if isinstance(analysis_duration_raw, (int, float, str))
+            else 0.0
+        )
+        grounding_duration = (
+            float(grounding_duration_raw)
+            if isinstance(grounding_duration_raw, (int, float, str))
+            else 0.0
+        )
+        execution_duration = (
+            float(execution_duration_raw)
+            if isinstance(execution_duration_raw, (int, float, str))
+            else 0.0
+        )
+
+        total_duration = int((grounding_duration + analysis_duration + execution_duration) * 1000)
 
         await self.__context.telemetry.info(
             f"Step {step_result.step.step_number} completed",
             type="STEP_COMPLETED",
             success=record.success,
-            duration=record.duration,
+            duration=total_duration,
             rationale=record.rationale,
             observation=record.observation,
             action_type=record.action_type,
@@ -590,6 +628,13 @@ class IntentNodeProvider:
             action_description=record.action_description,
             target=record.natural_language_target or record.target,
         )
+
+        if script_data:
+            await self.__context.telemetry.info(
+                script_data,
+                type="SCRIPT_GENERATED",
+                step=step_result.step.step_number + 1,
+            )
 
         await self.__context.memory.store_experience(
             success=step_result.success,
