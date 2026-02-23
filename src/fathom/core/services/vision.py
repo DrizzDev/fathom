@@ -141,9 +141,9 @@ class VisionService:
 
         # Pass ALL persistent memory (not just screen-specific)
         dynamic_context = self.__builder.build_user_context(
+            memory=all_memory,  # Cross-screen persistent memory
             history=full_context,
             tracking_note=tracking_note,
-            memory=all_memory,  # Cross-screen persistent memory
         )
 
         logger.debug(
@@ -295,6 +295,8 @@ class VisionService:
         """
         Converts label map to grounding manifest (strictly mirrored).
         """
+
+        logger.info(f"Converting {len(elements) if elements else 0} elements into manifest")
 
         if not elements:
             return "N/A"
