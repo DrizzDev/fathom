@@ -185,7 +185,7 @@ class AuditService:
                 "Confidence:", f"[{confidence_color}]{confidence_pct:.1f}%[/{confidence_color}]"
             )
 
-        audit_grid.add_row("ADB Command:", self.__format_ms(milliseconds=result.duration))
+        audit_grid.add_row("Device Command:", self.__format_ms(milliseconds=float(result.duration)))
 
         audit_grid.add_row(
             "[bold white]Total Time:[/bold white]",

@@ -33,12 +33,12 @@ class FathomSettings(BaseSettings):
     )
 
     # Device settings
-    android_serial: Optional[str] = Field(default=None, alias="ANDROID_SERIAL")
     adb_path: str = Field(default="adb", alias="ADB_PATH")
+    android_serial: Optional[str] = Field(default=None, alias="ANDROID_SERIAL")
 
     # Logging settings
     log_json: bool = Field(default=False, alias="LOG_JSON")
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    log_level: str = Field(default="DEBUG", alias="LOG_LEVEL")
 
     # Workflow default limits
     max_steps: int = Field(default=100, alias="MAX_STEPS")

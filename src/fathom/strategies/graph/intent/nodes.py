@@ -544,6 +544,22 @@ class IntentNodeProvider:
         self.__context.agent_state.record_step(result=step_result)
         self.__context.history.save_step(result=step_result, intent=self.__context.intent)
 
+        # Emit enriched telemetry for the UI to render full step details
+        record = step_result.to_record()
+
+        await self.__context.telemetry.info(
+            f"Step {step_result.step.step_number} completed",
+            type="STEP_COMPLETED",
+            success=record.success,
+            duration=record.duration,
+            rationale=record.rationale,
+            observation=record.observation,
+            action_type=record.action_type,
+            step=step_result.step.step_number,
+            action_description=record.action_description,
+            target=record.natural_language_target or record.target,
+        )
+
         await self.__context.memory.store_experience(
             success=step_result.success,
             action=step_result.step.action,
