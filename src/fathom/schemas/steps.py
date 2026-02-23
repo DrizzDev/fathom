@@ -46,7 +46,17 @@ class StepResult(BaseModel):
         default=None, description="Semantic observation of the screen state"
     )
 
-    def to_record(self, absolute_center: Optional[List[int]] = None) -> "StepRecord":
+    generalized_target: Optional[str] = Field(
+        default=None, description="Generalized description if target is dynamic or positional"
+    )
+    is_positional: bool = Field(
+        default=False,
+        description="Whether the generalized_target is a positional/ordinal reference",
+    )
+
+    def to_record(
+        self, absolute_center: Optional[List[int]] = None, activity: Optional[str] = None
+    ) -> "StepRecord":
         """
         Converts the result into a serializable record for persistence.
         """
@@ -57,17 +67,25 @@ class StepResult(BaseModel):
         else:
             bounds = None
 
+        condition = getattr(self.step, "condition", None) or getattr(
+            self.step.action, "condition", None
+        )
+
         return StepRecord(
             bounds=bounds,
+            activity=activity,
+            condition=condition,
             success=self.success,
             duration=self.duration,
             center=absolute_center,
             text=self.step.action.text,
             observation=self.observation,
             target=self.step.action.target,
+            is_positional=self.is_positional,
             step_number=self.step.step_number,
             screen_changed=self.screen_changed,
             rationale=self.step.action.rationale,
+            generalized_target=self.generalized_target,
             action_type=self.step.action.action_type.value,
             action_description=self.step.action.to_description(),
             natural_language_target=self.step.action.natural_language_target,
@@ -88,9 +106,17 @@ class StepRecord(BaseModel):
     natural_language_target: Optional[str] = Field(
         default=None, description="Human-friendly name of the target element"
     )
+    generalized_target: Optional[str] = Field(
+        default=None, description="Generalized description if target is dynamic or positional"
+    )
+    is_positional: bool = Field(
+        default=False,
+        description="Whether the generalized_target is a positional/ordinal reference",
+    )
     text: Optional[str] = Field(default=None, description="Typed text content")
     rationale: Optional[str] = Field(default=None, description="Reasoning for the action")
     observation: Optional[str] = Field(default=None, description="Screen state observation")
+    condition: Optional[str] = Field(default=None, description="Condition for IF-block wrapping")
     action_description: Optional[str] = Field(
         default=None, description="Human-readable NLP command"
     )
@@ -98,6 +124,8 @@ class StepRecord(BaseModel):
     success: bool = Field(description="Execution status")
     screen_changed: bool = Field(description="Visual transition status")
     duration: int = Field(ge=0, description="Duration in milliseconds")
+
+    activity: Optional[str] = Field(default=None, description="Android activity at time of action")
 
     bounds: Optional[List[int]] = Field(
         default=None, description="Normalized [x1, y1, x2, y2] bounds"

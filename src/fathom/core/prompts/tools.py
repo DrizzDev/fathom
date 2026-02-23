@@ -111,6 +111,19 @@ class ToolRegistry:
                                     "type": "STRING",
                                     "description": "Reasoning for the validity judgment.",
                                 },
+                                "condition": {
+                                    "type": "STRING",
+                                    "description": "Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
+                                },
+                                "target_type": {
+                                    "type": "STRING",
+                                    "enum": ["stable", "positional", "dynamic"],
+                                    "description": "How the target should be referenced in exported scripts: stable (fixed label), positional (ordinal in list), or dynamic (content that may change). Leave unset if unsure.",
+                                },
+                                "script_target": {
+                                    "type": "STRING",
+                                    "description": "When target_type is positional or dynamic, the exact phrase for script export (e.g. 'the first search result', 'the promotional banner'). Omit for stable.",
+                                },
                             },
                             "required": ["action_type", "rationale", "is_valid"],
                         },

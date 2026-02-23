@@ -565,6 +565,8 @@ class IntentNodeProvider:
             error=execution_result.error,
             screen_changed=screen_changed,
             success=execution_result.success,
+            generalized_target=step.action.script_target,
+            is_positional=(step.action.target_type == "positional"),
         )
 
         return {
