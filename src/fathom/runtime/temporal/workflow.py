@@ -102,7 +102,7 @@ class FathomWorkflow(FathomBaseWorkflow):
             result = await workflow.execute_activity(
                 activity="EXECUTE_INTENT",
                 args=[identity, request],
-                heartbeat_timeout=timedelta(seconds=120),
+                heartbeat_timeout=timedelta(seconds=300),
                 start_to_close_timeout=timedelta(minutes=30),
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )

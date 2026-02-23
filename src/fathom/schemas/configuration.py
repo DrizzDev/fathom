@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, Field
 
@@ -60,8 +60,8 @@ class StorageConfiguration(BaseModel):
     Configuration for artifact storage.
     """
 
-    backends: List[Literal["LOCAL", "CLOUD"]] = Field(
-        default=["LOCAL"], description="Storage backends to enable"
+    backends: Set[Literal["LOCAL", "CLOUD"]] = Field(
+        default={"LOCAL"}, description="Storage backends to enable"
     )
 
     storage_bucket: Optional[str] = Field(

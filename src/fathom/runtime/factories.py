@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from logging import getLogger
+from typing import Callable, Dict
+
 from fathom.adapters.device.adb import ADBDevice
 from fathom.adapters.device.remote import RemoteDeviceAdapter
 from fathom.adapters.storage.cloud import CloudStorage
@@ -16,6 +19,8 @@ from fathom.schemas.configuration import (
     StorageConfiguration,
     TelemetryConfiguration,
 )
+
+logger = getLogger(__name__)
 
 
 class DeviceFactory:
@@ -63,20 +68,33 @@ class StorageFactory:
     def create(configuration: StorageConfiguration, path_manager: SharedPathManager) -> StoragePort:
         """
         Creates the appropriate StoragePort implementation.
+        Supports LOCAL, CLOUD, or both using CompositeStorage.
         """
 
         from fathom.adapters.storage.composite import CompositeStorage
         from fathom.adapters.storage.local import LocalStorage
 
-        storages: list[StoragePort] = []
+        strategy_map: Dict[str, Callable[[], StoragePort]] = {
+            "LOCAL": lambda: LocalStorage(path_manager=path_manager),
+            "CLOUD": lambda: CloudStorage(storage=GCSImageStorage(configuration=configuration)),
+        }
 
-        if "LOCAL" in configuration.backends:
-            storages.append(LocalStorage(path_manager=path_manager))
+        active_storages = []
 
-        if "CLOUD" in configuration.backends and configuration.storage_bucket:
-            storages.append(CloudStorage(storage=GCSImageStorage(configuration=configuration)))
+        for backend in configuration.backends:
+            if backend == "CLOUD" and not configuration.storage_bucket:
+                logger.warning("CLOUD backend specified without a storage_bucket, skipping.")
+                continue
 
-        if storages:
-            return CompositeStorage(storages=storages)
+            if creator := strategy_map.get(backend):
+                active_storages.append(creator())
 
-        raise ValueError("Please provide at-least one backend for storage")
+        if not active_storages:
+            # Default fallback to LocalStorage if nothing specified or invalid
+            logger.warning("No valid storage backends configured, defaulting to LOCAL.")
+            return LocalStorage(path_manager=path_manager)
+
+        if len(active_storages) == 1:
+            return active_storages[0]
+
+        return CompositeStorage(storages=active_storages)
