@@ -36,6 +36,7 @@ from fathom.services.hierarchy import HierarchyService
 from fathom.services.history import HistoryService
 from fathom.services.resolution import ReferenceResolutionService
 from fathom.services.ux import UXService
+from fathom.services.validation import ValidationService
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision.processing.annotator import ImageAnnotator
@@ -153,6 +154,10 @@ class NodeContext:
         )
         self.resolution = ReferenceResolutionService(ledger=self.ledger)
         self.classifier = TargetClassifier()
+        self.validation_service = ValidationService(
+            vision_tool=planner.vision_tool if hasattr(planner, "vision_tool") else None,
+            hierarchy_service=self.hierarchy,
+        )
 
     def update_intent(self, intent: str) -> None:
         """Update the shared intent across context and reasoning."""
@@ -293,6 +298,83 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
                 "planning_screen": screen,
                 "elements": {},
                 "hierarchy_duration": time.time() - start,
+            }
+
+    async def validate_node(state: FathomGraphState) -> FathomGraphState:
+        """
+        Validate that required screen items are present before planning action.
+
+        Pre-condition check: Ensures all critical UI elements specified in the
+        original intent are still visible on the current screen. Logs validation
+        results but does not block progression (agent sees results in context).
+        """
+        screen: Optional[ScreenCapture] = state.get("capture")
+        screen_state: Optional[ScreenState] = state.get("screen_state")
+
+        if not screen or not screen_state:
+            return state
+
+        # Extract requirements from intent if not already done
+        validation_requirements = ctx.agent_state.validation_requirements
+        if not validation_requirements:
+            # Extract on first validation node execution
+            validation_requirements = ctx.validation_service.extract_requirements(
+                ctx.agent_state.intent
+            )
+            if validation_requirements:
+                ctx.agent_state.set_validation_requirements(validation_requirements)
+
+        # If no validation requirements, skip validation
+        if not validation_requirements:
+            logger.debug("No validation requirements found in intent")
+            return {
+                **state,
+                "validation_result": None,
+                "validation_duration": 0.0,
+            }
+
+        # Run validation check
+        start = time.time()
+        try:
+            validation_result = await ctx.validation_service.validate_screen(
+                screen=screen,
+                requirements=validation_requirements,
+                timeout_seconds=5.0,
+            )
+            validation_duration = time.time() - start
+
+            # Record in agent state
+            ctx.agent_state.set_validation_result(validation_result)
+
+            # Log validation result for audit trail
+            logger.info(f"Validation performed: {validation_result.notes}")
+
+            # Record validation metrics
+            ctx.metrics.record(operation="validation", duration=validation_duration)
+
+            # Include validation context for LLM planning
+            validation_context = {
+                "validation_passed": validation_result.passed,
+                "validation_confidence": validation_result.confidence_score,
+                "found_items": validation_result.found_items,
+                "missing_items": validation_result.missing_items,
+            }
+
+            return {
+                **state,
+                "validation_result": validation_result,
+                "validation_context": validation_context,
+                "validation_duration": validation_duration,
+            }
+        except Exception as exc:
+            logger.warning(f"Validation check failed with exception: {exc}")
+            validation_duration = time.time() - start
+            ctx.metrics.record(operation="validation", duration=validation_duration)
+            return {
+                **state,
+                "validation_result": None,
+                "validation_context": None,
+                "validation_duration": validation_duration,
             }
 
     async def analyze_node(state: FathomGraphState) -> FathomGraphState:
@@ -735,6 +817,7 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
     return {
         "ground": ground_node,
         "hierarchy": hierarchy_node,
+        "validate": validate_node,
         "analyze": analyze_node,
         "resolve": resolve_node,
         "execute": execute_node,
@@ -753,7 +836,7 @@ def make_route_after_ground(ctx: NodeContext) -> Callable[[FathomGraphState], st
             return "done"
         if state.get("capture") is None:
             return "done"
-        return "hierarchy"
+        return "validate"
 
     return route
 

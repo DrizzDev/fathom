@@ -7,6 +7,7 @@ from typing_extensions import TypedDict
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.validation import ValidationResult
 
 
 class FathomGraphState(TypedDict, total=False):
@@ -57,4 +58,9 @@ class FathomGraphState(TypedDict, total=False):
     # ── Timing (for UX / metrics) ─────────────────────────────────────
     grounding_duration: float
     hierarchy_duration: float
+    validation_duration: float
     execution_duration: float
+
+    # ── Validation artefacts ──────────────────────────────────────────
+    validation_result: Optional[ValidationResult]
+    validation_context: Optional[Dict[str, Any]]

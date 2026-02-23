@@ -9,6 +9,7 @@ from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import ActionHistory, LoopDetector
 from fathom.schemas.steps import StepResult
+from fathom.schemas.validation import ValidationRequirement, ValidationResult
 from fathom.services.summarizer import StepSummarizer
 
 logger = getLogger(__name__)
@@ -77,6 +78,10 @@ class AgentState:
         self.__last_error: Optional[str] = None
         self.__last_action_description: Optional[str] = None
         self.__last_action_type: Optional[ActionType] = None
+
+        # Validation fields
+        self.__validation_requirements: List[ValidationRequirement] = []
+        self.__last_validation_result: Optional[ValidationResult] = None
 
         # Non-physical actions that don't change the screen
         self.__non_physical_actions: Set[ActionType] = {
@@ -226,6 +231,62 @@ class AgentState:
     def set_last_error(self, error: str) -> None:
         """Set the last error message."""
         self.__last_error = error
+
+    def set_validation_requirements(self, requirements: List[ValidationRequirement]) -> None:
+        """
+        Set the list of items that need to be validated on screen.
+
+        Args:
+            requirements: List of ValidationRequirement objects to track.
+        """
+        self.__validation_requirements = requirements
+        logger.debug(f"Set validation requirements: {len(requirements)} items to validate")
+
+    @property
+    def validation_requirements(self) -> List[ValidationRequirement]:
+        """
+        Get current validation requirements.
+
+        Returns:
+            List of items that must be validated on screen.
+        """
+        return self.__validation_requirements.copy()
+
+    def set_validation_result(self, result: ValidationResult) -> None:
+        """
+        Record the result of a validation check.
+
+        Args:
+            result: ValidationResult containing pass/fail and details.
+        """
+        self.__last_validation_result = result
+        logger.debug(f"Recorded validation result: {result.notes}")
+
+    @property
+    def last_validation_result(self) -> Optional[ValidationResult]:
+        """
+        Get the most recent validation result.
+
+        Returns:
+            ValidationResult if validation has been performed, None otherwise.
+        """
+        return self.__last_validation_result
+
+    def is_validated_for_continuation(self) -> bool:
+        """
+        Check if the current screen still meets validation requirements.
+
+        This is useful for detecting if the screen has changed in a way
+        that invalidates our assumptions (e.g., required element disappeared).
+
+        Returns:
+            True if all validation requirements are met, False if any are missing
+            or if no validation has been performed yet.
+        """
+        if self.__last_validation_result is None:
+            return True  # No validation requirements, so assume OK to continue
+
+        return self.__last_validation_result.passed
 
     def get_smart_context(self, max_history: int = 5) -> str:
         """

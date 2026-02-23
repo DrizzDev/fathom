@@ -7,6 +7,10 @@ Topology::
     │ ground │──capture_failed?──→ END
     └───┬────┘
         │
+    ┌───▼────────┐
+    │  validate  │
+    └───┬────────┘
+        │
     ┌───▼──────┐
     │ hierarchy│
     └───┬──────┘
@@ -147,6 +151,7 @@ def build_intent_graph(
     graph = StateGraph(FathomGraphState)
 
     graph.add_node("ground", nodes["ground"])
+    graph.add_node("validate", nodes["validate"])
     graph.add_node("hierarchy", nodes["hierarchy"])
     graph.add_node("analyze", nodes["analyze"])
     graph.add_node("resolve", nodes["resolve"])
@@ -159,8 +164,10 @@ def build_intent_graph(
     graph.add_conditional_edges(
         "ground",
         make_route_after_ground(ctx),
-        {"hierarchy": "hierarchy", "done": END},
+        {"validate": "validate", "done": END},
     )
+
+    graph.add_edge("validate", "hierarchy")
 
     graph.add_edge("hierarchy", "analyze")
 
