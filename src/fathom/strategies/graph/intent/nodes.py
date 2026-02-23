@@ -377,7 +377,6 @@ class IntentNodeProvider:
             IntentStateKey.INJECTED_CONTEXT: None,
             IntentStateKey.PLANNED_STEP: plan.step,
             CommonStateKey.ANALYSIS_DURATION: duration,
-            CommonStateKey.IS_COMPLETE: plan.is_complete,
             IntentStateKey.SHOULD_RETRY: plan.should_retry,
             CommonStateKey.COMPLETION_REASON: completion_reason,
         }
@@ -718,6 +717,18 @@ class IntentNodeProvider:
                 step_count=self.__context.agent_state.step_count,
                 total_duration=grounding_duration + analysis_duration + execution_duration,
             )
+
+        # Check if the plan indicated completion
+        execution_plan = state.get(IntentStateKey.PLAN)
+        if isinstance(execution_plan, PlanResult) and execution_plan.is_complete:
+            logger.info("[NODE: RECORD] Plan indicates completion. This is the final step.")
+            self.__context.agent_state.mark_complete(
+                reason=execution_plan.reason or "Completed"
+            )
+            return {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: execution_plan.reason,
+            }
 
         # Check max steps
         if self.__context.agent_state.step_count >= self.__context.max_steps:
