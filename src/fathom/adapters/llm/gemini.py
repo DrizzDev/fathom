@@ -107,11 +107,47 @@ class GeminiLLM(LLMPort):
         except Exception as exception:
             raise VisionError(f"Init failed: {exception}") from exception
 
+    def __get_generation_configuration(
+        self,
+        cache_name: Optional[str] = None,
+        tools: Optional[Dict[str, Any]] = None,
+        system_instruction: Optional[str] = None,
+    ) -> types.GenerateContentConfig:
+        """
+        Constructs the GenerateContentConfig using current configuration.
+        """
+
+        config_args: Dict[str, Any] = {
+            "candidate_count": 1,
+            "automatic_function_calling": {"disable": True},
+            "temperature": self.__configuration.temperature,
+            "media_resolution": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+        }
+
+        # Add thinking configuration for Gemini 3 series
+        if "gemini-3" in self.model_name:
+            config_args["thinking_config"] = types.ThinkingConfig(
+                thinking_level=getattr(self.__configuration, "thinking_level", "low"),
+                include_thoughts=getattr(self.__configuration, "include_thoughts", True),
+            )
+
+        if not cache_name:
+            if system_instruction:
+                config_args["system_instruction"] = [{"text": system_instruction}]
+
+            if tools:
+                config_args["tools"] = [tools]
+                config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
+        else:
+            config_args["cached_content"] = cache_name
+
+        return types.GenerateContentConfig(**config_args)
+
     async def generate(
         self,
-        *,
-        prompt: Sequence[Union[str, bytes, Dict[str, str]]],
         use_cache: bool,
+        prompt: Sequence[Union[str, bytes, Dict[str, str]]],
+        *,
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
     ) -> GenerateResult:
@@ -146,23 +182,12 @@ class GeminiLLM(LLMPort):
             else:
                 parts.append(item)
 
-        config_args: Dict[str, Any] = {
-            "candidate_count": 1,
-            "temperature": self.__configuration.temperature,
-            "automatic_function_calling": {"disable": True},
-        }
+        config = self.__get_generation_configuration(
+            tools=tools,
+            cache_name=cache_name,
+            system_instruction=system_instruction,
+        )
 
-        if not cache_name:
-            if system_instruction:
-                config_args["system_instruction"] = [{"text": system_instruction}]
-
-            if tools:
-                config_args["tools"] = [tools]
-                config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
-        else:
-            config_args["cached_content"] = cache_name
-
-        config = types.GenerateContentConfig(**config_args)
         max_retries = self.__configuration.max_retries
 
         for attempt in range(max_retries + 1):
@@ -181,8 +206,13 @@ class GeminiLLM(LLMPort):
                     candidate = response.candidates[0]
                     if candidate.content and candidate.content.parts:
                         for part in candidate.content.parts:
+                            # Skip thought parts for final content but log them if necessary
+                            if hasattr(part, "thought") and part.thought:
+                                continue
+
                             if part.text:
                                 content += part.text
+
                             if part.function_call:
                                 tool_calls.append(part.function_call)
 

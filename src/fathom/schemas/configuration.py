@@ -25,9 +25,23 @@ class LLMConfiguration(BaseModel):
         description="Credentials as file path (str) or JSON object (dict)",
     )
 
+    # Gemini specific parameters
+    thinking_level: Literal["minimal", "low", "medium", "high"] = Field(
+        default="low",
+        description="Controls reasoning depth. 'low' = faster, 'high' = deeper/slower.",
+    )
+    include_thoughts: bool = Field(
+        default=False,
+        description="Whether to include the model's reasoning process in the response.",
+    )
+    media_resolution: Literal["low", "medium", "high"] = Field(
+        default="low",
+        description="Vision token density. 'low' is recommended for high-speed agents.",
+    )
+
     # Common hyper-parameters
     max_retries: int = Field(default=3, description="Maximum retry attempts")
-    temperature: float = Field(default=0.0, description="Sampling temperature")
+    temperature: float = Field(default=1.0, description="Sampling temperature")
     timeout: float = Field(default=60.0, description="Request timeout in seconds")
     retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
     rate_limit_backoff: float = Field(default=5.0, description="Base backoff for rate limit errors")

@@ -159,6 +159,7 @@ class VisionService:
         manifest_start = time.time()
         manifest = self.__format_elements(elements=elements)
         manifest_duration = time.time() - manifest_start
+        logger.info(f"Formatted manifest length: {len(manifest)} and took {manifest_duration:.3f}s")
 
         payload_start = time.time()
         payload = self.__build_payload(

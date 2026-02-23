@@ -103,7 +103,9 @@ class HierarchyService:
             capture = capture.model_copy(update={"metadata": new_metadata})
 
             duration = (datetime.now() - start_time).total_seconds()
-            logger.info(f"Hierarchy processing complete in {duration:.2f}s")
+            logger.info(
+                f"Hierarchy processing complete in {duration:.2f}s. Elements found: {len(self.__label_map)}"
+            )
 
             return capture, self.__label_map.copy()
 

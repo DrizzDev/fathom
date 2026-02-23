@@ -150,6 +150,10 @@ class Action(BaseModel):
         if self.action_type == ActionType.COMPLETE:
             return f"Validate {name} (Goal complete)"
 
+        if self.action_type == ActionType.ASK_USER:
+            msg = self.text or self.rationale or name
+            return f"Ask user: {msg}"
+
         return f"{self.action_type.value.capitalize()} on {name}"
 
 

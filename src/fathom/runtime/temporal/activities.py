@@ -75,8 +75,8 @@ class FathomActivities:
                 request_id=workflow_id,
                 intent=request["intent"],
                 package_name=package_name,
-                use_xml=request.get("use_xml", False),
-                max_steps=request.get("max_steps", 100),
+                use_xml=request.get("use_xml", True),
+                max_steps=request.get("max_steps", 50),
             )
 
             activity.heartbeat(f"Completed: {result.steps_taken} steps")

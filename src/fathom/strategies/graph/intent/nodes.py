@@ -96,7 +96,10 @@ class IntentNodeProvider:
             screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
 
             if not screenshot_bytes or len(screenshot_bytes) == 0:
-                await self.__context.telemetry.error("Ground: Empty screenshot captured")
+                await self.__context.telemetry.error(
+                    "Ground: Empty screenshot captured",
+                    step=self.__context.agent_state.step_count + 1,
+                )
                 logger.error("[NODE: GROUND] Empty screenshot captured")
                 return {
                     CommonStateKey.CAPTURE: None,
@@ -110,7 +113,10 @@ class IntentNodeProvider:
 
             # Validate dimensions
             if width <= 0 or height <= 0:
-                await self.__context.telemetry.error(f"Ground: Invalid dimensions {width}x{height}")
+                await self.__context.telemetry.error(
+                    f"Ground: Invalid dimensions {width}x{height}",
+                    step=self.__context.agent_state.step_count + 1,
+                )
                 logger.error(f"[NODE: GROUND] Invalid dimensions {width}x{height}")
                 return {
                     CommonStateKey.CAPTURE: None,
@@ -123,7 +129,8 @@ class IntentNodeProvider:
                 activity = await self.__context.device.get_current_package()
             except Exception as exception:
                 await self.__context.telemetry.warning(
-                    f"Ground: Failed to get current package: {exception}"
+                    f"Ground: Failed to get current package: {exception}",
+                    step=self.__context.agent_state.step_count + 1,
                 )
                 activity = "unknown"
 
@@ -149,10 +156,21 @@ class IntentNodeProvider:
             )
 
             # XML Dump if enabled
-            xml_content_str = xml_content if xml_content else None
+            xml: Optional[str] = None
+
+            if isinstance(xml_content, bytes):
+                xml = xml_content.decode("utf-8", errors="ignore")
+
+            elif isinstance(xml_content, str):
+                xml = xml_content
+
             elements = None
 
-            if self.__context.use_xml and xml_content_str:
+            logger.debug(
+                f"[DEBUG: GROUND] Config use_xml={self.__context.use_xml}, xml_content present={xml is not None}"
+            )
+
+            if self.__context.use_xml and xml:
                 dump_start = time.time()
                 self.__context.metrics.record(
                     operation="hierarchy_dump", duration=time.time() - dump_start
@@ -163,8 +181,8 @@ class IntentNodeProvider:
                     annotated_screen,
                     elements,
                 ) = await self.__context.hierarchy.process_xml_and_screen(
+                    xml=xml,
                     screen=screen,
-                    xml=xml_content_str,
                     package_name=activity,
                     action_type=ActionType.TAP,
                     session_id=self.__context.workflow_id,
@@ -196,7 +214,7 @@ class IntentNodeProvider:
             self.__context.metrics.record(operation="screenshot", duration=duration)
 
             logger.info(
-                f"[NODE: GROUND] Screen captured: hash={visual_hash}, activity={activity}, is_new={is_new_screen}"
+                f"[NODE: GROUND] Screen captured: hash={visual_hash}, activity={activity}, is_new={is_new_screen}, elements={len(elements) if elements else 0}"
             )
             logger.info(f"[NODE: GROUND] Grounding completed in {duration:.2f}s")
             logger.info("[NODE: GROUND] -> Transitioning to ANALYZE")
@@ -205,13 +223,13 @@ class IntentNodeProvider:
             return {
                 CommonStateKey.ANALYSIS: None,
                 CommonStateKey.CAPTURE: screen,
+                IntentStateKey.XML_CONTENT: xml,
                 CommonStateKey.STEP_RESULT: None,
                 IntentStateKey.ELEMENTS: elements,
                 IntentStateKey.PLANNED_STEP: None,
                 IntentStateKey.SHOULD_RETRY: False,
                 CommonStateKey.SCREEN_STATE: screen_state,
                 CommonStateKey.GROUNDING_DURATION: duration,
-                IntentStateKey.XML_CONTENT: xml_content_str,
                 CommonStateKey.IS_NEW_SCREEN: is_new_screen,
             }
 
@@ -306,9 +324,17 @@ class IntentNodeProvider:
             )
 
             # Emit structured telemetry for streaming UI
-            await self.__context.telemetry.info(plan.reason or "No reasoning", type="REASONING")
             await self.__context.telemetry.info(
-                plan.step.action.to_description(), type="PLANNED_ACTION"
+                plan.reason or "No reasoning",
+                type="REASONING",
+                step=current_step + 1,
+                reasoning=plan.reason,
+                rationale=plan.step.action.rationale if plan.step else None,
+            )
+            await self.__context.telemetry.info(
+                plan.step.action.to_description(),
+                type="PLANNED_ACTION",
+                step=current_step + 1,
             )
 
             self.__context.ux.render_fallback(
@@ -328,16 +354,19 @@ class IntentNodeProvider:
             f"has_step={plan.step is not None}"
         )
 
+        completion_reason = (
+            plan.reason if plan.is_complete else state.get(CommonStateKey.COMPLETION_REASON)
+        )
+
         result = {
             IntentStateKey.PLAN: plan,
-            IntentStateKey.PLANNED_STEP: plan.step,
-            CommonStateKey.IS_COMPLETE: plan.is_complete,
-            CommonStateKey.COMPLETION_REASON: plan.reason
-            if plan.is_complete
-            else state.get(CommonStateKey.COMPLETION_REASON),
-            IntentStateKey.SHOULD_RETRY: plan.should_retry,
-            CommonStateKey.ANALYSIS_DURATION: duration,
+            IntentStateKey.ELEMENTS: elements,
             IntentStateKey.INJECTED_CONTEXT: None,
+            IntentStateKey.PLANNED_STEP: plan.step,
+            CommonStateKey.ANALYSIS_DURATION: duration,
+            CommonStateKey.IS_COMPLETE: plan.is_complete,
+            IntentStateKey.SHOULD_RETRY: plan.should_retry,
+            CommonStateKey.COMPLETION_REASON: completion_reason,
         }
 
         # Log what will happen next based on routing logic
@@ -424,6 +453,7 @@ class IntentNodeProvider:
                 f"Action Paused: {question}",
                 type="HITL_REQUESTED",
                 original_action=step.action.to_description(),
+                step=self.__context.agent_state.step_count + 1,
             )
 
             user_response = await self.__context.signal.ask(prompt=question)
@@ -515,6 +545,7 @@ class IntentNodeProvider:
         return {
             CommonStateKey.STEP_RESULT: step_result,
             CommonStateKey.EXECUTION_DURATION: duration,
+            IntentStateKey.ELEMENTS: state.get(IntentStateKey.ELEMENTS),
         }
 
     async def record(self, state: IntentGraphState) -> IntentGraphState:
@@ -555,7 +586,7 @@ class IntentNodeProvider:
             rationale=record.rationale,
             observation=record.observation,
             action_type=record.action_type,
-            step=step_result.step.step_number,
+            step=step_result.step.step_number + 1,
             action_description=record.action_description,
             target=record.natural_language_target or record.target,
         )

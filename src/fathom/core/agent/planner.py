@@ -45,10 +45,10 @@ class StepPlanner:
         reasoner: Reasoner,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        *,
         screen_width: int,
         screen_height: int,
-        *,
-        use_xml: bool = False,
+        use_xml: bool = True,
         prompt_if_stuck: bool = False,
         interactive_mode: bool = False,
         elements: Optional[Dict[str, Any]] = None,
@@ -109,7 +109,7 @@ class StepPlanner:
                     step=self.__build_step(
                         action=Action(
                             confidence=1.0,
-                            target="ask_user",
+                            target="Request user assistance",
                             action_type=ActionType.ASK_USER,
                             rationale="Loop detected (Screen repeating). Requesting human intervention.",
                             text="I have detected a loop and I'm repeating the same screen state. How should I proceed to break this cycle?",

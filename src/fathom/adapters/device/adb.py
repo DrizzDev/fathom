@@ -226,7 +226,7 @@ class ADBDevice(DevicePort):
 
         if not dump_result.success:
             raise DeviceError(
-                f"Dump hierarchy: Failed to dump UI hierarchy: {dump_result.error or 'Unknown error'}"
+                f"Dump hierarchy: UI automation dump failed on device: {dump_result.error or 'Unknown error'}"
             )
 
         cat_arguments = self.__build_arguments(parts=["exec-out", "cat", path])
@@ -237,7 +237,7 @@ class ADBDevice(DevicePort):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(fut=process.communicate(), timeout=5.0)
+            stdout, stderr = await asyncio.wait_for(fut=process.communicate(), timeout=10.0)
 
             if process.returncode != 0:
                 error_msg = stderr.decode().strip() if stderr else "Unknown error"
@@ -249,14 +249,14 @@ class ADBDevice(DevicePort):
             return stdout.decode("utf-8", errors="ignore")
 
         except asyncio.TimeoutError as exception:
-            raise DeviceError("Dump hierarchy: Hierarchy dump timed out after 5s") from exception
+            raise DeviceError("Dump hierarchy: cat operation timed out after 10s") from exception
 
         except DeviceError:
             raise
 
         except Exception as exception:
             raise DeviceError(
-                f"Dump hierarchy: Failed to dump hierarchy: {exception}"
+                f"Dump hierarchy: Unexpected error during XML retrieval: {exception}"
             ) from exception
 
     async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
@@ -272,6 +272,12 @@ class ADBDevice(DevicePort):
 
         image_result = results[0]
         xml_result = results[1]
+
+        if isinstance(xml_result, Exception):
+            logger.error(f"Snapshot: Hierarchy dump failed: {xml_result}")
+
+        if isinstance(image_result, Exception):
+            logger.error(f"Snapshot: Screenshot capture failed: {image_result}")
 
         image = image_result if isinstance(image_result, bytes) else b""
         xml = xml_result if isinstance(xml_result, str) else None

@@ -207,7 +207,7 @@ class ToolResponseParser:
             alternatives=[],
             reasoning=message,
             is_goal_complete=completed,
-            screen_description="Tool-based analysis",
+            screen_description=message or action.rationale or "Analyzing screen...",
         )
 
     def __parse_memory_storage(self, arguments: Any) -> AnalysisResult:
@@ -263,11 +263,11 @@ class ToolResponseParser:
             action=Action(
                 confidence=0.0,
                 rationale=message,
-                target="No valid action",
                 action_type=ActionType.WAIT,
+                target="User Guidance Requested",
             ),
             alternatives=[],
             reasoning=message,
             is_goal_complete=completed,
-            screen_description="Fallback state",
+            screen_description=message or "Fallback state",
         )

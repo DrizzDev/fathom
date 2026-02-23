@@ -15,20 +15,47 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
+class SharedInputBus:
+    """
+    Broadcast-capable input bus for stdin.
+    Allows multiple concurrent listeners to receive and filter the same input stream.
+    """
+
+    def __init__(self) -> None:
+        self.__condition = asyncio.Condition()
+        self.__latest_input: Optional[str] = None
+
+    async def put(self, value: str) -> None:
+        """
+        Broadcast a new value to all waiting listeners.
+        """
+
+        async with self.__condition:
+            self.__latest_input = value
+            self.__condition.notify_all()
+
+    async def get(self) -> str:
+        """
+        Wait for the next broadcasted value.
+        """
+
+        async with self.__condition:
+            await self.__condition.wait()
+            return self.__latest_input or ""
+
+
 class InteractiveSignal(SignalPort):
     """
     High-performance, event-driven HITL signal adapter.
 
     Architecture:
     - Zero-Thread Multiplexing: Uses `loop.add_reader` on `sys.stdin` for O(1) kernel-level notifications.
-    - Singleton Input Bus: Shares a single async queue across all signal instances to prevent contention.
-    - Blocking-Safe I/O: Maintains `sys.stdin` in blocking mode to prevent `stdout` side-effects
-      (avoiding `BlockingIOError`), relying on kernel readiness signals to ensure non-blocking reads.
+    - Singleton Input Bus: Broadcasts input to all active listeners (preventing theft).
     """
 
     # Global input bus for all concurrent instances
     __listener_active: ClassVar[bool] = False
-    __input_bus: ClassVar[asyncio.Queue[str]] = asyncio.Queue()
+    __input_bus: ClassVar[SharedInputBus] = SharedInputBus()
 
     def __init__(self) -> None:
         """
@@ -37,14 +64,6 @@ class InteractiveSignal(SignalPort):
 
         self.__pause_requested = False
         self.__injected_context: Optional[str] = None
-
-        # Clear any stale data from the shared input bus
-        while not self.__input_bus.empty():
-            try:
-                stale_cmd = self.__input_bus.get_nowait()
-                logger.warning(f"InteractiveSignal: Cleared stale command from bus: '{stale_cmd}'")
-            except asyncio.QueueEmpty:
-                break
 
         # Ensure the global listener is registered in the current event loop
         self.__ensure_listener()
@@ -63,72 +82,57 @@ class InteractiveSignal(SignalPort):
 
         try:
             loop = asyncio.get_running_loop()
-            # Register kernel-level notification for stdin
-            # Note: We do NOT set O_NONBLOCK to avoid breaking stdout/logging.
-            # Kernel only triggers this when data is genuinely ready for consumption.
             loop.add_reader(sys.stdin.fileno(), cls.__on_tty_readiness)
             cls.__listener_active = True
         except (RuntimeError, ValueError):
-            # Fallback for environments where stdin is not a file or loop is missing
             pass
 
     @classmethod
     def __on_tty_readiness(cls) -> None:
         """
         Kernel callback triggered when stdin has data available.
-        Invoked on the main event loop thread.
         """
 
-        # Since the kernel notified us, this read will not block.
-        if line := sys.stdin.readline():
-            # Dispatch to the global async bus
-            # We use call_soon because we are in a low-level callback
-            asyncio.get_running_loop().call_soon(cls.__input_bus.put_nowait, line.strip())
+        line = sys.stdin.readline()
+
+        # EOF detection
+        if line == "":
+            try:
+                loop = asyncio.get_running_loop()
+                loop.remove_reader(sys.stdin.fileno())
+                cls.__listener_active = False
+            except Exception:  # nosec
+                pass
+            return
+
+        if line is not None:
+            content = line.rstrip("\n").strip()
+            # Push to the broadcast bus
+            asyncio.get_running_loop().create_task(cls.__input_bus.put(content))
 
     async def check_signal(self) -> Optional[str]:
         """
-        Non-blocking check of the global input bus.
-        Identifies high-priority 'pause' signals for immediate interruption.
+        Checks if pause is currently requested.
         """
-
-        while not self.__input_bus.empty():
-            cmd = self.__input_bus.get_nowait().lower()
-            if cmd == "pause":
-                self.__pause_requested = True
-                console.print("\n[bold yellow]⏸️  Pause requested - interrupting...[/bold yellow]\n")
-            # Other commands are buffered or discarded depending on state
 
         return SignalType.ASK.value if self.__pause_requested else None
 
     async def wait_for_pause(self) -> None:
         """
-        Efficiently parks the task until a pause signal arrives on the bus. Consumes zero CPU cycles while waiting.
+        Efficiently parks the task until a pause signal arrives.
         """
 
-        # If already paused, don't wait again (prevents infinite loop)
         if self.__pause_requested:
-            logger.warning(
-                f"wait_for_pause: Already paused (__pause_requested={self.__pause_requested}), returning immediately"
-            )
             return
 
-        logger.debug("wait_for_pause: Waiting for pause command from input bus...")
+        logger.debug("Waiting for pause command...")
+
         while True:
-            # Task is parked by the OS/Event-Loop until data hits stdin
             cmd = await self.__input_bus.get()
-            logger.debug(f"wait_for_pause: Received command from bus: '{cmd}'")
             if cmd.lower() == "pause":
                 self.__pause_requested = True
                 console.print("\n[bold yellow]⏸️  Pause requested - interrupting...[/bold yellow]\n")
-                sys.stdout.flush()
-                await asyncio.sleep(0)  # Yield to ensure UI update propagates
                 return
-            else:
-                # Ignore non-pause commands while waiting for pause
-                logger.debug(
-                    f"wait_for_pause: Ignoring non-pause command: '{cmd}', continuing to wait..."
-                )
-                continue
 
     async def wait_for_resume(self) -> None:
         """
@@ -142,6 +146,10 @@ class InteractiveSignal(SignalPort):
 
             # Efficiently wait for the next user interaction on the global bus
             choice = await self.__input_bus.get()
+
+            if not choice:
+                continue
+
             console.print(choice)  # Echo input for feedback
 
             if choice == "1":
@@ -154,6 +162,7 @@ class InteractiveSignal(SignalPort):
             elif choice == "3":
                 console.print("\n[bold red]❌ EXECUTION CANCELLED BY USER[/bold red]\n")
                 raise KeyboardInterrupt("User cancelled execution")
+
             else:
                 console.print(f"[yellow]Invalid choice '{choice}'.[/yellow]\n")
 
@@ -182,16 +191,27 @@ class InteractiveSignal(SignalPort):
 
     async def ask(self, *, prompt: str) -> str:
         """
-        Standardized human-agent interaction via async bus.
+        Standardized human-agent interaction via broadcast bus.
         """
 
         console.print(f"\n[bold yellow]❓ Agent Question[/bold yellow]\n[cyan]{prompt}[/cyan]")
         console.print("[bold]Your answer:[/bold] ", end="")
         sys.stdout.flush()
 
-        answer = await self.__input_bus.get()
-        console.print(f"[green]✓[/green] Recorded: [italic]{answer}[/italic]\n")
-        return answer
+        try:
+            while True:
+                answer = await asyncio.wait_for(self.__input_bus.get(), timeout=60.0)
+                if answer and answer.lower() != "pause":
+                    console.print(f"[green]✓[/green] Recorded: [italic]{answer}[/italic]\n")
+                    return answer
+        except asyncio.TimeoutError:
+            timeout_msg = (
+                "SYSTEM: User did not respond within 60s. Proceed autonomously if possible. "
+                "Analyze the current screen and determine if you can continue toward the goal "
+                "or if you must mark the task as failed."
+            )
+            console.print(f"\n[bold yellow]⏳ Timeout: {timeout_msg}[/bold yellow]\n")
+            return timeout_msg
 
     def __render_instructions(self) -> None:
         """
