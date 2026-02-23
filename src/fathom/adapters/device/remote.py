@@ -264,9 +264,10 @@ class RemoteDeviceAdapter(DevicePort):
             logger.info(f"Response of current package command: {data}")
 
             payload = self.__parse_response(data)
-            package = payload.get("package", "unknown_app")
+            package_name = payload.get("package")
+            package = str(package_name) if package_name else "unknown_app"
 
-            return str(package)
+            return package
 
         except httpx.HTTPError as exception:
             raise DeviceError(

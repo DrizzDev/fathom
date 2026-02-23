@@ -42,6 +42,10 @@ class StepResult(BaseModel):
     duration: int = Field(ge=0, description="Execution duration in milliseconds")
     error: Optional[str] = Field(default=None, description="Error details if execution failed")
 
+    observation: Optional[str] = Field(
+        default=None, description="Semantic observation of the screen state"
+    )
+
     def to_record(self, absolute_center: Optional[List[int]] = None) -> "StepRecord":
         """
         Converts the result into a serializable record for persistence.
@@ -59,11 +63,13 @@ class StepResult(BaseModel):
             duration=self.duration,
             center=absolute_center,
             text=self.step.action.text,
+            observation=self.observation,
             target=self.step.action.target,
             step_number=self.step.step_number,
             screen_changed=self.screen_changed,
             rationale=self.step.action.rationale,
             action_type=self.step.action.action_type.value,
+            action_description=self.step.action.to_description(),
             natural_language_target=self.step.action.natural_language_target,
         )
 
@@ -84,6 +90,10 @@ class StepRecord(BaseModel):
     )
     text: Optional[str] = Field(default=None, description="Typed text content")
     rationale: Optional[str] = Field(default=None, description="Reasoning for the action")
+    observation: Optional[str] = Field(default=None, description="Screen state observation")
+    action_description: Optional[str] = Field(
+        default=None, description="Human-readable NLP command"
+    )
 
     success: bool = Field(description="Execution status")
     screen_changed: bool = Field(description="Visual transition status")

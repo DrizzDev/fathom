@@ -189,6 +189,26 @@ class StepPlanner:
                 f"(confidence={action.confidence:.2f}, "
                 f"has_failed_before={state.should_avoid_action(action=action)})"
             )
+
+            # If interactive, yield to user for guidance on low confidence
+            if interactive_mode and prompt_if_stuck:
+                return PlanResult(
+                    step=self.__build_step(
+                        action=Action(
+                            confidence=1.0,
+                            target="ask_user",
+                            action_type=ActionType.ASK_USER,
+                            rationale=f"Confidence low ({action.confidence:.2f}): {action.rationale}",
+                            text=f"I'm not sure what to do next. I thought about: {action.to_description()}, but my confidence is low. How should I proceed?",
+                        ),
+                        capture=capture,
+                        is_recovery=True,
+                        step_number=state.step_count,
+                    ),
+                    is_complete=False,
+                    reason="Low confidence intercept for HITL.",
+                )
+
             return PlanResult(
                 step=None,
                 is_complete=False,
@@ -203,9 +223,12 @@ class StepPlanner:
             action=action,
             capture=capture,
             metrics=analysis.metrics,
-            metadata=analysis.metadata,
             memories=analysis.memories,
             step_number=state.step_count,
+            metadata={
+                **(analysis.metadata or {}),
+                "observation": analysis.screen_description,
+            },
         )
 
     def __select_action(

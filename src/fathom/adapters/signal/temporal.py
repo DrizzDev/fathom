@@ -20,22 +20,30 @@ class TemporalSignalAdapter(SignalPort):
     Uses an external client to bypass activity-restricted workflow context.
     """
 
-    def __init__(self, workflow_id: str, namespace: str = "default") -> None:
+    def __init__(
+        self,
+        namespace: str,
+        target_host: str,
+        workflow_id: str,
+        api_key: Optional[str] = None,
+    ) -> None:
         """
         Initialize Temporal signal adapter.
-
-        Args:
-            workflow_id: The Temporal workflow ID
-            namespace: The Temporal namespace
         """
 
-        self.__workflow_id = workflow_id
+        self.__api_key = api_key
         self.__namespace = namespace
+        self.__target_host = target_host
+
+        self.__workflow_id = workflow_id
         self.__client: Optional[Client] = None
+
+        self.__connection_lock = asyncio.Lock()
         self.__workflow_handle: Optional[Any] = None
 
         logger.info(
-            f"TemporalSignalAdapter initialized for workflow {workflow_id} (ns: {namespace})"
+            f"TemporalSignalAdapter initialized for workflow {workflow_id} "
+            f"(ns: {namespace}, host: {target_host})"
         )
 
     @property
@@ -48,23 +56,41 @@ class TemporalSignalAdapter(SignalPort):
 
     async def __get_workflow_handle(self) -> Any:
         """
-        Get or create workflow handle for querying state using a clean client.
+        Get or create workflow handle for querying state using an isolated client.
         """
 
-        if self.__client is None:
-            # We connect a fresh client using the cluster address.
-            # This bypasses activity sandbox restrictions on the current task's handle.
-            import os
+        async with self.__connection_lock:
+            if self.__client is None:
+                # We connect an isolated client using the cluster address.
+                # This bypasses activity sandbox restrictions on the current task's handle.
 
-            target = os.getenv("TEMPORAL_HOST", "localhost:7233")
+                # Align with genymotion_project/services/temporal/client.py
+                if "localhost" not in self.__target_host and "127.0.0.1" not in self.__target_host:
+                    from temporalio.service import TLSConfig
 
-            self.__client = await Client.connect(
-                target=target,
-                namespace=self.__namespace,
-            )
+                    tls_configuration = TLSConfig()
+                else:
+                    tls_configuration = False
 
-        if self.__workflow_handle is None:
-            self.__workflow_handle = self.__client.get_workflow_handle(self.__workflow_id)
+                try:
+                    # Attempt connection with target_host (aligned with newer SDKs)
+                    self.__client = await Client.connect(
+                        tls=tls_configuration,
+                        api_key=self.__api_key,
+                        namespace=self.__namespace,
+                        target_host=self.__target_host,
+                    )
+                except TypeError:
+                    # Fallback to target (legacy SDK versions)
+                    self.__client = await Client.connect(
+                        tls=tls_configuration,
+                        api_key=self.__api_key,
+                        target=self.__target_host,
+                        namespace=self.__namespace,
+                    )
+
+            if self.__workflow_handle is None:
+                self.__workflow_handle = self.__client.get_workflow_handle(self.__workflow_id)
 
         return self.__workflow_handle
 
@@ -155,16 +181,27 @@ class TemporalSignalAdapter(SignalPort):
 
     async def ask(self, *, prompt: str) -> str:
         """
-        Request human input with prompt.
+        Request human input with prompt and wait for injected context.
         """
 
-        _ = prompt
+        logger.info(f"Blocking for human assistance: {prompt}")
 
-        logger.warning(
-            f"ask called in Temporal mode for workflow {self.__workflow_id} "
-            "- not supported, use /inject endpoint instead"
-        )
-        return ""
+        # 1. Wait for context to be injected via /inject endpoint
+        # We poll the workflow state until has_context is True
+        while True:
+            state = await self.__query_workflow_state()
+
+            if state.get("has_context"):
+                context = await self.get_injected_context()
+                if context:
+                    logger.info(f"Human assistance received: {context}")
+                    return context
+
+            # Heartbeat to prevent activity timeout while waiting for human
+            with contextlib.suppress(RuntimeError):
+                activity.heartbeat(f"Waiting for human: {prompt[:50]}...")
+
+            await asyncio.sleep(1.0)
 
     async def get_injected_context(self) -> Optional[str]:
         """

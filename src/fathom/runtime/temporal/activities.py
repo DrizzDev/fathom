@@ -50,11 +50,12 @@ class FathomActivities:
         configuration = self.__build_configurations(workflow_id=workflow_id, request=request)
 
         runner = self.__build_runner(
+            request=request,
             workflow_id=workflow_id,
             llm_configuration=configuration["llm"],
+            interactive=request.get("interactive", True),
             device_configuration=configuration["device"],
             intent_configuration=configuration["intent"],
-            interactive=request.get("interactive", True),
             execution_configuration=configuration["engine"],
             telemetry_configuration=configuration["telemetry"],
             exploration_configuration=configuration["exploration"],
@@ -124,6 +125,7 @@ class FathomActivities:
         configuration = self.__build_configurations(workflow_id=workflow_id, request=request)
 
         runner = self.__build_runner(
+            request=request,
             workflow_id=workflow_id,
             llm_configuration=configuration["llm"],
             device_configuration=configuration["device"],
@@ -198,8 +200,10 @@ class FathomActivities:
 
         # 2. Device Configuration
         session_id = request.get("session_id", "default_session")
-        identity = request.get("identity") or workflow_id
         execution_id = request.get("execution_id") or workflow_id
+
+        # Use execution_id as identity for telemetry to ensure UI rendering
+        identity = execution_id
 
         if enricher_url := request.get("enricher_url"):
             device_configuration = DeviceConfiguration(
@@ -235,6 +239,7 @@ class FathomActivities:
     def __build_runner(
         self,
         workflow_id: str,
+        request: Dict[str, Any],
         llm_configuration: LLMConfiguration,
         device_configuration: DeviceConfiguration,
         intent_configuration: IntentConfiguration,
@@ -255,8 +260,15 @@ class FathomActivities:
         signal_adapter: SignalPort
 
         if interactive:
+            # Get cluster config from request (injected by CrawlerManager)
+            temporal_host = str(request["temporal_host"])
+            temporal_api_key = request.get("temporal_api_key")
+
             signal_adapter = TemporalSignalAdapter(
-                workflow_id=workflow_id, namespace=activity.info().workflow_namespace
+                workflow_id=workflow_id,
+                api_key=temporal_api_key,
+                target_host=temporal_host,
+                namespace=activity.info().workflow_namespace,
             )
         else:
             signal_adapter = NoopSignal()

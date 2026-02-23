@@ -12,7 +12,7 @@ from fathom.constants import ActionType
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey, IntentStateKey
-from fathom.schemas.results import ActionResult, AnalysisResult, PlanResult
+from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.strategies.graph.context import GraphContext
@@ -418,6 +418,14 @@ class IntentNodeProvider:
         if step.action.action_type == ActionType.ASK_USER:
             logger.info("[NODE: EXECUTE] Intercepting ASK_USER action for native HITL")
             question = step.action.text or "I need human assistance to proceed."
+
+            # Notify Client via telemetry so the user knows why the agent stopped
+            await self.__context.telemetry.info(
+                f"Action Paused: {question}",
+                type="HITL_REQUESTED",
+                original_action=step.action.to_description(),
+            )
+
             user_response = await self.__context.signal.ask(prompt=question)
 
             # Inject guidance to context manager
@@ -454,28 +462,28 @@ class IntentNodeProvider:
         await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
 
         # Capture post-execution screen to compute post_hash
-        try:
-            post_screenshot = await self.__context.device.capture_screen()
-            post_hash = (
-                hashlib.sha256(post_screenshot).hexdigest()[:VISUAL_HASH_LENGTH]
-                if post_screenshot
-                else "0"
-            )
-        except Exception as exception:
-            await self.__context.telemetry.warning(
-                f"Execute: Failed to capture post-screen: {exception}"
-            )
-            post_hash = "0"
-
-        duration = time.time() - start_time
-        self.__context.metrics.record(operation="action", duration=duration)
-
         current_screen_state = state.get(CommonStateKey.SCREEN_STATE)
         pre_hash = (
             current_screen_state.visual_hash
             if isinstance(current_screen_state, ScreenState)
             else "0"
         )
+
+        try:
+            post_screenshot = await self.__context.device.capture_screen()
+            post_hash = (
+                hashlib.sha256(post_screenshot).hexdigest()[:VISUAL_HASH_LENGTH]
+                if post_screenshot
+                else pre_hash  # Fallback to pre_hash to indicate NO CHANGE on capture failure
+            )
+        except Exception as exception:
+            await self.__context.telemetry.warning(
+                f"Execute: Failed to capture post-screen: {exception}"
+            )
+            post_hash = pre_hash  # Explicitly prevent 'screen changed' on error
+
+        duration = time.time() - start_time
+        self.__context.metrics.record(operation="action", duration=duration)
 
         screen_changed = pre_hash != post_hash
 
@@ -485,10 +493,19 @@ class IntentNodeProvider:
         )
         logger.info("[NODE: EXECUTE] -> Transitioning to RECORD")
 
+        # Extract observation from plan
+        execution_plan = state.get(IntentStateKey.PLAN)
+
+        if isinstance(execution_plan, PlanResult):
+            observation = execution_plan.metadata.get("observation")
+        else:
+            observation = None
+
         step_result = StepResult(
             step=step,
             pre_hash=pre_hash,
             post_hash=post_hash,
+            observation=observation,
             duration=int(duration * 1000),
             error=execution_result.error,
             screen_changed=screen_changed,
@@ -601,13 +618,13 @@ class IntentNodeProvider:
                 state=current_screen,
                 hierarchy_duration=0.0,
                 is_new_screen=is_new_screen,
+                result=step_result.to_record(),
                 analysis_duration=analysis_duration,
                 execution_duration=execution_duration,
                 grounding_duration=grounding_duration,
                 is_stuck=self.__context.agent_state.is_stuck,
                 step_count=self.__context.agent_state.step_count,
                 total_duration=grounding_duration + analysis_duration + execution_duration,
-                result=ActionResult(success=step_result.success, duration=step_result.duration),
             )
 
         # Check max steps

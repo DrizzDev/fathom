@@ -171,7 +171,7 @@ class AgentState:
         if is_new_screen:
             self.__seen_screens.append(screen)
             logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
-            # If we reached a new screen, we are definitely not stuck in a local loop.
+            # If we reached a truly new screen (never seen in session), we have made progress.
             self.__loop_detector.reset()
         elif previous_screen and previous_screen.activity_hash != screen.activity_hash:
             # Activity changed but screen was seen before (e.g., revisiting a page via

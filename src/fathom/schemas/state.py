@@ -50,10 +50,9 @@ class LoopDetector(BaseModel):
         )
 
         # Store only the single most descriptive identifier to prevent set-size inflation
-        if action_description:
-            self.__recent_actions.append(action_description)
-        elif action_type:
-            self.__recent_actions.append(action_type)
+        # We prefer description (e.g. "Tap on Evening tab") over type (e.g. "tap")
+        identifier = action_description or action_type or "None"
+        self.__recent_actions.append(identifier)
 
     def is_stuck(self) -> bool:
         """
@@ -125,11 +124,14 @@ class LoopDetector(BaseModel):
         if len(self.__recent_actions) >= self.threshold:
             action_counts: Dict[str, int] = {}
 
-            for action_description in self.__recent_actions:
-                action_counts[action_description] = action_counts.get(action_description, 0) + 1
-                if action_counts[action_description] >= self.threshold:
+            for identifier in self.__recent_actions:
+                if identifier == "None":
+                    continue
+
+                action_counts[identifier] = action_counts.get(identifier, 0) + 1
+                if action_counts[identifier] >= self.threshold:
                     logger.debug(
-                        f"LoopDetector.is_stuck: True (action '{action_description}' repeated {action_counts[action_description]}x)"
+                        f"LoopDetector.is_stuck: True (action '{identifier}' repeated {action_counts[identifier]}x)"
                     )
                     return True
 

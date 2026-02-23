@@ -10,8 +10,9 @@ from rich.panel import Panel
 from rich.table import Table
 
 from fathom.core.context.manager import ContextManager
-from fathom.schemas.results import ActionResult, PlanResult
+from fathom.schemas.results import PlanResult
 from fathom.schemas.screens import ScreenState
+from fathom.schemas.steps import StepRecord
 
 
 class AuditService:
@@ -118,7 +119,7 @@ class AuditService:
         self,
         plan: PlanResult,
         state: ScreenState,
-        result: ActionResult,
+        result: StepRecord,
         *,
         step_count: int,
         is_new_screen: bool,
@@ -201,18 +202,24 @@ class AuditService:
         )
 
         # Reasoning Output
-        if plan.step and plan.step.action:
-            action_info = Table.grid(padding=(0, 2))
-            action_info.add_column(style="bold yellow")
-            action_info.add_column()
+        action_info = Table.grid(padding=(0, 2))
+        action_info.add_column(style="bold yellow")
+        action_info.add_column()
 
-            action_info.add_row("Action:", plan.step.action.action_type.value)
-            action_info.add_row("Target:", escape(str(object=plan.step.action.target or "N/A")))
-            action_info.add_row(
-                "Rationale:", escape(str(object=plan.step.action.rationale or "N/A"))
-            )
+        # Use NLP description for the action
+        action_info.add_row(
+            "Action:", escape(str(object=result.action_description or result.action_type))
+        )
+        action_info.add_row(
+            "Target:", escape(str(object=result.natural_language_target or result.target))
+        )
 
-            self.__console.print(Panel(action_info, title="Brain Reasoning", border_style="yellow"))
+        if result.observation:
+            action_info.add_row("Observation:", escape(str(object=result.observation)))
+
+        action_info.add_row("Rationale:", escape(str(object=result.rationale or "N/A")))
+
+        self.__console.print(Panel(action_info, title="Brain Reasoning", border_style="yellow"))
 
     def __format_ms(self, seconds: float = 0, milliseconds: float = 0) -> str:
         """
