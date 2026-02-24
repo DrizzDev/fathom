@@ -183,8 +183,8 @@ class StepPlanner:
                 step=step,
                 is_complete=True,
                 metrics=analysis.metrics,
+                reason=analysis.reasoning,
                 metadata=analysis.metadata,
-                reason=completion.evidence,
                 memories=analysis.memories,
             )
 
