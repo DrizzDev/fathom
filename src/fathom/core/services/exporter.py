@@ -298,14 +298,14 @@ class ScriptExporter:
         """
 
         lines: list[str] = []
-        
+
         filtered_results = []
         for step in step_results:
             if ScriptExporter.__get_condition(step) == "recovery":
                 continue
             filtered_results.append(step)
         step_results = filtered_results
-        
+
         n = len(step_results)
         i = 0
         launch_boundary = 0

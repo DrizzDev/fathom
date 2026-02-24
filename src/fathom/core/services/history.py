@@ -82,6 +82,14 @@ class HistoryService:
         await self.__save_yaml(history=history["history"])
         return await self.__update_script(history=history["history"], intent=intent)
 
+    async def get_current_script(self, intent: str = "") -> str:
+        """
+        Retrieves the current script based on the saved history.
+        """
+
+        history = self.__load_history()
+        return await self.__update_script(history=history.get("history", []), intent=intent)
+
     def __load_history(self) -> Dict[str, Any]:
         """
         Loads existing history from the JSON artifact.
