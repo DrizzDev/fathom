@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from fathom.constants.events import FathomEvent
+
 # Re-export execution constants
 from fathom.constants.execution import (
     BOUNDS_SWIPE_DISTANCE,
@@ -15,6 +17,7 @@ from fathom.constants.execution import (
     ExecutionPhase,
     SignalType,
 )
+from fathom.constants.scope import ContextScope
 
 
 class ActionType(StrEnum):
@@ -84,6 +87,8 @@ class StrategyStatus(StrEnum):
 __all__ = [
     "ActionType",
     "FlowType",
+    "ContextScope",
+    "FathomEvent",
     "WorkflowStatus",
     "StrategyStatus",
     "SignalType",

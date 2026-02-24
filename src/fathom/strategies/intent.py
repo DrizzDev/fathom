@@ -9,6 +9,7 @@ from rich.console import Console
 
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.base.paths import SharedPathManager
+from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
@@ -117,7 +118,7 @@ class IntentStrategy:
                 if script_data:
                     await self.__graph_context.telemetry.info(
                         script_data,
-                        type="SCRIPT_GENERATED",
+                        type=FathomEvent.SCRIPT_GENERATED,
                         step=self.__graph_context.agent_state.step_count,
                     )
                 else:

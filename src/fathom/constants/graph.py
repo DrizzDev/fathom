@@ -12,5 +12,6 @@ class NodeName(StrEnum):
     GROUND = "ground"
     ANALYZE = "analyze"
     EXECUTE = "execute"
+    VERIFY = "verify"
     NAVIGATE = "navigate"
     BFS_ROUTE = "bfs_route"

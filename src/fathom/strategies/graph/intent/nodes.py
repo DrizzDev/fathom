@@ -3,15 +3,17 @@ from __future__ import annotations
 # mypy: disable-error-code="misc"
 import asyncio
 import hashlib
+import json
 import logging
 import time
 from typing import Any, Callable, Dict, Optional
 
 from fathom.adapters.signal.noop import NoopSignal
-from fathom.constants import ActionType
+from fathom.constants import ActionType, FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey, IntentStateKey
+from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
@@ -343,14 +345,14 @@ class IntentNodeProvider:
             # Emit structured telemetry for streaming UI
             await self.__context.telemetry.info(
                 plan.reason or "No reasoning",
-                type="REASONING",
+                type=FathomEvent.REASONING,
                 step=current_step + 1,
                 reasoning=plan.reason,
                 rationale=plan.step.action.rationale if plan.step else None,
             )
             await self.__context.telemetry.info(
                 plan.step.action.to_description(),
-                type="PLANNED_ACTION",
+                type=FathomEvent.PLANNED_ACTION,
                 step=current_step + 1,
             )
 
@@ -381,13 +383,14 @@ class IntentNodeProvider:
             IntentStateKey.INJECTED_CONTEXT: None,
             IntentStateKey.PLANNED_STEP: plan.step,
             CommonStateKey.ANALYSIS_DURATION: duration,
+            CommonStateKey.IS_COMPLETE: plan.is_complete,
             IntentStateKey.SHOULD_RETRY: plan.should_retry,
             CommonStateKey.COMPLETION_REASON: completion_reason,
         }
 
         # Log what will happen next based on routing logic
         if plan.is_complete:
-            logger.info("[NODE: ANALYZE] -> Will route to END (is_complete=True)")
+            logger.info("[NODE: ANALYZE] -> Will route to VERIFY (is_complete=True)")
 
         elif plan.should_retry:
             logger.info("[NODE: ANALYZE] -> Will route to GROUND (should_retry=True)")
@@ -467,7 +470,7 @@ class IntentNodeProvider:
             # Notify Client via telemetry so the user knows why the agent stopped
             await self.__context.telemetry.info(
                 f"Action Paused: {question}",
-                type="HITL_REQUESTED",
+                type=FathomEvent.HITL_REQUESTED,
                 original_action=step.action.to_description(),
                 step=self.__context.agent_state.step_count + 1,
             )
@@ -632,7 +635,7 @@ class IntentNodeProvider:
 
         await self.__context.telemetry.info(
             f"Step {step_result.step.step_number} completed",
-            type="STEP_COMPLETED",
+            type=FathomEvent.STEP_COMPLETED,
             success=record.success,
             duration=total_duration,
             rationale=record.rationale,
@@ -646,7 +649,7 @@ class IntentNodeProvider:
         if script_data:
             await self.__context.telemetry.info(
                 script_data,
-                type="SCRIPT_GENERATED",
+                type=FathomEvent.SCRIPT_GENERATED,
                 step=step_result.step.step_number + 1,
             )
 
@@ -759,6 +762,82 @@ class IntentNodeProvider:
         logger.info("[NODE: RECORD] -> Will route to GROUND for next step")
         return {}
 
+    async def verify(self, state: IntentGraphState) -> IntentGraphState:
+        """
+        Explicitly verify if the intent is truly complete by capturing the screen and asking the LLM.
+        If verification fails, it adds negative feedback and routes back to the main loop.
+        """
+        logger.info("[NODE: VERIFY] Starting verification phase")
+        start_time = time.time()
+
+        # 1. Capture the latest screen state
+        try:
+            image_bytes = await self.__context.device.capture_screen()
+            if not image_bytes:
+                logger.warning("[NODE: VERIFY] Failed to capture screen for verification")
+                return {CommonStateKey.IS_COMPLETE: False}
+        except Exception as exception:
+            logger.error(f"[NODE: VERIFY] Screen capture failed: {exception}")
+            return {CommonStateKey.IS_COMPLETE: False}
+
+        # 2. Construct binary validation prompt
+        intent = self.__context.intent
+        system_prompt = VERIFICATION_SYSTEM
+        user_prompt = VERIFICATION_USER_TEMPLATE.format(intent=intent)
+
+        # 3. Ask the LLM
+        try:
+            result = await self.__context.llm.generate(
+                prompt=[user_prompt, image_bytes],
+                system_instruction=system_prompt,
+                use_cache=False,
+            )
+
+            text = result.content.strip()
+            if text.startswith("```json"):
+                text = text[7:-3]
+            elif text.startswith("```"):
+                text = text[3:-3]
+
+            data = json.loads(text)
+            is_truly_complete = bool(data.get("is_complete", False))
+            reason = str(data.get("reason", "Verification failed without specific reason."))
+
+        except Exception as exception:
+            logger.error(f"[NODE: VERIFY] LLM verification failed: {exception}")
+            is_truly_complete = False
+            reason = f"Verification failed due to error: {exception}"
+
+        duration = time.time() - start_time
+        logger.info(
+            f"[NODE: VERIFY] Verification finished in {duration:.2f}s: is_complete={is_truly_complete}, reason={reason}"
+        )
+
+        if is_truly_complete:
+            self.__context.agent_state.mark_complete(reason=reason)
+            return {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: reason,
+            }
+        else:
+            # Inject negative feedback to force the agent to continue
+            feedback = f"Verification failed: {reason}"
+            logger.warning(f"[NODE: VERIFY] {feedback}")
+
+            # Reset the is_complete flag
+            self.__context.agent_state.reset_completion()
+
+            # Inject into ContextManager so the LLM sees it next iteration
+            await self.__context.context_manager.inject_user_guidance(
+                guidance=feedback, step=self.__context.agent_state.step_count
+            )
+
+            return {
+                CommonStateKey.IS_COMPLETE: False,
+                IntentStateKey.INJECTED_CONTEXT: feedback,
+                IntentStateKey.SHOULD_RETRY: True,
+            }
+
 
 class IntentGraphFactory:
     """
@@ -778,4 +857,5 @@ class IntentGraphFactory:
             NodeName.ANALYZE: provider.analyze,
             NodeName.EXECUTE: provider.execute,
             NodeName.RECORD: provider.record,
+            NodeName.VERIFY: provider.verify,
         }

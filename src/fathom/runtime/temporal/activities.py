@@ -82,6 +82,8 @@ class FathomActivities:
                 package_name=package_name,
                 use_xml=request.get("use_xml", True),
                 max_steps=request.get("max_steps", 50),
+                conversation_id=request.get("conversation_id"),
+                context_scope=request.get("context_scope", "execution"),
             )
 
             activity.heartbeat(f"Completed: {result.steps_taken} steps")
@@ -209,9 +211,6 @@ class FathomActivities:
         session_id = request.get("session_id", "default_session")
         execution_id = request.get("execution_id") or workflow_id
 
-        # Use session_id as identity for telemetry.
-        identity = session_id
-
         if enricher_url := request.get("enricher_url"):
             device_configuration = DeviceConfiguration(
                 type="REMOTE",
@@ -226,7 +225,7 @@ class FathomActivities:
         if redis_url := request.get("redis_url"):
             telemetry_configuration = TelemetryConfiguration(
                 type="REDIS",
-                identity=identity,
+                identity=execution_id,
                 session_id=session_id,
                 connection_string=redis_url,
                 topic="enricher:commands:v1:logs:{session_id}",

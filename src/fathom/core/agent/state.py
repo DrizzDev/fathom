@@ -252,6 +252,14 @@ class AgentState:
         self.__is_complete = True
         self.__completion_reason = reason
 
+    def reset_completion(self) -> None:
+        """
+        Clear the completion state.
+        """
+
+        self.__is_complete = False
+        self.__completion_reason = None
+
     def get_recovery_action(self) -> Optional[Action]:
         """
         Get a recovery action when stuck.

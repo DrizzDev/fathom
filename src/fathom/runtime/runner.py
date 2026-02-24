@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from fathom.adapters.summarization.llm import LLMSummarizer
 from fathom.base.paths import SharedPathManager
+from fathom.constants import ContextScope, FathomEvent
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.interfaces.device import DevicePort
@@ -116,6 +117,8 @@ class FathomRunner:
         max_steps: int = 50,
         use_xml: bool = False,
         request_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        context_scope: ContextScope = ContextScope.EXECUTION,
         package_name: Optional[str] = None,
         realignment: Optional[RealignmentPolicy] = None,
     ) -> IntentResult:
@@ -152,10 +155,18 @@ class FathomRunner:
             workflow_id=workflow_id,
             package_name=package_name,
             device_serial=device_serial,
+            context_scope=context_scope,
+        )
+
+        # Initialize context namespace
+        namespace = (
+            conversation_id
+            if context_scope == ContextScope.CONVERSATION and conversation_id
+            else workflow_id
         )
 
         # Initialize context
-        self.__context_manager = ContextManager(memory=self.__memory, workflow_id=workflow_id)
+        self.__context_manager = ContextManager(memory=self.__memory, workflow_id=namespace)
         self.__context_manager.set_roadmap(intent=intent)
 
         # Create and execute strategy
@@ -211,7 +222,8 @@ class FathomRunner:
             )
 
             await self.__telemetry.info(
-                "Intent workflow completed",
+                "Workflow execution finalized",
+                type=FathomEvent.WORKFLOW_COMPLETED,
                 duration=duration,
                 success=result.success,
                 steps_taken=result.steps_taken,

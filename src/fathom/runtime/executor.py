@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from langgraph.graph.state import CompiledStateGraph
 
+from fathom.constants.events import FathomEvent
 from fathom.strategies.graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,11 @@ class GraphExecutor:
             # Check cancellation before starting any graph execution
             if self.__context.is_cancelled:
                 logger.warning(f"Executor: Workflow {self.__thread_id} cancelled before execution")
+
+                await self.__context.telemetry.info(
+                    "Workflow execution cancelled",
+                    type=FathomEvent.WORKFLOW_CANCELLED,
+                )
                 break
 
             # Race Condition: Run Graph vs Wait for Pause
@@ -152,7 +158,17 @@ class GraphExecutor:
 
         # Block execution until user resumes
         logger.info(f"Executor: Pausing execution ({source})")
+        await self.__context.telemetry.info(
+            "Workflow execution paused",
+            type=FathomEvent.WORKFLOW_PAUSED,
+        )
+
         await self.__context.signal.wait_for_resume()
+
+        await self.__context.telemetry.info(
+            "Workflow execution resumed",
+            type=FathomEvent.WORKFLOW_RESUMED,
+        )
 
         # Check for context injection using strict interface
         if injected := await self.__context.signal.get_injected_context():

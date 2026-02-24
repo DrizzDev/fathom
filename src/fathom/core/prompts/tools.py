@@ -78,7 +78,7 @@ class ToolRegistry:
                                 },
                                 "bbox": {
                                     "type": "OBJECT",
-                                    "description": "Bounding box for the action (tap target). Use normalized coordinates (0-1000) whenever possible.",
+                                    "description": "Bounding box for the action (tap target). You MUST follow the active COORDINATE MODE (pixel vs normalized) defined in your system instructions.",
                                     "properties": {
                                         "x": {"type": "INTEGER"},
                                         "y": {"type": "INTEGER"},
@@ -87,7 +87,7 @@ class ToolRegistry:
                                         "coord_system": {
                                             "type": "STRING",
                                             "enum": ["normalized", "pixel"],
-                                            "description": "Coordinate system used. Defaults to normalized (0-1000).",
+                                            "description": "Coordinate system used. Must match the mode specified in your system instructions.",
                                         },
                                     },
                                 },

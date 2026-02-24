@@ -41,6 +41,7 @@ class IntentGraphBuilder(GraphBuilder):
         workflow.add_node(NodeName.ANALYZE, nodes[NodeName.ANALYZE])
         workflow.add_node(NodeName.EXECUTE, nodes[NodeName.EXECUTE])
         workflow.add_node(NodeName.RECORD, nodes[NodeName.RECORD])
+        workflow.add_node(NodeName.VERIFY, nodes[NodeName.VERIFY])
 
         workflow.set_entry_point(NodeName.GROUND)
         workflow.add_edge(NodeName.GROUND, NodeName.ANALYZE)
@@ -49,13 +50,22 @@ class IntentGraphBuilder(GraphBuilder):
             NodeName.ANALYZE,
             self.__route_after_analyze,
             {
-                NodeName.END: NodeName.END,
+                NodeName.VERIFY: NodeName.VERIFY,
                 NodeName.GROUND: NodeName.GROUND,
                 NodeName.EXECUTE: NodeName.EXECUTE,
             },
         )
 
         workflow.add_edge(NodeName.EXECUTE, NodeName.RECORD)
+
+        workflow.add_conditional_edges(
+            NodeName.VERIFY,
+            self.__route_after_verify,
+            {
+                NodeName.END: NodeName.END,
+                NodeName.GROUND: NodeName.GROUND,
+            },
+        )
 
         workflow.add_conditional_edges(
             NodeName.RECORD,
@@ -84,8 +94,8 @@ class IntentGraphBuilder(GraphBuilder):
         )
 
         if is_complete:
-            logger.info("[ROUTING] -> END (is_complete=True)")
-            return NodeName.END
+            logger.info("[ROUTING] -> VERIFY (is_complete=True)")
+            return NodeName.VERIFY
 
         if should_retry:
             logger.info("[ROUTING] -> GROUND (should_retry=True)")
@@ -98,12 +108,29 @@ class IntentGraphBuilder(GraphBuilder):
         logger.info("[ROUTING] -> EXECUTE")
         return NodeName.EXECUTE
 
+    def __route_after_verify(self, state: IntentGraphState) -> str:
+        """
+        Route after verify based on completion status.
+        """
+
+        is_complete = state.get(cast("str", CommonStateKey.IS_COMPLETE))
+
+        logger.info(f"[ROUTING] After VERIFY: is_complete={is_complete}")
+
+        if is_complete:
+            logger.info("[ROUTING] -> END (verification passed)")
+            return NodeName.END
+
+        logger.info("[ROUTING] -> GROUND (verification failed)")
+        return NodeName.GROUND
+
     def __route_after_record(self, state: IntentGraphState) -> str:
         """
         Route after record based on completion status.
         """
 
         if state.get(cast("str", CommonStateKey.IS_COMPLETE)):
-            return NodeName.END
+            logger.info("[ROUTING] -> VERIFY (is_complete=True from RECORD)")
+            return NodeName.VERIFY
 
         return NodeName.GROUND

@@ -33,7 +33,9 @@ class RedisTelemetryAdapter(TelemetryPort):
         self.__configuration = configuration
         self.__identity = configuration.identity
         self.__session_id = configuration.session_id
-        self.__channel = configuration.topic.format(session_id=self.__session_id)
+        self.__channel = configuration.topic.format(
+            session_id=self.__session_id, identity=self.__identity
+        )
         self.__redis = redis.from_url(configuration.connection_string, decode_responses=True)
 
         self.__logger = getLogger(name=logger_name)
