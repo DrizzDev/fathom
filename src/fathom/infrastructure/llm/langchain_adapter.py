@@ -267,7 +267,7 @@ class LangChainLLMClient(IVisionProvider):
                 mime = self.__detect_mime(data=item)
                 parts.append(types.Part.from_bytes(data=item, mime_type=mime))
             elif isinstance(item, str):
-                parts.append({"text": item})
+                parts.append(types.Part.from_text(text=item))
             else:
                 parts.append(item)
 
@@ -275,7 +275,7 @@ class LangChainLLMClient(IVisionProvider):
             candidate_count=1,
             temperature=self.__configuration.temperature,
             max_output_tokens=self.__configuration.max_output_tokens,
-            automatic_function_calling={"disable": False},
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=False),
             cached_content=cache_name,
         )
 

@@ -1,14 +1,23 @@
 from __future__ import annotations
 
-import json
 from logging import getLogger
-from typing import Any, Dict, Literal, Optional, cast
+from typing import Any, Literal, Optional, cast
+
+from pydantic import ValidationError
 
 from fathom.constants import ActionType
 from fathom.exceptions import VisionError
 from fathom.interfaces import IResponseParser
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.results import AnalysisResult
+from fathom.schemas.tool_requests import (
+    CompleteGoalRequest,
+    ExecuteUIRequest,
+    RecallMemoryRequest,
+    StoreMemoryRequest,
+    ValidateStateRequest,
+    VerifyGoalRequest,
+)
 
 logger = getLogger(__name__)
 
@@ -182,85 +191,108 @@ class ToolResponseParser(IResponseParser):
 
     def __parse_goal_verification(self, arguments: Any) -> AnalysisResult:
         """
-        Parses the verify_goal tool arguments.
+        Parses the verify_goal tool arguments using Pydantic validation.
         """
 
-        reason = str(arguments.get("assistant_message", ""))
-        completed = bool(arguments.get("goal_completed", False))
+        try:
+            request = VerifyGoalRequest.model_validate(arguments)
+        except ValidationError as e:
+            logger.warning(f"verify_goal validation error: {e}")
+            return self.__create_fallback_result(
+                message=str(arguments.get("assistant_message", ""))
+            )
+
+        action_type = ActionType.COMPLETE if request.goal_completed else ActionType.WAIT
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
-                rationale=reason,
+                rationale=request.assistant_message,
                 target="Goal Verification",
-                action_type=ActionType.COMPLETE if completed else ActionType.WAIT,
+                action_type=action_type,
             ),
             alternatives=[],
-            reasoning=reason,
-            is_goal_complete=completed,
+            reasoning=request.assistant_message,
+            is_goal_complete=request.goal_completed,
             screen_description="Goal verification step",
         )
 
     def __parse_state_validation(self, arguments: Any) -> AnalysisResult:
         """
-        Parses the validate_state tool arguments.
+        Parses the validate_state tool arguments using Pydantic validation.
         """
 
-        evidence = str(arguments.get("evidence", ""))
-        reason = str(arguments.get("assistant_message", ""))
-        completed = bool(arguments.get("goal_completed", False))
+        try:
+            request = ValidateStateRequest.model_validate(arguments)
+        except ValidationError as e:
+            logger.warning(f"validate_state validation error: {e}")
+            return self.__create_fallback_result(
+                message=str(arguments.get("assistant_message", ""))
+            )
+
+        action_type = ActionType.COMPLETE if (request.goal_completed or False) else ActionType.WAIT
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
                 target="State Validation",
-                action_type=ActionType.COMPLETE if completed else ActionType.WAIT,
-                rationale=f"{reason} | Evidence: {evidence}",
+                action_type=action_type,
+                rationale=f"{request.assistant_message} | Evidence: {request.evidence}",
             ),
             alternatives=[],
-            reasoning=reason,
-            is_goal_complete=completed,
+            reasoning=request.assistant_message,
+            is_goal_complete=request.goal_completed or False,
             screen_description="State validation step",
         )
 
     def __parse_goal_completion(self, arguments: Any) -> AnalysisResult:
         """
-        Parses the complete_goal tool arguments.
+        Parses the complete_goal tool arguments using Pydantic validation.
 
         This is the dedicated completion signal — always sets is_goal_complete=True.
         """
 
-        reason = str(arguments.get("assistant_message", ""))
-        evidence = str(arguments.get("evidence", ""))
+        try:
+            request = CompleteGoalRequest.model_validate(arguments)
+        except ValidationError as e:
+            logger.warning(f"complete_goal validation error: {e}")
+            return self.__create_fallback_result(
+                message=str(arguments.get("assistant_message", ""))
+            )
+
+        evidence_str = request.evidence or ""
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
-                rationale=f"{reason} | Evidence: {evidence}",
+                rationale=f"{request.assistant_message} | Evidence: {evidence_str}",
                 target="Goal Completion",
                 action_type=ActionType.COMPLETE,
             ),
             alternatives=[],
-            reasoning=reason,
+            reasoning=request.assistant_message,
             is_goal_complete=True,
             screen_description="Goal completion signal",
         )
 
     def __parse_execution(self, arguments: Any) -> AnalysisResult:
         """
-        Parses the execute_ui tool arguments.
+        Parses the execute_ui tool arguments using Pydantic validation.
 
         execute_ui no longer carries goal_completed — that responsibility
         belongs to the dedicated complete_goal tool.
         """
 
-        data = arguments.get("action", {})
-        message = str(arguments.get("assistant_message", ""))
-        content_exhausted = bool(arguments.get("content_exhausted", False))
-        screen_desc = str(arguments.get("screen_description", "")) or ""
+        try:
+            request = ExecuteUIRequest.model_validate(arguments)
+        except ValidationError as e:
+            logger.warning(f"execute_ui validation error: {e}")
+            fallback_message = str(arguments.get("assistant_message", ""))
+            return self.__create_fallback_result(message=fallback_message)
 
+        data = request.action
         if not data:
-            return self.__create_fallback_result(message=message)
+            return self.__create_fallback_result(message=request.assistant_message)
 
         bounds = None
         serialization = data.get("bbox")
@@ -282,7 +314,7 @@ class ToolResponseParser(IResponseParser):
         if action_type in (ActionType.INFER, ActionType.UNKNOWN):
             action_type = ActionType.WAIT
 
-        updates = self.__coerce_memory_updates(arguments.get("memory_updates"))
+        updates = request.memory_updates
         text = data.get("text") or data.get("text_to_type")
         wait = data.get("wait_duration") or data.get("wait_duration_ms")
         target_name = data.get("target_name") or data.get("element_name") or "UI Element"
@@ -323,10 +355,10 @@ class ToolResponseParser(IResponseParser):
         return AnalysisResult(
             action=action,
             alternatives=[],
-            reasoning=message,
+            reasoning=request.assistant_message,
             is_goal_complete=False,
-            content_exhausted=content_exhausted,
-            screen_description=screen_desc if screen_desc else "Tool-based analysis",
+            content_exhausted=request.content_exhausted or False,
+            screen_description=request.screen_description or "Tool-based analysis",
         )
 
     @staticmethod
@@ -336,86 +368,63 @@ class ToolResponseParser(IResponseParser):
         except (ValueError, TypeError):
             return default
 
-    @staticmethod
-    def __coerce_memory_updates(value: Any) -> Optional[Dict[str, str]]:
-        if value is None:
-            return None
-
-        if isinstance(value, dict):
-            return {str(k): str(v) for k, v in value.items()}
-
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped or stripped == "[]":
-                return None
-            try:
-                loaded = json.loads(stripped)
-            except json.JSONDecodeError:
-                return None
-            if isinstance(loaded, dict):
-                return {str(k): str(v) for k, v in loaded.items()}
-            return None
-
-        return None
-
-    @staticmethod
-    def __build_memory_key(arguments: Any) -> str:
-        """
-        Constructs a normalized composite memory key from category + item.
-
-        Falls back to legacy 'key' field for backward compatibility.
-        """
-
-        category = str(arguments.get("category", "")).strip().lower()
-        item = str(arguments.get("item", "")).strip().lower().replace(" ", "_")
-
-        if category and item:
-            return f"{category}.{item}"
-
-        # Backward compat: fall back to legacy freeform 'key' if present
-        legacy = str(arguments.get("key", "")).strip().lower().replace(" ", "_")
-        return legacy
-
     def __parse_memory_storage(self, arguments: Any) -> AnalysisResult:
         """
-        Parses memory storage tool call.
+        Parses memory storage tool call using Pydantic validation.
         """
 
-        reason = str(arguments.get("assistant_message", ""))
-        key = self.__build_memory_key(arguments)
-        value = str(arguments.get("value", ""))
+        try:
+            request = StoreMemoryRequest.model_validate(arguments)
+        except ValidationError as e:
+            logger.warning(f"store_memory validation error: {e}")
+            return self.__create_fallback_result(
+                message=str(arguments.get("assistant_message", ""))
+            )
+
+        key = f"{request.category.lower()}.{request.item.lower().replace(' ', '_')}"
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
-                rationale=reason,
-                memory_updates={key: value},
-                target=f"Memory Store: {key}={value}",
+                rationale=f"Storing {key} = {request.value}",
+                memory_updates={key: request.value},
+                target=f"Memory Store: {key}",
                 action_type=ActionType.SAVE_MEMORY,
             ),
             alternatives=[],
-            reasoning=reason,
+            reasoning=f"Memory storage: {key}",
             is_goal_complete=False,
             screen_description="Memory storage step",
         )
 
     def __parse_memory_retrieval(self, arguments: Any) -> AnalysisResult:
         """
-        Parses memory retrieval tool call.
+        Parses memory retrieval tool call using Pydantic validation.
         """
 
-        reason = str(arguments.get("assistant_message", ""))
-        key = self.__build_memory_key(arguments)
+        try:
+            request = RecallMemoryRequest.model_validate(arguments)
+        except ValidationError as e:
+            logger.warning(f"recall_memory validation error: {e}")
+            return self.__create_fallback_result(
+                message=str(arguments.get("assistant_message", ""))
+            )
+
+        key = (
+            f"{request.category.lower()}.{request.item.lower().replace(' ', '_')}"
+            if request.item
+            else request.category.lower()
+        )
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
-                rationale=reason,
+                rationale=f"Recalling {key}",
                 action_type=ActionType.RETRIEVE_MEMORY,
                 target=f"Memory Recall: {key}",
             ),
             alternatives=[],
-            reasoning=reason,
+            reasoning=f"Memory retrieval: {key}",
             is_goal_complete=False,
             screen_description="Memory retrieval step",
         )

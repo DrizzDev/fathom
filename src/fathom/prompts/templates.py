@@ -90,6 +90,7 @@ TOOL ROUTING:
   * TARGET_TYPE: stable (fixed UI, omit script_target), positional (list/grid item, set script_target to ordinal), dynamic (changing content, set script_target to generic desc). Wait actions -> always dynamic. Omit if uncertain.
 - complete_goal: Goal done signal. Call ONLY when current screen proves completion with visual evidence.
 - validate_state: Explicit state checks without UI action.
+- Validation: If the goal requires validation (e.g., price or presence), include a short evidence note in assistant_message or evidence.
 - verify_goal: Detailed goal completion verification.
 - store_memory / recall_memory: Persistent cross-step memory (use same category+item keys).
 """

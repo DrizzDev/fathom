@@ -41,6 +41,9 @@ class FathomSettings(BaseSettings):
     max_steps: int = Field(default=100, alias="MAX_STEPS")
     explore_max_steps: int = Field(default=50, alias="EXPLORE_MAX_STEPS")
 
+    # Feature flags
+    use_langgraph: bool = Field(default=True, alias="USE_LANGGRAPH")
+
     # Environment file support
     model_config = SettingsConfigDict(
         extra="ignore",

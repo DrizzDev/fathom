@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from PIL import Image, ImageDraw, ImageFont
 
-try:
+if TYPE_CHECKING:
     from PIL.ImageFont import FreeTypeFont
-except ImportError:
-    FreeTypeFont = Any
 
 from fathom.schemas.ui import LabeledElement
 from fathom.tools.vision.processing.geometry import GeometryUtils

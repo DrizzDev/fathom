@@ -22,12 +22,12 @@ def build_checkpointer(checkpoint_path: "Path") -> Any:
         return MemorySaver()
 
     try:
-        from langgraph.checkpoint.sqlite import SqliteSaver as _SqliteSaver
+        from langgraph.checkpoint.sqlite import SqliteSaver as _SqliteSaver  # type: ignore[import-not-found,unused-ignore]  # noqa: I001
 
         return _SqliteSaver.from_conn_string(str(checkpoint_path))
     except ImportError:
         try:
-            from langgraph.checkpoint.sqlite import SQLiteSaver as _SqliteSaver
+            from langgraph.checkpoint.sqlite import SQLiteSaver as _SqliteSaver  # type: ignore[import-not-found,unused-ignore]  # noqa: I001
 
             return _SqliteSaver.from_conn_string(str(checkpoint_path))
         except Exception as exc:

@@ -427,6 +427,19 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
         hint_str = PromptPreprocessor.build_context_prefix(hints)
         full_context = f"{hint_str}\n{smart_context}" if hint_str else smart_context
 
+        validation_note = None
+        if ctx.agent_state.validation_requirements:
+            items = ", ".join([r.item_name for r in ctx.agent_state.validation_requirements])
+            validation_note = (
+                "VALIDATION REQUIRED: "
+                f"{items}. Include a brief evidence note in assistant_message or evidence."
+            )
+        elif state.get("validation_context"):
+            validation_note = f"VALIDATION CONTEXT: {state.get('validation_context')}"
+
+        if validation_note:
+            full_context = f"{validation_note}\n{full_context}"
+
         plan = await ctx.planner.plan_step(
             state=ctx.agent_state,
             use_xml=ctx.use_xml,

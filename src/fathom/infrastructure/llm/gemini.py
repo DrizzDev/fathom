@@ -134,7 +134,7 @@ class GeminiLLMClient(IVisionProvider):
                 mime_type = self.__detect_mime(data=item)
                 parts.append(types.Part.from_bytes(data=item, mime_type=mime_type))
             elif isinstance(item, str):
-                parts.append({"text": item})
+                parts.append(types.Part.from_text(text=item))
             else:
                 parts.append(item)
 
@@ -142,7 +142,7 @@ class GeminiLLMClient(IVisionProvider):
             "candidate_count": 1,
             "temperature": self.__configuration.temperature,
             "max_output_tokens": self.__configuration.max_output_tokens,
-            "automatic_function_calling": {"disable": True},
+            "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
         }
 
         if not cache_name:
