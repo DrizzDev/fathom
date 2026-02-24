@@ -139,6 +139,10 @@ Your sole responsibility is to evaluate a mobile screenshot and definitively det
    - If you are unsure, or if the screen represents a state *just before* the final action, you MUST mark it as incomplete.
    - Provide a specific, actionable reason explaining exactly what visual evidence is missing.
 
+4. Human Override (HIGHEST PRIORITY):
+   - If User Guidance is provided and the user explicitly states the task is complete, finished, or should be stopped/cancelled, you MUST trust the human and mark "is_complete": true.
+   - Set the reason to indicate the human explicitly requested completion or cancellation.
+
 **OUTPUT SCHEMA**
 Return ONLY a valid JSON object matching this schema. Do not include markdown formatting or explanations outside the JSON.
 {
@@ -146,4 +150,6 @@ Return ONLY a valid JSON object matching this schema. Do not include markdown fo
   "reason": "string" // Factual explanation of what is visually missing, or why it is complete.
 }"""
 
-VERIFICATION_USER_TEMPLATE = "User Intent: {intent}\n\nTask: Analyze the provided screenshot. Has the user's intent been fully and definitively achieved according to the verification framework?"
+VERIFICATION_USER_TEMPLATE = """User Intent: {intent}
+{guidance_section}
+Task: Analyze the provided screenshot. Has the user's intent been fully and definitively achieved according to the verification framework?"""

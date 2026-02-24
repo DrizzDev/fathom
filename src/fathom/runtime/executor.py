@@ -111,6 +111,10 @@ class GraphExecutor:
             # Check cancellation after graph execution
             if self.__context.is_cancelled:
                 logger.warning(f"Executor: Workflow {self.__thread_id} cancelled after execution")
+                await self.__context.telemetry.info(
+                    "Workflow execution cancelled",
+                    type=FathomEvent.WORKFLOW_CANCELLED,
+                )
                 break
 
             # Check Graph State
@@ -127,6 +131,10 @@ class GraphExecutor:
             # Check cancellation after interrupt handling
             if self.__context.is_cancelled:
                 logger.warning(f"Executor: Workflow {self.__thread_id} cancelled")
+                await self.__context.telemetry.info(
+                    "Workflow execution cancelled",
+                    type=FathomEvent.WORKFLOW_CANCELLED,
+                )
                 break
 
             # Resume Execution
@@ -138,6 +146,10 @@ class GraphExecutor:
         """
 
         async for event in self.__graph.astream(input_val, config=self.__config):
+            if self.__context.is_cancelled:
+                logger.warning("Executor: Workflow cancelled during stream")
+                break
+
             # Log node transitions for visibility
             if isinstance(event, dict):
                 for node, _output in event.items():

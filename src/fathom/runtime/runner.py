@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from fathom.adapters.summarization.llm import LLMSummarizer
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ContextScope, FathomEvent
+from fathom.constants.state import CompletionReason
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.interfaces.device import DevicePort
@@ -205,28 +206,41 @@ class FathomRunner:
 
             # Build IntentResult
             duration = time.time() - start_time
-            completion_reason = "Completed successfully" if execution_result.success else "Failed"
+            is_cancelled = execution_result.is_cancelled
+
+            if is_cancelled:
+                error = None
+                success = False
+                status = "failed"
+                completion_reason = CompletionReason.CANCELLED.value
+            else:
+                success = execution_result.success
+                error = execution_result.error
+                status = "completed" if execution_result.success else "failed"
+                completion_reason = (
+                    "Completed successfully" if execution_result.success else "Failed"
+                )
 
             result = IntentResult(
+                error=error,
+                status=status,
                 intent=intent,
                 metrics=metrics,
+                success=success,
                 duration=duration,
                 workflow_id=workflow_id,
-                error=execution_result.error,
                 memory_summary=memory_summary,
-                success=execution_result.success,
                 completion_reason=completion_reason,
                 steps_taken=progress.get("step_count", 0),
                 steps_executed=progress.get("step_count", 0),
-                status="completed" if execution_result.success else "failed",
             )
 
             await self.__telemetry.info(
                 "Workflow execution finalized",
-                type=FathomEvent.WORKFLOW_COMPLETED,
                 duration=duration,
                 success=result.success,
                 steps_taken=result.steps_taken,
+                type=FathomEvent.WORKFLOW_COMPLETED,
             )
 
             return result

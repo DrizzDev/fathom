@@ -1,6 +1,17 @@
 from enum import StrEnum
 
 
+class CompletionReason(StrEnum):
+    """
+    Standard reasons for workflow completion or failure.
+    """
+
+    FAILED = "Failed"
+    CANCELLED = "Cancelled"
+    MAX_STEPS = "Max steps reached"
+    SUCCESS = "Completed successfully"
+
+
 class CommonStateKey(StrEnum):
     """
     Common state keys shared across all graph states.

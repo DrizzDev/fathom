@@ -130,21 +130,26 @@ class IntentStrategy:
             config = {"configurable": {"thread_id": self.__workflow_id}}
             final_state = await self.__graph.aget_state(config)
 
+            is_cancelled = self.__graph_context.is_cancelled
             success = self.__graph_context.agent_state.is_complete
             error = final_state.values.get("completion_reason")
 
             duration = int((time.time() - start_time) * 1000)
 
             return ExecutionResult(
-                success=success,
                 duration=duration,
+                is_cancelled=is_cancelled,
+                success=success and not is_cancelled,
                 error=error if not success else None,
             )
 
         except Exception as exception:
             logger.exception(f"Intent strategy execution failed: {exception}")
             duration = int((time.time() - start_time) * 1000)
-            return ExecutionResult(success=False, duration=duration, error=str(exception))
+            is_cancelled = self.__graph_context.is_cancelled
+            return ExecutionResult(
+                success=False, duration=duration, error=str(exception), is_cancelled=is_cancelled
+            )
 
     def get_progress(self) -> Dict[str, Any]:
         """

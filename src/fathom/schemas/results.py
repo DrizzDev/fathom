@@ -129,6 +129,7 @@ class ExecutionResult(BaseModel):
 
     error: Optional[str] = Field(default=None, description="Error message if failed")
     screen_changed: bool = Field(default=False, description="Whether the screen changed")
+    is_cancelled: bool = Field(default=False, description="Whether the execution was cancelled")
 
 
 class PlanResult(BaseModel):

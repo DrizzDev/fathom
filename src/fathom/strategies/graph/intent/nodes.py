@@ -12,7 +12,7 @@ from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
-from fathom.constants.state import CommonStateKey, IntentStateKey
+from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
@@ -86,9 +86,11 @@ class IntentNodeProvider:
 
         if await self.__is_cancelled():
             logger.warning("[NODE: GROUND] Execution cancelled")
+            self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
+
             return {
                 CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: "Cancelled",
+                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
             }
 
         current_step_num = self.__context.agent_state.step_count + 1
@@ -271,7 +273,12 @@ class IntentNodeProvider:
 
         if await self.__is_cancelled():
             logger.warning("[NODE: ANALYZE] Execution cancelled")
-            return {CommonStateKey.IS_COMPLETE: True}
+            self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
+
+            return {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+            }
 
         # Use type guard to satisfy MyPy
         screen_capture = state.get(CommonStateKey.CAPTURE)
@@ -413,7 +420,12 @@ class IntentNodeProvider:
 
         if await self.__is_cancelled():
             logger.warning("[NODE: EXECUTE] Execution cancelled")
-            return {CommonStateKey.IS_COMPLETE: True}
+            self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
+
+            return {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+            }
 
         # Type guards for planned_step and capture
         screen_capture = state.get(CommonStateKey.CAPTURE)
@@ -588,7 +600,12 @@ class IntentNodeProvider:
 
         if await self.__is_cancelled():
             logger.warning("[NODE: RECORD] Execution cancelled")
-            return {CommonStateKey.IS_COMPLETE: True}
+            self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
+
+            return {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+            }
 
         result = state.get(CommonStateKey.STEP_RESULT)
         if not isinstance(result, StepResult):
@@ -767,7 +784,19 @@ class IntentNodeProvider:
         Explicitly verify if the intent is truly complete by capturing the screen and asking the LLM.
         If verification fails, it adds negative feedback and routes back to the main loop.
         """
+
+        _ = state
         logger.info("[NODE: VERIFY] Starting verification phase")
+
+        if await self.__is_cancelled():
+            logger.warning("[NODE: VERIFY] Execution cancelled")
+            self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
+
+            return {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+            }
+
         start_time = time.time()
 
         # 1. Capture the latest screen state
@@ -783,19 +812,29 @@ class IntentNodeProvider:
         # 2. Construct binary validation prompt
         intent = self.__context.intent
         system_prompt = VERIFICATION_SYSTEM
-        user_prompt = VERIFICATION_USER_TEMPLATE.format(intent=intent)
+
+        guidance_section = ""
+        if user_guidance := self.__context.context_manager.get_user_guidance():
+            guidance_text = "\n".join([f"- {guidance.content}" for guidance in user_guidance])
+            guidance_section = f"\nUser Guidance:\n{guidance_text}\n"
+
+        user_prompt = VERIFICATION_USER_TEMPLATE.format(
+            intent=intent, guidance_section=guidance_section
+        )
 
         # 3. Ask the LLM
         try:
             result = await self.__context.llm.generate(
-                prompt=[user_prompt, image_bytes],
-                system_instruction=system_prompt,
                 use_cache=False,
+                system_instruction=system_prompt,
+                prompt=[user_prompt, image_bytes],
             )
 
             text = result.content.strip()
+
             if text.startswith("```json"):
                 text = text[7:-3]
+
             elif text.startswith("```"):
                 text = text[3:-3]
 
@@ -834,8 +873,8 @@ class IntentNodeProvider:
 
             return {
                 CommonStateKey.IS_COMPLETE: False,
-                IntentStateKey.INJECTED_CONTEXT: feedback,
                 IntentStateKey.SHOULD_RETRY: True,
+                IntentStateKey.INJECTED_CONTEXT: feedback,
             }
 
 
@@ -850,6 +889,7 @@ class IntentGraphFactory:
         """
         Builds the node functions for the intent graph.
         """
+
         provider = IntentNodeProvider(context=context)
 
         return {

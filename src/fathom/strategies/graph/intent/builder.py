@@ -94,6 +94,10 @@ class IntentGraphBuilder(GraphBuilder):
         )
 
         if is_complete:
+            if self.__context.is_cancelled:
+                logger.info("[ROUTING] -> END (Cancelled)")
+                return NodeName.END
+
             logger.info("[ROUTING] -> VERIFY (is_complete=True)")
             return NodeName.VERIFY
 
