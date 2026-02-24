@@ -116,6 +116,7 @@ class StepPlanner:
         use_xml: bool = False,
         elements: Optional[Dict[str, Any]] = None,
         additional_context: Optional[str] = None,
+        intent_override: Optional[str] = None,
     ) -> PlanResult:
         """
         Plan the next step based on current state.
@@ -146,11 +147,13 @@ class StepPlanner:
         if additional_context:
             full_context = f"{additional_context}\n{history_context}"
 
+        intent_value = intent_override or state.intent
+
         analysis = await self.__vision.analyze(
             use_xml=use_xml,
             capture=capture,
             elements=elements,
-            intent=state.intent,
+            intent=intent_value,
             is_stuck=state.is_stuck,
             last_action=(state.last_action_type.value if state.last_action_type else None),
             context=full_context,

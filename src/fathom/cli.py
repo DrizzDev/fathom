@@ -5,7 +5,10 @@ import os
 import signal
 import sys
 from logging import getLogger
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from fathom.schemas.results import ExplorationResult
 
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 
@@ -307,7 +310,117 @@ class FathomCLI:
 
                 console.print(token_table)
 
+        # Display exploration insights report
+        console.print("\n")
+        self._display_exploration_insights(result)
+
         return 0
+
+    def _display_exploration_insights(self, result: "ExplorationResult") -> None:
+        """Display comprehensive exploration insights from knowledge graph analysis."""
+        from fathom.services.exploration_report import ExplorationReportGenerator
+
+        kg_json = result.knowledge_graph
+        if not kg_json or not kg_json.get("nodes"):
+            return
+
+        # Rebuild knowledge graph from exported data (lightweight)
+        from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
+
+        kg = KnowledgeGraph()
+
+        # Manually populate nodes and edges from exported data
+        for node_data in kg_json.get("nodes", []):
+            from fathom.infrastructure.memory.knowledge_graph import GraphNode
+
+            node = GraphNode(
+                visual_hash=node_data["visual_hash"],
+                activity=node_data["activity"],
+                description=node_data.get("description"),
+                first_seen=node_data.get("first_seen"),
+                last_seen=node_data.get("last_seen"),
+                visit_count=node_data.get("visit_count", 0),
+            )
+            kg._KnowledgeGraph__nodes[node.visual_hash] = node  # type: ignore[attr-defined]
+
+        for edge_data in kg_json.get("edges", []):
+            from fathom.infrastructure.memory.knowledge_graph import GraphEdge
+
+            edge = GraphEdge(
+                source_hash=edge_data["source_hash"],
+                destination_hash=edge_data["destination_hash"],
+                action_type=edge_data["action_type"],
+                action_target=edge_data["action_target"],
+                count=edge_data.get("count", 1),
+            )
+            kg._KnowledgeGraph__edges.setdefault(edge_data["source_hash"], []).append(edge)  # type: ignore[attr-defined]
+
+        # Generate report generator
+        report_gen = ExplorationReportGenerator(kg)
+
+        # Detect cycles
+        cycles = kg.detect_cycles()
+
+        # Display insights
+        insights_table = Table(title="Graph Analysis & Insights", border_style="magenta")
+        insights_table.add_column("Metric", style="cyan")
+        insights_table.add_column("Value", style="magenta")
+
+        insights_table.add_row("Graph Diameter", str(kg.get_graph_diameter() or "N/A"))
+        insights_table.add_row("Cycles Detected", str(len(cycles)))
+        insights_table.add_row("Total Edges", str(kg.edge_count))
+
+        console.print(insights_table)
+
+        # Show critical screens
+        critical = report_gen._identify_critical_screens()
+        if critical:
+            critical_table = Table(
+                title="Critical Screens (Hubs & Bottlenecks)", border_style="yellow"
+            )
+            critical_table.add_column("Screen", style="cyan")
+            critical_table.add_column("Type", style="yellow")
+            critical_table.add_column("Connections", style="magenta", justify="right")
+
+            for screen in critical[:5]:
+                critical_table.add_row(
+                    screen["name"][:40],
+                    screen["type"],
+                    str(screen["connectivity"]),
+                )
+
+            console.print(critical_table)
+
+        # Show reachability analysis
+        reachability = report_gen._analyze_reachability()
+        if reachability:
+            reach_table = Table(
+                title="Reachability Analysis from Major Screens", border_style="cyan"
+            )
+            reach_table.add_column("Screen", style="cyan")
+            reach_table.add_column("Forward", style="magenta", justify="right")
+            reach_table.add_column("Backward", style="yellow", justify="right")
+
+            for screen_name, reach_data in reachability.items():
+                reach_table.add_row(
+                    screen_name[:40],
+                    reach_data["forward_coverage"],
+                    str(reach_data["backward_reach"]),
+                )
+
+            console.print(reach_table)
+
+        # Show recommendations
+        recommendations = report_gen._generate_recommendations(
+            result.knowledge_graph["stats"], cycles
+        )
+        if recommendations:
+            rec_panel = Panel(
+                "\n".join(recommendations),
+                title="[bold]Recommendations[/bold]",
+                border_style="green",
+            )
+            console.print(rec_panel)
 
 
 def main() -> int:

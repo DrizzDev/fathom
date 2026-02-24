@@ -169,13 +169,19 @@ class GeminiLLMClient(IVisionProvider):
                 # Extract token usage from response
                 usage = getattr(response, "usage_metadata", None)
                 if usage:
-                    result.metrics["prompt_tokens"] = getattr(usage, "prompt_token_count", 0) or 0
-                    result.metrics["completion_tokens"] = (
-                        getattr(usage, "candidates_token_count", 0) or 0
+                    prompt_t = getattr(usage, "prompt_token_count", 0) or 0
+                    completion_t = getattr(usage, "candidates_token_count", 0) or 0
+                    cached_t = getattr(usage, "cached_content_token_count", 0) or 0
+
+                    result.metrics["prompt_tokens"] = prompt_t
+                    result.metrics["completion_tokens"] = completion_t
+                    result.metrics["cached_tokens"] = cached_t
+
+                    logger.debug(
+                        f"Token usage: prompt={prompt_t}, completion={completion_t}, cached={cached_t}"
                     )
-                    result.metrics["cached_tokens"] = (
-                        getattr(usage, "cached_content_token_count", 0) or 0
-                    )
+                else:
+                    logger.warning("Response missing usage_metadata")
 
                 return result
             except Exception as exception:

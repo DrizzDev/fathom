@@ -269,12 +269,15 @@ def build_exploration_nodes(
         analysis_duration = time.time() - start
         ctx.metrics.record(operation="analysis", duration=analysis_duration)
 
-        if analysis.metrics:
-            ctx.metrics.record_tokens(
-                prompt=int(analysis.metrics.get("prompt_tokens", 0)),
-                completion=int(analysis.metrics.get("completion_tokens", 0)),
-                cached=int(analysis.metrics.get("cached_tokens", 0)),
-            )
+        # Always record tokens from analysis, defaulting to 0 if not present.
+        # The analysis.metrics dict may not contain token values if the provider
+        # didn't populate them (e.g., missing usage_metadata), so we always attempt
+        # to record with sensible defaults.
+        ctx.metrics.record_tokens(
+            prompt=int(analysis.metrics.get("prompt_tokens", 0)),
+            completion=int(analysis.metrics.get("completion_tokens", 0)),
+            cached=int(analysis.metrics.get("cached_tokens", 0)),
+        )
 
         # Register screen + persist VLM description in a single add_screen call
         await ctx.knowledge_graph.add_screen(

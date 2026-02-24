@@ -7,7 +7,8 @@ ensuring type safety and field validation before domain object construction.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional
+import json
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -40,6 +41,25 @@ class ExecuteUIRequest(BaseModel):
         if "action_type" not in v:
             raise ValueError("action must contain 'action_type'")
         return v
+
+    @field_validator("memory_updates", mode="before")
+    @classmethod
+    def parse_memory_updates(cls, v: Any) -> Optional[Dict[str, str]]:
+        """Handle memory_updates that may come as JSON string or dict."""
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, str):
+            if not v or v == "[]" or v == "{}":
+                return None
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return None
 
 
 class VerifyGoalRequest(BaseModel):

@@ -45,23 +45,39 @@ def _friendly_activity(activity: str) -> str:
 
 
 def _build_screen_names(graph_data: Dict[str, Any]) -> Dict[str, str]:
-    """Infer a human-readable name for every screen node.
+    """Infer a human-readable name for every node.
 
-    Strategy (in priority order):
-    1. Use the stored ``description`` if it is meaningful (not "Tool-based
-       analysis" or empty).
-    2. Infer from **incoming** edges: the ``action_target`` of the tap/scroll
-       that *led to* this screen tells us what it is.  e.g. if the incoming
-       edge says ``tap "Messages tab"`` → the screen is ``Messages``.
-    3. Infer from **outgoing** edges: the targets of elements *on* the screen
-       hint at its purpose (e.g. a screen with "Primary Care", "Urgent Care",
-       "Messages tab" is the Home/Dashboard).
-    4. Fall back to a cleaned-up activity class name.
+    Handles both activity-based nodes (new format) and visual_hash-based nodes (legacy format).
+
+    For activity-based nodes:
+    - Use the activity name (e.g., "com.example.app/.MainActivity")
+
+    For visual_hash-based nodes:
+    - Strategy (in priority order):
+      1. Use the stored ``description`` if meaningful
+      2. Infer from incoming edges
+      3. Infer from outgoing edges
+      4. Fall back to activity class name
     """
 
     nodes: List[Dict[str, Any]] = graph_data.get("nodes", [])
     edges: List[Dict[str, Any]] = graph_data.get("edges", [])
 
+    # Determine if this is activity-based or visual_hash-based
+    is_activity_based = any(n.get("activity") and not n.get("visual_hash") for n in nodes)
+
+    names: Dict[str, str] = {}
+
+    if is_activity_based:
+        # New format: activity nodes
+        for node in nodes:
+            activity = node.get("activity", "")
+            if activity:
+                # Use friendly activity name
+                names[activity] = _friendly_activity(activity)
+        return names
+
+    # Legacy format: visual_hash-based nodes
     # Index: hash → incoming non-back action targets
     incoming: Dict[str, List[str]] = defaultdict(list)
     # Index: hash → outgoing non-back action targets
@@ -78,8 +94,6 @@ def _build_screen_names(graph_data: Dict[str, Any]) -> Dict[str, str]:
             incoming[dst].append(target)
         if src:
             outgoing[src].append(target)
-
-    names: Dict[str, str] = {}
 
     for node in nodes:
         vhash = node.get("visual_hash")
@@ -199,6 +213,10 @@ class GraphExportService:
 
         screen_names = _build_screen_names(graph_data)
 
+        # Determine if activity-based or visual_hash-based
+        nodes = graph_data.get("nodes", [])
+        is_activity_based = any(n.get("activity") and not n.get("visual_hash") for n in nodes)
+
         lines = [
             "digraph KnowledgeGraph {",
             "  rankdir=LR;",
@@ -210,24 +228,42 @@ class GraphExportService:
             "",
         ]
 
-        for node in graph_data.get("nodes", []):
-            vhash = node.get("visual_hash")
-            if not vhash:
-                continue
-            name = screen_names.get(vhash, vhash[:8])
-            label = _node_label(name, node, max_len=50).replace('"', '\\"')
-            visits = node.get("visit_count", 0)
-            tooltip = f"visits: {visits}  hash: {vhash[:12]}"
-            lines.append(f'  "{vhash}" [label="{label}", tooltip="{tooltip}"];')
+        for node in nodes:
+            if is_activity_based:
+                node_id = node.get("activity")
+                if not node_id:
+                    continue
+                name = screen_names.get(node_id, _friendly_activity(node_id))
+            else:
+                node_id = node.get("visual_hash")
+                if not node_id:
+                    continue
+                name = screen_names.get(node_id, node_id[:8])
+
+            label = f"{name}\\n(visits: {node.get('visit_count', 0)})".replace('"', '\\"')
+            lines.append(f'  "{node_id}" [label="{label}"];')
 
         lines.append("")
 
-        for edge in graph_data.get("edges", []):
-            src = edge.get("source_hash")
-            dst = edge.get("destination_hash")
+        edges = graph_data.get("edges", [])
+        if is_activity_based:
+            src_key, dst_key = "source_activity", "destination_activity"
+        else:
+            src_key, dst_key = "source_hash", "destination_hash"
+
+        for edge in edges:
+            src = edge.get(src_key)
+            dst = edge.get(dst_key)
             if not src or not dst:
                 continue
-            label = _edge_label(edge, max_target=30).replace('"', '\\"')
+
+            action = edge.get("action_type", "")
+            target = edge.get("action_target", "")
+            label = f"{action}: {target}" if target else action
+            if edge.get("count", 1) > 1:
+                label += f" (×{edge['count']})"
+            label = label.replace('"', '\\"')
+
             lines.append(f'  "{src}" -> "{dst}" [label="{label}"];')
 
         lines.append("}")
@@ -239,28 +275,50 @@ class GraphExportService:
 
         screen_names = _build_screen_names(graph_data)
 
+        nodes = graph_data.get("nodes", [])
+        is_activity_based = any(n.get("activity") and not n.get("visual_hash") for n in nodes)
+
         lines = ["graph LR"]
 
         node_ids: Dict[str, str] = {}
-        for i, node in enumerate(graph_data.get("nodes", [])):
-            vhash = node.get("visual_hash")
-            if not vhash:
-                continue
-            node_id = f"S{i}"
-            node_ids[vhash] = node_id
+        for i, node in enumerate(nodes):
+            if is_activity_based:
+                node_key = node.get("activity")
+                if not node_key:
+                    continue
+                name = screen_names.get(node_key, _friendly_activity(node_key))
+            else:
+                node_key = node.get("visual_hash")
+                if not node_key:
+                    continue
+                name = screen_names.get(node_key, node_key[:8])
 
-            name = screen_names.get(vhash, vhash[:8])
-            label = _node_label(name, node, max_len=45).replace("\n", " | ")
+            node_id = f"N{i}"
+            node_ids[node_key] = node_id
+
+            visits = node.get("visit_count", 0)
+            label = f"{name} (visits: {visits})"
             label = label.replace('"', "'")
             lines.append(f'  {node_id}["{label}"]')
 
-        for edge in graph_data.get("edges", []):
-            src = node_ids.get(edge.get("source_hash", ""))
-            dst = node_ids.get(edge.get("destination_hash", ""))
+        edges = graph_data.get("edges", [])
+        if is_activity_based:
+            src_key, dst_key = "source_activity", "destination_activity"
+        else:
+            src_key, dst_key = "source_hash", "destination_hash"
+
+        for edge in edges:
+            src = node_ids.get(edge.get(src_key, ""))
+            dst = node_ids.get(edge.get(dst_key, ""))
             if not src or not dst:
                 continue
 
-            label = _edge_label(edge, max_target=25).replace('"', "'")
+            action = edge.get("action_type", "")
+            target = edge.get("action_target", "")
+            label = f"{action}: {target}" if target else action
+            if edge.get("count", 1) > 1:
+                label += f" (×{edge['count']})"
+            label = label.replace('"', "'")
             lines.append(f'  {src} -->|"{label}"| {dst}')
 
         return "\n".join(lines)
@@ -319,31 +377,51 @@ class GraphExportService:
 
         screen_names = _build_screen_names(graph_data)
 
+        # Determine if activity-based or visual_hash-based
+        is_activity_based = any(n.get("activity") and not n.get("visual_hash") for n in nodes)
+
         G = nx.DiGraph()
 
         # ── Build graph ──────────────────────────────────────────────
-        known_hashes: set[str] = set()
+        known_ids: set[str] = set()
         for node in nodes:
-            vhash = node.get("visual_hash")
-            if not vhash:
-                continue
-            known_hashes.add(vhash)
-            friendly_act = _friendly_activity(node.get("activity", "unknown"))
-            name = screen_names.get(vhash, vhash[:8])
-            label = _node_label(name, node, max_len=35)
+            if is_activity_based:
+                node_id = node.get("activity")
+                if not node_id:
+                    continue
+                activity_str = _friendly_activity(node_id)
+                name = screen_names.get(node_id, activity_str)
+            else:
+                node_id = node.get("visual_hash")
+                if not node_id:
+                    continue
+                activity_str = _friendly_activity(node.get("activity", "unknown"))
+                name = screen_names.get(node_id, node_id[:8])
+
+            known_ids.add(node_id)
+            label = f"{name}\n(visits: {node.get('visit_count', 0)})"
             visits = node.get("visit_count", 0)
-            G.add_node(vhash, label=label, visits=visits, activity=friendly_act)
+            G.add_node(node_id, label=label, visits=visits, activity=activity_str)
+
+        if is_activity_based:
+            src_key, dst_key = "source_activity", "destination_activity"
+        else:
+            src_key, dst_key = "source_hash", "destination_hash"
 
         for edge in edges:
-            src = edge.get("source_hash")
-            dst = edge.get("destination_hash")
+            src = edge.get(src_key)
+            dst = edge.get(dst_key)
             if not src or not dst:
                 continue
-            # Skip edges referencing nodes we don't know about to avoid
-            # networkx auto-creating attribute-less nodes.
-            if src not in known_hashes or dst not in known_hashes:
+            # Skip edges referencing nodes we don't know about
+            if src not in known_ids or dst not in known_ids:
                 continue
-            label = _edge_label(edge, max_target=20)
+
+            action = edge.get("action_type", "")
+            target = edge.get("action_target", "")
+            label = f"{action}: {target}" if target else action
+            if edge.get("count", 1) > 1:
+                label += f" (×{edge['count']})"
             G.add_edge(src, dst, label=label)
 
         # ── Layout ───────────────────────────────────────────────────

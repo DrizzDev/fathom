@@ -13,6 +13,7 @@ from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.configuration import WorkflowConfig
 from fathom.schemas.results import ExplorationResult
+from fathom.services.exploration_report import ExplorationReportGenerator
 from fathom.tools.capture import CaptureTool
 from fathom.tools.device import DeviceTool
 from fathom.tools.vision import VisionTool
@@ -63,6 +64,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         self.__knowledge_graph = knowledge_graph
         self.__target_package = target_package
         self.__completion_reason = ""
+        self.__start_time: float = 0.0
 
     @property
     def name(self) -> str:
@@ -78,6 +80,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         """
 
         logger.info("Executing exploration")
+        self.__start_time = asyncio.get_event_loop().time()
 
         from fathom.graph.exploration_graph import build_exploration_graph
 
@@ -163,6 +166,25 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         kg = node_ctx.knowledge_graph
 
         metrics_report = node_ctx.metrics.to_report_dict()
+
+        # Calculate duration
+        current_time = asyncio.get_event_loop().time()
+        duration_seconds = current_time - self.__start_time if self.__start_time else 0.0
+
+        # Generate comprehensive exploration report
+        report_generator = ExplorationReportGenerator(kg)
+        full_report = report_generator.generate_full_report(
+            workflow_id=self.workflow_id,
+            duration_seconds=duration_seconds,
+            target_package=self.__target_package,
+        )
+
+        # Save report to file
+        try:
+            report_path = asyncio.run(report_generator.save_report(full_report))
+            logger.info(f"Exploration report saved to {report_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save exploration report: {e}")
 
         if cancelled or final_state is None:
             stats = kg.get_stats()

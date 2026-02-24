@@ -58,6 +58,7 @@ class GeminiPromptBuilder(PromptBuilder):
     ) -> str:
         """
         Build dynamic task instructions for the User Message.
+        Note: Static scaffolding (tool response format, error recovery) is now in cached system prompt.
         """
 
         contextual_rules = self.__get_contextual_rules(intent=intent, hints=hints)
@@ -67,7 +68,6 @@ class GeminiPromptBuilder(PromptBuilder):
             f"GOAL: {intent}",
             contextual_rules,
             conditional_notes,
-            "Execute next best step via tool.",
         ]
         return "\n\n".join([part for part in parts if part.strip()])
 

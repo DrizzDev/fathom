@@ -93,7 +93,7 @@ class CacheService:
         # Fast path (no lock needed for read-only hit check)
         if self.__cached_content and self.__content_hash == current_hash:
             self.stats.hits += 1
-            logger.debug(f"Cache hit (hash={current_hash[:8]})")
+            logger.debug(f"Cache hit (hash={current_hash[:8]}, total_hits={self.stats.hits})")
             return str(self.__cached_content.name)
 
         async with self.__lock:
@@ -104,6 +104,9 @@ class CacheService:
 
             # Cache miss: content changed or no cache
             self.stats.misses += 1
+            logger.debug(
+                f"Cache miss (hash={current_hash[:8]}, total_hits={self.stats.hits}, total_misses={self.stats.misses})"
+            )
 
             if self.__uncacheable_hash and self.__uncacheable_hash != current_hash:
                 self.__uncacheable_hash = None
@@ -148,7 +151,9 @@ class CacheService:
             except Exception as exception:
                 if "minimum token count" in str(exception):
                     self.__uncacheable_hash = current_hash
-                    logger.debug(f"Skipping cache (below minimum): {exception}")
+                    logger.info(
+                        "Cache disabled for this hash: prompt too short (below minimum tokens required for caching)"
+                    )
                 else:
                     logger.warning(f"Failed to create cache: {exception}")
 

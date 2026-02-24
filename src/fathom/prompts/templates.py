@@ -83,19 +83,31 @@ STRICT FORMAT: Return only valid tool calls using provided schema fields.
 """
 
 TOOL_GUIDANCE = """
-TOOL ROUTING:
+TOOL ROUTING & RESPONSE FORMAT:
 - execute_ui: ALL physical UI interactions (tap, type, swipe, scroll, wait).
   * ALWAYS set screen_description (≤15 words) and evaluate is_valid.
   * NAMING: Use generic labels, not IDs. List items -> positional ("1st result"). Unique UI -> visible label ("Submit button").
   * TARGET_TYPE: stable (fixed UI, omit script_target), positional (list/grid item, set script_target to ordinal), dynamic (changing content, set script_target to generic desc). Wait actions -> always dynamic. Omit if uncertain.
+  * Return fields: action (object), assistant_message (str), is_valid (bool). ALWAYS include evidence or short reasoning.
 - complete_goal: Goal done signal. Call ONLY when current screen proves completion with visual evidence.
 - validate_state: Explicit state checks without UI action.
 - Validation: If the goal requires validation (e.g., price or presence), include a short evidence note in assistant_message or evidence.
 - verify_goal: Detailed goal completion verification.
 - store_memory / recall_memory: Persistent cross-step memory (use same category+item keys).
+
+ERROR RECOVERY:
+- If action fails (no UI change, button not tapped): Use 'back', scroll to refocus, or try alternative target.
+- If overlay/popup blocks target: Dismiss first (X, 'Close', 'Done'), then retry.
+- If action loops (same screen after 3+ attempts): Change strategy (scroll, navigate, wait for load).
+
+FOR ALL TOOL CALLS:
+- Respond ONLY with valid JSON tool calls using the provided schema.
+- Do NOT output plain text, markdown, or explain your reasoning outside of fields.
+- Confidence < 0.7 = mark is_valid=false and explain briefly in assistant_message.
 """
 
 RESPONSE_DIRECTIVE = (
     "RESPONSE: Return one primary tool call (execute_ui, complete_goal, validate_state, or verify_goal). "
-    "You MAY include store_memory or recall_memory alongside the primary call. No plain text or markdown."
+    "You MAY include store_memory or recall_memory alongside the primary call. "
+    "Execute the next best step via a tool call. Return only valid tool calls as JSON. No plain text, markdown, or explanations."
 )

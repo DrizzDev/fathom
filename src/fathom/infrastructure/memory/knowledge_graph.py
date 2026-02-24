@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.schemas.actions import Action
@@ -423,6 +424,400 @@ class KnowledgeGraph:
                 lines.append("ALREADY TRIED FROM THIS SCREEN: (none -- this is a fresh screen)")
 
         return "\n".join(lines)
+
+    # ── Query & Navigation Features ───────────────────────────────
+
+    def find_path(
+        self,
+        start_hash: str,
+        end_hash: str,
+        max_depth: int = 50,
+    ) -> Optional[List[Tuple[str, Optional[GraphEdge]]]]:
+        """
+        Finds the shortest path from start_hash to end_hash using BFS.
+
+        Returns a list of (node_hash, edge_taken) tuples representing the path,
+        or None if no path exists. The start node is always first with edge=None.
+        The end node is last with the edge that led to it.
+
+        Parameters
+        ----------
+        start_hash:
+            The starting screen's visual hash.
+        end_hash:
+            The target screen's visual hash.
+        max_depth:
+            Maximum search depth to prevent infinite exploration.
+
+        Returns
+        -------
+        List[Tuple[str, Optional[GraphEdge]]] or None
+            Path as [(node, edge_taken), ...] or None if unreachable.
+            Edge is None for the start node.
+        """
+        start_hash = self._resolve_canonical(start_hash)
+        end_hash = self._resolve_canonical(end_hash)
+
+        if start_hash not in self.__nodes:
+            logger.warning(f"Start hash {start_hash} not in graph")
+            return None
+
+        if end_hash not in self.__nodes:
+            logger.warning(f"End hash {end_hash} not in graph")
+            return None
+
+        if start_hash == end_hash:
+            return [(start_hash, None)]
+
+        # BFS queue: (current_hash, path_to_current)
+        queue: deque[Tuple[str, List[Tuple[str, Optional[GraphEdge]]]]] = deque()
+        visited: Set[str] = set()
+
+        initial_path: List[Tuple[str, Optional[GraphEdge]]] = [(start_hash, None)]
+        queue.append((start_hash, initial_path))
+        visited.add(start_hash)
+
+        while queue:
+            current, path = queue.popleft()
+
+            if len(path) > max_depth:
+                continue
+
+            for edge in self.__edges.get(current, []):
+                next_hash = edge.destination_hash
+
+                if next_hash == end_hash:
+                    return path + [(next_hash, edge)]
+
+                if next_hash not in visited:
+                    visited.add(next_hash)
+                    new_path = path + [(next_hash, edge)]
+                    queue.append((next_hash, new_path))
+
+        return None
+
+    def find_all_paths(
+        self,
+        start_hash: str,
+        end_hash: str,
+        max_depth: int = 10,
+    ) -> List[List[Tuple[str, Optional[GraphEdge]]]]:
+        """
+        Finds all paths from start_hash to end_hash up to max_depth.
+
+        Returns a list of paths, where each path is a list of
+        (node_hash, edge_taken) tuples.
+
+        Parameters
+        ----------
+        start_hash:
+            The starting screen's visual hash.
+        end_hash:
+            The target screen's visual hash.
+        max_depth:
+            Maximum search depth (smaller than find_path to avoid explosion).
+
+        Returns
+        -------
+        List[List[Tuple[str, Optional[GraphEdge]]]]
+            All found paths, or empty list if none exist.
+        """
+        start_hash = self._resolve_canonical(start_hash)
+        end_hash = self._resolve_canonical(end_hash)
+
+        if start_hash not in self.__nodes or end_hash not in self.__nodes:
+            return []
+
+        all_paths: List[List[Tuple[str, Optional[GraphEdge]]]] = []
+
+        def dfs(
+            current: str,
+            target: str,
+            path: List[Tuple[str, Optional[GraphEdge]]],
+            visited: Set[str],
+            depth: int,
+        ) -> None:
+            if depth > max_depth:
+                return
+
+            if current == target:
+                all_paths.append(path[:])
+                return
+
+            for edge in self.__edges.get(current, []):
+                next_hash = edge.destination_hash
+                if next_hash not in visited:
+                    visited.add(next_hash)
+                    path.append((next_hash, edge))
+                    dfs(next_hash, target, path, visited, depth + 1)
+                    path.pop()
+                    visited.remove(next_hash)
+
+        initial_path: List[Tuple[str, Optional[GraphEdge]]] = [(start_hash, None)]
+        visited_set: Set[str] = {start_hash}
+        dfs(start_hash, end_hash, initial_path, visited_set, 0)
+
+        return all_paths
+
+    def is_reachable(self, start_hash: str, end_hash: str, max_depth: int = 100) -> bool:
+        """
+        Checks if end_hash is reachable from start_hash.
+
+        Uses BFS for efficiency, stopping as soon as the target is found.
+
+        Parameters
+        ----------
+        start_hash:
+            The starting screen's visual hash.
+        end_hash:
+            The target screen's visual hash.
+        max_depth:
+            Maximum search depth to prevent infinite exploration.
+
+        Returns
+        -------
+        bool
+            True if a path exists, False otherwise.
+        """
+        return self.find_path(start_hash, end_hash, max_depth) is not None
+
+    def detect_cycles(self, start_hash: Optional[str] = None) -> List[List[str]]:
+        """
+        Detects all cycles in the graph using DFS.
+
+        If start_hash is provided, only searches for cycles reachable from that node.
+        Otherwise, searches the entire graph for all cycles.
+
+        Returns a list of cycles, where each cycle is a list of node hashes
+        representing the cycle path (first and last node are the same).
+
+        Parameters
+        ----------
+        start_hash:
+            Optional starting point for cycle detection. If None, searches entire graph.
+
+        Returns
+        -------
+        List[List[str]]
+            List of cycles found, each cycle is a list of node hashes.
+        """
+        cycles: List[List[str]] = []
+        visited: Set[str] = set()
+        rec_stack: Set[str] = set()
+        parent_map: Dict[str, str] = {}
+
+        def dfs_visit(node: str, path: List[str]) -> None:
+            visited.add(node)
+            rec_stack.add(node)
+            path.append(node)
+
+            for edge in self.__edges.get(node, []):
+                next_node = edge.destination_hash
+
+                if next_node not in visited:
+                    parent_map[next_node] = node
+                    dfs_visit(next_node, path)
+                elif next_node in rec_stack:
+                    # Found a cycle: extract it from the path
+                    cycle_start_idx = path.index(next_node)
+                    cycle = path[cycle_start_idx:] + [next_node]
+                    cycles.append(cycle)
+
+            path.pop()
+            rec_stack.remove(node)
+
+        # Determine which nodes to start from
+        start_nodes: List[str] = []
+        if start_hash:
+            resolved = self._resolve_canonical(start_hash)
+            if resolved in self.__nodes:
+                start_nodes = [resolved]
+        else:
+            start_nodes = list(self.__nodes.keys())
+
+        for node in start_nodes:
+            if node not in visited:
+                dfs_visit(node, [])
+
+        return cycles
+
+    def get_connected_component(self, start_hash: str) -> Set[str]:
+        """
+        Returns all nodes reachable from start_hash (forward reachability).
+
+        Uses BFS to find all nodes in the connected component.
+
+        Parameters
+        ----------
+        start_hash:
+            The starting screen's visual hash.
+
+        Returns
+        -------
+        Set[str]
+            Set of all reachable node hashes (including start_hash).
+        """
+        start_hash = self._resolve_canonical(start_hash)
+        if start_hash not in self.__nodes:
+            return set()
+
+        reachable: Set[str] = set()
+        queue: deque[str] = deque([start_hash])
+        reachable.add(start_hash)
+
+        while queue:
+            current = queue.popleft()
+            for edge in self.__edges.get(current, []):
+                next_node = edge.destination_hash
+                if next_node not in reachable:
+                    reachable.add(next_node)
+                    queue.append(next_node)
+
+        return reachable
+
+    def get_reverse_connected_component(self, end_hash: str) -> Set[str]:
+        """
+        Returns all nodes that can reach end_hash (backward reachability).
+
+        Builds reverse edges and uses BFS to find all nodes that lead to end_hash.
+
+        Parameters
+        ----------
+        end_hash:
+            The target screen's visual hash.
+
+        Returns
+        -------
+        Set[str]
+            Set of all nodes that can reach end_hash (including end_hash).
+        """
+        end_hash = self._resolve_canonical(end_hash)
+        if end_hash not in self.__nodes:
+            return set()
+
+        # Build reverse edge map
+        reverse_edges: Dict[str, List[str]] = {}
+        for source, edges in self.__edges.items():
+            for edge in edges:
+                dest = edge.destination_hash
+                reverse_edges.setdefault(dest, []).append(source)
+
+        # BFS backward from end_hash
+        can_reach: Set[str] = set()
+        queue: deque[str] = deque([end_hash])
+        can_reach.add(end_hash)
+
+        while queue:
+            current = queue.popleft()
+            for source in reverse_edges.get(current, []):
+                if source not in can_reach:
+                    can_reach.add(source)
+                    queue.append(source)
+
+        return can_reach
+
+    def get_graph_diameter(self) -> Optional[int]:
+        """
+        Computes the diameter of the graph (longest shortest path between any two nodes).
+
+        Returns None if the graph is empty or disconnected.
+        For large graphs, this may be expensive. Consider caching the result.
+
+        Returns
+        -------
+        int or None
+            The graph diameter, or None if not computable.
+        """
+        if not self.__nodes:
+            return None
+
+        nodes = list(self.__nodes.keys())
+        max_distance = 0
+
+        for start in nodes:
+            for end in nodes:
+                if start != end:
+                    path = self.find_path(start, end)
+                    if path:
+                        distance = len(path) - 1
+                        max_distance = max(max_distance, distance)
+
+        return max_distance if max_distance > 0 else None
+
+    def get_visualization_context(self, visual_hash: str, depth: int = 2) -> Dict[str, Any]:
+        """
+        Generates context for visualizing a screen and its neighborhood in the graph.
+
+        Returns information about the node, its incoming/outgoing edges,
+        and paths to/from nearby nodes.
+
+        Parameters
+        ----------
+        visual_hash:
+            The target screen's visual hash.
+        depth:
+            How many hops away to include in the context.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Context dict with node info, neighbors, and reachability analysis.
+        """
+        visual_hash = self._resolve_canonical(visual_hash)
+        node = self.__nodes.get(visual_hash)
+
+        if not node:
+            return {}
+
+        # Get forward and backward reachability
+        forward = self.get_connected_component(visual_hash)
+        backward = self.get_reverse_connected_component(visual_hash)
+
+        # Get immediate neighbors
+        outgoing: List[Dict[str, Any]] = []
+        for edge in self.__edges.get(visual_hash, []):
+            dest_node = self.__nodes.get(edge.destination_hash)
+            outgoing.append(
+                {
+                    "destination": edge.destination_hash,
+                    "action_type": edge.action_type,
+                    "action_target": edge.action_target,
+                    "count": edge.count,
+                    "destination_description": dest_node.description if dest_node else None,
+                }
+            )
+
+        # Get inbound neighbors
+        inbound: List[Dict[str, Any]] = []
+        for source, edges in self.__edges.items():
+            for edge in edges:
+                if edge.destination_hash == visual_hash:
+                    source_node = self.__nodes.get(source)
+                    inbound.append(
+                        {
+                            "source": source,
+                            "action_type": edge.action_type,
+                            "action_target": edge.action_target,
+                            "count": edge.count,
+                            "source_description": source_node.description if source_node else None,
+                        }
+                    )
+
+        return {
+            "node": {
+                "visual_hash": node.visual_hash,
+                "activity": node.activity,
+                "description": node.description,
+                "visit_count": node.visit_count,
+                "first_seen": node.first_seen,
+                "last_seen": node.last_seen,
+            },
+            "outgoing_edges": outgoing,
+            "inbound_edges": inbound,
+            "forward_reachable": len(forward),
+            "backward_reachable": len(backward),
+            "in_cycle": len(backward) > 1 and visual_hash in backward,
+        }
 
     def export_json(self) -> Dict[str, Any]:
         """

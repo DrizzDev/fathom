@@ -292,13 +292,19 @@ class LangChainLLMClient(IVisionProvider):
                 # Extract token usage
                 usage = getattr(response, "usage_metadata", None)
                 if usage:
-                    result.metrics["prompt_tokens"] = getattr(usage, "prompt_token_count", 0) or 0
-                    result.metrics["completion_tokens"] = (
-                        getattr(usage, "candidates_token_count", 0) or 0
+                    prompt_t = getattr(usage, "prompt_token_count", 0) or 0
+                    completion_t = getattr(usage, "candidates_token_count", 0) or 0
+                    cached_t = getattr(usage, "cached_content_token_count", 0) or 0
+
+                    result.metrics["prompt_tokens"] = prompt_t
+                    result.metrics["completion_tokens"] = completion_t
+                    result.metrics["cached_tokens"] = cached_t
+
+                    logger.debug(
+                        f"Token usage (raw genai): prompt={prompt_t}, completion={completion_t}, cached={cached_t}"
                     )
-                    result.metrics["cached_tokens"] = (
-                        getattr(usage, "cached_content_token_count", 0) or 0
-                    )
+                else:
+                    logger.warning("Response missing usage_metadata (raw genai path)")
 
                 return result
             except Exception as exc:
@@ -412,14 +418,29 @@ class LangChainLLMClient(IVisionProvider):
         usage = getattr(response, "usage_metadata", None) or {}
         if usage:
             if isinstance(usage, dict):
-                result.metrics["prompt_tokens"] = usage.get("input_tokens", 0)
-                result.metrics["completion_tokens"] = usage.get("output_tokens", 0)
-                result.metrics["cached_tokens"] = usage.get("input_token_details", {}).get(
-                    "cache_read", 0
+                prompt_t = usage.get("input_tokens", 0)
+                completion_t = usage.get("output_tokens", 0)
+                cached_t = usage.get("input_token_details", {}).get("cache_read", 0)
+
+                result.metrics["prompt_tokens"] = prompt_t
+                result.metrics["completion_tokens"] = completion_t
+                result.metrics["cached_tokens"] = cached_t
+
+                logger.debug(
+                    f"Token usage (LangChain): prompt={prompt_t}, completion={completion_t}, cached={cached_t}"
                 )
             else:
-                result.metrics["prompt_tokens"] = getattr(usage, "input_tokens", 0) or 0
-                result.metrics["completion_tokens"] = getattr(usage, "output_tokens", 0) or 0
+                prompt_t = getattr(usage, "input_tokens", 0) or 0
+                completion_t = getattr(usage, "output_tokens", 0) or 0
+                cached_t = getattr(usage, "cached_content_token_count", 0) or 0
+
+                result.metrics["prompt_tokens"] = prompt_t
+                result.metrics["completion_tokens"] = completion_t
+                result.metrics["cached_tokens"] = cached_t
+
+                logger.debug(
+                    f"Token usage (LangChain obj): prompt={prompt_t}, completion={completion_t}, cached={cached_t}"
+                )
 
         return result
 

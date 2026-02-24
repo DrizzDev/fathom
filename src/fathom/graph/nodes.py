@@ -333,49 +333,17 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
                 "validation_duration": 0.0,
             }
 
-        # Run validation check
-        start = time.time()
-        try:
-            validation_result = await ctx.validation_service.validate_screen(
-                screen=screen,
-                requirements=validation_requirements,
-                timeout_seconds=5.0,
-            )
-            validation_duration = time.time() - start
-
-            # Record in agent state
-            ctx.agent_state.set_validation_result(validation_result)
-
-            # Log validation result for audit trail
-            logger.info(f"Validation performed: {validation_result.notes}")
-
-            # Record validation metrics
-            ctx.metrics.record(operation="validation", duration=validation_duration)
-
-            # Include validation context for LLM planning
-            validation_context = {
-                "validation_passed": validation_result.passed,
-                "validation_confidence": validation_result.confidence_score,
-                "found_items": validation_result.found_items,
-                "missing_items": validation_result.missing_items,
-            }
-
-            return {
-                **state,
-                "validation_result": validation_result,
-                "validation_context": validation_context,
-                "validation_duration": validation_duration,
-            }
-        except Exception as exc:
-            logger.warning(f"Validation check failed with exception: {exc}")
-            validation_duration = time.time() - start
-            ctx.metrics.record(operation="validation", duration=validation_duration)
-            return {
-                **state,
-                "validation_result": None,
-                "validation_context": None,
-                "validation_duration": validation_duration,
-            }
+        # Single-call mode: do not run a separate validation LLM call.
+        validation_context = {
+            "validation_required": True,
+            "required_items": [req.item_name for req in validation_requirements],
+        }
+        return {
+            **state,
+            "validation_result": None,
+            "validation_context": validation_context,
+            "validation_duration": 0.0,
+        }
 
     async def analyze_node(state: FathomGraphState) -> FathomGraphState:
         """Run the LLM planner to decide the next action."""
@@ -437,8 +405,9 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
         elif state.get("validation_context"):
             validation_note = f"VALIDATION CONTEXT: {state.get('validation_context')}"
 
+        planning_intent = ctx.agent_state.intent
         if validation_note:
-            full_context = f"{validation_note}\n{full_context}"
+            planning_intent = f"{planning_intent}\n{validation_note}"
 
         plan = await ctx.planner.plan_step(
             state=ctx.agent_state,
@@ -447,17 +416,21 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
             reasoner=ctx.reasoner,
             elements=elements if elements else None,
             additional_context=full_context,
+            intent_override=planning_intent,
         )
 
         analysis_duration = time.time() - start
         ctx.metrics.record(operation="analysis", duration=analysis_duration)
 
-        if plan.metrics:
-            ctx.metrics.record_tokens(
-                prompt=int(plan.metrics.get("prompt_tokens", 0)),
-                completion=int(plan.metrics.get("completion_tokens", 0)),
-                cached=int(plan.metrics.get("cached_tokens", 0)),
-            )
+        # Always record tokens from plan, defaulting to 0 if not present.
+        # The plan.metrics dict may not contain token values if the provider
+        # didn't populate them (e.g., missing usage_metadata), so we always attempt
+        # to record with sensible defaults.
+        ctx.metrics.record_tokens(
+            prompt=int(plan.metrics.get("prompt_tokens", 0)),
+            completion=int(plan.metrics.get("completion_tokens", 0)),
+            cached=int(plan.metrics.get("cached_tokens", 0)),
+        )
 
         # Check validity
         if getattr(plan, "is_valid_action", True) is False:

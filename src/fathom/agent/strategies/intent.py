@@ -155,14 +155,15 @@ class IntentStrategy(ExecutionStrategy):
         )
         self.__metrics.record(operation="analysis", duration=analysis_duration)
 
-        # Track token usage from the LLM call
-        # Track token usage from the LLM call
-        if plan.metrics:
-            self.__metrics.record_tokens(
-                prompt=int(plan.metrics.get("prompt_tokens", 0)),
-                completion=int(plan.metrics.get("completion_tokens", 0)),
-                cached=int(plan.metrics.get("cached_tokens", 0)),
-            )
+        # Always record token usage from the LLM call, defaulting to 0 if not present.
+        # The plan.metrics dict may not contain token values if the provider
+        # didn't populate them (e.g., missing usage_metadata), so we always attempt
+        # to record with sensible defaults.
+        self.__metrics.record_tokens(
+            prompt=int(plan.metrics.get("prompt_tokens", 0)),
+            completion=int(plan.metrics.get("completion_tokens", 0)),
+            cached=int(plan.metrics.get("cached_tokens", 0)),
+        )
 
         # RETRY: Invalid action
         if getattr(plan, "is_valid_action", True) is False:
