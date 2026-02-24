@@ -10,6 +10,7 @@ from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.audit import AuditService
+from fathom.core.services.exporter import ScriptExporter
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
 from fathom.core.services.perception import PerceptionService
@@ -139,6 +140,7 @@ class GraphContext:
             workflow_id=workflow_id,
             package_name=package_name,
             path_manager=path_manager,
+            exporter=ScriptExporter(),
         )
         self.__trace = trace or TraceService(path_manager=path_manager)
         self.__resolution = resolution or ReferenceResolutionService(ledger=memory)

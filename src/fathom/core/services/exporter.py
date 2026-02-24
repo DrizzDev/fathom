@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Sequence, Union
 
 from fathom.schemas.steps import StepResult
 
-__ORDINAL_MAP = {
+ORDINAL_MAP = {
     "1st": "first",
     "2nd": "second",
     "3rd": "third",
@@ -18,8 +18,8 @@ __ORDINAL_MAP = {
     "10th": "tenth",
 }
 
-__NUMERIC_ORDINAL_RE = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b", re.IGNORECASE)
-__GENERIC_TARGETS = frozenset({"element", "ui element", "none", "a visible item"})
+NUMERIC_ORDINAL_RE = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b", re.IGNORECASE)
+GENERIC_TARGETS = frozenset({"element", "ui element", "none", "a visible item"})
 
 
 class ScriptExporter:
@@ -50,9 +50,9 @@ class ScriptExporter:
 
         def __replace_numeric(match: "re.Match[str]") -> str:
             full = match.group(0).lower()
-            return __ORDINAL_MAP.get(full, full)
+            return ORDINAL_MAP.get(full, full)
 
-        normalized = __NUMERIC_ORDINAL_RE.sub(__replace_numeric, text)
+        normalized = NUMERIC_ORDINAL_RE.sub(__replace_numeric, text)
 
         word_ordinals = (
             "first",
@@ -298,6 +298,14 @@ class ScriptExporter:
         """
 
         lines: list[str] = []
+        
+        filtered_results = []
+        for step in step_results:
+            if ScriptExporter.__get_condition(step) == "recovery":
+                continue
+            filtered_results.append(step)
+        step_results = filtered_results
+        
         n = len(step_results)
         i = 0
         launch_boundary = 0
@@ -348,7 +356,7 @@ class ScriptExporter:
                 if (
                     prev_changed
                     and prev_action_type not in ("wait", *ScriptExporter.__SWIPE_ACTIONS)
-                    and target.lower() not in __GENERIC_TARGETS
+                    and target.lower() not in GENERIC_TARGETS
                 ):
                     val_line = f"Validate {target} is visible"
                     prev_condition = ScriptExporter.__get_condition(prev)
@@ -366,14 +374,14 @@ class ScriptExporter:
                 text = step.get("text")
                 rationale = str(step.get("rationale", ""))
 
-            if action_type_val == "wait" and target.lower() in __GENERIC_TARGETS:
+            if action_type_val == "wait" and target.lower() in GENERIC_TARGETS:
                 target = ScriptExporter.__infer_wait_subject(rationale)
 
             description = ScriptExporter.__build_description(action_type_val, target, text)
 
             if condition:
                 lines.append(f"IF {condition} {{")
-                if target.lower() not in __GENERIC_TARGETS and action_type_val != "wait":
+                if target.lower() not in GENERIC_TARGETS and action_type_val != "wait":
                     lines.append(f"    Validate {target} is visible")
                 lines.append(f"    {description}")
                 lines.append("}")
@@ -386,7 +394,7 @@ class ScriptExporter:
 
             if last_action_type not in ("complete", "verify_goal_completion"):
                 last_target = ScriptExporter.__resolve_target(step_results[-1])
-                last_target_usable = last_target and last_target.lower() not in __GENERIC_TARGETS
+                last_target_usable = last_target and last_target.lower() not in GENERIC_TARGETS
 
                 goal_label = ScriptExporter.__extract_goal_label(goal_state)
 
@@ -521,7 +529,7 @@ class ScriptExporter:
 
         if action_type == "wait" and not condition:
             resolved = ScriptExporter.__resolve_target(step)
-            if resolved.lower() in __GENERIC_TARGETS:
+            if resolved.lower() in GENERIC_TARGETS:
                 subject = ScriptExporter.__infer_wait_subject(rationale)
                 condition = f"{subject} is visible"
             else:

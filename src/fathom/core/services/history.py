@@ -11,6 +11,7 @@ try:
 except ImportError:
     yaml = None
 
+from fathom.core.services.exporter import ScriptExporter
 from fathom.interfaces.storage import StoragePort
 from fathom.schemas.steps import StepResult
 
@@ -32,6 +33,7 @@ class HistoryService:
         workflow_id: str,
         package_name: str,
         path_manager: SharedPathManager,
+        exporter: ScriptExporter,
         storage: Optional[StoragePort] = None,
     ) -> None:
         self.__workflow_id = workflow_id
@@ -41,6 +43,7 @@ class HistoryService:
         self.__directory = path_manager.get_history_directory(
             package_name=package_name, session_id=workflow_id
         )
+        self.__exporter = exporter
         self.__background_tasks: set[asyncio.Task[Any]] = set()
 
     def __fire_and_forget(self, coroutine: Any) -> None:
@@ -163,39 +166,14 @@ class HistoryService:
         Generates a natural language test script with smart validation.
         """
 
-        step_number = 1
-        lines = []
         path = self.__directory / "script.txt"
 
-        for index, record in enumerate(iterable=history):
-            action_type = record.get("action_type", "unknown")
-            raw_target = record.get("natural_language_target") or record.get("target") or "element"
+        script_data = self.__exporter.export(
+            step_results=history,
+            goal_state=intent,
+            package_name=self.__package_name,
+        )
 
-            # 1. Resolve Target (Generalize if not in intent)
-            target = self.__resolve_script_target(
-                target=raw_target, intent=intent, action=action_type
-            )
-
-            # 2. Smart Validation (if previous screen changed)
-            if index > 0:
-                previous = history[index - 1]
-                if previous.get("screen_changed") and target.lower() not in (
-                    "none",
-                    "element",
-                    "ui element",
-                    "a visible item",
-                ):
-                    lines.append(f"{step_number}. Validate {target} is visible")
-                    step_number += 1
-
-            # 3. Action Description
-            description = self.__build_description(
-                action=action_type, target=target, text=record.get("text")
-            )
-            lines.append(f"{step_number}. {description}")
-            step_number += 1
-
-        script_data = "\n".join(lines) + "\n"
         with path.open(mode="w") as handle:
             handle.write(script_data)
 
@@ -213,89 +191,6 @@ class HistoryService:
             )
 
         return script_data
-
-    def __resolve_script_target(self, target: str, intent: str, action: str) -> str:
-        """
-        Checks if target is meaningful to intent, otherwise generalizes.
-        """
-
-        if not target or not intent:
-            return "element"
-
-        target_lower = target.lower()
-        intent_lower = intent.lower()
-
-        if target_lower in intent_lower:
-            return target
-
-        # Fuzzy overlap check
-        target_words = set(target_lower.replace("_", " ").split())
-        filler = {
-            "the",
-            "a",
-            "an",
-            "on",
-            "in",
-            "to",
-            "of",
-            "is",
-            "and",
-            "or",
-            "item",
-            "button",
-            "icon",
-            "area",
-            "field",
-        }
-        meaningful = target_words - filler
-        if not meaningful:
-            return target
-
-        intent_words = set(intent_lower.replace("_", " ").split())
-        overlap = meaningful & intent_words
-
-        if len(overlap) >= len(meaningful) * 0.5:
-            return target
-
-        return "a visible item" if action in ("tap", "long_press") else "the current view"
-
-    def __build_description(self, action: str, target: str, text: Optional[str]) -> str:
-        """
-        Constructs a human-readable action description.
-        """
-
-        if action == "tap":
-            return f"Tap on {target}"
-
-        if action == "type":
-            return f"Type '{text}' into {target}"
-
-        if "swipe" in action:
-            direction = action.split(sep="_")[-1] if "_" in action else "content"
-            return f"Swipe {direction} on {target}"
-
-        if action in ("back", "press_back"):
-            return "Press back button"
-
-        if action in ("home", "press_home"):
-            return "Press home button"
-
-        if action == "enter":
-            return "Press enter"
-
-        if action == "wait":
-            return f"Wait for {target}"
-
-        if action == "scroll":
-            return f"Scroll until you see {target}"
-
-        if action == "long_press":
-            return f"Long press on {target}"
-
-        if action == "complete":
-            return f"Validate {target} (Goal complete)"
-
-        return f"{action.replace('_', ' ').capitalize()} on {target}"
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """
