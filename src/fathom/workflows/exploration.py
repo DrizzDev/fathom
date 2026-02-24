@@ -137,7 +137,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
                 await graph_task
 
             self.__completion_reason = "Workflow cancelled by user"
-            return self.__build_result(
+            return await self.__build_result(
                 node_ctx=node_ctx,
                 final_state=None,
                 cancelled=True,
@@ -148,13 +148,13 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
             await cancel_waiter
 
         final_state = graph_task.result()
-        return self.__build_result(
+        return await self.__build_result(
             node_ctx=node_ctx,
             final_state=final_state,
             cancelled=False,
         )
 
-    def __build_result(
+    async def __build_result(
         self,
         node_ctx: ExplorationNodeContext,
         final_state: Optional[Dict[str, Any]],
@@ -181,7 +181,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
 
         # Save report to file
         try:
-            report_path = asyncio.run(report_generator.save_report(full_report))
+            report_path = await report_generator.save_report(full_report)
             logger.info(f"Exploration report saved to {report_path}")
         except Exception as e:
             logger.warning(f"Failed to save exploration report: {e}")
