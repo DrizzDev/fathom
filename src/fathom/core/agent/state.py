@@ -64,6 +64,8 @@ class AgentState:
         self.__is_complete = False
         self.__completion_reason: Optional[str] = None
 
+        self.__executed_steps: List[StepResult] = []
+
         # Enhanced state fields
         self.__knowledge: Dict[str, Any] = {}
         self.__current_screen_name: Optional[str] = None
@@ -122,6 +124,14 @@ class AgentState:
 
         self.__realignment_count += 1
         self.__loop_detector.reset()
+
+    @property
+    def executed_steps(self) -> List[StepResult]:
+        """
+        All StepResult objects recorded during this session, in execution order.
+        """
+
+        return list(self.__executed_steps)
 
     @property
     def can_continue(self) -> bool:
@@ -251,6 +261,7 @@ class AgentState:
         """
 
         self.__step_count += 1
+        self.__executed_steps.append(result)
 
         # Optimized record including activity context
         activity = self.__current_screen.activity if self.__current_screen else "unknown"

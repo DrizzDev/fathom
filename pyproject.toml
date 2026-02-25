@@ -57,6 +57,7 @@ dependencies = [
     "types-PyYAML>=6.0.12.20250915",
     "rustworkx>=0.15.0",
     "langgraph>=0.0.10",
+    "temporalio==1.23.0",
 ]
 
 [project.scripts]
