@@ -81,7 +81,7 @@ class GraphExecutor:
             # Race Condition: Run Graph vs Wait for Pause
             # We wrap the graph stream in a task to allow cancellation
             stream_task = asyncio.create_task(self.__stream_graph(current_input))
-            pause_task = asyncio.create_task(self.__context.signal.wait_for_pause())
+            pause_task = asyncio.create_task(self.__context.hitl.wait_for_pause())
 
             done, pending = await asyncio.wait(
                 [stream_task, pause_task], return_when=asyncio.FIRST_COMPLETED
@@ -160,30 +160,28 @@ class GraphExecutor:
         Processes HITL signals at graph breakpoints.
         """
 
-        # Log interrupt check for visibility
         logger.debug(f"Executor: Checking signal at interrupt ({source})")
 
-        signal_type = await self.__context.signal.check_signal()
+        signal_type = await self.__context.hitl.check_signal()
 
         if not signal_type:
             return
 
-        # Block execution until user resumes
         logger.info(f"Executor: Pausing execution ({source})")
         await self.__context.telemetry.info(
             "Workflow execution paused",
             type=FathomEvent.WORKFLOW_PAUSED,
         )
 
-        await self.__context.signal.wait_for_resume()
+        await self.__context.hitl.wait_for_resume()
 
         await self.__context.telemetry.info(
             "Workflow execution resumed",
             type=FathomEvent.WORKFLOW_RESUMED,
         )
 
-        # Check for context injection using strict interface
-        if injected := await self.__context.signal.get_injected_context():
+        current_step = self.__context.agent_state.step_count
+        if injected := await self.__context.hitl.get_injected_context(step=current_step + 1):
             await self.__inject_context(content=injected)
 
         logger.info("Executor: Resuming execution")
@@ -196,30 +194,20 @@ class GraphExecutor:
         current_step = self.__context.agent_state.step_count
         logger.info(f"Executor: Injecting user context at Step {current_step}: '{content}'")
 
-        # Emit HITL_RECEIVED event
-        await self.__context.telemetry.info(
-            f"User injected context: {content}",
-            context=content,
-            step=current_step + 1,
-            type=FathomEvent.HITL_RECEIVED,
-        )
-
-        # Track budget usage
         if self.__invalidate_on_injection:
             self.__replan_count += 1
             remaining = self.__context.realignment.budget - self.__replan_count
             logger.info(
-                f"Executor: Re-planning triggered. Budget used: {self.__replan_count}/{self.__context.realignment.budget} (Remaining: {remaining})"
+                f"Executor: Re-planning triggered. Budget used: {self.__replan_count}/"
+                f"{self.__context.realignment.budget} (Remaining: {remaining})"
             )
             if remaining < 0:
                 logger.warning("Executor: Realignment budget exceeded! Proceeding with caution.")
 
-        # A. Update ContextManager (Data Source)
         await self.__context.context_manager.inject_user_guidance(
             guidance=content, step=current_step
         )
 
-        # B. Update Graph State
         update_dict: Dict[str, Any] = {"injected_context": content}
 
         if self.__invalidate_on_injection:

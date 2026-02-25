@@ -13,6 +13,7 @@ from fathom.core.services.audit import AuditService
 from fathom.core.services.exporter import ScriptExporter
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
+from fathom.core.services.hitl import HITLService
 from fathom.core.services.perception import PerceptionService
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.trace import TraceService
@@ -83,7 +84,6 @@ class GraphContext:
         self.__storage = storage
         self.__knowledge = knowledge
 
-        self.__signal = signal
         self.__telemetry = telemetry
         self.__path_manager = path_manager
 
@@ -105,6 +105,9 @@ class GraphContext:
 
         self.__reasoner = reasoner or Reasoner(intent=intent)
         self.__agent_state = agent_state or AgentState(intent=intent, max_steps=max_steps)
+
+        self.__signal = signal
+        self.__hitl = HITLService(signal=signal, telemetry=telemetry)
 
         self.__perception = perception or PerceptionService(
             device=device, storage=storage, telemetry=telemetry
@@ -205,9 +208,20 @@ class GraphContext:
     def signal(self) -> SignalPort:
         """
         Returns the SignalPort instance.
+
+        Note: For HITL operations with event emission, use context.hitl instead.
+        This property is kept for backward compatibility and type checking.
         """
 
         return self.__signal
+
+    @property
+    def hitl(self) -> HITLService:
+        """
+        Returns the HITLService instance.
+        """
+
+        return self.__hitl
 
     @property
     def path_manager(self) -> SharedPathManager:

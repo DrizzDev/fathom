@@ -14,6 +14,7 @@ from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
+from fathom.core.services.hitl import HITLService
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
@@ -44,27 +45,25 @@ class IntentNodeProvider:
         if self.__context.is_cancelled:
             return True
 
-        signal = await self.__context.signal.check_signal()
+        signal = await self.__context.hitl.check_signal()
         return signal == "CANCELLED"
 
     async def __handle_hitl(self, current_step: int) -> None:
         """
-        Orchestrates Human-In-The-Loop interruptions and context injection.
-        Note: Context injection is now handled by the executor. This method only checks for pause requests.
+        Orchestrates Human-In-The-Loop interruptions.
         """
 
         _ = current_step
 
-        if isinstance(self.__context.signal, NoopSignal):
-            return
-
-        # Check for Pause Request
-        if await self.__context.signal.is_pause_requested():
+        if (
+            isinstance(self.__context.hitl, HITLService)
+            and await self.__context.hitl.is_pause_requested()
+        ):
             logger.info(
                 f"[HITL] Workflow {self.__context.workflow_id} is paused. "
                 "Waiting for resume/context."
             )
-            await self.__context.signal.wait_for_resume()
+            await self.__context.hitl.wait_for_resume()
 
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -474,23 +473,17 @@ class IntentNodeProvider:
         if step.action.action_type == ActionType.ASK_USER:
             logger.info("[NODE: EXECUTE] Intercepting ASK_USER action for native HITL")
             question = step.action.text or "I need human assistance to proceed."
+            current_step = self.__context.agent_state.step_count
 
-            # Notify Client via telemetry so the user knows why the agent stopped
-            await self.__context.telemetry.info(
-                f"Action Paused: {question}",
-                type=FathomEvent.HITL_REQUESTED,
-                original_action=step.action.to_description(),
-                step=self.__context.agent_state.step_count + 1,
+            user_response = await self.__context.hitl.ask(
+                prompt=question,
+                step=current_step + 1,
             )
 
-            user_response = await self.__context.signal.ask(prompt=question)
-
-            # Inject guidance to context manager
             await self.__context.context_manager.inject_user_guidance(
-                guidance=user_response, step=self.__context.agent_state.step_count
+                guidance=user_response, step=current_step
             )
 
-            # Clear stuck state so execution can resume with new guidance
             self.__context.agent_state.reset_stuck_state()
 
             from fathom.schemas.results import ExecutionResult
