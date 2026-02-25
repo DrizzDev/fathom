@@ -84,44 +84,41 @@ class ToolResponseParser(IResponseParser):
                 return self.__create_fallback_result(message=text_response)
 
             # Separate primary vs side-effect tool calls
-            primary_call = None
+            primary_calls = []
             side_effects = []
-            demoted_physical: Any = None
+            primary_call = None
+            completion_call: Optional[Any] = None
             completion_result: Optional[AnalysisResult] = None
 
             for fc in function_calls:
                 if fc.name in self.__PRIMARY_TOOLS:
-                    if primary_call is None:
-                        primary_call = fc
-                    elif (
-                        fc.name in self.__COMPLETION_TOOLS
-                        and primary_call.name not in self.__COMPLETION_TOOLS
-                    ):
-                        demoted_physical = primary_call
-                        side_effects.append(primary_call)
-                        primary_call = fc
-                    else:
-                        logger.warning(f"Multiple primary tools called; ignoring extra: {fc.name}")
+                    primary_calls.append(fc)
                 elif fc.name in self.__SIDE_EFFECT_TOOLS:
                     side_effects.append(fc)
                 else:
                     logger.warning(f"Unknown tool call ignored: {fc.name}")
 
-            # When a physical action was demoted in favor of a completion tool,
-            # use the physical action as primary so it executes, and mark
-            # is_goal_complete on the result from the completion call.
-            if demoted_physical is not None and primary_call is not None:
+            # Choose one primary deterministically when model emits multiples.
+            if primary_calls:
+                primary_call, completion_call = self.__select_primary_call(
+                    primary_calls=primary_calls
+                )
+                for extra in primary_calls:
+                    if extra is primary_call or extra is completion_call:
+                        continue
+                    logger.warning(f"Multiple primary tools called; ignoring extra: {extra.name}")
+
+            # If completion and physical co-occur, execute physical and propagate completion.
+            if primary_call is not None and completion_call is not None:
                 logger.info(
                     "Completion tool %s co-occurred with physical action %s; "
                     "executing physical action and marking goal complete",
+                    completion_call.name,
                     primary_call.name,
-                    demoted_physical.name,
                 )
                 completion_result = self.__dispatch_parse(
-                    name=primary_call.name, arguments=primary_call.args
+                    name=completion_call.name, arguments=completion_call.args
                 )
-                primary_call = demoted_physical
-                side_effects = [fc for fc in side_effects if fc is not demoted_physical]
                 # We'll merge the completion signal below after parsing primary.
 
             # If no primary tool, use the first side-effect as fallback
@@ -142,7 +139,7 @@ class ToolResponseParser(IResponseParser):
             result.metadata["tool_args"] = dict(primary_call.args or {})
 
             # If completion was demoted, propagate is_goal_complete onto the physical result
-            if demoted_physical is not None:
+            if completion_call is not None:
                 result = result.model_copy(update={"is_goal_complete": True})
                 if completion_result and completion_result.action.memory_updates:
                     merged = dict(result.action.memory_updates or {})
@@ -168,6 +165,39 @@ class ToolResponseParser(IResponseParser):
         except Exception as exception:
             logger.exception("Failed to parse tool response")
             raise VisionError(f"Response parsing failed: {exception}") from exception
+
+    def __select_primary_call(self, primary_calls: list[Any]) -> tuple[Any, Optional[Any]]:
+        """
+        Select a single primary call deterministically.
+
+        Returns:
+            (primary_to_execute, optional_completion_call_to_propagate)
+        """
+        completions = [fc for fc in primary_calls if fc.name in self.__COMPLETION_TOOLS]
+        non_completions = [fc for fc in primary_calls if fc.name not in self.__COMPLETION_TOOLS]
+
+        # Prefer executing physical/normal primary and carrying completion separately.
+        if non_completions:
+            selected = self.__prefer_valid_execute_ui(non_completions)
+            completion = completions[0] if completions else None
+            return selected, completion
+
+        # Completion-only response: execute first completion call.
+        return completions[0], None
+
+    @staticmethod
+    def __prefer_valid_execute_ui(calls: list[Any]) -> Any:
+        """
+        When multiple execute_ui calls exist, prefer the first explicitly valid one.
+        """
+        for fc in calls:
+            if fc.name != "execute_ui":
+                continue
+            args = dict(fc.args or {})
+            action = dict(args.get("action") or {})
+            if bool(action.get("is_valid", True)):
+                return fc
+        return calls[0]
 
     def __dispatch_parse(self, name: str, arguments: Any) -> AnalysisResult:
         """
