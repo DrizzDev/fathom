@@ -196,6 +196,14 @@ class GraphExecutor:
         current_step = self.__context.agent_state.step_count
         logger.info(f"Executor: Injecting user context at Step {current_step}: '{content}'")
 
+        # Emit HITL_RECEIVED event
+        await self.__context.telemetry.info(
+            f"User injected context: {content}",
+            context=content,
+            step=current_step + 1,
+            type=FathomEvent.HITL_RECEIVED,
+        )
+
         # Track budget usage
         if self.__invalidate_on_injection:
             self.__replan_count += 1

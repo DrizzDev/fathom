@@ -193,6 +193,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .cursor/
+.vscode/
 
 # Marimo
 marimo/_static/

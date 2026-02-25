@@ -50,35 +50,21 @@ class IntentNodeProvider:
     async def __handle_hitl(self, current_step: int) -> None:
         """
         Orchestrates Human-In-The-Loop interruptions and context injection.
+        Note: Context injection is now handled by the executor. This method only checks for pause requests.
         """
+
+        _ = current_step
 
         if isinstance(self.__context.signal, NoopSignal):
             return
 
-        # 1. Check for Pause Request
+        # Check for Pause Request
         if await self.__context.signal.is_pause_requested():
             logger.info(
                 f"[HITL] Workflow {self.__context.workflow_id} is paused. "
                 "Waiting for resume/context."
             )
             await self.__context.signal.wait_for_resume()
-
-        # 2. Consume Injected Context
-        if await self.__context.signal.has_injected_context() and (
-            injected := await self.__context.signal.get_injected_context()
-        ):
-            logger.info(f"[HITL] Injected context received: {injected}")
-
-            await self.__context.telemetry.info(
-                f"User injected context: {injected}",
-                context=injected,
-                step=current_step + 1,
-                type=FathomEvent.HITL_RECEIVED,
-            )
-
-            await self.__context.context_manager.inject_user_guidance(
-                guidance=injected, step=current_step
-            )
 
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
