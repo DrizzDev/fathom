@@ -6,6 +6,7 @@ import struct
 import time
 from logging import getLogger
 from typing import Any, Dict, Optional, Tuple, cast
+from urllib.parse import urljoin
 
 import httpx
 
@@ -35,14 +36,15 @@ class RemoteDeviceAdapter(DevicePort):
         self.__session = configuration.session_id
         self.__execution_id = configuration.execution_id
         self.__token = configuration.authentication_token
-        self.__url = configuration.provider_url.rstrip("/")
+        self.__url = configuration.provider_url.rstrip("/") + "/"
 
         self.__adb_config = ADBConfiguration(serial_number=self.__session)
+        base_url = urljoin(self.__url, f"sessions/{self.__session}/interaction/")
 
         self.__client = httpx.AsyncClient(
             http2=True,
             timeout=120.0,
-            base_url=f"{self.__url}/sessions/{self.__session}/interaction",
+            base_url=base_url,
             headers={"Authorization": f"Bearer {self.__token}"} if self.__token else {},
         )
 
@@ -63,7 +65,7 @@ class RemoteDeviceAdapter(DevicePort):
 
         try:
             params = {"execution_id": self.__execution_id} if self.__execution_id else {}
-            response = await self.__client.post("/snapshot", params=params)
+            response = await self.__client.post("snapshot", params=params)
             response.raise_for_status()
 
             data = response.content
@@ -160,7 +162,7 @@ class RemoteDeviceAdapter(DevicePort):
         )
 
         try:
-            response = await self.__client.post("/action", json=request.model_dump())
+            response = await self.__client.post("action", json=request.model_dump())
             response.raise_for_status()
 
             payload = self.__parse_response(response.json())
@@ -197,7 +199,7 @@ class RemoteDeviceAdapter(DevicePort):
         )
 
         try:
-            response = await self.__client.post("/action", json=request.model_dump())
+            response = await self.__client.post("action", json=request.model_dump())
             response.raise_for_status()
 
             payload = self.__parse_response(response.json())
@@ -228,7 +230,7 @@ class RemoteDeviceAdapter(DevicePort):
         request = RemoteInteractionRequest(action="GET_XML", execution_id=self.__execution_id)
 
         try:
-            response = await self.__client.post("/action", json=request.model_dump())
+            response = await self.__client.post("action", json=request.model_dump())
             response.raise_for_status()
 
             payload = self.__parse_response(response.json())
@@ -257,7 +259,7 @@ class RemoteDeviceAdapter(DevicePort):
         )
 
         try:
-            response = await self.__client.post("/action", json=request.model_dump())
+            response = await self.__client.post("action", json=request.model_dump())
             response.raise_for_status()
 
             data = response.json()
@@ -290,7 +292,7 @@ class RemoteDeviceAdapter(DevicePort):
         start = time.time()
         while (time.time() - start) < timeout:
             try:
-                _ = await self.__client.get("/")
+                _ = await self.__client.get("")
                 return True
             except httpx.HTTPError:
                 await asyncio.sleep(1.0)
@@ -321,7 +323,7 @@ class RemoteDeviceAdapter(DevicePort):
         start = time.time()
 
         try:
-            response = await self.__client.post("/action", json=request.model_dump())
+            response = await self.__client.post("action", json=request.model_dump())
             response.raise_for_status()
 
             data = response.json()
