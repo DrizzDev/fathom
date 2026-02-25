@@ -282,7 +282,7 @@ class GeminiPromptBuilder(PromptBuilder):
             COMMON_RULES,
             (
                 "MODE: VERIFICATION (Strict Checking)\n"
-                "Use 'validate_state' or 'verify_goal'.\n"
+                "Use execute_ui with action_type='validate' (or verify_goal for final completion checks).\n"
                 "Be extremely strict with evidence."
             ),
             RESPONSE_DIRECTIVE,

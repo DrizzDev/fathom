@@ -116,6 +116,8 @@ class AuditService:
             action_panel.add_column(style="bold yellow")
             action_panel.add_column()
 
+            event_type = plan.step.event_type or "action"
+            action_panel.add_row("Event Type:", event_type)
             action_panel.add_row("Action:", plan.step.action.action_type.value)
             action_panel.add_row("Target:", plan.step.action.target or "N/A")
             action_panel.add_row("Rationale:", reasoning)

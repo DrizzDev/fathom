@@ -64,3 +64,6 @@ class FathomGraphState(TypedDict, total=False):
     # ── Validation artefacts ──────────────────────────────────────────
     validation_result: Optional[ValidationResult]
     validation_context: Optional[Dict[str, Any]]
+    validation_followup_attempts: int
+    validation_completion_attempts: int
+    overlay_condition_attempts: int

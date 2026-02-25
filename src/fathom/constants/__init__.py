@@ -14,6 +14,7 @@ class ActionType(StrEnum):
     BACK = "back"
     HOME = "home"
     WAIT = "wait"
+    VALIDATE = "validate"
 
     SWIPE = "swipe"
     SWIPE_UP = "swipe_up"

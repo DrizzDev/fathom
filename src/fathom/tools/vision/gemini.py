@@ -346,13 +346,13 @@ class GeminiVisionTool(VisionTool):
         allowed = {"execute_ui", "complete_goal", "store_memory"}
 
         if mode == PromptMode.DEFAULT:
-            allowed.update({"recall_memory", "validate_state", "verify_goal"})
+            allowed.update({"recall_memory", "verify_goal"})
 
         elif mode == PromptMode.INTERACTION:
             allowed.update({"recall_memory"})
 
         elif mode == PromptMode.VERIFICATION:
-            allowed.update({"validate_state", "verify_goal", "recall_memory"})
+            allowed.update({"verify_goal", "recall_memory"})
 
         elif mode == PromptMode.EXPLORATION:
             # Exploration only needs execute_ui; no goal completion signaling

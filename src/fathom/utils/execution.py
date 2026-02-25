@@ -113,6 +113,7 @@ async def execute_device_action(device: DeviceTool, action: Action) -> ActionRes
         return await device.home()
 
     if action.action_type in (
+        ActionType.VALIDATE,
         ActionType.COMPLETE,
         ActionType.SAVE_MEMORY,
         ActionType.RETRIEVE_MEMORY,

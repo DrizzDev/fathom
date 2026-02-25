@@ -86,6 +86,7 @@ class AgentState:
         # Non-physical actions that don't change the screen
         self.__non_physical_actions: Set[ActionType] = {
             ActionType.WAIT,
+            ActionType.VALIDATE,
             ActionType.COMPLETE,
             ActionType.SAVE_MEMORY,
             ActionType.RETRIEVE_MEMORY,

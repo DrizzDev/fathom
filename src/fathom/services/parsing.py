@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Literal, Optional, cast
+from typing import Any, Dict, Literal, Optional, cast
 
 from pydantic import ValidationError
 
@@ -215,6 +215,7 @@ class ToolResponseParser(IResponseParser):
             reasoning=request.assistant_message,
             is_goal_complete=request.goal_completed,
             screen_description="Goal verification step",
+            metadata={"event_type": "validation"},
         )
 
     def __parse_state_validation(self, arguments: Any) -> AnalysisResult:
@@ -243,6 +244,7 @@ class ToolResponseParser(IResponseParser):
             reasoning=request.assistant_message,
             is_goal_complete=request.goal_completed or False,
             screen_description="State validation step",
+            metadata={"event_type": "validation"},
         )
 
     def __parse_goal_completion(self, arguments: Any) -> AnalysisResult:
@@ -318,6 +320,11 @@ class ToolResponseParser(IResponseParser):
         text = data.get("text") or data.get("text_to_type")
         wait = data.get("wait_duration") or data.get("wait_duration_ms")
         target_name = data.get("target_name") or data.get("element_name") or "UI Element"
+        condition_raw = data.get("condition")
+        condition = str(condition_raw).strip() if condition_raw else None
+        overlay_detected = bool(data.get("overlay_detected", False))
+        if overlay_detected and not condition:
+            condition = "Overlay is visible"
 
         # Optional VLM-provided script export classification
         raw_target_type = (data.get("target_type") or "").strip().lower()
@@ -348,9 +355,15 @@ class ToolResponseParser(IResponseParser):
             validation_reason=str(data.get("validation_reason"))
             if data.get("validation_reason")
             else None,
+            condition=condition,
+            overlay_detected=overlay_detected,
             target_type=target_type,
             script_target=script_target,
         )
+
+        metadata: Dict[str, Any] = {}
+        if action_type == ActionType.VALIDATE:
+            metadata["event_type"] = "validation"
 
         return AnalysisResult(
             action=action,
@@ -359,6 +372,7 @@ class ToolResponseParser(IResponseParser):
             is_goal_complete=False,
             content_exhausted=request.content_exhausted or False,
             screen_description=request.screen_description or "Tool-based analysis",
+            metadata=metadata,
         )
 
     @staticmethod

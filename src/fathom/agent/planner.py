@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from logging import getLogger
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Literal, Optional, Tuple
 
 from fathom.agent.reasoner import Reasoner
 from fathom.agent.state import AgentState
@@ -188,7 +188,10 @@ class StepPlanner:
             step = None
             if action.action_type not in ("complete", "unknown", "wait"):
                 step = self.__build_step(
-                    action=action, step_number=state.step_count, capture=capture
+                    action=action,
+                    step_number=state.step_count,
+                    capture=capture,
+                    event_type=analysis.metadata.get("event_type"),
                 )
 
             return PlanResult(
@@ -275,7 +278,11 @@ class StepPlanner:
         """
 
         step = self.__build_step(
-            action=action, step_number=step_number, capture=capture, is_recovery=is_recovery
+            action=action,
+            step_number=step_number,
+            capture=capture,
+            is_recovery=is_recovery,
+            event_type=(metadata or {}).get("event_type"),
         )
 
         return PlanResult(
@@ -295,6 +302,7 @@ class StepPlanner:
         step_number: int,
         capture: ScreenCapture,
         is_recovery: bool = False,
+        event_type: Optional[str] = None,
     ) -> Step:
         """
         Helper to construct a Step object.
@@ -302,12 +310,20 @@ class StepPlanner:
 
         screen_hash = self.__compute_simple_hash(capture=capture)
 
+        # Ensure event_type matches the expected type
+        validated_event_type: Literal["action", "validation"] | None = None
+        if event_type == "action":
+            validated_event_type = "action"
+        elif event_type == "validation":
+            validated_event_type = "validation"
+
         return Step(
             action=action,
             screen_hash=screen_hash,
             step_number=step_number,
             is_conditional=is_recovery,
             condition="recovery" if is_recovery else None,
+            event_type=validated_event_type,
         )
 
     def __compute_simple_hash(self, capture: ScreenCapture) -> str:

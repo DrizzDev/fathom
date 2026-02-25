@@ -30,7 +30,7 @@ class ToolRegistry:
         """
         Definition for execute_ui tool.
 
-        Handles ONLY physical UI interactions (tap, type, scroll, swipe, etc.).
+        Handles UI interactions and explicit validate events (tap, type, scroll, swipe, validate, etc.).
         Goal completion is signaled separately via complete_goal.
         """
 
@@ -60,6 +60,7 @@ class ToolRegistry:
                                     "swipe_up",
                                     "swipe_down",
                                     "wait",
+                                    "validate",
                                     "home",
                                     "back",
                                     "long_press",
@@ -110,6 +111,14 @@ class ToolRegistry:
                             "validation_reason": {
                                 "type": "STRING",
                                 "description": "Validity reasoning.",
+                            },
+                            "condition": {
+                                "type": "STRING",
+                                "description": "Condition for optional/overlay actions (e.g., 'Promotional overlay is visible').",
+                            },
+                            "overlay_detected": {
+                                "type": "BOOLEAN",
+                                "description": "True when this action is dismissing an overlay/popup.",
                             },
                             "target_type": {
                                 "type": "STRING",

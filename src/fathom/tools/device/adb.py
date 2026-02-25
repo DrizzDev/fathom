@@ -239,7 +239,7 @@ class ADBDeviceTool(DeviceTool):
 
         return (
             ActionResult(success=True, duration=0)
-            if name == "complete"
+            if name in {"complete", "validate"}
             else ActionResult(success=False, error=f"Unknown: {name}", duration=0)
         )
 

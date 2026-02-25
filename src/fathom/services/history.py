@@ -12,6 +12,7 @@ except ImportError:
     yaml = cast("Any", None)
 
 from fathom.schemas.steps import StepResult
+from fathom.services.text_normalization import describe_action, describe_validation
 
 logger = getLogger(__name__)
 
@@ -125,6 +126,7 @@ class HistoryService:
             step_results=history,
             goal_state=self.goal_state,
             package_name=self.__package_name,
+            intent=self.__intent,
         )
 
         # Overwrite file with full, improved script
@@ -144,6 +146,7 @@ class HistoryService:
             "target": target,
             "center": record.get("center"),
             "bounding_box": record.get("bounds"),
+            "event_type": record.get("event_type", "action"),
             "action_type": record.get("action_type", "wait"),
             "command": self.__describe_command(record=record),
             "metadata": {
@@ -178,31 +181,19 @@ class HistoryService:
         """
 
         action_type = str(object=record.get("action_type", "wait")).lower()
+        event_type = str(object=record.get("event_type", "action")).lower()
         target = self.__resolve_target_name(record=record)
 
-        if action_type == "type":
-            return f"Type '{record.get('text', '')}' in {target}"
-
-        if action_type == "tap":
-            return f"Tap on {target}"
-
-        if action_type == "scroll":
-            return f"Scroll until you see {target}"
-
-        if "swipe" in action_type:
-            direction = action_type.split(sep="_")[-1] if "_" in action_type else "content"
-            return f"Swipe {direction} on {target}"
-
-        if action_type == "back":
-            return "Press back button"
-
-        if action_type == "home":
-            return "Press home button"
+        if event_type == "validation":
+            return describe_validation(
+                target=target,
+                explicit=False,
+                complete=(action_type == "complete"),
+            )
 
         if action_type == "complete":
             return "Goal completed"
-
-        return f"{action_type.replace('_', ' ').capitalize()} on {target}"
+        return describe_action(action_type=action_type, target=target, text=record.get("text"))
 
     def __write_manual_yaml(self, path: Path, steps: List[Dict[str, Any]]) -> None:
         """
@@ -215,6 +206,7 @@ class HistoryService:
             lines.append(f"- step: {step['step']}")
             lines.append(f'  command: "{step["command"]}"')
             lines.append(f'  action_type: "{step["action_type"]}"')
+            lines.append(f'  event_type: "{step.get("event_type", "action")}"')
             lines.append(f'  target: "{step["target"]}"')
             lines.append(f"  bounding_box: {step.get('bounding_box')}")
             lines.append(f"  center: {step.get('center')}")

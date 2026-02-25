@@ -6,6 +6,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from fathom.services.text_normalization import normalize_reasoning
 from fathom.settings.env import FathomSettings
 
 
@@ -39,20 +40,31 @@ class UXService:
         grid.add_column(style="white")
 
         if message := args.get("assistant_message", ""):
-            grid.add_row("Reasoning:", message)
+            grid.add_row("Reasoning:", normalize_reasoning(str(message)))
 
         if screen_desc := args.get("screen_description", ""):
             grid.add_row("Screen:", screen_desc)
 
         if action := args.get("action", {}):
             grid.add_row("Action:", action.get("action_type", "?"))
+            if action.get("action_type") == "validate":
+                if "is_valid" in action:
+                    status = (
+                        "[bold green]YES[/bold green]"
+                        if bool(action.get("is_valid"))
+                        else "[bold red]NO[/bold red]"
+                    )
+                    grid.add_row("Validated:", status)
+                if validation_reason := action.get("validation_reason"):
+                    grid.add_row("Evidence:", normalize_reasoning(str(validation_reason)))
 
-        if condition_met := args.get("condition_met"):
+        if "condition_met" in args:
+            condition_met = bool(args.get("condition_met"))
             status = "[bold green]YES[/bold green]" if condition_met else "[bold red]NO[/bold red]"
             grid.add_row("Validated:", status)
 
         if (evidence := args.get("evidence", "")) and tool_name in ("complete_goal", "verify_goal"):
-            grid.add_row("Evidence:", evidence)
+            grid.add_row("Evidence:", normalize_reasoning(str(evidence)))
 
         if args.get("goal_completed") or tool_name == "complete_goal":
             grid.add_row("Status:", "[bold green]GOAL ACHIEVED[/bold green]")
@@ -79,7 +91,10 @@ class UXService:
         self.__console.print("")
         self.__console.print(
             Panel(
-                renderable=f"[cyan]Reasoning:[/cyan] {reasoning}\n[yellow]Action:[/yellow] {action}",
+                renderable=(
+                    f"[cyan]Reasoning:[/cyan] {normalize_reasoning(reasoning)}\n"
+                    f"[yellow]Action:[/yellow] {normalize_reasoning(action)}"
+                ),
                 title=f"Step {step_number} Thinking",
                 border_style="blue",
             )

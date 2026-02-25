@@ -11,6 +11,7 @@ closure that is constructed once and injected into each node factory.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from datetime import datetime
 from logging import getLogger
@@ -62,6 +63,144 @@ def _extract_package(activity: str) -> str:
     if not activity:
         return ""
     return activity.split("/")[0]
+
+
+def _intent_requests_validation(intent: str) -> bool:
+    """Return True when the user intent explicitly asks for validation."""
+    if not intent:
+        return False
+    return (
+        re.search(r"\b(validate|validation|verify|check|confirm)\b", intent, re.IGNORECASE)
+        is not None
+    )
+
+
+def _has_validation_event(step_results: List[StepResult]) -> bool:
+    """Return True if at least one validation step has already been executed."""
+    for result in step_results:
+        if result.step.event_type == "validation":
+            return True
+        if result.step.action.action_type == ActionType.VALIDATE:
+            return True
+    return False
+
+
+def _is_validation_step(step: Optional[Step]) -> bool:
+    """Return True if a planned step is a validation step."""
+    if not step:
+        return False
+    return step.event_type == "validation" or step.action.action_type == ActionType.VALIDATE
+
+
+def _last_step_was_validation(step_results: List[StepResult]) -> bool:
+    """Return True if the most recently executed step was validation."""
+    if not step_results:
+        return False
+    return _is_validation_step(step_results[-1].step)
+
+
+def _trailing_validation_count(step_results: List[StepResult]) -> int:
+    """Count consecutive validation steps at the end of execution history."""
+    count = 0
+    for result in reversed(step_results):
+        if _is_validation_step(result.step):
+            count += 1
+            continue
+        break
+    return count
+
+
+def _extract_validation_target(intent: str, required_items: Optional[List[str]] = None) -> str:
+    """Extract a semantic validation target phrase from user intent."""
+    if required_items:
+        cleaned = [item.strip() for item in required_items if item and item.strip()]
+        if cleaned:
+            return ", ".join(cleaned[:2])
+
+    if not intent:
+        return "requested validation condition"
+
+    # Capture phrase after "validate" / "verify" / "check" until separator.
+    match = re.search(
+        r"\b(?:validate|verify|check|confirm)(?:\s+that)?\s+(.+?)(?:,|\bthen\b|\band\b|$)",
+        intent,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        candidate = match.group(1).strip(" .,:;")
+        if candidate:
+            return candidate
+
+    return "requested validation condition"
+
+
+def _should_force_pre_action_validation(
+    *,
+    intent: str,
+    already_validated: bool,
+    step_count: int,
+    planned_step: Optional[Step],
+) -> bool:
+    """Decide whether validation must run before progressing to next action."""
+    if not _intent_requests_validation(intent):
+        return False
+    if already_validated:
+        return False
+    if step_count <= 0:
+        # Allow initial app-open/navigation action first.
+        return False
+    if planned_step is None:
+        return False
+
+    action_type = planned_step.action.action_type
+    non_blocking = {
+        ActionType.WAIT,
+        ActionType.VALIDATE,
+        ActionType.COMPLETE,
+        ActionType.SAVE_MEMORY,
+        ActionType.RETRIEVE_MEMORY,
+    }
+    return action_type not in non_blocking
+
+
+def _is_overlay_related_step(step: Optional[Step]) -> bool:
+    """Return True if step is likely handling an overlay/popup blocker."""
+    if step is None:
+        return False
+
+    if step.action.overlay_detected:
+        return True
+
+    signal = " ".join(
+        [
+            step.action.rationale or "",
+            step.action.target or "",
+            step.action.natural_language_target or "",
+        ]
+    ).lower()
+
+    overlay_terms = ("overlay", "popup", "pop-up", "modal", "consent", "permission", "interstitial")
+    dismissal_terms = (
+        "dismiss",
+        "close",
+        "skip",
+        "got it",
+        "not now",
+        "continue",
+        "allow",
+        "deny",
+    )
+    return any(term in signal for term in overlay_terms) and any(
+        term in signal for term in dismissal_terms
+    )
+
+
+def _is_overlay_step_missing_condition(step: Optional[Step]) -> bool:
+    """Return True when overlay handling is present but condition is missing."""
+    if not _is_overlay_related_step(step):
+        return False
+    condition = (step.action.condition or "").strip() if step else ""
+    return not condition
 
 
 def _maybe_switch_knowledge_db(
@@ -405,6 +544,32 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
         elif state.get("validation_context"):
             validation_note = f"VALIDATION CONTEXT: {state.get('validation_context')}"
 
+        requested_validation = _intent_requests_validation(ctx.agent_state.intent)
+        step_results = state.get("step_results", [])
+        already_validated = _has_validation_event(step_results)
+        last_step_validation = _last_step_was_validation(step_results)
+        trailing_validations = _trailing_validation_count(step_results)
+        followup_attempts = int(state.get("validation_followup_attempts", 0))
+        completion_attempts = int(state.get("validation_completion_attempts", 0))
+        overlay_attempts = int(state.get("overlay_condition_attempts", 0))
+        if requested_validation and not already_validated:
+            validation_note = ((validation_note + "\n") if validation_note else "") + (
+                "MANDATORY ORDERING: Before any further interactive action, call execute_ui with "
+                "action.action_type='validate' and set action.is_valid=true/false based on what is visible now. "
+                "Include concise evidence in action.validation_reason."
+            )
+        if requested_validation:
+            if last_step_validation:
+                validation_note = ((validation_note + "\n") if validation_note else "") + (
+                    "FINAL VALIDATION ALREADY SATISFIED: Do NOT run another validate action on the same screen. "
+                    "Either continue with the next non-validation action, or call complete_goal if user goal is met."
+                )
+            else:
+                validation_note = ((validation_note + "\n") if validation_note else "") + (
+                    "FINAL VALIDATION: Do not finish yet unless the final requested condition is explicitly validated "
+                    "via execute_ui(action_type='validate') with action.is_valid and validation_reason evidence."
+                )
+
         planning_intent = ctx.agent_state.intent
         if validation_note:
             planning_intent = f"{planning_intent}\n{validation_note}"
@@ -447,6 +612,229 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
                 "is_complete": False,
             }
 
+        # Ensure overlay dismissal actions are exported under explicit IF guards.
+        if _is_overlay_step_missing_condition(plan.step):
+            if overlay_attempts >= 2:
+                return {
+                    **state,
+                    "plan": plan.model_copy(
+                        update={
+                            "reason": "Overlay action missing condition guard",
+                            "should_retry": False,
+                        }
+                    ),
+                    "planned_step": None,
+                    "knowledge": knowledge,
+                    "analysis_duration": analysis_duration,
+                    "should_retry": False,
+                    "is_complete": False,
+                    "validation_followup_attempts": followup_attempts,
+                    "validation_completion_attempts": completion_attempts,
+                    "overlay_condition_attempts": overlay_attempts,
+                    "completion_reason": (
+                        "Overlay detected but no condition provided. "
+                        "Use action.overlay_detected=true with action.condition."
+                    ),
+                }
+            return {
+                **state,
+                "plan": plan.model_copy(
+                    update={
+                        "reason": "Overlay action requires action.condition guard",
+                        "should_retry": True,
+                    }
+                ),
+                "planned_step": None,
+                "knowledge": knowledge,
+                "analysis_duration": analysis_duration,
+                "should_retry": True,
+                "is_complete": False,
+                "validation_followup_attempts": followup_attempts,
+                "validation_completion_attempts": completion_attempts,
+                "overlay_condition_attempts": overlay_attempts + 1,
+                "completion_reason": state.get("completion_reason"),
+            }
+
+        # Enforce validation ordering for user-requested validation flows.
+        planned_is_validation = _is_validation_step(plan.step)
+        if requested_validation and planned_is_validation and trailing_validations >= 1:
+            if completion_attempts < 2:
+                return {
+                    **state,
+                    "plan": plan.model_copy(
+                        update={
+                            "reason": (
+                                "Redundant validation detected. Do not validate again on the same screen; "
+                                "continue with next action or call complete_goal."
+                            ),
+                            "should_retry": True,
+                        }
+                    ),
+                    "planned_step": None,
+                    "knowledge": knowledge,
+                    "analysis_duration": analysis_duration,
+                    "should_retry": True,
+                    "is_complete": False,
+                    "validation_followup_attempts": followup_attempts,
+                    "validation_completion_attempts": completion_attempts + 1,
+                    "overlay_condition_attempts": overlay_attempts,
+                    "completion_reason": state.get("completion_reason"),
+                }
+            return {
+                **state,
+                "plan": plan.model_copy(
+                    update={
+                        "is_complete": False,
+                        "should_retry": False,
+                        "reason": "Completion blocked: repeated validation loop detected",
+                    }
+                ),
+                "planned_step": None,
+                "knowledge": knowledge,
+                "analysis_duration": analysis_duration,
+                "should_retry": False,
+                "is_complete": False,
+                "validation_followup_attempts": followup_attempts,
+                "validation_completion_attempts": completion_attempts,
+                "overlay_condition_attempts": overlay_attempts,
+                "completion_reason": "Repeated redundant validation loop detected",
+            }
+
+        if _should_force_pre_action_validation(
+            intent=ctx.agent_state.intent,
+            already_validated=already_validated,
+            step_count=ctx.agent_state.step_count,
+            planned_step=plan.step,
+        ):
+            if followup_attempts >= 3:
+                return {
+                    **state,
+                    "plan": plan,
+                    "planned_step": None,
+                    "knowledge": knowledge,
+                    "analysis_duration": analysis_duration,
+                    "should_retry": False,
+                    "is_complete": False,
+                    "validation_followup_attempts": followup_attempts,
+                    "validation_completion_attempts": completion_attempts,
+                    "completion_reason": (
+                        "Validation requested but model did not produce a validate action with result"
+                    ),
+                }
+            return {
+                **state,
+                "plan": plan.model_copy(
+                    update={
+                        "reason": "Validation required before proceeding to interactive actions",
+                        "should_retry": True,
+                    }
+                ),
+                "planned_step": None,
+                "knowledge": knowledge,
+                "analysis_duration": analysis_duration,
+                "should_retry": True,
+                "is_complete": False,
+                "validation_followup_attempts": followup_attempts + 1,
+                "validation_completion_attempts": completion_attempts,
+                "overlay_condition_attempts": overlay_attempts,
+                "completion_reason": state.get("completion_reason"),
+            }
+
+        if (
+            requested_validation
+            and not already_validated
+            and not planned_is_validation
+            and (plan.is_complete or plan.step is None)
+        ):
+            return {
+                **state,
+                "plan": plan.model_copy(
+                    update={
+                        "reason": "Validation required before completion",
+                        "should_retry": True,
+                    }
+                ),
+                "planned_step": None,
+                "knowledge": knowledge,
+                "analysis_duration": analysis_duration,
+                "should_retry": True,
+                "is_complete": False,
+                "validation_followup_attempts": followup_attempts + 1,
+                "validation_completion_attempts": completion_attempts,
+                "overlay_condition_attempts": overlay_attempts,
+                "completion_reason": state.get("completion_reason"),
+            }
+
+        # Require a terminal validation step before allowing completion.
+        if (
+            requested_validation
+            and plan.is_complete
+            and not planned_is_validation
+            and not last_step_validation
+        ):
+            if completion_attempts < 2:
+                return {
+                    **state,
+                    "plan": plan.model_copy(
+                        update={
+                            "is_complete": False,
+                            "should_retry": True,
+                            "reason": "Final validation required before completion",
+                        }
+                    ),
+                    "planned_step": None,
+                    "knowledge": knowledge,
+                    "analysis_duration": analysis_duration,
+                    "should_retry": True,
+                    "is_complete": False,
+                    "validation_followup_attempts": followup_attempts,
+                    "validation_completion_attempts": completion_attempts + 1,
+                    "overlay_condition_attempts": overlay_attempts,
+                    "completion_reason": state.get("completion_reason"),
+                }
+            return {
+                **state,
+                "plan": plan.model_copy(
+                    update={
+                        "is_complete": False,
+                        "should_retry": False,
+                        "reason": "Completion blocked: final validation was not produced",
+                    }
+                ),
+                "planned_step": None,
+                "knowledge": knowledge,
+                "analysis_duration": analysis_duration,
+                "should_retry": False,
+                "is_complete": False,
+                "validation_followup_attempts": followup_attempts,
+                "validation_completion_attempts": completion_attempts,
+                "overlay_condition_attempts": overlay_attempts,
+                "completion_reason": "Final validation missing before completion",
+            }
+
+        # If validation was already executed but planner returns no next step,
+        # give one additional analyze cycle to seek a concrete validation/goal signal.
+        if (
+            requested_validation
+            and already_validated
+            and not plan.is_complete
+            and plan.step is None
+            and not plan.should_retry
+            and followup_attempts < 1
+        ):
+            return {
+                **state,
+                "plan": plan,
+                "planned_step": None,
+                "knowledge": knowledge,
+                "analysis_duration": analysis_duration,
+                "should_retry": True,
+                "is_complete": False,
+                "validation_followup_attempts": followup_attempts + 1,
+                "overlay_condition_attempts": overlay_attempts,
+                "completion_reason": state.get("completion_reason"),
+            }
+
         step = plan.step
         if not step:
             return {
@@ -457,6 +845,9 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
                 "analysis_duration": analysis_duration,
                 "should_retry": plan.should_retry,
                 "is_complete": plan.is_complete,
+                "validation_followup_attempts": followup_attempts,
+                "validation_completion_attempts": completion_attempts,
+                "overlay_condition_attempts": overlay_attempts,
                 "completion_reason": plan.reason
                 if plan.is_complete
                 else state.get("completion_reason"),
@@ -467,6 +858,20 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
             action = step.action.model_copy(update={"bounds": None})
             step = step.model_copy(update={"action": action})
 
+        next_followup_attempts = (
+            0
+            if (step.event_type == "validation" or step.action.action_type == ActionType.VALIDATE)
+            else followup_attempts
+        )
+        next_completion_attempts = (
+            0
+            if (step.event_type == "validation" or step.action.action_type == ActionType.VALIDATE)
+            else completion_attempts
+        )
+        next_overlay_attempts = (
+            0 if not _is_overlay_step_missing_condition(step) else overlay_attempts
+        )
+
         return {
             **state,
             "plan": plan,
@@ -475,6 +880,9 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
             "analysis_duration": analysis_duration,
             "should_retry": False,
             "is_complete": plan.is_complete,
+            "validation_followup_attempts": next_followup_attempts,
+            "validation_completion_attempts": next_completion_attempts,
+            "overlay_condition_attempts": next_overlay_attempts,
             "completion_reason": plan.reason
             if plan.is_complete
             else state.get("completion_reason"),

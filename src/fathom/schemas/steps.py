@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +22,10 @@ class Step(BaseModel):
         default=False, description="Whether this step is a recovery attempt"
     )
     condition: Optional[str] = Field(default=None, description="Condition for IF block")
+    event_type: Optional[Literal["action", "validation"]] = Field(
+        default=None,
+        description="Semantic event type for logging/export (e.g. validation).",
+    )
 
 
 class StepResult(BaseModel):
@@ -78,6 +82,7 @@ class StepResult(BaseModel):
             generalized_target=self.generalized_target,
             is_positional=self.is_positional,
             activity=activity,
+            event_type=self.step.event_type or "action",
         )
 
 
@@ -89,6 +94,10 @@ class StepRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     step_number: int = Field(ge=0, description="Step index")
+    event_type: Literal["action", "validation"] = Field(
+        default="action",
+        description="High-level event category used by logs and exporters.",
+    )
     action_type: str = Field(min_length=1, description="Action category")
     target: str = Field(min_length=1, description="Target element description")
 

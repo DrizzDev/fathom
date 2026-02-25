@@ -38,7 +38,7 @@ class UIActionInput(BaseModel):
 
     action_type: str = Field(
         description="Action type: tap, type, scroll, swipe_left, swipe_right, "
-        "swipe_up, swipe_down, wait, home, back, enter"
+        "swipe_up, swipe_down, wait, validate, home, back, enter"
     )
     rationale: str = Field(description="Why this action is being taken")
     is_valid: bool = Field(default=True, description="Self-validation flag")
@@ -61,6 +61,14 @@ class UIActionInput(BaseModel):
     validation_reason: Optional[str] = Field(
         default=None,
         description="Reasoning for validity judgment",
+    )
+    condition: Optional[str] = Field(
+        default=None,
+        description="Condition for optional/overlay actions (e.g., 'Promotional overlay is visible').",
+    )
+    overlay_detected: Optional[bool] = Field(
+        default=None,
+        description="Set true when this action is specifically dismissing an overlay/popup.",
     )
     target_type: Optional[Literal["stable", "positional", "dynamic"]] = Field(
         default=None,
@@ -163,11 +171,11 @@ def execute_ui(
     content_exhausted: Optional[bool] = None,
     memory_updates: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Execute a UI action on the device (tap, type, scroll, swipe, etc.).
+    """Execute a UI action on the device (tap, type, scroll, swipe, validate, etc.).
 
     Use this for ALL physical interactions with the app UI.
     Do NOT use this to signal goal completion — use complete_goal instead.
-    Do NOT use this for state validation or screen checks without a UI action — use validate_state instead.
+    Use action_type='validate' for explicit state checks that should be recorded in execution logs.
     Do NOT use this for verifying goal completion — use verify_goal or complete_goal instead.
     """
 
@@ -303,13 +311,13 @@ def get_tools_for_mode(mode: str) -> List[Any]:
     base = [execute_ui, complete_goal, store_memory]
 
     if mode == "default":
-        return base + [recall_memory, validate_state, verify_goal]
+        return base + [recall_memory, verify_goal]
 
     if mode == "interaction":
         return base + [recall_memory]
 
     if mode == "verification":
-        return base + [validate_state, verify_goal, recall_memory]
+        return base + [verify_goal, recall_memory]
 
     if mode == "exploration":
         # Exploration only needs execute_ui; no goal completion signaling

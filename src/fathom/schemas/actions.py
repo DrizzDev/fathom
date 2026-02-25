@@ -110,6 +110,10 @@ class Action(BaseModel):
         default=None,
         description="Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
     )
+    overlay_detected: bool = Field(
+        default=False,
+        description="True when this action is specifically handling an overlay/popup blocker.",
+    )
 
     # Script export classification (VLM-provided; optional; fallback is TargetClassifier)
     target_type: Optional[Literal["stable", "positional", "dynamic"]] = Field(
@@ -170,6 +174,9 @@ class Action(BaseModel):
 
         if self.action_type == ActionType.WAIT:
             return f"Wait for {name}"
+
+        if self.action_type == ActionType.VALIDATE:
+            return f"Validate {name}"
 
         if self.action_type == ActionType.COMPLETE:
             return f"Validate {name} (Goal complete)"

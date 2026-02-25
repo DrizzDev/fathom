@@ -85,13 +85,18 @@ STRICT FORMAT: Return only valid tool calls using provided schema fields.
 TOOL_GUIDANCE = """
 TOOL ROUTING & RESPONSE FORMAT:
 - execute_ui: ALL physical UI interactions (tap, type, swipe, scroll, wait).
+  * For explicit checks/validation, use execute_ui with action.action_type='validate'.
+  * For overlay/popup dismissal actions, set action.overlay_detected=true and action.condition to the exact visible guard
+    (e.g., "Promotional overlay is visible", "Cookie consent popup is visible").
+  * Keep assistant_message and validation_reason concise, grammatical, and evidence-based.
   * ALWAYS set screen_description (≤15 words) and evaluate is_valid.
   * NAMING: Use generic labels, not IDs. List items -> positional ("1st result"). Unique UI -> visible label ("Submit button").
   * TARGET_TYPE: stable (fixed UI, omit script_target), positional (list/grid item, set script_target to ordinal), dynamic (changing content, set script_target to generic desc). Wait actions -> always dynamic. Omit if uncertain.
   * Return fields: action (object), assistant_message (str), is_valid (bool). ALWAYS include evidence or short reasoning.
 - complete_goal: Goal done signal. Call ONLY when current screen proves completion with visual evidence.
-- validate_state: Explicit state checks without UI action.
+- validate_state: Legacy fallback only. Prefer execute_ui(action_type='validate').
 - Validation: If the goal requires validation (e.g., price or presence), include a short evidence note in assistant_message or evidence.
+  Use clear statements like "The first lemon item shows a $0.40 price."
 - verify_goal: Detailed goal completion verification.
 - store_memory / recall_memory: Persistent cross-step memory (use same category+item keys).
 
@@ -107,7 +112,7 @@ FOR ALL TOOL CALLS:
 """
 
 RESPONSE_DIRECTIVE = (
-    "RESPONSE: Return one primary tool call (execute_ui, complete_goal, validate_state, or verify_goal). "
+    "RESPONSE: Return one primary tool call (execute_ui, complete_goal, or verify_goal). "
     "You MAY include store_memory or recall_memory alongside the primary call. "
     "Execute the next best step via a tool call. Return only valid tool calls as JSON. No plain text, markdown, or explanations."
 )
