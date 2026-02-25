@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from langgraph.checkpoint.memory import MemorySaver
 from rich.console import Console
@@ -22,6 +22,7 @@ from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExecutionResult
+from fathom.schemas.steps import StepResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 
@@ -55,6 +56,7 @@ class IntentStrategy:
     ) -> None:
         self.__intent = intent
         self.__workflow_id = workflow_id
+        self.__step_results: List[StepResult] = []
 
         # Initialize Graph Context with injected summarizer
         self.__graph_context = GraphContext(
@@ -134,6 +136,10 @@ class IntentStrategy:
             success = self.__graph_context.agent_state.is_complete
             error = final_state.values.get("completion_reason")
 
+            # Read step results directly from AgentState (avoids LangGraph JSON serialization
+            # stripping Pydantic objects stored in graph state back to plain dicts)
+            self.__step_results = self.__graph_context.agent_state.executed_steps
+
             duration = int((time.time() - start_time) * 1000)
 
             return ExecutionResult(
@@ -150,6 +156,15 @@ class IntentStrategy:
             return ExecutionResult(
                 success=False, duration=duration, error=str(exception), is_cancelled=is_cancelled
             )
+
+    @property
+    def step_results(self) -> List[StepResult]:
+        """
+        Step results accumulated during execution.
+        Available after execute() completes.
+        """
+
+        return self.__step_results
 
     def get_progress(self) -> Dict[str, Any]:
         """

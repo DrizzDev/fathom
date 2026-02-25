@@ -233,6 +233,7 @@ class FathomRunner:
                 completion_reason=completion_reason,
                 steps_taken=progress.get("step_count", 0),
                 steps_executed=progress.get("step_count", 0),
+                step_results=strategy.step_results,
             )
 
             await self.__telemetry.info(

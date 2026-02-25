@@ -27,3 +27,5 @@ ruff>=0.1.0
 rich>=14.3.2
 Pillow>=12.1.0
 pre-commit>=3.0.0
+
+temporalio==1.23.0
