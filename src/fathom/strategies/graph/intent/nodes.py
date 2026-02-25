@@ -64,13 +64,21 @@ class IntentNodeProvider:
             await self.__context.signal.wait_for_resume()
 
         # 2. Consume Injected Context
-        if await self.__context.signal.has_injected_context():
-            injected = await self.__context.signal.get_injected_context()
-            if injected:
-                logger.info(f"[HITL] Injected context received: {injected}")
-                await self.__context.context_manager.inject_user_guidance(
-                    guidance=injected, step=current_step
-                )
+        if await self.__context.signal.has_injected_context() and (
+            injected := await self.__context.signal.get_injected_context()
+        ):
+            logger.info(f"[HITL] Injected context received: {injected}")
+
+            await self.__context.telemetry.info(
+                f"User injected context: {injected}",
+                context=injected,
+                step=current_step + 1,
+                type=FathomEvent.HITL_RECEIVED,
+            )
+
+            await self.__context.context_manager.inject_user_guidance(
+                guidance=injected, step=current_step
+            )
 
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -151,13 +159,13 @@ class IntentNodeProvider:
                 self.__context.storage.save(
                     data=screenshot_bytes,
                     metadata={
-                        "category": "screenshot",
-                        "filename": f"{int(time.time() * 1000)}__{activity}.png",
                         "type": "screenshots",
+                        "category": "screenshot",
                         "timestamp": time.time(),
                         "package_name": activity,
                         "activity_name": activity,
                         "session_id": self.__context.workflow_id,
+                        "filename": f"{int(time.time() * 1000)}__{activity}.png",
                     },
                 )
             )
@@ -257,10 +265,12 @@ class IntentNodeProvider:
         except Exception as exception:
             await self.__context.telemetry.error(f"Grounding failed: {exception}")
             logger.exception(f"[NODE: GROUND] Grounding failed: {exception}")
+            self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
+
             return {
                 CommonStateKey.CAPTURE: None,
-                CommonStateKey.COMPLETION_REASON: f"Grounding failed: {exception}",
                 CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
             }
 
     async def analyze(self, state: IntentGraphState) -> IntentGraphState:
@@ -758,6 +768,7 @@ class IntentNodeProvider:
         if isinstance(execution_plan, PlanResult) and execution_plan.is_complete:
             logger.info("[NODE: RECORD] Plan indicates completion. This is the final step.")
             self.__context.agent_state.mark_complete(reason=execution_plan.reason or "Completed")
+
             return {
                 CommonStateKey.IS_COMPLETE: True,
                 CommonStateKey.COMPLETION_REASON: execution_plan.reason,
@@ -766,8 +777,10 @@ class IntentNodeProvider:
         # Check max steps
         if self.__context.agent_state.step_count >= self.__context.max_steps:
             self.__context.agent_state.mark_complete(reason="Max steps reached")
-            logger.info(f"[NODE: RECORD] Max steps reached ({self.__context.max_steps})")
-            logger.info("[NODE: RECORD] -> Will route to END")
+            logger.info(
+                f"[NODE: RECORD] Max steps reached ({self.__context.max_steps}). Will route to END"
+            )
+
             return {
                 CommonStateKey.IS_COMPLETE: True,
                 CommonStateKey.COMPLETION_REASON: "Max steps reached",
@@ -804,10 +817,20 @@ class IntentNodeProvider:
             image_bytes = await self.__context.device.capture_screen()
             if not image_bytes:
                 logger.warning("[NODE: VERIFY] Failed to capture screen for verification")
-                return {CommonStateKey.IS_COMPLETE: False}
+                self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
+
+                return {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                }
         except Exception as exception:
             logger.error(f"[NODE: VERIFY] Screen capture failed: {exception}")
-            return {CommonStateKey.IS_COMPLETE: False}
+            self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
+
+            return {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+            }
 
         # 2. Construct binary validation prompt
         intent = self.__context.intent

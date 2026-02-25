@@ -9,8 +9,8 @@ h2>=4.1.0
 numpy>=2.4.2
 httpx>=0.28.1
 PyYAML>=6.0.0
+tenacity>=9.1.2
 aiosqlite>=0.20.0
-
 types-PyYAML>=6.0.12.20250915
 
 google-genai>=0.2.0

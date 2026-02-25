@@ -8,7 +8,7 @@ from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from fathom.constants.graph import NodeName
-from fathom.constants.state import CommonStateKey, IntentStateKey
+from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.interfaces.graph import GraphBuilder
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.nodes import IntentGraphFactory
@@ -50,6 +50,7 @@ class IntentGraphBuilder(GraphBuilder):
             NodeName.ANALYZE,
             self.__route_after_analyze,
             {
+                NodeName.END: NodeName.END,
                 NodeName.VERIFY: NodeName.VERIFY,
                 NodeName.GROUND: NodeName.GROUND,
                 NodeName.EXECUTE: NodeName.EXECUTE,
@@ -94,18 +95,30 @@ class IntentGraphBuilder(GraphBuilder):
             f"planned_step_type={type(planned_step).__name__}"
         )
 
+        # 1. Cancellation overrides everything
+        if self.__context.is_cancelled:
+            logger.info("[ROUTING] -> END (Cancelled)")
+            return NodeName.END
+
+        # 2. Fatal Errors and Completion override retry logic
         if is_complete:
-            if self.__context.is_cancelled:
-                logger.info("[ROUTING] -> END (Cancelled)")
+            reason = state.get(cast("str", CommonStateKey.COMPLETION_REASON), "")
+
+            # If it completed due to a fatal error or max steps, do not verify, just end
+            if reason in {CompletionReason.FAILED.value, CompletionReason.MAX_STEPS.value}:
+                logger.info(f"[ROUTING] -> END (Fatal Error / Max Steps: {reason})")
                 return NodeName.END
 
+            # Otherwise, it's a normal goal completion, proceed to verification
             logger.info("[ROUTING] -> VERIFY (is_complete=True)")
             return NodeName.VERIFY
 
+        # 3. Soft Retries (e.g. missing elements, LLM asked to retry)
         if should_retry:
             logger.info("[ROUTING] -> GROUND (should_retry=True)")
             return NodeName.GROUND
 
+        # 4. Incomplete but missing step -> Error fallback
         if not planned_step:
             logger.info(f"[ROUTING] -> GROUND (no planned_step, value={planned_step})")
             return NodeName.GROUND
@@ -122,6 +135,10 @@ class IntentGraphBuilder(GraphBuilder):
 
         logger.info(f"[ROUTING] After VERIFY: is_complete={is_complete}")
 
+        if self.__context.is_cancelled:
+            logger.info("[ROUTING] -> END (Cancelled during verify)")
+            return NodeName.END
+
         if is_complete:
             logger.info("[ROUTING] -> END (verification passed)")
             return NodeName.END
@@ -135,6 +152,17 @@ class IntentGraphBuilder(GraphBuilder):
         """
 
         if state.get(cast("str", CommonStateKey.IS_COMPLETE)):
+            # Check for cancellation
+            if self.__context.is_cancelled:
+                logger.info("[ROUTING] -> END (Cancelled)")
+                return NodeName.END
+
+            # Check if completion was due to Max Steps - if so, fail/end instead of verifying
+            reason = state.get(cast("str", CommonStateKey.COMPLETION_REASON))
+            if reason == CompletionReason.MAX_STEPS.value:
+                logger.info("[ROUTING] -> END (Max steps reached)")
+                return NodeName.END
+
             logger.info("[ROUTING] -> VERIFY (is_complete=True from RECORD)")
             return NodeName.VERIFY
 

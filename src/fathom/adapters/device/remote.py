@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import struct
 import time
 from logging import getLogger
@@ -9,6 +10,13 @@ from typing import Any, Dict, Optional, Tuple, cast
 from urllib.parse import urljoin
 
 import httpx
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from fathom.core.exceptions import DeviceError, PortError
 from fathom.interfaces.device import DevicePort
@@ -50,6 +58,23 @@ class RemoteDeviceAdapter(DevicePort):
 
         self.__cached_dimensions: Optional[Tuple[int, int]] = None
 
+    @retry(  # type: ignore[untyped-decorator]
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception(DeviceError.is_transient),
+        before_sleep=before_sleep_log(logger, logging.WARNING, exc_info=True),
+    )
+    async def __execute_request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """
+        Executes an HTTP request with automatic retries for transient errors (5xx, timeouts). Immediately raises on 4xx errors.
+        """
+
+        response = await self.__client.request(method, path, **kwargs)
+        response.raise_for_status()
+
+        return response
+
     @property
     def configuration(self) -> ADBConfiguration:
         """
@@ -65,8 +90,7 @@ class RemoteDeviceAdapter(DevicePort):
 
         try:
             params = {"execution_id": self.__execution_id} if self.__execution_id else {}
-            response = await self.__client.post("snapshot", params=params)
-            response.raise_for_status()
+            response = await self.__execute_request("POST", "snapshot", params=params)
 
             data = response.content
 
@@ -91,13 +115,23 @@ class RemoteDeviceAdapter(DevicePort):
 
             return image_bytes, xml_bytes.decode("utf-8", errors="ignore")
 
+        except httpx.HTTPStatusError as exception:
+            # Re-wrap without losing original trace. HTTPStatusError is a subclass of HTTPError
+            status = exception.response.status_code
+            logger.error(f"Remote snapshot failed with HTTP {status}: {exception}")
+            raise DeviceError(
+                f"Remote snapshot failed with HTTP {status}: {exception}"
+            ) from exception
+
         except httpx.HTTPError as exception:
+            logger.error(f"Remote snapshot connection failed: {exception}")
             raise DeviceError(f"Remote snapshot failed: {exception}") from exception
 
         except DeviceError:
             raise
 
         except Exception as exception:
+            logger.error(f"Snapshot parsing error: {exception}")
             raise DeviceError(f"Snapshot parsing error: {exception}") from exception
 
     async def tap(self, *, x: int, y: int) -> ActionResult:
@@ -162,8 +196,7 @@ class RemoteDeviceAdapter(DevicePort):
         )
 
         try:
-            response = await self.__client.post("action", json=request.model_dump())
-            response.raise_for_status()
+            response = await self.__execute_request("POST", "action", json=request.model_dump())
 
             payload = self.__parse_response(response.json())
 
@@ -199,8 +232,7 @@ class RemoteDeviceAdapter(DevicePort):
         )
 
         try:
-            response = await self.__client.post("action", json=request.model_dump())
-            response.raise_for_status()
+            response = await self.__execute_request("POST", "action", json=request.model_dump())
 
             payload = self.__parse_response(response.json())
 
@@ -230,8 +262,7 @@ class RemoteDeviceAdapter(DevicePort):
         request = RemoteInteractionRequest(action="GET_XML", execution_id=self.__execution_id)
 
         try:
-            response = await self.__client.post("action", json=request.model_dump())
-            response.raise_for_status()
+            response = await self.__execute_request("POST", "action", json=request.model_dump())
 
             payload = self.__parse_response(response.json())
 
@@ -259,8 +290,7 @@ class RemoteDeviceAdapter(DevicePort):
         )
 
         try:
-            response = await self.__client.post("action", json=request.model_dump())
-            response.raise_for_status()
+            response = await self.__execute_request("POST", "action", json=request.model_dump())
 
             data = response.json()
             logger.info(f"Response of current package command: {data}")
@@ -292,7 +322,7 @@ class RemoteDeviceAdapter(DevicePort):
         start = time.time()
         while (time.time() - start) < timeout:
             try:
-                _ = await self.__client.get("")
+                _ = await self.__execute_request("GET", "")
                 return True
             except httpx.HTTPError:
                 await asyncio.sleep(1.0)
@@ -323,8 +353,7 @@ class RemoteDeviceAdapter(DevicePort):
         start = time.time()
 
         try:
-            response = await self.__client.post("action", json=request.model_dump())
-            response.raise_for_status()
+            response = await self.__execute_request("POST", "action", json=request.model_dump())
 
             data = response.json()
             success = data.get("status") != "ERROR"
