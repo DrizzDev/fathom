@@ -73,6 +73,7 @@ class IntentGraphBuilder(GraphBuilder):
             {
                 NodeName.END: NodeName.END,
                 NodeName.GROUND: NodeName.GROUND,
+                NodeName.VERIFY: NodeName.VERIFY,
             },
         )
 
