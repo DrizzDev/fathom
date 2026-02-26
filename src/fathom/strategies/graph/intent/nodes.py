@@ -86,6 +86,19 @@ class IntentNodeProvider:
                 CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
             }
 
+        # Check max steps BEFORE planning to avoid planning actions we can't execute
+        if self.__context.agent_state.step_count >= self.__context.max_steps:
+            logger.warning(
+                f"[NODE: GROUND] Max steps ({self.__context.max_steps}) reached. "
+                f"Current step count: {self.__context.agent_state.step_count}"
+            )
+            self.__context.agent_state.mark_complete(reason=CompletionReason.MAX_STEPS.value)
+
+            return {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.MAX_STEPS.value,
+            }
+
         current_step_num = self.__context.agent_state.step_count + 1
 
         await self.__context.telemetry.info(
@@ -751,18 +764,6 @@ class IntentNodeProvider:
             return {
                 CommonStateKey.IS_COMPLETE: True,
                 CommonStateKey.COMPLETION_REASON: execution_plan.reason,
-            }
-
-        # Check max steps
-        if self.__context.agent_state.step_count >= self.__context.max_steps:
-            self.__context.agent_state.mark_complete(reason="Max steps reached")
-            logger.info(
-                f"[NODE: RECORD] Max steps reached ({self.__context.max_steps}). Will route to END"
-            )
-
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: "Max steps reached",
             }
 
         logger.info(

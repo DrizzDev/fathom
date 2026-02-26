@@ -194,6 +194,10 @@ class GraphExecutor:
         current_step = self.__context.agent_state.step_count
         logger.info(f"Executor: Injecting user context at Step {current_step}: '{content}'")
 
+        # Reset loop detector on manual context injection to give agent fresh start
+        self.__context.agent_state.reset_stuck_state()
+        logger.info("Executor: Loop detector reset after manual context injection")
+
         if self.__invalidate_on_injection:
             self.__replan_count += 1
             remaining = self.__context.realignment.budget - self.__replan_count
@@ -212,9 +216,16 @@ class GraphExecutor:
 
         if self.__invalidate_on_injection:
             logger.info("Executor: Invalidating pending plan to force re-planning")
+
+            # Reset completion state in AgentState to match graph state
+            self.__context.agent_state.reset_completion()
+
+            # Clear all completion and planning state to force fresh analysis
             update_dict["plan"] = None
+            update_dict["is_complete"] = False
             update_dict["planned_step"] = None
             update_dict["should_retry"] = True
+            update_dict["completion_reason"] = None
         else:
             logger.info("Executor: Preserving pending plan (if any)")
 

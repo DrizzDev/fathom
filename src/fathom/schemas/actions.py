@@ -161,6 +161,8 @@ class Action(BaseModel):
             return "Press home button"
 
         if self.action_type == ActionType.WAIT:
+            if self.wait_duration:
+                return f"Wait for {self.wait_duration} seconds"
             return f"Wait for {name}"
 
         if self.action_type == ActionType.COMPLETE:
