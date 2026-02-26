@@ -60,8 +60,7 @@ dependencies = [
 ]
 
 [project.scripts]
-fathom = "fathom.cli_new:main"
-fathom-old = "fathom.cli:main"
+fathom = "fathom.cli:main"
 
 [project.optional-dependencies]
 gemini = [

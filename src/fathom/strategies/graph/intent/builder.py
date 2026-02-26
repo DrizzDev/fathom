@@ -44,7 +44,15 @@ class IntentGraphBuilder(GraphBuilder):
         workflow.add_node(NodeName.VERIFY, nodes[NodeName.VERIFY])
 
         workflow.set_entry_point(NodeName.GROUND)
-        workflow.add_edge(NodeName.GROUND, NodeName.ANALYZE)
+
+        workflow.add_conditional_edges(
+            NodeName.GROUND,
+            self.__route_after_ground,
+            {
+                NodeName.END: NodeName.END,
+                NodeName.ANALYZE: NodeName.ANALYZE,
+            },
+        )
 
         workflow.add_conditional_edges(
             NodeName.ANALYZE,
@@ -79,6 +87,29 @@ class IntentGraphBuilder(GraphBuilder):
         )
 
         return workflow.compile(checkpointer=checkpointer, interrupt_before=interrupt_before)
+
+    def __route_after_ground(self, state: IntentGraphState) -> str:
+        """
+        Route after ground based on completion status.
+        
+        Note: We check context.agent_state instead of state dict because
+        LangGraph routing happens before node return values are merged into state.
+        """
+
+        _ = state
+
+        # Check AgentState directly (updated by node before return)
+        if self.__context.agent_state.is_complete:
+            reason = self.__context.agent_state.completion_reason
+            logger.info(f"[ROUTING] After GROUND: is_complete=True, reason={reason}")
+
+            # Max steps or cancellation should end immediately
+            if reason in {CompletionReason.MAX_STEPS.value, CompletionReason.CANCELLED.value}:
+                logger.info(f"[ROUTING] -> END ({reason})")
+                return NodeName.END
+
+        logger.info("[ROUTING] After GROUND: -> ANALYZE")
+        return NodeName.ANALYZE
 
     def __route_after_analyze(self, state: IntentGraphState) -> str:
         """
