@@ -497,7 +497,11 @@ class IntentNodeProvider:
                 guidance=user_response, step=current_step
             )
 
+            # ASK_USER is triggered when agent is stuck/uncertain
+            # Always reset state to give agent fresh start, regardless of realignment policy
             self.__context.agent_state.reset_stuck_state()
+            self.__context.agent_state.reset_completion()
+            logger.info("[NODE: EXECUTE] State reset after ASK_USER (agent was stuck/uncertain)")
 
             from fathom.schemas.results import ExecutionResult
 
@@ -586,11 +590,23 @@ class IntentNodeProvider:
             is_positional=(step.action.target_type == "positional"),
         )
 
-        return {
+        result_dict: IntentGraphState = {
             CommonStateKey.STEP_RESULT: step_result,
             CommonStateKey.EXECUTION_DURATION: duration,
             IntentStateKey.ELEMENTS: state.get(IntentStateKey.ELEMENTS),
         }
+
+        # If ASK_USER was executed, always clear state to force re-planning
+        # ASK_USER is triggered when agent is stuck/uncertain, so fresh start is always needed
+        if step.action.action_type == ActionType.ASK_USER:
+            logger.info("[NODE: EXECUTE] Clearing graph state after ASK_USER for fresh analysis")
+            result_dict[IntentStateKey.PLAN] = None
+            result_dict[CommonStateKey.IS_COMPLETE] = False
+            result_dict[IntentStateKey.PLANNED_STEP] = None
+            result_dict[IntentStateKey.SHOULD_RETRY] = True
+            result_dict[CommonStateKey.COMPLETION_REASON] = None
+
+        return result_dict
 
     async def record(self, state: IntentGraphState) -> IntentGraphState:
         """

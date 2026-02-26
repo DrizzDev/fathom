@@ -194,11 +194,14 @@ class GraphExecutor:
         current_step = self.__context.agent_state.step_count
         logger.info(f"Executor: Injecting user context at Step {current_step}: '{content}'")
 
-        # Reset loop detector on manual context injection to give agent fresh start
-        self.__context.agent_state.reset_stuck_state()
-        logger.info("Executor: Loop detector reset after manual context injection")
+        await self.__context.context_manager.inject_user_guidance(
+            guidance=content, step=current_step
+        )
+
+        update_dict: Dict[str, Any] = {"injected_context": content}
 
         if self.__invalidate_on_injection:
+            # Immediate realignment: Force complete re-evaluation
             self.__replan_count += 1
             remaining = self.__context.realignment.budget - self.__replan_count
             logger.info(
@@ -208,25 +211,22 @@ class GraphExecutor:
             if remaining < 0:
                 logger.warning("Executor: Realignment budget exceeded! Proceeding with caution.")
 
-        await self.__context.context_manager.inject_user_guidance(
-            guidance=content, step=current_step
-        )
+            logger.info("Executor: Invalidating state for immediate realignment")
 
-        update_dict: Dict[str, Any] = {"injected_context": content}
-
-        if self.__invalidate_on_injection:
-            logger.info("Executor: Invalidating pending plan to force re-planning")
-
-            # Reset completion state in AgentState to match graph state
+            # Reset agent state
+            self.__context.agent_state.reset_stuck_state()
             self.__context.agent_state.reset_completion()
 
-            # Clear all completion and planning state to force fresh analysis
+            # Clear all planning and completion state in graph
             update_dict["plan"] = None
             update_dict["is_complete"] = False
             update_dict["planned_step"] = None
             update_dict["should_retry"] = True
             update_dict["completion_reason"] = None
+
+            logger.info("Executor: Loop detector and completion state reset for fresh start")
         else:
-            logger.info("Executor: Preserving pending plan (if any)")
+            # Deferred realignment: Preserve current state, guidance applies to future steps
+            logger.info("Executor: Preserving current state (deferred realignment)")
 
         await self.__graph.aupdate_state(self.__config, update_dict)
