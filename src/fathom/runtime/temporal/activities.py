@@ -6,7 +6,6 @@ from typing import Any, Dict, Optional, cast
 from temporalio import activity
 
 from fathom.adapters.llm.gemini import GeminiLLM
-from fathom.adapters.signal.temporal import TemporalSignalAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.builder import Fathom
@@ -283,6 +282,8 @@ class FathomActivities:
         signal_adapter: SignalPort
 
         if interactive:
+            from fathom.adapters.signal.temporal import TemporalSignalAdapter
+
             # Get cluster config from request (injected by CrawlerManager)
             temporal_host = str(request["temporal_host"])
             temporal_api_key = request.get("temporal_api_key")
