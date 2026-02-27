@@ -93,6 +93,14 @@ class AgentState:
         return self.__is_complete
 
     @property
+    def completion_reason(self) -> Optional[str]:
+        """
+        Returns Completion Reason
+        """
+
+        return self.__completion_reason
+
+    @property
     def is_stuck(self) -> bool:
         """
         Whether the agent is stuck in a loop.

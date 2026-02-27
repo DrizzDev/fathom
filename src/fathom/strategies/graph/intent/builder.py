@@ -91,7 +91,7 @@ class IntentGraphBuilder(GraphBuilder):
     def __route_after_ground(self, state: IntentGraphState) -> str:
         """
         Route after ground based on completion status.
-        
+
         Note: We check context.agent_state instead of state dict because
         LangGraph routing happens before node return values are merged into state.
         """

@@ -497,11 +497,12 @@ class IntentNodeProvider:
                 guidance=user_response, step=current_step
             )
 
-            # ASK_USER is triggered when agent is stuck/uncertain
-            # Always reset state to give agent fresh start, regardless of realignment policy
-            self.__context.agent_state.reset_stuck_state()
+            # ASK_USER is an LLM action. We reset completion, but we DO NOT reset stuck state.
+            # If the user's guidance doesn't lead to a new screen, the loop detector should correctly catch it.
             self.__context.agent_state.reset_completion()
-            logger.info("[NODE: EXECUTE] State reset after ASK_USER (agent was stuck/uncertain)")
+            logger.info(
+                "[NODE: EXECUTE] Completion state reset after ASK_USER. Loop history preserved."
+            )
 
             from fathom.schemas.results import ExecutionResult
 

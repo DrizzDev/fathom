@@ -5,6 +5,7 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
+from fathom.constants.state import CompletionReason
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
@@ -89,9 +90,7 @@ class StepPlanner:
                     reason="Native intercept for HITL due to exhausted recovery.",
                 )
 
-            return PlanResult(
-                step=None, is_complete=False, reason="Max steps or recovery exhausted"
-            )
+            return PlanResult(step=None, is_complete=True, reason=CompletionReason.FAILED.value)
 
         # Default tracking note
         current_tracking_note = state.tracking_note

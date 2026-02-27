@@ -213,10 +213,6 @@ class GraphExecutor:
 
             logger.info("Executor: Invalidating state for immediate realignment")
 
-            # Reset agent state
-            self.__context.agent_state.reset_stuck_state()
-            self.__context.agent_state.reset_completion()
-
             # Clear planning and completion state in graph
             # NOTE: We do NOT clear planned_step - let current action execute
             # User guidance applies to NEXT planning cycle, not current action
@@ -225,7 +221,9 @@ class GraphExecutor:
             update_dict["should_retry"] = True
             update_dict["completion_reason"] = None
 
-            logger.info("Executor: Loop detector and completion state reset for fresh start")
+            logger.info(
+                "Executor: Graph routing state reset for fresh start, loop history preserved"
+            )
         else:
             # Deferred realignment: Preserve current state, guidance applies to future steps
             logger.info("Executor: Preserving current state (deferred realignment)")
