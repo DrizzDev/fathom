@@ -35,18 +35,24 @@ class PerceptionService:
         device: DevicePort,
         storage: StoragePort,
         telemetry: TelemetryPort,
+        session_id: Optional[str] = None,
     ) -> None:
         self.__device = device
         self.__storage = storage
         self.__telemetry = telemetry
+        self.__session_id = session_id
 
-    async def perceive(self) -> ScreenCapture:
+    async def perceive(self, session_id: Optional[str] = None) -> ScreenCapture:
         """
         Capture current screen state via DevicePort.
 
         Returns:
             ScreenCapture with screenshot data
         """
+
+        effective_session_id = session_id or self.__session_id
+        if not effective_session_id:
+            raise ValueError("session_id must be provided either in __init__ or perceive()")
 
         screenshot_bytes = await self.__device.capture_screen()
         width, height = await self.__device.get_dimensions()
@@ -58,8 +64,13 @@ class PerceptionService:
             await self.__telemetry.warning("Failed to get current package", error=str(exception))
             activity = "unknown"
 
-        # Store screenshot artifact
-        storage_id = await self.__persist_capture(data=screenshot_bytes)
+        # Store screenshot artifact with metadata for structured storage
+        storage_id = await self.__persist_capture(
+            data=screenshot_bytes,
+            package_name=activity,
+            activity_name=activity,
+            session_id=effective_session_id,
+        )
 
         return ScreenCapture(
             width=width,
@@ -70,14 +81,22 @@ class PerceptionService:
             metadata={"storage_id": storage_id},
         )
 
-    async def __persist_capture(self, data: bytes) -> str:
+    async def __persist_capture(
+        self, data: bytes, package_name: str, activity_name: str, session_id: str
+    ) -> str:
         """
         Persists screenshot to storage.
         """
 
         return await self.__storage.save(
             data=data,
-            metadata={"type": "screenshot", "timestamp": time.time()},
+            metadata={
+                "type": "screenshot",
+                "timestamp": time.time(),
+                "package_name": package_name,
+                "activity_name": activity_name,
+                "session_id": session_id,
+            },
         )
 
     def compute_visual_hash(self, capture: ScreenCapture) -> str:

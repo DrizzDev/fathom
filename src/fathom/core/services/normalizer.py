@@ -115,17 +115,18 @@ class Normalizer:
             return "Press enter"
 
         if kind == "wait":
+            duration_str = ""
             if wait_duration is not None:
                 seconds = (
                     float(wait_duration) / 1000.0 if wait_duration > 100 else float(wait_duration)
                 )
-                return f"Wait for {seconds:g} seconds"
+                duration_str = f" for {seconds:g} seconds"
 
             if cleaned_target.lower() == "app to finish loading":
-                return "Wait for the app to finish loading"
+                return f"Wait for the app to finish loading{duration_str}"
             if cleaned_target.lower() == "ad to finish":
-                return "Wait for the ad to finish"
-            return f"Wait for {cleaned_target}"
+                return f"Wait for the ad to finish{duration_str}"
+            return f"Wait for {cleaned_target}{duration_str}"
 
         if kind == "validate":
             return f"Validate {cleaned_target}"

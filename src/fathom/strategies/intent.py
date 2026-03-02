@@ -5,7 +5,7 @@ from logging import getLogger
 from typing import Any, Dict, Optional
 
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.serde.jsonplus import JsonplusSerializer
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from rich.console import Console
 
 from fathom.adapters.signal.noop import NoopSignal
@@ -85,8 +85,8 @@ class IntentStrategy:
         interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE.value]
 
         # Configure serializer to allow fathom and langgraph modules for MsgPack
-        serializer = JsonplusSerializer(allowed_msgpack_modules=["fathom", "langgraph"])
-        checkpointer = MemorySaver(serializer)
+        serializer = JsonPlusSerializer(allowed_json_modules=["fathom", "langgraph"])
+        checkpointer = MemorySaver(serde=serializer)
 
         self.__graph = builder.build(
             checkpointer=checkpointer,

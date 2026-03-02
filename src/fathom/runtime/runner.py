@@ -118,10 +118,10 @@ class FathomRunner:
         max_steps: int = 50,
         use_xml: bool = False,
         request_id: Optional[str] = None,
-        conversation_id: Optional[str] = None,
-        context_scope: ContextScope = ContextScope.EXECUTION,
         package_name: Optional[str] = None,
+        conversation_id: Optional[str] = None,
         realignment: Optional[RealignmentPolicy] = None,
+        context_scope: ContextScope = ContextScope.EXECUTION,
     ) -> IntentResult:
         """
         Execute intent-based workflow.
@@ -136,13 +136,7 @@ class FathomRunner:
 
         # Use provided package name or fetch from device
         if not package_name:
-            try:
-                package_name = await self.__device.get_current_package()
-            except Exception as exception:
-                package_name = "unknown_app"
-                await self.__telemetry.warning(
-                    "Failed to get package name, using fallback", error=str(exception)
-                )
+            package_name = await self.__device.get_current_package()
 
         if self.__device.configuration:
             device_serial = self.__device.configuration.serial_number
@@ -267,13 +261,7 @@ class FathomRunner:
 
         # Use provided package name or fetch from device
         if not package_name:
-            try:
-                package_name = await self.__device.get_current_package()
-            except Exception as exception:
-                package_name = "unknown_app"
-                await self.__telemetry.warning(
-                    "Failed to get package name, using fallback", error=str(exception)
-                )
+            package_name = await self.__device.get_current_package()
 
         if self.__device.configuration:
             device_serial = self.__device.configuration.serial_number

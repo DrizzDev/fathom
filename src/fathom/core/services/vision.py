@@ -37,8 +37,8 @@ class VisionService:
         *,
         use_cache: bool,
         version: str = "pro",
-        session_id: str = "default",
-        package_name: str = "unknown_app",
+        session_id: str = "not_set",
+        package_name: str = "unknown",
         auditor: Optional[AuditService] = None,
     ) -> None:
         """

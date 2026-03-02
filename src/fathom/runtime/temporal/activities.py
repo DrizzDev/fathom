@@ -69,11 +69,8 @@ class FathomActivities:
             activity.heartbeat("Starting execution")
 
             # Fetch package name for accurate tracing/storage
-            try:
-                package_name = await runner.device.get_current_package()
-            except Exception as exception:
-                package_name = "unknown_app"
-                logger.warning(f"Failed to fetch package name due to {exception}")
+            # If this fails, let the error propagate or handle it explicitly without 'unknown_app'
+            package_name = await runner.device.get_current_package()
 
             result = await runner.run_intent(
                 request_id=workflow_id,
@@ -148,11 +145,7 @@ class FathomActivities:
             activity.heartbeat("Starting exploration")
 
             # Fetch package name for accurate tracing/storage
-            try:
-                package_name = await runner.device.get_current_package()
-            except Exception as exception:
-                package_name = "unknown_app"
-                logger.warning(f"Failed to fetch package name due to {exception}")
+            package_name = await runner.device.get_current_package()
 
             result = await runner.run_exploration(
                 request_id=workflow_id,
@@ -207,7 +200,7 @@ class FathomActivities:
         llm_configuration = LLMConfiguration(**llm_parameters)
 
         # 2. Device Configuration
-        session_id = request.get("session_id", "default_session")
+        session_id = request["session_id"]
         execution_id = request.get("execution_id") or workflow_id
 
         if enricher_url := request.get("enricher_url"):

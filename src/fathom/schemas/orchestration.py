@@ -287,7 +287,7 @@ class WorkflowRequest(BaseModel):
 
     intent: str = Field(..., description="User goal")
     device_serial: Optional[str] = Field(default=None, description="Device serial number")
-    package_name: str = Field(default="unknown_app", description="Target application package")
+    package_name: Optional[str] = Field(default=None, description="Target application package")
     session_id: str = Field(
         default_factory=lambda: uuid.uuid4().hex[:8], description="Unique session ID"
     )

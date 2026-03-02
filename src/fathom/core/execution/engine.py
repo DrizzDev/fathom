@@ -32,8 +32,8 @@ class ExecutionEngine:
 
     def __init__(
         self,
-        device: DevicePort,
         llm: LLMPort,
+        device: DevicePort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
@@ -67,8 +67,8 @@ class ExecutionEngine:
         self,
         step: Step,
         *,
-        session_id: str = "default",
-        package_name: str = "unknown_app",
+        session_id: str,
+        package_name: str = "unknown",
         pre_capture: Optional[ScreenCapture] = None,
     ) -> StepResult:
         """
@@ -83,7 +83,7 @@ class ExecutionEngine:
 
             # Phase 2: Perceive (capture pre-action state)
             if pre_capture is None:
-                pre_capture = await self.__perception.perceive()
+                pre_capture = await self.__perception.perceive(session_id=session_id)
 
             pre_hash = self.__perception.compute_visual_hash(capture=pre_capture)
 
@@ -105,7 +105,7 @@ class ExecutionEngine:
 
             # Wait for screen stability
             await asyncio.sleep(delay=self.__stability_wait)
-            post_capture = await self.__perception.perceive()
+            post_capture = await self.__perception.perceive(session_id=session_id)
             post_hash = self.__perception.compute_visual_hash(capture=post_capture)
 
             # Phase 5: Learn

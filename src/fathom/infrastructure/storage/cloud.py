@@ -54,27 +54,34 @@ class GCSImageStorage(IImageStorage):
                 else:
                     client = storage.Client(**client_kwargs)
 
+                if not metadata:
+                    raise ValueError("Storage metadata is required for GCS uploads")
+
                 storage_bucket = client.bucket(bucket)
 
-                filename_meta = None
-                category = "screenshot"
-                package = "unknown_app"
-                session = "default_session"
-                activity = "unknown_screen"
+                category = metadata.get("category", "screenshot")
+                session = metadata.get("session_id")
+                package = metadata.get("package_name")
+                filename_meta = metadata.get("filename")
+                # Fallback activity to package if missing
+                activity = metadata.get("activity_name") or package or "unknown_screen"
+
                 folder = datetime.now().strftime("%Y-%m-%d")
 
-                if metadata:
-                    filename_meta = metadata.get("filename")
-                    category = metadata.get("category") or category
-                    package = metadata.get("package_name") or package
-                    session = metadata.get("session_id") or session
-                    activity = metadata.get("activity_name") or activity
+                if not all([package, session]):
+                    raise ValueError(f"Missing required GCS metadata: {package=}, {session=}")
+
+                # Ensure types for mypy after validation
+                package_str = str(package)
+                session_str = str(session)
+                activity_str = str(activity)
+                category_str = str(category)
 
                 # Sanitize
-                package = "".join(char for char in package if char.isalnum() or char in "._-")
-                session = "".join(char for char in session if char.isalnum() or char in "._-")
-                activity = "".join(char for char in activity if char.isalnum() or char in "._-")
-                category = "".join(char for char in category if char.isalnum() or char in "._-")
+                package = "".join(char for char in package_str if char.isalnum() or char in "._-")
+                session = "".join(char for char in session_str if char.isalnum() or char in "._-")
+                activity = "".join(char for char in activity_str if char.isalnum() or char in "._-")
+                category = "".join(char for char in category_str if char.isalnum() or char in "._-")
 
                 if filename_meta:
                     filename = f"{category}/{folder}/{package}/{session}/{filename_meta}"

@@ -297,8 +297,7 @@ class RemoteDeviceAdapter(DevicePort):
 
             payload = self.__parse_response(data)
             package_name = payload.get("package")
-            package = str(package_name) if package_name else "unknown_app"
-
+            package = str(package_name) if package_name else "unknown"
             return package
 
         except httpx.HTTPError as exception:

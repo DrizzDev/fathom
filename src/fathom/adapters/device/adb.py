@@ -209,7 +209,7 @@ class ADBDevice(DevicePort):
         """
 
         result = await self.__shell(
-            command="dumpsys activity activities | grep mResumedActivity", capture_output=True
+            command="dumpsys window | grep mCurrentFocus", capture_output=True
         )
 
         if not result.success:
@@ -220,7 +220,10 @@ class ADBDevice(DevicePort):
         if not result.output:
             raise DeviceError("Get current package: Package query returned empty output")
 
-        if match := re.search(r"u0\s+([a-zA-Z0-9_.]+)/", result.output):
+        # Expected format: mCurrentFocus=Window{e5fb16 u0 com.package.name/com.package.name.MainActivity}
+        if match := re.search(
+            r"mCurrentFocus=Window\{[a-f0-9]+\s+(?:u\d+\s+)?([a-zA-Z0-9_.]+)\/", result.output
+        ):
             return match.group(1)
 
         raise DeviceError(

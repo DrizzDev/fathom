@@ -29,23 +29,34 @@ class LocalImageStorage(IImageStorage):
         """
 
         try:
+            if not metadata:
+                raise ValueError("Storage metadata is required for saving screenshots")
+
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            package = "unknown_app"
-            session = "default_session"
-            activity = "unknown_screen"
+            session = metadata.get("session_id")
+            package = metadata.get("package_name")
+            # Activity name is optional, fallback to package if missing
+            activity = metadata.get("activity_name") or package
+            filename_meta = metadata.get("filename")
 
-            if metadata:
-                session = metadata.get("session_id") or session
-                package = metadata.get("package_name") or package
-                activity = metadata.get("activity_name") or activity
+            if not all([session, package]):
+                raise ValueError(
+                    f"Missing required screenshot metadata: {session=}, {package=}"
+                )
+
+            # Ensure types for mypy after validation
+            package_str = str(package)
+            session_str = str(session)
+            activity_str = str(activity)
 
             # Sanitize components to be safe for filenames
-            package = "".join(char for char in package if char.isalnum() or char in "._-")
-            session = "".join(char for char in session if char.isalnum() or char in "._-")
-            activity = "".join(char for char in activity if char.isalnum() or char in "._-")
+            package = "".join(char for char in package_str if char.isalnum() or char in "._-")
+            session = "".join(char for char in session_str if char.isalnum() or char in "._-")
+            activity = "".join(char for char in activity_str if char.isalnum() or char in "._-")
 
-            filename = f"{timestamp}__{activity}.png"
+            # Use explicit filename if provided (e.g. for history artifacts), otherwise generate one
+            filename = filename_meta or f"{timestamp}__{activity}.png"
 
             # Use path manager to enforce unified structure
             path = self.__path_manager.get_screenshot_path(

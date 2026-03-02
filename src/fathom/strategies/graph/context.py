@@ -110,7 +110,7 @@ class GraphContext:
         self.__hitl = HITLService(signal=signal, telemetry=telemetry)
 
         self.__perception = perception or PerceptionService(
-            device=device, storage=storage, telemetry=telemetry
+            device=device, storage=storage, telemetry=telemetry, session_id=workflow_id
         )
 
         # GCC Context Manager with optional summarizer
