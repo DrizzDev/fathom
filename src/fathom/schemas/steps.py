@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,8 +21,12 @@ class Step(BaseModel):
     is_conditional: bool = Field(
         default=False, description="Whether this step is a recovery attempt"
     )
-    condition: Optional[str] = Field(default=None, description="Optional condition for the step")
+    condition: Optional[str] = Field(default=None, description="Condition for IF block")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
+    event_type: Optional[Literal["action", "validation"]] = Field(
+        default=None,
+        description="Semantic event type for logging/export (e.g. validation).",
+    )
 
 
 class StepResult(BaseModel):
@@ -55,7 +59,9 @@ class StepResult(BaseModel):
     )
 
     def to_record(
-        self, absolute_center: Optional[List[int]] = None, activity: Optional[str] = None
+        self,
+        activity: Optional[str] = None,
+        absolute_center: Optional[List[int]] = None,
     ) -> "StepRecord":
         """
         Converts the result into a serializable record for persistence.
@@ -67,14 +73,9 @@ class StepResult(BaseModel):
         else:
             bounds = None
 
-        condition = getattr(self.step, "condition", None) or getattr(
-            self.step.action, "condition", None
-        )
-
         return StepRecord(
             bounds=bounds,
             activity=activity,
-            condition=condition,
             success=self.success,
             duration=self.duration,
             center=absolute_center,
@@ -85,6 +86,7 @@ class StepResult(BaseModel):
             step_number=self.step.step_number,
             screen_changed=self.screen_changed,
             rationale=self.step.action.rationale,
+            event_type=self.step.event_type or "action",
             generalized_target=self.generalized_target,
             action_type=self.step.action.action_type.value,
             action_description=self.step.action.to_description(),
@@ -100,6 +102,10 @@ class StepRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     step_number: int = Field(ge=0, description="Step index")
+    event_type: Literal["action", "validation"] = Field(
+        default="action",
+        description="High-level event category used by logs and exporters.",
+    )
     action_type: str = Field(min_length=1, description="Action category")
     target: str = Field(min_length=1, description="Target element description")
 
@@ -116,7 +122,6 @@ class StepRecord(BaseModel):
     text: Optional[str] = Field(default=None, description="Typed text content")
     rationale: Optional[str] = Field(default=None, description="Reasoning for the action")
     observation: Optional[str] = Field(default=None, description="Screen state observation")
-    condition: Optional[str] = Field(default=None, description="Condition for IF-block wrapping")
     action_description: Optional[str] = Field(
         default=None, description="Human-readable NLP command"
     )

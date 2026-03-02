@@ -115,6 +115,13 @@ class AgentState:
 
         self.__loop_detector.reset()
 
+    def reset_loop_detector(self) -> None:
+        """
+        Reset loop detector (e.g., after content exhaustion signal).
+        """
+
+        self.__loop_detector.signal_content_exhausted()
+
     @property
     def can_continue(self) -> bool:
         """
@@ -144,6 +151,21 @@ class AgentState:
         """
 
         return self.__interaction_tracker.get_cadence_note()
+
+    @property
+    def last_action_type(self) -> Optional[ActionType]:
+        """
+        The type of the last action executed.
+        """
+
+        if not self.__last_action_type:
+            return None
+
+        try:
+            return ActionType(value=self.__last_action_type)
+        except ValueError as exception:
+            logger.warning(f"Got exception: {exception}", stack_info=True)
+            return None
 
     def __is_new_screen(self, screen: ScreenState) -> bool:
         """
@@ -307,6 +329,13 @@ class AgentState:
                 action_type=ActionType.HOME,
                 rationale="Loop detected (Screen repeating). Forcing HOME to reset agent.",
             )
+
+    def record_recovery_attempt(self) -> int:
+        """
+        Record a recovery attempt (prompt-driven).
+        """
+
+        return self.__loop_detector.record_recovery_attempt()
 
     def build_context(self) -> Dict[str, object]:
         """

@@ -177,8 +177,9 @@ class HistoryService:
         path = self.__directory / "script.txt"
 
         script_data = self.__exporter.export(
-            step_results=history,
+            intent=intent,
             goal_state=intent,
+            step_results=history,
             package_name=self.__package_name,
         )
 
@@ -212,6 +213,7 @@ class HistoryService:
             "target": target,
             "center": record.get("center"),
             "bounding_box": record.get("bounds"),
+            "event_type": record.get("event_type", "action"),
             "action_type": record.get("action_type", "wait"),
             "metadata": {
                 "success": record.get("success"),
@@ -231,6 +233,7 @@ class HistoryService:
         for step in steps:
             lines.append(f"- step: {step['step']}")
             lines.append(f'  action_type: "{step["action_type"]}"')
+            lines.append(f'  event_type: "{step.get("event_type", "action")}"')
             lines.append(f'  target: "{step["target"]}"')
             lines.append(f"  bounding_box: {step.get('bounding_box')}")
             lines.append(f"  center: {step.get('center')}")

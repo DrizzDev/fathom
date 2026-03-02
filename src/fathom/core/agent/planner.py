@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from logging import getLogger
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Literal, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason
@@ -52,6 +52,8 @@ class StepPlanner:
         use_xml: bool = True,
         prompt_if_stuck: bool = False,
         interactive_mode: bool = False,
+        intent_override: Optional[str] = None,
+        additional_context: Optional[str] = None,
         elements: Optional[Dict[str, Any]] = None,
     ) -> PlanResult:
         """
@@ -149,17 +151,46 @@ class StepPlanner:
                     step_number=state.step_count,
                 )
 
+        context_data = state.build_context()
+        history_context = str(object=context_data.get("compact_history", "None"))
+
+        if additional_context:
+            full_context = f"{additional_context}\n{history_context}"
+        else:
+            full_context = history_context
+
+        intent_value = intent_override or state.intent
+
         analysis = await self.__vision.analyze(
             use_xml=use_xml,
             capture=capture,
             elements=elements,
-            intent=state.intent,
+            intent=intent_value,
+            context=full_context,
+            is_stuck=state.is_stuck,
             screen_width=screen_width,
             screen_height=screen_height,
             context_manager=context_manager,
             tracking_note=current_tracking_note,
-            failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
+            failures=cast("List[str]", context_data.get("relevant_failures", [])),
+            last_action=(state.last_action_type.value if state.last_action_type else None),
         )
+
+        if analysis.content_exhausted:
+            logger.info(
+                "Content has been exhausted, Resetting LoopDetection and Marking State Completion"
+            )
+            state.reset_loop_detector()
+            state.mark_complete(reason="Content exhaustion signaled by model")
+
+            return PlanResult(
+                step=None,
+                is_complete=True,
+                metrics=analysis.metrics,
+                memories=analysis.memories,
+                metadata=analysis.metadata,
+                reason="Model signaled content exhaustion (end of list/carousel).",
+            )
 
         completion = reasoner.analyze_completion(
             analysis=analysis, screen_description=capture.activity
@@ -173,7 +204,10 @@ class StepPlanner:
             # If there's a valid physical action, we should execute it before finishing
             if action.action_type not in ("complete", "unknown", "wait"):
                 step = self.__build_step(
-                    action=action, step_number=state.step_count, capture=capture
+                    action=action,
+                    capture=capture,
+                    step_number=state.step_count,
+                    event_type=analysis.metadata.get("event_type"),
                 )
             else:
                 step = None
@@ -182,10 +216,14 @@ class StepPlanner:
                 step=step,
                 is_complete=True,
                 metrics=analysis.metrics,
-                reason=analysis.reasoning,
+                reason=completion.evidence,
                 metadata=analysis.metadata,
                 memories=analysis.memories,
             )
+
+        if state.is_stuck:
+            logger.info("State is stuck, Triggering Record Recovery Attempt...")
+            state.record_recovery_attempt()
 
         # Optimization: Check if this EXACT action just failed on this screen hash
         if state.should_avoid_action(action=action):
@@ -285,8 +323,12 @@ class StepPlanner:
         Return a PlanResult with the given action and metadata.
         """
 
-        step: Step = self.__build_step(
-            action=action, step_number=step_number, capture=capture, is_recovery=is_recovery
+        step = self.__build_step(
+            action=action,
+            capture=capture,
+            step_number=step_number,
+            is_recovery=is_recovery,
+            event_type=(metadata or {}).get("event_type"),
         )
 
         return PlanResult(
@@ -297,7 +339,7 @@ class StepPlanner:
             metadata=metadata or {},
             is_valid_action=action.is_valid,
             validation_reasoning=action.validation_reason,
-            reason=action.rationale or ("Step planned" if not is_recovery else "Recovery step"),
+            reason="Step planned" if not is_recovery else "Recovery step",
         )
 
     def __build_step(
@@ -306,18 +348,29 @@ class StepPlanner:
         step_number: int,
         capture: ScreenCapture,
         is_recovery: bool = False,
+        event_type: Optional[str] = None,
     ) -> Step:
         """
         Helper to construct a Step object.
         """
 
-        screen_hash: str = self.__compute_simple_hash(capture=capture)
+        screen_hash = self.__compute_simple_hash(capture=capture)
+
+        # Ensure event_type matches the expected type
+        validated_event_type: Literal["action", "validation"] | None = None
+
+        if event_type == "action":
+            validated_event_type = "action"
+
+        elif event_type == "validation":
+            validated_event_type = "validation"
 
         return Step(
             action=action,
             screen_hash=screen_hash,
             step_number=step_number,
             is_conditional=is_recovery,
+            event_type=validated_event_type,
             condition="recovery" if is_recovery else None,
         )
 
@@ -326,5 +379,5 @@ class StepPlanner:
         Compute a simple hash of the screen capture
         """
 
-        data: bytes = f"{capture.activity}:{len(capture.image)}".encode()
-        return hashlib.md5(string=data, usedforsecurity=False).hexdigest()[:16]
+        data = f"{capture.activity}:{len(capture.image)}".encode()
+        return hashlib.md5(data, usedforsecurity=False).hexdigest()[:16]

@@ -67,6 +67,9 @@ class VisionService:
         screen_height: int,
         *,
         use_xml: bool = False,
+        is_stuck: bool = False,
+        context: Optional[str] = None,
+        last_action: Optional[str] = None,
         tracking_note: Optional[str] = None,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
@@ -166,9 +169,11 @@ class VisionService:
             intent=intent,
             manifest=manifest,
             failures=failures,
+            is_stuck=is_stuck,
             knowledge=knowledge,
             screen=capture.image,
-            context=dynamic_context,
+            last_action=last_action,
+            context=context or dynamic_context,
         )
         payload_duration = time.time() - payload_start
 
@@ -260,7 +265,9 @@ class VisionService:
         knowledge: Dict[str, Any],
         *,
         manifest: str = "N/A",
+        is_stuck: bool = False,
         context: Optional[str] = None,
+        last_action: Optional[str] = None,
         failures: Optional[List[str]] = None,
     ) -> List[Any]:
         """
@@ -268,6 +275,12 @@ class VisionService:
         """
 
         payload: List[Any] = [f"Goal: {intent}"]
+
+        if is_stuck:
+            payload.append("Status: You appear to be stuck in a loop. Try a different approach.")
+
+        if last_action:
+            payload.append(f"Last Action: {last_action}")
 
         if knowledge.get("description"):
             payload.append(f"Screen Info: {knowledge['description']}")

@@ -165,6 +165,15 @@ class LoopDetector(BaseModel):
         self.__recovery_attempts = 0
         logger.info(f"LoopDetector.reset: cleared {prev_size} screens")
 
+    def signal_content_exhausted(self) -> None:
+        """
+        Clear recent history but preserve recovery attempts.
+        """
+
+        self.__recent_screens.clear()
+        self.__recent_actions.clear()
+        logger.info("LoopDetector: Content exhausted signaled, history cleared.")
+
 
 class InteractionTracker(BaseModel):
     """

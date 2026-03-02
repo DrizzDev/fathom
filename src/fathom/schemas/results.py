@@ -32,6 +32,19 @@ class AnalysisResult(BaseModel):
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional context like raw tool calls"
     )
+    content_exhausted: bool = Field(
+        default=False, description="Model signals end of scrollable content"
+    )
+
+
+class GenerateResult(BaseModel):
+    """
+    Raw result from LLM generation.
+    """
+
+    content: str = Field(default="", description="Text content from LLM")
+    tool_calls: List[Any] = Field(default_factory=list, description="Structured tool calls")
+    metrics: Dict[str, float] = Field(default_factory=dict, description="Token usage and timing")
 
 
 class StrategyResult(BaseModel):
@@ -86,6 +99,10 @@ class IntentResult(WorkflowResult):
     memory_summary: Dict[str, Any] = Field(
         default_factory=dict, description="Summary of Knowledge Graph"
     )
+    knowledge_graph: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Accumulated knowledge graph snapshot (nodes, edges, stats)",
+    )
 
 
 class ExplorationResult(WorkflowResult):
@@ -96,11 +113,18 @@ class ExplorationResult(WorkflowResult):
     unique_screens: int = Field(ge=0, description="Unique screens discovered")
     total_actions: int = Field(ge=0, description="Total actions performed")
     total_transitions: int = Field(ge=0, description="Total transitions")
-
-    discovered_activities: List[str] = Field(default_factory=list)
     coverage_percentage: float = Field(ge=0.0, le=100.0, description="App coverage")
 
-    screen_graph: Dict[str, List[str]] = Field(default_factory=dict)
+    screen_graph: Dict[str, Any] = Field(default_factory=dict)
+    discovered_activities: List[str] = Field(default_factory=list)
+
+    knowledge_graph: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Accumulated knowledge graph snapshot (nodes, edges, stats)",
+    )
+    metrics: Dict[str, Dict[str, float]] = Field(
+        default_factory=dict, description="Execution metrics (timing, tokens)"
+    )
 
 
 class ActionResult(BaseModel):
@@ -110,6 +134,7 @@ class ActionResult(BaseModel):
 
     success: bool = Field(description="Execution status")
     duration: int = Field(ge=0, description="Duration in milliseconds")
+
     error: Optional[str] = Field(default=None, description="Error details")
     output: Optional[str] = Field(default=None, description="Command output")
 
@@ -123,13 +148,11 @@ class ExecutionResult(BaseModel):
 
     success: bool = Field(..., description="Whether the execution was successful")
     duration: int = Field(..., description="Duration of execution in milliseconds")
-
     pre_hash: str = Field(default="", description="Visual hash before execution")
     post_hash: str = Field(default="", description="Visual hash after execution")
-
     error: Optional[str] = Field(default=None, description="Error message if failed")
     screen_changed: bool = Field(default=False, description="Whether the screen changed")
-    is_cancelled: bool = Field(default=False, description="Whether the execution was cancelled")
+    is_cancelled: bool = Field(default=False, description="Whether execution was cancelled")
 
 
 class PlanResult(BaseModel):
@@ -153,13 +176,3 @@ class PlanResult(BaseModel):
     validation_reasoning: Optional[str] = Field(
         default=None, description="Reason if action is invalid"
     )
-
-
-class GenerateResult(BaseModel):
-    """
-    Raw result from LLM generation.
-    """
-
-    content: str = Field(default="", description="Text content from LLM")
-    tool_calls: List[Any] = Field(default_factory=list, description="Structured tool calls")
-    metrics: Dict[str, float] = Field(default_factory=dict, description="Token usage and timing")
