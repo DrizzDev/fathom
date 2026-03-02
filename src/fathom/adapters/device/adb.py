@@ -99,6 +99,53 @@ class ADBDevice(DevicePort):
         console.print("[bold cyan]🏠  HOME[/bold cyan] button")
         return await self.__keyevent(keycode=3)
 
+    async def __run_safe_subprocess(
+        self,
+        arguments: List[str],
+        timeout: float,
+        capture_stdout: bool = True,
+        capture_stderr: bool = True,
+    ) -> Tuple[int, bytes, bytes]:
+        """
+        Centralized, safe subprocess executor.
+        Guarantees that underlying OS processes are killed if the operation times out
+        or if the Python task is cancelled, preventing ADB connection deadlocks.
+        """
+
+        process = None
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *arguments,
+                stdout=asyncio.subprocess.PIPE if capture_stdout else asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE if capture_stderr else asyncio.subprocess.DEVNULL,
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                fut=process.communicate(),
+                timeout=timeout,
+            )
+
+            return process.returncode or 0, stdout, stderr
+
+        except asyncio.TimeoutError as exception:
+            raise DeviceError(
+                f"Command timed out after {timeout}s: {' '.join(arguments)}"
+            ) from exception
+
+        except Exception as exception:
+            raise DeviceError(f"Command execution failed: {exception}") from exception
+
+        finally:
+            if process and process.returncode is None:
+                try:
+                    process.kill()
+                    await process.wait()
+                except ProcessLookupError:
+                    pass  # Process already dead
+                except Exception as cleanup_exception:
+                    logger.warning(f"Failed to cleanup subprocess: {cleanup_exception}")
+
     async def get_dimensions(self) -> Tuple[int, int]:
         """
         Get device screen dimensions.
@@ -134,19 +181,15 @@ class ADBDevice(DevicePort):
 
         arguments = self.__build_arguments(parts=["exec-out", "screencap", "-p"])
 
-        process = None
         try:
-            process = await asyncio.create_subprocess_exec(
-                *arguments,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                fut=process.communicate(),
+            returncode, stdout, stderr = await self.__run_safe_subprocess(
+                arguments=arguments,
                 timeout=self.__configuration.command_timeout,
+                capture_stdout=True,
+                capture_stderr=True,
             )
 
-            if process.returncode != 0:
+            if returncode != 0:
                 error_msg = stderr.decode().strip() if stderr else "Unknown error"
                 raise DeviceError(f"Screenshot capture failed: {error_msg}")
 
@@ -155,25 +198,10 @@ class ADBDevice(DevicePort):
 
             return stdout
 
-        except asyncio.TimeoutError as exception:
-            raise DeviceError(
-                f"Screenshot capture timed out after {self.__configuration.command_timeout}s"
-            ) from exception
-
         except DeviceError:
             raise
-
         except Exception as exception:
             raise DeviceError(f"Screenshot capture failed: {exception}") from exception
-
-        finally:
-            # Ensure process is terminated if still running
-            if process and process.returncode is None:
-                try:
-                    process.kill()
-                    await process.wait()
-                except Exception as cleanup_exception:
-                    logger.warning(f"Failed to cleanup subprocess: {cleanup_exception}")
 
     async def get_current_package(self) -> str:
         """
@@ -204,42 +232,60 @@ class ADBDevice(DevicePort):
         Wait for device availability.
         """
 
+        arguments = self.__build_arguments(parts=["wait-for-device"])
+
         try:
-            process = await asyncio.create_subprocess_exec(
-                *self.__build_arguments(parts=["wait-for-device"]),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+            returncode, _, _ = await self.__run_safe_subprocess(
+                arguments=arguments,
+                timeout=timeout,
+                capture_stdout=False,
+                capture_stderr=False,
             )
-            await asyncio.wait_for(fut=process.wait(), timeout=timeout)
-            return process.returncode == 0
+            return returncode == 0
         except Exception:
             return False
 
     async def dump_hierarchy(self) -> Optional[str]:
         """
         Dump UI hierarchy to XML string.
+        Attempts compressed dump first, with fallback to uncompressed and process cleanup.
         """
 
         path = "/data/local/tmp/window_dump.xml"
+
+        # Ensure we don't read a stale file
+        await self.__shell(command=f"rm -f {path}")
+
         dump_command = f"uiautomator dump --compressed {path}"
         dump_result = await self.__shell(command=dump_command)
 
         if not dump_result.success:
-            raise DeviceError(
-                f"Dump hierarchy: UI automation dump failed on device: {dump_result.error or 'Unknown error'}"
+            logger.warning(
+                f"Compressed dump failed: {dump_result.error}. Attempting recovery and fallback."
             )
+            # Device-side recovery: forcefully kill hung uiautomator service
+            await self.__shell(command="pkill -9 uiautomator")
+
+            # Fallback to uncompressed dump
+            fallback_command = f"uiautomator dump {path}"
+            dump_result = await self.__shell(command=fallback_command)
+
+            if not dump_result.success:
+                raise DeviceError(
+                    f"Dump hierarchy: UI automation dump failed on device after fallback: {dump_result.error or 'Unknown error'}"
+                )
 
         cat_arguments = self.__build_arguments(parts=["exec-out", "cat", path])
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *cat_arguments,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            returncode, stdout, stderr = await self.__run_safe_subprocess(
+                arguments=cat_arguments,
+                timeout=10.0,
+                capture_stdout=True,
+                capture_stderr=True,
             )
-            stdout, stderr = await asyncio.wait_for(fut=process.communicate(), timeout=10.0)
 
-            if process.returncode != 0:
+            if returncode != 0:
                 error_msg = stderr.decode().strip() if stderr else "Unknown error"
                 raise DeviceError(f"Dump hierarchy: Failed to read hierarchy file: {error_msg}")
 
@@ -248,12 +294,8 @@ class ADBDevice(DevicePort):
 
             return stdout.decode("utf-8", errors="ignore")
 
-        except asyncio.TimeoutError as exception:
-            raise DeviceError("Dump hierarchy: cat operation timed out after 10s") from exception
-
         except DeviceError:
             raise
-
         except Exception as exception:
             raise DeviceError(
                 f"Dump hierarchy: Unexpected error during XML retrieval: {exception}"
@@ -294,28 +336,24 @@ class ADBDevice(DevicePort):
         start_time = asyncio.get_event_loop().time()
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *arguments,
-                stderr=asyncio.subprocess.PIPE,
-                stdout=(asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL),
-            )
-
-            stdout, stderr = await asyncio.wait_for(
-                fut=process.communicate(),
+            returncode, stdout, stderr = await self.__run_safe_subprocess(
+                arguments=arguments,
                 timeout=self.__configuration.command_timeout,
+                capture_stdout=capture_output,
+                capture_stderr=True,
             )
 
             duration = int((asyncio.get_event_loop().time() - start_time) * 1000)
 
             # Rich formatting for command logs
-            color_theme = "green" if process.returncode == 0 else "red"
+            color_theme = "green" if returncode == 0 else "red"
             console.print(
                 f"[bold blue]⚡ ADB[/bold blue] [white]❯[/white] "
                 f"[{color_theme}]{command[:100]}{'...' if len(command) > 100 else ''}[/{color_theme}] "
                 f"[bold yellow]{duration}ms[/bold yellow]"
             )
 
-            if process.returncode != 0:
+            if returncode != 0:
                 error_message = stderr.decode().strip() if stderr else "Failed"
                 return ActionResult(success=False, error=error_message, duration=duration)
 

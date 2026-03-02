@@ -5,6 +5,7 @@ from logging import getLogger
 from typing import Any, Dict, Optional
 
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonplusSerializer
 from rich.console import Console
 
 from fathom.adapters.signal.noop import NoopSignal
@@ -82,7 +83,10 @@ class IntentStrategy:
         # Autonomous mode doesn't need checkpointing
 
         interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE.value]
-        checkpointer = MemorySaver()
+
+        # Configure serializer to allow fathom and langgraph modules for MsgPack
+        serializer = JsonplusSerializer(allowed_msgpack_modules=["fathom", "langgraph"])
+        checkpointer = MemorySaver(serializer)
 
         self.__graph = builder.build(
             checkpointer=checkpointer,

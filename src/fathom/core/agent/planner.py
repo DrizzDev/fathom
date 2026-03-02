@@ -170,19 +170,8 @@ class StepPlanner:
         if completion.is_complete:
             state.mark_complete(reason=completion.evidence)
 
-            # If there's a valid physical action, we should execute it before finishing
-            if action.action_type not in ("complete", "unknown", "wait"):
-                step = self.__build_step(
-                    action=action,
-                    capture=capture,
-                    step_number=state.step_count,
-                    event_type=analysis.metadata.get("event_type"),
-                )
-            else:
-                step = None
-
             return PlanResult(
-                step=step,
+                step=None,  # No physical actions after goal completion
                 is_complete=True,
                 metrics=analysis.metrics,
                 reason=analysis.reasoning,

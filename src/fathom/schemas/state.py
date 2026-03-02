@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import deque
 from logging import getLogger
 from typing import Any, Deque, Dict, List, Optional
@@ -14,19 +15,19 @@ logger = getLogger(__name__)
 
 class LoopDetector(BaseModel):
     """
-    Detects when agent is stuck in a loop.
-
-    Uses a sliding window of screen states to detect repeated states.
-    Implements fuzzy matching via Hamming distance.
+    Detects when agent is stuck in a loop using multi-strategy pattern analysis.
     """
 
-    threshold: int = Field(default=3, description="Screen repetition threshold")
-    window_size: int = Field(default=5, description="Size of the sliding window")
+    threshold: int = Field(default=3, description="Standard repetition threshold")
+    window_size: int = Field(default=15, description="Size of the pattern analysis window")
 
     __max_recovery: int = PrivateAttr(default=3)
     __recovery_attempts: int = PrivateAttr(default=0)
-    __recent_actions: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=5))
-    __recent_screens: Deque[ScreenState] = PrivateAttr(default_factory=lambda: deque(maxlen=5))
+    __recent_actions: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
+    __recent_types: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
+    __recent_hashes: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
+    __recent_screens: Deque[ScreenState] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
+    __recent_timestamps: Deque[float] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
 
     def record(
         self,
@@ -35,107 +36,159 @@ class LoopDetector(BaseModel):
         action_type: Optional[str] = None,
     ) -> None:
         """
-        Record a screen state and optionally an action description.
+        Record state and action data for pattern analysis.
         """
 
         self.__recent_screens.append(screen)
-        logger.debug(
-            f"LoopDetector.record: {screen.visual_hash[:8]} ({screen.activity}) | deque_size={len(self.__recent_screens)}"
-        )
+        self.__recent_hashes.append(screen.visual_hash)
+        self.__recent_timestamps.append(time.time())
 
-        logger.debug(
-            f"[H1] Recorded screen in loop detector | "
-            f"activity={screen.activity} hash_prefix={screen.visual_hash[:8]} "
-            f"recent_count={len(self.__recent_screens)} threshold={self.threshold}"
-        )
-
-        # Store only the single most descriptive identifier to prevent set-size inflation
-        # We prefer description (e.g. "Tap on Evening tab") over type (e.g. "tap")
+        # Store descriptions for semantic matching
         identifier = action_description or action_type or "None"
         self.__recent_actions.append(identifier)
 
-    def is_stuck(self) -> bool:
-        """
-        Check if agent appears stuck in a loop.
-        """
+        # Store raw types for velocity and scroll analysis
+        self.__recent_types.append(str(action_type or "unknown").lower())
 
-        screen_count = len(self.__recent_screens)
         logger.debug(
-            f"[H4] Evaluating stuck status | "
-            f"screen_count={screen_count} threshold={self.threshold} "
-            f"recent_actions={len(self.__recent_actions)} can_recover={self.can_recover()}"
+            f"LoopDetector.record: {screen.visual_hash[:8]} | "
+            f"action={identifier} | type={action_type}"
         )
 
-        if screen_count < self.threshold:
-            logger.debug(
-                f"LoopDetector.is_stuck: False (only {screen_count} screens, need {self.threshold})"
-            )
+    def is_stuck(self) -> bool:
+        """
+        Evaluate if current interaction sequence indicates a loop.
+        """
+
+        if len(self.__recent_screens) < self.threshold:
             return False
 
-        # Check for repeated screens using fuzzy matching
+        # 1. Direct Repetition (Existing logic)
+        if self.__detect_repetition():
+            return True
+
+        # 2. State Oscillation (A-B-A-B or A-B-C-A)
+        if self.__detect_oscillation():
+            return True
+
+        # 3. Scroll Stalling (Repetitive scrolling with minimal progress)
+        if self.__detect_scroll_stall():
+            return True
+
+        # 4. Action Velocity (Rapid firing with no progress)
+        return bool(self.__detect_action_velocity_loop())
+
+    def __detect_repetition(self) -> bool:
+        """
+        Detect simple repetition of screens or actions.
+        """
+
+        # Check screen repeats (using semantic identity)
         for index in range(len(self.__recent_screens)):
             count = 1
             current = self.__recent_screens[index]
-            for __next_index in range(index + 1, len(self.__recent_screens)):
-                if current.is_same_screen(self.__recent_screens[__next_index]):
+            for forward_index in range(index + 1, len(self.__recent_screens)):
+                if current.is_same_screen(self.__recent_screens[forward_index]):
                     count += 1
 
-                    candidate = self.__recent_screens[__next_index]
-                    distance = 64
-                    if len(current.visual_hash) == len(candidate.visual_hash):
-                        try:
-                            distance = bin(
-                                int(current.visual_hash, 16) ^ int(candidate.visual_hash, 16)
-                            ).count("1")
-                        except ValueError:
-                            distance = 64
-
-                    logger.debug(
-                        f"[H6] Fuzzy screen match | "
-                        f"base={current.activity} candidate={candidate.activity} "
-                        f"dist={distance}"
-                    )
-
             if count >= self.threshold:
-                unique_recent_actions = len(set(self.__recent_actions))
-                if (
-                    len(self.__recent_actions) >= self.threshold
-                    and unique_recent_actions >= self.threshold
-                ):
-                    logger.debug(
-                        f"[H8] Bypassing stuck=true due to diverse recent actions | "
-                        f"count={len(self.__recent_actions)} unique={unique_recent_actions} "
-                        f"repeat_count={count}"
-                    )
+                # Bypass if actions are diverse despite similar screens
+                if len(set(self.__recent_actions)) >= self.threshold:
                     continue
-                hashes = [s.visual_hash[:8] for s in self.__recent_screens]
-                logger.debug(
-                    f"LoopDetector.is_stuck: True (screen {current.visual_hash[:8]} repeated {count}x) | deque={hashes}"
-                )
 
-                logger.debug(
-                    f"[H1] Stuck=true due to repeated screen | "
-                    f"activity={current.activity} hash_prefix={current.visual_hash[:8]} "
-                    f"repeat_count={count} unique_actions={len(set(self.__recent_actions))}"
-                )
+                logger.warning(f"LoopDetector: Stuck via screen repetition ({count}x)")
                 return True
 
-        # Check for repeated actions (exact match is fine for actions)
-        if len(self.__recent_actions) >= self.threshold:
-            action_counts: Dict[str, int] = {}
+        # Check action repeats
+        action_counts: Dict[str, int] = {}
+        for action in self.__recent_actions:
+            if action == "None":
+                continue
+            action_counts[action] = action_counts.get(action, 0) + 1
+            if action_counts[action] >= self.threshold + 1:  # Slightly higher for actions
+                logger.warning(f"LoopDetector: Stuck via action repetition '{action}'")
+                return True
 
-            for identifier in self.__recent_actions:
-                if identifier == "None":
-                    continue
+        return False
 
-                action_counts[identifier] = action_counts.get(identifier, 0) + 1
-                if action_counts[identifier] >= self.threshold:
-                    logger.debug(
-                        f"LoopDetector.is_stuck: True (action '{identifier}' repeated {action_counts[identifier]}x)"
-                    )
-                    return True
+    def __detect_oscillation(self) -> bool:
+        """
+        Detect bouncing between 2 or 3 screens.
+        """
 
-        logger.debug("LoopDetector.is_stuck: False (no repeats above threshold)")
+        if len(self.__recent_hashes) < 4:
+            return False
+
+        hashes = list(self.__recent_hashes)
+
+        # Pattern: A-B-A-B
+        if len(hashes) >= 4 and hashes[-1] == hashes[-3] and hashes[-2] == hashes[-4]:
+            logger.warning("LoopDetector: Oscillation detected (A-B-A-B)")
+            return True
+
+        # Pattern: A-B-C-A
+        if (
+            len(hashes) >= 6
+            and hashes[-1] == hashes[-4]
+            and hashes[-2] == hashes[-5]
+            and hashes[-3] == hashes[-6]
+        ):
+            logger.warning("LoopDetector: Oscillation detected (A-B-C-A-B-C)")
+            return True
+
+        return False
+
+    def __detect_scroll_stall(self) -> bool:
+        """
+        Detect repetitive scrolling that yields minimal visual progress.
+        """
+
+        recent_types = list(self.__recent_types)
+        scroll_indices = [
+            i
+            for i, t in enumerate(recent_types)
+            if any(s in t for s in ["scroll", "swipe", "flick"])
+        ]
+
+        # Need at least 3 scrolls to confirm a stall
+        if len(scroll_indices) < 3:
+            return False
+
+        # If last 3 actions were all scrolls
+        last_three_indices = scroll_indices[-3:]
+        if last_three_indices[2] - last_three_indices[0] == 2:  # Consecutive scrolls
+            first_hash = self.__recent_hashes[last_three_indices[0]]
+            last_hash = self.__recent_hashes[last_three_indices[2]]
+
+            # Tight distance check: if 3 scrolls didn't move the pHash significantly
+            distance = ScreenState.hamming_distance(first_hash, last_hash)
+            if distance < 8:
+                logger.warning(f"LoopDetector: Scroll stall detected (dist={distance})")
+                return True
+
+        return False
+
+    def __detect_action_velocity_loop(self) -> bool:
+        """
+        Detect rapid-fire actions that fail to change the screen state.
+        """
+
+        if len(self.__recent_timestamps) < 3:
+            return False
+
+        times = list(self.__recent_timestamps)
+        # Average interval between last 3 actions
+        intervals = [times[i] - times[i - 1] for i in range(len(times) - 1, len(times) - 3, -1)]
+        avg_interval = sum(intervals) / len(intervals)
+
+        # If firing faster than 1.5s per action
+        if avg_interval < 1.5:
+            # Check if state is actually changing
+            recent_hashes = list(self.__recent_hashes)[-3:]
+            if len(set(recent_hashes)) == 1:
+                logger.warning(f"LoopDetector: Velocity loop detected (avg={avg_interval:.2f}s)")
+                return True
+
         return False
 
     def can_recover(self) -> bool:
@@ -162,6 +215,11 @@ class LoopDetector(BaseModel):
 
         self.__recent_screens.clear()
         self.__recent_actions.clear()
+
+        self.__recent_types.clear()
+        self.__recent_hashes.clear()
+        self.__recent_timestamps.clear()
+
         self.__recovery_attempts = 0
         logger.info(f"LoopDetector.reset: cleared {prev_size} screens")
 

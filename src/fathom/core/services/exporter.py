@@ -311,6 +311,7 @@ class ScriptExporter:
             action_type_val = ScriptExporter.__get_action_type(step=step)
             event_type = ScriptExporter.__get_event_type(step=step)
             condition = ScriptExporter.__get_condition(step=step)
+            target = ScriptExporter.__resolve_target(step=step)
 
             if action_type_val in ScriptExporter.__SWIPE_ACTIONS:
                 swipe_direction = action_type_val
@@ -341,8 +342,6 @@ class ScriptExporter:
                 lines.append(f"{label} until {next_target} is visible")
                 swipe_just_processed = True
                 continue
-
-            target = ScriptExporter.__resolve_target(step=step)
 
             # Smart Validation on screen change (Restored)
             if (
@@ -522,13 +521,21 @@ class ScriptExporter:
                 if last_target_usable and ScriptExporter.__is_intent_target(
                     target=last_target, intent=(intent or goal_state)
                 ):
-                    lines.append(f"Validate {last_target} is visible")
+                    val_line = f"Validate {last_target} is visible"
+                    if not lines or lines[-1].strip() != val_line:
+                        lines.append(val_line)
                 elif goal_label:
-                    lines.append(f"Validate {goal_label} is visible")
+                    val_line = f"Validate {goal_label} is visible"
+                    if not lines or lines[-1].strip() != val_line:
+                        lines.append(val_line)
                 elif last_target_usable:
-                    lines.append(f"Validate {last_target} is visible")
+                    val_line = f"Validate {last_target} is visible"
+                    if not lines or lines[-1].strip() != val_line:
+                        lines.append(val_line)
                 else:
-                    lines.append("Validate Goal State is visible")
+                    val_line = "Validate Goal State is visible"
+                    if not lines or lines[-1].strip() != val_line:
+                        lines.append(val_line)
 
         return "\n".join(lines) + "\n"
 

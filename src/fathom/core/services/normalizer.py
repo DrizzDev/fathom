@@ -50,7 +50,11 @@ class Normalizer:
         ):
             return "ad to finish"
 
-        if "splash" in rationale_lower or "load" in rationale_lower or "main interface" in rationale_lower:
+        if (
+            "splash" in rationale_lower
+            or "load" in rationale_lower
+            or "main interface" in rationale_lower
+        ):
             return "app to finish loading"
 
         return "screen to load"
@@ -81,8 +85,8 @@ class Normalizer:
 
     @staticmethod
     def action(
-        action_type: str, 
-        target: str, 
+        target: str,
+        action_type: str,
         text: Optional[str] = None,
         wait_duration: Optional[int | float] = None,
     ) -> str:
@@ -112,7 +116,9 @@ class Normalizer:
 
         if kind == "wait":
             if wait_duration is not None:
-                seconds = float(wait_duration) / 1000.0 if wait_duration > 100 else float(wait_duration)
+                seconds = (
+                    float(wait_duration) / 1000.0 if wait_duration > 100 else float(wait_duration)
+                )
                 return f"Wait for {seconds:g} seconds"
 
             if cleaned_target.lower() == "app to finish loading":

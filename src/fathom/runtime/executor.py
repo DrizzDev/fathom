@@ -214,9 +214,8 @@ class GraphExecutor:
             logger.info("Executor: Invalidating state for immediate realignment")
 
             # Clear planning and completion state in graph
-            # NOTE: We do NOT clear planned_step - let current action execute
-            # User guidance applies to NEXT planning cycle, not current action
             update_dict["plan"] = None
+            update_dict["planned_step"] = None
             update_dict["is_complete"] = False
             update_dict["should_retry"] = True
             update_dict["completion_reason"] = None

@@ -159,7 +159,13 @@ class PerceptionService:
             return ""
 
         class_name = str(node.get("class", node.tag)).split(".")[-1]
-        signature = f"{depth}:{class_name}#{resource_id}"
+
+        # Content-awareness: Include text and description to catch state changes
+        # Truncation prevents signature explosion while maintaining uniqueness
+        element_text = str(node.get("text", "")).strip()[:32]
+        element_desc = str(node.get("content-desc", "")).strip()[:32]
+
+        signature = f"{depth}:{class_name}#{resource_id}[{element_text}|{element_desc}]"
 
         child_signatures = []
 
