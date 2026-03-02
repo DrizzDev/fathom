@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from logging import getLogger
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Literal, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason
@@ -173,7 +173,10 @@ class StepPlanner:
             # If there's a valid physical action, we should execute it before finishing
             if action.action_type not in ("complete", "unknown", "wait"):
                 step = self.__build_step(
-                    action=action, step_number=state.step_count, capture=capture
+                    action=action,
+                    capture=capture,
+                    step_number=state.step_count,
+                    event_type=analysis.metadata.get("event_type"),
                 )
             else:
                 step = None
@@ -286,7 +289,11 @@ class StepPlanner:
         """
 
         step: Step = self.__build_step(
-            action=action, step_number=step_number, capture=capture, is_recovery=is_recovery
+            action=action,
+            capture=capture,
+            is_recovery=is_recovery,
+            step_number=step_number,
+            event_type=(metadata or {}).get("event_type"),
         )
 
         return PlanResult(
@@ -306,6 +313,7 @@ class StepPlanner:
         step_number: int,
         capture: ScreenCapture,
         is_recovery: bool = False,
+        event_type: Optional[str] = None,
     ) -> Step:
         """
         Helper to construct a Step object.
@@ -313,11 +321,20 @@ class StepPlanner:
 
         screen_hash: str = self.__compute_simple_hash(capture=capture)
 
+        validated_event_type: Literal["action", "validation"] | None = None
+
+        if event_type == "action":
+            validated_event_type = "action"
+
+        elif event_type == "validation":
+            validated_event_type = "validation"
+
         return Step(
             action=action,
             screen_hash=screen_hash,
             step_number=step_number,
             is_conditional=is_recovery,
+            event_type=validated_event_type,
             condition="recovery" if is_recovery else None,
         )
 

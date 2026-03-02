@@ -3,23 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional, Sequence, Union
 
+from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.steps import StepResult
-
-ORDINAL_MAP = {
-    "1st": "first",
-    "2nd": "second",
-    "3rd": "third",
-    "4th": "fourth",
-    "5th": "fifth",
-    "6th": "sixth",
-    "7th": "seventh",
-    "8th": "eighth",
-    "9th": "ninth",
-    "10th": "tenth",
-}
-
-NUMERIC_ORDINAL_RE = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b", re.IGNORECASE)
-GENERIC_TARGETS = frozenset({"element", "ui element", "none", "a visible item"})
 
 
 class ScriptExporter:
@@ -27,20 +12,61 @@ class ScriptExporter:
     Service for exporting execution history to natural language scripts.
     """
 
+    __ORDINAL_MAP = {
+        "1st": "first",
+        "2nd": "second",
+        "3rd": "third",
+        "4th": "fourth",
+        "5th": "fifth",
+        "6th": "sixth",
+        "7th": "seventh",
+        "8th": "eighth",
+        "9th": "ninth",
+        "10th": "tenth",
+    }
+
+    __NUMERIC_ORDINAL_RE = re.compile(pattern=r"\b(\d+)(?:st|nd|rd|th)\b", flags=re.IGNORECASE)
+    __GENERIC_TARGETS = frozenset({"element", "ui element", "none", "a visible item"})
+    __SWIPE_ACTIONS = {"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"}
+
+    __SCREEN_RE = re.compile(
+        pattern=r"(?:the\s+)?(\w+(?:\s+\w+)?)\s+(screen|page)\b",
+        flags=re.IGNORECASE,
+    )
+    __LABEL_STOP = frozenset(
+        {
+            "a",
+            "an",
+            "the",
+            "any",
+            "some",
+            "no",
+            "or",
+            "and",
+            "this",
+            "that",
+            "on",
+            "in",
+            "at",
+            "to",
+            "of",
+            "is",
+            "it",
+            "my",
+            "its",
+        }
+    )
+
+    __SCROLL_VERB_RE = re.compile(
+        pattern=r"(?:find|look(?:ing)?\s+for|search(?:ing)?\s+for)\s+(.+?)(?:\.|,\s|;|$)",
+        flags=re.IGNORECASE,
+    )
+    __PROPER_PHRASE_RE = re.compile(pattern=r"\b([A-Z][a-z]+(?:\s+[a-z]+)*(?:\s+[A-Z][a-z]+)+)")
+
     @staticmethod
     def __normalize_positional(target: str) -> str:
         """
         Standardize ordinal formatting in positional target descriptions.
-
-        Converts numeric ordinals (1st, 2nd, 3rd) to word ordinals
-        (first, second, third) and ensures a leading 'the' article
-        for consistency. Only transforms targets that look positional.
-
-        Examples:
-            'The 2nd card'            -> 'the second card'
-            '1st search result'       -> 'the first search result'
-            'Third item in the list'  -> 'the third item in the list'
-            'Submit button'           -> 'Submit button'  (unchanged)
         """
 
         if not target:
@@ -50,9 +76,9 @@ class ScriptExporter:
 
         def __replace_numeric(match: "re.Match[str]") -> str:
             full = match.group(0).lower()
-            return ORDINAL_MAP.get(full, full)
+            return ScriptExporter.__ORDINAL_MAP.get(full, full)
 
-        normalized = NUMERIC_ORDINAL_RE.sub(__replace_numeric, text)
+        normalized = ScriptExporter.__NUMERIC_ORDINAL_RE.sub(repl=__replace_numeric, string=text)
 
         word_ordinals = (
             "first",
@@ -66,19 +92,25 @@ class ScriptExporter:
             "ninth",
             "tenth",
         )
-        stripped = re.sub(r"^(?:the|a|an)\s+", "", normalized, flags=re.IGNORECASE).strip().lower()
+        stripped = (
+            re.sub(pattern=r"^(?:the|a|an)\s+", repl="", string=normalized, flags=re.IGNORECASE)
+            .strip()
+            .lower()
+        )
         is_positional = any(stripped.startswith(o) for o in word_ordinals)
 
         if not is_positional:
             return target
 
-        without_article = re.sub(r"^(?:the|a|an)\s+", "", normalized, flags=re.IGNORECASE).strip()
+        without_article = re.sub(
+            pattern=r"^(?:the|a|an)\s+", repl="", string=normalized, flags=re.IGNORECASE
+        ).strip()
         return f"the {without_article}"
 
     @staticmethod
     def __is_intent_target(target: str, intent: str) -> bool:
         """
-        Check if a target was mentioned or implied by the user's intent. Uses word overlap to handle fuzzy matches.
+        Check if a target was mentioned or implied by the user's intent.
         """
 
         if not target or not intent:
@@ -114,7 +146,6 @@ class ScriptExporter:
             "at",
         }
         meaningful = target_words - filler
-
         if not meaningful:
             return True
 
@@ -122,42 +153,10 @@ class ScriptExporter:
         overlap = meaningful & intent_words
         return len(overlap) >= len(meaningful) * 0.5
 
-    __SCREEN_RE = re.compile(
-        r"(?:the\s+)?(\w+(?:\s+\w+)?)\s+(screen|page)\b",
-        re.IGNORECASE,
-    )
-    __LABEL_STOP = frozenset(
-        {
-            "a",
-            "an",
-            "the",
-            "any",
-            "some",
-            "no",
-            "or",
-            "and",
-            "this",
-            "that",
-            "on",
-            "in",
-            "at",
-            "to",
-            "of",
-            "is",
-            "it",
-            "my",
-            "its",
-        }
-    )
-
     @staticmethod
     def __extract_goal_label(goal_state: str) -> str:
         """
         Derive a concise validation label from a potentially long intent.
-
-        Short strings (<=60 chars, no sentence-ending punctuation) are returned as-is.
-        Longer intent strings are scanned for a "screen/page" reference which is title-cased into a label like "Payment Screen".
-        Returns empty string when nothing useful can be extracted.
         """
 
         if not goal_state:
@@ -167,7 +166,7 @@ class ScriptExporter:
         if len(trimmed) <= 60 and "." not in trimmed:
             return trimmed
 
-        matches = ScriptExporter.__SCREEN_RE.findall(goal_state)
+        matches = ScriptExporter.__SCREEN_RE.findall(string=goal_state)
 
         for name, kind in reversed(matches):
             cleaned = name.strip()
@@ -182,26 +181,30 @@ class ScriptExporter:
     def __resolve_target(step: Union[StepResult, Dict[str, Any]]) -> str:
         """
         Resolve the description for a target.
-        Uses the pre-computed 'generalized_target' if available (dynamic/positional).
-        Otherwise uses the specific target text (stable). Normalizes positional ordinals for consistency.
         """
 
         if isinstance(step, StepResult):
             if step.generalized_target:
-                return ScriptExporter.__normalize_positional(step.generalized_target)
-
+                return ScriptExporter.__normalize_positional(target=step.generalized_target)
             target = step.step.action.natural_language_target or step.step.action.target
-
         else:
             if step.get("generalized_target"):
-                raw = str(step.get("generalized_target") or "")
-                return ScriptExporter.__normalize_positional(raw)
-
+                raw = str(object=step.get("generalized_target") or "")
+                return ScriptExporter.__normalize_positional(target=raw)
             target = step.get("natural_language_target") or step.get("target") or ""
 
         return target or "element"
 
-    __SWIPE_ACTIONS = {"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"}
+    @staticmethod
+    def __get_event_type(step: Union[StepResult, Dict[str, Any]]) -> str:
+        """
+        Extract semantic event type from a step.
+        """
+
+        if isinstance(step, StepResult):
+            return getattr(step.step, "event_type", "action") or "action"
+
+        return str(object=step.get("event_type", "action") or "action")
 
     @staticmethod
     def __get_action_type(step: Union[StepResult, Dict[str, Any]]) -> str:
@@ -212,17 +215,12 @@ class ScriptExporter:
         if isinstance(step, StepResult):
             return step.step.action.action_type.value
 
-        return str(step.get("action_type", "unknown"))
+        return str(object=step.get("action_type", "unknown"))
 
     @staticmethod
     def __swipe_direction_label(action_type: str) -> str:
         """
         Map a swipe action to its user-facing scroll/swipe label.
-
-        swipe_up   -> 'Scroll down'  (finger moves up = content scrolls down)
-        swipe_down -> 'Scroll up'
-        swipe_left -> 'Swipe left'
-        swipe_right -> 'Swipe right'
         """
 
         mapping = {
@@ -237,11 +235,11 @@ class ScriptExporter:
     @staticmethod
     def __get_activity(step: Union[StepResult, Dict[str, Any]]) -> str:
         """
-        Extract the activity string from a step (empty string if absent).
+        Extract the activity string from a step.
         """
 
         if isinstance(step, dict):
-            return str(step.get("activity") or "")
+            return str(object=step.get("activity") or "")
 
         return ""
 
@@ -252,25 +250,16 @@ class ScriptExporter:
     ) -> int:
         """
         Find the index of the first step that runs inside the target package.
-
-        Returns the index of the first step whose ``activity`` starts with
-        *package_name*, or ``0`` if the app is already active from the start
-        (or activity data is unavailable).  All steps before this index are
-        considered "opening the app" actions and should be suppressed in
-        favour of a single ``OPEN_APP`` directive.
-
-        A safety cap of 10 prevents suppressing large portions of the history
-        if something unexpected happened.
         """
 
-        __MAX_LAUNCH_STEPS = 10
+        max_launch_steps = 10
         prefix = package_name + "/"
 
-        for j, step in enumerate(steps):
-            if j > __MAX_LAUNCH_STEPS:
+        for j, step in enumerate(iterable=steps):
+            if j > max_launch_steps:
                 return 0
 
-            activity = ScriptExporter.__get_activity(step)
+            activity = ScriptExporter.__get_activity(step=step)
             if activity.startswith(prefix) or activity == package_name:
                 return j
 
@@ -279,75 +268,94 @@ class ScriptExporter:
     @staticmethod
     def export(
         step_results: Sequence[Union[StepResult, Dict[str, Any]]],
+        *,
+        intent: str = "",
         goal_state: str = "",
         package_name: str = "",
     ) -> str:
         """
         Export steps to a natural language test script.
-
-        Consecutive swipe actions are collapsed into a single
-        'Scroll down until X is visible' instruction where X is the
-        target of the next non-swipe action.
-
-        Args:
-            step_results: List of executed step results.
-            goal_state: Optional specific goal state for final validation.
-            package_name: Android package name. When set, all steps that
-                precede the first in-app activity are suppressed and replaced
-                with a single ``OPEN_APP <package_name>`` directive.
         """
 
         lines: list[str] = []
 
+        # Filter recovery steps
         filtered_results = []
         for step in step_results:
-            if ScriptExporter.__get_condition(step) == "recovery":
+            if ScriptExporter.__get_condition(step=step) == "recovery":
                 continue
             filtered_results.append(step)
+
         step_results = filtered_results
 
         n = len(step_results)
         i = 0
         launch_boundary = 0
+        swipe_just_processed = False
+        validation_subjects = ScriptExporter.__extract_validation_subjects(
+            intent=(intent or goal_state)
+        )
+        validation_subject_index = 0
+        emitted_validation_lines: set[str] = set()
 
         if package_name:
-            launch_boundary = ScriptExporter.__find_app_launch_boundary(step_results, package_name)
+            launch_boundary = ScriptExporter.__find_app_launch_boundary(
+                steps=step_results, package_name=package_name
+            )
             if launch_boundary > 0:
                 lines.append(f"OPEN_APP {package_name}")
                 i = launch_boundary
 
         while i < n:
             step = step_results[i]
-            action_type_val = ScriptExporter.__get_action_type(step)
+            action_type_val = ScriptExporter.__get_action_type(step=step)
+            event_type = ScriptExporter.__get_event_type(step=step)
+            condition = ScriptExporter.__get_condition(step=step)
 
             if action_type_val in ScriptExporter.__SWIPE_ACTIONS:
                 swipe_direction = action_type_val
                 swipe_start = i
+                j = i + 1
                 while (
-                    i < n
-                    and ScriptExporter.__get_action_type(step_results[i])
-                    in ScriptExporter.__SWIPE_ACTIONS
+                    j < n
+                    and ScriptExporter.__get_action_type(step=step_results[j]) == swipe_direction
                 ):
-                    i += 1
+                    j += 1
+                i = j
 
                 if i < n:
-                    next_target = ScriptExporter.__resolve_target(step_results[i])
+                    next_target = ScriptExporter.__resolve_target(step=step_results[i])
                 else:
+                    # Advanced Scroll Inference (Restored)
                     next_target = (
-                        ScriptExporter.__infer_scroll_target(step_results, swipe_start, i)
-                        or ScriptExporter.__extract_goal_label(goal_state)
+                        ScriptExporter.__infer_scroll_target(
+                            steps=step_results, start=swipe_start, end=i
+                        )
+                        or ScriptExporter.__extract_goal_label(goal_state=(intent or goal_state))
+                        or intent
+                        or goal_state
                         or "the target"
                     )
 
-                label = ScriptExporter.__swipe_direction_label(swipe_direction)
+                label = ScriptExporter.__swipe_direction_label(action_type=swipe_direction)
                 lines.append(f"{label} until {next_target} is visible")
+                swipe_just_processed = True
                 continue
 
-            target = ScriptExporter.__resolve_target(step)
+            target = ScriptExporter.__resolve_target(step=step)
 
-            if i > 0 and i > launch_boundary and action_type_val != "wait":
+            # Smart Validation on screen change (Restored)
+            if (
+                i > 0
+                and i > launch_boundary
+                and action_type_val != "wait"
+                and not swipe_just_processed
+                and event_type != "validation"
+                and not condition
+            ):
                 prev = step_results[i - 1]
-                prev_action_type = ScriptExporter.__get_action_type(prev)
+                prev_action_type = ScriptExporter.__get_action_type(step=prev)
+                prev_condition = ScriptExporter.__get_condition(step=prev)
                 prev_changed = (
                     prev.screen_changed
                     if isinstance(prev, StepResult)
@@ -356,32 +364,134 @@ class ScriptExporter:
                 if (
                     prev_changed
                     and prev_action_type not in ("wait", *ScriptExporter.__SWIPE_ACTIONS)
-                    and target.lower() not in GENERIC_TARGETS
+                    and target.lower() not in ScriptExporter.__GENERIC_TARGETS
                 ):
                     val_line = f"Validate {target} is visible"
-                    prev_condition = ScriptExporter.__get_condition(prev)
                     if prev_condition:
-                        val_line = f"IF {prev_condition} {{ {val_line} }}"
-                    lines.append(val_line)
+                        lines.append(f"IF {prev_condition}")
+                        lines.append("{")
+                        lines.append(f"    {val_line}")
+                        lines.append("}")
+                    else:
+                        lines.append(val_line)
 
-            condition = ScriptExporter.__get_condition(step)
+            swipe_just_processed = False
 
             if isinstance(step, StepResult):
                 action = step.step.action
                 text = action.text
                 rationale = action.rationale
+                wait_duration = action.wait_duration
             else:
                 text = step.get("text")
-                rationale = str(step.get("rationale", ""))
+                rationale = str(object=step.get("rationale", ""))
+                wait_duration = step.get("wait_duration")
 
-            if action_type_val == "wait" and target.lower() in GENERIC_TARGETS:
-                target = ScriptExporter.__infer_wait_subject(rationale)
+            if action_type_val == "wait" and target.lower() in ScriptExporter.__GENERIC_TARGETS:
+                target = ScriptExporter.__infer_wait_subject(rationale=rationale)
 
-            description = ScriptExporter.__build_description(action_type_val, target, text)
+            description = Normalizer.action(
+                action_type=action_type_val, target=target, text=text, wait_duration=wait_duration
+            )
+
+            # Semantic Validation Handling (Integrated)
+            if event_type == "validation":
+                effective_target = target
+                is_system_validation = ScriptExporter.__is_system_validation(
+                    target=target, rationale=rationale, condition=condition
+                )
+                should_use_intent_subject = (
+                    bool(validation_subjects)
+                    and not is_system_validation
+                    and validation_subject_index < len(validation_subjects)
+                )
+                if should_use_intent_subject:
+                    effective_target = validation_subjects[
+                        min(validation_subject_index, len(validation_subjects) - 1)
+                    ]
+                    validation_subject_index += 1
+                validation_condition = ScriptExporter.__infer_validation_condition(
+                    condition=condition,
+                    action_type=action_type_val,
+                    target=effective_target,
+                    rationale=rationale,
+                )
+                if not validation_condition and i > 0 and not should_use_intent_subject:
+                    prev = step_results[i - 1]
+                    prev_condition = ScriptExporter.__get_condition(step=prev)
+                    prev_action_type = ScriptExporter.__get_action_type(step=prev)
+                    if prev_condition and prev_action_type == "wait":
+                        validation_condition = prev_condition
+
+                validation_line = Normalizer.validation(
+                    target=effective_target,
+                    explicit=should_use_intent_subject,
+                )
+
+                if validation_condition and i + 1 < n:
+                    next_step = step_results[i + 1]
+                    next_condition = ScriptExporter.__get_condition(step=next_step)
+                    next_target = ScriptExporter.__resolve_target(step=next_step)
+                    next_event_type = ScriptExporter.__get_event_type(step=next_step)
+                    if (
+                        next_event_type != "validation"
+                        and next_condition == validation_condition
+                        and next_target.strip().lower() == target.strip().lower()
+                    ):
+                        i += 1
+                        continue
+                if validation_line in emitted_validation_lines:
+                    i += 1
+                    continue
+                if validation_condition:
+                    merged_into_previous_wait_block = False
+                    if i > 0:
+                        prev = step_results[i - 1]
+                        prev_action_type = ScriptExporter.__get_action_type(step=prev)
+                        prev_condition = ScriptExporter.__get_condition(step=prev)
+                        if (
+                            prev_action_type == "wait"
+                            and prev_condition == validation_condition
+                            and len(lines) >= 4
+                            and lines[-4] == f"IF {validation_condition}"
+                            and lines[-3] == "{"
+                            and lines[-1] == "}"
+                        ):
+                            lines.pop()
+                            lines.append(f"    {validation_line}")
+                            lines.append("}")
+                            merged_into_previous_wait_block = True
+                    if merged_into_previous_wait_block:
+                        emitted_validation_lines.add(validation_line)
+                        i += 1
+                        continue
+                    lines.append(f"IF {validation_condition}")
+                    lines.append("{")
+                    lines.append(f"    {validation_line}")
+                    lines.append("}")
+                else:
+                    lines.append(validation_line)
+                emitted_validation_lines.add(validation_line)
+                i += 1
+                continue
 
             if condition:
-                lines.append(f"IF {condition} {{")
-                if target.lower() not in GENERIC_TARGETS and action_type_val != "wait":
+                lines.append(f"IF {condition}")
+                lines.append("{")
+                prev_is_same_target_validation = False
+                if i > 0:
+                    prev = step_results[i - 1]
+                    prev_event_type = ScriptExporter.__get_event_type(step=prev)
+                    prev_target = ScriptExporter.__resolve_target(step=prev)
+                    prev_is_same_target_validation = (
+                        prev_event_type == "validation"
+                        and prev_target.strip().lower() == target.strip().lower()
+                    )
+                if (
+                    target.lower() not in ScriptExporter.__GENERIC_TARGETS
+                    and action_type_val != "wait"
+                    and not prev_is_same_target_validation
+                ):
                     lines.append(f"    Validate {target} is visible")
                 lines.append(f"    {description}")
                 lines.append("}")
@@ -389,17 +499,28 @@ class ScriptExporter:
                 lines.append(description)
             i += 1
 
+        # Final Goal Validation Logic (Restored)
         if step_results:
-            last_action_type = ScriptExporter.__get_action_type(step_results[-1])
+            last_action_type = ScriptExporter.__get_action_type(step=step_results[-1])
 
             if last_action_type not in ("complete", "verify_goal_completion"):
-                last_target = ScriptExporter.__resolve_target(step_results[-1])
-                last_target_usable = last_target and last_target.lower() not in GENERIC_TARGETS
+                if validation_subjects:
+                    final_validation_line = f"Validate that {validation_subjects[-1]}"
+                    if final_validation_line not in emitted_validation_lines and (
+                        not lines or lines[-1].strip() != final_validation_line
+                    ):
+                        lines.append(final_validation_line)
+                        emitted_validation_lines.add(final_validation_line)
+                    return "\n".join(lines) + "\n"
 
-                goal_label = ScriptExporter.__extract_goal_label(goal_state)
+                goal_label = ScriptExporter.__extract_goal_label(goal_state=(intent or goal_state))
+                last_target = ScriptExporter.__resolve_target(step=step_results[-1])
+                last_target_usable = (
+                    last_target and last_target.lower() not in ScriptExporter.__GENERIC_TARGETS
+                )
 
                 if last_target_usable and ScriptExporter.__is_intent_target(
-                    last_target, goal_state
+                    target=last_target, intent=(intent or goal_state)
                 ):
                     lines.append(f"Validate {last_target} is visible")
                 elif goal_label:
@@ -412,37 +533,52 @@ class ScriptExporter:
         return "\n".join(lines) + "\n"
 
     @staticmethod
-    def __build_description(action_type: str, target: str, text: Optional[str] = None) -> str:
-        """Build a human-readable action description."""
-        if action_type == "tap":
-            return f"Tap on {target}"
-        elif action_type == "type":
-            return f"Type '{text}' into {target}"
-        elif "swipe" in action_type:
-            direction = action_type.split("_")[-1] if "_" in action_type else "content"
-            return f"Swipe {direction} on {target}"
-        elif action_type in ("back", "press_back"):
-            return "Press back button"
-        elif action_type in ("home", "press_home"):
-            return "Press home button"
-        elif action_type == "enter":
-            return "Press enter"
-        elif action_type == "wait":
-            return f"Wait for {target}"
-        elif action_type == "scroll":
-            return f"Scroll until you see {target}"
-        elif action_type == "long_press":
-            return f"Long press on {target}"
-        elif action_type == "complete":
-            return f"Validate {target} (Goal complete)"
-        else:
-            return f"{action_type.replace('_', ' ').capitalize()} on {target}"
+    def __is_system_validation(
+        *, target: str, rationale: Optional[str], condition: Optional[str]
+    ) -> bool:
+        """Detect transient/blocker validations that should not consume intent subjects."""
 
-    __SCROLL_VERB_RE = re.compile(
-        r"(?:find|look(?:ing)?\s+for|search(?:ing)?\s+for)\s+(.+?)(?:\.|,\s|;|$)",
-        re.IGNORECASE,
-    )
-    __PROPER_PHRASE_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[a-z]+)*(?:\s+[A-Z][a-z]+)+)")
+        signal = " ".join([target or "", rationale or "", condition or ""]).lower()
+        system_terms = (
+            "overlay",
+            "popup",
+            "pop-up",
+            "dialog",
+            "permission",
+            "consent",
+            "cookie",
+            "splash",
+            "loading",
+            "spinner",
+            "interstitial",
+            "close button",
+            "got it",
+            "blocker",
+            "transient",
+        )
+        return any(term in signal for term in system_terms)
+
+    @staticmethod
+    def __extract_validation_subjects(intent: str) -> list[str]:
+        """
+        Extract all user-requested validation subjects from intent text.
+        """
+
+        if not intent:
+            return []
+
+        matches = re.finditer(
+            pattern=r"\b(?:validate|verify|check|confirm)(?:\s+that)?\s+(.+?)(?=(?:,|\bthen\b|\band\s+(?:validate|verify|check|confirm)\b|$))",
+            string=intent,
+            flags=re.IGNORECASE,
+        )
+        subjects: list[str] = []
+        for match in matches:
+            subject = Normalizer.clean(text=match.group(1).strip(" .,:;"))
+            if subject:
+                subjects.append(subject)
+
+        return subjects
 
     @staticmethod
     def __infer_scroll_target(
@@ -450,57 +586,81 @@ class ScriptExporter:
         start: int,
         end: int,
     ) -> str:
-        """Infer what the user was scrolling to find from swipe rationales.
-
-        Uses a two-pass extraction: first isolates the clause after
-        "find/look for/search for", then extracts a proper-noun phrase
-        (e.g. "Mango flavored Mogu Mogu") from it.
         """
+        Infer what the user was scrolling to find from swipe rationales.
+        """
+
         for j in range(start, min(end, start + 5)):
             step = steps[j]
             if isinstance(step, StepResult):
                 rationale = step.step.action.rationale or ""
             else:
-                rationale = str(step.get("rationale") or "")
+                rationale = str(object=step.get("rationale") or "")
             if not rationale:
                 continue
-            verb_match = ScriptExporter.__SCROLL_VERB_RE.search(rationale)
+            verb_match = ScriptExporter.__SCROLL_VERB_RE.search(string=rationale)
             if not verb_match:
                 continue
             clause = verb_match.group(1)
-            product_match = ScriptExporter.__PROPER_PHRASE_RE.search(clause)
+            product_match = ScriptExporter.__PROPER_PHRASE_RE.search(string=clause)
             if product_match:
                 return product_match.group(1).strip()
         return ""
 
     @staticmethod
     def __infer_wait_subject(rationale: Optional[str]) -> str:
-        """Derive a human-readable wait subject from the step rationale.
-
-        Used when the VLM produced a generic target like "UI Element" for
-        a wait action.  Returns a concise phrase suitable for both the IF
-        condition and the Wait description.
         """
-        if not rationale:
-            return "screen to load"
+        Derive a human-readable wait subject from the step rationale.
+        """
 
-        lower = str(rationale).lower()
+        return Normalizer.wait_subject(rationale=rationale) or "screen to load"
 
-        if "ad" in lower and ("play" in lower or "finish" in lower or "skip" in lower):
-            return "ad to finish"
+    @staticmethod
+    def __infer_validation_condition(
+        *,
+        target: str,
+        action_type: str,
+        rationale: Optional[str],
+        condition: Optional[str],
+    ) -> Optional[str]:
+        """
+        Infer IF conditions for validation events.
+        """
 
-        if "splash" in lower or "load" in lower or "main interface" in lower:
-            return "app to finish loading"
+        lower = str(object=rationale or "").lower()
+        blocker_terms = ("permission", "cookie", "consent", "popup", "dialog", "blocker")
+        transient_terms = (
+            "loading",
+            "spinner",
+            "splash",
+            "interstitial",
+            "ad",
+            "please wait",
+        )
 
-        return "screen to load"
+        if any(term in lower for term in blocker_terms):
+            return "Blocker prompt is visible"
+
+        if any(term in lower for term in transient_terms):
+            return "Transient screen is visible"
+
+        if condition:
+            return condition
+
+        if action_type == "wait":
+            if target.lower() in ScriptExporter.__GENERIC_TARGETS:
+                return f"{ScriptExporter.__infer_wait_subject(rationale=rationale)} is visible"
+
+            return f"{target} is visible"
+
+        return None
 
     @staticmethod
     def __get_condition(step: Union[StepResult, Dict[str, Any]]) -> Optional[str]:
         """
         Get the condition for a step, inferring from rationale if needed.
-        Uses resolved (generalized) target for wait conditions to avoid
-        generic fallbacks like "UI Element".
         """
+
         condition: Optional[str] = None
         rationale: Optional[str] = None
         action_type: str = "wait"
@@ -509,15 +669,26 @@ class ScriptExporter:
             condition = getattr(step.step, "condition", None) or getattr(
                 step.step.action, "condition", None
             )
-            rationale = step.step.action.rationale
+            rationale = Normalizer.clean(text=step.step.action.rationale)
             action_type = step.step.action.action_type.value.lower()
         else:
-            condition = step.get("condition")
-            rationale = step.get("rationale")
-            action_type = str(step.get("action_type", "wait")).lower()
+            condition = Normalizer.clean(text=step.get("condition"))
+            rationale = Normalizer.clean(text=step.get("rationale"))
+            action_type = str(object=step.get("action_type", "wait")).lower()
 
         if not condition and rationale:
-            lower_rationale = str(rationale).lower()
+            lower_rationale = str(object=rationale).lower()
+            if (
+                "overlay" in lower_rationale
+                or "popup" in lower_rationale
+                or "pop-up" in lower_rationale
+            ) and (
+                "dismiss" in lower_rationale
+                or "close" in lower_rationale
+                or "skip" in lower_rationale
+                or "got it" in lower_rationale
+            ):
+                condition = "Promotional overlay is visible"
             if "timeout" in lower_rationale:
                 condition = "Timeout error is displayed"
             elif (
@@ -528,11 +699,21 @@ class ScriptExporter:
                 condition = "Error message is displayed"
 
         if action_type == "wait" and not condition:
-            resolved = ScriptExporter.__resolve_target(step)
-            if resolved.lower() in GENERIC_TARGETS:
-                subject = ScriptExporter.__infer_wait_subject(rationale)
-                condition = f"{subject} is visible"
+            resolved = ScriptExporter.__resolve_target(step=step)
+            if resolved.lower() in ScriptExporter.__GENERIC_TARGETS:
+                subject = ScriptExporter.__infer_wait_subject(rationale=rationale)
+                if subject == "app to finish loading":
+                    condition = "the app is still loading"
+                else:
+                    condition = f"{subject} is visible"
             else:
-                condition = f"{resolved} is visible"
+                resolved_lower = resolved.lower()
+                if "search result" in resolved_lower or "results" in resolved_lower:
+                    condition = "search results are still loading"
+                else:
+                    condition = f"{resolved} is visible"
+
+        if action_type == "wait":
+            condition = Normalizer.wait_condition(condition=condition, rationale=rationale)
 
         return condition

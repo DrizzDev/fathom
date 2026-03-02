@@ -40,6 +40,7 @@ class ActionType(StrEnum):
 
     SCROLL = "scroll"
     COMPLETE = "complete"
+    VALIDATE = "validate"
     LONG_PRESS = "long_press"
     SAVE_MEMORY = "save_memory"
     RETRIEVE_MEMORY = "retrieve_memory"

@@ -119,7 +119,12 @@ class ActionExecutor:
         )
 
         # Handle non-interactive actions immediately
-        if action.action_type == ActionType.WAIT:
+        if action.action_type in (
+            ActionType.WAIT,
+            ActionType.VALIDATE,
+            ActionType.SAVE_MEMORY,
+            ActionType.RETRIEVE_MEMORY,
+        ):
             await asyncio.sleep(delay=float(action.wait_duration or 1.0))
             return (
                 ExecutionResult(success=True, duration=int((time.time() - start_time) * 1000)),

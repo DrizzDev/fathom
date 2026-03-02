@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from logging import getLogger
-from typing import Any, Optional
+from typing import Any, Dict, Literal, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.core.exceptions import VisionError
@@ -109,17 +109,19 @@ class ToolResponseParser:
 
         reason = str(arguments.get("assistant_message", ""))
         completed = bool(arguments.get("goal_completed", False))
+        screen = str(arguments.get("current_screen", "Goal State"))
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
                 rationale=reason,
-                target="Goal Verification",
-                action_type=ActionType.COMPLETE if completed else ActionType.WAIT,
+                target=screen,
+                action_type=ActionType.COMPLETE if completed else ActionType.VALIDATE,
             ),
             alternatives=[],
             reasoning=reason,
             is_goal_complete=completed,
+            metadata={"event_type": "validation"},
             screen_description="Goal verification step",
         )
 
@@ -130,17 +132,19 @@ class ToolResponseParser:
 
         evidence = str(arguments.get("evidence", ""))
         reason = str(arguments.get("assistant_message", ""))
+        condition = str(arguments.get("condition_to_verify", "State Validation"))
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
-                target="State Validation",
-                action_type=ActionType.WAIT,
+                target=condition,
+                action_type=ActionType.VALIDATE,
                 rationale=f"{reason} | Evidence: {evidence}",
             ),
             alternatives=[],
             reasoning=reason,
             is_goal_complete=False,
+            metadata={"event_type": "validation"},
             screen_description="State validation step",
         )
 
@@ -187,10 +191,30 @@ class ToolResponseParser:
         )
         target_name = data.get("target_name") or data.get("element_name") or "UI Element"
 
+        condition_raw = data.get("condition")
+        condition = str(condition_raw).strip() if condition_raw else None
+
+        raw_target_type = (data.get("target_type") or "").strip().lower()
+        target_type: Optional[Literal["stable", "positional", "dynamic"]] = (
+            cast("Literal['stable', 'positional', 'dynamic']", raw_target_type)
+            if raw_target_type in ("stable", "positional", "dynamic")
+            else None
+        )
+
+        script_target_raw = data.get("script_target")
+        script_target = (
+            str(script_target_raw).strip()
+            if script_target_raw and str(script_target_raw).strip()
+            else None
+        )
+
         action = Action(
             bounds=bounds,
             target=target_name,
+            condition=condition,
             action_type=action_type,
+            target_type=target_type,
+            script_target=script_target,
             wait_duration=wait_duration,
             text=str(text) if text else None,
             validation_reason=validation_reason,
@@ -202,10 +226,15 @@ class ToolResponseParser:
             label_id=str(data.get("label_id")) if data.get("label_id") else None,
         )
 
+        metadata_dict: Dict[str, Any] = {}
+        if action_type == ActionType.VALIDATE:
+            metadata_dict["event_type"] = "validation"
+
         return AnalysisResult(
             action=action,
             alternatives=[],
             reasoning=message,
+            metadata=metadata_dict,
             is_goal_complete=completed,
             screen_description=message or action.rationale or "Analyzing screen...",
         )
