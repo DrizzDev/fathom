@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
+from fathom.constants.state import CompletionReason
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import ActionHistory, InteractionTracker, LoopDetector
@@ -32,6 +33,7 @@ class AgentState:
         max_steps: int = 20,
         loop_threshold: int = 3,
         context_window: int = 10,
+        realignment_budget: int = 3,
     ) -> None:
         """
         Initialize agent state.
@@ -41,11 +43,13 @@ class AgentState:
             max_steps: Maximum steps before giving up.
             loop_threshold: Screen repetitions before stuck detection.
             context_window: Number of recent items to keep in context.
+            realignment_budget: Maximum human interventions allowed for loops.
         """
 
         self.__step_count = 0
         self.__intent = intent
         self.__max_steps = max_steps
+        self.__realignment_budget = realignment_budget
 
         self.__loop_detector = LoopDetector(
             threshold=loop_threshold,
@@ -67,6 +71,9 @@ class AgentState:
         self.__last_error: Optional[str] = None
         self.__last_action_type: Optional[str] = None
         self.__last_action_description: Optional[str] = None
+
+        # HITL Tracking
+        self.__realignment_count = 0
 
     @property
     def intent(self) -> str:
@@ -108,11 +115,12 @@ class AgentState:
 
         return self.__loop_detector.is_stuck()
 
-    def reset_stuck_state(self) -> None:
+    def record_hitl_intervention(self) -> None:
         """
-        Clear the stuck loop state after human intervention.
+        Atomic update when user provides guidance to break a loop.
         """
 
+        self.__realignment_count += 1
         self.__loop_detector.reset()
 
     @property
@@ -127,7 +135,17 @@ class AgentState:
         if self.__step_count >= self.__max_steps:
             return False
 
-        return not (self.is_stuck and not self.__loop_detector.can_recover())
+        # If stuck, evaluate based on recovery mode
+        if self.is_stuck:
+            # We fail if BOTH budgets are exhausted or relevant budget is exhausted.
+            # In interactive mode, we only care about realignment budget.
+            if self.__realignment_count >= self.__realignment_budget:
+                return False
+
+            # Autonomous budget (used in non-interactive mode)
+            return bool(self.__loop_detector.can_recover())
+
+        return True
 
     @property
     def current_screen(self) -> Optional[ScreenState]:
@@ -167,13 +185,15 @@ class AgentState:
         self.__current_screen = screen
 
         # Fuzzy matching for seen screens
-        is_new_screen = self.__is_new_screen(screen)
+        is_new_screen = self.__is_new_screen(screen=screen)
 
         logger.debug(
-            f"[H2] Screen update classification | "
-            f"is_new={is_new_screen} seen_count={len(self.__seen_screens)} "
-            f"current={screen.activity} hash={screen.activity_hash} "
-            f"prev={previous_screen.activity if previous_screen else None}"
+            msg=(
+                f"[H2] Screen update classification | "
+                f"is_new={is_new_screen} seen_count={len(self.__seen_screens)} "
+                f"current={screen.activity} hash={screen.activity_hash} "
+                f"prev={previous_screen.activity if previous_screen else None}"
+            )
         )
 
         if is_new_screen:
@@ -185,8 +205,10 @@ class AgentState:
             # Activity changed but screen was seen before (e.g., revisiting a page via
             # a different navigation path). This is progress, not a loop.
             logger.debug(
-                f"Activity changed: {previous_screen.activity} -> {screen.activity}. "
-                f"Resetting loop detector."
+                (
+                    f"Activity changed: {previous_screen.activity} -> {screen.activity}. "
+                    f"Resetting loop detector."
+                )
             )
             self.__loop_detector.reset()
         else:
@@ -241,13 +263,15 @@ class AgentState:
         self.__last_action_description = result.step.action.to_description()
 
         logger.debug(
-            f"[H7] Recorded executed action | "
-            f"step={self.__step_count} action={result.step.action.to_description()} "
-            f"type={result.step.action.action_type.value} success={result.success}"
+            (
+                f"[H7] Recorded executed action | "
+                f"step={self.__step_count} action={result.step.action.to_description()} "
+                f"type={result.step.action.action_type.value} success={result.success}"
+            )
         )
 
         if result.step.action.action_type == ActionType.COMPLETE and result.success:
-            self.mark_complete(reason="Goal achieved via COMPLETE action")
+            self.mark_complete(reason=CompletionReason.SUCCESS.value)
 
     def mark_complete(self, reason: str) -> None:
         """
@@ -353,7 +377,9 @@ class AgentState:
             "max_steps": self.__max_steps,
             "step_count": self.__step_count,
             "is_complete": self.__is_complete,
+            "realignment_count": self.__realignment_count,
             "completion_reason": self.__completion_reason,
+            "realignment_budget": self.__realignment_budget,
             "action_stats": self.__action_history.get_stats(),
             "action_context": self.__action_history.get_context(),
             "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
@@ -365,6 +391,8 @@ class AgentState:
         is_complete: bool,
         completion_reason: Optional[str],
         seen_screens: List[Dict[str, Any]],
+        *,
+        realignment_count: int = 0,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -373,6 +401,7 @@ class AgentState:
         self.__step_count = step_count
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
+        self.__realignment_count = realignment_count
 
         for data in seen_screens:
             self.__seen_screens.append(ScreenState(**data))
@@ -390,14 +419,28 @@ class AgentState:
         """
 
         max_steps_value = data.get("max_steps")
-        max_steps = int(max_steps_value) if isinstance(max_steps_value, (int, float)) else 20
+        max_steps = (
+            int(cast("int", max_steps_value)) if isinstance(max_steps_value, (int, float)) else 20
+        )
 
-        state = cls(intent=str(data["intent"]), max_steps=max_steps)
+        realignment_budget_value = data.get("realignment_budget")
+        realignment_budget = (
+            int(cast("int", realignment_budget_value))
+            if isinstance(realignment_budget_value, (int, float))
+            else 3
+        )
+
+        state = cls(
+            intent=str(data["intent"]), max_steps=max_steps, realignment_budget=realignment_budget
+        )
 
         step_count_value = data.get("step_count")
-        step_count = int(step_count_value) if isinstance(step_count_value, (int, float)) else 0
+        step_count = (
+            int(cast("int", step_count_value)) if isinstance(step_count_value, (int, float)) else 0
+        )
 
         is_complete = bool(data.get("is_complete", False))
+        realignment_count = int(cast("int", data.get("realignment_count", 0)))
 
         reason_value = data.get("completion_reason")
         completion_reason = str(reason_value) if reason_value else None
@@ -413,6 +456,7 @@ class AgentState:
             is_complete=is_complete,
             seen_screens=seen_screens,
             completion_reason=completion_reason,
+            realignment_count=realignment_count,
         )
 
         return state

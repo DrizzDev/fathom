@@ -52,8 +52,8 @@ class GraphContext:
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
         *,
-        max_steps: int,
         use_xml: bool,
+        max_steps: int,
         workflow_id: str,
         package_name: str,
         ux: Optional[UXService] = None,
@@ -104,7 +104,11 @@ class GraphContext:
         self.__auditor = auditor or AuditService()
 
         self.__reasoner = reasoner or Reasoner(intent=intent)
-        self.__agent_state = agent_state or AgentState(intent=intent, max_steps=max_steps)
+        self.__agent_state = agent_state or AgentState(
+            intent=intent,
+            max_steps=max_steps,
+            realignment_budget=self.__realignment.budget,
+        )
 
         self.__signal = signal
         self.__hitl = HITLService(signal=signal, telemetry=telemetry)

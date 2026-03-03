@@ -497,12 +497,9 @@ class IntentNodeProvider:
                 guidance=user_response, step=current_step
             )
 
-            # ASK_USER is an LLM action. We reset completion, but we DO NOT reset stuck state.
-            # If the user's guidance doesn't lead to a new screen, the loop detector should correctly catch it.
-            self.__context.agent_state.reset_completion()
-            logger.info(
-                "[NODE: EXECUTE] Completion state reset after ASK_USER. Loop history preserved."
-            )
+            # Atomic update of budget and loop detector for HITL
+            self.__context.agent_state.record_hitl_intervention()
+            logger.info(msg="[NODE: EXECUTE] HITL intervention recorded. Loop history reset.")
 
             from fathom.schemas.results import ExecutionResult
 

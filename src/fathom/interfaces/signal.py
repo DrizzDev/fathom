@@ -41,10 +41,27 @@ class SignalPort(ABC):
     @abstractmethod
     async def get_injected_context(self) -> Optional[str]:
         """
+        DEPRECATED: Use peek_next_context and consume_context.
         Retrieve and consume injected user context.
 
         Returns:
             The context string if available, else None.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def peek_next_context(self) -> Optional[str]:
+        """
+        Peek at the next context without consuming it.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def consume_context(self) -> None:
+        """
+        Explicitly consume the next context.
         """
 
         raise NotImplementedError

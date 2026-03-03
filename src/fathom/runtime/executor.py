@@ -180,9 +180,25 @@ class GraphExecutor:
             type=FathomEvent.WORKFLOW_RESUMED,
         )
 
-        current_step = self.__context.agent_state.step_count
-        if injected := await self.__context.hitl.get_injected_context(step=current_step + 1):
-            await self.__inject_context(content=injected)
+        # Process ALL pending contexts in order
+        processed_count = 0
+
+        while await self.__context.hitl.has_injected_context():
+            context = await self.__context.hitl.peek_next_context()
+            if not context:
+                break
+
+            processed_count += 1
+            logger.info(f"Executor: Processing context {processed_count}: '{context[:50]}...'")
+
+            # Inject into system (resets loop state internally)
+            await self.__inject_context(content=context)
+
+            # Explicitly consume
+            await self.__context.hitl.consume_context()
+
+        if processed_count > 0:
+            logger.info(f"Executor: Processed {processed_count} user contexts")
 
         logger.info("Executor: Resuming execution")
 
@@ -193,6 +209,9 @@ class GraphExecutor:
 
         current_step = self.__context.agent_state.step_count
         logger.info(f"Executor: Injecting user context at Step {current_step}: '{content}'")
+
+        # Atomic update of budget and loop detector
+        self.__context.agent_state.record_hitl_intervention()
 
         await self.__context.context_manager.inject_user_guidance(
             guidance=content, step=current_step

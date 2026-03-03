@@ -200,12 +200,27 @@ class SocketSignal(SignalPort):
 
     async def get_injected_context(self) -> Optional[str]:
         """
+        DEPRECATED: Use peek_next_context and consume_context.
         Atomic retrieval and consumption of context.
         """
 
         context = self.__injected_context
         self.__injected_context = None
         return context
+
+    async def peek_next_context(self) -> Optional[str]:
+        """
+        Peek at the current injected context.
+        """
+
+        return self.__injected_context
+
+    async def consume_context(self) -> None:
+        """
+        Clear the current injected context.
+        """
+
+        self.__injected_context = None
 
     async def is_pause_requested(self) -> bool:
         """

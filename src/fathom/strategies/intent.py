@@ -85,7 +85,17 @@ class IntentStrategy:
         interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE.value]
 
         # Configure serializer to allow fathom and langgraph modules for MsgPack
-        serializer = JsonPlusSerializer(allowed_json_modules=["fathom", "langgraph"])
+        serializer = JsonPlusSerializer(
+            allowed_json_modules=[
+                "fathom",
+                "fathom.constants",
+                "fathom.constants.state",
+                "fathom.schemas.screens",
+                "fathom.schemas.steps",
+                "fathom.schemas.results",
+                "langgraph",
+            ]
+        )
         checkpointer = MemorySaver(serde=serializer)
 
         self.__graph = builder.build(

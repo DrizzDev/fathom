@@ -344,7 +344,7 @@ def main() -> int:
     run_parser.add_argument("intent", type=str, help="The goal description")
     run_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
     run_parser.add_argument("--api-key", "-k", type=str, help="Gemini API Key")
-    run_parser.add_argument("--max-steps", type=int, default=20, help="Maximum steps allowed")
+    run_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
     run_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     run_parser.add_argument("--use-xml", "-x", action="store_true", help="Use XML bounding boxes")
     run_parser.add_argument(

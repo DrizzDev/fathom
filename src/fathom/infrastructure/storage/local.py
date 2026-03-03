@@ -41,9 +41,7 @@ class LocalImageStorage(IImageStorage):
             filename_meta = metadata.get("filename")
 
             if not all([session, package]):
-                raise ValueError(
-                    f"Missing required screenshot metadata: {session=}, {package=}"
-                )
+                raise ValueError(f"Missing required screenshot metadata: {session=}, {package=}")
 
             # Ensure types for mypy after validation
             package_str = str(package)

@@ -192,8 +192,10 @@ class TemporalSignalAdapter(SignalPort):
             state = await self.__query_workflow_state()
 
             if state.get("has_context"):
-                context = await self.get_injected_context()
+                # Use peek + consume to ensure we don't lose data
+                context = await self.peek_next_context()
                 if context:
+                    await self.consume_context()
                     logger.info(f"Human assistance received: {context}")
                     return context
 
@@ -205,22 +207,39 @@ class TemporalSignalAdapter(SignalPort):
 
     async def get_injected_context(self) -> Optional[str]:
         """
+        DEPRECATED: Use peek_next_context and consume_context.
         Get injected context from workflow via external handle.
         """
 
+        context = await self.peek_next_context()
+        if context:
+            await self.consume_context()
+
+        return context
+
+    async def peek_next_context(self) -> Optional[str]:
+        """
+        Peek at the next context without consuming it.
+        """
+
         try:
-            state = await self.__query_workflow_state()
-
-            if state.get("has_context"):
-                handle = await self.__get_workflow_handle()
-                # Use string query name to avoid workflow context triggers
-                context = await handle.query("get_injected_context")
-
-                return str(context)
+            handle = await self.__get_workflow_handle()
+            context = await handle.query("peek_next_context")
+            return str(context) if context else None
         except Exception as exception:
-            logger.error(f"Failed to get injected context: {exception}")
+            logger.error(f"Failed to peek context: {exception}")
+            return None
 
-        return None
+    async def consume_context(self) -> None:
+        """
+        Explicitly consume the next context via signal.
+        """
+
+        try:
+            handle = await self.__get_workflow_handle()
+            await handle.signal("consume_context")
+        except Exception as exception:
+            logger.error(f"Failed to consume context: {exception}")
 
     async def has_injected_context(self) -> bool:
         """

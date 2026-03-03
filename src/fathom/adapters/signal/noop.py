@@ -49,6 +49,20 @@ class NoopSignal(SignalPort):
 
         return None
 
+    async def peek_next_context(self) -> Optional[str]:
+        """
+        Peek at the next context - always returns None.
+        """
+
+        return None
+
+    async def consume_context(self) -> None:
+        """
+        Consume the next context - no-op.
+        """
+
+        pass
+
     async def has_injected_context(self) -> bool:
         """
         Check if there's injected context - always returns False for autonomous mode.

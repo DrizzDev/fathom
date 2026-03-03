@@ -1,10 +1,12 @@
-from __future__ import annotations
-
+import logging
+from collections import deque
 from datetime import timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Deque, Dict, Optional
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+
+logger = logging.getLogger(__name__)
 
 
 class FathomBaseWorkflow:
@@ -15,7 +17,18 @@ class FathomBaseWorkflow:
     def __init__(self) -> None:
         self.__paused = False
         self.__cancelled = False
-        self.__injected_context: Optional[str] = None
+        self.__injected_contexts: Deque[str] = deque()
+
+    def __log(self, message: str, level: int = logging.INFO) -> None:
+        """
+        Safe logging that works both inside and outside Temporal workflow context.
+        """
+
+        try:
+            workflow.info()
+            workflow.logger.log(level, message)
+        except Exception:
+            logger.log(level, message)
 
     @workflow.signal  # type: ignore[untyped-decorator]
     async def pause(self) -> None:
@@ -23,7 +36,7 @@ class FathomBaseWorkflow:
         Signal to pause execution.
         """
 
-        workflow.logger.info("Received pause signal")
+        self.__log(message="Received pause signal")
         self.__paused = True
 
     @workflow.signal  # type: ignore[untyped-decorator]
@@ -32,7 +45,7 @@ class FathomBaseWorkflow:
         Signal to resume execution.
         """
 
-        workflow.logger.info("Received resume signal")
+        self.__log(message="Received resume signal")
         self.__paused = False
 
     @workflow.signal  # type: ignore[untyped-decorator]
@@ -41,8 +54,18 @@ class FathomBaseWorkflow:
         Signal to inject user context.
         """
 
-        workflow.logger.info(f"Received inject signal with context: {context}")
-        self.__injected_context = context
+        self.__log(message=f"Received inject signal with context: {context}")
+        self.__injected_contexts.append(context)
+
+    @workflow.signal  # type: ignore[untyped-decorator]
+    async def consume_context(self) -> None:
+        """
+        Consume the next context from the queue.
+        """
+
+        if self.__injected_contexts:
+            consumed = self.__injected_contexts.popleft()
+            self.__log(message=f"Consumed context: {consumed}")
 
     @workflow.signal  # type: ignore[untyped-decorator]
     async def cancel(self) -> None:
@@ -50,7 +73,8 @@ class FathomBaseWorkflow:
         Signal to cancel execution.
         """
 
-        workflow.logger.info("Received cancel signal")
+        self.__log(message="Received cancel signal")
+        self.__paused = False
         self.__cancelled = True
 
     @workflow.query  # type: ignore[untyped-decorator]
@@ -62,19 +86,32 @@ class FathomBaseWorkflow:
         return {
             "paused": self.__paused,
             "cancelled": self.__cancelled,
-            "has_context": self.__injected_context is not None,
+            "has_context": len(self.__injected_contexts) > 0,
+            "pending_contexts": len(self.__injected_contexts),
         }
+
+    @workflow.query  # type: ignore[untyped-decorator]
+    def peek_next_context(self) -> Optional[str]:
+        """
+        Peek at the next context without consuming it.
+        """
+
+        if self.__injected_contexts:
+            return self.__injected_contexts[0]
+
+        return None
 
     @workflow.query  # type: ignore[untyped-decorator]
     def get_injected_context(self) -> Optional[str]:
         """
-        Query and clear injected context.
+        DEPRECATED: Use peek_next_context + consume_context signal.
+        Kept for backward compatibility during transition.
         """
 
-        context = self.__injected_context
-        self.__injected_context = None
+        if not self.__injected_contexts:
+            return None
 
-        return context
+        return self.__injected_contexts[0]
 
 
 @workflow.defn(name="FathomWorkflow")

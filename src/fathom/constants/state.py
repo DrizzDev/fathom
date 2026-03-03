@@ -10,6 +10,9 @@ class CompletionReason(StrEnum):
     CANCELLED = "Cancelled"
     MAX_STEPS = "Max steps reached"
     SUCCESS = "Completed successfully"
+    STUCK = "Stuck: Recovery exhausted"
+    INTERVENTION_REQUIRED = "Human intervention required"
+    USER_DIRECTIVE = "Marked complete via user directive"
 
 
 class CommonStateKey(StrEnum):

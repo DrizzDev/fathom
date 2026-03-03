@@ -58,96 +58,76 @@ class StepPlanner:
         Plan the next step based on current state.
         """
 
-        logger.debug(
-            f"[H5] Entering planner plan_step | "
-            f"step_count={state.step_count} is_complete={state.is_complete} "
-            f"is_stuck={state.is_stuck} can_continue={state.can_continue}"
-        )
-
         if not state.can_continue:
             if state.is_complete:
-                return PlanResult(step=None, is_complete=True, reason="Intent completed")
-
-            # NATIVE INTERCEPT: Autonomous recovery exhausted, yield to HITL if enabled
-            if state.is_stuck and interactive_mode and prompt_if_stuck:
-                logger.warning(
-                    "Agent exhausted recovery attempts. Yielding to native HITL intercept."
-                )
                 return PlanResult(
-                    step=self.__build_step(
-                        action=Action(
-                            confidence=1.0,
-                            target="ask_user",
-                            action_type=ActionType.ASK_USER,
-                            rationale="Native intercept: loop recovery exhausted.",
-                            text="I am stuck in a loop and cannot recover autonomously. What should I do next?",
-                        ),
-                        capture=capture,
-                        is_recovery=True,
-                        step_number=state.step_count,
-                    ),
-                    is_complete=False,
-                    reason="Native intercept for HITL due to exhausted recovery.",
+                    step=None, is_complete=True, reason=CompletionReason.SUCCESS.value
                 )
 
-            return PlanResult(step=None, is_complete=True, reason=CompletionReason.FAILED.value)
+            # TERMINAL FAIL: If we reach here, it means max_steps or budgets are hit.
+            # We must stop immediately to avoid infinite HITL loops.
+            return PlanResult(
+                step=None,
+                is_complete=True,
+                reason=CompletionReason.STUCK.value
+                if state.is_stuck
+                else CompletionReason.FAILED.value,
+            )
 
         # Default tracking note
         current_tracking_note = state.tracking_note
 
         # IMMEDIATE RECOVERY
         if state.is_stuck:
-            completion_error = None
-            completion_signal = False
-            logger.warning("Agent is stuck in a loop. Evaluating recovery options.")
-
             # NATIVE INTERCEPT: Yield to HITL if enabled before attempting aggressive auto-recovery
             if interactive_mode and prompt_if_stuck:
-                logger.warning("Agent is stuck. Yielding to native HITL intercept.")
-                return PlanResult(
-                    step=self.__build_step(
-                        action=Action(
-                            confidence=1.0,
-                            target="Request user assistance",
-                            action_type=ActionType.ASK_USER,
-                            rationale="Loop detected (Screen repeating). Requesting human intervention.",
-                            text="I have detected a loop and I'm repeating the same screen state. How should I proceed to break this cycle?",
+                # If we have guidance, proceed to analysis.
+                if context_manager.get_user_guidance():
+                    # Pass through to analysis
+                    pass
+                else:
+                    return PlanResult(
+                        step=self.__build_step(
+                            action=Action(
+                                confidence=1.0,
+                                target="Request user assistance",
+                                action_type=ActionType.ASK_USER,
+                                rationale="Loop detected (Screen repeating). Requesting human intervention.",
+                                text="I have detected a loop and I'm repeating the same screen state. How should I proceed to break this cycle?",
+                            ),
+                            capture=capture,
+                            is_recovery=True,
+                            step_number=state.step_count,
                         ),
+                        is_complete=False,
+                        reason=CompletionReason.INTERVENTION_REQUIRED.value,
+                    )
+
+            # Autonomous Recovery (ONLY for non-interactive mode)
+            else:
+                try:
+                    await self.__vision.check_completion(
+                        capture=capture,
+                        intent=state.intent,
+                        screen_width=screen_width,
+                        screen_height=screen_height,
+                        context_manager=context_manager,
+                        tracking_note=state.tracking_note,
+                    )
+                except Exception as exception:
+                    # Completion check is an optimization, but we must log the failure
+                    logger.error(
+                        msg=f"Planner: Completion check failed during recovery: {exception}"
+                    )
+
+                recovery_action = state.get_recovery_action()
+                if recovery_action:
+                    return self.__build_plan_result(
                         capture=capture,
                         is_recovery=True,
+                        action=recovery_action,
                         step_number=state.step_count,
-                    ),
-                    is_complete=False,
-                    reason="HITL intercept for loop detection.",
-                )
-
-            try:
-                completion_signal = await self.__vision.check_completion(
-                    capture=capture,
-                    intent=state.intent,
-                    screen_width=screen_width,
-                    screen_height=screen_height,
-                    context_manager=context_manager,
-                    tracking_note=state.tracking_note,
-                )
-            except Exception as exception:
-                completion_error = str(exception)
-
-            logger.debug(
-                f"[H3] Stuck gate reached | "
-                f"can_recover={state.can_continue} "
-                f"check_completion_signal={completion_signal} "
-                f"check_completion_error={completion_error}"
-            )
-
-            recovery_action = state.get_recovery_action()
-            if recovery_action:
-                return self.__build_plan_result(
-                    capture=capture,
-                    is_recovery=True,
-                    action=recovery_action,
-                    step_number=state.step_count,
-                )
+                    )
 
         analysis = await self.__vision.analyze(
             use_xml=use_xml,
@@ -181,7 +161,6 @@ class StepPlanner:
 
         # Optimization: Check if this EXACT action just failed on this screen hash
         if state.should_avoid_action(action=action):
-            logger.warning(msg=f"Avoiding recently failed action: {action.to_description()}")
             return PlanResult(
                 step=None,
                 is_complete=False,
@@ -189,18 +168,12 @@ class StepPlanner:
                 metrics=analysis.metrics,
                 metadata=analysis.metadata,
                 memories=analysis.memories,
-                reason="Action recently failed on this screen",
+                reason=CompletionReason.FAILED.value,
             )
 
         if not reasoner.should_accept_action(
             action=action, has_failed_before=state.should_avoid_action(action=action)
         ):
-            logger.warning(
-                f"Action rejected by reasoner: {action.to_description()} "
-                f"(confidence={action.confidence:.2f}, "
-                f"has_failed_before={state.should_avoid_action(action=action)})"
-            )
-
             # If interactive, yield to user for guidance on low confidence
             if interactive_mode and prompt_if_stuck:
                 return PlanResult(
@@ -217,7 +190,7 @@ class StepPlanner:
                         step_number=state.step_count,
                     ),
                     is_complete=False,
-                    reason="Low confidence intercept for HITL.",
+                    reason=CompletionReason.INTERVENTION_REQUIRED.value,
                 )
 
             return PlanResult(
@@ -227,7 +200,7 @@ class StepPlanner:
                 metrics=analysis.metrics,
                 metadata=analysis.metadata,
                 memories=analysis.memories,
-                reason=f"Action rejected: {action.rationale}",
+                reason=CompletionReason.FAILED.value,
             )
 
         return self.__build_plan_result(

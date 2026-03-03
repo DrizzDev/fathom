@@ -65,6 +65,20 @@ class HITLService:
 
         return await self.__signal.has_injected_context()
 
+    async def peek_next_context(self) -> Optional[str]:
+        """
+        Peek at the next context without consuming it.
+        """
+
+        return await self.__signal.peek_next_context()
+
+    async def consume_context(self) -> None:
+        """
+        Explicitly consume the next context.
+        """
+
+        await self.__signal.consume_context()
+
     async def get_injected_context(self, *, step: int) -> Optional[str]:
         """
         Retrieve injected context and emit HITL_RECEIVED event.
