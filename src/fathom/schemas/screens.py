@@ -6,8 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ScreenState(BaseModel):
-    """Immutable screen state representation.
-
+    """
+    Immutable screen state representation.
     Uses a hybrid 3-layer hashing approach for efficient screen comparison.
     """
 
@@ -19,18 +19,19 @@ class ScreenState(BaseModel):
     activity_hash: str = Field(description="Hash of activity name")
     structural_hash: str = Field(description="Hash of screen structure")
     visual_hash: str = Field(description="Perceptual hash (pHash) of screen")
+
     xml_hash: Optional[str] = Field(default=None, description="Semantic structural hash of XML")
     interaction_hash: Optional[str] = Field(
         default=None, description="Hash of interactive elements"
     )
 
-    def is_same_screen(self, other: "ScreenState", threshold: int = 10) -> bool:
+    def is_same_screen(self, other: "ScreenState", threshold: int = 5) -> bool:
         """
         Check if two screen states represent the same screen.
 
         Uses Multi-Layer State Identity Algorithm (MLSIA):
         1. Activity check (must match)
-        2. Structural check (XML tree structure)
+        2. Structural check (XML tree structure + content)
         3. Interaction check (Clickable elements)
         4. Visual check (dHash distance)
 
@@ -45,8 +46,8 @@ class ScreenState(BaseModel):
         if (
             self.xml_hash
             and other.xml_hash
-            and self.xml_hash != "0000000000000000"
             and self.xml_hash != other.xml_hash
+            and self.xml_hash != "0000000000000000"
         ):
             return False
 
@@ -63,19 +64,22 @@ class ScreenState(BaseModel):
         # 3. Visual Identity (Fallback/Confirmation)
         # If both structural and interaction hashes match (or are missing),
         # we verify visual similarity to catch "paint-only" changes.
-        distance = self.__hamming_distance(self.visual_hash, other.visual_hash)
+        distance = self.hamming_distance(self.visual_hash, other.visual_hash)
         return distance <= threshold
 
     @staticmethod
-    def __hamming_distance(hash1: str, hash2: str) -> int:
+    def hamming_distance(hash1: str, hash2: str) -> int:
         """
         Calculate hamming distance between two hex hash strings.
         """
 
-        if len(hash1) != len(hash2):
+        if not hash1 or not hash2 or len(hash1) != len(hash2):
             return 64
 
-        return bin(int(hash1, 16) ^ int(hash2, 16)).count("1")
+        try:
+            return bin(int(hash1, 16) ^ int(hash2, 16)).count("1")
+        except (ValueError, TypeError):
+            return 64
 
 
 class ScreenCapture(BaseModel):

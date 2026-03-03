@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,7 +10,6 @@ from fathom.constants import ActionType
 class Bounds(BaseModel):
     """
     Bounds for UI elements.
-    Expected to be normalized (0-1000 scale) but supports raw pixels for robustness.
     """
 
     x: int = Field(ge=0, le=5000, description="Top-left X coordinate")
@@ -86,9 +85,7 @@ class Action(BaseModel):
     label_id: Optional[str] = Field(default=None, description="Numeric label ID from XML grounding")
 
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
-    wait_duration: Optional[int] = Field(
-        default=None, description="Duration to wait in milliseconds"
-    )
+    wait_duration: Optional[float] = Field(default=None, description="Duration to wait in seconds")
     memory_updates: Optional[Dict[str, str]] = Field(
         default=None, description="Key-value pairs to store in persistent memory"
     )
@@ -97,6 +94,22 @@ class Action(BaseModel):
     is_valid: bool = Field(default=True, description="Self-validation of the action")
     validation_reason: Optional[str] = Field(
         default=None, description="Reason if action is invalid"
+    )
+
+    # Conditional Execution
+    condition: Optional[str] = Field(
+        default=None,
+        description="Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
+    )
+
+    # Script export classification (VLM-provided; optional; fallback is TargetClassifier)
+    target_type: Optional[Literal["stable", "positional", "dynamic"]] = Field(
+        default=None,
+        description="How the target should be referenced in exported scripts: stable (fixed label), positional (ordinal in list), or dynamic (content that may change). Leave unset if unsure.",
+    )
+    script_target: Optional[str] = Field(
+        default=None,
+        description="When target_type is positional or dynamic, the exact phrase for script export (e.g. 'the first search result', 'the promotional banner'). Omit for stable.",
     )
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
@@ -124,7 +137,8 @@ class Action(BaseModel):
             return f"Tap on {name}"
 
         if self.action_type == ActionType.TYPE:
-            return f"Type '{self.text}' in {name}"
+            text_val = self.text if self.text is not None else ""
+            return f"Type '{text_val}' in {name}"
 
         if "swipe" in self.action_type.value:
             direction = (
@@ -147,10 +161,16 @@ class Action(BaseModel):
             return "Press home button"
 
         if self.action_type == ActionType.WAIT:
+            if self.wait_duration:
+                return f"Wait for {self.wait_duration} seconds"
             return f"Wait for {name}"
 
         if self.action_type == ActionType.COMPLETE:
             return f"Validate {name} (Goal complete)"
+
+        if self.action_type == ActionType.ASK_USER:
+            msg = self.text or self.rationale or name
+            return f"Ask user: {msg}"
 
         return f"{self.action_type.value.capitalize()} on {name}"
 

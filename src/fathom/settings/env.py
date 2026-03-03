@@ -20,7 +20,10 @@ class FathomSettings(BaseSettings):
     gemini_model: str = Field(default="gemini-3-flash-preview", alias="GEMINI_MODEL")
 
     vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
-    vertex_project_id: Optional[str] = Field(default=None, alias="VERTEX_PROJECT_ID")
+    vertex_project_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT", "GCP_PROJECT"),
+    )
 
     google_application_credentials: Optional[str] = Field(
         default=None,
@@ -30,15 +33,18 @@ class FathomSettings(BaseSettings):
     )
 
     # Device settings
-    android_serial: Optional[str] = Field(default=None, alias="ANDROID_SERIAL")
     adb_path: str = Field(default="adb", alias="ADB_PATH")
+    android_serial: Optional[str] = Field(default=None, alias="ANDROID_SERIAL")
 
     # Logging settings
     log_json: bool = Field(default=False, alias="LOG_JSON")
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    log_level: str = Field(default="DEBUG", alias="LOG_LEVEL")
 
     # Workflow default limits
     max_steps: int = Field(default=100, alias="MAX_STEPS")
+
+    # Assets path
+    assets_path: Path = Field(default=PROJECT_ROOT / "assets", alias="FATHOM_ASSETS_PATH")
 
     # Environment file support
     model_config = SettingsConfigDict(

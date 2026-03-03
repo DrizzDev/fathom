@@ -38,12 +38,15 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "numpy>=2.4.2",
     "httpx>=0.28.1",
     "PyYAML>=6.0.0",
-    "aiosqlite>=0.20.0",
     "rich>=14.3.2",
     "Pillow>=12.1.0",
     "pydantic>=2.0.0",
+    "tenacity>=9.0.0",
+    "aiosqlite>=0.20.0",
+    "opencv-python>=4.13.0.92",
     "pydantic-settings>=2.0.0",
     "aiohttp>=3.8.0",
     "structlog>=23.0.0",
@@ -52,6 +55,8 @@ dependencies = [
     "google-genai>=0.2.0",
     "google-cloud-storage>=2.0.0",
     "types-PyYAML>=6.0.12.20250915",
+    "rustworkx>=0.15.0",
+    "langgraph>=0.0.10",
 ]
 
 [project.scripts]
@@ -120,6 +125,18 @@ ignore = [
     "UP007",  # use X | Y instead of Union/Optional (User preference)
     "UP035",  # use builtin types (User preference)
 ]
+
+# Architectural boundary enforcement
+# Note: These rules are documented here but enforcement is manual via code review
+# Ruff's flake8-tidy-imports doesn't support complex allowed-in patterns
+#
+# Rules:
+# 1. Core layer (core/) cannot import from adapters/
+# 2. Interfaces layer (interfaces/) can only import from schemas/
+# 3. Strategies (strategies/) should receive ports via dependency injection
+# 4. Adapters (adapters/) can import from anywhere (they're at the edge)
+# 5. Processing (processing/) can only import from schemas/ and utils/
+# 6. Runtime (runtime/) wires everything together and can import adapters
 
 [tool.ruff.lint.isort]
 known-first-party = ["fathom"]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from pathlib import Path  # noqa: TC003
 from typing import Any, Dict, Optional
 
 import aiosqlite
@@ -18,9 +18,13 @@ class SQLiteMemoryProvider(IMemoryProvider):
     Handles raw database operations for the Knowledge Graph.
     """
 
-    def __init__(self, database_path: str = "assets/memory/knowledge.db") -> None:
+    def __init__(self, database_path: Path) -> None:
+        """
+        Initialize provider with explicit database path.
+        """
+
         self.__initialized = False
-        self.__path = Path(database_path)
+        self.__path = database_path
         self.__path.parent.mkdir(parents=True, exist_ok=True)
 
     async def __initialize(self) -> None:
@@ -105,9 +109,9 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         data = json.loads(row[0])
                         knowledge["previous_actions"].append(
                             {
+                                "success": bool(row[1]),
                                 "action": data.get("action_type"),
                                 "target": data.get("target") or "element",
-                                "success": bool(row[1]),
                             }
                         )
                     except (json.JSONDecodeError, AttributeError):

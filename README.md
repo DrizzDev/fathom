@@ -59,7 +59,7 @@ async def main():
         vision=vision,
         intent="Login with username 'user' and password 'pass'",
         config=WorkflowConfig(
-            max_steps=20,
+            max_steps=50,
             step_timeout=10.0
         )
     )
@@ -84,11 +84,11 @@ from fathom.workflows import ExplorationWorkflow
 
 async def explore():
     explorer = ExplorationWorkflow(
-        workflow_id="explore-001",
         device=device,
-        capture=capture,
         vision=vision,
-        config=WorkflowConfig(max_steps=50)
+        capture=capture,
+        workflow_id="explore-001",
+        config=WorkflowConfig(max_steps=100)
     )
 
     result = await explorer.execute()

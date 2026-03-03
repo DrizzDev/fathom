@@ -1,103 +1,207 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Dict, Literal, Optional, Set, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
-class ADBConfig(BaseModel):
+class LLMConfiguration(BaseModel):
     """
-    Configuration for ADB device tool.
+    Generic configuration for LLM providers.
+    Supports any backend (Gemini, OpenAI, Anthropic) via provider field.
     """
 
-    model_config = ConfigDict(frozen=True)
+    provider: Literal["gemini", "openai", "anthropic", "vertex_ai"] = Field(
+        default="gemini", description="LLM provider name"
+    )
+    model: str = Field(default="gemini-3-flash-preview", description="Model identifier")
+    api_key: Optional[str] = Field(default=None, description="API access key")
 
-    adb_path: str = Field(default="adb", description="Path to adb executable")
-    device_serial: Optional[str] = Field(default=None, description="Target device serial")
+    # Provider-specific settings (GCP/Azure/OpenAI specific)
+    project_id: Optional[str] = Field(default=None, description="Project identifier")
+    location: Optional[str] = Field(default=None, description="Deployment location/region")
+    credentials: Optional[Union[str, Dict[str, Any]]] = Field(
+        default=None,
+        description="Credentials as file path (str) or JSON object (dict)",
+    )
 
-    tap_duration: int = Field(default=50, description="Tap duration in ms")
-    swipe_duration: int = Field(default=300, description="Swipe duration in ms")
-    command_timeout: float = Field(default=30.0, description="Command timeout in seconds")
-    long_press_duration: int = Field(default=1000, description="Long press duration in ms")
+    # Gemini specific parameters
+    thinking_level: Literal["minimal", "low", "medium", "high"] = Field(
+        default="low",
+        description="Controls reasoning depth. 'low' = faster, 'high' = deeper/slower.",
+    )
+    include_thoughts: bool = Field(
+        default=False,
+        description="Whether to include the model's reasoning process in the response.",
+    )
+    media_resolution: Literal["low", "medium", "high"] = Field(
+        default="low",
+        description="Vision token density. 'low' is recommended for high-speed agents.",
+    )
 
+    # Common hyper-parameters
+    max_retries: int = Field(default=3, description="Maximum retry attempts")
+    temperature: float = Field(default=1.0, description="Sampling temperature")
+    timeout: float = Field(default=60.0, description="Request timeout in seconds")
+    retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
+    rate_limit_backoff: float = Field(default=5.0, description="Base backoff for rate limit errors")
+
+    # Backend storage (for artifacts like image caching)
+    use_cache: bool = Field(default=True, description="Whether to use context caching for the LLM")
+
+    # Extension hook for arbitrary provider settings
+    parameters: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional provider-specific parameters"
+    )
+
+
+class StorageConfiguration(BaseModel):
+    """
+    Configuration for artifact storage.
+    """
+
+    backends: Set[Literal["LOCAL", "CLOUD"]] = Field(
+        default={"LOCAL"}, description="Storage backends to enable"
+    )
+
+    storage_bucket: Optional[str] = Field(
+        default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"
+    )
+    project_id: Optional[str] = Field(
+        default=None, description="Project identifier for cloud storage"
+    )
+    credentials: Optional[Union[str, Dict[str, Any]]] = Field(
+        default=None,
+        description="Credentials as file path (str) or JSON object (dict)",
+    )
+
+
+class ADBConfiguration(BaseModel):
+    """
+    Configuration for local ADB device interactions.
+    """
+
+    executable_path: str = Field(default="adb", description="Path to ADB executable")
+    serial_number: Optional[str] = Field(default=None, description="Target device serial")
+    command_timeout: float = Field(default=10.0, description="Shell command timeout in seconds")
+
+    swipe_duration: int = Field(default=300, description="Default swipe gesture duration in ms")
     swipe_distance: float = Field(default=0.7, description="Percentage of screen to swipe")
     scroll_distance: float = Field(default=0.2, description="Percentage of screen height to scroll")
 
 
-class ADBCaptureConfig(BaseModel):
+class DeviceConfiguration(BaseModel):
     """
-    Configuration for ADB capture tool.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    adb_path: str = Field(default="adb", description="Path to the ADB executable")
-    timeout: float = Field(default=10.0, description="Timeout for capture operations in seconds")
-
-    use_hybrid_hash: bool = Field(default=True, description="Whether to use hybrid hashing")
-    device_serial: Optional[str] = Field(default=None, description="Specific device serial number")
-
-
-class GeminiConfig(BaseModel):
-    """
-    Configuration for Gemini vision tool.
+    Unified configuration for device connection.
+    Determines whether to use local ADB or a remote provider.
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    api_key: Optional[str] = Field(
-        default=None, description="Gemini API key (optional if using Vertex AI)"
-    )
-    credentials_path: Optional[str] = Field(
-        default=None, description="Path to Google credentials JSON file"
-    )
-    project_id: Optional[str] = Field(default=None, description="GCP Project ID for Vertex AI")
-
-    model: str = Field(default="gemini-2.5-flash-lite", description="High-speed VLM model")
-    location: str = Field(default="global", description="Vertex AI location")
-
-    timeout: float = Field(default=180.0, description="API request timeout")
-    temperature: float = Field(default=0.0, description="Model temperature")
-    max_output_tokens: int = Field(default=16384, description="Max output tokens")
-
-    max_retries: int = Field(default=3, description="Max retries on API failure")
-    retry_delay: float = Field(default=2.0, description="Base retry delay in seconds")
-    gcs_bucket: str = Field(
-        default="drizz-dev-crawler-artifacts", description="GCS bucket for screenshot uploads"
+    type: Literal["LOCAL", "REMOTE"] = Field(
+        default="LOCAL", description="Device connection type: LOCAL or REMOTE"
     )
 
-
-class HasherConfig(BaseModel):
-    """
-    Configuration for hybrid hasher.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    use_perceptual: bool = Field(default=True, description="Enable perceptual hashing")
-    use_structural: bool = Field(default=True, description="Enable structural hashing")
-    thumbnail_size: Tuple[int, int] = Field(default=(8, 8), description="pHash thumbnail size")
-
-
-class WorkflowConfig(BaseModel):
-    """
-    Configuration for workflow execution.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    max_steps: int = Field(default=20, ge=1, le=1000, description="Maximum steps")
-    step_timeout: float = Field(
-        default=15.0, ge=1.0, le=300.0, description="Per-step timeout in seconds"
+    # Connectivity Details
+    session_id: Optional[str] = Field(default=None, description="Remote session identifier")
+    execution_id: Optional[str] = Field(default=None, description="Execution/Workflow identifier")
+    provider_url: Optional[str] = Field(default=None, description="Remote provider endpoint")
+    serial_number: Optional[str] = Field(default=None, description="Device serial identifier")
+    authentication_token: Optional[str] = Field(
+        default=None, description="Access token for remote provider"
     )
-    total_timeout: float = Field(
-        default=600.0, ge=10.0, le=86400.0, description="Total workflow timeout"
+
+    # Generic parameters for future adapters
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional device metadata")
+
+
+class ExplorationConfiguration(BaseModel):
+    """
+    Configuration for application exploration strategy.
+    """
+
+    max_steps: int = Field(default=100, description="Maximum exploration depth")
+    timeout: int = Field(default=300, description="Global timeout for the run")
+    random_seed: Optional[int] = Field(
+        default=None, description="Seed for deterministic exploration"
     )
-    checkpoint_interval: int = Field(
-        default=5, ge=1, le=50, description="Steps between checkpoints"
+
+    # Tap action boundaries
+    tap_margin_x: int = Field(
+        default=50,
+        description="Minimum horizontal distance from screen edges to avoid system UI elements",
     )
-    retry_limit: int = Field(default=3, ge=0, le=10, description="Max retries on failure")
-    use_xml_bounding_boxes: bool = Field(
-        default=False, description="Use XML hierarchy for bounding boxes"
+    tap_margin_y: int = Field(
+        default=100,
+        description="Minimum vertical distance from screen edges to avoid status/navigation bars",
     )
-    package_name: str = Field(default="unknown_app", description="Target application package name")
+    tap_max_x: int = Field(
+        default=950,
+        description="Maximum X coordinate for exploratory taps to stay within safe bounds",
+    )
+    tap_max_y: int = Field(
+        default=900,
+        description="Maximum Y coordinate for exploratory taps to stay within safe bounds",
+    )
+    tap_target_size: int = Field(
+        default=50, description="Size of tap target bounding box for action generation"
+    )
+
+
+class IntentConfiguration(BaseModel):
+    """
+    Configuration for intent-based execution strategy.
+    """
+
+    max_steps: int = Field(default=100, description="Step limit for goal achievement")
+    use_xml_grounding: bool = Field(default=False, description="Enable structured XML analysis")
+    prompt_user_if_stuck: bool = Field(
+        default=True,
+        description="If True and in interactive mode, prompt the user for help when the agent detects a loop.",
+    )
+
+
+class ExecutionConfiguration(BaseModel):
+    """
+    Configuration for the core execution engine.
+    """
+
+    max_retries: int = Field(default=3, description="Maximum retries for physical actions")
+    stability_wait: float = Field(
+        default=0.5, description="Wait time after action for screen settlement"
+    )
+
+
+class TelemetryConfiguration(BaseModel):
+    """
+    Configuration for telemetry and logging adapters.
+    """
+
+    type: Literal["STRUCTLOG", "REDIS"] = Field(
+        default="STRUCTLOG", description="Telemetry adapter type"
+    )
+    connection_string: Optional[str] = Field(
+        default=None, description="Connection URL for streaming logs"
+    )
+    topic: Optional[str] = Field(
+        default=None,
+        description="Topic or channel pattern (e.g., enricher:commands:v1:logs:{session_id})",
+    )
+    session_id: Optional[str] = Field(
+        default=None, description="Session ID for channel interpolation"
+    )
+    identity: Optional[str] = Field(default=None, description="Workflow identity for log routing")
+
+
+class FathomConfiguration(BaseModel):
+    """
+    Root configuration container for the Fathom runtime.
+    Aggregates all component configurations into a single schema.
+    """
+
+    llm: LLMConfiguration = Field(default_factory=LLMConfiguration)
+    device: DeviceConfiguration = Field(default_factory=DeviceConfiguration)
+    engine: ExecutionConfiguration = Field(default_factory=ExecutionConfiguration)
+    storage: StorageConfiguration = Field(default_factory=StorageConfiguration)
+    telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
+
+    intent: IntentConfiguration = Field(default_factory=IntentConfiguration)
+    exploration: ExplorationConfiguration = Field(default_factory=ExplorationConfiguration)

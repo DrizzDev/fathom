@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Tuple
 
 from fathom.schemas.actions import Bounds
-from fathom.schemas.configuration import ADBConfig
+from fathom.schemas.configuration import ADBConfiguration
 
 
 class CoordinateConverter:
@@ -12,7 +12,10 @@ class CoordinateConverter:
     """
 
     def __init__(
-        self, screen_width: int, screen_height: int, configuration: ADBConfig = ADBConfig()
+        self,
+        screen_width: int,
+        screen_height: int,
+        configuration: ADBConfiguration = ADBConfiguration(),
     ) -> None:
         """
         Initialize converter.
@@ -31,11 +34,24 @@ class CoordinateConverter:
 
     def center_to_pixels(self, bounds: Bounds) -> Tuple[int, int]:
         """
-        Get center point in pixel coordinates.
+        Get center point in pixel coordinates with high precision.
+        Calculates center in normalized space first to avoid rounding errors.
         """
 
-        x, y, width, height = self.to_pixels(bounds=bounds)
-        return x + width // 2, y + height // 2
+        if bounds.system == "pixel" or not bounds.is_normalized:
+            x, y, width, height = bounds.to_pixels(
+                screen_width=self.__width, screen_height=self.__height
+            )
+            return x + width // 2, y + height // 2
+
+        # High-precision calculation for normalized coordinates
+        norm_cx = bounds.x + (bounds.width / 2.0)
+        norm_cy = bounds.y + (bounds.height / 2.0)
+
+        px = int(norm_cx * self.__width / 1000.0)
+        py = int(norm_cy * self.__height / 1000.0)
+
+        return px, py
 
     def swipe_coordinates(
         self,

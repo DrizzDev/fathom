@@ -1,0 +1,584 @@
+(Fathom-ENV) ➜  fathom git:(features/exporter_new) ✗ fathom run "Open Snabbit app, Go to schedule. go to custom. select Saturday and Sunday. Select 12 days from now as start date and 5 days after that as end date. select duration as 90 mins, any evening slot(slot will be hourly boxes). for payment choose UPI with 8105944810@ybl." --use-xml --serial emulator-5554 --interactive
+usage: fathom [-h] {run,explore} ...
+fathom: error: unrecognized arguments: --interactive
+(Fathom-ENV) ➜  fathom git:(features/exporter_new) ✗ fathom run "Open Snabbit app, Go to schedule. go to custom. select Saturday and Sunday. Select 12 days from now as start date and 5 days after that as end date. select duration as 90 mins, any evening slot(slot will be hourly boxes). for payment choose UPI with 8105944810@ybl." --use-xml --serial emulator-5554
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Fathom Agent                                                                                                                    │
+│ Intent: Open Snabbit app, Go to schedule. go to custom. select Saturday and Sunday. Select 12 days from now as start date and 5 │
+│ days after that as end date. select duration as 90 mins, any evening slot(slot will be hourly boxes). for payment choose UPI    │
+│ with 8105944810@ybl.                                                                                                            │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+⚡ ADB ❯ dumpsys activity activities | grep mResumedActivity 61ms
+⠋ Agent working...
+2026-02-24T04:50:05.042664Z [info     ] Executing intent: Open Snabbit app, Go to schedule. go to custom. select Saturday and Sunday. Select 12 days from now as start date and 5 days after that as end date. select duration as 90 mins, any evening slot(slot will
+⠦ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 497ms
+⠧ Agent working...
+⠹ Agent working...
+2026-02-24T04:50:10.770894Z [info     ] Created context cache: projects/790754672560/locations/global/cachedContents/13367461735951
+⠴ Agent working...
+╭───────── execute_ui 9.32s ──────────╮
+│ Reasoning: Opening the Snabbit app. │
+│   Actions: tap                      │
+⠦ Agent working...
+⚡ ADB ❯ wm size 75ms
+2026-02-24T04:50:15.857937Z [info     ] Saving trace image: assets/traces/step__1__tap__20260224_102015_857709.png [fathom.agent.st
+⠧ Agent working...
+⚡ ADB ❯ input tap 137 355 41ms
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 1 Audit ─╮
+│ Screen Status:                                                                                                  🆕 3513e488f320 │
+│                             (com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity) │
+│ Grounding:                                                                                                       1.36s [1362ms] │
+│ Memory Retrieval:                                                                                                   0.00s [3ms] │
+│ LLM Core Analysis:                                                                                               9.18s [9178ms] │
+│ Tokens:                                                                  2,597 (prompt: 2,531 | completion: 66 | cached: 1,319) │
+│ Total Analysis:                                                                                                  9.32s [9320ms] │
+│ ADB Execution:                                                                                                     0.04s [41ms] │
+│ Overhead:                                                                                                         0.19s [191ms] │
+│ Total Step Time:                                                                                               10.98s [10975ms] │
+│ Cache:                                                                                                      hits: 0 | misses: 1 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Snabbit app icon                                                                                                    │
+│ Rationale:  Opening the Snabbit app to begin the task.                                                                          │
+⠧ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 829ms
+⠴ Agent working...
+⠦ Agent working...
+╭─────────────── execute_ui 5.72s ────────────────╮
+│ Reasoning: Waiting for the Snabbit app to load. │
+│   Actions: wait                                 │
+⠏ Agent working...
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 2 Audit ─╮
+│ Screen Status:      🆕 b71200000000 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    2.15s [2155ms]                                    │
+│ Memory Retrieval:                                                               0.01s [11ms]                                    │
+│ LLM Core Analysis:                                                            5.65s [5654ms]                                    │
+│ Tokens:                               2,619 (prompt: 2,544 | completion: 75 | cached: 1,319)                                    │
+│ Total Analysis:                                                               5.72s [5716ms]                                    │
+│ ADB Execution:                                                                1.00s [1000ms]                                    │
+│ Overhead:                                                                        0.00s [1ms]                                    │
+│ Total Step Time:                                                              8.93s [8925ms]                                    │
+│ Cache:                                                                   hits: 1 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     wait                                                                                                                │
+│ Target:     splash screen                                                                                                       │
+│ Rationale:  The app is on a splash screen. I need to wait for it to load the main interface.                                    │
+⠼ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 1268ms
+⠧ Agent working...
+⠼ Agent working...
+╭─────────────────────────────── execute_ui 5.39s ────────────────────────────────╮
+│ Reasoning: I'm opening the 'Schedule' section to start setting up your service. │
+│   Actions: tap                                                                  │
+╰──────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:50:32.600768Z [info     ] Saving trace image: assets/traces/step__3__tap__20260224_102032_600621.png [fathom.agent.st
+⠧ Agent working...
+⚡ ADB ❯ input tap 240 1240 93ms
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 3 Audit ─╮
+│ Screen Status:      🆕 216929eb18c2 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    2.21s [2206ms]                                    │
+│ Memory Retrieval:                                                                0.01s [6ms]                                    │
+│ LLM Core Analysis:                                                            5.32s [5322ms]                                    │
+│ Tokens:                               2,636 (prompt: 2,561 | completion: 75 | cached: 1,319)                                    │
+│ Total Analysis:                                                               5.39s [5388ms]                                    │
+│ ADB Execution:                                                                  0.09s [93ms]                                    │
+│ Overhead:                                                                      0.11s [113ms]                                    │
+│ Total Step Time:                                                              7.86s [7858ms]                                    │
+│ Cache:                                                                   hits: 2 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Schedule card                                                                                                       │
+│ Rationale:  Tap on the 'Schedule' card to proceed with scheduling a service.                                                    │
+⠸ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 1270ms
+⠏ Agent working...
+⠼ Agent working...
+╭─────────────────── execute_ui 6.07s ────────────────────╮
+│ Reasoning: Navigating to the 'Custom' schedule section. │
+│   Actions: tap                                          │
+╰──────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:50:41.382201Z [info     ] Saving trace image: assets/traces/step__4__tap__20260224_102041_381925.png [fathom.agent.st
+⠧ Agent working...
+⚡ ADB ❯ input tap 933 449 99ms
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 4 Audit ─╮
+│ Screen Status:      🆕 331088c690c4 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    2.46s [2463ms]                                    │
+│ Memory Retrieval:                                                                0.00s [3ms]                                    │
+│ LLM Core Analysis:                                                            6.02s [6020ms]                                    │
+│ Tokens:                               2,646 (prompt: 2,578 | completion: 68 | cached: 1,319)                                    │
+│ Total Analysis:                                                               6.07s [6066ms]                                    │
+│ ADB Execution:                                                                  0.10s [99ms]                                    │
+│ Overhead:                                                                       0.05s [52ms]                                    │
+│ Total Step Time:                                                              8.72s [8725ms]                                    │
+│ Cache:                                                                   hits: 3 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Custom tab                                                                                                          │
+│ Rationale:  The user wants to go to the 'Custom' schedule option.                                                               │
+⠸ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 1377ms
+⠧ Agent working...
+⠇ Agent working...
+╭─────────────────────────── execute_ui 5.71s ───────────────────────────╮
+│ Reasoning: I'm selecting Saturday and Sunday for your custom schedule. │
+│   Actions: tap, tap                                                    │
+╰─────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:50:49.703134Z [info     ] Saving trace image: assets/traces/step__5__tap__20260224_102049_702998.png [fathom.agent.st
+⠏ Agent working...
+⚡ ADB ❯ input tap 833 739 52ms
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 5 Audit ─╮
+│ Screen Status:      🆕 351040832aab (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    2.42s [2420ms]                                    │
+│ Memory Retrieval:                                                                0.01s [5ms]                                    │
+│ LLM Core Analysis:                                                            5.66s [5655ms]                                    │
+│ Tokens:                              2,696 (prompt: 2,595 | completion: 101 | cached: 1,319)                                    │
+│ Total Analysis:                                                               5.71s [5707ms]                                    │
+│ ADB Execution:                                                                  0.05s [52ms]                                    │
+│ Overhead:                                                                       0.04s [38ms]                                    │
+│ Total Step Time:                                                              8.26s [8258ms]                                    │
+│ Cache:                                                                   hits: 4 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Saturday button                                                                                                     │
+│ Rationale:  Selecting Saturday in the Days section.                                                                             │
+⠋ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 828ms
+⠦ Agent working...
+╭──────────────────────────────────── execute_ui 4.87s ────────────────────────────────────╮
+│ Reasoning: I've selected Saturday, now I'll select Sunday to complete the day selection. │
+│   Actions: tap                                                                           │
+╰───────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:50:55.955625Z [info     ] Saving trace image: assets/traces/step__6__tap__20260224_102055_955499.png [fathom.agent.st
+⠇ Agent working...
+⚡ ADB ❯ input tap 944 741 116ms
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 6 Audit ─╮
+│ Screen Status:      🔄 351040832aab (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    1.25s [1249ms]                                    │
+│ Memory Retrieval:                                                                0.00s [5ms]                                    │
+│ LLM Core Analysis:                                                            4.82s [4820ms]                                    │
+│ Tokens:                               2,683 (prompt: 2,612 | completion: 71 | cached: 1,319)                                    │
+│ Total Analysis:                                                               4.87s [4868ms]                                    │
+│ ADB Execution:                                                                 0.12s [116ms]                                    │
+│ Overhead:                                                                       0.05s [53ms]                                    │
+│ Total Step Time:                                                              6.33s [6333ms]                                    │
+│ Cache:                                                                   hits: 5 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Sunday button                                                                                                       │
+│ Rationale:  Selecting Sunday as requested in the goal.                                                                          │
+⠹ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 1073ms
+⠸ Agent working...
+╭──────────────────────────────────── execute_ui 4.70s ─────────────────────────────────────╮
+│ Reasoning: Selecting March 8th as the start date, which is 12 days from today (Feb 24th). │
+│   Actions: tap                                                                            │
+╰────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:51:02.052918Z [info     ] Saving trace image: assets/traces/step__7__tap__20260224_102102_052714.png [fathom.agent.st
+⠴ Agent working...
+⚡ ADB ❯ input tap 926 1712 48ms
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 7 Audit ─╮
+│ Screen Status:      🔄 351040832aab (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    1.17s [1172ms]                                    │
+│ Memory Retrieval:                                                                0.00s [5ms]                                    │
+│ LLM Core Analysis:                                                            4.66s [4656ms]                                    │
+│ Tokens:                               2,716 (prompt: 2,623 | completion: 93 | cached: 1,319)                                    │
+│ Total Analysis:                                                               4.70s [4704ms]                                    │
+│ ADB Execution:                                                                  0.05s [48ms]                                    │
+│ Overhead:                                                                      0.12s [119ms]                                    │
+│ Total Step Time:                                                              6.09s [6091ms]                                    │
+│ Cache:                                                                   hits: 6 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     March 8th date                                                                                                      │
+│ Rationale:  Selecting March 8th as the start date (12 days from Feb 24th).                                                      │
+⠸ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 637ms
+⠴ Agent working...
+⠴ Agent working...
+╭───────────────────────────────────── execute_ui 6.45s ─────────────────────────────────────╮
+│ Reasoning: I'm selecting March 13th as the end date, which is 5 days after the start date. │
+│   Actions: tap                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:51:10.263780Z [info     ] Saving trace image: assets/traces/step__8__tap__20260224_102110_263524.png [fathom.agent.st
+⠧ Agent working...
+⚡ ADB ❯ input tap 662 1807 61ms
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 8 Audit ─╮
+│ Screen Status:      🆕 351040832aab (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    1.55s [1549ms]                                    │
+│ Memory Retrieval:                                                                0.00s [2ms]                                    │
+│ LLM Core Analysis:                                                            6.40s [6403ms]                                    │
+│ Tokens:                              2,760 (prompt: 2,629 | completion: 131 | cached: 1,319)                                    │
+│ Total Analysis:                                                               6.45s [6448ms]                                    │
+│ ADB Execution:                                                                  0.06s [61ms]                                    │
+│ Overhead:                                                                       0.06s [61ms]                                    │
+│ Total Step Time:                                                              8.16s [8164ms]                                    │
+│ Cache:                                                                   hits: 7 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     March 13th date                                                                                                     │
+│ Rationale:  Selecting March 13th as the end date, which is 5 days after the start date (March 8th). Today is Feb 24th. 12 days  │
+│             from today is March 8th. 5 days after that is March 13th.                                                           │
+⠧ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 766ms
+⠴ Agent working...
+⠇ Agent working...
+╭───────────────────────── execute_ui 4.98s ─────────────────────────╮
+│ Reasoning: I'm selecting the 90-minute duration for your schedule. │
+│   Actions: tap                                                     │
+╰─────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:51:17.633623Z [info     ] Saving trace image: assets/traces/step__9__tap__20260224_102117_633409.png [fathom.agent.st
+⠏ Agent working...
+⚡ ADB ❯ input tap 491 1701 58ms
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 9 Audit ─╮
+│ Screen Status:      🆕 351248831107 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    2.15s [2145ms]                                    │
+│ Memory Retrieval:                                                                0.00s [5ms]                                    │
+│ LLM Core Analysis:                                                            4.94s [4937ms]                                    │
+│ Tokens:                               2,719 (prompt: 2,644 | completion: 75 | cached: 1,319)                                    │
+│ Total Analysis:                                                               4.98s [4984ms]                                    │
+│ ADB Execution:                                                                  0.06s [58ms]                                    │
+│ Overhead:                                                                       0.06s [59ms]                                    │
+│ Total Step Time:                                                              7.36s [7363ms]                                    │
+│ Cache:                                                                   hits: 8 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     90 min duration option                                                                                              │
+│ Rationale:  Selecting the 90 min duration as per the goal.                                                                      │
+⠏ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 835ms
+⠙ Agent working...
+⠧ Agent working...
+╭──────────────────────────────────────────────── execute_ui 4.48s ────────────────────────────────────────────────╮
+│ Reasoning: I've selected the dates and duration. Now I'm scrolling down to see the available evening time slots. │
+│   Actions: scroll                                                                                                │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:51:23.979628Z [info     ] Saving trace image: assets/traces/step__10__scroll__20260224_102123_979421.png [fathom.agen
+⠇ Agent working...
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 10 Audit ─╮
+│ Screen Status:      🆕 351248431007 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    1.70s [1700ms]                                    │
+│ Memory Retrieval:                                                                0.00s [2ms]                                    │
+│ LLM Core Analysis:                                                            4.43s [4431ms]                                    │
+│ Tokens:                               2,749 (prompt: 2,657 | completion: 92 | cached: 1,319)                                    │
+│ Total Analysis:                                                               4.48s [4476ms]                                    │
+│ ADB Execution:                                                                   0.00s [0ms]                                    │
+│ Overhead:                                                                       0.06s [63ms]                                    │
+│ Total Step Time:                                                              6.29s [6288ms]                                    │
+│ Cache:                                                                   hits: 9 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     scroll                                                                                                              │
+│ Target:     schedule content area                                                                                               │
+│ Rationale:  Scroll down to see the available start time slots.                                                                  │
+⠴ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 551ms
+⠙ Agent working...
+╭─────────────────────────── execute_ui 4.87s ───────────────────────────╮
+│ Reasoning: I'm scrolling down to see the available evening time slots. │
+│   Actions: swipe_up                                                    │
+╰─────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:51:29.926120Z [info     ] Saving trace image: assets/traces/step__11__swipe_up__20260224_102129_925935.png [fathom.ag
+⠦ Agent working...
+⚡ ADB ❯ input swipe 540 1450 540 1124 300 362ms
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 11 Audit ─╮
+│ Screen Status:      🔄 351248431007 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                     0.97s [965ms]                                    │
+│ Memory Retrieval:                                                                0.00s [3ms]                                    │
+│ LLM Core Analysis:                                                            4.83s [4826ms]                                    │
+│ Tokens:                               2,763 (prompt: 2,687 | completion: 76 | cached: 1,319)                                    │
+│ Total Analysis:                                                               4.87s [4873ms]                                    │
+│ ADB Execution:                                                                 0.36s [362ms]                                    │
+│ Overhead:                                                                       0.05s [47ms]                                    │
+│ Total Step Time:                                                              6.30s [6300ms]                                    │
+│ Cache:                                                                  hits: 10 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     swipe_up                                                                                                            │
+│ Target:     schedule content area                                                                                               │
+│ Rationale:  Scroll up to reveal the time slots under the 'Start Time' section.                                                  │
+⠼ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 659ms
+⠧ Agent working...
+⠴ Agent working...
+╭───────────────────────────────────────────────── execute_ui 6.22s ──────────────────────────────────────────────────╮
+│ Reasoning: I've selected the 90-minute duration. Now, I'm switching to the 'Evening' tab to choose an evening slot. │
+│   Actions: tap                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:51:38.210300Z [info     ] Saving trace image: assets/traces/step__12__tap__20260224_102138_210149.png [fathom.agent.s
+⠧ Agent working...
+⚡ ADB ❯ input tap 923 1651 74ms
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 12 Audit ─╮
+│ Screen Status:      🆕 351240031843 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    1.60s [1598ms]                                    │
+│ Memory Retrieval:                                                                0.01s [8ms]                                    │
+│ LLM Core Analysis:                                                            6.17s [6167ms]                                    │
+│ Tokens:                               2,777 (prompt: 2,685 | completion: 92 | cached: 1,319)                                    │
+│ Total Analysis:                                                               6.22s [6219ms]                                    │
+│ ADB Execution:                                                                  0.07s [74ms]                                    │
+│ Overhead:                                                                      0.12s [121ms]                                    │
+│ Total Step Time:                                                              8.06s [8059ms]                                    │
+│ Cache:                                                                  hits: 11 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Evening tab                                                                                                         │
+│ Rationale:  Tap on the 'Evening' tab to view evening time slots as per the goal.                                                │
+⠹ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 415ms
+⠸ Agent working...
+╭────────────────────────────────── execute_ui 5.21s ───────────────────────────────────╮
+│ Reasoning: I'm tapping on the 'Evening' tab to view the available evening time slots. │
+│   Actions: tap                                                                        │
+╰────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:51:44.447598Z [info     ] Saving trace image: assets/traces/step__13__tap__20260224_102144_447444.png [fathom.agent.s
+⠼ Agent working...
+⚡ ADB ❯ input tap 990 1651 43ms
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 13 Audit ─╮
+│ Screen Status:      🔄 351240031843 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                     0.79s [789ms]                                    │
+│ Memory Retrieval:                                                                0.00s [3ms]                                    │
+│ LLM Core Analysis:                                                            5.16s [5163ms]                                    │
+│ Tokens:                               2,763 (prompt: 2,689 | completion: 74 | cached: 1,319)                                    │
+│ Total Analysis:                                                               5.21s [5206ms]                                    │
+│ ADB Execution:                                                                  0.04s [43ms]                                    │
+│ Overhead:                                                                       0.04s [43ms]                                    │
+│ Total Step Time:                                                              6.13s [6127ms]                                    │
+│ Cache:                                                                  hits: 12 | misses: 1                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Evening tab                                                                                                         │
+│ Rationale:  Tap on the Evening tab to see evening time slots.                                                                   │
+⠏ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 398ms
+⠼ Agent working...
+⠴ Agent working...
+⠧ Agent working...
+2026-02-24T04:51:46.398684Z [info     ] Deleted cache: projects/790754672560/locations/global/cachedContents/1336746173595123712 [f
+⠇ Agent working...
+2026-02-24T04:51:49.625376Z [info     ] Created context cache: projects/790754672560/locations/global/cachedContents/64123029536416
+⠼ Agent working...
+╭─────────────────────────────────────────────────────── Step 14 Thinking ────────────────────────────────────────────────────────╮
+│ Reasoning: Loop detected (Screen repeating). Forcing BACK to break context.                                                     │
+│ Action: Press back button                                                                                                       │
+⠧ Agent working...
+⚡ ADB ❯ input keyevent 4 139ms
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 14 Audit ─╮
+│ Screen Status:    🔄 351240031843 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                      │
+│ Loop Detected:                                                                         YES                                      │
+│ Grounding:                                                                   0.82s [820ms]                                      │
+│ Total Analysis:                                                           18.43s [18426ms]                                      │
+│ ADB Execution:                                                               0.14s [139ms]                                      │
+│ Overhead:                                                                      0.00s [1ms]                                      │
+│ Total Step Time:                                                          19.43s [19433ms]                                      │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     back                                                                                                                │
+│ Target:     system: back                                                                                                        │
+│ Rationale:  Loop detected (Screen repeating). Forcing BACK to break context.                                                    │
+⠦ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 762ms
+⠧ Agent working...
+⠇ Agent working...
+2026-02-24T04:52:08.106839Z [info     ] Deleted cache: projects/790754672560/locations/global/cachedContents/6412302953641672704 [f
+⠹ Agent working...
+2026-02-24T04:52:11.569592Z [info     ] Created context cache: projects/790754672560/locations/global/cachedContents/21248761083849
+⠋ Agent working...
+╭────────────────────────── execute_ui 9.05s ───────────────────────────╮
+│ Reasoning: Opening the schedule section to begin the booking process. │
+│   Actions: tap                                                        │
+╰────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:52:16.230118Z [info     ] Saving trace image: assets/traces/step__15__tap__20260224_102216_229907.png [fathom.agent.s
+⠸ Agent working...
+⚡ ADB ❯ input tap 240 1239 58ms
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 15 Audit ─╮
+│ Screen Status:      🔄 316939eb18c2 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    3.15s [3147ms]                                    │
+│ Memory Retrieval:                                                                0.00s [5ms]                                    │
+│ LLM Core Analysis:                                                            8.98s [8985ms]                                    │
+│ Tokens:                               2,739 (prompt: 2,673 | completion: 66 | cached: 1,319)                                    │
+│ Total Analysis:                                                               9.05s [9048ms]                                    │
+│ ADB Execution:                                                                  0.06s [58ms]                                    │
+│ Overhead:                                                                      0.13s [131ms]                                    │
+│ Total Step Time:                                                            12.45s [12449ms]                                    │
+│ Cache:                                                                  hits: 12 | misses: 3                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Schedule button                                                                                                     │
+│ Rationale:  Tap on 'Schedule' to start the scheduling process.                                                                  │
+⠧ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 1222ms
+⠸ Agent working...
+⠹ Agent working...
+╭──────────────────────────────────────────── execute_ui 5.64s ─────────────────────────────────────────────╮
+│ Reasoning: I'm switching to the 'Custom' tab to set up your recurring schedule for Saturdays and Sundays. │
+│   Actions: tap                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:52:24.480571Z [info     ] Saving trace image: assets/traces/step__16__tap__20260224_102224_480358.png [fathom.agent.s
+⠴ Agent working...
+⚡ ADB ❯ input tap 914 462 71ms
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 16 Audit ─╮
+│ Screen Status:      🆕 351248830001 (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    2.37s [2373ms]                                    │
+│ Memory Retrieval:                                                                0.00s [4ms]                                    │
+│ LLM Core Analysis:                                                            5.59s [5587ms]                                    │
+│ Tokens:                               2,750 (prompt: 2,671 | completion: 79 | cached: 1,319)                                    │
+│ Total Analysis:                                                               5.64s [5638ms]                                    │
+│ ADB Execution:                                                                  0.07s [71ms]                                    │
+│ Overhead:                                                                       0.05s [51ms]                                    │
+│ Total Step Time:                                                              8.20s [8199ms]                                    │
+│ Cache:                                                                  hits: 13 | misses: 3                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Custom tab                                                                                                          │
+│ Rationale:  Switching to the 'Custom' tab as per the goal requirements.                                                         │
+⠋ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 1185ms
+⠦ Agent working...
+╭────────────────────────── execute_ui 8.14s ───────────────────────────╮
+│ Reasoning: I'm selecting Saturday and Sunday for the custom schedule. │
+│   Actions: tap, tap                                                   │
+╰────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:52:35.156097Z [info     ] Saving trace image: assets/traces/step__17__tap__20260224_102235_155635.png [fathom.agent.s
+⠏ Agent working...
+⚡ ADB ❯ input tap 819 739 143ms
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 17 Audit ─╮
+│ Screen Status:      🔄 351040832aab (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    2.35s [2346ms]                                    │
+│ Memory Retrieval:                                                                0.00s [2ms]                                    │
+│ LLM Core Analysis:                                                            8.09s [8094ms]                                    │
+│ Tokens:                              2,768 (prompt: 2,667 | completion: 101 | cached: 1,319)                                    │
+│ Total Analysis:                                                               8.14s [8138ms]                                    │
+│ ADB Execution:                                                                 0.14s [143ms]                                    │
+│ Overhead:                                                                       0.06s [62ms]                                    │
+│ Total Step Time:                                                            10.74s [10739ms]                                    │
+│ Cache:                                                                  hits: 14 | misses: 3                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Saturday button                                                                                                     │
+│ Rationale:  Select Saturday in the Days section.                                                                                │
+⠴ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 1310ms
+⠏ Agent working...
+╭──────────────────────── execute_ui 5.93s ────────────────────────╮
+│ Reasoning: I'll select Sunday to complete the weekend selection. │
+│   Actions: tap                                                   │
+╰───────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:52:43.337630Z [info     ] Saving trace image: assets/traces/step__18__tap__20260224_102243_337486.png [fathom.agent.s
+⠙ Agent working...
+⚡ ADB ❯ input tap 922 734 98ms
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 18 Audit ─╮
+│ Screen Status:      🔄 351040832aab (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    2.00s [1996ms]                                    │
+│ Memory Retrieval:                                                                0.00s [3ms]                                    │
+│ LLM Core Analysis:                                                            5.89s [5887ms]                                    │
+│ Tokens:                               2,728 (prompt: 2,664 | completion: 64 | cached: 1,319)                                    │
+│ Total Analysis:                                                               5.93s [5930ms]                                    │
+│ ADB Execution:                                                                  0.10s [98ms]                                    │
+│ Overhead:                                                                       0.04s [39ms]                                    │
+│ Total Step Time:                                                              8.11s [8112ms]                                    │
+│ Cache:                                                                  hits: 15 | misses: 3                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     Sunday button                                                                                                       │
+│ Rationale:  Selecting Sunday as requested in the goal.                                                                          │
+⠙ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 824ms
+⠦ Agent working...
+╭────────────────────────────────────── execute_ui 8.78s ───────────────────────────────────────╮
+│ Reasoning: I'm selecting March 8th as the start date, which is 12 days from today (Feb 24th). │
+│   Actions: tap                                                                                │
+╰────────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:52:53.539511Z [info     ] Saving trace image: assets/traces/step__19__tap__20260224_102253_539114.png [fathom.agent.s
+⠧ Agent working...
+⠇ Agent working...
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 19 Audit ─╮
+│ Screen Status:      🔄 351040832aab (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    1.23s [1228ms]                                    │
+│ Memory Retrieval:                                                                0.00s [3ms]                                    │
+│ LLM Core Analysis:                                                            8.74s [8737ms]                                    │
+│ Tokens:                               2,754 (prompt: 2,660 | completion: 94 | cached: 1,319)                                    │
+│ Total Analysis:                                                               8.78s [8783ms]                                    │
+│ ADB Execution:                                                                  0.06s [58ms]                                    │
+│ Overhead:                                                                       0.04s [45ms]                                    │
+│ Total Step Time:                                                            10.16s [10164ms]                                    │
+│ Cache:                                                                  hits: 16 | misses: 3                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     March 8 date button                                                                                                 │
+│ Rationale:  Selecting March 8 as the start date (12 days from Feb 24).                                                          │
+⠦ Agent working...
+⚡ ADB ❯ uiautomator dump --compressed /data/local/tmp/window_dump.xm... 720ms
+⠸ Agent working...
+╭──────────────────────────────────────────── execute_ui 11.30s ─────────────────────────────────────────────╮
+│ Reasoning: I'm selecting March 13th as the end date, which is five days after the start date of March 8th. │
+│   Actions: tap                                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────────────── UI Actions ─╯
+2026-02-24T04:53:06.079837Z [info     ] Saving trace image: assets/traces/step__20__tap__20260224_102306_079418.png [fathom.agent.s
+⠼ Agent working...
+⠴ Agent working...
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────── Step 20 Audit ─╮
+│ Screen Status:      🔄 351040832aab (com.snabbit.customer/com.snabbit.customer.MainActivity)                                    │
+│ Grounding:                                                                    1.09s [1088ms]                                    │
+│ Memory Retrieval:                                                                0.00s [3ms]                                    │
+│ LLM Core Analysis:                                                          11.25s [11253ms]                                    │
+│ Tokens:                               2,761 (prompt: 2,664 | completion: 97 | cached: 1,319)                                    │
+│ Total Analysis:                                                             11.30s [11298ms]                                    │
+│ ADB Execution:                                                                  0.06s [61ms]                                    │
+│ Overhead:                                                                       0.05s [47ms]                                    │
+│ Total Step Time:                                                            12.54s [12543ms]                                    │
+│ Cache:                                                                  hits: 17 | misses: 3                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────── LLM Reasoning & Action ─────────────────────────────────────────────────────╮
+│ Action:     tap                                                                                                                 │
+│ Target:     March 13 date button                                                                                                │
+│ Rationale:  Selecting March 13 as the end date, which is 5 days after March 8.                                                  │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+Stopping gracefully... Please wait.
+⠦ Agent working...
+2026-02-24T04:53:07.193518Z [info     ] Deleted cache: projects/790754672560/locations/global/cachedContents/2124876108384960512 [f
+               Execution Summary
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Metric      ┃ Value                         ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Status      │ Failed                        │
+│ Reason      │ Execution failed or timed out │
+│ Steps Taken │ 20                            │
+└─────────────┴───────────────────────────────┘
+                      Timing Audit
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
+┃ Operation            ┃ Total Time (s) ┃ Avg/Step (s) ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
+│ Screenshot           │         34.77s │        1.74s │
+│ Hierarchy Dump       │          0.00s │        0.00s │
+│ Hierarchy Processing │          0.00s │        0.00s │
+│ Action               │          4.01s │        0.20s │
+│ Analysis             │        141.24s │        7.06s │
+└──────────────────────┴────────────────┴──────────────┘
+   Resource Usage (Tokens)
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Metric            ┃  Value ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ Prompt Tokens     │ 50,034 │
+│ Completion Tokens │  1,590 │
+│ Cached Tokens     │ 25,061 │
+│ Total Tokens      │ 51,624 │
+└───────────────────┴────────┘
+Failure Reason: Execution failed or timed out
+(Fathom-ENV) ➜  fathom git:(features/exporter_new) ✗

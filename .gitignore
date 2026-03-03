@@ -193,6 +193,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .cursor/
+.vscode/
 
 # Marimo
 marimo/_static/
@@ -202,6 +203,7 @@ __marimo__/
 # Custom
 *.db
 .DS_Store
+logs/
 assets/
 secrets/
 documents/
