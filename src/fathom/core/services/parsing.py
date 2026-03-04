@@ -7,6 +7,7 @@ from typing import Any, Dict, Literal, Optional, cast
 from fathom.constants import ActionType
 from fathom.core.exceptions import VisionError
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.delta import GeminiDeltaSignal
 from fathom.schemas.results import AnalysisResult, GenerateResult
 
 logger = getLogger(__name__)
@@ -160,18 +161,8 @@ class ToolResponseParser:
         if not actions:
             return self.__create_fallback_result(message=message, completed=completed)
 
-        bounds = None
         data = actions[0]
-        serialization = data.get("bbox")
-
-        if serialization:
-            bounds = Bounds(
-                x=int(serialization.get("x", 0)),
-                y=int(serialization.get("y", 0)),
-                width=int(serialization.get("width", 0)),
-                height=int(serialization.get("height", 0)),
-                coord_system=serialization.get("coord_system", "normalized"),
-            )
+        bounds = self.__parse_bounds(data=data)
 
         try:
             action_type = ActionType(str(data.get("action_type", "wait")).lower())
@@ -230,14 +221,91 @@ class ToolResponseParser:
         if action_type == ActionType.VALIDATE:
             metadata_dict["event_type"] = "validation"
 
+        parsed_delta = GeminiDeltaSignal(
+            previous_screen_summary=arguments.get("previous_screen_summary"),
+            current_screen_summary=arguments.get("current_screen_summary"),
+            delta_observed=arguments.get("delta_observed"),
+            delta_reasoning=arguments.get("delta_reasoning"),
+            delta_confidence=self.__safe_float(arguments.get("delta_confidence"), default=0.0)
+            if arguments.get("delta_confidence") is not None
+            else None,
+            visible_anchors=list(arguments.get("visible_anchors") or []),
+            top_anchor=arguments.get("top_anchor"),
+            bottom_anchor=arguments.get("bottom_anchor"),
+        )
+        has_delta_signal = any(
+            (
+                parsed_delta.previous_screen_summary,
+                parsed_delta.current_screen_summary,
+                parsed_delta.delta_observed is not None,
+                parsed_delta.delta_reasoning,
+                parsed_delta.delta_confidence is not None,
+                parsed_delta.visible_anchors,
+                parsed_delta.top_anchor,
+                parsed_delta.bottom_anchor,
+            )
+        )
+
         return AnalysisResult(
             action=action,
             alternatives=[],
             reasoning=message,
             metadata=metadata_dict,
             is_goal_complete=completed,
+            content_exhausted=bool(arguments.get("content_exhausted", False)),
+            gemini_delta=parsed_delta if has_delta_signal else None,
             screen_description=message or action.rationale or "Analyzing screen...",
         )
+
+    @staticmethod
+    def __safe_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    @staticmethod
+    def __safe_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+    def __parse_bounds(self, data: Dict[str, Any]) -> Optional[Bounds]:
+        serialization = data.get("bbox")
+
+        if not isinstance(serialization, dict):
+            return None
+
+        x = self.__safe_int(serialization.get("x"), default=0)
+        y = self.__safe_int(serialization.get("y"), default=0)
+        width = self.__safe_int(serialization.get("width"), default=0)
+        height = self.__safe_int(serialization.get("height"), default=0)
+
+        if width <= 0 or height <= 0:
+            logger.warning(
+                "Ignoring invalid bbox with non-positive dimensions: width=%s height=%s",
+                width,
+                height,
+            )
+            return None
+
+        coord_system_raw = str(serialization.get("coord_system", "normalized")).strip().lower()
+        coord_system = (
+            coord_system_raw if coord_system_raw in {"normalized", "pixel"} else "normalized"
+        )
+
+        try:
+            return Bounds(
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                coord_system=coord_system,
+            )
+        except Exception:
+            logger.warning("Ignoring malformed bbox payload: %s", serialization)
+            return None
 
     def __parse_memory_storage(self, arguments: Any) -> AnalysisResult:
         """

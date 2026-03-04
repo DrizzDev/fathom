@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
+from fathom.schemas.delta import GeminiDeltaSignal
 from fathom.schemas.steps import Step, StepResult
 
 
@@ -31,6 +32,12 @@ class AnalysisResult(BaseModel):
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional context like raw tool calls"
+    )
+    content_exhausted: bool = Field(
+        default=False, description="Model signals end of scrollable content"
+    )
+    gemini_delta: Optional[GeminiDeltaSignal] = Field(
+        default=None, description="Optional model-provided semantic delta hints"
     )
 
 

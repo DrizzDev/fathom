@@ -12,6 +12,7 @@ from fathom.adapters.signal.noop import NoopSignal
 from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
+from fathom.constants.state import CommonStateKey
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -84,9 +85,10 @@ class IntentStrategy:
 
         interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE.value]
 
-        # Configure serializer to allow fathom and langgraph modules for MsgPack
-        serializer = JsonPlusSerializer(
-            allowed_json_modules=[
+        # Compatibility: newer langgraph JsonPlusSerializer() has no
+        # allowed_json_modules argument, while older versions do.
+        with_modules_kwargs = {
+            "allowed_json_modules": [
                 "fathom",
                 "fathom.constants",
                 "fathom.constants.state",
@@ -95,7 +97,14 @@ class IntentStrategy:
                 "fathom.schemas.results",
                 "langgraph",
             ]
-        )
+        }
+        try:
+            serializer = JsonPlusSerializer(**with_modules_kwargs)
+        except TypeError:
+            logger.warning(
+                "JsonPlusSerializer does not accept allowed_json_modules; using default serializer"
+            )
+            serializer = JsonPlusSerializer()
         checkpointer = MemorySaver(serde=serializer)
 
         self.__graph = builder.build(
@@ -146,7 +155,11 @@ class IntentStrategy:
 
             is_cancelled = self.__graph_context.is_cancelled
             success = self.__graph_context.agent_state.is_complete
-            error = final_state.values.get("completion_reason")
+            error = final_state.values.get(CommonStateKey.COMPLETION_REASON)
+            if not error:
+                error = final_state.values.get("completion_reason")
+            if not error:
+                error = self.__graph_context.agent_state.completion_reason
 
             duration = int((time.time() - start_time) * 1000)
 
@@ -174,6 +187,7 @@ class IntentStrategy:
             "intent": self.__intent,
             "step_count": self.__graph_context.agent_state.step_count,
             "is_complete": self.__graph_context.agent_state.is_complete,
+            "completion_reason": self.__graph_context.agent_state.completion_reason,
         }
 
     def get_metrics(self) -> ExecutionMetrics:

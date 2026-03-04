@@ -138,8 +138,23 @@ class StepPlanner:
             screen_height=screen_height,
             context_manager=context_manager,
             tracking_note=current_tracking_note,
+            is_stuck=state.is_stuck,
+            last_action=state.last_action_type,
+            delta_context=state.get_delta_context(),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
+
+        if analysis.content_exhausted:
+            state.reset_loop_detector()
+            state.mark_complete(reason="Content exhaustion signaled by model")
+            return PlanResult(
+                step=None,
+                is_complete=True,
+                metrics=analysis.metrics,
+                metadata=analysis.metadata,
+                memories=analysis.memories,
+                reason="Model signaled content exhaustion (end of list/carousel).",
+            )
 
         completion = reasoner.analyze_completion(
             analysis=analysis, screen_description=capture.activity

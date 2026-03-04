@@ -211,9 +211,13 @@ class FathomRunner:
                 success = execution_result.success
                 error = execution_result.error
                 status = "completed" if execution_result.success else "failed"
-                completion_reason = (
-                    "Completed successfully" if execution_result.success else "Failed"
-                )
+                completion_reason = str(progress.get("completion_reason") or "").strip()
+                if not completion_reason:
+                    completion_reason = (
+                        CompletionReason.SUCCESS.value
+                        if execution_result.success
+                        else (execution_result.error or CompletionReason.FAILED.value)
+                    )
 
             result = IntentResult(
                 error=error,

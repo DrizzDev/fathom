@@ -6,9 +6,10 @@ from types import MappingProxyType
 COORD_RULES = (
     "COORDINATE SYSTEM (CRITICAL):\n"
     "- GROUNDING: IF the target exists in the Element Manifest, you MUST include its 'label_id' (e.g., label_id='4').\n"
-    "- VISION FALLBACK: If no label exists, use 'bbox' with normalized coordinates (0-1000).\n"
-    "- FORMULA: norm_x = (x / width) * 1000, norm_y = (y / height) * 1000.\n"
-    "- PIXEL MODE: Only use pixel coordinates if you explicitly set coord_system='pixel'. Default is normalized."
+    "- BBOX SHAPE: x,y are TOP-LEFT; width,height extend right/down.\n"
+    "- DEFAULT: Use normalized coordinates (0-1000) for bbox.\n"
+    "- PIXEL MODE: Use raw pixels ONLY when you explicitly set coord_system='pixel'.\n"
+    "- COORD_SYSTEM CONSISTENCY: coord_system must match the numbers you provide."
 )
 
 CONFIDENCE_RULES = "CONFIDENCE: 0.9+ clear match, 0.7-0.89 certain. Below 0.7 indicates ambiguity."

@@ -70,6 +70,9 @@ class VisionService:
         tracking_note: Optional[str] = None,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
+        is_stuck: bool = False,
+        last_action: Optional[str] = None,
+        delta_context: Optional[Dict[str, object]] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
@@ -145,6 +148,23 @@ class VisionService:
             history=full_context,
             tracking_note=tracking_note,
         )
+
+        if is_stuck:
+            dynamic_context += (
+                "\n\n<SYSTEM_ALERT>\n"
+                "Loop risk detected; avoid repeating the same ineffective action."
+                "\n</SYSTEM_ALERT>"
+            )
+
+        if last_action:
+            dynamic_context += (
+                f"\n\n<LAST_ACTION>\nMost recent action: {last_action}\n</LAST_ACTION>"
+            )
+
+        if delta_context:
+            dynamic_context += (
+                f"\n\n<DELTA_CONTEXT>\n{json.dumps(delta_context, default=str)}\n</DELTA_CONTEXT>"
+            )
 
         logger.debug(
             f"[H3] Dynamic Context Built | "

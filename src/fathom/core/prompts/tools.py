@@ -78,7 +78,7 @@ class ToolRegistry:
                                 },
                                 "bbox": {
                                     "type": "OBJECT",
-                                    "description": "Bounding box for the action (tap target). You MUST follow the active COORDINATE MODE (pixel vs normalized) defined in your system instructions.",
+                                    "description": "Bounding box for the action target. x,y are TOP-LEFT and width,height extend right/down. Use normalized values (0-1000) by default; use pixel values only with coord_system='pixel'.",
                                     "properties": {
                                         "x": {"type": "INTEGER"},
                                         "y": {"type": "INTEGER"},
@@ -87,7 +87,7 @@ class ToolRegistry:
                                         "coord_system": {
                                             "type": "STRING",
                                             "enum": ["normalized", "pixel"],
-                                            "description": "Coordinate system used. Must match the mode specified in your system instructions.",
+                                            "description": "Coordinate system for bbox values. Default is 'normalized' (0-1000). Set 'pixel' only when using raw pixel coordinates.",
                                         },
                                     },
                                 },
@@ -131,6 +131,43 @@ class ToolRegistry:
                     "goal_completed": {
                         "type": "BOOLEAN",
                         "description": "True if the user's high-level goal is fully achieved after these actions.",
+                    },
+                    "content_exhausted": {
+                        "type": "BOOLEAN",
+                        "description": "True when scrolling/swiping reveals no more new content and the list/feed appears exhausted.",
+                    },
+                    "previous_screen_summary": {
+                        "type": "STRING",
+                        "description": "Optional short summary of the previous screen for semantic delta analysis.",
+                    },
+                    "current_screen_summary": {
+                        "type": "STRING",
+                        "description": "Optional short summary of the current screen for semantic delta analysis.",
+                    },
+                    "delta_observed": {
+                        "type": "BOOLEAN",
+                        "description": "Optional hint indicating whether a meaningful screen change was observed.",
+                    },
+                    "delta_reasoning": {
+                        "type": "STRING",
+                        "description": "Optional rationale behind the delta_observed hint.",
+                    },
+                    "delta_confidence": {
+                        "type": "NUMBER",
+                        "description": "Optional confidence score (0.0-1.0) for delta_observed.",
+                    },
+                    "visible_anchors": {
+                        "type": "ARRAY",
+                        "description": "Optional key UI anchors currently visible (e.g., top card title, footer label).",
+                        "items": {"type": "STRING"},
+                    },
+                    "top_anchor": {
+                        "type": "STRING",
+                        "description": "Optional anchor near the top of the viewport.",
+                    },
+                    "bottom_anchor": {
+                        "type": "STRING",
+                        "description": "Optional anchor near the bottom of the viewport.",
                     },
                     "memory_updates": {
                         "type": "OBJECT",

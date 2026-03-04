@@ -108,6 +108,14 @@ class AgentState:
         return self.__completion_reason
 
     @property
+    def last_action_type(self) -> Optional[str]:
+        """
+        The type of the most recently executed action, if any.
+        """
+
+        return self.__last_action_type
+
+    @property
     def is_stuck(self) -> bool:
         """
         Whether the agent is stuck in a loop.
@@ -332,6 +340,27 @@ class AgentState:
                 rationale="Loop detected (Screen repeating). Forcing HOME to reset agent.",
             )
 
+    def record_recovery_attempt(self) -> int:
+        """
+        Record a planner-level recovery attempt.
+        """
+
+        return self.__loop_detector.record_recovery_attempt()
+
+    def reset_loop_detector(self) -> None:
+        """
+        Reset loop detector state after an explicit progress signal.
+        """
+
+        self.__loop_detector.signal_content_exhausted()
+
+    def get_delta_context(self) -> Dict[str, object]:
+        """
+        Return compact no-XML delta context used for planning hints.
+        """
+
+        return {"last_delta_score": None, "low_delta_streak": 0}
+
     def build_context(self) -> Dict[str, object]:
         """
         Build context for vision-language model with token optimization.
@@ -349,6 +378,7 @@ class AgentState:
             "relevant_failures": self.__action_history.get_activity_failures(
                 current_activity=current_activity
             ),
+            "delta_context": self.get_delta_context(),
         }
 
     def should_avoid_action(self, action: Action) -> bool:

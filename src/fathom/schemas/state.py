@@ -223,6 +223,13 @@ class LoopDetector(BaseModel):
         self.__recovery_attempts = 0
         logger.info(f"LoopDetector.reset: cleared {prev_size} screens")
 
+    def signal_content_exhausted(self) -> None:
+        """
+        Clear loop history after explicit end-of-content signal.
+        """
+
+        self.reset()
+
 
 class InteractionTracker(BaseModel):
     """

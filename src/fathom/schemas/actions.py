@@ -48,23 +48,29 @@ class Bounds(BaseModel):
         """
         Converts coordinates to absolute device pixels.
         Handles both normalized and already-pixel coordinates.
+        Clamps results to valid screen bounds.
         """
 
         # If explicitly told it's pixels, don't normalize
         if self.system == "pixel":
-            return self.x, self.y, self.width, self.height
+            x, y, width, height = self.x, self.y, self.width, self.height
+        elif self.is_normalized:
+            x = int(self.x * screen_width / 1000)
+            y = int(self.y * screen_height / 1000)
+            width = int(self.width * screen_width / 1000)
+            height = int(self.height * screen_height / 1000)
+        else:
+            # Fallback for large values that must be pixels
+            x, y, width, height = self.x, self.y, self.width, self.height
 
-        # Use heuristic if system is normalized (default)
-        if self.is_normalized:
-            x_pixel = int(self.x * screen_width / 1000)
-            y_pixel = int(self.y * screen_height / 1000)
-            width_pixel = int(self.width * screen_width / 1000)
-            height_pixel = int(self.height * screen_height / 1000)
+        max_x = max(0, screen_width - 1)
+        max_y = max(0, screen_height - 1)
+        x = max(0, min(x, max_x))
+        y = max(0, min(y, max_y))
+        width = max(1, min(width, max(1, screen_width - x)))
+        height = max(1, min(height, max(1, screen_height - y)))
 
-            return x_pixel, y_pixel, width_pixel, height_pixel
-
-        # Fallback for large values that must be pixels
-        return self.x, self.y, self.width, self.height
+        return x, y, width, height
 
 
 class Action(BaseModel):

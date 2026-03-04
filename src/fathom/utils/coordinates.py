@@ -34,8 +34,10 @@ class CoordinateConverter:
 
     def center_to_pixels(self, bounds: Bounds) -> Tuple[int, int]:
         """
-        Get center point in pixel coordinates with high precision.
-        Calculates center in normalized space first to avoid rounding errors.
+        Get center point in pixel coordinates.
+
+        For normalized coordinates, this preserves the gold-standard ambiguity
+        handling when VLM outputs (x, y) as either top-left or center.
         """
 
         if bounds.system == "pixel" or not bounds.is_normalized:
@@ -44,14 +46,29 @@ class CoordinateConverter:
             )
             return x + width // 2, y + height // 2
 
-        # High-precision calculation for normalized coordinates
-        norm_cx = bounds.x + (bounds.width / 2.0)
-        norm_cy = bounds.y + (bounds.height / 2.0)
+        x, y, width, height = bounds.x, bounds.y, bounds.width, bounds.height
 
-        px = int(norm_cx * self.__width / 1000.0)
-        py = int(norm_cy * self.__height / 1000.0)
+        center_x_norm: float
+        center_y_norm: float
 
-        return px, py
+        if x + width > 1000:
+            center_x_norm = x
+        elif x - width / 2 < 0:
+            center_x_norm = x + width / 2
+        else:
+            center_x_norm = x + width / 4
+
+        if y + height > 1000:
+            center_y_norm = y
+        elif y - height / 2 < 0:
+            center_y_norm = y + height / 2
+        else:
+            center_y_norm = y + height / 4
+
+        center_x = max(0, min(int(center_x_norm * self.__width / 1000), self.__width))
+        center_y = max(0, min(int(center_y_norm * self.__height / 1000), self.__height))
+
+        return center_x, center_y
 
     def swipe_coordinates(
         self,

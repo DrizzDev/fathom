@@ -118,8 +118,10 @@ class GeminiPromptBuilder(PromptBuilder):
         if hints and (w := hints.get("screen_width")) and (h := hints.get("screen_height")):
             return (
                 f"You are a Mobile UI expert agent. Screen Resolution: {w}x{h}.\n"
-                "COORDINATE MODE: PIXEL. Use raw pixel values in 'bbox' and set coord_system='pixel'. "
-                "Do NOT normalize. Map visual elements directly to their x/y pixel locations."
+                "COORDINATE MODE: NORMALIZED by default.\n"
+                "Use normalized coordinates (0-1000) in 'bbox' unless you explicitly set "
+                "coord_system='pixel'.\n"
+                "When using bbox, x/y are TOP-LEFT and width/height extend right/down."
             )
 
         return (
