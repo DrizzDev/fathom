@@ -504,8 +504,9 @@ class ScriptExporter:
                 i += 1
                 continue
 
-            is_blocker_wait = action_type_val == "wait" and ScriptExporter.__is_blocker_popup_condition(
-                condition=condition
+            is_blocker_wait = (
+                action_type_val == "wait"
+                and ScriptExporter.__is_blocker_popup_condition(condition=condition)
             )
             if condition and (action_type_val != "wait" or is_blocker_wait):
                 lines.append(f"IF {condition} {{")
