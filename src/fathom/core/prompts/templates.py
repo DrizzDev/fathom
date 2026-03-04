@@ -92,6 +92,9 @@ TOOL_GUIDANCE = """
 TOOL SELECTION & VALIDATION:
 - execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).
   * For explicit checks/validation, prefer execute_ui with action_type='validate'.
+  * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).
+  * Always provide condition text when visible; if omitted, conditional_type is used for default guard text.
+  * For overlay/popup dismissal steps, set overlay_detected=true and include condition with the visible guard when available.
   * Evaluate is_valid and validation_reason for EVERY action.
   * If action is risky/ambiguous, set is_valid=False and explain.
   * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').

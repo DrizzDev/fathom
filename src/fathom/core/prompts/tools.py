@@ -116,6 +116,19 @@ class ToolRegistry:
                                     "type": "STRING",
                                     "description": "Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
                                 },
+                                "is_conditional": {
+                                    "type": "BOOLEAN",
+                                    "description": "Set true when this action should be executed only under a visible guard condition.",
+                                },
+                                "conditional_type": {
+                                    "type": "STRING",
+                                    "enum": ["blocker", "transient", "error", "optional"],
+                                    "description": "Optional condition class when is_conditional=true. Use blocker/transient/error/optional.",
+                                },
+                                "overlay_detected": {
+                                    "type": "BOOLEAN",
+                                    "description": "Set true when this action is specifically handling an overlay/popup blocker.",
+                                },
                                 "target_type": {
                                     "type": "STRING",
                                     "enum": ["stable", "positional", "dynamic"],

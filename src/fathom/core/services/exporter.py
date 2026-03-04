@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, Literal, Optional, Sequence, Union, cast
 
 from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.steps import StepResult
@@ -244,6 +244,95 @@ class ScriptExporter:
         return ""
 
     @staticmethod
+    def __is_overlay_detected(step: Union[StepResult, Dict[str, Any]]) -> bool:
+        """
+        Extract explicit overlay/popup blocker signal from a step.
+        """
+
+        if isinstance(step, StepResult):
+            return bool(getattr(step.step.action, "overlay_detected", False))
+
+        return bool(step.get("overlay_detected", False))
+
+    @staticmethod
+    def __is_explicit_conditional(step: Union[StepResult, Dict[str, Any]]) -> bool:
+        """
+        Extract explicit conditional execution signal from a step.
+        """
+
+        if isinstance(step, StepResult):
+            return bool(getattr(step.step.action, "is_conditional", False))
+
+        return bool(step.get("is_conditional", False))
+
+    @staticmethod
+    def __get_conditional_type(
+        step: Union[StepResult, Dict[str, Any]],
+    ) -> Optional[Literal["blocker", "transient", "error", "optional"]]:
+        """
+        Extract conditional type for explicit conditional actions.
+        """
+
+        if isinstance(step, StepResult):
+            raw = getattr(step.step.action, "conditional_type", None)
+        else:
+            raw = step.get("conditional_type")
+
+        text = str(raw or "").strip().lower()
+        if text in ("blocker", "transient", "error", "optional"):
+            return cast("Literal['blocker', 'transient', 'error', 'optional']", text)
+        return None
+
+    @staticmethod
+    def __default_condition_for_type(
+        conditional_type: Optional[Literal["blocker", "transient", "error", "optional"]],
+    ) -> Optional[str]:
+        """
+        Map explicit conditional type to deterministic default condition text.
+        """
+
+        mapping = {
+            "blocker": "Blocker prompt is visible",
+            "transient": "Transient screen is visible",
+            "error": "Error message is displayed",
+            "optional": "Optional UI state is visible",
+        }
+        return mapping.get(conditional_type or "")
+
+    @staticmethod
+    def __is_generic_wait_condition(condition: Optional[str]) -> bool:
+        """
+        Detect generic wait-derived conditions that should be replaced by explicit conditional type defaults.
+        """
+
+        if not condition:
+            return False
+
+        lower = condition.strip().lower()
+        generic_wait_phrases = {
+            "screen to load is visible",
+            "the app is still loading",
+            "loading spinner is visible",
+        }
+        return lower in generic_wait_phrases
+
+    @staticmethod
+    def __get_raw_condition(step: Union[StepResult, Dict[str, Any]]) -> Optional[str]:
+        """
+        Extract condition directly from step payload without heuristic inference.
+        """
+
+        if isinstance(step, StepResult):
+            raw = getattr(step.step, "condition", None) or getattr(
+                step.step.action, "condition", None
+            )
+        else:
+            raw = step.get("condition")
+
+        text = str(raw).strip() if raw else None
+        return text or None
+
+    @staticmethod
     def __find_app_launch_boundary(
         steps: Sequence[Union[StepResult, Dict[str, Any]]],
         package_name: str,
@@ -344,7 +433,24 @@ class ScriptExporter:
             step = step_results[i]
             action_type_val = ScriptExporter.__get_action_type(step=step)
             event_type = ScriptExporter.__get_event_type(step=step)
+            raw_condition = ScriptExporter.__get_raw_condition(step=step)
             condition = ScriptExporter.__get_condition(step=step)
+            explicit_conditional = ScriptExporter.__is_explicit_conditional(step=step)
+            conditional_type = ScriptExporter.__get_conditional_type(step=step)
+            if explicit_conditional:
+                default_condition = ScriptExporter.__default_condition_for_type(
+                    conditional_type=conditional_type
+                )
+                if default_condition and (
+                    not raw_condition
+                    or not condition
+                    or ScriptExporter.__is_generic_wait_condition(condition=condition)
+                ):
+                    condition = default_condition
+            if ScriptExporter.__is_overlay_detected(
+                step=step
+            ) and not ScriptExporter.__is_blocker_popup_condition(condition=condition):
+                condition = "Overlay is visible"
             target = ScriptExporter.__resolve_target(step=step)
 
             if action_type_val in ScriptExporter.__SWIPE_ACTIONS:
@@ -401,10 +507,7 @@ class ScriptExporter:
                 ):
                     val_line = f"Validate {target} is visible"
                     if prev_condition:
-                        lines.append(f"IF {prev_condition}")
-                        lines.append("{")
-                        lines.append(f"    {val_line}")
-                        lines.append("}")
+                        lines.append(f"IF {prev_condition} {{ {val_line} }}")
                     else:
                         lines.append(val_line)
 
@@ -504,11 +607,7 @@ class ScriptExporter:
                 i += 1
                 continue
 
-            is_blocker_wait = (
-                action_type_val == "wait"
-                and ScriptExporter.__is_blocker_popup_condition(condition=condition)
-            )
-            if condition and (action_type_val != "wait" or is_blocker_wait):
+            if condition and action_type_val != "wait":
                 lines.append(f"IF {condition} {{")
                 prev_is_same_target_validation = False
                 if i > 0:
@@ -710,7 +809,9 @@ class ScriptExporter:
             "popup",
             "pop-up",
             "overlay",
+            "prompt",
             "dialog",
+            "notification",
             "permission",
             "consent",
             "cookie",
@@ -753,6 +854,23 @@ class ScriptExporter:
                 or "got it" in lower_rationale
             ):
                 condition = "Promotional overlay is visible"
+            elif any(
+                token in lower_rationale
+                for token in ("prompt", "permission", "dialog", "consent", "cookie")
+            ) and any(
+                token in lower_rationale
+                for token in (
+                    "dismiss",
+                    "close",
+                    "skip",
+                    "not now",
+                    "deny",
+                    "allow",
+                    "accept",
+                    "continue",
+                )
+            ):
+                condition = "Blocker prompt is visible"
             if "timeout" in lower_rationale:
                 condition = "Timeout error is displayed"
             elif (

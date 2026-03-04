@@ -184,6 +184,28 @@ class ToolResponseParser:
 
         condition_raw = data.get("condition")
         condition = str(condition_raw).strip() if condition_raw else None
+        is_conditional = bool(data.get("is_conditional", False))
+        raw_conditional_type = str(data.get("conditional_type") or "").strip().lower()
+        conditional_type: Optional[Literal["blocker", "transient", "error", "optional"]] = (
+            cast("Literal['blocker', 'transient', 'error', 'optional']", raw_conditional_type)
+            if raw_conditional_type in ("blocker", "transient", "error", "optional")
+            else None
+        )
+        overlay_detected = bool(data.get("overlay_detected", False))
+        if overlay_detected and not condition:
+            condition = "Overlay is visible"
+        if overlay_detected and not conditional_type:
+            conditional_type = "blocker"
+        if is_conditional and not condition:
+            default_condition_map = {
+                "blocker": "Blocker prompt is visible",
+                "transient": "Transient screen is visible",
+                "error": "Error message is displayed",
+                "optional": "Optional UI state is visible",
+            }
+            condition = default_condition_map.get(
+                conditional_type or "", "Conditional UI state is visible"
+            )
 
         raw_target_type = (data.get("target_type") or "").strip().lower()
         target_type: Optional[Literal["stable", "positional", "dynamic"]] = (
@@ -203,6 +225,9 @@ class ToolResponseParser:
             bounds=bounds,
             target=target_name,
             condition=condition,
+            is_conditional=is_conditional,
+            conditional_type=conditional_type,
+            overlay_detected=overlay_detected,
             action_type=action_type,
             target_type=target_type,
             script_target=script_target,

@@ -107,6 +107,18 @@ class Action(BaseModel):
         default=None,
         description="Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
     )
+    is_conditional: bool = Field(
+        default=False,
+        description="True when the action should execute only under a visible guard condition.",
+    )
+    conditional_type: Optional[Literal["blocker", "transient", "error", "optional"]] = Field(
+        default=None,
+        description="Optional conditional category: blocker, transient, error, or optional.",
+    )
+    overlay_detected: bool = Field(
+        default=False,
+        description="True when this action is specifically handling an overlay/popup blocker.",
+    )
 
     # Script export classification (VLM-provided; optional; fallback is TargetClassifier)
     target_type: Optional[Literal["stable", "positional", "dynamic"]] = Field(
