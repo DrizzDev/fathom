@@ -33,7 +33,7 @@ class ToolRegistry:
 
         return {
             "name": "execute_ui",
-            "description": "Execute a sequence of UI actions on the device to achieve a specific sub-goal or the final goal. Use this to interact with the app.",
+            "description": "Execute a sequence of UI actions on the device to achieve a specific sub-goal or the final goal. Use this to interact with the app, including explicit validation checks via action_type='validate'.",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
@@ -59,6 +59,7 @@ class ToolRegistry:
                                         "swipe_up",
                                         "swipe_down",
                                         "wait",
+                                        "validate",
                                         "home",
                                         "back",
                                         "enter",

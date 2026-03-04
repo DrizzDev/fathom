@@ -266,6 +266,33 @@ class ScriptExporter:
         return 0
 
     @staticmethod
+    def __infer_open_app_package(
+        steps: Sequence[Union[StepResult, Dict[str, Any]]],
+        default_package: str,
+    ) -> Optional[str]:
+        """
+        Infer package name for OPEN_APP from step activity when available.
+        Falls back to the provided package identifier.
+        """
+
+        if default_package:
+            return default_package
+
+        if not steps:
+            return None
+
+        # Try to find the first concrete activity and derive package from it.
+        for step in steps:
+            activity = ScriptExporter.__get_activity(step=step)
+            if not activity:
+                continue
+            if "/" in activity:
+                return activity.split("/")[0].strip() or None
+            return activity.strip() or None
+
+        return None
+
+    @staticmethod
     def export(
         step_results: Sequence[Union[StepResult, Dict[str, Any]]],
         *,
@@ -305,6 +332,13 @@ class ScriptExporter:
             if launch_boundary > 0:
                 lines.append(f"OPEN_APP {package_name}")
                 i = launch_boundary
+            else:
+                inferred_package = ScriptExporter.__infer_open_app_package(
+                    steps=step_results, default_package=package_name
+                )
+                if inferred_package:
+                    lines.append(f"OPEN_APP {inferred_package}")
+                    i = 1
 
         while i < n:
             step = step_results[i]
@@ -451,9 +485,8 @@ class ScriptExporter:
                         if (
                             prev_action_type == "wait"
                             and prev_condition == validation_condition
-                            and len(lines) >= 4
-                            and lines[-4] == f"IF {validation_condition}"
-                            and lines[-3] == "{"
+                            and len(lines) >= 3
+                            and lines[-3] == f"IF {validation_condition} {{"
                             and lines[-1] == "}"
                         ):
                             lines.pop()
@@ -464,19 +497,18 @@ class ScriptExporter:
                         emitted_validation_lines.add(validation_line)
                         i += 1
                         continue
-                    lines.append(f"IF {validation_condition}")
-                    lines.append("{")
-                    lines.append(f"    {validation_line}")
-                    lines.append("}")
+                    lines.append(f"IF {validation_condition} {{ {validation_line} }}")
                 else:
                     lines.append(validation_line)
                 emitted_validation_lines.add(validation_line)
                 i += 1
                 continue
 
-            if condition:
-                lines.append(f"IF {condition}")
-                lines.append("{")
+            is_blocker_wait = action_type_val == "wait" and ScriptExporter.__is_blocker_popup_condition(
+                condition=condition
+            )
+            if condition and (action_type_val != "wait" or is_blocker_wait):
+                lines.append(f"IF {condition} {{")
                 prev_is_same_target_validation = False
                 if i > 0:
                     prev = step_results[i - 1]
@@ -661,6 +693,30 @@ class ScriptExporter:
             return f"{target} is visible"
 
         return None
+
+    @staticmethod
+    def __is_blocker_popup_condition(condition: Optional[str]) -> bool:
+        """
+        Check whether a condition corresponds to blocker/popup style UI states.
+        """
+
+        if not condition:
+            return False
+
+        signal = condition.lower()
+        blocker_terms = (
+            "blocker",
+            "popup",
+            "pop-up",
+            "overlay",
+            "dialog",
+            "permission",
+            "consent",
+            "cookie",
+            "transient",
+            "interstitial",
+        )
+        return any(term in signal for term in blocker_terms)
 
     @staticmethod
     def __get_condition(step: Union[StepResult, Dict[str, Any]]) -> Optional[str]:

@@ -629,6 +629,11 @@ class IntentNodeProvider:
             return {}
 
         step_result: StepResult = result
+        current_activity = "unknown"
+        try:
+            current_activity = await self.__context.device.get_current_package()
+        except Exception:
+            current_activity = "unknown"
 
         logger.info(
             f"[NODE: RECORD] Recording step: success={step_result.success}, "
@@ -637,11 +642,11 @@ class IntentNodeProvider:
 
         self.__context.agent_state.record_step(result=step_result)
         script_data = await self.__context.history.save_step(
-            result=step_result, intent=self.__context.intent
+            result=step_result, intent=self.__context.intent, activity=current_activity
         )
 
         # Emit enriched telemetry for the UI to render full step details
-        record = step_result.to_record()
+        record = step_result.to_record(activity=current_activity)
 
         # Calculate total duration for UI
         analysis_duration_raw = state.get(CommonStateKey.ANALYSIS_DURATION) or 0.0

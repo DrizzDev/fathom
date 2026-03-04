@@ -239,7 +239,12 @@ class ExplorationNodeProvider:
             )
 
         self.__context.agent_state.record_step(result=step_result)
-        await self.__context.history.save_step(result=step_result, intent="exploration")
+        activity = screen_state.activity if isinstance(screen_state, ScreenState) else "unknown"
+        await self.__context.history.save_step(
+            result=step_result,
+            intent="exploration",
+            activity=activity,
+        )
 
         if self.__context.agent_state.step_count >= self.__context.max_steps:
             result = ExplorationGraphState(**state)

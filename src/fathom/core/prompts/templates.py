@@ -34,6 +34,10 @@ _ACTION_RULES_RAW = {
         "CRITICAL: Even if XML elements are present, if the visual is a Skeleton/Shimmer, you MUST WAIT. "
         "Include wait_duration (default 2.0)."
     ),
+    "validate": (
+        "VALIDATE: Use when the next best step is an explicit check/confirmation rather than a touch action "
+        "(e.g., verify page state, banner text, toggle status)."
+    ),
     "zoom": "ZOOM: 'zoom_in' to enlarge, 'zoom_out' to shrink. Target the relevant region.",
     "type": (
         "CRITICAL - TAP BEFORE TYPE: Always tap input first to gain focus. "
@@ -78,6 +82,7 @@ ACTIONS:
 - {ACTION_RULES["type"]}
 - {ACTION_RULES["scroll"]}
 - {ACTION_RULES["wait"]}
+- {ACTION_RULES["validate"]}
 - {ACTION_RULES["zoom"]}
 
 STRICT FORMAT: Return only valid tool calls using provided schema fields.
@@ -85,7 +90,8 @@ STRICT FORMAT: Return only valid tool calls using provided schema fields.
 
 TOOL_GUIDANCE = """
 TOOL SELECTION & VALIDATION:
-- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, zoom).
+- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).
+  * For explicit checks/validation, prefer execute_ui with action_type='validate'.
   * Evaluate is_valid and validation_reason for EVERY action.
   * If action is risky/ambiguous, set is_valid=False and explain.
   * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
@@ -93,7 +99,7 @@ TOOL SELECTION & VALIDATION:
   * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.
     Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}
     ALWAYS use this to "tick off" requirements from the user's goal as you complete them.
-- validate_state: Use for explicit state checks when no immediate UI action is required.
+- validate_state: Legacy fallback for explicit checks when no immediate UI action is required.
 - verify_goal: Use for explicit completion checks.
 - store_memory: Secondary tool. Use ONLY for saving complex text data that doesn't fit in execute_ui.
 - recall_memory: Check what you've already done to avoid repeating actions.

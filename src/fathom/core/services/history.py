@@ -64,6 +64,7 @@ class HistoryService:
         *,
         intent: str = "",
         absolute_center: Optional[List[int]] = None,
+        activity: Optional[str] = None,
     ) -> str:
         """
         Saves a single step result and updates associated artifact files.
@@ -72,7 +73,7 @@ class HistoryService:
 
         history = self.__load_history()
 
-        record = result.to_record(absolute_center=absolute_center).model_dump()
+        record = result.to_record(absolute_center=absolute_center, activity=activity).model_dump()
         record["timestamp"] = int(time.time() * 1000)
         record["screen_changed"] = result.screen_changed
 
@@ -176,10 +177,11 @@ class HistoryService:
 
         path = self.__directory / "script.txt"
 
+        export_package_name = self.__resolve_export_package_name(history=history)
         script_data = self.__exporter.export(
             step_results=history,
             goal_state=intent,
-            package_name=self.__package_name,
+            package_name=export_package_name,
             intent=intent,
         )
 
@@ -200,6 +202,22 @@ class HistoryService:
             )
 
         return script_data
+
+    def __resolve_export_package_name(self, history: List[Dict[str, Any]]) -> str:
+        """
+        Resolve best package name for OPEN_APP from recorded runtime activity.
+        """
+
+        for item in reversed(history):
+            activity_raw = str(item.get("activity") or "").strip()
+            if not activity_raw or activity_raw.lower() == "unknown":
+                continue
+            if "/" in activity_raw:
+                activity_raw = activity_raw.split("/", 1)[0].strip()
+            if activity_raw:
+                return activity_raw
+
+        return self.__package_name
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """
