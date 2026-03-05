@@ -149,10 +149,7 @@ class IntentStrategy:
             is_cancelled = self.__graph_context.is_cancelled
             success = self.__graph_context.agent_state.is_complete
             error = final_state.values.get("completion_reason")
-
-            # Read step results directly from AgentState (avoids LangGraph JSON serialization
-            # stripping Pydantic objects stored in graph state back to plain dicts)
-            self.__step_results = self.__graph_context.agent_state.executed_steps
+            self.__step_results = list(final_state.values.get("STEP_RESULTS") or [])
 
             duration = int((time.time() - start_time) * 1000)
 
@@ -167,6 +164,16 @@ class IntentStrategy:
             logger.exception(f"Intent strategy execution failed: {exception}")
             duration = int((time.time() - start_time) * 1000)
             is_cancelled = self.__graph_context.is_cancelled
+
+            # Recover step history from last checkpoint so the execution transcript
+            # is not lost even when the run raises an exception.
+            try:
+                config = {"configurable": {"thread_id": self.__workflow_id}}
+                final_state = await self.__graph.aget_state(config)
+                self.__step_results = list(final_state.values.get("STEP_RESULTS") or [])
+            except Exception:
+                pass
+
             return ExecutionResult(
                 success=False, duration=duration, error=str(exception), is_cancelled=is_cancelled
             )
