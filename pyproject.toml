@@ -168,6 +168,9 @@ addopts = "-v --tb=short"
 source = ["src/fathom"]
 branch = true
 
+[tool.bandit]
+exclude_dirs = ["tests"]
+
 [tool.coverage.report]
 exclude_lines = [
     "pragma: no cover",

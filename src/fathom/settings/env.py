@@ -1,5 +1,6 @@
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional, cast
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -43,12 +44,44 @@ class FathomSettings(BaseSettings):
     # Workflow default limits
     max_steps: int = Field(default=100, alias="MAX_STEPS")
 
+    # Temporal settings (used by TemporalSignalAdapter in interactive mode)
+    temporal_host: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("TEMPORAL_HOST", "TEMPORAL_TARGET_HOST"),
+    )
+    temporal_api_key: Optional[str] = Field(default=None, alias="TEMPORAL_API_KEY")
+
+    # Redis URL for telemetry streaming
+    redis_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("REDIS_URL", "GATEWAY_REDIS_URL"),
+    )
+
+    # Google service account credentials (dict or JSON string from env var)
+    google_credentials_json: Optional[Dict[str, Any]] = Field(
+        default=None,
+        alias="GOOGLE_APPLICATION_CREDENTIALS_JSON",
+    )
+
     # Assets path
     assets_path: Path = Field(default=PROJECT_ROOT / "assets", alias="FATHOM_ASSETS_PATH")
+
+    @field_validator("google_credentials_json", mode="before")
+    @classmethod
+    def parse_google_credentials(cls, value: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(value, str):
+            return cast("Dict[str, Any]", json.loads(value))
+
+        return cast("Optional[Dict[str, Any]]", value)
+
+    @property
+    def google_credentials_dict(self) -> Optional[Dict[str, Any]]:
+        return self.google_credentials_json
 
     # Environment file support
     model_config = SettingsConfigDict(
         extra="ignore",
+        populate_by_name=True,
         env_file_encoding="utf-8",
         env_file=[".env", str(PROJECT_ROOT / ".env")],
     )
