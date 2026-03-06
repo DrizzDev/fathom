@@ -18,6 +18,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from fathom.constants.interaction import InteractionAction, SwipeSpeed
 from fathom.core.exceptions import DeviceError, PortError
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.configuration import ADBConfiguration, DeviceConfiguration
@@ -139,7 +140,9 @@ class RemoteDeviceAdapter(DevicePort):
         Execute remote tap.
         """
 
-        request = RemoteInteractionRequest(action="tap", x=x, y=y, execution_id=self.__execution_id)
+        request = RemoteInteractionRequest(
+            action=InteractionAction.TAP, x=x, y=y, execution_id=self.__execution_id
+        )
         return await self.__send_command(request)
 
     async def type(self, *, text: str) -> ActionResult:
@@ -148,21 +151,31 @@ class RemoteDeviceAdapter(DevicePort):
         """
 
         request = RemoteInteractionRequest(
-            action="type", text=text, execution_id=self.__execution_id
+            action=InteractionAction.TYPE, text=text, execution_id=self.__execution_id
         )
         return await self.__send_command(request)
 
     async def swipe(
-        self, *, x1: int, y1: int, x2: int, y2: int, duration: int = 300
+        self,
+        *,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        duration: Optional[int] = None,
+        speed: Optional[SwipeSpeed] = None,
     ) -> ActionResult:
         """
         Execute remote swipe.
         """
 
+        duration = duration or (self.configuration.swipe_duration if self.configuration else 300)
+
         request = RemoteInteractionRequest(
-            action="swipe",
+            speed=speed,
+            duration=duration,
             points=[x1, y1, x2, y2],
-            extras={"duration": duration},
+            action=InteractionAction.SWIPE,
             execution_id=self.__execution_id,
         )
         return await self.__send_command(request)
@@ -172,7 +185,9 @@ class RemoteDeviceAdapter(DevicePort):
         Execute remote back press.
         """
 
-        request = RemoteInteractionRequest(action="back", execution_id=self.__execution_id)
+        request = RemoteInteractionRequest(
+            action=InteractionAction.BACK, execution_id=self.__execution_id
+        )
         return await self.__send_command(request)
 
     async def home(self) -> ActionResult:
@@ -180,7 +195,9 @@ class RemoteDeviceAdapter(DevicePort):
         Execute remote home press.
         """
 
-        request = RemoteInteractionRequest(action="home", execution_id=self.__execution_id)
+        request = RemoteInteractionRequest(
+            action=InteractionAction.HOME, execution_id=self.__execution_id
+        )
         return await self.__send_command(request)
 
     async def get_dimensions(self) -> Tuple[int, int]:
@@ -192,11 +209,13 @@ class RemoteDeviceAdapter(DevicePort):
             return self.__cached_dimensions
 
         request = RemoteInteractionRequest(
-            action="GET_DIMENSIONS", execution_id=self.__execution_id
+            action=InteractionAction.GET_DIMENSIONS, execution_id=self.__execution_id
         )
 
         try:
-            response = await self.__execute_request("POST", "action", json=request.model_dump())
+            response = await self.__execute_request(
+                "POST", "action", json=request.model_dump(exclude_none=True)
+            )
 
             payload = self.__parse_response(response.json())
 
@@ -228,11 +247,13 @@ class RemoteDeviceAdapter(DevicePort):
         """
 
         request = RemoteInteractionRequest(
-            action="GET_SCREENSHOT", execution_id=self.__execution_id
+            action=InteractionAction.GET_SCREENSHOT, execution_id=self.__execution_id
         )
 
         try:
-            response = await self.__execute_request("POST", "action", json=request.model_dump())
+            response = await self.__execute_request(
+                "POST", "action", json=request.model_dump(exclude_none=True)
+            )
 
             payload = self.__parse_response(response.json())
 
@@ -259,10 +280,14 @@ class RemoteDeviceAdapter(DevicePort):
         Dump UI hierarchy to XML string.
         """
 
-        request = RemoteInteractionRequest(action="GET_XML", execution_id=self.__execution_id)
+        request = RemoteInteractionRequest(
+            action=InteractionAction.GET_XML, execution_id=self.__execution_id
+        )
 
         try:
-            response = await self.__execute_request("POST", "action", json=request.model_dump())
+            response = await self.__execute_request(
+                "POST", "action", json=request.model_dump(exclude_none=True)
+            )
 
             payload = self.__parse_response(response.json())
 
@@ -286,11 +311,13 @@ class RemoteDeviceAdapter(DevicePort):
         """
 
         request = RemoteInteractionRequest(
-            action="GET_CURRENT_PACKAGE", execution_id=self.__execution_id
+            action=InteractionAction.GET_CURRENT_PACKAGE, execution_id=self.__execution_id
         )
 
         try:
-            response = await self.__execute_request("POST", "action", json=request.model_dump())
+            response = await self.__execute_request(
+                "POST", "action", json=request.model_dump(exclude_none=True)
+            )
 
             data = response.json()
             logger.info(f"Response of current package command: {data}")
@@ -352,7 +379,9 @@ class RemoteDeviceAdapter(DevicePort):
         start = time.time()
 
         try:
-            response = await self.__execute_request("POST", "action", json=request.model_dump())
+            response = await self.__execute_request(
+                "POST", "action", json=request.model_dump(exclude_none=True)
+            )
 
             data = response.json()
             success = data.get("status") != "ERROR"

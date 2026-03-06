@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 
+from fathom.constants.interaction import SwipeSpeed
 from fathom.schemas.configuration import ADBConfiguration
 from fathom.schemas.results import ActionResult
 
@@ -39,7 +40,14 @@ class DevicePort(ABC):
 
     @abstractmethod
     async def swipe(
-        self, *, x1: int, y1: int, x2: int, y2: int, duration: int = 300
+        self,
+        *,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        duration: Optional[int] = None,
+        speed: Optional[SwipeSpeed] = None,
     ) -> ActionResult:
         """
         Swipe from (x1,y1) to (x2,y2).
