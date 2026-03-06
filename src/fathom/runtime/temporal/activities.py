@@ -30,6 +30,9 @@ class FathomActivities:
     Encapsulates execution logic for intent and exploration workflows.
     """
 
+    def __init__(self, settings: Optional[FathomSettings] = None) -> None:
+        self.__settings = settings or FathomSettings()
+
     @activity.defn(name="EXECUTE_INTENT")  # type: ignore[untyped-decorator]
     async def execute_intent(
         self,
@@ -189,7 +192,8 @@ class FathomActivities:
         llm_parameters: Dict[str, Any] = {
             "location": planner_configuration.get("location"),
             "project_id": planner_configuration.get("project_id"),
-            "credentials": planner_configuration.get("credentials"),
+            "credentials": planner_configuration.get("credentials")
+            or self.__settings.google_credentials_dict,
             "use_cache": planner_configuration.get("use_cache", True),
             "model": planner_configuration.get("model", "gemini-3-flash-preview"),
         }
@@ -214,7 +218,7 @@ class FathomActivities:
         else:
             device_configuration = DeviceConfiguration(type="LOCAL", serial_number=session_id)
 
-        if redis_url := request.get("redis_url"):
+        if redis_url := (request.get("redis_url") or self.__settings.redis_url):
             telemetry_configuration = TelemetryConfiguration(
                 type="REDIS",
                 identity=execution_id,
@@ -229,7 +233,8 @@ class FathomActivities:
         storage_parameters: Dict[str, Any] = {
             "backends": ["LOCAL", "CLOUD"],
             "project_id": planner_configuration.get("project_id"),
-            "credentials": planner_configuration.get("credentials"),
+            "credentials": planner_configuration.get("credentials")
+            or self.__settings.google_credentials_dict,
             "storage_bucket": llm_request_configuration.get("storage_bucket")
             or planner_configuration.get("storage_bucket"),
         }
@@ -277,14 +282,18 @@ class FathomActivities:
         if interactive:
             from fathom.adapters.signal.temporal import TemporalSignalAdapter
 
-            # Get cluster config from request (injected by CrawlerManager)
-            temporal_host = str(request["temporal_host"])
-            temporal_api_key = request.get("temporal_api_key")
+            # Resolve cluster config: request takes precedence, env vars are the fallback
+            temporal_host = request.get("temporal_host") or self.__settings.temporal_host
+            if not temporal_host:
+                raise ValueError(
+                    "temporal_host is required for interactive mode but is not set in the request or environment (TEMPORAL_HOST / TEMPORAL_TARGET_HOST)"
+                )
+            temporal_api_key = request.get("temporal_api_key") or self.__settings.temporal_api_key
 
             signal_adapter = TemporalSignalAdapter(
                 workflow_id=workflow_id,
                 api_key=temporal_api_key,
-                target_host=temporal_host,
+                target_host=str(temporal_host),
                 namespace=activity.info().workflow_namespace,
             )
         else:
