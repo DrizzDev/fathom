@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 
 from rich.console import Console
 
+from fathom.constants.interaction import SwipeSpeed
 from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.configuration import ADBConfiguration
@@ -69,19 +70,30 @@ class ADBDevice(DevicePort):
         return await self.__shell(command=f'input text "{escaped_text}"')
 
     async def swipe(
-        self, *, x1: int, y1: int, x2: int, y2: int, duration: int = 300
+        self,
+        *,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        duration: Optional[int] = None,
+        speed: Optional[SwipeSpeed] = None,
     ) -> ActionResult:
         """
         Execute swipe gesture.
         """
+
+        _ = speed
+        duration = duration or (
+            self.__configuration.swipe_duration if self.__configuration else 300
+        )
 
         console.print(
             f"[bold cyan]↔️  SWIPE[/bold cyan] from ([bold yellow]{x1}, {y1}[/bold yellow]) "
             f"to ([bold yellow]{x2}, {y2}[/bold yellow]) in {duration}ms"
         )
 
-        time_limit = duration or self.__configuration.swipe_duration
-        return await self.__shell(command=f"input swipe {x1} {y1} {x2} {y2} {time_limit}")
+        return await self.__shell(command=f"input swipe {x1} {y1} {x2} {y2} {duration}")
 
     async def back(self) -> ActionResult:
         """

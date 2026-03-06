@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from fathom.constants.interaction import SwipeSpeed
+
 
 class RemoteInteractionRequest(BaseModel):
     """
@@ -11,7 +13,9 @@ class RemoteInteractionRequest(BaseModel):
     Adapters should map internal Action objects to this schema.
     """
 
-    action: str = Field(description="Action type (tap, type, swipe, back, home)")
+    action: str = Field(
+        description="Action type (TAP, TYPE, SWIPE, SCROLL, DRAG, BACK, HOME, PINCH, GET_DIMENSIONS, GET_XML, GET_SCREENSHOT, GET_CURRENT_PACKAGE)"
+    )
     execution_id: Optional[str] = Field(
         default=None, description="The unique ID for the current execution/workflow."
     )
@@ -23,4 +27,8 @@ class RemoteInteractionRequest(BaseModel):
     )
 
     text: Optional[str] = Field(default=None, description="Input text for typing actions")
+    duration: Optional[int] = Field(default=None, description="Gesture duration in ms")
+    speed: Optional[SwipeSpeed] = Field(
+        default=None, description="Gesture speed for swipe, scroll, and drag actions"
+    )
     extras: Dict[str, Any] = Field(default_factory=dict, description="Provider-specific metadata")
