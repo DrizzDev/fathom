@@ -469,13 +469,13 @@ class IntentNodeProvider:
         )
         step = step.model_copy(update={"action": resolved_action})
 
-        # Determine package name from state for tracing
+        # Use a stable session package for trace/screenshot history paths.
+        # Dynamic foreground activity changes (launcher -> target app) fragment artifacts
+        # across multiple directories and makes traces appear to stop after step 0.
         current_screen = state.get(CommonStateKey.SCREEN_STATE)
-
-        if isinstance(current_screen, ScreenState) and current_screen.activity:
-            package_name = current_screen.activity
-        else:
-            package_name = "unknown"
+        package_name = self.__context.package_name or "unknown"
+        if package_name == "unknown" and isinstance(current_screen, ScreenState):
+            package_name = current_screen.activity or "unknown"
 
         # Process memory updates (Side-effects from tool calls)
         if step.action.memory_updates:

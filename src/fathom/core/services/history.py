@@ -185,7 +185,7 @@ class HistoryService:
             intent=intent,
         )
 
-        if script_data is None:
+        if script_data is None or not script_data.strip():
             if path.exists():
                 with path.open(mode="r") as handle:
                     return handle.read()

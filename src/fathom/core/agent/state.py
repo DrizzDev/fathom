@@ -201,15 +201,14 @@ class AgentState:
             # If we reached a truly new screen (never seen in session), we have made progress.
             self.__loop_detector.reset()
         elif previous_screen and previous_screen.activity_hash != screen.activity_hash:
-            # Activity changed but screen was seen before (e.g., revisiting a page via
-            # a different navigation path). This is progress, not a loop.
+            # Keep loop history when revisiting known screens across activities.
+            # This preserves oscillation/stall evidence instead of masking it.
             logger.debug(
                 (
-                    f"Activity changed: {previous_screen.activity} -> {screen.activity}. "
-                    f"Resetting loop detector."
+                    f"Activity changed on known screen: {previous_screen.activity} -> "
+                    f"{screen.activity}. Preserving loop detector state."
                 )
             )
-            self.__loop_detector.reset()
         else:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
 

@@ -96,8 +96,6 @@ class IntentGraphBuilder(GraphBuilder):
         LangGraph routing happens before node return values are merged into state.
         """
 
-        _ = state
-
         # Check AgentState directly (updated by node before return)
         if self.__context.agent_state.is_complete:
             reason = self.__context.agent_state.completion_reason

@@ -369,6 +369,9 @@ class ScriptExporter:
         """
 
         normalized = dict(structured_args)
+        normalized["final_validation"] = ScriptExporter.__normalize_final_validation(
+            value=normalized.get("final_validation")
+        )
         conditional_blocks_raw = list(normalized.get("conditional_blocks") or [])
         remaining_raw = list(normalized.get("remaining_action_ids") or [])
         required_set = set(required_action_ids)
@@ -442,6 +445,30 @@ class ScriptExporter:
         normalized["conditional_blocks"] = cleaned_blocks
         normalized["remaining_action_ids"] = cleaned_remaining
         return normalized
+
+    @staticmethod
+    def __normalize_final_validation(value: Any) -> str:
+        """
+        Coerce model-produced final validation into schema-compliant Validate line.
+        """
+
+        raw = str(value or "").strip()
+        if not raw:
+            return "Validate expected goal state is visible."
+
+        match = re.search(pattern=r"\bvalidate\b.*", string=raw, flags=re.IGNORECASE)
+        if match:
+            extracted = match.group(0).strip()
+            return (
+                "Validate" + extracted[len("validate") :]
+                if extracted
+                else "Validate expected goal state is visible."
+            )
+
+        cleaned = raw.rstrip(".")
+        if cleaned.lower().startswith("that "):
+            return f"Validate {cleaned}."
+        return f"Validate that {cleaned[0].lower() + cleaned[1:] if len(cleaned) > 1 else cleaned.lower()}."
 
     @staticmethod
     def __intent_requires_if_block(intent: str) -> bool:
@@ -519,7 +546,7 @@ class ScriptExporter:
 
         payload = ScriptExporter.__build_export_payload(step_results=step_results)
         if not payload:
-            return ""
+            return None
 
         if not self.__prompt_builder:
             raise ScriptExportError("Script exporter prompt builder is not configured.")
