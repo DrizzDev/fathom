@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, Type
 
 from fathom.core.prompts.base import PromptBuilder
+from fathom.core.prompts.export import ExportPromptBuilder, GeminiExportPromptBuilder
 from fathom.core.prompts.gemini import GeminiPromptBuilder
 
 
@@ -13,6 +14,9 @@ class PromptFactory:
 
     __builders: Dict[str, Type[PromptBuilder]] = {
         "gemini": GeminiPromptBuilder,
+    }
+    __export_builders: Dict[str, Type[ExportPromptBuilder]] = {
+        "gemini": GeminiExportPromptBuilder,
     }
 
     @classmethod
@@ -44,3 +48,20 @@ class PromptFactory:
         strategy = "xml" if use_xml else "vision"
 
         return f"{tier}_{strategy}"
+
+    @classmethod
+    def get_export_builder(cls, model_name: str) -> ExportPromptBuilder:
+        """
+        Returns a concrete export prompt builder instance.
+        """
+
+        kind = "gemini"
+
+        if "gpt" in model_name.lower():
+            kind = "openai"  # Placeholder
+
+        elif "claude" in model_name.lower():
+            kind = "anthropic"  # Placeholder
+
+        builder_class = cls.__export_builders.get(kind, GeminiExportPromptBuilder)
+        return builder_class()

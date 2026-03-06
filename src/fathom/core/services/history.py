@@ -178,12 +178,18 @@ class HistoryService:
         path = self.__directory / "script.txt"
 
         export_package_name = self.__resolve_export_package_name(history=history)
-        script_data = self.__exporter.export(
+        script_data = await self.__exporter.export_with_llm(
             step_results=history,
             goal_state=intent,
             package_name=export_package_name,
             intent=intent,
         )
+
+        if script_data is None:
+            if path.exists():
+                with path.open(mode="r") as handle:
+                    return handle.read()
+            return ""
 
         with path.open(mode="w") as handle:
             handle.write(script_data)

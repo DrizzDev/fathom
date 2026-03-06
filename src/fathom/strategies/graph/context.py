@@ -147,7 +147,7 @@ class GraphContext:
             workflow_id=workflow_id,
             package_name=package_name,
             path_manager=path_manager,
-            exporter=ScriptExporter(),
+            exporter=ScriptExporter(llm=llm, use_cache=configuration.llm.use_cache),
         )
         self.__trace = trace or TraceService(path_manager=path_manager)
         self.__resolution = resolution or ReferenceResolutionService(ledger=memory)

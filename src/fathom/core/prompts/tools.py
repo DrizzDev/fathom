@@ -25,6 +25,14 @@ class ToolRegistry:
             ]
         }
 
+    @classmethod
+    def get_export_definitions(cls) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Returns tool definitions for script export composition.
+        """
+
+        return {"function_declarations": [cls.__emit_script()]}
+
     @staticmethod
     def __execute_ui() -> Dict[str, Any]:
         """
@@ -344,5 +352,26 @@ class ToolRegistry:
                     },
                 },
                 "required": ["question"],
+            },
+        }
+
+    @staticmethod
+    def __emit_script() -> Dict[str, Any]:
+        """
+        Definition for script export output tool.
+        """
+
+        return {
+            "name": "emit_script",
+            "description": "Return the final exported automation script as plain text. Script must have balanced IF braces and end with a goal validation line.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "script": {
+                        "type": "STRING",
+                        "description": "Final script text with optional IF blocks. Do not include markdown fences. Last meaningful line must start with 'Validate'.",
+                    }
+                },
+                "required": ["script"],
             },
         }

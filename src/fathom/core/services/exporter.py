@@ -3,7 +3,13 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Literal, Optional, Sequence, Union, cast
 
+from fathom.core.exceptions import ScriptExportError
+from fathom.core.prompts.export import ExportPromptBuilder
+from fathom.core.prompts.factory import PromptFactory
+from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.normalizer import Normalizer
+from fathom.interfaces.llm import LLMPort
+from fathom.schemas.export import ScriptExportPayload
 from fathom.schemas.steps import StepResult
 
 
@@ -62,6 +68,493 @@ class ScriptExporter:
         flags=re.IGNORECASE,
     )
     __PROPER_PHRASE_RE = re.compile(pattern=r"\b([A-Z][a-z]+(?:\s+[a-z]+)*(?:\s+[A-Z][a-z]+)+)")
+    __DYNAMIC_TARGET_PREFIXES = (
+        "add to cart button for ",
+        "increase quantity button for ",
+        "decrease quantity button for ",
+        "remove item button for ",
+    )
+    __STORE_NAME_PATTERN = re.compile(
+        pattern=(
+            r"\b(?:"
+            r"walmart|costco|target|kroger|safeway|publix|aldi|instacart|"
+            r"whole\s+foods|trader\s+joe'?s|amazon\s+fresh|tesco"
+            r")\b\s+"
+            r"(?=(?:"
+            r"continue\s+shopping|cart|button|item|entry|row|store|aisle|checkout|basket"
+            r")\b)"
+        ),
+        flags=re.IGNORECASE,
+    )
+
+    def __init__(self, *, llm: Optional[LLMPort] = None, use_cache: bool = True) -> None:
+        """
+        Initialize exporter with optional LLM-backed script composition.
+        """
+
+        self.__llm = llm
+        self.__use_cache = use_cache
+        self.__prompt_builder: Optional[ExportPromptBuilder] = (
+            PromptFactory.get_export_builder(model_name=llm.model_name) if llm else None
+        )
+
+    @staticmethod
+    def __normalize_script_output(script: str) -> str:
+        """
+        Normalize generated script formatting and ensure trailing newline.
+        """
+
+        cleaned_lines = [line.rstrip() for line in str(script).replace("\r\n", "\n").split("\n")]
+        while cleaned_lines and not cleaned_lines[-1].strip():
+            cleaned_lines.pop()
+        if not cleaned_lines:
+            return ""
+        return "\n".join(cleaned_lines) + "\n"
+
+    @staticmethod
+    def __normalize_text_signal(text: str) -> str:
+        """
+        Normalize text for fuzzy containment checks.
+        """
+
+        cleaned = re.sub(pattern=r"[^a-z0-9\s]", repl=" ", string=str(text).lower())
+        return re.sub(pattern=r"\s+", repl=" ", string=cleaned).strip()
+
+    @staticmethod
+    def __intent_mentions_phrase(intent: str, phrase: str) -> bool:
+        """
+        Check if a phrase is explicitly present in user intent.
+        """
+
+        if not intent or not phrase:
+            return False
+
+        intent_norm = ScriptExporter.__normalize_text_signal(text=intent)
+        phrase_norm = ScriptExporter.__normalize_text_signal(text=phrase)
+        return bool(phrase_norm) and phrase_norm in intent_norm
+
+    @staticmethod
+    def __is_generic_dynamic_reference(text: str) -> bool:
+        """
+        Detect whether a dynamic target is already generic/repeatable.
+        """
+
+        lower = str(text).strip().lower()
+        generic_tokens = (
+            "first",
+            "second",
+            "third",
+            "search result",
+            "matching result",
+            "matching item",
+            "selected item",
+        )
+        return any(token in lower for token in generic_tokens)
+
+    @staticmethod
+    def __generalize_dynamic_target(target: str, intent: str, *, generic_item_phrase: str) -> str:
+        """
+        Generalize dynamic product-specific targets unless explicitly requested by intent.
+        """
+
+        if not target:
+            return target
+
+        lowered = target.lower()
+        for prefix in ScriptExporter.__DYNAMIC_TARGET_PREFIXES:
+            marker = lowered.find(prefix)
+            if marker < 0:
+                continue
+
+            suffix_start = marker + len(prefix)
+            specific_phrase = target[suffix_start:].strip()
+            if not specific_phrase:
+                return target
+            if ScriptExporter.__intent_mentions_phrase(intent=intent, phrase=specific_phrase):
+                return target
+            if ScriptExporter.__is_generic_dynamic_reference(text=specific_phrase):
+                return target
+
+            return f"{target[:suffix_start]}{generic_item_phrase}"
+
+        return target
+
+    @staticmethod
+    def __sanitize_script_targets(script: str, intent: str) -> str:
+        """
+        Post-process script lines to improve repeatability of dynamic targets.
+        """
+
+        if not script:
+            return script
+
+        lines = script.splitlines()
+        updated: list[str] = []
+        combined_signal = ScriptExporter.__normalize_text_signal(text=f"{intent} {script}")
+        search_context = any(
+            token in combined_signal
+            for token in ("search bar", "search suggestion", "search result", "search")
+        )
+        generic_item_phrase = (
+            "the first search result" if search_context else "the first matching item"
+        )
+
+        for line in lines:
+            transformed = ScriptExporter.__STORE_NAME_PATTERN.sub(repl="", string=line)
+            for prefix in ScriptExporter.__DYNAMIC_TARGET_PREFIXES:
+                pattern = re.compile(
+                    pattern=rf"({re.escape(prefix)})(.+?)(?=(\s+is\s+visible\b|$))",
+                    flags=re.IGNORECASE,
+                )
+
+                def __replace(match: "re.Match[str]") -> str:
+                    left = match.group(1)
+                    suffix = match.group(2).strip()
+                    combined = f"{left}{suffix}"
+                    generalized = ScriptExporter.__generalize_dynamic_target(
+                        target=combined, intent=intent, generic_item_phrase=generic_item_phrase
+                    )
+                    if not generalized.lower().startswith(left.lower()):
+                        return match.group(0)
+                    return generalized
+
+                transformed = pattern.sub(repl=__replace, string=transformed)
+            transformed = re.sub(pattern=r"\s{2,}", repl=" ", string=transformed).strip()
+            updated.append(transformed)
+
+        normalized = "\n".join(updated)
+        return ScriptExporter.__normalize_script_output(script=normalized)
+
+    @staticmethod
+    def __count_action_lines(script: str) -> int:
+        """
+        Count non-structural lines to prevent empty/underspecified LLM scripts.
+        """
+
+        count = 0
+        for line in script.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped == "}" or stripped.startswith("IF ") and stripped.endswith("{"):
+                continue
+            count += 1
+        return count
+
+    @staticmethod
+    def __action_kind_from_line(line: str) -> Optional[str]:
+        """
+        Extract canonical executable action kind from a script line.
+        """
+
+        normalized = line.strip().lower()
+        if not normalized:
+            return None
+
+        if normalized.startswith("open_app "):
+            return "open_app"
+        if normalized.startswith("tap "):
+            return "tap"
+        if normalized.startswith("type "):
+            return "type"
+        if normalized.startswith("scroll "):
+            return "scroll"
+        if normalized.startswith("swipe "):
+            return "swipe"
+        if normalized.startswith("wait "):
+            return "wait"
+        if normalized.startswith("press "):
+            return "press"
+        if normalized.startswith("long press "):
+            return "long_press"
+        return None
+
+    @staticmethod
+    def __executable_action_counts(script: str) -> Dict[str, int]:
+        """
+        Count executable action lines (excluding validations and IF structure).
+        """
+
+        counts: Dict[str, int] = {}
+        for raw_line in script.splitlines():
+            line = raw_line.strip()
+            if not line or line == "}":
+                continue
+            if line.startswith("IF ") and line.endswith("{"):
+                continue
+
+            action_kind = ScriptExporter.__action_kind_from_line(line=line)
+            if not action_kind:
+                continue
+            counts[action_kind] = counts.get(action_kind, 0) + 1
+        return counts
+
+    @staticmethod
+    def __is_valid_llm_script(candidate: str, baseline: str) -> bool:
+        """
+        Validate LLM output is a plain script and structurally safe.
+        """
+
+        if not candidate.strip():
+            return False
+        if "```" in candidate:
+            return False
+
+        balance = 0
+        for raw_line in candidate.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("IF ") and line.endswith("{"):
+                balance += 1
+                continue
+            if line == "}":
+                balance -= 1
+                if balance < 0:
+                    return False
+        if balance != 0:
+            return False
+
+        baseline_actions = ScriptExporter.__count_action_lines(script=baseline)
+        candidate_actions = ScriptExporter.__count_action_lines(script=candidate)
+        if baseline_actions > 0 and candidate_actions <= 0:
+            return False
+
+        baseline_counts = ScriptExporter.__executable_action_counts(script=baseline)
+        candidate_counts = ScriptExporter.__executable_action_counts(script=candidate)
+        for action_kind, required_count in baseline_counts.items():
+            if candidate_counts.get(action_kind, 0) < required_count:
+                return False
+
+        return True
+
+    @staticmethod
+    def __last_non_structural_line(script: str) -> str:
+        """
+        Return the last meaningful script line excluding IF/brace structure.
+        """
+
+        for raw_line in reversed(script.splitlines()):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line == "}":
+                continue
+            if line.startswith("IF ") and line.endswith("{"):
+                continue
+            return line
+        return ""
+
+    @staticmethod
+    def __contains_goal_validation(script: str) -> bool:
+        """
+        Ensure the script ends with an explicit validation statement.
+        """
+
+        last_line = ScriptExporter.__last_non_structural_line(script=script)
+        if not last_line:
+            return False
+        return last_line.lower().startswith("validate")
+
+    @staticmethod
+    def __build_export_payload(
+        step_results: Sequence[Union[StepResult, Dict[str, Any]]],
+    ) -> list[Dict[str, Any]]:
+        """
+        Build compact structured payload from step history for LLM export.
+        """
+
+        payload: list[Dict[str, Any]] = []
+        for index, step in enumerate(step_results, start=1):
+            action_type_val = ScriptExporter.__get_action_type(step=step)
+            target = ScriptExporter.__resolve_target(step=step)
+            condition = ScriptExporter.__get_condition(step=step)
+            event_type = ScriptExporter.__get_event_type(step=step)
+            is_conditional = ScriptExporter.__is_explicit_conditional(step=step)
+            conditional_type = ScriptExporter.__get_conditional_type(step=step)
+
+            if isinstance(step, StepResult):
+                text = step.step.action.text
+                rationale = step.step.action.rationale
+                screen_changed = bool(step.screen_changed)
+            else:
+                text = step.get("text")
+                rationale = str(object=step.get("rationale") or "")
+                screen_changed = bool(step.get("screen_changed", False))
+
+            payload.append(
+                {
+                    "step": index,
+                    "event_type": event_type,
+                    "action_type": action_type_val,
+                    "target": target,
+                    "text": text,
+                    "condition": condition,
+                    "is_conditional": is_conditional,
+                    "conditional_type": conditional_type,
+                    "screen_changed": screen_changed,
+                    "rationale": rationale,
+                }
+            )
+        return payload
+
+    async def export_with_llm(
+        self,
+        step_results: Sequence[Union[StepResult, Dict[str, Any]]],
+        *,
+        intent: str = "",
+        goal_state: str = "",
+        package_name: str = "",
+    ) -> Optional[str]:
+        """
+        Export script using Gemini-only composition.
+        """
+
+        if not self.__llm:
+            return None
+
+        payload = ScriptExporter.__build_export_payload(step_results=step_results)
+        if not payload:
+            return ""
+
+        if not self.__prompt_builder:
+            raise ScriptExportError("Script exporter prompt builder is not configured.")
+
+        llm_baseline_script = self.export(
+            step_results=step_results,
+            intent=intent,
+            goal_state=goal_state,
+            package_name=package_name,
+            include_final_validation=False,
+        )
+        llm_baseline_script = ScriptExporter.__normalize_script_output(script=llm_baseline_script)
+        llm_baseline_script = ScriptExporter.__sanitize_script_targets(
+            script=llm_baseline_script, intent=(intent or goal_state)
+        )
+
+        system_instruction = self.__prompt_builder.build_system_instruction()
+        prompt_text = self.__prompt_builder.build_user_prompt(
+            intent=intent,
+            goal_state=goal_state,
+            package_name=package_name,
+            baseline_script=llm_baseline_script,
+            trace_payload=payload,
+        )
+
+        try:
+            response = await self.__llm.generate(
+                use_cache=self.__use_cache,
+                prompt=[prompt_text],
+                tools=ToolRegistry.get_export_definitions(),
+                system_instruction=system_instruction,
+            )
+        except Exception as exception:
+            raise ScriptExportError(f"Gemini script generation failed: {exception}") from exception
+
+        candidate_text = response.content
+        if response.tool_calls:
+            for tool_call in response.tool_calls:
+                if getattr(tool_call, "name", "") != "emit_script":
+                    continue
+                arguments = getattr(tool_call, "args", {}) or {}
+                raw_script = arguments.get("script")
+                if raw_script:
+                    candidate_text = str(raw_script)
+                    break
+
+        candidate = ScriptExporter.__normalize_script_output(script=candidate_text)
+        candidate = ScriptExporter.__sanitize_script_targets(
+            script=candidate, intent=(intent or goal_state)
+        )
+        allowed_action_lines = ScriptExporter.__build_allowed_action_lines(
+            step_results=step_results,
+            package_name=package_name,
+            intent=(intent or goal_state),
+        )
+
+        try:
+            parsed_script = ScriptExportPayload.model_validate(
+                {"script": candidate, "allowed_action_lines": allowed_action_lines}
+            )
+        except Exception as exception:
+            raise ScriptExportError(
+                f"Gemini-generated script failed Pydantic schema validation: {exception}"
+            ) from exception
+
+        candidate = parsed_script.script
+        if not ScriptExporter.__is_valid_llm_script(
+            candidate=candidate, baseline=llm_baseline_script
+        ):
+            raise ScriptExportError(
+                "Gemini-generated script failed structural or action-coverage validation."
+            )
+        if not ScriptExporter.__contains_goal_validation(script=candidate):
+            raise ScriptExportError(
+                "Gemini-generated script does not contain a valid final goal-validation step."
+            )
+
+        return candidate
+
+    @staticmethod
+    def __build_allowed_action_lines(
+        step_results: Sequence[Union[StepResult, Dict[str, Any]]],
+        package_name: str,
+        intent: str,
+    ) -> list[str]:
+        """
+        Build exact executable action lines allowed from raw step data.
+        """
+
+        lines: list[str] = []
+
+        if package_name:
+            lines.append(f"OPEN_APP {package_name}")
+
+        for step in step_results:
+            action_type_val = ScriptExporter.__get_action_type(step=step)
+            target = ScriptExporter.__resolve_target(step=step)
+
+            if isinstance(step, StepResult):
+                text = step.step.action.text
+                rationale = step.step.action.rationale
+                wait_duration = step.step.action.wait_duration
+            else:
+                text = step.get("text")
+                rationale = str(object=step.get("rationale", ""))
+                wait_duration = step.get("wait_duration")
+
+            if action_type_val == "wait" and target.lower() in ScriptExporter.__GENERIC_TARGETS:
+                target = ScriptExporter.__infer_wait_subject(rationale=rationale)
+
+            description = Normalizer.action(
+                action_type=action_type_val, target=target, text=text, wait_duration=wait_duration
+            )
+
+            lowered = description.lower()
+            if lowered.startswith("validate "):
+                continue
+
+            lines.append(description)
+
+        executable_prefixes = (
+            "open_app ",
+            "tap ",
+            "type ",
+            "scroll ",
+            "swipe ",
+            "wait ",
+            "press ",
+            "long press ",
+        )
+        sanitized_script = ScriptExporter.__sanitize_script_targets(
+            script="\n".join(lines) + ("\n" if lines else ""),
+            intent=intent,
+        )
+        return [
+            line.strip().lower()
+            for line in sanitized_script.splitlines()
+            if line.strip() and line.strip().lower().startswith(executable_prefixes)
+        ]
 
     @staticmethod
     def __normalize_positional(target: str) -> str:
@@ -388,6 +881,7 @@ class ScriptExporter:
         intent: str = "",
         goal_state: str = "",
         package_name: str = "",
+        include_final_validation: bool = True,
     ) -> str:
         """
         Export steps to a natural language test script.
@@ -631,7 +1125,7 @@ class ScriptExporter:
             i += 1
 
         # Final Goal Validation Logic (Restored)
-        if step_results:
+        if include_final_validation and step_results:
             last_action_type = ScriptExporter.__get_action_type(step=step_results[-1])
 
             if last_action_type not in ("complete", "verify_goal_completion"):
@@ -642,7 +1136,10 @@ class ScriptExporter:
                     ):
                         lines.append(final_validation_line)
                         emitted_validation_lines.add(final_validation_line)
-                    return "\n".join(lines) + "\n"
+                    script = "\n".join(lines) + "\n"
+                    return ScriptExporter.__sanitize_script_targets(
+                        script=script, intent=(intent or goal_state)
+                    )
 
                 goal_label = ScriptExporter.__extract_goal_label(goal_state=(intent or goal_state))
                 last_target = ScriptExporter.__resolve_target(step=step_results[-1])
@@ -669,7 +1166,10 @@ class ScriptExporter:
                     if not lines or lines[-1].strip() != val_line:
                         lines.append(val_line)
 
-        return "\n".join(lines) + "\n"
+        script = "\n".join(lines) + "\n"
+        return ScriptExporter.__sanitize_script_targets(
+            script=script, intent=(intent or goal_state)
+        )
 
     @staticmethod
     def __is_system_validation(
