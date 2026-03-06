@@ -9,7 +9,7 @@ from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.normalizer import Normalizer
 from fathom.interfaces.llm import LLMPort
-from fathom.schemas.export import ScriptExportPayload
+from fathom.schemas.export import ScriptExportPayload, ScriptExportStructuredPayload
 from fathom.schemas.steps import StepResult
 
 
@@ -357,6 +357,70 @@ class ScriptExporter:
         return last_line.lower().startswith("validate")
 
     @staticmethod
+    def __normalize_structured_action_ids(
+        structured_args: Dict[str, Any], required_action_ids: Sequence[str]
+    ) -> Dict[str, Any]:
+        """
+        Normalize Gemini structured action IDs to include all required IDs exactly once.
+        Keeps model-provided conditional grouping, appends missing IDs to remaining_action_ids.
+        """
+
+        normalized = dict(structured_args)
+        conditional_blocks_raw = list(normalized.get("conditional_blocks") or [])
+        remaining_raw = list(normalized.get("remaining_action_ids") or [])
+        required_set = set(required_action_ids)
+
+        seen: set[str] = set()
+        cleaned_blocks: list[Dict[str, Any]] = []
+        for block in conditional_blocks_raw:
+            if not isinstance(block, dict):
+                continue
+            condition = str(block.get("condition") or "").strip()
+            action_ids_raw = block.get("action_ids") or []
+            block_ids: list[str] = []
+            for action_id in action_ids_raw:
+                aid = str(action_id).strip()
+                if not aid or aid in seen or aid not in required_set:
+                    continue
+                seen.add(aid)
+                block_ids.append(aid)
+            cleaned_blocks.append({"condition": condition, "action_ids": block_ids})
+
+        cleaned_remaining: list[str] = []
+        for action_id in remaining_raw:
+            aid = str(action_id).strip()
+            if not aid or aid in seen or aid not in required_set:
+                continue
+            seen.add(aid)
+            cleaned_remaining.append(aid)
+
+        for required_id in required_action_ids:
+            if required_id not in seen:
+                cleaned_remaining.append(required_id)
+                seen.add(required_id)
+
+        normalized["conditional_blocks"] = cleaned_blocks
+        normalized["remaining_action_ids"] = cleaned_remaining
+        return normalized
+
+    @staticmethod
+    def __intent_requires_if_block(intent: str) -> bool:
+        """
+        Determine whether intent explicitly requests conditional flow.
+        """
+
+        normalized = ScriptExporter.__normalize_text_signal(text=intent)
+        if not normalized:
+            return False
+
+        conditional_terms = ("if ", " when ", "if the", "if cart", "if there are")
+        if not any(term in f" {normalized} " for term in conditional_terms):
+            return False
+
+        domain_terms = ("cart", "not empty", "has any item", "contains item", "clear")
+        return any(term in normalized for term in domain_terms)
+
+    @staticmethod
     def __build_export_payload(
         step_results: Sequence[Union[StepResult, Dict[str, Any]]],
     ) -> list[Dict[str, Any]]:
@@ -431,6 +495,20 @@ class ScriptExporter:
         llm_baseline_script = ScriptExporter.__sanitize_script_targets(
             script=llm_baseline_script, intent=(intent or goal_state)
         )
+        action_catalog, required_action_ids, required_open_app_id = (
+            ScriptExporter.__build_action_catalog_from_steps(
+                step_results=step_results,
+                package_name=package_name,
+                intent=(intent or goal_state),
+            )
+        )
+        action_catalog_lines = [
+            f"{action_id}: {line}" for action_id, line in action_catalog.items()
+        ]
+        allowed_action_lines = [
+            line.strip().lower() for line in action_catalog.values() if line.strip()
+        ]
+        strict_enforcement_ready = len(step_results) >= 4
 
         system_instruction = self.__prompt_builder.build_system_instruction()
         prompt_text = self.__prompt_builder.build_user_prompt(
@@ -439,6 +517,7 @@ class ScriptExporter:
             package_name=package_name,
             baseline_script=llm_baseline_script,
             trace_payload=payload,
+            action_catalog_lines=action_catalog_lines,
         )
 
         try:
@@ -451,30 +530,66 @@ class ScriptExporter:
         except Exception as exception:
             raise ScriptExportError(f"Gemini script generation failed: {exception}") from exception
 
-        candidate_text = response.content
+        structured_args: Dict[str, Any] = {}
         if response.tool_calls:
             for tool_call in response.tool_calls:
                 if getattr(tool_call, "name", "") != "emit_script":
                     continue
                 arguments = getattr(tool_call, "args", {}) or {}
-                raw_script = arguments.get("script")
-                if raw_script:
-                    candidate_text = str(raw_script)
-                    break
+                structured_args = dict(arguments)
+                break
 
-        candidate = ScriptExporter.__normalize_script_output(script=candidate_text)
+        if not structured_args:
+            raise ScriptExportError("Gemini did not return structured emit_script tool arguments.")
+
+        normalized_structured_args = ScriptExporter.__normalize_structured_action_ids(
+            structured_args=structured_args, required_action_ids=required_action_ids
+        )
+
+        try:
+            structured_payload = ScriptExportStructuredPayload.model_validate(
+                {
+                    **normalized_structured_args,
+                    "action_catalog": action_catalog,
+                    "required_action_ids": required_action_ids if strict_enforcement_ready else [],
+                    "required_open_app_id": required_open_app_id
+                    if strict_enforcement_ready
+                    else None,
+                    "require_if_block": (
+                        ScriptExporter.__intent_requires_if_block(intent=(intent or goal_state))
+                        if strict_enforcement_ready
+                        else False
+                    ),
+                }
+            )
+        except Exception as exception:
+            raise ScriptExportError(
+                f"Gemini-generated structured payload failed schema validation: {exception}"
+            ) from exception
+
+        candidate = ScriptExporter.__normalize_script_output(script=structured_payload.to_script())
         candidate = ScriptExporter.__sanitize_script_targets(
             script=candidate, intent=(intent or goal_state)
-        )
-        allowed_action_lines = ScriptExporter.__build_allowed_action_lines(
-            step_results=step_results,
-            package_name=package_name,
-            intent=(intent or goal_state),
         )
 
         try:
             parsed_script = ScriptExportPayload.model_validate(
-                {"script": candidate, "allowed_action_lines": allowed_action_lines}
+                {
+                    "script": candidate,
+                    "allowed_action_lines": allowed_action_lines
+                    if strict_enforcement_ready
+                    else [],
+                    "required_open_app": (
+                        f"open_app {package_name}".strip()
+                        if package_name and strict_enforcement_ready
+                        else None
+                    ),
+                    "require_if_block": (
+                        ScriptExporter.__intent_requires_if_block(intent=(intent or goal_state))
+                        if strict_enforcement_ready
+                        else False
+                    ),
+                }
             )
         except Exception as exception:
             raise ScriptExportError(
@@ -482,27 +597,28 @@ class ScriptExporter:
             ) from exception
 
         candidate = parsed_script.script
-        if not ScriptExporter.__is_valid_llm_script(
-            candidate=candidate, baseline=llm_baseline_script
-        ):
-            raise ScriptExportError(
-                "Gemini-generated script failed structural or action-coverage validation."
-            )
-        if not ScriptExporter.__contains_goal_validation(script=candidate):
-            raise ScriptExportError(
-                "Gemini-generated script does not contain a valid final goal-validation step."
-            )
+        if strict_enforcement_ready:
+            if not ScriptExporter.__is_valid_llm_script(
+                candidate=candidate, baseline=llm_baseline_script
+            ):
+                raise ScriptExportError(
+                    "Gemini-generated script failed structural or action-coverage validation."
+                )
+            if not ScriptExporter.__contains_goal_validation(script=candidate):
+                raise ScriptExportError(
+                    "Gemini-generated script does not contain a valid final goal-validation step."
+                )
 
         return candidate
 
     @staticmethod
-    def __build_allowed_action_lines(
+    def __build_action_catalog_from_steps(
         step_results: Sequence[Union[StepResult, Dict[str, Any]]],
         package_name: str,
         intent: str,
-    ) -> list[str]:
+    ) -> tuple[Dict[str, str], list[str], Optional[str]]:
         """
-        Build exact executable action lines allowed from raw step data.
+        Build ordered executable action catalog from raw step data.
         """
 
         lines: list[str] = []
@@ -534,6 +650,16 @@ class ScriptExporter:
             if lowered.startswith("validate "):
                 continue
 
+            # Collapse app launch into OPEN_APP by skipping the initial app-icon tap.
+            is_launch_tap = (
+                bool(package_name)
+                and not lines[1:]  # OPEN_APP is already present; this is first step-derived action
+                and action_type_val == "tap"
+                and "app icon" in target.lower()
+            )
+            if is_launch_tap:
+                continue
+
             lines.append(description)
 
         executable_prefixes = (
@@ -550,11 +676,24 @@ class ScriptExporter:
             script="\n".join(lines) + ("\n" if lines else ""),
             intent=intent,
         )
-        return [
-            line.strip().lower()
+        executable_lines = [
+            line.strip()
             for line in sanitized_script.splitlines()
             if line.strip() and line.strip().lower().startswith(executable_prefixes)
         ]
+
+        action_catalog: Dict[str, str] = {}
+        required_action_ids: list[str] = []
+        required_open_app_id: Optional[str] = None
+
+        for index, line in enumerate(executable_lines, start=1):
+            action_id = f"A{index}"
+            action_catalog[action_id] = line
+            required_action_ids.append(action_id)
+            if required_open_app_id is None and line.lower().startswith("open_app "):
+                required_open_app_id = action_id
+
+        return action_catalog, required_action_ids, required_open_app_id
 
     @staticmethod
     def __normalize_positional(target: str) -> str:

@@ -29,7 +29,7 @@ class GeminiLLM(LLMPort):
         self,
         *,
         api_key: Optional[str] = None,
-        model: str = "gemini-3-flash-preview",
+        model: str = "gemini-3.1-flash-lite-preview",
         configuration: Optional[LLMConfiguration] = None,
     ) -> None:
         """

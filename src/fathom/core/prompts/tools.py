@@ -363,15 +363,39 @@ class ToolRegistry:
 
         return {
             "name": "emit_script",
-            "description": "Return the final exported automation script as plain text. Script must have balanced IF braces and end with a goal validation line.",
+            "description": "Return structured script sections derived only from allowed step action lines. Do not paraphrase executable actions.",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
-                    "script": {
+                    "conditional_blocks": {
+                        "type": "ARRAY",
+                        "description": "Ordered IF blocks for condition-scoped actions using action IDs.",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "condition": {
+                                    "type": "STRING",
+                                    "description": "Condition text for IF block.",
+                                },
+                                "action_ids": {
+                                    "type": "ARRAY",
+                                    "description": "Executable action IDs under this IF block. Must be selected from provided action catalog.",
+                                    "items": {"type": "STRING"},
+                                },
+                            },
+                            "required": ["condition", "action_ids"],
+                        },
+                    },
+                    "remaining_action_ids": {
+                        "type": "ARRAY",
+                        "description": "Ordered executable action IDs outside IF blocks. Must be selected from provided action catalog.",
+                        "items": {"type": "STRING"},
+                    },
+                    "final_validation": {
                         "type": "STRING",
-                        "description": "Final script text with optional IF blocks. Do not include markdown fences. Last meaningful line must start with 'Validate'.",
-                    }
+                        "description": "Final goal-validation line. Must start with 'Validate'.",
+                    },
                 },
-                "required": ["script"],
+                "required": ["final_validation"],
             },
         }
