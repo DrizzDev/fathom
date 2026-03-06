@@ -46,27 +46,11 @@ class CoordinateConverter:
             )
             return x + width // 2, y + height // 2
 
-        x, y, width, height = bounds.x, bounds.y, bounds.width, bounds.height
-
-        center_x_norm: float
-        center_y_norm: float
-
-        if x + width > 1000:
-            center_x_norm = x
-        elif x - width / 2 < 0:
-            center_x_norm = x + width / 2
-        else:
-            center_x_norm = x + width / 4
-
-        if y + height > 1000:
-            center_y_norm = y
-        elif y - height / 2 < 0:
-            center_y_norm = y + height / 2
-        else:
-            center_y_norm = y + height / 4
-
-        center_x = max(0, min(int(center_x_norm * self.__width / 1000), self.__width))
-        center_y = max(0, min(int(center_y_norm * self.__height / 1000), self.__height))
+        x_px, y_px, width_px, height_px = bounds.to_pixels(
+            screen_width=self.__width, screen_height=self.__height
+        )
+        center_x = max(0, min(x_px + width_px // 2, self.__width))
+        center_y = max(0, min(y_px + height_px // 2, self.__height))
 
         return center_x, center_y
 

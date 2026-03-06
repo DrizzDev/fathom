@@ -83,6 +83,14 @@ class LoopDetector(BaseModel):
         Detect simple repetition of screens or actions.
         """
 
+        def _is_scroll_navigation_sequence(window: int = 4) -> bool:
+            recent_types = list(self.__recent_types)[-window:]
+            if len(recent_types) < window:
+                return False
+            return all(
+                any(token in t for token in ("scroll", "swipe", "flick")) for t in recent_types
+            )
+
         # Check screen repeats (using semantic identity)
         for index in range(len(self.__recent_screens)):
             count = 1
@@ -92,6 +100,10 @@ class LoopDetector(BaseModel):
                     count += 1
 
             if count >= self.threshold:
+                # Intent-aligned scrolling can legitimately revisit near-identical visual hashes.
+                # Let scroll-specific detectors (stall/velocity) decide these cases.
+                if _is_scroll_navigation_sequence():
+                    continue
                 # Bypass if actions are diverse despite similar screens
                 if len(set(self.__recent_actions)) >= self.threshold:
                     continue
@@ -106,6 +118,11 @@ class LoopDetector(BaseModel):
                 continue
             action_counts[action] = action_counts.get(action, 0) + 1
             if action_counts[action] >= self.threshold + 1:  # Slightly higher for actions
+                action_lower = action.lower()
+                # Intent-guided exploration often requires many consecutive swipes/scrolls;
+                # let dedicated scroll-stall/velocity detectors decide those cases.
+                if any(token in action_lower for token in ("swipe", "scroll", "flick")):
+                    continue
                 logger.warning(f"LoopDetector: Stuck via action repetition '{action}'")
                 return True
 
@@ -144,27 +161,32 @@ class LoopDetector(BaseModel):
         """
 
         recent_types = list(self.__recent_types)
-        scroll_indices = [
-            i
-            for i, t in enumerate(recent_types)
-            if any(s in t for s in ["scroll", "swipe", "flick"])
-        ]
 
-        # Need at least 3 scrolls to confirm a stall
-        if len(scroll_indices) < 3:
+        # Require a longer uninterrupted scroll streak before considering stall.
+        trailing_scroll_streak = 0
+        for action_type in reversed(recent_types):
+            if any(token in action_type for token in ("scroll", "swipe", "flick")):
+                trailing_scroll_streak += 1
+            else:
+                break
+        if trailing_scroll_streak < 7:
             return False
 
-        # If last 3 actions were all scrolls
-        last_three_indices = scroll_indices[-3:]
-        if last_three_indices[2] - last_three_indices[0] == 2:  # Consecutive scrolls
-            first_hash = self.__recent_hashes[last_three_indices[0]]
-            last_hash = self.__recent_hashes[last_three_indices[2]]
+        # Evaluate over the trailing streak to avoid first/last hash aliasing.
+        streak_start = len(recent_types) - trailing_scroll_streak
+        first_hash = self.__recent_hashes[streak_start]
+        last_hash = self.__recent_hashes[-1]
+        streak_hashes = list(self.__recent_hashes)[streak_start:]
+        unique_hash_count = len(set(streak_hashes))
 
-            # Tight distance check: if 3 scrolls didn't move the pHash significantly
-            distance = ScreenState.hamming_distance(first_hash, last_hash)
-            if distance < 8:
-                logger.warning(f"LoopDetector: Scroll stall detected (dist={distance})")
-                return True
+        distance = ScreenState.hamming_distance(first_hash, last_hash)
+        # Stall must show both low net movement and low diversity across streak.
+        if distance < 4 and unique_hash_count <= 2:
+            logger.warning(
+                "LoopDetector: Scroll stall detected "
+                f"(dist={distance}, streak={trailing_scroll_streak}, unique={unique_hash_count})"
+            )
+            return True
 
         return False
 

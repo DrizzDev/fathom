@@ -87,7 +87,7 @@ class ADBConfiguration(BaseModel):
 
     swipe_duration: int = Field(default=300, description="Default swipe gesture duration in ms")
     swipe_distance: float = Field(default=0.7, description="Percentage of screen to swipe")
-    scroll_distance: float = Field(default=0.4, description="Percentage of screen height to scroll")
+    scroll_distance: float = Field(default=0.5, description="Percentage of screen height to scroll")
 
 
 class DeviceConfiguration(BaseModel):

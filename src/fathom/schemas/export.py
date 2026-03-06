@@ -128,22 +128,68 @@ class ScriptExportStructuredPayload(BaseModel):
             if open_line:
                 lines.append(open_line)
 
+        # Build a deterministic chronological order of selected action IDs so IF blocks
+        # are emitted where their first action occurs in execution order.
+        selected_ids: List[str] = []
         for block in self.conditional_blocks:
-            lines.append(f"IF {block.condition.strip()} {{")
-            for action_id in block.action_ids:
-                if required_open_app_id and action_id.strip() == required_open_app_id:
-                    continue
-                action_line = self.action_catalog.get(action_id.strip(), "").strip()
-                if action_line:
-                    lines.append(f"    {action_line}")
-            lines.append("}")
+            selected_ids.extend(
+                action_id.strip() for action_id in block.action_ids if action_id.strip()
+            )
+        selected_ids.extend(
+            action_id.strip() for action_id in self.remaining_action_ids if action_id.strip()
+        )
 
-        for action_id in self.remaining_action_ids:
-            if required_open_app_id and action_id.strip() == required_open_app_id:
+        if self.required_action_ids:
+            canonical_order = [
+                action_id.strip() for action_id in self.required_action_ids if action_id.strip()
+            ]
+        else:
+            canonical_order = list(self.action_catalog.keys())
+
+        rank = {action_id: index for index, action_id in enumerate(canonical_order)}
+        ordered_selected_ids = sorted(
+            dict.fromkeys(selected_ids),
+            key=lambda action_id: rank.get(action_id, len(rank)),
+        )
+
+        block_by_action_id: Dict[str, int] = {}
+        for block_index, block in enumerate(self.conditional_blocks):
+            for action_id in block.action_ids:
+                action_id = action_id.strip()
+                if action_id:
+                    block_by_action_id[action_id] = block_index
+
+        emitted_block_indices: set[int] = set()
+        emitted_non_block_action_ids: set[str] = set()
+        for action_id in ordered_selected_ids:
+            if required_open_app_id and action_id == required_open_app_id:
                 continue
-            action_line = self.action_catalog.get(action_id.strip(), "").strip()
+
+            selected_block_index = block_by_action_id.get(action_id)
+            if selected_block_index is not None:
+                if selected_block_index in emitted_block_indices:
+                    continue
+                block = self.conditional_blocks[selected_block_index]
+                lines.append(f"IF {block.condition.strip()} {{")
+                for block_action_id in block.action_ids:
+                    block_action_id = block_action_id.strip()
+                    if not block_action_id:
+                        continue
+                    if required_open_app_id and block_action_id == required_open_app_id:
+                        continue
+                    action_line = self.action_catalog.get(block_action_id, "").strip()
+                    if action_line:
+                        lines.append(f"    {action_line}")
+                lines.append("}")
+                emitted_block_indices.add(selected_block_index)
+                continue
+
+            if action_id in emitted_non_block_action_ids:
+                continue
+            action_line = self.action_catalog.get(action_id, "").strip()
             if action_line:
                 lines.append(action_line)
+                emitted_non_block_action_ids.add(action_id)
 
         lines.append(self.final_validation.strip())
         return "\n".join(lines).strip() + "\n"

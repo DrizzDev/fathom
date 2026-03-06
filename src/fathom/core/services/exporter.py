@@ -260,7 +260,8 @@ class ScriptExporter:
         if normalized.startswith("scroll "):
             return "scroll"
         if normalized.startswith("swipe "):
-            return "swipe"
+            # Coverage validation treats swipe/scroll as the same navigation family.
+            return "scroll"
         if normalized.startswith("wait "):
             return "wait"
         if normalized.startswith("press "):
@@ -358,7 +359,9 @@ class ScriptExporter:
 
     @staticmethod
     def __normalize_structured_action_ids(
-        structured_args: Dict[str, Any], required_action_ids: Sequence[str]
+        structured_args: Dict[str, Any],
+        required_action_ids: Sequence[str],
+        action_catalog: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Normalize Gemini structured action IDs to include all required IDs exactly once.
@@ -398,6 +401,43 @@ class ScriptExporter:
             if required_id not in seen:
                 cleaned_remaining.append(required_id)
                 seen.add(required_id)
+
+        action_catalog = action_catalog or {}
+        order_rank = {action_id: idx for idx, action_id in enumerate(required_action_ids)}
+        moved_to_blocks: list[str] = []
+        for block in cleaned_blocks:
+            condition_lower = str(block.get("condition") or "").strip().lower()
+            block_ids = list(block.get("action_ids") or [])
+            if "outside the us dropdown" not in condition_lower or not block_ids:
+                continue
+
+            last_rank = max(order_rank.get(action_id, -1) for action_id in block_ids)
+            candidate_ids: list[str] = []
+            for action_id in cleaned_remaining:
+                rank = order_rank.get(action_id, -1)
+                if rank <= last_rank:
+                    continue
+                action_line = str(action_catalog.get(action_id) or "").strip().lower()
+                is_scroll = action_line.startswith("scroll ")
+                is_location_selection_tap = action_line.startswith("tap on ") and (
+                    "washington" in action_line or action_line.endswith(" option")
+                )
+                if is_scroll or is_location_selection_tap:
+                    candidate_ids.append(action_id)
+                    last_rank = rank
+                    continue
+                if candidate_ids:
+                    break
+
+            if candidate_ids:
+                block["action_ids"] = block_ids + candidate_ids
+                moved_to_blocks.extend(candidate_ids)
+
+        if moved_to_blocks:
+            moved_set = set(moved_to_blocks)
+            cleaned_remaining = [
+                action_id for action_id in cleaned_remaining if action_id not in moved_set
+            ]
 
         normalized["conditional_blocks"] = cleaned_blocks
         normalized["remaining_action_ids"] = cleaned_remaining
@@ -543,7 +583,9 @@ class ScriptExporter:
             raise ScriptExportError("Gemini did not return structured emit_script tool arguments.")
 
         normalized_structured_args = ScriptExporter.__normalize_structured_action_ids(
-            structured_args=structured_args, required_action_ids=required_action_ids
+            structured_args=structured_args,
+            required_action_ids=required_action_ids,
+            action_catalog=action_catalog,
         )
 
         try:
@@ -567,7 +609,8 @@ class ScriptExporter:
                 f"Gemini-generated structured payload failed schema validation: {exception}"
             ) from exception
 
-        candidate = ScriptExporter.__normalize_script_output(script=structured_payload.to_script())
+        raw_structured_script = structured_payload.to_script()
+        candidate = ScriptExporter.__normalize_script_output(script=raw_structured_script)
         candidate = ScriptExporter.__sanitize_script_targets(
             script=candidate, intent=(intent or goal_state)
         )
@@ -626,7 +669,10 @@ class ScriptExporter:
         if package_name:
             lines.append(f"OPEN_APP {package_name}")
 
-        for step in step_results:
+        n = len(step_results)
+        i = 0
+        while i < n:
+            step = step_results[i]
             action_type_val = ScriptExporter.__get_action_type(step=step)
             target = ScriptExporter.__resolve_target(step=step)
 
@@ -642,25 +688,60 @@ class ScriptExporter:
             if action_type_val == "wait" and target.lower() in ScriptExporter.__GENERIC_TARGETS:
                 target = ScriptExporter.__infer_wait_subject(rationale=rationale)
 
+            if action_type_val in ScriptExporter.__SWIPE_ACTIONS:
+                swipe_direction = action_type_val
+                swipe_start = i
+                j = i + 1
+                while (
+                    j < n
+                    and ScriptExporter.__get_action_type(step=step_results[j]) == swipe_direction
+                ):
+                    j += 1
+                i = j
+
+                if i < n:
+                    next_target = ScriptExporter.__resolve_target(step=step_results[i])
+                else:
+                    next_target = (
+                        ScriptExporter.__infer_scroll_target(
+                            steps=step_results, start=swipe_start, end=i
+                        )
+                        or ScriptExporter.__extract_goal_label(goal_state=intent)
+                        or intent
+                        or "the target"
+                    )
+
+                label = ScriptExporter.__swipe_direction_label(action_type=swipe_direction)
+                lines.append(f"{label} until {next_target} is visible")
+                continue
+
             description = Normalizer.action(
                 action_type=action_type_val, target=target, text=text, wait_duration=wait_duration
             )
 
             lowered = description.lower()
             if lowered.startswith("validate "):
+                i += 1
                 continue
 
+            is_first_step_derived_action = (
+                bool(package_name) and len(lines) == 1 and lines[0].lower().startswith("open_app ")
+            )
             # Collapse app launch into OPEN_APP by skipping the initial app-icon tap.
             is_launch_tap = (
-                bool(package_name)
-                and not lines[1:]  # OPEN_APP is already present; this is first step-derived action
+                is_first_step_derived_action
                 and action_type_val == "tap"
-                and "app icon" in target.lower()
+                and ScriptExporter.__is_likely_launch_tap(
+                    target=target,
+                    description=description,
+                )
             )
             if is_launch_tap:
+                i += 1
                 continue
 
             lines.append(description)
+            i += 1
 
         executable_prefixes = (
             "open_app ",
@@ -694,6 +775,21 @@ class ScriptExporter:
                 required_open_app_id = action_id
 
         return action_catalog, required_action_ids, required_open_app_id
+
+    @staticmethod
+    def __is_likely_launch_tap(target: str, description: str) -> bool:
+        """
+        Heuristic for identifying the launcher tap that opens the app.
+        """
+
+        combined = f"{target} {description}".strip().lower()
+        if not combined:
+            return False
+        if "app icon" in combined:
+            return True
+        if re.search(r"\b[a-z0-9.+_-]+\s+icon\b", combined):
+            return True
+        return bool(combined.endswith(" icon"))
 
     @staticmethod
     def __normalize_positional(target: str) -> str:

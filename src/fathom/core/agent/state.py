@@ -195,15 +195,6 @@ class AgentState:
         # Fuzzy matching for seen screens
         is_new_screen = self.__is_new_screen(screen=screen)
 
-        logger.debug(
-            msg=(
-                f"[H2] Screen update classification | "
-                f"is_new={is_new_screen} seen_count={len(self.__seen_screens)} "
-                f"current={screen.activity} hash={screen.activity_hash} "
-                f"prev={previous_screen.activity if previous_screen else None}"
-            )
-        )
-
         if is_new_screen:
             self.__seen_screens.append(screen)
             logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
@@ -269,14 +260,6 @@ class AgentState:
 
         self.__last_action_type = result.step.action.action_type.value
         self.__last_action_description = result.step.action.to_description()
-
-        logger.debug(
-            (
-                f"[H7] Recorded executed action | "
-                f"step={self.__step_count} action={result.step.action.to_description()} "
-                f"type={result.step.action.action_type.value} success={result.success}"
-            )
-        )
 
         if result.step.action.action_type == ActionType.COMPLETE and result.success:
             self.mark_complete(reason=CompletionReason.SUCCESS.value)
