@@ -49,6 +49,9 @@ class GraphExecutor:
         Processes interrupts and resumes until completion or cancellation.
         """
 
+        # Validate state consistency before execution
+        await self.__validate_state_sync("run_start")
+
         # For autonomous mode (no interrupts), run graph to completion in one call
         if not self.__has_interrupts:
             logger.info("Executor: Running in autonomous mode (no interrupts)")
@@ -234,6 +237,30 @@ class GraphExecutor:
 
         logger.info("Executor: Resuming execution")
 
+    async def __validate_state_sync(self, checkpoint: str) -> None:
+        """
+        Validate consistency between graph state and context objects.
+        Logs warnings if state drift is detected.
+        """
+
+        try:
+            snapshot = await self.__graph.aget_state(self.__config)
+            graph_is_complete = snapshot.values.get(CommonStateKey.IS_COMPLETE, False)
+            context_is_complete = self.__context.agent_state.is_complete
+
+            if graph_is_complete != context_is_complete:
+                logger.warning(
+                    f"Executor [{checkpoint}]: State drift detected! "
+                    f"Graph is_complete={graph_is_complete}, Context is_complete={context_is_complete}"
+                )
+
+            logger.debug(
+                f"Executor [{checkpoint}]: State validation - "
+                f"next_nodes={snapshot.next}, graph_keys={list(snapshot.values.keys())}"
+            )
+        except Exception as exception:
+            logger.error(f"Executor [{checkpoint}]: State validation failed: {exception}")
+
     async def __inject_context(self, content: str) -> None:
         """
         Injects user guidance into both ContextManager and Graph State.
@@ -278,4 +305,8 @@ class GraphExecutor:
             # Deferred realignment: Preserve current state, guidance applies to future steps
             logger.info("Executor: Preserving current state (deferred realignment)")
 
+        # CRITICAL: Persist injected context to graph state for checkpoint recovery
         await self.__graph.aupdate_state(self.__config, update_dict)
+        logger.info(
+            f"Executor: Graph state updated with context injection. Keys updated: {list(update_dict.keys())}"
+        )

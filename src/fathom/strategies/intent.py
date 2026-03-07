@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from logging import getLogger
+from pathlib import Path  # noqa: TC003
 from typing import Any, Dict, Optional
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -105,7 +106,12 @@ class IntentStrategy:
                 "JsonPlusSerializer does not accept allowed_json_modules; using default serializer"
             )
             serializer = JsonPlusSerializer()
-        checkpointer = MemorySaver(serde=serializer)
+
+        checkpoint_db = path_manager.memory_path / "checkpoints.db"
+        checkpointer = self.__build_checkpointer(
+            serializer=serializer,
+            checkpoint_db_path=checkpoint_db,
+        )
 
         self.__graph = builder.build(
             checkpointer=checkpointer,
@@ -202,3 +208,40 @@ class IntentStrategy:
         """
 
         self.__graph_context.cancel()
+
+    def __build_checkpointer(
+        self,
+        serializer: JsonPlusSerializer,
+        checkpoint_db_path: "Path",
+    ) -> Any:
+        """
+        Build a persistence layer for graph checkpoints.
+
+        Prefers SQLite-backed checkpoints for crash-safe persistence.
+        Falls back to in-memory checkpoints if sqlite support is unavailable.
+        """
+
+        checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            from langgraph.checkpoint.sqlite import SqliteSaver
+
+            try:
+                return SqliteSaver.from_conn_string(
+                    str(checkpoint_db_path),
+                    serde=serializer,
+                )
+            except TypeError:
+                # Some SqliteSaver versions do not accept serde in factory method.
+                logger.warning(
+                    "SqliteSaver.from_conn_string() does not accept serde; using default serializer"
+                )
+                return SqliteSaver.from_conn_string(str(checkpoint_db_path))
+
+        except Exception as exception:
+            logger.warning(
+                "SQLite checkpoint saver unavailable; falling back to MemorySaver. "
+                "Install 'langgraph-checkpoint-sqlite' to enable persistent checkpoints. "
+                f"Reason: {exception}"
+            )
+            return MemorySaver(serde=serializer)

@@ -68,6 +68,9 @@ class IntentNodeProvider:
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
         Capture the screen and update state.
+
+        ERROR BOUNDARY: All exceptions are caught and converted to terminal states
+        to ensure graph execution completes gracefully even on device failures.
         """
 
         logger.info("=" * 80)
@@ -77,39 +80,40 @@ class IntentNodeProvider:
             f"[NODE: GROUND] Incoming state has planned_step: {state.get(IntentStateKey.PLANNED_STEP) is not None}"
         )
 
-        if await self.__is_cancelled():
-            logger.warning("[NODE: GROUND] Execution cancelled")
-            self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
-
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
-            }
-
-        # Check max steps BEFORE planning to avoid planning actions we can't execute
-        if self.__context.agent_state.step_count >= self.__context.max_steps:
-            logger.warning(
-                f"[NODE: GROUND] Max steps ({self.__context.max_steps}) reached. "
-                f"Current step count: {self.__context.agent_state.step_count}"
-            )
-            self.__context.agent_state.mark_complete(reason=CompletionReason.MAX_STEPS.value)
-
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: CompletionReason.MAX_STEPS.value,
-            }
-
-        current_step_num = self.__context.agent_state.step_count + 1
-
-        await self.__context.telemetry.info(
-            f"Grounding step {current_step_num}...",
-            type="STEP_STARTED",
-            step=current_step_num,
-        )
-
-        start_time = time.time()
-
+        # ERROR BOUNDARY: Wrap entire node in try/except
         try:
+            if await self.__is_cancelled():
+                logger.warning("[NODE: GROUND] Execution cancelled")
+                self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
+
+                return {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+                }
+
+            # Check max steps BEFORE planning to avoid planning actions we can't execute
+            if self.__context.agent_state.step_count >= self.__context.max_steps:
+                logger.warning(
+                    f"[NODE: GROUND] Max steps ({self.__context.max_steps}) reached. "
+                    f"Current step count: {self.__context.agent_state.step_count}"
+                )
+                self.__context.agent_state.mark_complete(reason=CompletionReason.MAX_STEPS.value)
+
+                return {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.MAX_STEPS.value,
+                }
+
+            current_step_num = self.__context.agent_state.step_count + 1
+
+            await self.__context.telemetry.info(
+                f"Grounding step {current_step_num}...",
+                type="STEP_STARTED",
+                step=current_step_num,
+            )
+
+            start_time = time.time()
+
             # 1. Capture State (Screenshot + XML)
             screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
 
@@ -276,6 +280,8 @@ class IntentNodeProvider:
     async def analyze(self, state: IntentGraphState) -> IntentGraphState:
         """
         Plan the next step using the Agent Planner.
+
+        ERROR BOUNDARY: Wraps planning in try/except to handle LLM/network failures gracefully.
         """
 
         logger.info("=" * 80)
@@ -299,130 +305,147 @@ class IntentNodeProvider:
 
         capture: ScreenCapture = screen_capture
 
-        # Check injected context
-        current_step = self.__context.agent_state.step_count
-        state_injected = state.get(IntentStateKey.INJECTED_CONTEXT)
+        # ERROR BOUNDARY: Wrap planning logic
+        try:
+            # Check injected context
+            current_step = self.__context.agent_state.step_count
+            state_injected = state.get(IntentStateKey.INJECTED_CONTEXT)
 
-        guidance_snapshot = self.__context.context_manager.get_user_guidance()
-        logger.debug(
-            f"[H3] Analysis Context | Step: {current_step} | "
-            f"Active Guidance: {len(guidance_snapshot)} items | "
-            f"State Injected: {state_injected is not None}"
-        )
-
-        start_time = time.time()
-        raw_elements = state.get(IntentStateKey.ELEMENTS)
-
-        elements: Optional[Dict[str, Any]] = None
-        if isinstance(raw_elements, dict):
-            elements = raw_elements
-
-        # Get Device Dimensions for Accurate Normalization (Strict)
-        width, height = await self.__context.device.get_dimensions()
-
-        # Determine interactive mode & config for planner
-        is_interactive = not isinstance(self.__context.signal, NoopSignal)
-        prompt_if_stuck = self.__context.configuration.intent.prompt_user_if_stuck
-
-        # HITL: Check for pause request or context injection before planning
-        await self.__handle_hitl(current_step=current_step)
-
-        logger.info(f"[NODE: ANALYZE] Calling planner for step {current_step + 1}")
-        plan = await self.__context.planner.plan_step(
-            capture=capture,
-            elements=elements,
-            screen_width=width,
-            screen_height=height,
-            use_xml=self.__context.use_xml,
-            interactive_mode=is_interactive,
-            prompt_if_stuck=prompt_if_stuck,
-            state=self.__context.agent_state,
-            reasoner=self.__context.reasoner,
-            context_manager=self.__context.context_manager,
-        )
-
-        duration = time.time() - start_time
-        self.__context.metrics.record(operation="analysis", duration=duration)
-
-        if plan.metrics:
-            self.__context.metrics.record_tokens(
-                prompt=int(plan.metrics.get("prompt_tokens", 0)),
-                cached=int(plan.metrics.get("cached_tokens", 0)),
-                completion=int(plan.metrics.get("completion_tokens", 0)),
+            guidance_snapshot = self.__context.context_manager.get_user_guidance()
+            logger.debug(
+                f"[H3] Analysis Context | Step: {current_step} | "
+                f"Active Guidance: {len(guidance_snapshot)} items | "
+                f"State Injected: {state_injected is not None}"
             )
 
-        # Log plan details
-        if plan.step:
+            start_time = time.time()
+            raw_elements = state.get(IntentStateKey.ELEMENTS)
+
+            elements: Optional[Dict[str, Any]] = None
+            if isinstance(raw_elements, dict):
+                elements = raw_elements
+
+            # Get Device Dimensions for Accurate Normalization (Strict)
+            width, height = await self.__context.device.get_dimensions()
+
+            # Determine interactive mode & config for planner
+            is_interactive = not isinstance(self.__context.signal, NoopSignal)
+            prompt_if_stuck = self.__context.configuration.intent.prompt_user_if_stuck
+
+            # HITL: Check for pause request or context injection before planning
+            await self.__handle_hitl(current_step=current_step)
+
+            logger.info(f"[NODE: ANALYZE] Calling planner for step {current_step + 1}")
+            plan = await self.__context.planner.plan_step(
+                capture=capture,
+                elements=elements,
+                screen_width=width,
+                screen_height=height,
+                use_xml=self.__context.use_xml,
+                interactive_mode=is_interactive,
+                prompt_if_stuck=prompt_if_stuck,
+                state=self.__context.agent_state,
+                reasoner=self.__context.reasoner,
+                context_manager=self.__context.context_manager,
+            )
+
+            duration = time.time() - start_time
+            self.__context.metrics.record(operation="analysis", duration=duration)
+
+            if plan.metrics:
+                self.__context.metrics.record_tokens(
+                    prompt=int(plan.metrics.get("prompt_tokens", 0)),
+                    cached=int(plan.metrics.get("cached_tokens", 0)),
+                    completion=int(plan.metrics.get("completion_tokens", 0)),
+                )
+
+            # Log plan details
+            if plan.step:
+                logger.info(
+                    f"[NODE: ANALYZE] Plan created: action={plan.step.action.action_type.value}, "
+                    f"confidence={plan.step.action.confidence:.2f}, "
+                    f"target={plan.step.action.target}"
+                )
+
+                # Emit structured telemetry for streaming UI
+                await self.__context.telemetry.info(
+                    plan.reason or "No reasoning",
+                    type=FathomEvent.REASONING,
+                    step=current_step + 1,
+                    reasoning=plan.reason,
+                    rationale=plan.step.action.rationale if plan.step else None,
+                )
+                await self.__context.telemetry.info(
+                    plan.step.action.to_description(),
+                    type=FathomEvent.PLANNED_ACTION,
+                    step=current_step + 1,
+                )
+
+                self.__context.ux.render_fallback(
+                    reasoning=plan.reason or "No reasoning",
+                    action=plan.step.action.to_description(),
+                    step_number=self.__context.agent_state.step_count + 1,
+                )
+            else:
+                logger.warning(
+                    f"[NODE: ANALYZE] No step planned: is_complete={plan.is_complete}, "
+                    f"should_retry={plan.should_retry}, reason={plan.reason}"
+                )
+
             logger.info(
-                f"[NODE: ANALYZE] Plan created: action={plan.step.action.action_type.value}, "
-                f"confidence={plan.step.action.confidence:.2f}, "
-                f"target={plan.step.action.target}"
+                f"[NODE: ANALYZE] Analysis completed in {duration:.2f}s: "
+                f"is_complete={plan.is_complete}, should_retry={plan.should_retry}, "
+                f"has_step={plan.step is not None}"
             )
 
-            # Emit structured telemetry for streaming UI
-            await self.__context.telemetry.info(
-                plan.reason or "No reasoning",
-                type=FathomEvent.REASONING,
-                step=current_step + 1,
-                reasoning=plan.reason,
-                rationale=plan.step.action.rationale if plan.step else None,
-            )
-            await self.__context.telemetry.info(
-                plan.step.action.to_description(),
-                type=FathomEvent.PLANNED_ACTION,
-                step=current_step + 1,
+            completion_reason = (
+                plan.reason if plan.is_complete else state.get(CommonStateKey.COMPLETION_REASON)
             )
 
-            self.__context.ux.render_fallback(
-                reasoning=plan.reason or "No reasoning",
-                action=plan.step.action.to_description(),
-                step_number=self.__context.agent_state.step_count + 1,
+            result = {
+                IntentStateKey.PLAN: plan,
+                IntentStateKey.ELEMENTS: elements,
+                IntentStateKey.INJECTED_CONTEXT: None,
+                IntentStateKey.PLANNED_STEP: plan.step,
+                CommonStateKey.ANALYSIS_DURATION: duration,
+                CommonStateKey.IS_COMPLETE: plan.is_complete,
+                IntentStateKey.SHOULD_RETRY: plan.should_retry,
+                CommonStateKey.COMPLETION_REASON: completion_reason,
+            }
+
+            # Log what will happen next based on routing logic
+            if plan.is_complete:
+                logger.info("[NODE: ANALYZE] -> Will route to VERIFY (is_complete=True)")
+
+            elif plan.should_retry:
+                logger.info("[NODE: ANALYZE] -> Will route to GROUND (should_retry=True)")
+
+            elif not plan.step:
+                logger.info("[NODE: ANALYZE] -> Will route to GROUND (no planned_step)")
+
+            else:
+                logger.info("[NODE: ANALYZE] -> Will route to EXECUTE")
+
+            return result  # type: ignore[return-value]
+
+        except Exception as exception:
+            logger.exception(f"[NODE: ANALYZE] Analysis failed: {exception}")
+            await self.__context.telemetry.error(
+                f"Analysis failed: {exception}",
+                step=self.__context.agent_state.step_count + 1,
             )
-        else:
-            logger.warning(
-                f"[NODE: ANALYZE] No step planned: is_complete={plan.is_complete}, "
-                f"should_retry={plan.should_retry}, reason={plan.reason}"
-            )
-
-        logger.info(
-            f"[NODE: ANALYZE] Analysis completed in {duration:.2f}s: "
-            f"is_complete={plan.is_complete}, should_retry={plan.should_retry}, "
-            f"has_step={plan.step is not None}"
-        )
-
-        completion_reason = (
-            plan.reason if plan.is_complete else state.get(CommonStateKey.COMPLETION_REASON)
-        )
-
-        result = {
-            IntentStateKey.PLAN: plan,
-            IntentStateKey.ELEMENTS: elements,
-            IntentStateKey.INJECTED_CONTEXT: None,
-            IntentStateKey.PLANNED_STEP: plan.step,
-            CommonStateKey.ANALYSIS_DURATION: duration,
-            CommonStateKey.IS_COMPLETE: plan.is_complete,
-            IntentStateKey.SHOULD_RETRY: plan.should_retry,
-            CommonStateKey.COMPLETION_REASON: completion_reason,
-        }
-
-        # Log what will happen next based on routing logic
-        if plan.is_complete:
-            logger.info("[NODE: ANALYZE] -> Will route to VERIFY (is_complete=True)")
-
-        elif plan.should_retry:
-            logger.info("[NODE: ANALYZE] -> Will route to GROUND (should_retry=True)")
-
-        elif not plan.step:
-            logger.info("[NODE: ANALYZE] -> Will route to GROUND (no planned_step)")
-
-        else:
-            logger.info("[NODE: ANALYZE] -> Will route to EXECUTE")
-
-        return result  # type: ignore[return-value]
+            # Return retry state to attempt recovery
+            return {
+                IntentStateKey.SHOULD_RETRY: True,
+                CommonStateKey.ANALYSIS_DURATION: 0.0,
+                IntentStateKey.INJECTED_CONTEXT: None,
+            }
 
     async def execute(self, state: IntentGraphState) -> IntentGraphState:
         """
         Execute the planned action via ActionExecutor.
+
+        ERROR BOUNDARY: Wraps execution in try/except to handle device/action failures gracefully.
         """
 
         logger.info("=" * 80)
@@ -450,7 +473,6 @@ class IntentNodeProvider:
 
         step: Step = current_step
         capture: ScreenCapture = screen_capture
-
         # Retrieve elements for Ground Truth resolution
         raw_elements = state.get(IntentStateKey.ELEMENTS)
 
@@ -590,7 +612,7 @@ class IntentNodeProvider:
             is_positional=(step.action.target_type == "positional"),
         )
 
-        result_dict: IntentGraphState = {
+        result_dict: Dict[Any, Any] = {
             CommonStateKey.STEP_RESULT: step_result,
             CommonStateKey.EXECUTION_DURATION: duration,
             IntentStateKey.ELEMENTS: state.get(IntentStateKey.ELEMENTS),
@@ -606,11 +628,13 @@ class IntentNodeProvider:
             result_dict[IntentStateKey.SHOULD_RETRY] = True
             result_dict[CommonStateKey.COMPLETION_REASON] = None
 
-        return result_dict
+        return result_dict  # type: ignore[return-value]
 
     async def record(self, state: IntentGraphState) -> IntentGraphState:
         """
         Record the execution result.
+
+        ERROR BOUNDARY: Wraps recording in try/except to handle storage/telemetry failures gracefully.
         """
 
         logger.info("=" * 80)
@@ -625,133 +649,34 @@ class IntentNodeProvider:
                 CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
             }
 
-        result = state.get(CommonStateKey.STEP_RESULT)
-        if not isinstance(result, StepResult):
-            logger.error("[NODE: RECORD] No valid step result found")
-            return {}
-
-        step_result: StepResult = result
-        current_activity = "unknown"
+        # ERROR BOUNDARY: Wrap recording logic
         try:
-            current_activity = await self.__context.device.get_current_package()
-        except Exception:
+            result = state.get(CommonStateKey.STEP_RESULT)
+            if not isinstance(result, StepResult):
+                logger.error("[NODE: RECORD] No valid step result found")
+                return {}
+
+            step_result: StepResult = result
             current_activity = "unknown"
+            try:
+                current_activity = await self.__context.device.get_current_package()
+            except Exception:
+                current_activity = "unknown"
 
-        logger.info(
-            f"[NODE: RECORD] Recording step: success={step_result.success}, "
-            f"screen_changed={step_result.screen_changed}, duration={step_result.duration}ms"
-        )
-
-        self.__context.agent_state.record_step(result=step_result)
-        script_data = await self.__context.history.save_step(
-            result=step_result, intent=self.__context.intent, activity=current_activity
-        )
-
-        # Emit enriched telemetry for the UI to render full step details
-        record = step_result.to_record(activity=current_activity)
-
-        # Calculate total duration for UI
-        analysis_duration_raw = state.get(CommonStateKey.ANALYSIS_DURATION) or 0.0
-        grounding_duration_raw = state.get(CommonStateKey.GROUNDING_DURATION) or 0.0
-        execution_duration_raw = state.get(CommonStateKey.EXECUTION_DURATION) or 0.0
-
-        analysis_duration = (
-            float(analysis_duration_raw)
-            if isinstance(analysis_duration_raw, (int, float, str))
-            else 0.0
-        )
-        grounding_duration = (
-            float(grounding_duration_raw)
-            if isinstance(grounding_duration_raw, (int, float, str))
-            else 0.0
-        )
-        execution_duration = (
-            float(execution_duration_raw)
-            if isinstance(execution_duration_raw, (int, float, str))
-            else 0.0
-        )
-
-        total_duration = int((grounding_duration + analysis_duration + execution_duration) * 1000)
-        plan_metrics: Dict[str, Any] = {}
-        plan_raw = state.get(IntentStateKey.PLAN)
-        if isinstance(plan_raw, PlanResult):
-            plan_metrics = dict(plan_raw.metrics or {})
-
-        await self.__context.telemetry.info(
-            f"Step {step_result.step.step_number} completed",
-            type=FathomEvent.STEP_COMPLETED,
-            success=record.success,
-            duration=total_duration,
-            rationale=record.rationale,
-            observation=record.observation,
-            action_type=record.action_type,
-            step=step_result.step.step_number + 1,
-            action_description=record.action_description,
-            target=record.natural_language_target or record.target,
-            analysis_llm_ms=float(plan_metrics.get("llm_analysis_ms", 0.0) or 0.0),
-            analysis_parse_ms=float(plan_metrics.get("parse_ms", 0.0) or 0.0),
-            analysis_payload_ms=float(plan_metrics.get("payload_ms", 0.0) or 0.0),
-            analysis_manifest_ms=float(plan_metrics.get("manifest_ms", 0.0) or 0.0),
-            analysis_tool_scope_ms=float(plan_metrics.get("tool_scope_ms", 0.0) or 0.0),
-            analysis_total_ms=float(plan_metrics.get("analyze_ms", 0.0) or 0.0),
-        )
-
-        if script_data:
-            await self.__context.telemetry.info(
-                script_data,
-                type=FathomEvent.SCRIPT_GENERATED,
-                step=step_result.step.step_number + 1,
+            logger.info(
+                f"[NODE: RECORD] Recording step: success={step_result.success}, "
+                f"screen_changed={step_result.screen_changed}, duration={step_result.duration}ms"
             )
 
-        await self.__context.memory.store_experience(
-            success=step_result.success,
-            action=step_result.step.action,
-            visual_hash=step_result.pre_hash,
-        )
+            self.__context.agent_state.record_step(result=step_result)
+            script_data = await self.__context.history.save_step(
+                result=step_result, intent=self.__context.intent, activity=current_activity
+            )
 
-        # Commit cycle to ContextManager (GCC Trace)
-        logger.debug(
-            f"[H3] Committing to trace | thought={step_result.step.action.rationale[:50]}..."
-        )
+            # Emit enriched telemetry for the UI to render full step details
+            record = step_result.to_record(activity=current_activity)
 
-        analysis_result = state.get(CommonStateKey.ANALYSIS)
-
-        analysis: Optional[AnalysisResult] = None
-        if isinstance(analysis_result, AnalysisResult):
-            analysis = analysis_result
-
-        observation = f"Screen: {step_result.pre_hash[:8]}"
-        if analysis and analysis.screen_description:
-            observation += f" | Content: {analysis.screen_description[:100]}..."
-
-        await self.__context.context_manager.commit(
-            observation=observation,
-            action=step_result.step.action,
-            thought=step_result.step.action.rationale,
-        )
-
-        # GCC Branching - Semantic compression for long-running workflows
-        # Threshold: 15 steps balances context freshness with compression benefits
-        # For 100-150 step workflows, this creates ~7-10 milestones
-        full_context = self.__context.context_manager.get_full_context()
-        active_count = full_context.get("active_count", 0)
-
-        BRANCHING_THRESHOLD = 15
-        if active_count >= BRANCHING_THRESHOLD:
-            logger.info(f"[NODE: RECORD] Triggering GCC branch: active_count={active_count}")
-            await self.__context.context_manager.branch()
-
-        # Audit logging
-        execution_plan = state.get(IntentStateKey.PLAN)
-        current_screen = state.get(CommonStateKey.SCREEN_STATE)
-        is_new_screen = state.get(CommonStateKey.IS_NEW_SCREEN)
-
-        if (
-            isinstance(execution_plan, PlanResult)
-            and isinstance(current_screen, ScreenState)
-            and isinstance(is_new_screen, bool)
-        ):
-            # Explicit float conversion for metrics
+            # Calculate total duration for UI
             analysis_duration_raw = state.get(CommonStateKey.ANALYSIS_DURATION) or 0.0
             grounding_duration_raw = state.get(CommonStateKey.GROUNDING_DURATION) or 0.0
             execution_duration_raw = state.get(CommonStateKey.EXECUTION_DURATION) or 0.0
@@ -772,36 +697,150 @@ class IntentNodeProvider:
                 else 0.0
             )
 
-            self.__context.auditor.log_step(
-                plan=execution_plan,
-                state=current_screen,
-                hierarchy_duration=0.0,
-                is_new_screen=is_new_screen,
-                result=step_result.to_record(),
-                analysis_duration=analysis_duration,
-                execution_duration=execution_duration,
-                grounding_duration=grounding_duration,
-                is_stuck=self.__context.agent_state.is_stuck,
-                step_count=self.__context.agent_state.step_count,
-                total_duration=grounding_duration + analysis_duration + execution_duration,
+            total_duration = int(
+                (grounding_duration + analysis_duration + execution_duration) * 1000
+            )
+            plan_metrics: Dict[str, Any] = {}
+            plan_raw = state.get(IntentStateKey.PLAN)
+            if isinstance(plan_raw, PlanResult):
+                plan_metrics = dict(plan_raw.metrics or {})
+
+            await self.__context.telemetry.info(
+                f"Step {step_result.step.step_number} completed",
+                type=FathomEvent.STEP_COMPLETED,
+                success=record.success,
+                duration=total_duration,
+                rationale=record.rationale,
+                observation=record.observation,
+                action_type=record.action_type,
+                step=step_result.step.step_number + 1,
+                action_description=record.action_description,
+                target=record.natural_language_target or record.target,
+                analysis_llm_ms=float(plan_metrics.get("llm_analysis_ms", 0.0) or 0.0),
+                analysis_parse_ms=float(plan_metrics.get("parse_ms", 0.0) or 0.0),
+                analysis_payload_ms=float(plan_metrics.get("payload_ms", 0.0) or 0.0),
+                analysis_manifest_ms=float(plan_metrics.get("manifest_ms", 0.0) or 0.0),
+                analysis_tool_scope_ms=float(plan_metrics.get("tool_scope_ms", 0.0) or 0.0),
+                analysis_total_ms=float(plan_metrics.get("analyze_ms", 0.0) or 0.0),
             )
 
-        # Check if the plan indicated completion
-        execution_plan = state.get(IntentStateKey.PLAN)
-        if isinstance(execution_plan, PlanResult) and execution_plan.is_complete:
-            logger.info("[NODE: RECORD] Plan indicates completion. This is the final step.")
-            self.__context.agent_state.mark_complete(reason=execution_plan.reason or "Completed")
+            if script_data:
+                await self.__context.telemetry.info(
+                    script_data,
+                    type=FathomEvent.SCRIPT_GENERATED,
+                    step=step_result.step.step_number + 1,
+                )
 
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: execution_plan.reason,
-            }
+            await self.__context.memory.store_experience(
+                success=step_result.success,
+                action=step_result.step.action,
+                visual_hash=step_result.pre_hash,
+            )
 
-        logger.info(
-            f"[NODE: RECORD] Step {self.__context.agent_state.step_count} recorded successfully"
-        )
-        logger.info("[NODE: RECORD] -> Will route to GROUND for next step")
-        return {}
+            # Commit cycle to ContextManager (GCC Trace)
+            logger.debug(
+                f"[H3] Committing to trace | thought={step_result.step.action.rationale[:50]}..."
+            )
+
+            analysis_result = state.get(CommonStateKey.ANALYSIS)
+
+            analysis: Optional[AnalysisResult] = None
+            if isinstance(analysis_result, AnalysisResult):
+                analysis = analysis_result
+
+            observation = f"Screen: {step_result.pre_hash[:8]}"
+            if analysis and analysis.screen_description:
+                observation += f" | Content: {analysis.screen_description[:100]}..."
+
+            await self.__context.context_manager.commit(
+                observation=observation,
+                action=step_result.step.action,
+                thought=step_result.step.action.rationale,
+            )
+
+            # GCC Branching - Semantic compression for long-running workflows
+            # Threshold: 15 steps balances context freshness with compression benefits
+            # For 100-150 step workflows, this creates ~7-10 milestones
+            full_context = self.__context.context_manager.get_full_context()
+            active_count = full_context.get("active_count", 0)
+
+            BRANCHING_THRESHOLD = 15
+            if active_count >= BRANCHING_THRESHOLD:
+                logger.info(f"[NODE: RECORD] Triggering GCC branch: active_count={active_count}")
+                await self.__context.context_manager.branch()
+
+            # Audit logging
+            execution_plan = state.get(IntentStateKey.PLAN)
+            current_screen = state.get(CommonStateKey.SCREEN_STATE)
+            is_new_screen = state.get(CommonStateKey.IS_NEW_SCREEN)
+
+            if (
+                isinstance(execution_plan, PlanResult)
+                and isinstance(current_screen, ScreenState)
+                and isinstance(is_new_screen, bool)
+            ):
+                # Explicit float conversion for metrics
+                analysis_duration_raw = state.get(CommonStateKey.ANALYSIS_DURATION) or 0.0
+                grounding_duration_raw = state.get(CommonStateKey.GROUNDING_DURATION) or 0.0
+                execution_duration_raw = state.get(CommonStateKey.EXECUTION_DURATION) or 0.0
+
+                analysis_duration = (
+                    float(analysis_duration_raw)
+                    if isinstance(analysis_duration_raw, (int, float, str))
+                    else 0.0
+                )
+                grounding_duration = (
+                    float(grounding_duration_raw)
+                    if isinstance(grounding_duration_raw, (int, float, str))
+                    else 0.0
+                )
+                execution_duration = (
+                    float(execution_duration_raw)
+                    if isinstance(execution_duration_raw, (int, float, str))
+                    else 0.0
+                )
+
+                self.__context.auditor.log_step(
+                    plan=execution_plan,
+                    state=current_screen,
+                    hierarchy_duration=0.0,
+                    is_new_screen=is_new_screen,
+                    result=step_result.to_record(),
+                    analysis_duration=analysis_duration,
+                    execution_duration=execution_duration,
+                    grounding_duration=grounding_duration,
+                    is_stuck=self.__context.agent_state.is_stuck,
+                    step_count=self.__context.agent_state.step_count,
+                    total_duration=grounding_duration + analysis_duration + execution_duration,
+                )
+
+            # Check if the plan indicated completion
+            execution_plan = state.get(IntentStateKey.PLAN)
+            if isinstance(execution_plan, PlanResult) and execution_plan.is_complete:
+                logger.info("[NODE: RECORD] Plan indicates completion. This is the final step.")
+                self.__context.agent_state.mark_complete(
+                    reason=execution_plan.reason or "Completed"
+                )
+
+                return {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: execution_plan.reason,
+                }
+
+            logger.info(
+                f"[NODE: RECORD] Step {self.__context.agent_state.step_count} recorded successfully"
+            )
+            logger.info("[NODE: RECORD] -> Will route to GROUND for next step")
+            return {}
+
+        except Exception as exception:
+            logger.exception(f"[NODE: RECORD] Recording failed: {exception}")
+            await self.__context.telemetry.error(
+                f"Recording failed: {exception}",
+                step=self.__context.agent_state.step_count,
+            )
+            # Return empty dict to continue execution - recording is not critical
+            return {}
 
     async def verify(self, state: IntentGraphState) -> IntentGraphState:
         """
