@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from logging import getLogger
 from typing import Any, Dict, Literal, Optional, Sequence, Union, cast
@@ -366,6 +367,18 @@ class ScriptExporter:
         normalized["final_validation"] = ScriptExporter.__normalize_final_validation(
             value=normalized.get("final_validation")
         )
+        raw_action_validations = normalized.get("action_validations")
+        normalized_action_validations: Dict[str, str] = {}
+        if isinstance(raw_action_validations, dict):
+            for action_id, validation_text in raw_action_validations.items():
+                aid = str(action_id).strip()
+                if not aid:
+                    continue
+                normalized_action_validations[aid] = ScriptExporter.__normalize_validation_line(
+                    value=validation_text,
+                    fallback="Validate expected state is visible.",
+                )
+        normalized["action_validations"] = normalized_action_validations
         conditional_blocks_raw = list(normalized.get("conditional_blocks") or [])
         remaining_raw = list(normalized.get("remaining_action_ids") or [])
         required_set = set(required_action_ids)
@@ -446,18 +459,25 @@ class ScriptExporter:
         Coerce model-produced final validation into schema-compliant Validate line.
         """
 
+        return ScriptExporter.__normalize_validation_line(
+            value=value,
+            fallback="Validate expected goal state is visible.",
+        )
+
+    @staticmethod
+    def __normalize_validation_line(value: Any, *, fallback: str) -> str:
+        """
+        Coerce arbitrary text into a schema-compliant Validate line.
+        """
+
         raw = str(value or "").strip()
         if not raw:
-            return "Validate expected goal state is visible."
+            return fallback
 
         match = re.search(pattern=r"\bvalidate\b.*", string=raw, flags=re.IGNORECASE)
         if match:
             extracted = match.group(0).strip()
-            return (
-                "Validate" + extracted[len("validate") :]
-                if extracted
-                else "Validate expected goal state is visible."
-            )
+            return "Validate" + extracted[len("validate") :] if extracted else fallback
 
         cleaned = raw.rstrip(".")
         if cleaned.lower().startswith("that "):
@@ -545,12 +565,23 @@ class ScriptExporter:
         if not self.__prompt_builder:
             raise ScriptExportError("Script exporter prompt builder is not configured.")
 
+        # Use Gemini to robustly extract validation subjects from the intent
+        validation_subjects = await self.__extract_validation_subjects_with_llm(
+            intent=(intent or goal_state)
+        )
+        if validation_subjects:
+            logger.info(
+                f"Using Gemini-extracted validation subjects ({len(validation_subjects)} found) "
+                "for LLM export baseline generation."
+            )
+
         llm_baseline_script = self.export(
             step_results=step_results,
             intent=intent,
             goal_state=goal_state,
             package_name=package_name,
             include_final_validation=False,
+            validation_subjects_override=validation_subjects,
         )
         deterministic_fallback_script = self.export(
             step_results=step_results,
@@ -558,6 +589,7 @@ class ScriptExporter:
             goal_state=goal_state,
             package_name=package_name,
             include_final_validation=True,
+            validation_subjects_override=validation_subjects,
         )
         deterministic_fallback_script = ScriptExporter.__normalize_script_output(
             script=deterministic_fallback_script
@@ -647,6 +679,7 @@ class ScriptExporter:
                     "required_action_ids": required_action_ids,
                     "required_open_app_id": required_open_app_id,
                     "require_if_block": require_if_block,
+                    "expected_validation_count": len(validation_subjects),
                 }
             )
         except Exception as exception:
@@ -946,22 +979,91 @@ class ScriptExporter:
         return ""
 
     @staticmethod
+    def __infer_target_from_rationale(
+        *, action_type: str, rationale: Optional[str], fallback: str
+    ) -> str:
+        """
+        Recover a human-readable target from rationale when model target is generic.
+        """
+
+        if action_type != "tap":
+            return fallback
+
+        raw = str(rationale or "").strip()
+        if not raw:
+            return fallback
+
+        text = Normalizer.clean(text=raw)
+        if not text:
+            return fallback
+
+        quoted_match = re.search(
+            pattern=r"['\"]([^'\"]{2,80})['\"]\s*(button|tab|icon|option|field|selector|link)?",
+            string=raw,
+            flags=re.IGNORECASE,
+        )
+        if quoted_match:
+            name = Normalizer.clean(text=quoted_match.group(1))
+            suffix = Normalizer.clean(text=quoted_match.group(2) or "")
+            if name and name.lower() not in ScriptExporter.__GENERIC_TARGETS:
+                return f"{name} {suffix}".strip()
+
+        intent_match = re.search(
+            pattern=(
+                r"(?:tap|click|press|find|locate|search\s+for|look\s+for)"
+                r"\s+(?:on\s+)?(?:the\s+)?"
+                r"([a-z0-9][a-z0-9\s&/()+._-]{2,80}?)"
+                r"\s*(button|tab|icon|option|field|selector|link)?"
+                r"(?:\s+to\b|\.|,|;|$)"
+            ),
+            string=text,
+            flags=re.IGNORECASE,
+        )
+        if intent_match:
+            name = Normalizer.clean(text=intent_match.group(1))
+            suffix = Normalizer.clean(text=intent_match.group(2) or "")
+            candidate = f"{name} {suffix}".strip()
+            lowered = candidate.lower()
+            if (
+                candidate
+                and lowered not in ScriptExporter.__GENERIC_TARGETS
+                and lowered not in ("app", "application", "screen")
+            ):
+                return candidate
+
+        return fallback
+
+    @staticmethod
     def __resolve_target(step: Union[StepResult, Dict[str, Any]]) -> str:
         """
         Resolve the description for a target.
         """
 
+        rationale: Optional[str]
         if isinstance(step, StepResult):
             if step.generalized_target:
                 return ScriptExporter.__normalize_positional(target=step.generalized_target)
             target = step.step.action.natural_language_target or step.step.action.target
+            rationale = step.step.action.rationale
         else:
             if step.get("generalized_target"):
                 raw = str(object=step.get("generalized_target") or "")
                 return ScriptExporter.__normalize_positional(target=raw)
             target = step.get("natural_language_target") or step.get("target") or ""
+            rationale = str(object=step.get("rationale") or "")
 
-        return target or "element"
+        resolved_target = Normalizer.clean(text=target) or "element"
+        if resolved_target.lower() in ScriptExporter.__GENERIC_TARGETS:
+            action_type = ScriptExporter.__get_action_type(step=step)
+            inferred = ScriptExporter.__infer_target_from_rationale(
+                action_type=action_type,
+                rationale=rationale,
+                fallback=resolved_target,
+            )
+            if inferred:
+                return inferred
+
+        return resolved_target
 
     @staticmethod
     def __get_event_type(step: Union[StepResult, Dict[str, Any]]) -> str:
@@ -1157,6 +1259,7 @@ class ScriptExporter:
         goal_state: str = "",
         package_name: str = "",
         include_final_validation: bool = True,
+        validation_subjects_override: Optional[Sequence[str]] = None,
     ) -> str:
         """
         Export steps to a natural language test script.
@@ -1177,10 +1280,18 @@ class ScriptExporter:
         i = 0
         launch_boundary = 0
         swipe_just_processed = False
-        validation_subjects = ScriptExporter.__extract_validation_subjects(
-            intent=(intent or goal_state)
-        )
+        if validation_subjects_override is not None:
+            validation_subjects = []
+            for subject in validation_subjects_override:
+                cleaned_subject = Normalizer.clean(text=str(subject).strip(" .,:;"))
+                if cleaned_subject:
+                    validation_subjects.append(cleaned_subject)
+        else:
+            validation_subjects = ScriptExporter.__extract_validation_subjects(
+                intent=(intent or goal_state)
+            )
         validation_subject_index = 0
+        reserved_final_subjects = 1 if include_final_validation and validation_subjects else 0
         emitted_validation_lines: set[str] = set()
 
         if package_name:
@@ -1276,7 +1387,15 @@ class ScriptExporter:
                     and prev_action_type not in ("wait", *ScriptExporter.__SWIPE_ACTIONS)
                     and target.lower() not in ScriptExporter.__GENERIC_TARGETS
                 ):
-                    val_line = f"Validate {target} is visible"
+                    available_for_intermediate = max(
+                        0, len(validation_subjects) - reserved_final_subjects
+                    )
+                    if validation_subject_index < available_for_intermediate:
+                        requested_subject = validation_subjects[validation_subject_index]
+                        validation_subject_index += 1
+                        val_line = Normalizer.validation(target=requested_subject, explicit=True)
+                    else:
+                        val_line = f"Validate {target} is visible"
                     if prev_condition:
                         lines.append(f"IF {prev_condition} {{ {val_line} }}")
                     else:
@@ -1310,7 +1429,8 @@ class ScriptExporter:
                 should_use_intent_subject = (
                     bool(validation_subjects)
                     and not is_system_validation
-                    and validation_subject_index < len(validation_subjects)
+                    and validation_subject_index
+                    < max(0, len(validation_subjects) - reserved_final_subjects)
                 )
                 if should_use_intent_subject:
                     effective_target = validation_subjects[
@@ -1406,8 +1526,9 @@ class ScriptExporter:
             last_action_type = ScriptExporter.__get_action_type(step=step_results[-1])
 
             if last_action_type not in ("complete", "verify_goal_completion"):
-                if validation_subjects:
-                    final_validation_line = f"Validate that {validation_subjects[-1]}"
+                if validation_subject_index < len(validation_subjects):
+                    final_subject = validation_subjects[validation_subject_index]
+                    final_validation_line = f"Validate that {final_subject}"
                     if final_validation_line not in emitted_validation_lines and (
                         not lines or lines[-1].strip() != final_validation_line
                     ):
@@ -1475,9 +1596,10 @@ class ScriptExporter:
         return any(term in signal for term in system_terms)
 
     @staticmethod
-    def __extract_validation_subjects(intent: str) -> list[str]:
+    def __extract_validation_subjects_regex(intent: str) -> list[str]:
         """
-        Extract all user-requested validation subjects from intent text.
+        Extract all user-requested validation subjects from intent text using regex.
+        This is a fallback when LLM-based extraction is unavailable.
         """
 
         if not intent:
@@ -1495,6 +1617,96 @@ class ScriptExporter:
                 subjects.append(subject)
 
         return subjects
+
+    async def __extract_validation_subjects_with_llm(self, intent: str) -> list[str]:
+        """
+        Extract validation subjects robustly using Gemini NLP understanding.
+        Handles complex natural language like numbered lists, conditional validations, etc.
+        Falls back to regex if LLM fails or is unavailable.
+        """
+
+        if not intent or not self.__llm:
+            return ScriptExporter.__extract_validation_subjects_regex(intent=intent)
+
+        try:
+            system_instruction = (
+                "You are an expert at parsing user intents for mobile UI automation. "
+                "Your task is to extract all validation requirements from a user's intent."
+            )
+
+            prompt = (
+                f"Extract all validation requirements from this intent. "
+                f"Return a JSON list of validation subjects (what to validate/confirm/check). "
+                f"Each subject should be a complete, standalone assertion (e.g., 'the cart page is displayed', 'api validation succeeded'). "
+                f"Handle numbered lists, conditionals, and complex sentences. Do not include keywords like 'Validate' or 'Check'. "
+                f"Return ONLY valid JSON list of strings, no other text.\n\n"
+                f"Intent: {intent}"
+            )
+
+            response = await self.__llm.generate(
+                use_cache=False,
+                prompt=[prompt],
+                system_instruction=system_instruction,
+            )
+
+            if not response or not response.content:
+                logger.warning(
+                    "Gemini validation subject extraction returned empty response; using regex fallback."
+                )
+                return ScriptExporter.__extract_validation_subjects_regex(intent=intent)
+
+            # Parse JSON response
+            try:
+                # Clean response (remove markdown code blocks if present)
+                content = response.content.strip()
+                if content.startswith("```json"):
+                    content = content[7:]
+                if content.startswith("```"):
+                    content = content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+                content = content.strip()
+
+                subjects = json.loads(content)
+                if not isinstance(subjects, list):
+                    logger.warning("Gemini returned non-list JSON; using regex fallback.")
+                    return ScriptExporter.__extract_validation_subjects_regex(intent=intent)
+
+                # Normalize subjects
+                normalized = []
+                for subject in subjects:
+                    if isinstance(subject, str):
+                        cleaned = Normalizer.clean(text=subject.strip())
+                        if cleaned:
+                            normalized.append(cleaned)
+
+                if normalized:
+                    logger.info(
+                        f"Gemini extracted {len(normalized)} validation subjects from intent."
+                    )
+                    return normalized
+                else:
+                    logger.warning("Gemini extracted empty subjects; using regex fallback.")
+                    return ScriptExporter.__extract_validation_subjects_regex(intent=intent)
+
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse Gemini JSON response ({e}); using regex fallback.")
+                return ScriptExporter.__extract_validation_subjects_regex(intent=intent)
+
+        except Exception as e:
+            logger.warning(
+                f"Gemini validation subject extraction failed ({e}); falling back to regex extraction."
+            )
+            return ScriptExporter.__extract_validation_subjects_regex(intent=intent)
+
+    @staticmethod
+    def __extract_validation_subjects(intent: str) -> list[str]:
+        """
+        Extract validation subjects using regex (synchronous fallback).
+        For async LLM-based extraction, use __extract_validation_subjects_with_llm().
+        """
+
+        return ScriptExporter.__extract_validation_subjects_regex(intent=intent)
 
     @staticmethod
     def __infer_scroll_target(

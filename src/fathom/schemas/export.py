@@ -32,6 +32,13 @@ class ScriptExportStructuredPayload(BaseModel):
     final_validation: str = Field(
         min_length=1, description="Final goal validation line starting with 'Validate'."
     )
+    action_validations: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Optional map of action_id -> intermediate validation line. "
+            "Each value must start with 'Validate' and is emitted after that action."
+        ),
+    )
 
     action_catalog: Dict[str, str] = Field(
         default_factory=dict,
@@ -57,11 +64,28 @@ class ScriptExportStructuredPayload(BaseModel):
         exclude=True,
         repr=False,
     )
+    expected_validation_count: int = Field(
+        default=1,
+        description="Number of validation subjects extracted from user intent. Used to enforce validation distribution.",
+        exclude=True,
+        repr=False,
+    )
 
     @model_validator(mode="after")
     def __validate_against_allowed_actions(self) -> "ScriptExportStructuredPayload":
         if not self.final_validation.strip().lower().startswith("validate"):
             raise ValueError("final_validation must start with 'Validate'.")
+
+        cleaned_action_validations: Dict[str, str] = {}
+        for action_id, validation_line in self.action_validations.items():
+            aid = str(action_id).strip()
+            line = str(validation_line).strip()
+            if not aid or not line:
+                continue
+            if not line.lower().startswith("validate"):
+                raise ValueError(f"action_validations[{aid}] must start with 'Validate'.")
+            cleaned_action_validations[aid] = line
+        self.action_validations = cleaned_action_validations
 
         non_empty_blocks = [
             block
@@ -112,6 +136,23 @@ class ScriptExportStructuredPayload(BaseModel):
             if action_id not in self.action_catalog:
                 raise ValueError(f"Unknown action ID referenced: {action_id}")
 
+        for action_id in self.action_validations:
+            if action_id not in self.action_catalog:
+                raise ValueError(f"Unknown action ID in action_validations: {action_id}")
+            if self.action_catalog[action_id].strip().lower().startswith("open_app "):
+                raise ValueError("action_validations cannot target OPEN_APP actions.")
+
+        # Enforce validation distribution when multiple validations are expected
+        if self.expected_validation_count > 1:
+            total_validations = len(self.action_validations) + 1  # +1 for final_validation
+            if total_validations < self.expected_validation_count:
+                raise ValueError(
+                    f"Intent requires {self.expected_validation_count} validations, "
+                    f"but only {total_validations} were provided. "
+                    f"Expected at least {self.expected_validation_count - 1} intermediate validations in action_validations "
+                    f"(found {len(self.action_validations)})."
+                )
+
         return self
 
     def to_script(self) -> str:
@@ -159,6 +200,11 @@ class ScriptExportStructuredPayload(BaseModel):
                 if action_id:
                     block_by_action_id[action_id] = block_index
 
+        def __append_action_validation(action_id: str, *, indent: str = "") -> None:
+            validation_line = self.action_validations.get(action_id, "").strip()
+            if validation_line:
+                lines.append(f"{indent}{validation_line}")
+
         emitted_block_indices: set[int] = set()
         emitted_non_block_action_ids: set[str] = set()
         for action_id in ordered_selected_ids:
@@ -180,6 +226,7 @@ class ScriptExportStructuredPayload(BaseModel):
                     action_line = self.action_catalog.get(block_action_id, "").strip()
                     if action_line:
                         lines.append(f"    {action_line}")
+                        __append_action_validation(block_action_id, indent="    ")
                 lines.append("}")
                 emitted_block_indices.add(selected_block_index)
                 continue
@@ -189,6 +236,7 @@ class ScriptExportStructuredPayload(BaseModel):
             action_line = self.action_catalog.get(action_id, "").strip()
             if action_line:
                 lines.append(action_line)
+                __append_action_validation(action_id)
                 emitted_non_block_action_ids.add(action_id)
 
         lines.append(self.final_validation.strip())

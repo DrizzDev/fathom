@@ -397,6 +397,15 @@ class ToolRegistry:
                         "description": "Ordered executable action IDs outside IF blocks. Must be selected from provided action catalog.",
                         "items": {"type": "STRING"},
                     },
+                    "action_validations": {
+                        "type": "OBJECT",
+                        "description": (
+                            "Optional mapping of action ID to intermediate validation line "
+                            "(e.g., {'A3': 'Validate that results are visible'}). "
+                            "Each value must start with 'Validate'."
+                        ),
+                        "additionalProperties": {"type": "STRING"},
+                    },
                     "final_validation": {
                         "type": "STRING",
                         "description": "Final goal-validation line. Must start with 'Validate'.",

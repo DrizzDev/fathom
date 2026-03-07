@@ -67,8 +67,11 @@ class GeminiExportPromptBuilder(ExportPromptBuilder):
             "10) Executable actions must be copied exactly from allowed step-derived action lines. Do not invent or paraphrase action text like 'Clear all items'.\n"
             "11) When a package is provided, the first executable line MUST be exactly OPEN_APP <package>.\n"
             "12) If user intent includes conditional language (e.g., 'if', 'when', 'if cart is not empty'), you MUST represent that branch using IF block syntax.\n"
-            "13) Return structured tool args: conditional_blocks[].action_ids, remaining_action_ids[], final_validation.\n"
-            "14) Use only action IDs from the provided action catalog; do not emit raw executable action text."
+            "13) If the intent requests multiple checks (validate/verify/assert/check/confirm), you MUST distribute them across action-anchored validations in action_validations{}. NEVER collapse multiple checks into a single final validation line. Example: intent='Validate X, Validate Y, Validate Z' → action_validations must map at least 2 checks to different action IDs, preserving 1 for final_validation.\n"
+            "14) Return structured tool args: conditional_blocks[].action_ids, remaining_action_ids[], action_validations{}, final_validation.\n"
+            "15) action_validations keys must be action IDs from the catalog; values must start with 'Validate'.\n"
+            "16) Use only action IDs from the provided action catalog; do not emit raw executable action text.\n"
+            "17) CRITICAL: If the execution trace has intermediate points where user validations should occur (between actions), anchor each validation to the nearest preceding action ID in action_validations."
         )
 
     def build_user_prompt(
@@ -105,8 +108,9 @@ class GeminiExportPromptBuilder(ExportPromptBuilder):
             "Conditional-block constraint:\n"
             "- If the intent has an 'if/when' condition, include at least one IF block and place condition-scoped steps inside it.\n\n"
             "Tool output format constraint:\n"
-            "- Return structured tool args with keys: conditional_blocks, remaining_action_ids, final_validation.\n"
+            "- Return structured tool args with keys: conditional_blocks, remaining_action_ids, action_validations, final_validation.\n"
             "- In conditional_blocks, use action_ids (not action text).\n"
+            "- In action_validations, map 1+ action IDs to intermediate validation lines (must start with 'Validate'). CRITICAL: populate this field whenever intent has multiple validation requirements (e.g., 'Validate X', 'Validate Y', 'Verify Z'). Map each to a different action ID.\n"
             "- Do not return a free-form script string.\n\n"
             "Final-goal requirement:\n"
             "- End the script with one validation line that captures the exact user goal in natural language.\n"
