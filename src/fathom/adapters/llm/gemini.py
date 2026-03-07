@@ -4,10 +4,9 @@ import asyncio
 import random
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, Optional, Sequence, Union, cast
 
-from google import genai
-from google.genai import types
+from google.genai import Client, types
 from google.oauth2 import service_account
 
 from fathom.adapters.llm.cache import CacheService
@@ -29,7 +28,7 @@ class GeminiLLM(LLMPort):
         self,
         *,
         api_key: Optional[str] = None,
-        model: str = "gemini-3.0-flash-preview",
+        model: str = "gemini-3.1-flash-lite-preview",
         configuration: Optional[LLMConfiguration] = None,
     ) -> None:
         """
@@ -86,20 +85,20 @@ class GeminiLLM(LLMPort):
                 else:
                     logger.warning(f"Credential file not found at: {path}")
 
-        http_options = {"timeout": self.__configuration.timeout * 1000}
+        http_options = {"timeout": int(self.__configuration.timeout * 1000)}
 
         try:
             if self.__configuration.api_key:
-                self.__client = genai.Client(
-                    http_options=http_options,
+                self.__client = Client(
+                    http_options=cast("Any", http_options),
                     api_key=self.__configuration.api_key,
                 )
             else:
-                self.__client = genai.Client(
+                self.__client = Client(
                     vertexai=True,
                     project=project,
                     location=location,
-                    http_options=http_options,
+                    http_options=cast("Any", http_options),
                     credentials=self.__credentials,
                 )
 
@@ -124,6 +123,17 @@ class GeminiLLM(LLMPort):
         }
         configured_resolution = str(self.__configuration.media_resolution).lower()
 
+        thinking_level_map = {
+            "low": types.ThinkingLevel.LOW,
+            "medium": types.ThinkingLevel.MEDIUM,
+            "high": types.ThinkingLevel.HIGH,
+        }
+        configured_thinking = getattr(self.__configuration, "thinking_level", "low")
+        if isinstance(configured_thinking, str):
+            configured_thinking = configured_thinking.lower()
+        else:
+            configured_thinking = "low"
+
         config_args: Dict[str, Any] = {
             "candidate_count": 1,
             "automatic_function_calling": {"disable": True},
@@ -137,7 +147,10 @@ class GeminiLLM(LLMPort):
         # Add thinking configuration for Gemini 3 series
         if "gemini-3" in self.model_name:
             config_args["thinking_config"] = types.ThinkingConfig(
-                thinking_level=getattr(self.__configuration, "thinking_level", "low"),
+                thinking_level=thinking_level_map.get(
+                    configured_thinking,
+                    types.ThinkingLevel.LOW,
+                ),
                 include_thoughts=getattr(self.__configuration, "include_thoughts", True),
             )
 
