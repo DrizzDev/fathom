@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from langgraph.graph.state import CompiledStateGraph
 
+from fathom.constants import SignalType
 from fathom.constants.events import FathomEvent
 from fathom.constants.state import CommonStateKey, IntentStateKey
 from fathom.core.exceptions import WorkflowCancelledError
@@ -182,6 +183,15 @@ class GraphExecutor:
         signal_type = await self.__context.hitl.check_signal()
 
         if not signal_type:
+            return
+
+        if signal_type == SignalType.CANCELLED.value:
+            logger.info(f"Executor: Cancellation signal received ({source})")
+            self.__context.cancel()
+            await self.__context.telemetry.info(
+                "Workflow execution cancelled",
+                type=FathomEvent.WORKFLOW_CANCELLED,
+            )
             return
 
         logger.info(f"Executor: Pausing execution ({source})")

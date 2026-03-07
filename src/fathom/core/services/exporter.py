@@ -591,6 +591,15 @@ class ScriptExporter:
         allowed_action_lines = [
             line.strip().lower() for line in action_catalog.values() if line.strip()
         ]
+        action_validation_baseline_script = ScriptExporter.__normalize_script_output(
+            script="\n".join(action_catalog.values())
+        )
+        action_validation_baseline_script = ScriptExporter.__sanitize_script_targets(
+            script=action_validation_baseline_script,
+            intent=(intent or goal_state),
+        )
+        if not action_validation_baseline_script.strip():
+            action_validation_baseline_script = llm_baseline_script
         strict_enforcement_ready = len(step_results) >= 4
 
         system_instruction = self.__prompt_builder.build_system_instruction()
@@ -692,7 +701,7 @@ class ScriptExporter:
         candidate = parsed_script.script
         if strict_enforcement_ready:
             if not ScriptExporter.__is_valid_llm_script(
-                candidate=candidate, baseline=llm_baseline_script
+                candidate=candidate, baseline=action_validation_baseline_script
             ):
                 logger.warning(
                     "Gemini script failed structural/action coverage validation; falling back to deterministic exporter output."

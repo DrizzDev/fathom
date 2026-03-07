@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from typing import ClassVar, Optional
+from collections import deque
+from typing import ClassVar, Deque, Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -64,7 +65,7 @@ class InteractiveSignal(SignalPort):
         """
 
         self.__pause_requested = False
-        self.__injected_context: Optional[str] = None
+        self.__injected_contexts: Deque[str] = deque()
 
         # Ensure the global listener is registered in the current event loop
         self.__ensure_listener()
@@ -174,8 +175,9 @@ class InteractiveSignal(SignalPort):
         Atomically retrieves and clears any injected context.
         """
 
-        context = self.__injected_context
-        self.__injected_context = None
+        context = self.__injected_contexts[0] if self.__injected_contexts else None
+        if self.__injected_contexts:
+            self.__injected_contexts.popleft()
         return context
 
     async def peek_next_context(self) -> Optional[str]:
@@ -183,14 +185,15 @@ class InteractiveSignal(SignalPort):
         Peek at the current injected context.
         """
 
-        return self.__injected_context
+        return self.__injected_contexts[0] if self.__injected_contexts else None
 
     async def consume_context(self) -> None:
         """
         Clear the current injected context.
         """
 
-        self.__injected_context = None
+        if self.__injected_contexts:
+            self.__injected_contexts.popleft()
 
     async def is_pause_requested(self) -> bool:
         """
@@ -204,7 +207,7 @@ class InteractiveSignal(SignalPort):
         Check if there is injected context available.
         """
 
-        return self.__injected_context is not None
+        return len(self.__injected_contexts) > 0
 
     async def ask(self, *, prompt: str) -> str:
         """
@@ -253,8 +256,8 @@ class InteractiveSignal(SignalPort):
         console.print(
             "\n" + "=" * 70 + "\n[bold yellow]⏸️  EXECUTION PAUSED[/bold yellow]\n" + "=" * 70
         )
-        if self.__injected_context:
-            console.print(f"[bold cyan]📝 Context:[/bold cyan] {self.__injected_context}\n")
+        if self.__injected_contexts:
+            console.print(f"[bold cyan]📝 Context:[/bold cyan] {self.__injected_contexts[0]}\n")
 
     def __render_options(self) -> None:
         """
@@ -282,8 +285,9 @@ class InteractiveSignal(SignalPort):
         sys.stdout.flush()
 
         if context := await self.__input_bus.get():
-            self.__injected_context = context.strip("'\"")
-            console.print(f"[green]✓ Recorded:[/green] {self.__injected_context}\n")
+            injected = context.strip("'\"")
+            self.__injected_contexts.append(injected)
+            console.print(f"[green]✓ Recorded:[/green] {injected}\n")
 
     def __del__(self) -> None:
         """

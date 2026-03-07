@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Deque, Dict, Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -35,7 +36,7 @@ class SocketSignal(SignalPort):
         self.__server: Optional[asyncio.AbstractServer] = None
 
         self.__pause_requested = False
-        self.__injected_context: Optional[str] = None
+        self.__injected_contexts: Deque[str] = deque()
 
         # High-performance async primitives for O(1) notification
         self.__pause_event = asyncio.Event()
@@ -146,7 +147,7 @@ class SocketSignal(SignalPort):
         elif cmd == "inject":
             content = payload.get("data", "")
             if content:
-                self.__injected_context = content
+                self.__injected_contexts.append(content)
                 await self.__command_queue.put(payload)
                 console.print(f"[bold cyan]💡 Remote Context Injected:[/bold cyan] {content}")
                 writer.write(b'{"status": "injected"}\n')
@@ -154,6 +155,13 @@ class SocketSignal(SignalPort):
         elif cmd == "answer":
             await self.__command_queue.put(payload)
             writer.write(b'{"status": "answer_received"}\n')
+
+        elif cmd == "cancel":
+            self.__pause_requested = False
+            self.__pause_event.clear()
+            await self.__command_queue.put(payload)
+            console.print("[bold red]⏹️  Remote Cancel Signal Received[/bold red]")
+            writer.write(b'{"status": "cancelled"}\n')
 
         await writer.drain()
 
@@ -207,8 +215,9 @@ class SocketSignal(SignalPort):
         Atomic retrieval and consumption of context.
         """
 
-        context = self.__injected_context
-        self.__injected_context = None
+        context = self.__injected_contexts[0] if self.__injected_contexts else None
+        if self.__injected_contexts:
+            self.__injected_contexts.popleft()
         return context
 
     async def peek_next_context(self) -> Optional[str]:
@@ -216,14 +225,15 @@ class SocketSignal(SignalPort):
         Peek at the current injected context.
         """
 
-        return self.__injected_context
+        return self.__injected_contexts[0] if self.__injected_contexts else None
 
     async def consume_context(self) -> None:
         """
         Clear the current injected context.
         """
 
-        self.__injected_context = None
+        if self.__injected_contexts:
+            self.__injected_contexts.popleft()
 
     async def is_pause_requested(self) -> bool:
         """
@@ -237,7 +247,7 @@ class SocketSignal(SignalPort):
         Check if there is injected context available.
         """
 
-        return self.__injected_context is not None
+        return len(self.__injected_contexts) > 0
 
     async def ask(self, *, prompt: str) -> str:
         """
