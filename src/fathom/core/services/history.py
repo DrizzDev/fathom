@@ -104,8 +104,19 @@ class HistoryService:
                 with path.open(mode="r") as handle:
                     data = json.load(fp=handle)
             except Exception as exception:  # nosec
-                _ = exception
-                pass
+                backup_path = path.with_suffix(f".corrupt.{int(time.time())}.json")
+                logger.error(
+                    "History file is corrupted; preserving backup at %s. Original error: %s",
+                    backup_path,
+                    exception,
+                )
+                try:
+                    path.replace(backup_path)
+                except Exception as backup_exception:  # nosec
+                    logger.warning(
+                        "Failed to preserve corrupt history backup: %s",
+                        backup_exception,
+                    )
 
         return data
 

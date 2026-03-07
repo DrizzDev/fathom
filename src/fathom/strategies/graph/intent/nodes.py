@@ -119,10 +119,11 @@ class IntentNodeProvider:
                     step=self.__context.agent_state.step_count + 1,
                 )
                 logger.error("[NODE: GROUND] Empty screenshot captured")
+                self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
                 return {
                     CommonStateKey.CAPTURE: None,
                     CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: "Empty screenshot captured",
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
                 }
 
             # 2. Capture Dimensions (Independent hardware metadata)
@@ -136,10 +137,11 @@ class IntentNodeProvider:
                     step=self.__context.agent_state.step_count + 1,
                 )
                 logger.error(f"[NODE: GROUND] Invalid dimensions {width}x{height}")
+                self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
                 return {
                     CommonStateKey.CAPTURE: None,
                     CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: f"Invalid dimensions: {width}x{height}",
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
                 }
 
             # Get current package

@@ -8,6 +8,8 @@ from typing import Any, Dict, Optional
 from langgraph.graph.state import CompiledStateGraph
 
 from fathom.constants.events import FathomEvent
+from fathom.constants.state import CommonStateKey, IntentStateKey
+from fathom.core.exceptions import WorkflowCancelledError
 from fathom.strategies.graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
@@ -87,19 +89,34 @@ class GraphExecutor:
                 [stream_task, pause_task], return_when=asyncio.FIRST_COMPLETED
             )
 
-            # Clean up pending tasks immediately
-            for task in pending:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-
             # Case A: Pause Requested
             if pause_task in done:
                 logger.info("Executor: Pause signal received during execution")
+
+                # Do not cancel in-flight graph execution. Let current stream cycle
+                # finish and handle pause at a safe graph boundary.
+                if stream_task not in done:
+                    try:
+                        await stream_task
+                    except Exception as exception:
+                        logger.error(f"Executor: Graph stream failed: {exception}")
+                        raise
+
+                # Snapshot may already be terminal after stream completion.
+                snapshot = await self.__graph.aget_state(self.__config)
+                if not snapshot.next:
+                    break
+
                 await self.__handle_interrupt(source="manual_pause")
                 # Resume loop (with current_input=None to continue from last checkpoint)
                 current_input = None
                 continue
+
+            # Case B: Graph finished first, stop listening for pause for this cycle.
+            for task in pending:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
             # Case B: Graph Execution Finished (Step or Workflow)
             try:
@@ -173,7 +190,12 @@ class GraphExecutor:
             type=FathomEvent.WORKFLOW_PAUSED,
         )
 
-        await self.__context.hitl.wait_for_resume()
+        try:
+            await self.__context.hitl.wait_for_resume()
+        except WorkflowCancelledError:
+            logger.info("Executor: Received workflow cancellation while paused")
+            self.__context.cancel()
+            return
 
         await self.__context.telemetry.info(
             "Workflow execution resumed",
@@ -217,7 +239,7 @@ class GraphExecutor:
             guidance=content, step=current_step
         )
 
-        update_dict: Dict[str, Any] = {"injected_context": content}
+        update_dict: Dict[str, Any] = {IntentStateKey.INJECTED_CONTEXT: content}
 
         if self.__invalidate_on_injection:
             # Immediate realignment: Force complete re-evaluation
@@ -233,11 +255,11 @@ class GraphExecutor:
             logger.info("Executor: Invalidating state for immediate realignment")
 
             # Clear planning and completion state in graph
-            update_dict["plan"] = None
-            update_dict["planned_step"] = None
-            update_dict["is_complete"] = False
-            update_dict["should_retry"] = True
-            update_dict["completion_reason"] = None
+            update_dict[IntentStateKey.PLAN] = None
+            update_dict[IntentStateKey.PLANNED_STEP] = None
+            update_dict[CommonStateKey.IS_COMPLETE] = False
+            update_dict[IntentStateKey.SHOULD_RETRY] = True
+            update_dict[CommonStateKey.COMPLETION_REASON] = None
 
             logger.info(
                 "Executor: Graph routing state reset for fresh start, loop history preserved"

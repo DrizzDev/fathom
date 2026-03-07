@@ -308,13 +308,7 @@ class ActionExecutor:
 
         coords = (x, y)
 
-        # Note: ADB tap doesn't simulate long press?
-        _ = await self.__device.tap(x=x, y=y)
-        # ADB long press is usually: input swipe x y x y duration
-        # My ADBDevice adapter only has tap/swipe.
-        # FIX: Use swipe with 0 distance and long duration for long press.
-        # But wait, ADBDevice doesn't have explicit long_press.
-        # I'll implement it as a static swipe for 1000ms.
+        # Long-press via static swipe avoids triggering a separate tap side-effect.
         long_press_result = await self.__device.swipe(x1=x, y1=y, x2=x, y2=y, duration=1000)
         return long_press_result, coords
 

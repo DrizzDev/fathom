@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from fathom.constants import SignalType
+from fathom.core.exceptions import WorkflowCancelledError
 from fathom.interfaces.signal import SignalPort
 
 console = Console()
@@ -196,7 +197,9 @@ class SocketSignal(SignalPort):
                 pass
 
             elif cmd == "cancel":
-                raise KeyboardInterrupt("Remote cancellation")
+                self.__pause_requested = False
+                self.__pause_event.clear()
+                raise WorkflowCancelledError(workflow_id="socket")
 
     async def get_injected_context(self) -> Optional[str]:
         """

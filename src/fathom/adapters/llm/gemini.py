@@ -182,15 +182,15 @@ class GeminiLLM(LLMPort):
             else:
                 parts.append(item)
 
-        config = self.__get_generation_configuration(
-            tools=tools,
-            cache_name=cache_name,
-            system_instruction=system_instruction,
-        )
-
         max_retries = self.__configuration.max_retries
+        active_cache_name = cache_name
 
         for attempt in range(max_retries + 1):
+            config = self.__get_generation_configuration(
+                tools=tools,
+                cache_name=active_cache_name,
+                system_instruction=system_instruction,
+            )
             try:
                 response = await self.__client.aio.models.generate_content(
                     config=config,
@@ -234,6 +234,26 @@ class GeminiLLM(LLMPort):
             except Exception as exception:
                 error_msg = str(exception)
                 is_quota_error = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
+                lower_error = error_msg.lower()
+                stale_cached_content = (
+                    active_cache_name is not None
+                    and (
+                        "cached content" in lower_error
+                        or "cached_content" in lower_error
+                        or "cachedcontent" in lower_error
+                    )
+                    and ("not found" in lower_error or "invalid" in lower_error)
+                )
+
+                if stale_cached_content:
+                    logger.warning(
+                        "Stale cached content detected (%s); retrying without cache.",
+                        active_cache_name,
+                    )
+                    if self.__cache and active_cache_name is not None:
+                        await self.__cache.invalidate_cache_name(cache_name=active_cache_name)
+                    active_cache_name = None
+                    continue
 
                 if attempt == max_retries:
                     raise VisionError(f"LLM fail: {exception}") from exception

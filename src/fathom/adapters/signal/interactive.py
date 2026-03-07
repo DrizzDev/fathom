@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from fathom.constants import SignalType
+from fathom.core.exceptions import WorkflowCancelledError
 from fathom.interfaces.signal import SignalPort
 
 console = Console()
@@ -161,7 +162,8 @@ class InteractiveSignal(SignalPort):
 
             elif choice == "3":
                 console.print("\n[bold red]❌ EXECUTION CANCELLED BY USER[/bold red]\n")
-                raise KeyboardInterrupt("User cancelled execution")
+                self.__pause_requested = False
+                raise WorkflowCancelledError(workflow_id="interactive")
 
             else:
                 console.print(f"[yellow]Invalid choice '{choice}'.[/yellow]\n")

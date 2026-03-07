@@ -100,6 +100,9 @@ class ToolResponseParser:
         elif name == "recall_memory":
             return self.__parse_memory_retrieval(arguments=arguments)
 
+        elif name == "ask_user":
+            return self.__parse_ask_user(arguments=arguments)
+
         else:
             raise VisionError(f"Unknown function call: {name}")
 
@@ -374,6 +377,30 @@ class ToolResponseParser:
             reasoning=reason,
             is_goal_complete=False,
             screen_description="Memory retrieval step",
+        )
+
+    def __parse_ask_user(self, arguments: Any) -> AnalysisResult:
+        """
+        Parses ask_user tool arguments.
+        """
+
+        question = str(arguments.get("question") or "").strip()
+        context = str(arguments.get("context") or "").strip()
+        rationale = context or question or "Requesting user clarification"
+
+        return AnalysisResult(
+            action=Action(
+                confidence=1.0,
+                rationale=rationale,
+                action_type=ActionType.ASK_USER,
+                target="human_assistance",
+                natural_language_target="User",
+                text=question or rationale,
+            ),
+            alternatives=[],
+            reasoning=rationale,
+            is_goal_complete=False,
+            screen_description="User guidance requested",
         )
 
     def __create_fallback_result(self, message: str, completed: bool = False) -> AnalysisResult:

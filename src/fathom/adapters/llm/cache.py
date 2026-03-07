@@ -120,6 +120,16 @@ class CacheService:
 
         await self.__evict_all()
 
+    async def invalidate_cache_name(self, cache_name: str) -> None:
+        """
+        Evict a cache entry by remote cache name if tracked locally.
+        """
+
+        for content_hash, cached_content in list(self.__cache_entries.items()):
+            if str(getattr(cached_content, "name", "")) == cache_name:
+                await self.__evict_hash(content_hash=content_hash)
+                break
+
     async def __evict_all(self) -> None:
         """
         Evicts all current cache entries.

@@ -101,8 +101,12 @@ class IntentGraphBuilder(GraphBuilder):
             reason = self.__context.agent_state.completion_reason
             logger.info(f"[ROUTING] After GROUND: is_complete=True, reason={reason}")
 
-            # Max steps or cancellation should end immediately
-            if reason in {CompletionReason.MAX_STEPS.value, CompletionReason.CANCELLED.value}:
+            # Fatal/terminal reasons should end immediately
+            if reason in {
+                CompletionReason.MAX_STEPS.value,
+                CompletionReason.CANCELLED.value,
+                CompletionReason.FAILED.value,
+            }:
                 logger.info(f"[ROUTING] -> END ({reason})")
                 return NodeName.END
 
