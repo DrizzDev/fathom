@@ -105,21 +105,6 @@ class StepPlanner:
 
             # Autonomous Recovery (ONLY for non-interactive mode)
             else:
-                try:
-                    await self.__vision.check_completion(
-                        capture=capture,
-                        intent=state.intent,
-                        screen_width=screen_width,
-                        screen_height=screen_height,
-                        context_manager=context_manager,
-                        tracking_note=state.tracking_note,
-                    )
-                except Exception as exception:
-                    # Completion check is an optimization, but we must log the failure
-                    logger.error(
-                        msg=f"Planner: Completion check failed during recovery: {exception}"
-                    )
-
                 recovery_action = state.get_recovery_action()
                 if recovery_action:
                     return self.__build_plan_result(

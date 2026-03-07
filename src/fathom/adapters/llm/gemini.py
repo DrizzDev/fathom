@@ -117,11 +117,21 @@ class GeminiLLM(LLMPort):
         Constructs the GenerateContentConfig using current configuration.
         """
 
+        media_resolution_map = {
+            "low": types.MediaResolution.MEDIA_RESOLUTION_LOW,
+            "medium": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+            "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
+        }
+        configured_resolution = str(self.__configuration.media_resolution).lower()
+
         config_args: Dict[str, Any] = {
             "candidate_count": 1,
             "automatic_function_calling": {"disable": True},
             "temperature": self.__configuration.temperature,
-            "media_resolution": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+            "media_resolution": media_resolution_map.get(
+                configured_resolution,
+                types.MediaResolution.MEDIA_RESOLUTION_LOW,
+            ),
         }
 
         # Add thinking configuration for Gemini 3 series

@@ -134,20 +134,19 @@ class IntentStrategy:
 
             await executor.run()
 
-            if self.__graph_context.is_cancelled:
-                script_data = await self.__graph_context.history.get_current_script(
-                    intent=self.__intent
+            script_data = await self.__graph_context.history.get_current_script(
+                intent=self.__intent
+            )
+            if script_data:
+                await self.__graph_context.telemetry.info(
+                    script_data,
+                    type=FathomEvent.SCRIPT_GENERATED,
+                    step=self.__graph_context.agent_state.step_count,
                 )
-                if script_data:
-                    await self.__graph_context.telemetry.info(
-                        script_data,
-                        type=FathomEvent.SCRIPT_GENERATED,
-                        step=self.__graph_context.agent_state.step_count,
-                    )
-                else:
-                    logger.warning(
-                        "Execution is cancelled and script data is missing. Cannot publish SCRIPT_GENERATED event"
-                    )
+            else:
+                logger.warning(
+                    "Final script generation returned empty data; cannot publish SCRIPT_GENERATED event"
+                )
 
             # 3. Result extraction from final state
             config = {"configurable": {"thread_id": self.__workflow_id}}

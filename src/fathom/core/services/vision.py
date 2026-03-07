@@ -54,6 +54,7 @@ class VisionService:
         self.__session_id = session_id
         self.__package_name = package_name
         self.__auditor = auditor or AuditService()
+        self.__parser = ToolResponseParser()
 
         # Use the original prompt builder factory
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
@@ -77,6 +78,8 @@ class VisionService:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
         """
+
+        analyze_start = time.time()
 
         # Background persistence (original logic)
         asyncio.create_task(self.__persist(data=capture.image, activity=capture.activity))
@@ -173,7 +176,9 @@ class VisionService:
             f"context_length={len(dynamic_context)}"
         )
 
+        tool_scope_start = time.time()
         tools = self.__scope_tools(intent=intent)
+        tool_scope_duration = time.time() - tool_scope_start
 
         # 3. CONTENT ASSEMBLY
         manifest_start = time.time()
@@ -217,8 +222,9 @@ class VisionService:
         )
 
         # 5. PARSE & ENRICH
-        parser = ToolResponseParser()
-        analysis = parser.parse(response)
+        parse_start = time.time()
+        analysis = self.__parser.parse(response)
+        parse_duration = time.time() - parse_start
 
         # Update metrics & metadata
         if response.metrics:
@@ -233,6 +239,13 @@ class VisionService:
         analysis.memories = len(knowledge.get("previous_actions", []))
         analysis.metrics["llm_analysis"] = duration
         analysis.metrics["memory_retrieval"] = retrieval
+        analysis.metrics["tool_scope_ms"] = tool_scope_duration * 1000
+        analysis.metrics["manifest_ms"] = manifest_duration * 1000
+        analysis.metrics["payload_ms"] = payload_duration * 1000
+        analysis.metrics["parse_ms"] = parse_duration * 1000
+        analysis.metrics["analyze_ms"] = (time.time() - analyze_start) * 1000
+        analysis.metrics["llm_analysis_ms"] = duration * 1000
+        analysis.metrics["memory_retrieval_ms"] = retrieval * 1000
 
         # 6. BRAIN UPDATE (Store observation)
         await self.__memory.store_observation(

@@ -68,7 +68,7 @@ class HistoryService:
     ) -> str:
         """
         Saves a single step result and updates associated artifact files.
-        Returns the generated natural language script.
+        Returns the current script if already generated.
         """
 
         history = self.__load_history()
@@ -81,11 +81,11 @@ class HistoryService:
 
         await self.__save_json(data=history)
         await self.__save_yaml(history=history["history"])
-        return await self.__update_script(history=history["history"], intent=intent)
+        return self.__read_existing_script()
 
     async def get_current_script(self, intent: str) -> str:
         """
-        Retrieves the current script based on the saved history.
+        Retrieves (or generates) the latest script based on saved history.
         """
 
         history = self.__load_history()
@@ -183,7 +183,7 @@ class HistoryService:
 
     async def __update_script(self, history: List[Dict[str, Any]], intent: str) -> str:
         """
-        Generates a natural language test script with smart validation.
+        Generates and persists a final natural language script.
         """
 
         path = self.__directory / "script.txt"
@@ -197,10 +197,7 @@ class HistoryService:
         )
 
         if script_data is None or not script_data.strip():
-            if path.exists():
-                with path.open(mode="r") as handle:
-                    return handle.read()
-            return ""
+            return self.__read_existing_script()
 
         with path.open(mode="w") as handle:
             handle.write(script_data)
@@ -219,6 +216,18 @@ class HistoryService:
             )
 
         return script_data
+
+    def __read_existing_script(self) -> str:
+        """
+        Return script.txt content if it already exists.
+        """
+
+        path = self.__directory / "script.txt"
+        if not path.exists():
+            return ""
+
+        with path.open(mode="r") as handle:
+            return handle.read()
 
     def __resolve_export_package_name(self, history: List[Dict[str, Any]]) -> str:
         """

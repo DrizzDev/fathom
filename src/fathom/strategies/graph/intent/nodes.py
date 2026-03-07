@@ -672,6 +672,10 @@ class IntentNodeProvider:
         )
 
         total_duration = int((grounding_duration + analysis_duration + execution_duration) * 1000)
+        plan_metrics: Dict[str, Any] = {}
+        plan_raw = state.get(IntentStateKey.PLAN)
+        if isinstance(plan_raw, PlanResult):
+            plan_metrics = dict(plan_raw.metrics or {})
 
         await self.__context.telemetry.info(
             f"Step {step_result.step.step_number} completed",
@@ -684,6 +688,12 @@ class IntentNodeProvider:
             step=step_result.step.step_number + 1,
             action_description=record.action_description,
             target=record.natural_language_target or record.target,
+            analysis_llm_ms=float(plan_metrics.get("llm_analysis_ms", 0.0) or 0.0),
+            analysis_parse_ms=float(plan_metrics.get("parse_ms", 0.0) or 0.0),
+            analysis_payload_ms=float(plan_metrics.get("payload_ms", 0.0) or 0.0),
+            analysis_manifest_ms=float(plan_metrics.get("manifest_ms", 0.0) or 0.0),
+            analysis_tool_scope_ms=float(plan_metrics.get("tool_scope_ms", 0.0) or 0.0),
+            analysis_total_ms=float(plan_metrics.get("analyze_ms", 0.0) or 0.0),
         )
 
         if script_data:
