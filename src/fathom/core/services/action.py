@@ -189,6 +189,30 @@ class ActionExecutor:
                 None,
             )
 
+    def __apply_tap_bias(
+        self, x: int, y: int, action: Action, converter: CoordinateConverter
+    ) -> Tuple[int, int]:
+        """
+        Apply upward coordinate bias for VLM-detected bounds.
+        Skips adjustment for label-snapped pixel bounds which are already grounded.
+        """
+
+        if not action.bounds:
+            return x, y
+
+        # Label-snapped pixel bounds are already grounded to exact device coordinates
+        is_label_snapped_pixel = bool(action.label_id) and action.bounds.system.lower() == "pixel"
+
+        if is_label_snapped_pixel:
+            return x, y
+
+        # Apply 20% upward bias for VLM-detected bounds to account for bounding box imprecision
+        _, _, width_px, height_px = converter.to_pixels(bounds=action.bounds)
+        if height_px > 0:
+            y = max(0, y - max(2, int(height_px * 0.20)))
+
+        return x, y
+
     async def __execute_tap(
         self, action: Action, converter: CoordinateConverter, width: int, height: int
     ) -> Tuple[ActionResult, Tuple[int, ...]]:
@@ -198,16 +222,7 @@ class ActionExecutor:
 
         if action.bounds:
             x, y = converter.center_to_pixels(bounds=action.bounds)
-            x_px, y_px, width_px, height_px = converter.to_pixels(bounds=action.bounds)
-
-            # Bias taps slightly upward for model-produced boxes.
-            # Skip this only for label-snapped pixel bounds, which are already
-            # grounded to exact device coordinates.
-            is_label_snapped_pixel = (
-                bool(action.label_id) and action.bounds.system.lower() == "pixel"
-            )
-            if not is_label_snapped_pixel and height_px > 0:
-                y = max(0, y - max(2, int(height_px * 0.20)))
+            x, y = self.__apply_tap_bias(x=x, y=y, action=action, converter=converter)
         else:
             x, y = width // 2, height // 2
 
@@ -229,6 +244,7 @@ class ActionExecutor:
             raise ExecutionError("Type action requires bounds for focus tap guard")
 
         x, y = converter.center_to_pixels(bounds=action.bounds)
+        x, y = self.__apply_tap_bias(x=x, y=y, action=action, converter=converter)
         coords = (x, y)
 
         focus_result = await self.__device.tap(x=x, y=y)
