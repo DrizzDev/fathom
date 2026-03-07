@@ -33,6 +33,9 @@ class GeminiPromptBuilder(PromptBuilder):
                 f"- {COORD_RULES}\n"
                 f"- {CONFIDENCE_RULES}\n"
                 "- REQUIRED: You MUST include 'label_id' from manifest for every interaction.\n"
+                "- REQUIRED: Every primary tool call MUST include BOTH boolean flags: "
+                "'goal_completed' and 'sub_goal_completed'.\n"
+                "- REQUIRED: If action_type is 'complete', set BOTH flags to true.\n"
                 "- Return tool call(s) only, with schema-valid fields.\n"
                 "\nExecute next best step via tool using current user-provided goal and context."
             ),

@@ -315,6 +315,12 @@ class ToolResponseParser:
             label_id=str(data.get("label_id")) if data.get("label_id") else None,
         )
 
+        # Enforce completion-flag consistency for terminal actions.
+        # Some model responses may emit COMPLETE action with stale/inconsistent flags.
+        if action_type == ActionType.COMPLETE:
+            completed = True
+            sub_completed = True
+
         metadata_dict: Dict[str, Any] = {}
         if action_type == ActionType.VALIDATE:
             metadata_dict["event_type"] = "validation"

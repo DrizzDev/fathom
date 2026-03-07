@@ -377,11 +377,8 @@ class AgentState:
         if not current:
             return False
 
-        # Implement trace verification:
-        # Check if actions were executed AND screen state changed
-        trace_verified = completion_signal.trace_verified or self.__verify_sub_goal_trace()
-
-        # Create updated signal with trace verification
+        # Single-signal policy: gate on explicit LLM completion signal.
+        # Preserve rationale flag for telemetry/observability.
         updated_signal = SubGoalCompletionSignal(
             evidence=completion_signal.evidence,
             llm_confidence=completion_signal.llm_confidence,
@@ -389,7 +386,7 @@ class AgentState:
             action_executed=completion_signal.action_executed,
             llm_signaled=completion_signal.llm_signaled,
             rationale_verified=completion_signal.rationale_verified,
-            trace_verified=trace_verified,
+            trace_verified=False,
         )
 
         # Mark complete with all signals
@@ -402,7 +399,7 @@ class AgentState:
         signal_count = updated_signal.count_signals()
         logger.info(
             f"[AgentState] Sub-goal {current.index} marked complete: {current.description} | "
-            f"Signals: {signal_count}/3 [llm={updated_signal.llm_signaled}, "
+            f"Signals: {signal_count}/2 [llm={updated_signal.llm_signaled}, "
             f"trace={updated_signal.trace_verified}, rationale={updated_signal.rationale_verified}] | "
             f"Evidence: {updated_signal.evidence}"
         )

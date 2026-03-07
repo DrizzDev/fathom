@@ -159,7 +159,8 @@ class StepPlanner:
                 screen_description=capture.activity,
             )
 
-            # Determine required threshold: validation/verification steps only need 1-2 signals
+            # Two-signal policy: use llm_signaled + rationale_verified.
+            # Validation checks can advance with either signal (1-of-2), action steps require both (2-of-2).
             is_validation_step = any(
                 keyword in current_sub_goal.description.lower()
                 for keyword in ["validate", "verify", "confirm", "check if", "check that"]
@@ -191,7 +192,7 @@ class StepPlanner:
                     )
                     logger.info(
                         f"[StepPlanner] Sub-goal {current_sub_goal.index} complete with "
-                        f"{sub_goal_signal.count_signals()}/3 signals. "
+                        f"{sub_goal_signal.count_signals()}/2 signals. "
                         f"{state.get_sub_goal_progress()[1] - state.get_sub_goal_progress()[0]} sub-goals remain."
                     )
                     # Do not execute stale action planned for previous sub-goal.
@@ -214,7 +215,7 @@ class StepPlanner:
                     # All sub-goals complete - mark intent complete
                     logger.info(
                         f"[StepPlanner] All sub-goals complete. Final sub-goal had "
-                        f"{sub_goal_signal.count_signals()}/3 signals."
+                        f"{sub_goal_signal.count_signals()}/2 signals."
                     )
                     state.mark_complete(reason="All sub-goals completed sequentially")
 

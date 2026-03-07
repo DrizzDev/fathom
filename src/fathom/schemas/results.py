@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
@@ -43,6 +43,21 @@ class AnalysisResult(BaseModel):
     gemini_delta: Optional[GeminiDeltaSignal] = Field(
         default=None, description="Optional model-provided semantic delta hints"
     )
+
+    @model_validator(mode="after")
+    def __enforce_completion_flag_consistency(self) -> "AnalysisResult":
+        """
+        Enforce consistency between terminal COMPLETE actions and completion flags.
+
+        Defensive normalization: if the model/parser yields a COMPLETE action with
+        stale booleans, align both flags to True so sub-goal progression cannot stall.
+        """
+
+        if self.action.action_type.value == "complete":
+            self.is_goal_complete = True
+            self.is_sub_goal_complete = True
+
+        return self
 
 
 class StrategyResult(BaseModel):

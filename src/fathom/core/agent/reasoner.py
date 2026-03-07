@@ -185,19 +185,21 @@ class Reasoner:
         )
 
         # Signal 1: LLM Explicit Signal (from tool output)
-        llm_signaled = analysis.is_sub_goal_complete or (
-            analysis.is_goal_complete and analysis.action.action_type == ActionType.COMPLETE
+        llm_signaled = (
+            analysis.is_sub_goal_complete
+            or analysis.is_goal_complete
+            or analysis.action.action_type == ActionType.COMPLETE
         )
         if llm_signaled:
             evidence_list.append("LLM signaled sub-goal completion via tool output")
 
-        # Signal 2: Rationale Verification (keyword matching)
+        # Rationale verification signal (restored for diagnostics/telemetry).
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
         similarity = SequenceMatcher(None, target_goal, context).ratio()
         keyword_match = similarity >= 0.72
 
-        # Check for explicit completion phrases in rationale
         completion_keywords = [
+            "complete",
             "completed",
             "finished",
             "achieved",

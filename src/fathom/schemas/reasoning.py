@@ -73,12 +73,12 @@ class SubGoalCompletionSignal(BaseModel):
         Count how many verification signals are present.
 
         Returns:
-            Number of True boolean signals (llm_signaled, trace_verified, rationale_verified)
+            Number of True boolean signals used by the completion gate.
+            Current policy: llm_signaled + rationale_verified participate in gating.
         """
         return sum(
             [
                 self.llm_signaled,
-                self.trace_verified,
                 self.rationale_verified,
             ]
         )
@@ -88,7 +88,7 @@ class SubGoalCompletionSignal(BaseModel):
         Check if enough signals are present for completion gate.
 
         Args:
-            required_signals: Minimum number of signals required (default: 2 of 3)
+            required_signals: Minimum number of signals required (default: 2)
 
         Returns:
             True if threshold met

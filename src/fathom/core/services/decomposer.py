@@ -55,6 +55,13 @@ INSTRUCTIONS:
    - Preserve specific app names, button names, field names, and action verbs
    - Keep technical terms and product names exactly as stated
 
+IMPORTANT - COMPOUND ACTIONS:
+Keep these patterns as SINGLE steps (do NOT split them):
+- "Scroll to X and select/tap/click Y" → ONE step (scroll is just navigation to reach Y)
+- "Navigate to X and do Y" → ONE step (navigate is means to reach Y)
+- "Find X and tap/click Y" → ONE step (find is means to reach Y)
+- "Go to X and verify/check Y" → ONE step (navigation + verification together)
+
 EXAMPLES:
 ✓ GOOD: User says "Tap the login button" → Sub-goal: "Tap the login button"
 ✗ BAD: User says "Tap the login button" → Sub-goal: "Authenticate with credentials"
@@ -64,6 +71,12 @@ EXAMPLES:
 
 ✓ GOOD: User says "Open Settings app" → Sub-goal: "Open Settings app"
 ✗ BAD: User says "Open Settings app" → Sub-goal: "Navigate to system configuration"
+
+✓ GOOD: User says "Scroll to labs section and select any category" → Sub-goal: "Scroll to labs section and select any category"
+✗ BAD: User says "Scroll to labs section and select any category" → Sub-goals: ["Scroll to labs section", "Select any category"]
+
+✓ GOOD: User says "Go to cart and verify total amount" → Sub-goal: "Go to cart and verify total amount"
+✗ BAD: User says "Go to cart and verify total amount" → Sub-goals: ["Go to cart", "Verify total amount"]
 
 Return ONLY a valid JSON with this structure:
 {{
@@ -100,13 +113,7 @@ Return ONLY the JSON, no other text."""
 
         logger.info(f"[Decomposer] Starting decomposition: {intent[:100]}...")
 
-        # Single-step bypass: if intent is simple/atomic, skip decomposition
-        # to preserve exact user wording
-        if self.__is_single_step_intent(intent):
-            logger.info("[Decomposer] Single-step intent detected, bypassing decomposition")
-            return self.__fallback_decomposition(intent)
-
-        # Prepare prompt
+        # Prepare prompt - let LLM decide if it's single or multi-step
         prompt = self.DECOMPOSITION_PROMPT.format(intent=intent)
 
         # Call LLM to decompose
@@ -121,7 +128,7 @@ Return ONLY the JSON, no other text."""
             logger.warning(f"[Decomposer] LLM decomposition failed: {e}, using fallback")
             return self.__fallback_decomposition(intent)
 
-        # Parse response strict Schema validation
+        # Parse response with strict Schema validation
         try:
             parsed = json.loads(response)
             schema = DecompositionSchema(**parsed)
@@ -149,50 +156,6 @@ Return ONLY the JSON, no other text."""
             f"(confidence={schema.confidence})"
         )
         return sub_goals
-
-    def __is_single_step_intent(self, intent: str) -> bool:
-        """
-        Heuristic to detect single-step intents that don't need decomposition.
-
-        Args:
-            intent: Intent string to check
-
-        Returns:
-            True if intent appears to be a single atomic action
-        """
-        # Simple heuristics:
-        # - No conjunctions (and, then, after, before)
-        # - No commas (except within quotes)
-        # - Short length (< 80 chars suggests single action)
-        # - Single verb pattern
-
-        intent_lower = intent.lower()
-
-        # Check for multi-step indicators
-        multi_step_indicators = [
-            " and ",
-            " then ",
-            " after ",
-            " before ",
-            " next ",
-            " finally ",
-            ", and",
-            ", then",
-            ", after",
-            ", next",
-        ]
-
-        has_multi_step_indicator = any(
-            indicator in intent_lower for indicator in multi_step_indicators
-        )
-
-        # Count commas outside quotes (simple approximation)
-        comma_count = intent.count(",")
-
-        # If short, no multi-step indicators, and few commas, likely single-step
-        is_single = len(intent) < 80 and not has_multi_step_indicator and comma_count <= 1
-
-        return is_single
 
     def __fallback_decomposition(self, intent: str) -> List[SubGoal]:
         """
