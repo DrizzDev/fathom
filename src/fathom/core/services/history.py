@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import time
 from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
-
-try:
-    import yaml  # type: ignore[import-untyped]
-except ImportError:
-    yaml = None
 
 from fathom.core.services.exporter import ScriptExporter
 from fathom.interfaces.storage import StoragePort
@@ -17,6 +13,12 @@ from fathom.schemas.steps import StepResult
 
 if TYPE_CHECKING:
     from fathom.base.paths import SharedPathManager
+
+yaml: Any
+try:
+    yaml = importlib.import_module("yaml")
+except ImportError:
+    yaml = None
 
 
 logger = getLogger(__name__)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from fathom.core.prompts.base import PromptBuilder
 from fathom.core.prompts.templates import (
@@ -19,31 +19,22 @@ class GeminiPromptBuilder(PromptBuilder):
     Structured Gemini prompt builder that formats hierarchical context.
     """
 
-    def build(
-        self,
-        intent: str,
-        hints: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    def build(self) -> str:
         """
         Build stable system prompt for tool-based UI execution.
         """
 
-        contextual_rules = self.__get_contextual_rules(intent=intent, hints=hints)
-        conditional_notes = self.__get_conditional_notes(intent=intent, hints=hints)
-
         parts = [
-            self.__get_persona(hints=hints),
+            self.__get_persona(),
             TOOL_GUIDANCE,
             COMMON_RULES,
-            contextual_rules,
-            conditional_notes,
             (
                 "OUTPUT REQUIREMENTS:\n"
                 f"- {COORD_RULES}\n"
                 f"- {CONFIDENCE_RULES}\n"
                 "- REQUIRED: You MUST include 'label_id' from manifest for every interaction.\n"
                 "- Return tool call(s) only, with schema-valid fields.\n"
-                f"\nGOAL: {intent}\nExecute next best step via tool."
+                "\nExecute next best step via tool using current user-provided goal and context."
             ),
         ]
         return "\n\n".join([part for part in parts if part.strip()])
@@ -61,8 +52,17 @@ class GeminiPromptBuilder(PromptBuilder):
         # Map history to context for internal consistency with GCC terminology
         context = history if isinstance(history, dict) else {}
         tracking_note: Optional[str] = kwargs.get("tracking_note")
+        intent = str(kwargs.get("intent") or "").strip()
+        hints_raw = kwargs.get("hints")
+        hints: Dict[str, Any] = (
+            cast("Dict[str, Any]", hints_raw) if isinstance(hints_raw, dict) else {}
+        )
 
         parts = []
+
+        # Runtime task metadata previously embedded in system prompt (kept dynamic for cache stability).
+        if runtime_brief := self.__build_runtime_brief(intent=intent, hints=hints):
+            parts.append(runtime_brief)
 
         # 1. Memory Ledger (Factual Memory - PERSISTENT ACROSS SCREENS)
         if ledger := self.__get_ledger_segment(memory=memory):
@@ -110,24 +110,46 @@ class GeminiPromptBuilder(PromptBuilder):
 
         return "\n\n".join(parts)
 
-    def __get_persona(self, hints: Optional[Dict[str, Any]] = None) -> str:
+    def __get_persona(self) -> str:
         """
-        Core identity with screen resolution awareness.
+        Core identity with a cache-stable instruction footprint.
         """
-
-        if hints and (w := hints.get("screen_width")) and (h := hints.get("screen_height")):
-            return (
-                f"You are a Mobile UI expert agent. Screen Resolution: {w}x{h}.\n"
-                "COORDINATE MODE: NORMALIZED by default.\n"
-                "Use normalized coordinates (0-1000) in 'bbox' unless you explicitly set "
-                "coord_system='pixel'.\n"
-                "When using bbox, x/y are TOP-LEFT and width/height extend right/down."
-            )
 
         return (
-            "You are a Mobile UI expert agent. "
-            "Ground all interactions using normalized coordinates (0-1000)."
+            "You are a Mobile UI expert agent.\n"
+            "COORDINATE MODE: NORMALIZED by default.\n"
+            "Use normalized coordinates (0-1000) in 'bbox' unless you explicitly set "
+            "coord_system='pixel'.\n"
+            "When using bbox, x/y are TOP-LEFT and width/height extend right/down."
         )
+
+    def __build_runtime_brief(self, intent: str, hints: Dict[str, Any]) -> str:
+        """
+        Build dynamic task guidance that should live in user payload.
+        """
+
+        runtime_lines: List[str] = []
+        if intent:
+            runtime_lines.append(f"GOAL: {intent}")
+
+        if (w := hints.get("screen_width")) and (h := hints.get("screen_height")):
+            runtime_lines.append(f"SCREEN_RESOLUTION: {w}x{h}")
+
+        if hints.get("use_xml"):
+            runtime_lines.append("XML_GROUNDING: enabled")
+
+        contextual_rules = self.__get_contextual_rules(intent=intent, hints=hints)
+        if contextual_rules:
+            runtime_lines.append(contextual_rules)
+
+        conditional_notes = self.__get_conditional_notes(intent=intent, hints=hints)
+        if conditional_notes:
+            runtime_lines.append(conditional_notes)
+
+        if not runtime_lines:
+            return ""
+
+        return "<TASK_CONTEXT>\n" + "\n".join(runtime_lines) + "\n</TASK_CONTEXT>"
 
     def __get_contextual_rules(self, intent: str, hints: Optional[Dict[str, Any]]) -> str:
         """

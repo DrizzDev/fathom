@@ -136,20 +136,19 @@ class VisionService:
             f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
         )
 
-        instruction = self.__builder.build(
-            intent=intent,
-            hints={
-                "use_xml": use_xml,
-                "screen_width": screen_width,
-                "screen_height": screen_height,
-            },
-        )
+        instruction = self.__builder.build()
 
         # Pass ALL persistent memory (not just screen-specific)
         dynamic_context = self.__builder.build_user_context(
             memory=all_memory,  # Cross-screen persistent memory
             history=full_context,
             tracking_note=tracking_note,
+            intent=intent,
+            hints={
+                "use_xml": use_xml,
+                "screen_width": screen_width,
+                "screen_height": screen_height,
+            },
         )
 
         if is_stuck:
@@ -300,7 +299,10 @@ class VisionService:
         Assembles request with token-locality (strictly mirrored).
         """
 
-        payload: List[Any] = [f"Goal: {intent}"]
+        payload: List[Any] = []
+
+        if not context or "GOAL:" not in context:
+            payload.append(f"Goal: {intent}")
 
         if knowledge.get("description"):
             payload.append(f"Screen Info: {knowledge['description']}")
