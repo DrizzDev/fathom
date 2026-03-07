@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, cast
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason
 from fathom.schemas.actions import Action
+from fathom.schemas.delta import GeminiDeltaSignal
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import ActionHistory, InteractionTracker, LoopDetector
 from fathom.schemas.steps import StepResult
@@ -71,6 +72,8 @@ class AgentState:
         self.__last_error: Optional[str] = None
         self.__last_action_type: Optional[str] = None
         self.__last_action_description: Optional[str] = None
+        self.__last_delta_score: Optional[float] = None
+        self.__low_delta_streak: int = 0
 
         # HITL Tracking
         self.__realignment_count = 0
@@ -341,7 +344,36 @@ class AgentState:
         Return compact no-XML delta context used for planning hints.
         """
 
-        return {"last_delta_score": None, "low_delta_streak": 0}
+        return {
+            "last_delta_score": self.__last_delta_score,
+            "low_delta_streak": self.__low_delta_streak,
+        }
+
+    def update_delta_context(self, gemini_delta: Optional[GeminiDeltaSignal]) -> None:
+        """
+        Update rolling delta metrics from model-provided semantic delta signal.
+        """
+
+        if gemini_delta is None:
+            return
+
+        score: Optional[float] = None
+        if gemini_delta.delta_confidence is not None:
+            score = max(0.0, min(1.0, float(gemini_delta.delta_confidence)))
+        elif gemini_delta.delta_observed is True:
+            score = 1.0
+        elif gemini_delta.delta_observed is False:
+            score = 0.0
+
+        if score is None:
+            return
+
+        self.__last_delta_score = score
+        low_progress_threshold = 0.3
+        if score < low_progress_threshold:
+            self.__low_delta_streak += 1
+        else:
+            self.__low_delta_streak = 0
 
     def build_context(self) -> Dict[str, object]:
         """
@@ -392,6 +424,8 @@ class AgentState:
             "realignment_count": self.__realignment_count,
             "completion_reason": self.__completion_reason,
             "realignment_budget": self.__realignment_budget,
+            "last_delta_score": self.__last_delta_score,
+            "low_delta_streak": self.__low_delta_streak,
             "action_stats": self.__action_history.get_stats(),
             "action_context": self.__action_history.get_context(),
             "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
@@ -405,6 +439,8 @@ class AgentState:
         seen_screens: List[Dict[str, Any]],
         *,
         realignment_count: int = 0,
+        last_delta_score: Optional[float] = None,
+        low_delta_streak: int = 0,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -414,6 +450,8 @@ class AgentState:
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
         self.__realignment_count = realignment_count
+        self.__last_delta_score = last_delta_score
+        self.__low_delta_streak = max(0, low_delta_streak)
 
         for data in seen_screens:
             self.__seen_screens.append(ScreenState(**data))
@@ -453,9 +491,16 @@ class AgentState:
 
         is_complete = bool(data.get("is_complete", False))
         realignment_count = int(cast("int", data.get("realignment_count", 0)))
+        low_delta_streak = int(cast("int", data.get("low_delta_streak", 0)))
 
         reason_value = data.get("completion_reason")
         completion_reason = str(reason_value) if reason_value else None
+        last_delta_raw = data.get("last_delta_score")
+        last_delta_score = (
+            float(cast("float", last_delta_raw))
+            if isinstance(last_delta_raw, (int, float))
+            else None
+        )
 
         seen_screens: List[Dict[str, Any]] = []
         screens_value = data.get("seen_screens")
@@ -469,6 +514,8 @@ class AgentState:
             seen_screens=seen_screens,
             completion_reason=completion_reason,
             realignment_count=realignment_count,
+            last_delta_score=last_delta_score,
+            low_delta_streak=low_delta_streak,
         )
 
         return state

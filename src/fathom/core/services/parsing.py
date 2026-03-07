@@ -249,29 +249,32 @@ class ToolResponseParser:
         if action_type == ActionType.VALIDATE:
             metadata_dict["event_type"] = "validation"
 
+        delta_observed = self.__safe_optional_bool(arguments.get("delta_observed"))
+        delta_confidence = (
+            self.__safe_float(arguments.get("delta_confidence"), default=0.0)
+            if arguments.get("delta_confidence") is not None
+            else None
+        )
+
+        # Enforce non-null delta contract for downstream planning telemetry.
+        if delta_observed is None and delta_confidence is None:
+            delta_observed = False
+            # Neutral fallback (unknown) to avoid biasing streak logic toward zero progress.
+            delta_confidence = 0.5
+        elif delta_observed is None and delta_confidence is not None:
+            delta_observed = delta_confidence > 0.0
+        elif delta_observed is not None and delta_confidence is None:
+            delta_confidence = 1.0 if delta_observed else 0.0
+
         parsed_delta = GeminiDeltaSignal(
             previous_screen_summary=arguments.get("previous_screen_summary"),
             current_screen_summary=arguments.get("current_screen_summary"),
-            delta_observed=arguments.get("delta_observed"),
+            delta_observed=delta_observed,
             delta_reasoning=arguments.get("delta_reasoning"),
-            delta_confidence=self.__safe_float(arguments.get("delta_confidence"), default=0.0)
-            if arguments.get("delta_confidence") is not None
-            else None,
+            delta_confidence=delta_confidence,
             visible_anchors=list(arguments.get("visible_anchors") or []),
             top_anchor=arguments.get("top_anchor"),
             bottom_anchor=arguments.get("bottom_anchor"),
-        )
-        has_delta_signal = any(
-            (
-                parsed_delta.previous_screen_summary,
-                parsed_delta.current_screen_summary,
-                parsed_delta.delta_observed is not None,
-                parsed_delta.delta_reasoning,
-                parsed_delta.delta_confidence is not None,
-                parsed_delta.visible_anchors,
-                parsed_delta.top_anchor,
-                parsed_delta.bottom_anchor,
-            )
         )
 
         return AnalysisResult(
@@ -281,7 +284,7 @@ class ToolResponseParser:
             metadata=metadata_dict,
             is_goal_complete=completed,
             content_exhausted=bool(arguments.get("content_exhausted", False)),
-            gemini_delta=parsed_delta if has_delta_signal else None,
+            gemini_delta=parsed_delta,
             screen_description=message or action.rationale or "Analyzing screen...",
         )
 
@@ -291,6 +294,20 @@ class ToolResponseParser:
             return float(value)
         except (ValueError, TypeError):
             return default
+
+    @staticmethod
+    def __safe_optional_bool(value: Any) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "1", "yes"}:
+                return True
+            if lowered in {"false", "0", "no"}:
+                return False
+
+        return None
 
     @staticmethod
     def __safe_int(value: Any, default: int) -> int:

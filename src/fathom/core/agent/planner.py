@@ -143,6 +143,7 @@ class StepPlanner:
             delta_context=state.get_delta_context(),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
+        state.update_delta_context(analysis.gemini_delta)
 
         if analysis.content_exhausted:
             state.reset_loop_detector()

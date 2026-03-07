@@ -91,6 +91,7 @@ STRICT FORMAT: Return only valid tool calls using provided schema fields.
 TOOL_GUIDANCE = """
 TOOL SELECTION & VALIDATION:
 - execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).
+  * Delta telemetry is MANDATORY on every execute_ui call: always include both delta_observed (boolean) and delta_confidence (0.0-1.0).
   * For explicit checks/validation, prefer execute_ui with action_type='validate'.
   * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).
   * Always provide condition text when visible; if omitted, conditional_type is used for default guard text.

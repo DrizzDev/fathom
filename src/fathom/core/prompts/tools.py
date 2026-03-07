@@ -168,7 +168,7 @@ class ToolRegistry:
                     },
                     "delta_observed": {
                         "type": "BOOLEAN",
-                        "description": "Optional hint indicating whether a meaningful screen change was observed.",
+                        "description": "REQUIRED: Whether a meaningful screen change was observed since the previous screenshot.",
                     },
                     "delta_reasoning": {
                         "type": "STRING",
@@ -176,7 +176,7 @@ class ToolRegistry:
                     },
                     "delta_confidence": {
                         "type": "NUMBER",
-                        "description": "Optional confidence score (0.0-1.0) for delta_observed.",
+                        "description": "REQUIRED: Confidence score (0.0-1.0) for delta_observed.",
                     },
                     "visible_anchors": {
                         "type": "ARRAY",
@@ -196,7 +196,13 @@ class ToolRegistry:
                         "description": "Optional key-value pairs to update in persistent memory. Use this to track progress (e.g., 'visited_card1': 'true').",
                     },
                 },
-                "required": ["assistant_message", "actions", "goal_completed"],
+                "required": [
+                    "assistant_message",
+                    "actions",
+                    "goal_completed",
+                    "delta_observed",
+                    "delta_confidence",
+                ],
             },
         }
 
@@ -396,6 +402,6 @@ class ToolRegistry:
                         "description": "Final goal-validation line. Must start with 'Validate'.",
                     },
                 },
-                "required": ["final_validation"],
+                "required": ["remaining_action_ids", "final_validation"],
             },
         }

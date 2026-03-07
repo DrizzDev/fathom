@@ -321,16 +321,7 @@ class ScriptExporter:
 
         baseline_actions = ScriptExporter.__count_action_lines(script=baseline)
         candidate_actions = ScriptExporter.__count_action_lines(script=candidate)
-        if baseline_actions > 0 and candidate_actions <= 0:
-            return False
-
-        baseline_counts = ScriptExporter.__executable_action_counts(script=baseline)
-        candidate_counts = ScriptExporter.__executable_action_counts(script=candidate)
-        for action_kind, required_count in baseline_counts.items():
-            if candidate_counts.get(action_kind, 0) < required_count:
-                return False
-
-        return True
+        return not (baseline_actions > 0 and candidate_actions <= 0)
 
     @staticmethod
     def __last_non_structural_line(script: str) -> str:
@@ -600,7 +591,12 @@ class ScriptExporter:
         )
         if not action_validation_baseline_script.strip():
             action_validation_baseline_script = llm_baseline_script
-        strict_enforcement_ready = len(step_results) >= 4
+        require_if_block = ScriptExporter.__intent_requires_if_block(intent=(intent or goal_state))
+        required_open_app_line = (
+            str(action_catalog.get(required_open_app_id) or "").strip().lower()
+            if required_open_app_id
+            else None
+        )
 
         system_instruction = self.__prompt_builder.build_system_instruction()
         prompt_text = self.__prompt_builder.build_user_prompt(
@@ -648,15 +644,9 @@ class ScriptExporter:
                 {
                     **normalized_structured_args,
                     "action_catalog": action_catalog,
-                    "required_action_ids": required_action_ids if strict_enforcement_ready else [],
-                    "required_open_app_id": required_open_app_id
-                    if strict_enforcement_ready
-                    else None,
-                    "require_if_block": (
-                        ScriptExporter.__intent_requires_if_block(intent=(intent or goal_state))
-                        if strict_enforcement_ready
-                        else False
-                    ),
+                    "required_action_ids": required_action_ids,
+                    "required_open_app_id": required_open_app_id,
+                    "require_if_block": require_if_block,
                 }
             )
         except Exception as exception:
@@ -676,19 +666,9 @@ class ScriptExporter:
             parsed_script = ScriptExportPayload.model_validate(
                 {
                     "script": candidate,
-                    "allowed_action_lines": allowed_action_lines
-                    if strict_enforcement_ready
-                    else [],
-                    "required_open_app": (
-                        f"open_app {package_name}".strip()
-                        if package_name and strict_enforcement_ready
-                        else None
-                    ),
-                    "require_if_block": (
-                        ScriptExporter.__intent_requires_if_block(intent=(intent or goal_state))
-                        if strict_enforcement_ready
-                        else False
-                    ),
+                    "allowed_action_lines": allowed_action_lines,
+                    "required_open_app": required_open_app_line,
+                    "require_if_block": require_if_block,
                 }
             )
         except Exception as exception:
@@ -699,19 +679,18 @@ class ScriptExporter:
             return deterministic_fallback_script
 
         candidate = parsed_script.script
-        if strict_enforcement_ready:
-            if not ScriptExporter.__is_valid_llm_script(
-                candidate=candidate, baseline=action_validation_baseline_script
-            ):
-                logger.warning(
-                    "Gemini script failed structural/action coverage validation; falling back to deterministic exporter output."
-                )
-                return deterministic_fallback_script
-            if not ScriptExporter.__contains_goal_validation(script=candidate):
-                logger.warning(
-                    "Gemini script missing final goal validation; falling back to deterministic exporter output."
-                )
-                return deterministic_fallback_script
+        if not ScriptExporter.__is_valid_llm_script(
+            candidate=candidate, baseline=action_validation_baseline_script
+        ):
+            logger.warning(
+                "Gemini script failed structural/action coverage validation; falling back to deterministic exporter output."
+            )
+            return deterministic_fallback_script
+        if not ScriptExporter.__contains_goal_validation(script=candidate):
+            logger.warning(
+                "Gemini script missing final goal validation; falling back to deterministic exporter output."
+            )
+            return deterministic_fallback_script
 
         return candidate
 
