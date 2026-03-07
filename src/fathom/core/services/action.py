@@ -201,9 +201,12 @@ class ActionExecutor:
             x_px, y_px, width_px, height_px = converter.to_pixels(bounds=action.bounds)
 
             # Bias taps slightly upward for model-produced boxes.
-            # Only skip bias when we have true pixel-grounded bounds (label snap path).
-            bounds_system = action.bounds.system.lower()
-            if bounds_system != "pixel" and height_px > 0:
+            # Skip this only for label-snapped pixel bounds, which are already
+            # grounded to exact device coordinates.
+            is_label_snapped_pixel = (
+                bool(action.label_id) and action.bounds.system.lower() == "pixel"
+            )
+            if not is_label_snapped_pixel and height_px > 0:
                 y = max(0, y - max(2, int(height_px * 0.20)))
         else:
             x, y = width // 2, height // 2
