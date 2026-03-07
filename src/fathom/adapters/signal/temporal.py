@@ -73,21 +73,28 @@ class TemporalSignalAdapter(SignalPort):
                     tls_configuration = False
 
                 try:
-                    # Attempt connection with target_host (aligned with newer SDKs)
+                    # Attempt connection with target_host
                     self.__client = await Client.connect(
                         tls=tls_configuration,
                         api_key=self.__api_key,
                         namespace=self.__namespace,
                         target_host=self.__target_host,
                     )
-                except TypeError:
-                    # Fallback to target (legacy SDK versions)
-                    self.__client = await Client.connect(
-                        tls=tls_configuration,
-                        api_key=self.__api_key,
-                        target=self.__target_host,
-                        namespace=self.__namespace,
-                    )
+                except (TypeError, ValueError):
+                    # Fallback if SDK version is different or target_host not available
+                    try:
+                        self.__client = await Client.connect(
+                            tls=tls_configuration,
+                            api_key=self.__api_key,
+                            namespace=self.__namespace,
+                            target_host=self.__target_host,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to connect to Temporal at {self.__target_host}: {e}")
+                        raise
+
+            if self.__client is None:
+                raise RuntimeError("Failed to establish Temporal client connection")
 
             if self.__workflow_handle is None:
                 self.__workflow_handle = self.__client.get_workflow_handle(self.__workflow_id)

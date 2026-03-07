@@ -316,6 +316,15 @@ class GraphContext:
         """
         return self.__agent_state
 
+    def set_agent_state(self, state: AgentState) -> None:
+        """
+        Set/replace the AgentState instance (used for checkpoint restore).
+
+        Args:
+            state: New AgentState instance to use
+        """
+        self.__agent_state = state
+
     @property
     def context_manager(self) -> ContextManager:
         """

@@ -74,6 +74,7 @@ class VisionService:
         is_stuck: bool = False,
         last_action: Optional[str] = None,
         delta_context: Optional[Dict[str, object]] = None,
+        agent_state: Optional[Any] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
@@ -138,6 +139,27 @@ class VisionService:
 
         instruction = self.__builder.build()
 
+        # Extract sub-goal progress if available - SINGLE FOCUS MODE
+        # Only pass current sub-goal to Gemini, not remaining ones
+        # This prevents skip-ahead behavior and forces step-wise execution
+        sub_goal_info = None
+        if agent_state and hasattr(agent_state, "get_current_sub_goal"):
+            current_sub_goal = agent_state.get_current_sub_goal()
+            if current_sub_goal:
+                current_idx, total = agent_state.get_sub_goal_progress()
+
+                # SINGLE FOCUS MODE: Only include current sub-goal
+                sub_goal_info = {
+                    "index": current_idx,
+                    "total": total,
+                    "description": current_sub_goal.description,
+                }
+
+                logger.debug(
+                    f"[Vision] Single sub-goal focus mode: step [{current_idx + 1}/{total}] | "
+                    f"Task: {current_sub_goal.description[:60]}"
+                )
+
         # Pass ALL persistent memory (not just screen-specific)
         dynamic_context = self.__builder.build_user_context(
             memory=all_memory,  # Cross-screen persistent memory
@@ -149,6 +171,7 @@ class VisionService:
                 "screen_width": screen_width,
                 "screen_height": screen_height,
             },
+            sub_goal_info=sub_goal_info,
         )
 
         if is_stuck:

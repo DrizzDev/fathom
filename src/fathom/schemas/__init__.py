@@ -32,7 +32,6 @@ from fathom.schemas.steps import Step, StepRecord, StepResult
 from fathom.schemas.ui import LabeledElement, UIBounds
 
 __all__ = [
-    "ADBConfig",
     "ADBConfiguration",
     "Action",
     "ActionGenerator",
@@ -40,20 +39,15 @@ __all__ = [
     "AnalysisResult",
     "Bounds",
     "DeviceConfiguration",
-    "ExecutionConfig",
     "ExecutionConfiguration",
     "ExecutionContext",
     "ExecutionResult",
     "ExplorationConfiguration",
     "ExplorationGraph",
     "ExplorationResult",
-    "ExplorationStrategyConfig",
-    "FathomConfig",
     "FathomConfiguration",
-    "GeminiConfig",
     "IntentConfiguration",
     "IntentResult",
-    "IntentStrategyConfig",
     "LabeledElement",
     "LLMConfiguration",
     "PlanResult",
@@ -68,6 +62,5 @@ __all__ = [
     "StepResult",
     "StrategyResult",
     "UIBounds",
-    "WorkflowConfig",
     "WorkflowResult",
 ]

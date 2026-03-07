@@ -14,7 +14,10 @@ try:
     OPENCV_AVAILABLE = True
 except ImportError:
     OPENCV_AVAILABLE = False
-    from PIL import Image
+    cv2 = None
+    numpy = None
+
+from PIL import Image
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.interfaces.device import DevicePort
@@ -120,19 +123,23 @@ class PerceptionService:
         Computes pHash using OpenCV and NumPy (Primary).
         """
 
+        if not OPENCV_AVAILABLE or cv2 is None or numpy is None:
+            raise RuntimeError("OpenCV not available")
+
         logger.info("Computing pHash using OpenCV")
 
-        image_array = numpy.frombuffer(image_data, numpy.uint8)
-        decoded_image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
+        image_array: Any = numpy.frombuffer(image_data, numpy.uint8)
+        decoded_image: Any = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
 
         if decoded_image is None:
             raise ValueError("Could not decode image with OpenCV")
 
-        resized_image = cv2.resize(decoded_image, (32, 32), interpolation=cv2.INTER_AREA)
-        dct_transform = cv2.dct(numpy.float32(resized_image))
+        resized_image: Any = cv2.resize(decoded_image, (32, 32), interpolation=cv2.INTER_AREA)
+        float_image: Any = numpy.float32(resized_image)
+        dct_transform: Any = cv2.dct(float_image)
 
-        low_frequencies = dct_transform[0:8, 0:8]
-        average_frequency = (numpy.sum(low_frequencies) - low_frequencies[0, 0]) / 63.0
+        low_frequencies: Any = dct_transform[0:8, 0:8]
+        average_frequency: Any = (numpy.sum(low_frequencies) - low_frequencies[0, 0]) / 63.0
 
         hash_integer = 0
         flattened_frequencies = (low_frequencies > average_frequency).flatten()
@@ -152,7 +159,18 @@ class PerceptionService:
 
         with Image.open(io.BytesIO(image_data)) as pillow_image:
             grayscale_image = pillow_image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
-            pixel_data = list(grayscale_image.getdata())
+            # getdata() returns values that need to be safely converted to int
+            # Values can be int, float, tuple, or None - handle each case
+            pixel_data: list[int] = []
+            for p in grayscale_image.getdata():
+                if isinstance(p, int):
+                    pixel_data.append(p)
+                elif isinstance(p, float):
+                    pixel_data.append(int(p))
+                elif isinstance(p, (tuple, list)) and len(p) > 0:
+                    pixel_data.append(int(p[0]))
+                else:
+                    pixel_data.append(0)  # Fallback for None or unknown types
 
             hash_integer = 0
             for row_index in range(8):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from fathom.adapters.summarization.llm import LLMSummarizer
 from fathom.base.paths import SharedPathManager
@@ -131,8 +131,10 @@ class FathomRunner:
         workflow_id = request_id or uuid.uuid4().hex[:8]
 
         # Synchronize telemetry identity with workflow_id for routing
-        if hasattr(self.__telemetry, "update_identity"):
-            self.__telemetry.update_identity(identity=workflow_id)
+        # update_identity is available on some telemetry implementations
+        telemetry_with_identity = cast("Any", self.__telemetry)
+        if hasattr(telemetry_with_identity, "update_identity"):
+            telemetry_with_identity.update_identity(identity=workflow_id)
 
         # Use provided package name or fetch from device
         if not package_name:
@@ -260,8 +262,10 @@ class FathomRunner:
         workflow_id = request_id or uuid.uuid4().hex[:8]
 
         # Synchronize telemetry identity with workflow_id for routing
-        if hasattr(self.__telemetry, "update_identity"):
-            self.__telemetry.update_identity(identity=workflow_id)
+        # update_identity is available on some telemetry implementations
+        telemetry_with_identity = cast("Any", self.__telemetry)
+        if hasattr(telemetry_with_identity, "update_identity"):
+            telemetry_with_identity.update_identity(identity=workflow_id)
 
         # Use provided package name or fetch from device
         if not package_name:
@@ -366,8 +370,9 @@ class FathomRunner:
             logger.warning("Workflow cancellation requested")
 
             # Call cancel method on strategy if it has one
-            if hasattr(self.__current_strategy, "cancel"):
-                self.__current_strategy.cancel()
+            strategy_with_cancel = cast("Any", self.__current_strategy)
+            if hasattr(strategy_with_cancel, "cancel"):
+                strategy_with_cancel.cancel()
             else:
                 logger.warning("Strategy does not support cancellation")
 

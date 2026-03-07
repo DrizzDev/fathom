@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
@@ -31,7 +31,7 @@ class ExplorationGraphBuilder(GraphBuilder):
         Builds and compiles the exploration graph.
         """
 
-        workflow = StateGraph(ExplorationGraphState)
+        workflow = StateGraph(cast("Any", ExplorationGraphState))
         nodes = ExplorationGraphFactory.build(self.__context)
 
         # 1. Add Nodes

@@ -297,7 +297,7 @@ class AndroidParser(PlatformParser):
     def filter_and_deduplicate(
         self,
         elements: List[LabeledElement],
-        threshold: float = 0.4,
+        iou_threshold: float = 0.4,
         action: Any = None,
     ) -> List[LabeledElement]:
         """
@@ -305,7 +305,7 @@ class AndroidParser(PlatformParser):
         """
 
         pruned = self.__prune_containers(elements=elements)
-        suppressed = self.__suppress_overlaps(elements=pruned, threshold=threshold)
+        suppressed = self.__suppress_overlaps(elements=pruned, threshold=iou_threshold)
 
         meaningful = self.__filter_for_meaningfulness(elements=suppressed)
         return sorted(meaningful, key=lambda element: element.bounds.area, reverse=True)

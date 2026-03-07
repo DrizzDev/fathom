@@ -1034,6 +1034,72 @@ class ScriptExporter:
         return fallback
 
     @staticmethod
+    def __should_generalize_target(rationale: Optional[str]) -> bool:
+        """
+        Detect if rationale indicates non-specific selection requiring generalization.
+        """
+
+        if not rationale:
+            return False
+
+        text = str(rationale).lower()
+
+        # Match patterns like "first item", "any item", "random category", etc.
+        pattern = r"\b(first|any|random|any available|available)\s+(item|product|option|category|choice|element)\b"
+        return bool(re.search(pattern=pattern, string=text, flags=re.IGNORECASE))
+
+    @staticmethod
+    def __generalize_product_target(target: str, rationale: Optional[str]) -> str:
+        """
+        Extract generic action from product-specific targets.
+
+        Examples:
+            "ADD button for Limcee Vitamin C Chewable Tablet" -> "ADD button"
+            "Remove button for Product X" -> "Remove button"
+
+        Args:
+            target: The target description to generalize
+            rationale: The reasoning context for target selection
+        """
+
+        if not target:
+            return target
+
+        cleaned = Normalizer.clean(text=target)
+        if not cleaned:
+            return target
+
+        # Use rationale to detect element type hints
+        rationale_lower = str(rationale).lower() if rationale else ""
+        detected_element_type = None
+
+        if "button" in rationale_lower:
+            detected_element_type = "button"
+        elif "icon" in rationale_lower:
+            detected_element_type = "icon"
+        elif "option" in rationale_lower:
+            detected_element_type = "option"
+
+        # Pattern: "<action> button for <product>"
+        button_for_match = re.search(
+            pattern=r"^([A-Z][A-Z\s]+|[A-Z][a-z]+(?:\s+[a-z]+)?)?\s*(button|icon|option)\s+for\s+.+$",
+            string=cleaned,
+            flags=re.IGNORECASE,
+        )
+        if button_for_match:
+            action = Normalizer.clean(text=button_for_match.group(1) or "")
+            element_type = Normalizer.clean(
+                text=button_for_match.group(2) or detected_element_type or "button"
+            )
+            if action:
+                return f"{action} {element_type}".strip()
+            else:
+                return f"{element_type}".strip()
+
+        # If no clear pattern, return original
+        return target
+
+    @staticmethod
     def __resolve_target(step: Union[StepResult, Dict[str, Any]]) -> str:
         """
         Resolve the description for a target.
@@ -1062,6 +1128,15 @@ class ScriptExporter:
             )
             if inferred:
                 return inferred
+
+        # Generalize product-specific targets when rationale indicates non-specific selection
+        if ScriptExporter.__should_generalize_target(rationale=rationale):
+            generalized = ScriptExporter.__generalize_product_target(
+                target=resolved_target,
+                rationale=rationale,
+            )
+            if generalized != resolved_target:
+                return generalized
 
         return resolved_target
 
@@ -1366,6 +1441,7 @@ class ScriptExporter:
                 continue
 
             # Smart Validation on screen change (Restored)
+            deferred_screen_validation: Optional[str] = None
             if (
                 i > 0
                 and i > launch_boundary
@@ -1397,9 +1473,9 @@ class ScriptExporter:
                     else:
                         val_line = f"Validate {target} is visible"
                     if prev_condition:
-                        lines.append(f"IF {prev_condition} {{ {val_line} }}")
+                        deferred_screen_validation = f"IF {prev_condition} {{ {val_line} }}"
                     else:
-                        lines.append(val_line)
+                        deferred_screen_validation = val_line
 
             swipe_just_processed = False
 
@@ -1519,6 +1595,12 @@ class ScriptExporter:
                 lines.append("}")
             else:
                 lines.append(description)
+
+            # Emit smart screen-change validation after the associated action.
+            if deferred_screen_validation and (
+                not lines or lines[-1].strip() != deferred_screen_validation
+            ):
+                lines.append(deferred_screen_validation)
             i += 1
 
         # Final Goal Validation Logic (Restored)

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import importlib
 import time
 from logging import getLogger
 from pathlib import Path  # noqa: TC003
 from typing import Any, Dict, Optional, cast
 
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from rich.console import Console
 
 from fathom.adapters.signal.noop import NoopSignal
@@ -14,6 +14,7 @@ from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey
+from fathom.core.services.decomposer import IntentDecomposer
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -58,6 +59,7 @@ class IntentStrategy:
     ) -> None:
         self.__intent = intent
         self.__workflow_id = workflow_id
+        self.__llm = llm
 
         # Initialize Graph Context with injected summarizer
         self.__graph_context = GraphContext(
@@ -88,29 +90,10 @@ class IntentStrategy:
 
         # Compatibility: newer langgraph JsonPlusSerializer() has no
         # allowed_json_modules argument, while older versions do.
-        # Convert module names to tuple format for JsonPlusSerializer
-        allowed_modules = [
-            ("fathom",),
-            ("fathom.constants",),
-            ("fathom.constants.state",),
-            ("fathom.schemas.screens",),
-            ("fathom.schemas.steps",),
-            ("fathom.schemas.results",),
-            ("langgraph",),
-        ]
-        try:
-            serializer = JsonPlusSerializer(allowed_json_modules=allowed_modules)
-        except TypeError:
-            logger.warning(
-                "JsonPlusSerializer does not accept allowed_json_modules; using default serializer"
-            )
-            serializer = JsonPlusSerializer()
 
+        # Build checkpointer for graph state persistence
         checkpoint_db = path_manager.memory_path / "checkpoints.db"
-        checkpointer = self.__build_checkpointer(
-            serializer=serializer,
-            checkpoint_db_path=checkpoint_db,
-        )
+        checkpointer = self.__build_checkpointer(checkpoint_db_path=checkpoint_db)
 
         self.__graph = builder.build(
             checkpointer=checkpointer,
@@ -127,6 +110,18 @@ class IntentStrategy:
         start_time = time.time()
 
         try:
+            # 1. Decompose intent into sub-goals using LLM
+            logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
+            decomposer = IntentDecomposer(llm=self.__llm)
+            sub_goals = await decomposer.decompose(intent=self.__intent)
+
+            # Set sub-goals in agent state
+            self.__graph_context.agent_state.set_sub_goals(sub_goals)
+            logger.info(
+                f"[IntentStrategy] Intent decomposed into {len(sub_goals)} sub-goals. "
+                f"Starting execution..."
+            )
+
             # 2. Delegate execution lifecycle to the GraphExecutor (SRP)
             # invalidate_on_injection=True forces re-planning when context is added
             executor = GraphExecutor(
@@ -212,7 +207,6 @@ class IntentStrategy:
 
     def __build_checkpointer(
         self,
-        serializer: JsonPlusSerializer,
         checkpoint_db_path: Path,
     ) -> Any:
         """
@@ -225,17 +219,15 @@ class IntentStrategy:
         checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            from langgraph.checkpoint.sqlite import SqliteSaver
+            # Use importlib to avoid static import resolution errors
+            sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite")
+            SqliteSaver = sqlite_module.SqliteSaver
 
-            try:
-                # Create SqliteSaver without custom serde
-                # The default serializer is sufficient for checkpoint persistence
-                return SqliteSaver.from_conn_string(str(checkpoint_db_path))
-            except TypeError:
-                # Fallback to basic SqliteSaver
-                logger.warning("SqliteSaver configuration failed; using default serializer")
-                return SqliteSaver.from_conn_string(str(checkpoint_db_path))
-
+            # Create checkpointer using SqliteSaver
+            # The default serializer in SqliteSaver handles Pydantic models automatically
+            checkpointer = SqliteSaver.from_conn_string(str(checkpoint_db_path))
+            logger.info(f"Using SqliteSaver for checkpointing at {checkpoint_db_path}")
+            return checkpointer
         except Exception as exception:
             logger.warning(
                 "SQLite checkpoint saver unavailable; falling back to MemorySaver. "

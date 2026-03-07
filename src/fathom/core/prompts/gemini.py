@@ -64,6 +64,35 @@ class GeminiPromptBuilder(PromptBuilder):
         if runtime_brief := self.__build_runtime_brief(intent=intent, hints=hints):
             parts.append(runtime_brief)
 
+        # 1a. Sub-goal Progress (if sequential intent execution is active) - SINGLE FOCUS MODE
+        # Only pass current sub-goal, no remaining steps list
+        sub_goal_info = kwargs.get("sub_goal_info")
+        if sub_goal_info and isinstance(sub_goal_info, dict):
+            index = sub_goal_info.get("index")
+            total = sub_goal_info.get("total", 0)
+            description = sub_goal_info.get("description")
+
+            if index is not None and total > 1:
+                progress_text = f"[{index + 1}/{total}]"
+
+                parts.append(
+                    f"<CURRENT_STEP>\n"
+                    f"Progress: {progress_text}\n"
+                    f"Task: {description}\n\n"
+                    f"CRITICAL INSTRUCTIONS:\n"
+                    f"1. Focus EXCLUSIVELY on completing this task\n"
+                    f"2. Do NOT attempt to complete future steps\n"
+                    f"3. When this task is FULLY COMPLETED, signal completion by:\n"
+                    f"   - Setting 'is_goal_complete: true' in your response, OR\n"
+                    f"   - Returning a COMPLETE action\n"
+                    f"4. The system will automatically advance to the next step\n"
+                    f"</CURRENT_STEP>"
+                )
+                logger.debug(
+                    f"[H3] Single Sub-goal Focus | step={index + 1}/{total} | "
+                    f"task={description[:50]}"
+                )
+
         # 1. Memory Ledger (Factual Memory - PERSISTENT ACROSS SCREENS)
         if ledger := self.__get_ledger_segment(memory=memory):
             parts.append(
@@ -237,10 +266,15 @@ class GeminiPromptBuilder(PromptBuilder):
             else:
                 desc = getattr(action, "target", "unknown")
                 type_ = getattr(action, "action_type", "tap")
-                if hasattr(type_, "value"):
-                    type_ = type_.value
 
-            lines.append(f"{index}. {observation} -> {type_.upper()}:{desc}")
+            # Convert enum to string if needed
+            type_str = (
+                type_.value
+                if hasattr(type_, "value") and not isinstance(type_, str)
+                else str(type_)
+            )
+
+            lines.append(f"{index}. {observation} -> {type_str.upper()}:{desc}")
             if desc != "unknown":
                 avoided.append(desc)
 

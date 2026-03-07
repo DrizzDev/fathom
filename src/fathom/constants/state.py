@@ -66,6 +66,10 @@ class IntentStateKey(StrEnum):
     PLAN = "PLAN"
     PLANNED_STEP = "PLANNED_STEP"
 
+    # Sub-goal state propagation (for global checkpoint persistence)
+    CURRENT_SUB_GOAL_INDEX = "CURRENT_SUB_GOAL_INDEX"
+    AGENT_STATE_CHECKPOINT = "AGENT_STATE_CHECKPOINT"
+
 
 class ExplorationStateKey(StrEnum):
     """

@@ -8,56 +8,59 @@ from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import StepResult
 
 
+# TypedDict-compatible state for LangGraph StateGraph type checking
 class ExplorationGraphState(dict[str, Any]):
     """
-    State flowing through the Exploration Graph.
+    State schema flowing through the Exploration Graph.
+    Must be dict-based for StateGraph compatibility.
     """
 
-    def __init__(self, **kwargs: Any) -> None:
-        """
-        Initialize exploration graph state.
-        """
+    pass
 
-        super().__init__(**kwargs)
 
-    def get_capture(self) -> Optional[ScreenCapture]:
-        """
-        Get capture from state.
-        """
+def get_capture(state: dict[str, Any]) -> Optional[ScreenCapture]:
+    """
+    Get capture from state.
+    """
 
-        return self.get(CommonStateKey.CAPTURE)
+    return state.get(CommonStateKey.CAPTURE)
 
-    def get_screen_state(self) -> Optional[ScreenState]:
-        """
-        Get screen state from state.
-        """
 
-        return self.get(CommonStateKey.SCREEN_STATE)
+def get_screen_state(state: dict[str, Any]) -> Optional[ScreenState]:
+    """
+    Get screen state from state.
+    """
 
-    def get_action(self) -> Optional[Action]:
-        """
-        Get action from state.
-        """
+    return state.get(CommonStateKey.SCREEN_STATE)
 
-        return self.get(ExplorationStateKey.ACTION)
 
-    def get_step_result(self) -> Optional[StepResult]:
-        """
-        Get step result from state.
-        """
+def get_action(state: dict[str, Any]) -> Optional[Action]:
+    """
+    Get action from state.
+    """
 
-        return self.get(CommonStateKey.STEP_RESULT)
+    return state.get(ExplorationStateKey.ACTION)
 
-    def is_complete(self) -> bool:
-        """
-        Check if execution is complete.
-        """
 
-        return bool(self.get(CommonStateKey.IS_COMPLETE, False))
+def get_step_result(state: dict[str, Any]) -> Optional[StepResult]:
+    """
+    Get step result from state.
+    """
 
-    def is_content_exhausted(self) -> bool:
-        """
-        Check if content is exhausted.
-        """
+    return state.get(CommonStateKey.STEP_RESULT)
 
-        return bool(self.get(ExplorationStateKey.CONTENT_EXHAUSTED, False))
+
+def is_complete(state: dict[str, Any]) -> bool:
+    """
+    Check if execution is complete.
+    """
+
+    return bool(state.get(CommonStateKey.IS_COMPLETE, False))
+
+
+def is_content_exhausted(state: dict[str, Any]) -> bool:
+    """
+    Check if content is exhausted.
+    """
+
+    return bool(state.get(ExplorationStateKey.CONTENT_EXHAUSTED, False))

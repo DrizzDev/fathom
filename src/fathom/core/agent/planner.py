@@ -127,6 +127,7 @@ class StepPlanner:
             last_action=state.last_action_type,
             delta_context=state.get_delta_context(),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
+            agent_state=state,
         )
         state.update_delta_context(analysis.gemini_delta)
 
@@ -142,23 +143,120 @@ class StepPlanner:
                 reason="Model signaled content exhaustion (end of list/carousel).",
             )
 
-        completion = reasoner.analyze_completion(
-            analysis=analysis, screen_description=capture.activity
-        )
+        # Get current sub-goal for sequential intent execution
+        current_sub_goal = state.get_current_sub_goal()
+        current_sub_goal_text = current_sub_goal.description if current_sub_goal else None
+
+        # Check completion using multi-signal verification for sub-goals
+        if current_sub_goal and state.has_sub_goals():
+            # Get progress for logging
+            current_idx, total = state.get_sub_goal_progress()
+
+            # Use dedicated sub-goal completion analysis
+            sub_goal_signal = reasoner.analyze_subgoal_completion(
+                analysis=analysis,
+                sub_goal_description=current_sub_goal.description,
+                screen_description=capture.activity,
+            )
+
+            # Determine required threshold: validation/verification steps only need 1-2 signals
+            is_validation_step = any(
+                keyword in current_sub_goal.description.lower()
+                for keyword in ["validate", "verify", "confirm", "check if", "check that"]
+            )
+            required_threshold = 1 if is_validation_step else 2
+            signal_count = sub_goal_signal.count_signals()
+
+            logger.info(
+                f"[StepPlanner] Sub-goal completion analysis: '{current_sub_goal.description[:50]}...' | "
+                f"signals={signal_count}/{required_threshold} | "
+                f"llm={sub_goal_signal.llm_signaled} | "
+                f"rationale={sub_goal_signal.rationale_verified} | "
+                f"action={sub_goal_signal.action_executed} | "
+                f"evidence: {sub_goal_signal.evidence}"
+            )
+
+            # Completion gate with adaptive threshold
+            if sub_goal_signal.meets_threshold(required_signals=required_threshold):
+                # Mark current sub-goal as complete with all signals
+                has_more = state.mark_current_sub_goal_complete(completion_signal=sub_goal_signal)
+
+                if has_more:
+                    # More sub-goals remain - continue execution
+                    next_sub_goal = state.get_current_sub_goal()
+                    logger.info(
+                        f"[StepPlanner] ✓ Sub-goal {current_sub_goal.index} COMPLETE. "
+                        f"Advancing to sub-goal {next_sub_goal.index if next_sub_goal else '(none)'}: "
+                        f"'{next_sub_goal.description if next_sub_goal else ''}'"
+                    )
+                    logger.info(
+                        f"[StepPlanner] Sub-goal {current_sub_goal.index} complete with "
+                        f"{sub_goal_signal.count_signals()}/3 signals. "
+                        f"{state.get_sub_goal_progress()[1] - state.get_sub_goal_progress()[0]} sub-goals remain."
+                    )
+                    # Do not execute stale action planned for previous sub-goal.
+                    # Force a re-plan against the next active sub-goal.
+                    return PlanResult(
+                        step=None,
+                        is_complete=False,
+                        should_retry=True,
+                        metrics=analysis.metrics,
+                        memories=analysis.memories,
+                        reason="Advanced to next sub-goal; replanning next action",
+                        metadata={
+                            **(analysis.metadata or {}),
+                            "observation": analysis.screen_description,
+                            "sub_goal_completed": current_sub_goal.description,
+                            "completion_signals": sub_goal_signal.count_signals(),
+                        },
+                    )
+                else:
+                    # All sub-goals complete - mark intent complete
+                    logger.info(
+                        f"[StepPlanner] All sub-goals complete. Final sub-goal had "
+                        f"{sub_goal_signal.count_signals()}/3 signals."
+                    )
+                    state.mark_complete(reason="All sub-goals completed sequentially")
+
+                    return PlanResult(
+                        step=None,  # No physical actions after goal completion
+                        is_complete=True,
+                        metrics=analysis.metrics,
+                        reason="All sub-goals completed sequentially",
+                        metadata=analysis.metadata,
+                        memories=analysis.memories,
+                    )
+            else:
+                # Completion gates not met - log detailed reason
+                logger.warning(
+                    f"[StepPlanner] Sub-goal {current_sub_goal.index} NOT completing yet: "
+                    f"{signal_count}/{required_threshold} signals | "
+                    f"Progress: [{current_idx + 1}/{total}] | "
+                    f"Type: {'validation' if is_validation_step else 'action'} | "
+                    f"Evidence: {sub_goal_signal.evidence} | "
+                    f"Will retry next step..."
+                )
+        else:
+            # No sub-goals or checking overall intent - use original completion logic
+            completion = reasoner.analyze_completion(
+                analysis=analysis,
+                screen_description=capture.activity,
+                current_sub_goal=current_sub_goal_text,
+            )
+
+            if completion.is_complete:
+                state.mark_complete(reason=completion.evidence)
+
+                return PlanResult(
+                    step=None,  # No physical actions after goal completion
+                    is_complete=True,
+                    metrics=analysis.metrics,
+                    reason=analysis.reasoning,
+                    metadata=analysis.metadata,
+                    memories=analysis.memories,
+                )
 
         action = self.__select_action(state=state, reasoner=reasoner, analysis=analysis)
-
-        if completion.is_complete:
-            state.mark_complete(reason=completion.evidence)
-
-            return PlanResult(
-                step=None,  # No physical actions after goal completion
-                is_complete=True,
-                metrics=analysis.metrics,
-                reason=analysis.reasoning,
-                metadata=analysis.metadata,
-                memories=analysis.memories,
-            )
 
         # Optimization: Check if this EXACT action just failed on this screen hash
         if state.should_avoid_action(action=action):
@@ -203,6 +301,13 @@ class StepPlanner:
                 memories=analysis.memories,
                 reason=CompletionReason.FAILED.value,
             )
+
+        # Record action for sub-goal trace verification
+        if state.has_sub_goals() and action.action_type not in {
+            ActionType.ASK_USER,
+            ActionType.WAIT,
+        }:
+            state.record_sub_goal_action()
 
         return self.__build_plan_result(
             action=action,

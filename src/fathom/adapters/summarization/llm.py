@@ -62,12 +62,15 @@ class LLMSummarizer(SummarizationPort):
                 target = getattr(action, "target", "unknown")
                 action_type = getattr(action, "action_type", "unknown")
 
-            # Track action type
-            if hasattr(action_type, "value"):
-                action_type = action_type.value
+            # Convert enum to string if needed
+            action_type_str = (
+                action_type.value
+                if hasattr(action_type, "value") and not isinstance(action_type, str)
+                else str(action_type)
+            )
 
             # Build action description
-            actions_taken.append(f"{str(action_type)}:{str(target)}")
+            actions_taken.append(f"{action_type_str}:{str(target)}")
 
             # Track failures
             if not success or "fail" in thought.lower():

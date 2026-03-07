@@ -22,6 +22,46 @@ class ToolResponseParser:
     __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
     __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state", "ask_user"}
 
+    @staticmethod
+    def __require_bool(
+        arguments: Any,
+        key: str,
+        tool_name: str,
+        *,
+        default_if_missing: Optional[bool] = None,
+    ) -> bool:
+        """Read a boolean field from model tool arguments with compatibility fallback."""
+
+        if key not in arguments:
+            if default_if_missing is not None:
+                logger.warning(
+                    "Missing mandatory Gemini completion signal '%s' in %s response; defaulting to %s",
+                    key,
+                    tool_name,
+                    default_if_missing,
+                )
+                return default_if_missing
+            raise VisionError(
+                f"Missing mandatory Gemini completion signal '{key}' in {tool_name} response"
+            )
+
+        value = arguments.get(key)
+        if isinstance(value, bool):
+            return value
+
+        if default_if_missing is not None:
+            logger.warning(
+                "Invalid completion signal type for '%s' in %s response; defaulting to %s",
+                key,
+                tool_name,
+                default_if_missing,
+            )
+            return default_if_missing
+
+        raise VisionError(
+            f"Invalid completion signal type for '{key}' in {tool_name}: expected bool"
+        )
+
     def parse(self, response: GenerateResult) -> AnalysisResult:
         """
         Parses tool calls from a GenerateResult.
@@ -112,7 +152,15 @@ class ToolResponseParser:
         """
 
         reason = str(arguments.get("assistant_message", ""))
-        completed = bool(arguments.get("goal_completed", False))
+        completed = self.__require_bool(
+            arguments=arguments, key="goal_completed", tool_name="verify_goal"
+        )
+        sub_completed = self.__require_bool(
+            arguments=arguments,
+            key="sub_goal_completed",
+            tool_name="verify_goal",
+            default_if_missing=completed,
+        )
         screen = str(arguments.get("current_screen", "Goal State"))
 
         return AnalysisResult(
@@ -125,6 +173,7 @@ class ToolResponseParser:
             alternatives=[],
             reasoning=reason,
             is_goal_complete=completed,
+            is_sub_goal_complete=sub_completed,
             metadata={"event_type": "validation"},
             screen_description="Goal verification step",
         )
@@ -137,6 +186,18 @@ class ToolResponseParser:
         evidence = str(arguments.get("evidence", ""))
         reason = str(arguments.get("assistant_message", ""))
         condition = str(arguments.get("condition_to_verify", "State Validation"))
+        completed = self.__require_bool(
+            arguments=arguments,
+            key="goal_completed",
+            tool_name="validate_state",
+            default_if_missing=False,
+        )
+        sub_completed = self.__require_bool(
+            arguments=arguments,
+            key="sub_goal_completed",
+            tool_name="validate_state",
+            default_if_missing=bool(arguments.get("condition_met", False)),
+        )
 
         return AnalysisResult(
             action=Action(
@@ -147,7 +208,8 @@ class ToolResponseParser:
             ),
             alternatives=[],
             reasoning=reason,
-            is_goal_complete=False,
+            is_goal_complete=completed,
+            is_sub_goal_complete=sub_completed,
             metadata={"event_type": "validation"},
             screen_description="State validation step",
         )
@@ -159,7 +221,15 @@ class ToolResponseParser:
 
         actions = arguments.get("actions", [])
         message = str(arguments.get("assistant_message", ""))
-        completed = bool(arguments.get("goal_completed", False))
+        completed = self.__require_bool(
+            arguments=arguments, key="goal_completed", tool_name="execute_ui"
+        )
+        sub_completed = self.__require_bool(
+            arguments=arguments,
+            key="sub_goal_completed",
+            tool_name="execute_ui",
+            default_if_missing=completed,
+        )
 
         if not actions:
             return self.__create_fallback_result(message=message, completed=completed)
@@ -283,6 +353,7 @@ class ToolResponseParser:
             reasoning=message,
             metadata=metadata_dict,
             is_goal_complete=completed,
+            is_sub_goal_complete=sub_completed,
             content_exhausted=bool(arguments.get("content_exhausted", False)),
             gemini_delta=parsed_delta,
             screen_description=message or action.rationale or "Analyzing screen...",
@@ -404,6 +475,18 @@ class ToolResponseParser:
         question = str(arguments.get("question") or "").strip()
         context = str(arguments.get("context") or "").strip()
         rationale = context or question or "Requesting user clarification"
+        completed = self.__require_bool(
+            arguments=arguments,
+            key="goal_completed",
+            tool_name="ask_user",
+            default_if_missing=False,
+        )
+        sub_completed = self.__require_bool(
+            arguments=arguments,
+            key="sub_goal_completed",
+            tool_name="ask_user",
+            default_if_missing=False,
+        )
 
         return AnalysisResult(
             action=Action(
@@ -416,7 +499,8 @@ class ToolResponseParser:
             ),
             alternatives=[],
             reasoning=rationale,
-            is_goal_complete=False,
+            is_goal_complete=completed,
+            is_sub_goal_complete=sub_completed,
             screen_description="User guidance requested",
         )
 

@@ -5,7 +5,7 @@ import json
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
-from google.genai.types import Content
+from google.genai.types import Content, Part
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.schemas.statistics import CacheStats
@@ -82,7 +82,9 @@ class CacheService:
                     "tools": tool_list,
                     "ttl": f"{self.__ttl_minutes * 60}s",
                     "tool_config": {"function_calling_config": {"mode": "ANY"}},
-                    "contents": [Content(role="user", parts=[{"text": system_instruction}])],
+                    "contents": [
+                        Content(role="user", parts=[Part.from_text(text=system_instruction)])
+                    ],
                 }
 
                 cached_content = await self.__client.aio.caches.create(

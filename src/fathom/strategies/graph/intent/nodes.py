@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Callable, Dict, Optional, cast
+from typing import Any, Callable, Dict, Optional, Union, cast
 
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
@@ -64,6 +64,60 @@ class IntentNodeProvider:
                 "Waiting for resume/context."
             )
             await self.__context.hitl.wait_for_resume()
+
+    def __restore_agent_state_from_graph(self, state: IntentGraphState) -> None:
+        """
+        Restore agent_state from graph checkpoint if present.
+        This ensures sub-goal index and other state survive graph boundaries.
+        """
+
+        checkpoint = state.get(IntentStateKey.AGENT_STATE_CHECKPOINT)
+        current_index_value = state.get(IntentStateKey.CURRENT_SUB_GOAL_INDEX, 0)
+        current_index = (
+            int(current_index_value) if isinstance(current_index_value, (int, str)) else 0
+        )
+
+        if checkpoint and isinstance(checkpoint, dict):
+            logger.debug(
+                f"[SYNC] Restoring agent_state from graph checkpoint: "
+                f"step_count={checkpoint.get('step_count')}, "
+                f"sub_goal_index={checkpoint.get('current_sub_goal_index')}"
+            )
+            # Restore from checkpoint (this handles sub-goals and index)
+            from fathom.core.agent.state import AgentState
+
+            restored = AgentState.from_checkpoint(checkpoint)
+            # Replace context's agent_state with restored version using public setter
+            self.__context.set_agent_state(restored)
+        elif current_index > 0:
+            logger.debug(f"[SYNC] Updating sub-goal index from graph: {current_index}")
+            # Partial update: just index (if checkpoint not available)
+            if self.__context.agent_state.sub_goal_list and current_index < len(
+                self.__context.agent_state.sub_goal_list
+            ):
+                self.__context.agent_state.set_current_sub_goal_index(current_index)
+
+    def __persist_agent_state_to_graph(
+        self, result: Union[IntentGraphState, Dict[str, Any]]
+    ) -> None:
+        """
+        Serialize agent_state updates back to graph state for checkpoint persistence.
+        This ensures sub-goal progress survives loop recovery and graph restarts.
+        """
+
+        checkpoint = self.__context.agent_state.to_checkpoint()
+        current_index = self.__context.agent_state.current_sub_goal_index
+
+        logger.debug(
+            f"[SYNC] Persisting agent_state to graph: "
+            f"step_count={checkpoint.get('step_count')}, "
+            f"sub_goal_index={current_index}"
+        )
+
+        # Cast to dict to allow enum key access
+        result_dict = cast("Dict[str, Any]", result)
+        result_dict[IntentStateKey.AGENT_STATE_CHECKPOINT.value] = checkpoint
+        result_dict[IntentStateKey.CURRENT_SUB_GOAL_INDEX.value] = current_index
 
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -265,7 +319,7 @@ class IntentNodeProvider:
             logger.info("[NODE: GROUND] -> Transitioning to ANALYZE")
 
             # Reset per-step fields
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.ANALYSIS: None,
@@ -281,12 +335,17 @@ class IntentNodeProvider:
                 },
             )
 
+            # Persist sub-goal state to graph for checkpoint recovery
+            self.__persist_agent_state_to_graph(result)
+
+            return result
+
         except Exception as exception:
             await self.__context.telemetry.error(f"Grounding failed: {exception}")
             logger.exception(f"[NODE: GROUND] Grounding failed: {exception}")
             self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
 
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.CAPTURE: None,
@@ -294,6 +353,11 @@ class IntentNodeProvider:
                     CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
                 },
             )
+
+            # Persist failure state
+            self.__persist_agent_state_to_graph(result)
+
+            return result
 
     async def analyze(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -305,17 +369,22 @@ class IntentNodeProvider:
         logger.info("=" * 80)
         logger.info("[NODE: ANALYZE] Starting analysis node")
 
+        # Restore agent_state from graph checkpoint if available
+        self.__restore_agent_state_from_graph(state)
+
         if await self.__is_cancelled():
             logger.warning("[NODE: ANALYZE] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: True,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
                 },
             )
+            self.__persist_agent_state_to_graph(result)
+            return result
 
         # Use type guard to satisfy MyPy
         screen_capture = state.get(CommonStateKey.CAPTURE)
@@ -423,16 +492,19 @@ class IntentNodeProvider:
                 plan.reason if plan.is_complete else state.get(CommonStateKey.COMPLETION_REASON)
             )
 
-            result = {
-                IntentStateKey.PLAN: plan,
-                IntentStateKey.ELEMENTS: elements,
-                IntentStateKey.INJECTED_CONTEXT: None,
-                IntentStateKey.PLANNED_STEP: plan.step,
-                CommonStateKey.ANALYSIS_DURATION: duration,
-                CommonStateKey.IS_COMPLETE: plan.is_complete,
-                IntentStateKey.SHOULD_RETRY: plan.should_retry,
-                CommonStateKey.COMPLETION_REASON: completion_reason,
-            }
+            result = cast(
+                "IntentGraphState",
+                {
+                    IntentStateKey.PLAN: plan,
+                    IntentStateKey.ELEMENTS: elements,
+                    IntentStateKey.INJECTED_CONTEXT: None,
+                    IntentStateKey.PLANNED_STEP: plan.step,
+                    CommonStateKey.ANALYSIS_DURATION: duration,
+                    CommonStateKey.IS_COMPLETE: plan.is_complete,
+                    IntentStateKey.SHOULD_RETRY: plan.should_retry,
+                    CommonStateKey.COMPLETION_REASON: completion_reason,
+                },
+            )
 
             # Log what will happen next based on routing logic
             if plan.is_complete:
@@ -447,7 +519,10 @@ class IntentNodeProvider:
             else:
                 logger.info("[NODE: ANALYZE] -> Will route to EXECUTE")
 
-            return result  # type: ignore[return-value]
+            # Persist sub-goal state to graph for checkpoint recovery
+            self.__persist_agent_state_to_graph(result)
+
+            return result
 
         except Exception as exception:
             logger.exception(f"[NODE: ANALYZE] Analysis failed: {exception}")
@@ -456,7 +531,7 @@ class IntentNodeProvider:
                 step=self.__context.agent_state.step_count + 1,
             )
             # Return retry state to attempt recovery
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     IntentStateKey.SHOULD_RETRY: True,
@@ -464,6 +539,8 @@ class IntentNodeProvider:
                     IntentStateKey.INJECTED_CONTEXT: None,
                 },
             )
+            self.__persist_agent_state_to_graph(result)
+            return result
 
     async def execute(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -475,17 +552,22 @@ class IntentNodeProvider:
         logger.info("=" * 80)
         logger.info("[NODE: EXECUTE] Starting execution node")
 
+        # Restore agent_state from graph checkpoint if available
+        self.__restore_agent_state_from_graph(state)
+
         if await self.__is_cancelled():
             logger.warning("[NODE: EXECUTE] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: True,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
                 },
             )
+            self.__persist_agent_state_to_graph(result)
+            return result
 
         # Type guards for planned_step and capture
         screen_capture = state.get(CommonStateKey.CAPTURE)
@@ -655,6 +737,9 @@ class IntentNodeProvider:
             result_dict[IntentStateKey.SHOULD_RETRY] = True
             result_dict[CommonStateKey.COMPLETION_REASON] = None
 
+        # Persist sub-goal state to graph for checkpoint recovery
+        self.__persist_agent_state_to_graph(result_dict)
+
         return result_dict  # type: ignore[return-value]
 
     async def record(self, state: IntentGraphState) -> IntentGraphState:
@@ -667,26 +752,31 @@ class IntentNodeProvider:
         logger.info("=" * 80)
         logger.info("[NODE: RECORD] Starting record node")
 
+        # Restore agent_state from graph checkpoint if available
+        self.__restore_agent_state_from_graph(state)
+
         if await self.__is_cancelled():
             logger.warning("[NODE: RECORD] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: True,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
                 },
             )
+            self.__persist_agent_state_to_graph(result)
+            return result
 
         # ERROR BOUNDARY: Wrap recording logic
         try:
-            result = state.get(CommonStateKey.STEP_RESULT)
-            if not isinstance(result, StepResult):
+            result_value = state.get(CommonStateKey.STEP_RESULT)
+            if not isinstance(result_value, StepResult):
                 logger.error("[NODE: RECORD] No valid step result found")
-                return {}
+                return cast("IntentGraphState", {})
 
-            step_result: StepResult = result
+            step_result: StepResult = result_value
             current_activity = "unknown"
             try:
                 current_activity = await self.__context.device.get_current_package()
@@ -852,19 +942,25 @@ class IntentNodeProvider:
                     reason=execution_plan.reason or "Completed"
                 )
 
-                return cast(
+                result = cast(
                     "IntentGraphState",
                     {
                         CommonStateKey.IS_COMPLETE: True,
                         CommonStateKey.COMPLETION_REASON: execution_plan.reason,
                     },
                 )
+                self.__persist_agent_state_to_graph(result)
+                return result
 
             logger.info(
                 f"[NODE: RECORD] Step {self.__context.agent_state.step_count} recorded successfully"
             )
             logger.info("[NODE: RECORD] -> Will route to GROUND for next step")
-            return {}
+
+            # Persist state before returning
+            result = cast("IntentGraphState", {})
+            self.__persist_agent_state_to_graph(result)
+            return result
 
         except Exception as exception:
             logger.exception(f"[NODE: RECORD] Recording failed: {exception}")
@@ -873,7 +969,9 @@ class IntentNodeProvider:
                 step=self.__context.agent_state.step_count,
             )
             # Return empty dict to continue execution - recording is not critical
-            return {}
+            result = cast("IntentGraphState", {})
+            self.__persist_agent_state_to_graph(result)
+            return result
 
     async def verify(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -881,20 +979,24 @@ class IntentNodeProvider:
         If verification fails, it adds negative feedback and routes back to the main loop.
         """
 
-        _ = state
         logger.info("[NODE: VERIFY] Starting verification phase")
+
+        # Restore agent_state from graph checkpoint if available
+        self.__restore_agent_state_from_graph(state)
 
         if await self.__is_cancelled():
             logger.warning("[NODE: VERIFY] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: True,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
                 },
             )
+            self.__persist_agent_state_to_graph(result)
+            return result
 
         start_time = time.time()
 
@@ -939,13 +1041,13 @@ class IntentNodeProvider:
 
         # 3. Ask the LLM
         try:
-            result = await self.__context.llm.generate(
+            llm_result = await self.__context.llm.generate(
                 use_cache=False,
                 system_instruction=system_prompt,
                 prompt=[user_prompt, image_bytes],
             )
 
-            text = result.content.strip()
+            text = llm_result.content.strip()
 
             if text.startswith("```json"):
                 text = text[7:-3]
@@ -969,13 +1071,15 @@ class IntentNodeProvider:
 
         if is_truly_complete:
             self.__context.agent_state.mark_complete(reason=reason)
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: True,
                     CommonStateKey.COMPLETION_REASON: reason,
                 },
             )
+            self.__persist_agent_state_to_graph(result)
+            return result
         else:
             # Inject negative feedback to force the agent to continue
             feedback = f"Verification failed: {reason}"
@@ -989,7 +1093,7 @@ class IntentNodeProvider:
                 guidance=feedback, step=self.__context.agent_state.step_count
             )
 
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: False,
@@ -997,6 +1101,8 @@ class IntentNodeProvider:
                     IntentStateKey.INJECTED_CONTEXT: feedback,
                 },
             )
+            self.__persist_agent_state_to_graph(result)
+            return result
 
 
 class IntentGraphFactory:

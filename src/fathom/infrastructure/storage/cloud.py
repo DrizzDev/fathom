@@ -43,7 +43,9 @@ class GCSImageStorage(IImageStorage):
             """
 
             try:
-                client_kwargs = {"project": project} if project else {}
+                client_kwargs = {}
+                if project:
+                    client_kwargs["project"] = project
 
                 if isinstance(credentials, str):
                     client = storage.Client.from_service_account_json(credentials, **client_kwargs)
@@ -52,7 +54,8 @@ class GCSImageStorage(IImageStorage):
                     client = storage.Client.from_service_account_info(credentials, **client_kwargs)
 
                 else:
-                    client = storage.Client(**client_kwargs)
+                    # Use positional argument for project if available
+                    client = storage.Client(project=project) if project else storage.Client()
 
                 if not metadata:
                     raise ValueError("Storage metadata is required for GCS uploads")

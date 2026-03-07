@@ -168,9 +168,9 @@ class GeminiLLM(LLMPort):
 
     async def generate(
         self,
+        *,
         use_cache: bool,
         prompt: Sequence[Union[str, bytes, Dict[str, str]]],
-        *,
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
     ) -> GenerateResult:

@@ -24,6 +24,10 @@ class AnalysisResult(BaseModel):
     is_goal_complete: bool = Field(
         default=False, description="Whether the user intent has been fully achieved"
     )
+    is_sub_goal_complete: bool = Field(
+        default=False,
+        description="Whether the current decomposed sub-goal is complete",
+    )
     memories: int = Field(
         default=0, description="Number of historical experiences retrieved for this state"
     )

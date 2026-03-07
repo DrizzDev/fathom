@@ -294,7 +294,7 @@ class FathomActivities:
                 workflow_id=workflow_id,
                 api_key=temporal_api_key,
                 target_host=str(temporal_host),
-                namespace=activity.info().workflow_namespace,
+                namespace=activity.info().workflow_namespace or "default",
             )
         else:
             signal_adapter = NoopSignal()

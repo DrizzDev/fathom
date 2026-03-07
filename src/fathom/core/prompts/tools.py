@@ -154,6 +154,10 @@ class ToolRegistry:
                         "type": "BOOLEAN",
                         "description": "True if the user's high-level goal is fully achieved after these actions.",
                     },
+                    "sub_goal_completed": {
+                        "type": "BOOLEAN",
+                        "description": "True if the current sub-goal is completed after these actions.",
+                    },
                     "content_exhausted": {
                         "type": "BOOLEAN",
                         "description": "True when scrolling/swiping reveals no more new content and the list/feed appears exhausted.",
@@ -200,6 +204,7 @@ class ToolRegistry:
                     "assistant_message",
                     "actions",
                     "goal_completed",
+                    "sub_goal_completed",
                     "delta_observed",
                     "delta_confidence",
                 ],
@@ -234,12 +239,22 @@ class ToolRegistry:
                         "type": "STRING",
                         "description": "Visual evidence supporting the conclusion.",
                     },
+                    "goal_completed": {
+                        "type": "BOOLEAN",
+                        "description": "True only if the overall goal is complete.",
+                    },
+                    "sub_goal_completed": {
+                        "type": "BOOLEAN",
+                        "description": "True if the current sub-goal is complete.",
+                    },
                 },
                 "required": [
                     "assistant_message",
                     "condition_to_verify",
                     "condition_met",
                     "evidence",
+                    "goal_completed",
+                    "sub_goal_completed",
                 ],
             },
         }
@@ -264,6 +279,10 @@ class ToolRegistry:
                         "type": "BOOLEAN",
                         "description": "True if the overall goal is FULLY completed based on screen state.",
                     },
+                    "sub_goal_completed": {
+                        "type": "BOOLEAN",
+                        "description": "True if the current sub-goal is completed based on screen state.",
+                    },
                     "current_screen": {
                         "type": "STRING",
                         "description": "The actual screen currently displayed.",
@@ -276,6 +295,7 @@ class ToolRegistry:
                 "required": [
                     "assistant_message",
                     "goal_completed",
+                    "sub_goal_completed",
                     "current_screen",
                     "evidence",
                 ],
@@ -356,8 +376,16 @@ class ToolRegistry:
                         "type": "STRING",
                         "description": "Context explaining what you were trying to do and why you need help.",
                     },
+                    "goal_completed": {
+                        "type": "BOOLEAN",
+                        "description": "Must be false unless the overall goal is complete.",
+                    },
+                    "sub_goal_completed": {
+                        "type": "BOOLEAN",
+                        "description": "Must be false unless the current sub-goal is complete.",
+                    },
                 },
-                "required": ["question"],
+                "required": ["question", "goal_completed", "sub_goal_completed"],
             },
         }
 

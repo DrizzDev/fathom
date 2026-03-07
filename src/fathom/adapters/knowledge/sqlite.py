@@ -95,9 +95,7 @@ class SQLiteKnowledge(KnowledgePort):
                         action_data = json.loads(action_json) if action_json else {}
 
                         if self.__graph is not None:
-                            self.__graph.add_edge(
-                                parent=from_index, child=to_index, edge=action_data
-                            )
+                            self.__graph.add_edge(from_index, to_index, action_data)
 
     async def add_screen(self, *, screen_id: str, metadata: Dict[str, Any]) -> None:
         """
@@ -151,7 +149,7 @@ class SQLiteKnowledge(KnowledgePort):
         if self.__graph is None:
             raise RuntimeError("Knowledge graph not initialized")
 
-        self.__graph.add_edge(parent=from_index, child=to_index, edge=action.model_dump())
+        self.__graph.add_edge(from_index, to_index, action.model_dump())
 
     async def find_path(self, *, from_screen: str, to_screen: str) -> Optional[List[Action]]:
         """

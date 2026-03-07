@@ -37,3 +37,7 @@ class IntentGraphState(TypedDict, total=False):
     ANALYSIS_DURATION: float
     EXECUTION_DURATION: float
     GROUNDING_DURATION: float
+
+    # Sub-goal state (for global propagation across graph nodes)
+    CURRENT_SUB_GOAL_INDEX: int
+    AGENT_STATE_CHECKPOINT: Optional[Dict[str, object]]
