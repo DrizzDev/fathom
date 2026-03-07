@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from langgraph.graph.state import CompiledStateGraph
+
+if TYPE_CHECKING:
+    from langchain_core.runnables.config import RunnableConfig
 
 from fathom.constants import SignalType
 from fathom.constants.events import FathomEvent
@@ -41,7 +44,7 @@ class GraphExecutor:
         self.__invalidate_on_injection = invalidate_on_injection
 
         self.__replan_count = 0
-        self.__config = {"configurable": {"thread_id": self.__thread_id}}
+        self.__config: RunnableConfig = {"configurable": {"thread_id": self.__thread_id}}
 
     async def run(self) -> None:
         """

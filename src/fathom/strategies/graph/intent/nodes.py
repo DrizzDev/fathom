@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, cast
 
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
@@ -86,10 +86,13 @@ class IntentNodeProvider:
                 logger.warning("[NODE: GROUND] Execution cancelled")
                 self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-                return {
-                    CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
-                }
+                return cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+                    },
+                )
 
             # Check max steps BEFORE planning to avoid planning actions we can't execute
             if self.__context.agent_state.step_count >= self.__context.max_steps:
@@ -99,10 +102,13 @@ class IntentNodeProvider:
                 )
                 self.__context.agent_state.mark_complete(reason=CompletionReason.MAX_STEPS.value)
 
-                return {
-                    CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: CompletionReason.MAX_STEPS.value,
-                }
+                return cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: CompletionReason.MAX_STEPS.value,
+                    },
+                )
 
             current_step_num = self.__context.agent_state.step_count + 1
 
@@ -124,11 +130,14 @@ class IntentNodeProvider:
                 )
                 logger.error("[NODE: GROUND] Empty screenshot captured")
                 self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
-                return {
-                    CommonStateKey.CAPTURE: None,
-                    CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
-                }
+                return cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.CAPTURE: None,
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                    },
+                )
 
             # 2. Capture Dimensions (Independent hardware metadata)
             width, height = await self.__context.device.get_dimensions()
@@ -142,11 +151,14 @@ class IntentNodeProvider:
                 )
                 logger.error(f"[NODE: GROUND] Invalid dimensions {width}x{height}")
                 self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
-                return {
-                    CommonStateKey.CAPTURE: None,
-                    CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
-                }
+                return cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.CAPTURE: None,
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                    },
+                )
 
             # Get current package
             try:
@@ -253,29 +265,35 @@ class IntentNodeProvider:
             logger.info("[NODE: GROUND] -> Transitioning to ANALYZE")
 
             # Reset per-step fields
-            return {
-                CommonStateKey.ANALYSIS: None,
-                CommonStateKey.CAPTURE: screen,
-                IntentStateKey.XML_CONTENT: xml,
-                CommonStateKey.STEP_RESULT: None,
-                IntentStateKey.ELEMENTS: elements,
-                IntentStateKey.PLANNED_STEP: None,
-                IntentStateKey.SHOULD_RETRY: False,
-                CommonStateKey.SCREEN_STATE: screen_state,
-                CommonStateKey.GROUNDING_DURATION: duration,
-                CommonStateKey.IS_NEW_SCREEN: is_new_screen,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.ANALYSIS: None,
+                    CommonStateKey.CAPTURE: screen,
+                    IntentStateKey.XML_CONTENT: xml,
+                    CommonStateKey.STEP_RESULT: None,
+                    IntentStateKey.ELEMENTS: elements,
+                    IntentStateKey.PLANNED_STEP: None,
+                    IntentStateKey.SHOULD_RETRY: False,
+                    CommonStateKey.SCREEN_STATE: screen_state,
+                    CommonStateKey.GROUNDING_DURATION: duration,
+                    CommonStateKey.IS_NEW_SCREEN: is_new_screen,
+                },
+            )
 
         except Exception as exception:
             await self.__context.telemetry.error(f"Grounding failed: {exception}")
             logger.exception(f"[NODE: GROUND] Grounding failed: {exception}")
             self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
 
-            return {
-                CommonStateKey.CAPTURE: None,
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.CAPTURE: None,
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                },
+            )
 
     async def analyze(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -291,17 +309,20 @@ class IntentNodeProvider:
             logger.warning("[NODE: ANALYZE] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+                },
+            )
 
         # Use type guard to satisfy MyPy
         screen_capture = state.get(CommonStateKey.CAPTURE)
 
         if not screen_capture or not isinstance(screen_capture, ScreenCapture):
             logger.error("[NODE: ANALYZE] No valid screen capture found, setting should_retry=True")
-            return {IntentStateKey.SHOULD_RETRY: True}
+            return cast("IntentGraphState", {IntentStateKey.SHOULD_RETRY: True})
 
         capture: ScreenCapture = screen_capture
 
@@ -435,11 +456,14 @@ class IntentNodeProvider:
                 step=self.__context.agent_state.step_count + 1,
             )
             # Return retry state to attempt recovery
-            return {
-                IntentStateKey.SHOULD_RETRY: True,
-                CommonStateKey.ANALYSIS_DURATION: 0.0,
-                IntentStateKey.INJECTED_CONTEXT: None,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    IntentStateKey.SHOULD_RETRY: True,
+                    CommonStateKey.ANALYSIS_DURATION: 0.0,
+                    IntentStateKey.INJECTED_CONTEXT: None,
+                },
+            )
 
     async def execute(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -455,10 +479,13 @@ class IntentNodeProvider:
             logger.warning("[NODE: EXECUTE] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+                },
+            )
 
         # Type guards for planned_step and capture
         screen_capture = state.get(CommonStateKey.CAPTURE)
@@ -644,10 +671,13 @@ class IntentNodeProvider:
             logger.warning("[NODE: RECORD] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+                },
+            )
 
         # ERROR BOUNDARY: Wrap recording logic
         try:
@@ -822,10 +852,13 @@ class IntentNodeProvider:
                     reason=execution_plan.reason or "Completed"
                 )
 
-                return {
-                    CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: execution_plan.reason,
-                }
+                return cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: execution_plan.reason,
+                    },
+                )
 
             logger.info(
                 f"[NODE: RECORD] Step {self.__context.agent_state.step_count} recorded successfully"
@@ -855,10 +888,13 @@ class IntentNodeProvider:
             logger.warning("[NODE: VERIFY] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+                },
+            )
 
         start_time = time.time()
 
@@ -869,18 +905,24 @@ class IntentNodeProvider:
                 logger.warning("[NODE: VERIFY] Failed to capture screen for verification")
                 self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
 
-                return {
-                    CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
-                }
+                return cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                    },
+                )
         except Exception as exception:
             logger.error(f"[NODE: VERIFY] Screen capture failed: {exception}")
             self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
 
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                },
+            )
 
         # 2. Construct binary validation prompt
         intent = self.__context.intent
@@ -927,10 +969,13 @@ class IntentNodeProvider:
 
         if is_truly_complete:
             self.__context.agent_state.mark_complete(reason=reason)
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: reason,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: reason,
+                },
+            )
         else:
             # Inject negative feedback to force the agent to continue
             feedback = f"Verification failed: {reason}"
@@ -944,11 +989,14 @@ class IntentNodeProvider:
                 guidance=feedback, step=self.__context.agent_state.step_count
             )
 
-            return {
-                CommonStateKey.IS_COMPLETE: False,
-                IntentStateKey.SHOULD_RETRY: True,
-                IntentStateKey.INJECTED_CONTEXT: feedback,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: False,
+                    IntentStateKey.SHOULD_RETRY: True,
+                    IntentStateKey.INJECTED_CONTEXT: feedback,
+                },
+            )
 
 
 class IntentGraphFactory:

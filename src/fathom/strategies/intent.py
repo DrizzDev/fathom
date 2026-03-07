@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from logging import getLogger
 from pathlib import Path  # noqa: TC003
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
@@ -88,19 +88,18 @@ class IntentStrategy:
 
         # Compatibility: newer langgraph JsonPlusSerializer() has no
         # allowed_json_modules argument, while older versions do.
-        with_modules_kwargs = {
-            "allowed_json_modules": [
-                "fathom",
-                "fathom.constants",
-                "fathom.constants.state",
-                "fathom.schemas.screens",
-                "fathom.schemas.steps",
-                "fathom.schemas.results",
-                "langgraph",
-            ]
-        }
+        # Convert module names to tuple format for JsonPlusSerializer
+        allowed_modules = [
+            ("fathom",),
+            ("fathom.constants",),
+            ("fathom.constants.state",),
+            ("fathom.schemas.screens",),
+            ("fathom.schemas.steps",),
+            ("fathom.schemas.results",),
+            ("langgraph",),
+        ]
         try:
-            serializer = JsonPlusSerializer(**with_modules_kwargs)
+            serializer = JsonPlusSerializer(allowed_json_modules=allowed_modules)
         except TypeError:
             logger.warning(
                 "JsonPlusSerializer does not accept allowed_json_modules; using default serializer"
@@ -155,7 +154,9 @@ class IntentStrategy:
                 )
 
             # 3. Result extraction from final state
-            config = {"configurable": {"thread_id": self.__workflow_id}}
+            from langchain_core.runnables.config import RunnableConfig
+
+            config = cast("RunnableConfig", {"configurable": {"thread_id": self.__workflow_id}})
             final_state = await self.__graph.aget_state(config)
 
             is_cancelled = self.__graph_context.is_cancelled
@@ -212,7 +213,7 @@ class IntentStrategy:
     def __build_checkpointer(
         self,
         serializer: JsonPlusSerializer,
-        checkpoint_db_path: "Path",
+        checkpoint_db_path: Path,
     ) -> Any:
         """
         Build a persistence layer for graph checkpoints.
@@ -227,15 +228,12 @@ class IntentStrategy:
             from langgraph.checkpoint.sqlite import SqliteSaver
 
             try:
-                return SqliteSaver.from_conn_string(
-                    str(checkpoint_db_path),
-                    serde=serializer,
-                )
+                # Create SqliteSaver without custom serde
+                # The default serializer is sufficient for checkpoint persistence
+                return SqliteSaver.from_conn_string(str(checkpoint_db_path))
             except TypeError:
-                # Some SqliteSaver versions do not accept serde in factory method.
-                logger.warning(
-                    "SqliteSaver.from_conn_string() does not accept serde; using default serializer"
-                )
+                # Fallback to basic SqliteSaver
+                logger.warning("SqliteSaver configuration failed; using default serializer")
                 return SqliteSaver.from_conn_string(str(checkpoint_db_path))
 
         except Exception as exception:
@@ -244,4 +242,4 @@ class IntentStrategy:
                 "Install 'langgraph-checkpoint-sqlite' to enable persistent checkpoints. "
                 f"Reason: {exception}"
             )
-            return MemorySaver(serde=serializer)
+            return MemorySaver()
