@@ -93,8 +93,22 @@ class GeminiPromptBuilder(PromptBuilder):
                 )
                 logger.debug(
                     f"[H3] Single Sub-goal Focus | step={index + 1}/{total} | "
-                    f"task={description[:50]}"
+                    f"task={(description or '')[:50]}"
                 )
+
+        # 1a-bis. App Launch Semantics (when package is known)
+        if hints and hints.get("package_name") and hints.get("package_name") != "unknown":
+            pkg = hints.get("package_name")
+            parts.append(
+                f"<APP_LAUNCH_SEMANTICS>\n"
+                f"Target app package: {pkg}\n"
+                f"When the app needs to be launched or brought to foreground:\n"
+                f"1. Do NOT emit an explicit 'tap' action on the app icon\n"
+                f"2. Instead, rely on the system's automatic OPEN_APP normalization\n"
+                f"3. Signal completion/focus goals directly via completion flags\n"
+                f"</APP_LAUNCH_SEMANTICS>"
+            )
+            logger.debug(f"[H3] App Launch Semantics | package={pkg}")
 
         # 1. Memory Ledger (Factual Memory - PERSISTENT ACROSS SCREENS)
         if ledger := self.__get_ledger_segment(memory=memory):

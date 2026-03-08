@@ -38,6 +38,16 @@ class ScriptExporter:
     __NUMERIC_ORDINAL_RE = re.compile(pattern=r"\b(\d+)(?:st|nd|rd|th)\b", flags=re.IGNORECASE)
     __GENERIC_TARGETS = frozenset({"element", "ui element", "none", "a visible item"})
     __SWIPE_ACTIONS = {"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"}
+    __LAUNCHER_PACKAGES = frozenset(
+        {
+            "com.google.android.apps.nexuslauncher",
+            "com.android.launcher",
+            "com.android.launcher3",
+            "com.sec.android.app.launchers",
+            "com.miui.home",
+            "com.oppo.launcher",
+        }
+    )
 
     __SCREEN_RE = re.compile(
         pattern=r"(?:the\s+)?(\w+(?:\s+\w+)?)\s+(screen|page)\b",
@@ -746,6 +756,9 @@ class ScriptExporter:
         i = 0
         while i < n:
             step = step_results[i]
+            if ScriptExporter.__is_launcher_activity(activity=ScriptExporter.__get_activity(step)):
+                i += 1
+                continue
             action_type_val = ScriptExporter.__get_action_type(step=step)
             target = ScriptExporter.__resolve_target(step=step)
 
@@ -753,10 +766,12 @@ class ScriptExporter:
                 text = step.step.action.text
                 rationale = step.step.action.rationale
                 wait_duration = step.step.action.wait_duration
+                is_app_launcher_signal = step.step.action.is_app_launcher
             else:
                 text = step.get("text")
                 rationale = str(object=step.get("rationale", ""))
                 wait_duration = step.get("wait_duration")
+                is_app_launcher_signal = step.get("is_app_launcher", False)
 
             if action_type_val == "wait" and target.lower() in ScriptExporter.__GENERIC_TARGETS:
                 target = ScriptExporter.__infer_wait_subject(rationale=rationale)
@@ -801,15 +816,24 @@ class ScriptExporter:
                 bool(package_name) and len(lines) == 1 and lines[0].lower().startswith("open_app ")
             )
             # Collapse app launch into OPEN_APP by skipping the initial app-icon tap.
+            # Match if: explicit is_app_launcher signal OR heuristic pattern match
             is_launch_tap = (
                 is_first_step_derived_action
                 and action_type_val == "tap"
-                and ScriptExporter.__is_likely_launch_tap(
-                    target=target,
-                    description=description,
+                and (
+                    is_app_launcher_signal
+                    or ScriptExporter.__is_likely_launch_tap(
+                        target=target,
+                        description=description,
+                    )
                 )
             )
             if is_launch_tap:
+                logger.debug(
+                    f"[EXPORTER] Collapsing launcher tap into OPEN_APP: target='{target}' "
+                    f"description='{description}' package={package_name} "
+                    f"launcher_signal={is_app_launcher_signal}"
+                )
                 i += 1
                 continue
 
@@ -853,16 +877,34 @@ class ScriptExporter:
     def __is_likely_launch_tap(target: str, description: str) -> bool:
         """
         Heuristic for identifying the launcher tap that opens the app.
+        Matches patterns like "Chrome icon", "app icon", "<name> icon", "launcher icon", etc.
+        More conservative to avoid false positives on element names that happen to end in 'icon'.
         """
 
         combined = f"{target} {description}".strip().lower()
         if not combined:
             return False
-        if "app icon" in combined:
+
+        # Most reliable: explicit "app icon" or "launcher icon" phrase
+        if any(
+            phrase in combined
+            for phrase in [
+                "app icon",
+                "launcher icon",
+                "home screen",
+                "launcher button",
+            ]
+        ):
             return True
-        if re.search(r"\b[a-z0-9.+_-]+\s+icon\b", combined):
+
+        # Conservative pattern: word characters followed by "icon" as a distinct token
+        # This matches "Chrome icon", "Maps icon", "1mg icon" but avoids false
+        # positives on random text containing the substring "icon"
+        if re.search(r"\b(?:the\s+)?[a-z0-9.\-_'\s]+\s+icon\b", combined):
             return True
-        return bool(combined.endswith(" icon"))
+
+        # Fallback: ends with " icon" (catches pattern-matched targets)
+        return combined.endswith(" icon")
 
     @staticmethod
     def __normalize_positional(target: str) -> str:
@@ -1189,6 +1231,19 @@ class ScriptExporter:
         return ""
 
     @staticmethod
+    def __is_launcher_activity(activity: str) -> bool:
+        """
+        Return whether the activity belongs to a launcher package.
+        """
+
+        text = str(activity or "").strip()
+        if not text:
+            return False
+
+        package = text.split("/")[0]
+        return package in ScriptExporter.__LAUNCHER_PACKAGES
+
+    @staticmethod
     def __is_overlay_detected(step: Union[StepResult, Dict[str, Any]]) -> bool:
         """
         Extract explicit overlay/popup blocker signal from a step.
@@ -1388,6 +1443,9 @@ class ScriptExporter:
 
         while i < n:
             step = step_results[i]
+            if ScriptExporter.__is_launcher_activity(activity=ScriptExporter.__get_activity(step)):
+                i += 1
+                continue
             action_type_val = ScriptExporter.__get_action_type(step=step)
             event_type = ScriptExporter.__get_event_type(step=step)
             raw_condition = ScriptExporter.__get_raw_condition(step=step)
@@ -1484,10 +1542,12 @@ class ScriptExporter:
                 text = action.text
                 rationale = action.rationale
                 wait_duration = action.wait_duration
+                is_app_launcher_signal = action.is_app_launcher
             else:
                 text = step.get("text")
                 rationale = str(object=step.get("rationale", ""))
                 wait_duration = step.get("wait_duration")
+                is_app_launcher_signal = bool(step.get("is_app_launcher", False))
 
             if action_type_val == "wait" and target.lower() in ScriptExporter.__GENERIC_TARGETS:
                 target = ScriptExporter.__infer_wait_subject(rationale=rationale)
@@ -1495,6 +1555,24 @@ class ScriptExporter:
             description = Normalizer.action(
                 action_type=action_type_val, target=target, text=text, wait_duration=wait_duration
             )
+
+            is_first_step_derived_action = (
+                bool(package_name) and len(lines) == 1 and lines[0].lower().startswith("open_app ")
+            )
+            is_launch_tap = (
+                is_first_step_derived_action
+                and action_type_val == "tap"
+                and (
+                    is_app_launcher_signal
+                    or ScriptExporter.__is_likely_launch_tap(
+                        target=target,
+                        description=description,
+                    )
+                )
+            )
+            if is_launch_tap:
+                i += 1
+                continue
 
             # Semantic Validation Handling (Integrated)
             if event_type == "validation":

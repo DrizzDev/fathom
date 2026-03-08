@@ -23,6 +23,16 @@ from fathom.strategies.graph.state import IntentGraphState
 
 logger = logging.getLogger(__name__)
 
+# Default launcher packages - actions on these should never persist during task execution
+DEFAULT_LAUNCHERS = {
+    "com.google.android.apps.nexuslauncher",  # Google Pixel default
+    "com.android.launcher",
+    "com.android.launcher3",
+    "com.sec.android.app.launchers",  # Samsung default
+    "com.miui.home",  # MIUI default
+    "com.oppo.launcher",  # OPPO default
+}
+
 
 class IntentNodeProvider:
     """
@@ -783,15 +793,46 @@ class IntentNodeProvider:
             except Exception:
                 current_activity = "unknown"
 
+            execution_activity = "unknown"
+            screen_state_value = state.get(CommonStateKey.SCREEN_STATE)
+            if isinstance(screen_state_value, ScreenState):
+                execution_activity = screen_state_value.activity or "unknown"
+
             logger.info(
                 f"[NODE: RECORD] Recording step: success={step_result.success}, "
-                f"screen_changed={step_result.screen_changed}, duration={step_result.duration}ms"
+                f"screen_changed={step_result.screen_changed}, duration={step_result.duration}ms, "
+                f"execution_package={execution_activity}, observed_package={current_activity}"
             )
 
+            # Record in agent state (internal bookkeeping, always done)
             self.__context.agent_state.record_step(result=step_result)
-            script_data = await self.__context.history.save_step(
-                result=step_result, intent=self.__context.intent, activity=current_activity
-            )
+
+            # LAUNCHER BLOCKING: Never persist actions taken on launcher apps
+            execution_package_base = execution_activity.split("/")[0]
+            is_on_launcher = execution_package_base in DEFAULT_LAUNCHERS
+
+            if is_on_launcher:
+                logger.warning(
+                    f"[NODE: RECORD] Skipping persistence: on launcher app. "
+                    f"Launcher={execution_package_base}, "
+                    f"step_num={step_result.step.step_number}, action_type={step_result.step.action.action_type.value}"
+                )
+                await self.__context.telemetry.warning(
+                    f"Step {step_result.step.step_number} not persisted (on launcher)",
+                    execution_package=execution_activity,
+                    observed_package=current_activity,
+                    step_number=step_result.step.step_number + 1,
+                    action_type=step_result.step.action.action_type.value,
+                )
+                script_data = ""
+            else:
+                # Not on launcher: persist to history/export
+                logger.debug(
+                    f"[NODE: RECORD] Recording step to history. Observed={current_activity}"
+                )
+                script_data = await self.__context.history.save_step(
+                    result=step_result, intent=self.__context.intent, activity=current_activity
+                )
 
             # Emit enriched telemetry for the UI to render full step details
             record = step_result.to_record(activity=current_activity)

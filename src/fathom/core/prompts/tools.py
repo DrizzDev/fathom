@@ -41,7 +41,7 @@ class ToolRegistry:
 
         return {
             "name": "execute_ui",
-            "description": "Execute a sequence of UI actions on the device to achieve a specific sub-goal or the final goal. Use this to interact with the app, including explicit validation checks via action_type='validate'.",
+            "description": "Execute a sequence of UI actions on the device to achieve a specific sub-goal or the final goal. Use this to interact with the app, including explicit validation checks via action_type='validate'. IMPORTANT: When launching a target app (when a package_name is known), prefer signaling app completion via 'goal_completed: true' or 'sub_goal_completed: true' rather than emitting an explicit 'tap' action on the app icon. The system will normalize app launch intents automatically.",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {

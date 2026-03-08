@@ -130,6 +130,12 @@ class Action(BaseModel):
         description="When target_type is positional or dynamic, the exact phrase for script export (e.g. 'the first search result', 'the promotional banner'). Omit for stable.",
     )
 
+    # Launch semantics (optional; used to disambiguate launcher icon taps from regular taps)
+    is_app_launcher: bool = Field(
+        default=False,
+        description="Set to true when this tap action is specifically intended to launch or focus the target app. Helps the exporter replace launcher taps with OPEN_APP semantics.",
+    )
+
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
     def to_description(self) -> str:
