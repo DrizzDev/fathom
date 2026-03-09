@@ -12,6 +12,7 @@ from fathom.adapters.signal.noop import NoopSignal
 from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
+from fathom.constants.state import IntentStateKey
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -149,7 +150,7 @@ class IntentStrategy:
             is_cancelled = self.__graph_context.is_cancelled
             success = self.__graph_context.agent_state.is_complete
             error = final_state.values.get("completion_reason")
-            self.__step_results = list(final_state.values.get("STEP_RESULTS") or [])
+            self.__step_results = list(final_state.values.get(IntentStateKey.STEP_RESULTS) or [])
 
             duration = int((time.time() - start_time) * 1000)
 
@@ -170,7 +171,7 @@ class IntentStrategy:
             try:
                 config = {"configurable": {"thread_id": self.__workflow_id}}
                 final_state = await self.__graph.aget_state(config)
-                self.__step_results = list(final_state.values.get("STEP_RESULTS") or [])
+                self.__step_results = list(final_state.values.get(IntentStateKey.STEP_RESULTS) or [])
             except Exception:
                 pass
 
