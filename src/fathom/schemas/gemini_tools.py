@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 CoordSystem = Literal["normalized", "pixel"]
 ConditionalType = Literal["blocker", "transient", "error", "optional"]
 TargetType = Literal["stable", "positional", "dynamic"]
@@ -317,6 +316,7 @@ class ExecuteUIArgs(GeminiCompletionFlags, GeminiDeltaTelemetry):
     )
     memory_updates: Optional[Dict[str, str]] = None
 
+
 class StoreMemoryArgs(BaseModel):
     """
     Schema for the store_memory tool.
@@ -363,4 +363,3 @@ class AskUserArgs(GeminiCompletionFlags):
         if self.sub_goal_completed is None:
             object.__setattr__(self, "sub_goal_completed", False)
         return self
-
