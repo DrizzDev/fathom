@@ -171,9 +171,11 @@ class IntentStrategy:
             try:
                 config = {"configurable": {"thread_id": self.__workflow_id}}
                 final_state = await self.__graph.aget_state(config)
-                self.__step_results = list(final_state.values.get(IntentStateKey.STEP_RESULTS) or [])
-            except Exception:
-                pass
+                self.__step_results = list(
+                    final_state.values.get(IntentStateKey.STEP_RESULTS) or []
+                )
+            except Exception as recovery_error:
+                logger.debug(f"Could not recover step results from checkpoint: {recovery_error}")
 
             return ExecutionResult(
                 success=False, duration=duration, error=str(exception), is_cancelled=is_cancelled
