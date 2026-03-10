@@ -10,6 +10,7 @@ class Normalizer:
     """
 
     __MULTISPACE_RE = re.compile(pattern=r"\s+")
+    __GENERIC_TARGET_NAMES = frozenset({"element", "ui element", "none", "label", "unknown"})
 
     @staticmethod
     def clean(text: Optional[str]) -> str:
@@ -21,6 +22,20 @@ class Normalizer:
         cleaned = Normalizer.__MULTISPACE_RE.sub(repl=" ", string=str(object=text)).strip()
         cleaned = re.sub(pattern=r"\s+([,.;:!?])", repl=r"\1", string=cleaned)
         return cleaned
+
+    @staticmethod
+    def is_generic_target_name(name: Optional[str]) -> bool:
+        """
+        Return True when a target name is effectively generic.
+
+        Treats empty/whitespace-only names as generic as well.
+        """
+
+        if not name:
+            return True
+
+        cleaned = Normalizer.clean(text=name).lower()
+        return cleaned in Normalizer.__GENERIC_TARGET_NAMES
 
     @staticmethod
     def sentence(text: Optional[str]) -> str:
@@ -93,7 +108,9 @@ class Normalizer:
         """Build canonical action descriptions with stable grammar."""
 
         kind = Normalizer.clean(text=action_type).lower()
-        cleaned_target = Normalizer.clean(text=target) or "UI Element"
+        cleaned_target = Normalizer.clean(text=target)
+        if not cleaned_target:
+            cleaned_target = "element"
 
         if kind == "tap":
             return f"Tap on {cleaned_target}"

@@ -26,8 +26,9 @@ PRECISION_RULES = MappingProxyType(_PRECISION_RULES_RAW)
 # Action rules (Immutable)
 _ACTION_RULES_RAW = {
     "scroll": (
-        "SCROLL/SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
-        "Bbox wraps scrollable region only (exclude fixed headers/footers)."
+        "SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
+        "Bbox wraps scrollable region only (exclude fixed headers/footers). "
+        "Do NOT use 'scroll' as an action_type; always use the appropriate swipe_* variant."
     ),
     "wait": (
         "WAIT: Use if screen shows a SPINNER, LOADING TEXT, or SKELETON/SHIMMER (gray shapes). "

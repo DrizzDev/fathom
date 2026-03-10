@@ -193,6 +193,11 @@ class FathomRunner:
             # Get progress info
             progress = strategy.get_progress()
 
+            # Get subgoal execution audit trail
+            executed_subgoals, skipped_subgoals, subgoal_count = (
+                strategy.get_subgoal_execution_audit()
+            )
+
             # Collect metrics from strategy - use to_report_dict() for proper format
             strategy_metrics = strategy.get_metrics()
             metrics = strategy_metrics.to_report_dict() if strategy_metrics else {}
@@ -221,6 +226,15 @@ class FathomRunner:
                         else (execution_result.error or CompletionReason.FAILED.value)
                     )
 
+                # ENFORCE: All subgoals must be executed (not SKIPPED)
+                if skipped_subgoals:
+                    error_msg = f"Execution aborted: {len(skipped_subgoals)} subgoal(s) were skipped without execution: {skipped_subgoals}"
+                    logger.error(error_msg)
+                    success = False
+                    error = error_msg
+                    status = "failed"
+                    completion_reason = "SUBGOAL_SKIPPED"
+
             result = IntentResult(
                 error=error,
                 status=status,
@@ -233,6 +247,9 @@ class FathomRunner:
                 completion_reason=completion_reason,
                 steps_taken=progress.get("step_count", 0),
                 steps_executed=progress.get("step_count", 0),
+                executed_subgoals=executed_subgoals,
+                skipped_subgoals=skipped_subgoals,
+                subgoal_count=subgoal_count,
             )
 
             await self.__telemetry.info(

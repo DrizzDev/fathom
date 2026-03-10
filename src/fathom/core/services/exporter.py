@@ -12,6 +12,7 @@ from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.normalizer import Normalizer
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.export import ScriptExportPayload, ScriptExportStructuredPayload
+from fathom.schemas.gemini_tools import EmitScriptArgs
 from fathom.schemas.steps import StepResult
 
 logger = getLogger(__name__)
@@ -36,7 +37,17 @@ class ScriptExporter:
     }
 
     __NUMERIC_ORDINAL_RE = re.compile(pattern=r"\b(\d+)(?:st|nd|rd|th)\b", flags=re.IGNORECASE)
-    __GENERIC_TARGETS = frozenset({"element", "ui element", "none", "a visible item"})
+    __GENERIC_TARGETS = frozenset(
+        {
+            # Shared generic target names plus exporter-specific variants.
+            "element",
+            "ui element",
+            "none",
+            "label",
+            "unknown",
+            "a visible item",
+        }
+    )
     __SWIPE_ACTIONS = {"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"}
     __LAUNCHER_PACKAGES = frozenset(
         {
@@ -504,12 +515,10 @@ class ScriptExporter:
         if not normalized:
             return False
 
-        conditional_terms = ("if ", " when ", "if the", "if cart", "if there are")
-        if not any(term in f" {normalized} " for term in conditional_terms):
-            return False
-
-        domain_terms = ("cart", "not empty", "has any item", "contains item", "clear")
-        return any(term in normalized for term in domain_terms)
+        # Previously this was restricted to cart/clear-cart flows; that was too narrow
+        # and missed general user-demanded conditionals like "If the dropdown is visible".
+        conditional_terms = (" if ", " when ", " if_", " if-", " if(", " if the", " if there")
+        return any(term in f" {normalized} " for term in conditional_terms)
 
     @staticmethod
     def __build_export_payload(
@@ -624,6 +633,24 @@ class ScriptExporter:
         allowed_action_lines = [
             line.strip().lower() for line in action_catalog.values() if line.strip()
         ]
+
+        # Guardrail (soft): record when catalog lines still contain generic targets.
+        # We no longer hard-reject structured export here, because that prevented
+        # legitimate conditional blocks from being emitted when the user explicitly
+        # requested them. Instead we log for observability and rely on downstream
+        # sanitization and ScriptExportPayload validation to enforce safety.
+        for action_id, line in action_catalog.items():
+            if line.strip().lower().startswith("open_app "):
+                continue
+            target_phrase = ScriptExporter.__extract_target_from_action_line(line=line) or ""
+            if Normalizer.is_generic_target_name(target_phrase):
+                logger.warning(
+                    "Gemini structured export catalog contains generic target name "
+                    "[export_violation=generic_target_name, action_id=%s, line=%s].",
+                    action_id,
+                    line,
+                )
+
         action_validation_baseline_script = ScriptExporter.__normalize_script_output(
             script="\n".join(action_catalog.values())
         )
@@ -671,12 +698,25 @@ class ScriptExporter:
 
         if not structured_args:
             logger.warning(
-                "Gemini emit_script arguments missing; falling back to deterministic exporter output."
+                "Gemini emit_script arguments missing; "
+                "falling back to deterministic exporter output "
+                "[export_mode=fallback_deterministic, export_violation=missing_tool_args]."
+            )
+            return deterministic_fallback_script
+
+        try:
+            raw_emit_args = EmitScriptArgs.model_validate(structured_args)
+        except Exception as exception:
+            logger.warning(
+                "Gemini emit_script raw payload parsing failed (%s); "
+                "falling back to deterministic exporter output "
+                "[export_mode=invalid_structured, export_violation=raw_parse].",
+                exception,
             )
             return deterministic_fallback_script
 
         normalized_structured_args = ScriptExporter.__normalize_structured_action_ids(
-            structured_args=structured_args,
+            structured_args=raw_emit_args.model_dump(exclude_unset=True),
             required_action_ids=required_action_ids,
             action_catalog=action_catalog,
         )
@@ -694,7 +734,9 @@ class ScriptExporter:
             )
         except Exception as exception:
             logger.warning(
-                "Gemini structured payload validation failed (%s); falling back to deterministic exporter output.",
+                "Gemini structured payload validation failed (%s); "
+                "falling back to deterministic exporter output "
+                "[export_mode=fallback_deterministic, export_violation=structured_payload].",
                 exception,
             )
             return deterministic_fallback_script
@@ -716,7 +758,9 @@ class ScriptExporter:
             )
         except Exception as exception:
             logger.warning(
-                "Gemini script schema validation failed (%s); falling back to deterministic exporter output.",
+                "Gemini script schema validation failed (%s); "
+                "falling back to deterministic exporter output "
+                "[export_mode=fallback_deterministic, export_violation=script_schema].",
                 exception,
             )
             return deterministic_fallback_script
@@ -726,15 +770,22 @@ class ScriptExporter:
             candidate=candidate, baseline=action_validation_baseline_script
         ):
             logger.warning(
-                "Gemini script failed structural/action coverage validation; falling back to deterministic exporter output."
+                "Gemini script failed structural/action coverage validation; "
+                "falling back to deterministic exporter output "
+                "[export_mode=fallback_deterministic, export_violation=post_validation_coverage]."
             )
             return deterministic_fallback_script
         if not ScriptExporter.__contains_goal_validation(script=candidate):
             logger.warning(
-                "Gemini script missing final goal validation; falling back to deterministic exporter output."
+                "Gemini script missing final goal validation; "
+                "falling back to deterministic exporter output "
+                "[export_mode=fallback_deterministic, export_violation=missing_goal_validation]."
             )
             return deterministic_fallback_script
 
+        logger.info(
+            "Gemini script export succeeded via structured payload [export_mode=llm_structured]."
+        )
         return candidate
 
     @staticmethod
@@ -767,14 +818,34 @@ class ScriptExporter:
                 rationale = step.step.action.rationale
                 wait_duration = step.step.action.wait_duration
                 is_app_launcher_signal = step.step.action.is_app_launcher
+                wait_subject = step.step.action.wait_subject
+                wait_pattern = step.step.action.wait_pattern
+                scroll_target = step.step.action.scroll_target
             else:
                 text = step.get("text")
                 rationale = str(object=step.get("rationale", ""))
                 wait_duration = step.get("wait_duration")
                 is_app_launcher_signal = step.get("is_app_launcher", False)
+                wait_subject = step.get("wait_subject")
+                wait_pattern = step.get("wait_pattern")
+                scroll_target = step.get("scroll_target")
 
             if action_type_val == "wait" and target.lower() in ScriptExporter.__GENERIC_TARGETS:
-                target = ScriptExporter.__infer_wait_subject(rationale=rationale)
+                # Prefer structured wait_subject field with pattern as fallback to rationale
+                if wait_subject:
+                    target = wait_subject
+                elif wait_pattern:
+                    pattern_map = {
+                        "ad": "ad to finish",
+                        "splash": "app to finish loading",
+                        "load": "app to finish loading",
+                        "search": "search results to appear",
+                    }
+                    target = pattern_map.get(wait_pattern, "screen to load")
+                else:
+                    target = ScriptExporter.__infer_wait_subject(
+                        rationale=rationale, wait_subject=None
+                    )
 
             if action_type_val in ScriptExporter.__SWIPE_ACTIONS:
                 swipe_direction = action_type_val
@@ -790,8 +861,10 @@ class ScriptExporter:
                 if i < n:
                     next_target = ScriptExporter.__resolve_target(step=step_results[i])
                 else:
+                    # Prefer structured scroll_target, fallback to inference
                     next_target = (
-                        ScriptExporter.__infer_scroll_target(
+                        scroll_target
+                        or ScriptExporter.__infer_scroll_target(
                             steps=step_results, start=swipe_start, end=i
                         )
                         or ScriptExporter.__extract_goal_label(goal_state=intent)
@@ -1148,28 +1221,50 @@ class ScriptExporter:
         """
 
         rationale: Optional[str]
+        script_target: Optional[str] = None
+        scroll_target: Optional[str] = None
+        wait_subject: Optional[str] = None
+
         if isinstance(step, StepResult):
             if step.generalized_target:
                 return ScriptExporter.__normalize_positional(target=step.generalized_target)
-            target = step.step.action.natural_language_target or step.step.action.target
-            rationale = step.step.action.rationale
+            action = step.step.action
+            target = action.natural_language_target or action.target
+            rationale = action.rationale
+            script_target = action.script_target
+            scroll_target = action.scroll_target
+            wait_subject = action.wait_subject
         else:
             if step.get("generalized_target"):
                 raw = str(object=step.get("generalized_target") or "")
                 return ScriptExporter.__normalize_positional(target=raw)
             target = step.get("natural_language_target") or step.get("target") or ""
             rationale = str(object=step.get("rationale") or "")
+            script_target = step.get("script_target")
+            scroll_target = step.get("scroll_target")
+            wait_subject = step.get("wait_subject")
 
         resolved_target = Normalizer.clean(text=target) or "element"
-        if resolved_target.lower() in ScriptExporter.__GENERIC_TARGETS:
+        lower_resolved = resolved_target.lower()
+
+        # When the model emitted a generic target, prefer structured fields first.
+        if lower_resolved in ScriptExporter.__GENERIC_TARGETS:
+            for candidate in (script_target, scroll_target, wait_subject):
+                if candidate and not Normalizer.is_generic_target_name(candidate):
+                    return Normalizer.clean(text=candidate)
+
             action_type = ScriptExporter.__get_action_type(step=step)
             inferred = ScriptExporter.__infer_target_from_rationale(
                 action_type=action_type,
                 rationale=rationale,
                 fallback=resolved_target,
             )
-            if inferred:
+            if inferred and not Normalizer.is_generic_target_name(inferred):
                 return inferred
+
+            # As a last resort, keep a simple, generic 'element' label rather than
+            # exposing internal IDs or coordinates.
+            return "element"
 
         # Generalize product-specific targets when rationale indicates non-specific selection
         if ScriptExporter.__should_generalize_target(rationale=rationale):
@@ -1181,6 +1276,50 @@ class ScriptExporter:
                 return generalized
 
         return resolved_target
+
+    @staticmethod
+    def __extract_target_from_action_line(line: str) -> Optional[str]:
+        """
+        Best-effort extraction of the target phrase from an executable script line.
+        """
+
+        text = line.strip()
+        lower = text.lower()
+
+        if lower.startswith("tap on "):
+            return text[len("Tap on ") :].strip()
+
+        if lower.startswith("type "):
+            marker = lower.rfind(" into ")
+            if marker != -1:
+                return text[marker + len(" into ") :].strip()
+
+        if lower.startswith("scroll until you see "):
+            return text[len("Scroll until you see ") :].strip()
+        if lower.startswith("scroll down until ") or lower.startswith("scroll up until "):
+            suffix = (
+                text[len("Scroll down until ") :]
+                if lower.startswith("scroll down until ")
+                else text[len("Scroll up until ") :]
+            )
+            return suffix.strip()
+
+        if lower.startswith("wait for "):
+            return text[len("Wait for ") :].strip()
+
+        if lower.startswith("long press on "):
+            return text[len("Long press on ") :].strip()
+
+        if lower.startswith("validate "):
+            target = text[len("Validate ") :].strip()
+            if target.lower().startswith("that "):
+                target = target[5:].strip()
+            return target
+
+        # OPEN_APP and other non-target lines: no target phrase to check for generic.
+        if lower.startswith("open_app "):
+            return None
+        return None
 
     @staticmethod
     def __get_event_type(step: Union[StepResult, Dict[str, Any]]) -> str:
@@ -1543,14 +1682,32 @@ class ScriptExporter:
                 rationale = action.rationale
                 wait_duration = action.wait_duration
                 is_app_launcher_signal = action.is_app_launcher
+                wait_subject = action.wait_subject
+                wait_pattern = action.wait_pattern
             else:
                 text = step.get("text")
                 rationale = str(object=step.get("rationale", ""))
                 wait_duration = step.get("wait_duration")
                 is_app_launcher_signal = bool(step.get("is_app_launcher", False))
+                wait_subject = step.get("wait_subject")
+                wait_pattern = step.get("wait_pattern")
 
             if action_type_val == "wait" and target.lower() in ScriptExporter.__GENERIC_TARGETS:
-                target = ScriptExporter.__infer_wait_subject(rationale=rationale)
+                # Prefer structured wait_subject field with pattern as fallback to rationale
+                if wait_subject:
+                    target = wait_subject
+                elif wait_pattern:
+                    pattern_map = {
+                        "ad": "ad to finish",
+                        "splash": "app to finish loading",
+                        "load": "app to finish loading",
+                        "search": "search results to appear",
+                    }
+                    target = pattern_map.get(wait_pattern, "screen to load")
+                else:
+                    target = ScriptExporter.__infer_wait_subject(
+                        rationale=rationale, wait_subject=None
+                    )
 
             description = Normalizer.action(
                 action_type=action_type_val, target=target, text=text, wait_duration=wait_duration
@@ -1875,9 +2032,23 @@ class ScriptExporter:
         end: int,
     ) -> str:
         """
-        Infer what the user was scrolling to find from swipe rationales.
+        Infer what the user was scrolling to find from structured scroll_target field or swipe rationales.
+        Prioritizes structured scroll_target over rationale parsing.
         """
 
+        # First check if any step has structured scroll_target
+        for j in range(start, min(end, start + 5)):
+            step = steps[j]
+            if isinstance(step, StepResult):
+                scroll_target = step.step.action.scroll_target
+                if scroll_target:
+                    return scroll_target
+            else:
+                scroll_target = step.get("scroll_target")
+                if scroll_target:
+                    return str(scroll_target)
+
+        # Fallback to rationale parsing
         for j in range(start, min(end, start + 5)):
             step = steps[j]
             if isinstance(step, StepResult):
@@ -1889,18 +2060,53 @@ class ScriptExporter:
             verb_match = ScriptExporter.__SCROLL_VERB_RE.search(string=rationale)
             if not verb_match:
                 continue
-            clause = verb_match.group(1)
+            clause = verb_match.group(1).strip()
+
+            # Try extracting quoted phrases first (e.g., 'Vitamins and supplements', "Lab tests")
+            quoted_match = re.search(r"['\"]([^'\"]+)['\"]", clause)
+            if quoted_match:
+                extracted = quoted_match.group(1).strip()
+                # Clean up common suffixes
+                extracted = re.sub(
+                    r"\s+(section|category|area|page|screen|button|tab|widget)$",
+                    "",
+                    extracted,
+                    flags=re.IGNORECASE,
+                )
+                if extracted:
+                    return extracted
+
+            # Fall back to proper phrase matching
             product_match = ScriptExporter.__PROPER_PHRASE_RE.search(string=clause)
             if product_match:
                 return product_match.group(1).strip()
+
+            # Last resort: clean up the clause and extract meaningful content
+            # Remove common stop words and suffixes
+            cleaned = re.sub(r"^the\s+", "", clause, flags=re.IGNORECASE)
+            cleaned = re.sub(
+                r"\s+(section|category|area|page|screen|button|tab|widget)$",
+                "",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
+            cleaned = cleaned.strip(" ,'\"")
+            if cleaned and len(cleaned) > 5:  # Avoid too-short generic phrases
+                return cleaned
         return ""
 
     @staticmethod
-    def __infer_wait_subject(rationale: Optional[str]) -> str:
+    def __infer_wait_subject(rationale: Optional[str], wait_subject: Optional[str] = None) -> str:
         """
-        Derive a human-readable wait subject from the step rationale.
+        Derive a human-readable wait subject from structured wait_subject field or step rationale.
+        Prioritizes structured wait_subject over rationale parsing.
         """
 
+        # Use structured field if available
+        if wait_subject:
+            return wait_subject
+
+        # Fallback to rationale normalization
         return Normalizer.wait_subject(rationale=rationale) or "screen to load"
 
     @staticmethod

@@ -136,6 +136,38 @@ class Action(BaseModel):
         description="Set to true when this tap action is specifically intended to launch or focus the target app. Helps the exporter replace launcher taps with OPEN_APP semantics.",
     )
 
+    # Structured signal details for export (VLM-provided; avoids regex parsing of rationale)
+    scroll_target: Optional[str] = Field(
+        default=None,
+        description="For scroll/swipe actions: the element or section being scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and packages'). Use the exact phrase from the UI when possible.",
+    )
+    wait_subject: Optional[str] = Field(
+        default=None,
+        description="For wait actions: what we're waiting for (e.g., 'app to load', 'search results to appear', 'Home page content'). Describe the expected state or element.",
+    )
+    validation_subject: Optional[str] = Field(
+        default=None,
+        description="For validate actions: what specifically is being validated (e.g., 'login status', 'banner visibility', 'item alignment'). Be specific about the validation target.",
+    )
+    target_is_generic: Optional[bool] = Field(
+        default=None,
+        description="Set to true when this action taps/selects a non-specific target (e.g., 'any item', 'random category', 'first result'). Signals that target should be generalized in export.",
+    )
+    target_element_type: Optional[
+        Literal["button", "icon", "option", "link", "field", "text", "checkbox"]
+    ] = Field(
+        default=None,
+        description="For tap/interact actions: the element type/role (button, icon, option, etc.). Helps refine target descriptions when product-specific elements are tapped.",
+    )
+    validation_pattern: Optional[Literal["blocker", "transient", "error", "generic"]] = Field(
+        default=None,
+        description="For validate actions: the pattern category - blocker (permission/popup/consent), transient (loading/spinner), error (network/validation error), or generic check.",
+    )
+    wait_pattern: Optional[Literal["ad", "splash", "load", "search", "generic"]] = Field(
+        default=None,
+        description="For wait actions: the wait category - ad (ad to finish), splash (app splash screen), load (content loading), search (search results), or generic.",
+    )
+
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
     def to_description(self) -> str:
@@ -146,7 +178,8 @@ class Action(BaseModel):
         # Resolve best target description.
         name = self.natural_language_target
 
-        if not name or name.lower() in ("element", "ui element", "none", "label", "unknown"):
+        lowered = (name or "").strip().lower()
+        if not name or lowered in ("element", "ui element", "none", "label", "unknown"):
             # Fallback to label ID or bounds if natural language target is generic/missing
             if self.label_id:
                 name = f"Element (Label {self.label_id})"
@@ -155,7 +188,7 @@ class Action(BaseModel):
                 name = f"Element at [{self.bounds.x}, {self.bounds.y}]"
 
             else:
-                name = self.target or "UI Element"
+                name = self.target or "element"
 
         if self.action_type == ActionType.TAP:
             return f"Tap on {name}"

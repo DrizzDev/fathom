@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
@@ -24,9 +24,21 @@ class AnalysisResult(BaseModel):
     is_goal_complete: bool = Field(
         default=False, description="Whether the user intent has been fully achieved"
     )
+    goal_completion_reason: Optional[str] = Field(
+        default=None,
+        description="Explicit reason why the goal is complete (e.g., 'Order placed successfully', 'Feature verified on screen'). Used for intent verification.",
+    )
     is_sub_goal_complete: bool = Field(
         default=False,
         description="Whether the current decomposed sub-goal is complete",
+    )
+    subgoal_completion_reason: Optional[str] = Field(
+        default=None,
+        description="Explicit reason why the sub-goal is complete (e.g., 'Item added to cart', 'User authenticated'). Used for verification and audit trails.",
+    )
+    completion_criteria_met: Optional[List[str]] = Field(
+        default=None,
+        description="List of criteria/conditions that triggered completion (e.g., ['payment_processed', 'order_confirmed']). For multi-condition verifications.",
     )
     memories: int = Field(
         default=0, description="Number of historical experiences retrieved for this state"
@@ -43,21 +55,6 @@ class AnalysisResult(BaseModel):
     gemini_delta: Optional[GeminiDeltaSignal] = Field(
         default=None, description="Optional model-provided semantic delta hints"
     )
-
-    @model_validator(mode="after")
-    def __enforce_completion_flag_consistency(self) -> "AnalysisResult":
-        """
-        Enforce consistency between terminal COMPLETE actions and completion flags.
-
-        Defensive normalization: if the model/parser yields a COMPLETE action with
-        stale booleans, align both flags to True so sub-goal progression cannot stall.
-        """
-
-        if self.action.action_type.value == "complete":
-            self.is_goal_complete = True
-            self.is_sub_goal_complete = True
-
-        return self
 
 
 class StrategyResult(BaseModel):
@@ -111,6 +108,18 @@ class IntentResult(WorkflowResult):
     )
     memory_summary: Dict[str, Any] = Field(
         default_factory=dict, description="Summary of Knowledge Graph"
+    )
+
+    executed_subgoals: List[str] = Field(
+        default_factory=list,
+        description="List of sub-goal descriptions that were executed and completed",
+    )
+    skipped_subgoals: List[str] = Field(
+        default_factory=list,
+        description="List of sub-goal descriptions that were skipped (should be empty for successful execution)",
+    )
+    subgoal_count: int = Field(
+        default=0, ge=0, description="Total number of sub-goals in the decomposition"
     )
 
 

@@ -377,8 +377,9 @@ class AgentState:
         if not current:
             return False
 
-        # Single-signal policy: gate on explicit LLM completion signal.
-        # Preserve rationale flag for telemetry/observability.
+        # NOTE: Completion gating happens in planner with two-signal policy (llm + rationale).
+        # This method just records the signals and advances. Trace verification is disabled
+        # to prevent false positives from screen changes unrelated to sub-goal completion.
         updated_signal = SubGoalCompletionSignal(
             evidence=completion_signal.evidence,
             llm_confidence=completion_signal.llm_confidence,
@@ -399,7 +400,7 @@ class AgentState:
         signal_count = updated_signal.count_signals()
         logger.info(
             f"[AgentState] Sub-goal {current.index} marked complete: {current.description} | "
-            f"Signals: {signal_count}/2 [llm={updated_signal.llm_signaled}, "
+            f"Signals: {signal_count} [llm={updated_signal.llm_signaled}, "
             f"trace={updated_signal.trace_verified}, rationale={updated_signal.rationale_verified}] | "
             f"Evidence: {updated_signal.evidence}"
         )

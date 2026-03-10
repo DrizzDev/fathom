@@ -100,6 +100,11 @@ class ScriptExportStructuredPayload(BaseModel):
 
         ordered_action_ids: List[str] = []
         for block in self.conditional_blocks:
+            # Normalize condition text and enforce non-empty after stripping.
+            condition_text = block.condition.strip()
+            if not condition_text:
+                raise ValueError("Conditional block condition must not be empty.")
+
             ordered_action_ids.extend(
                 action_id.strip() for action_id in block.action_ids if action_id.strip()
             )
@@ -125,6 +130,26 @@ class ScriptExportStructuredPayload(BaseModel):
                     f"First executable action ID must be exactly: {self.required_open_app_id}"
                 )
 
+        # Enforce that action IDs inside each conditional block respect the canonical
+        # execution order when we have required_action_ids available. This keeps
+        # conditionals structurally aligned with the underlying trace while leaving
+        # Gemini free to choose which subset to include.
+        if self.required_action_ids:
+            rank = {
+                action_id.strip(): index
+                for index, action_id in enumerate(self.required_action_ids)
+                if action_id.strip()
+            }
+            for block in self.conditional_blocks:
+                indices = [rank.get(aid.strip(), -1) for aid in block.action_ids if aid.strip()]
+                filtered = [index for index in indices if index >= 0]
+                if not filtered:
+                    continue
+                if any(b < a for a, b in zip(filtered, filtered[1:], strict=False)):
+                    raise ValueError(
+                        "Conditional block action_ids must follow the canonical step order."
+                    )
+
         if self.required_action_ids and Counter(ordered_action_ids) != Counter(
             self.required_action_ids
         ):
@@ -142,15 +167,42 @@ class ScriptExportStructuredPayload(BaseModel):
             if self.action_catalog[action_id].strip().lower().startswith("open_app "):
                 raise ValueError("action_validations cannot target OPEN_APP actions.")
 
-        # Enforce validation distribution when multiple validations are expected
+        # Reject degenerate duplicated conditional blocks that use the same condition
+        # text but whose action ID sets are strict subsets of one another. This keeps
+        # IF structure meaningful without inspecting the semantic content of conditions.
+        if self.conditional_blocks:
+            normalized_blocks: List[tuple[str, set[str]]] = []
+            for block in self.conditional_blocks:
+                condition_text = block.condition.strip().lower()
+                id_set = {aid.strip() for aid in block.action_ids if aid.strip()}
+                normalized_blocks.append((condition_text, id_set))
+
+            for i in range(len(normalized_blocks)):
+                cond_i, ids_i = normalized_blocks[i]
+                if not ids_i:
+                    continue
+                for j in range(i + 1, len(normalized_blocks)):
+                    cond_j, ids_j = normalized_blocks[j]
+                    if cond_i != cond_j:
+                        continue
+                    if ids_i and ids_j and (ids_i < ids_j or ids_j < ids_i):
+                        raise ValueError(
+                            "Degenerate duplicate conditional blocks detected for the same condition."
+                        )
+
+        # Enforce validation distribution when multiple validations are expected.
+        # When require_if_block is True we relax this so conditional blocks are not
+        # rejected solely for under-provided validations (e.g. 1 final only).
         if self.expected_validation_count > 1:
             total_validations = len(self.action_validations) + 1  # +1 for final_validation
-            if total_validations < self.expected_validation_count:
+            min_required = 1 if self.require_if_block else 2
+            if total_validations < min_required:
                 raise ValueError(
-                    f"Intent requires {self.expected_validation_count} validations, "
-                    f"but only {total_validations} were provided. "
-                    f"Expected at least {self.expected_validation_count - 1} intermediate validations in action_validations "
-                    f"(found {len(self.action_validations)})."
+                    f"Intent has {self.expected_validation_count} validation subjects, "
+                    f"but only {total_validations} validation statement(s) were provided. "
+                    f"Expected at least {min_required} validations total "
+                    f"(found {len(self.action_validations)} intermediate + 1 final). "
+                    f"Multiple subjects can be covered by a single validation statement."
                 )
 
         return self
@@ -323,6 +375,40 @@ class ScriptExportPayload(BaseModel):
             has_if_block = any(line.lower().startswith("if ") and "{" in line for line in lines)
             if not has_if_block:
                 raise ValueError("Script must contain at least one IF conditional block.")
+
+            # Additionally require that at least one IF block guards a non-trivial body with
+            # more than one non-structural line (e.g., an action and/or validation), to avoid
+            # accepting degenerate empty or single-line shells.
+            max_body_statements = 0
+            in_if_block = False
+            current_body_count = 0
+            for raw in lines:
+                line = raw.strip()
+                if not line:
+                    continue
+                if line.lower().startswith("if ") and "{" in line:
+                    # Starting a new IF block.
+                    if in_if_block:
+                        max_body_statements = max(max_body_statements, current_body_count)
+                    in_if_block = True
+                    current_body_count = 0
+                    continue
+                if line == "}":
+                    if in_if_block:
+                        max_body_statements = max(max_body_statements, current_body_count)
+                        in_if_block = False
+                        current_body_count = 0
+                    continue
+                if in_if_block:
+                    current_body_count += 1
+
+            if in_if_block:
+                max_body_statements = max(max_body_statements, current_body_count)
+
+            if max_body_statements <= 1:
+                raise ValueError(
+                    "Script must contain at least one non-trivial IF block with multiple statements."
+                )
 
         statements = __extract_action_statements(raw_lines=lines)
         last_non_structural = statements[-1] if statements else ""

@@ -191,6 +191,21 @@ class IntentStrategy:
             "completion_reason": self.__graph_context.agent_state.completion_reason,
         }
 
+    def get_subgoal_execution_audit(self) -> tuple[list[str], list[str], int]:
+        """
+        Get audit trail of executed vs skipped subgoals.
+
+        Returns:
+            Tuple of (executed_descriptions, skipped_descriptions, total_count)
+        """
+        from fathom.schemas.subgoal import SubGoalStatus
+
+        subgoals = self.__graph_context.agent_state.sub_goal_list
+        executed = [sg.description for sg in subgoals if sg.status == SubGoalStatus.COMPLETE]
+        skipped = [sg.description for sg in subgoals if sg.status == SubGoalStatus.SKIPPED]
+
+        return executed, skipped, len(subgoals)
+
     def get_metrics(self) -> ExecutionMetrics:
         """
         Get execution metrics.

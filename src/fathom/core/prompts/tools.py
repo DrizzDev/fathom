@@ -41,7 +41,20 @@ class ToolRegistry:
 
         return {
             "name": "execute_ui",
-            "description": "Execute a sequence of UI actions on the device to achieve a specific sub-goal or the final goal. Use this to interact with the app, including explicit validation checks via action_type='validate'. IMPORTANT: When launching a target app (when a package_name is known), prefer signaling app completion via 'goal_completed: true' or 'sub_goal_completed: true' rather than emitting an explicit 'tap' action on the app icon. The system will normalize app launch intents automatically.",
+            "description": (
+                "Execute a sequence of UI actions on the device to achieve a specific sub-goal "
+                "or the final goal. Use this to interact with the app, including explicit "
+                "validation checks via action_type='validate'. "
+                "IMPORTANT: When launching a target app (when a package_name is known), prefer "
+                "signaling app completion via 'goal_completed: true' or 'sub_goal_completed: true' "
+                "rather than emitting an explicit 'tap' action on the app icon. The system will "
+                "normalize app launch intents automatically. "
+                "CRITICAL: For every UI action you MUST provide a concrete, user-facing target "
+                "phrase via 'target_name' or 'script_target' (e.g., 'Search box', "
+                "'Add to cart button', 'the first search result'). NEVER use placeholders like "
+                "'UI Element', 'element', 'button', 'label', 'icon', 'field', or 'text' as the "
+                "only target description."
+            ),
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
@@ -57,11 +70,10 @@ class ToolRegistry:
                             "properties": {
                                 "action_type": {
                                     "type": "STRING",
-                                    "description": "The type of action to perform.",
+                                    "description": "The type of action to perform. Use swipe_* for all scrolling gestures.",
                                     "enum": [
                                         "tap",
                                         "type",
-                                        "scroll",
                                         "swipe_left",
                                         "swipe_right",
                                         "swipe_up",
@@ -79,7 +91,14 @@ class ToolRegistry:
                                 },
                                 "target_name": {
                                     "type": "STRING",
-                                    "description": "Descriptive name of the element (e.g., 'search bar', 'bathroom cleaning service option').",
+                                    "description": (
+                                        "Descriptive, user-facing name of the element "
+                                        "(e.g., 'Search box', 'Add to cart button', "
+                                        "'Settings tab'). MUST NOT be a generic placeholder "
+                                        "like 'element', 'UI Element', 'button', 'label', "
+                                        "or 'icon'. Always choose the text a human tester "
+                                        "would naturally say when referring to this element."
+                                    ),
                                 },
                                 "label_id": {
                                     "type": "STRING",
@@ -144,7 +163,54 @@ class ToolRegistry:
                                 },
                                 "script_target": {
                                     "type": "STRING",
-                                    "description": "When target_type is positional or dynamic, the exact phrase for script export (e.g. 'the first search result', 'the promotional banner'). Omit for stable.",
+                                    "description": (
+                                        "When target_type is 'positional' or 'dynamic', the "
+                                        "exact natural-language phrase that should appear in "
+                                        "exported scripts (e.g. 'the first search result', "
+                                        "'the promotional banner', 'the selected cart item'). "
+                                        "Treat this field as REQUIRED whenever target_type is "
+                                        "'positional' or 'dynamic'. The phrase MUST be specific "
+                                        "and user-facing, not a generic placeholder."
+                                    ),
+                                },
+                                "scroll_target": {
+                                    "type": "STRING",
+                                    "description": "For scroll/swipe actions: the element or section being scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and packages'). Use the exact phrase from the UI when possible.",
+                                },
+                                "wait_subject": {
+                                    "type": "STRING",
+                                    "description": "For wait actions: what we're waiting for (e.g., 'app to load', 'search results to appear', 'Home page content'). Describe the expected state or element.",
+                                },
+                                "validation_subject": {
+                                    "type": "STRING",
+                                    "description": "For validate actions: what specifically is being validated (e.g., 'login status', 'banner visibility', 'item alignment'). Be specific about the validation target.",
+                                },
+                                "target_is_generic": {
+                                    "type": "BOOLEAN",
+                                    "description": "Set to true when this action taps/selects a non-specific target (e.g., 'any item', 'random category', 'first result'). Signals that target should be generalized in export.",
+                                },
+                                "target_element_type": {
+                                    "type": "STRING",
+                                    "enum": [
+                                        "button",
+                                        "icon",
+                                        "option",
+                                        "link",
+                                        "field",
+                                        "text",
+                                        "checkbox",
+                                    ],
+                                    "description": "For tap/interact actions: the element type/role (button, icon, option, etc.). Helps refine target descriptions when product-specific elements are tapped.",
+                                },
+                                "validation_pattern": {
+                                    "type": "STRING",
+                                    "enum": ["blocker", "transient", "error", "generic"],
+                                    "description": "For validate actions: the pattern category - blocker (permission/popup/consent), transient (loading/spinner), error (network/validation error), or generic check.",
+                                },
+                                "wait_pattern": {
+                                    "type": "STRING",
+                                    "enum": ["ad", "splash", "load", "search", "generic"],
+                                    "description": "For wait actions: the wait category - ad (ad to finish), splash (app splash screen), load (content loading), search (search results), or generic.",
                                 },
                             },
                             "required": ["action_type", "rationale", "is_valid"],
@@ -154,9 +220,22 @@ class ToolRegistry:
                         "type": "BOOLEAN",
                         "description": "True if the user's high-level goal is fully achieved after these actions.",
                     },
+                    "goal_completion_reason": {
+                        "type": "STRING",
+                        "description": "Explicit reason why the goal is complete (e.g., 'Order placed successfully', 'Feature verified on screen'). Required when goal_completed=true.",
+                    },
                     "sub_goal_completed": {
                         "type": "BOOLEAN",
-                        "description": "True if the current sub-goal is completed after these actions.",
+                        "description": "True if the current sub-goal is completed after these actions. CONSTRAINT: You CANNOT skip sub-goals. All sub-goals must be executed in order. If you cannot complete the current sub-goal, ask the user for help or explain the blockage. Do NOT emit any signal that means 'skip this sub-goal'.",
+                    },
+                    "subgoal_completion_reason": {
+                        "type": "STRING",
+                        "description": "Explicit reason why the sub-goal is complete (e.g., 'Item added to cart', 'User authenticated'). Required when sub_goal_completed=true.",
+                    },
+                    "completion_criteria_met": {
+                        "type": "ARRAY",
+                        "description": "List of criteria/conditions that triggered completion (e.g., ['payment_processed', 'order_confirmed']). Use for multi-condition completions.",
+                        "items": {"type": "STRING"},
                     },
                     "content_exhausted": {
                         "type": "BOOLEAN",
@@ -172,7 +251,7 @@ class ToolRegistry:
                     },
                     "delta_observed": {
                         "type": "BOOLEAN",
-                        "description": "REQUIRED: Whether a meaningful screen change was observed since the previous screenshot.",
+                        "description": "Whether a meaningful screen change was observed since the previous screenshot. Strongly RECOMMENDED when the model can assess semantic deltas; omit only when unsure or when no comparison is possible.",
                     },
                     "delta_reasoning": {
                         "type": "STRING",
@@ -180,7 +259,7 @@ class ToolRegistry:
                     },
                     "delta_confidence": {
                         "type": "NUMBER",
-                        "description": "REQUIRED: Confidence score (0.0-1.0) for delta_observed.",
+                        "description": "Confidence score (0.0-1.0) for delta_observed. Strongly RECOMMENDED whenever delta_observed is provided; omit only when the model cannot estimate confidence.",
                     },
                     "visible_anchors": {
                         "type": "ARRAY",
@@ -205,8 +284,6 @@ class ToolRegistry:
                     "actions",
                     "goal_completed",
                     "sub_goal_completed",
-                    "delta_observed",
-                    "delta_confidence",
                 ],
             },
         }
