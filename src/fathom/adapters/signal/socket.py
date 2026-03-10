@@ -45,6 +45,13 @@ class SocketSignal(SignalPort):
         # Start server immediately
         self.__setup_server()
 
+    def supports_interruption(self) -> bool:
+        """
+        Return interruption support for this adapter.
+        """
+
+        return True
+
     def __setup_server(self) -> None:
         """
         Starts the async socket server.

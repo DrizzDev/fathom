@@ -8,7 +8,6 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
-from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
 from fathom.constants.execution import LAUNCHER_PACKAGES, VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
@@ -180,10 +179,10 @@ class IntentNodeProvider:
 
             start_time = time.time()
 
-            # 1. Capture State (Screenshot + XML)
-            screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
+            # 1. Capture State (Screenshot + optional hierarchy)
+            screen = await self.__context.perception.perceive(session_id=self.__context.workflow_id)
 
-            if not screenshot_bytes or len(screenshot_bytes) == 0:
+            if not screen.image:
                 await self.__context.telemetry.error(
                     "Ground: Empty screenshot captured",
                     step=self.__context.agent_state.step_count + 1,
@@ -200,7 +199,8 @@ class IntentNodeProvider:
                 )
 
             # 2. Capture Dimensions (Independent hardware metadata)
-            width, height = await self.__context.device.get_dimensions()
+            width = screen.width
+            height = screen.height
             logger.info(f"Device dimension is {height=}x{width=}")
 
             # Validate dimensions
@@ -220,50 +220,10 @@ class IntentNodeProvider:
                     },
                 )
 
-            # Get current package
-            try:
-                activity = await self.__context.device.get_current_package()
-            except Exception as exception:
-                await self.__context.telemetry.warning(
-                    f"Ground: Failed to get current package: {exception}",
-                    step=self.__context.agent_state.step_count + 1,
-                )
-                activity = "unknown"
-
-            # Persist capture in background to avoid blocking
-            asyncio.create_task(
-                self.__context.storage.save(
-                    data=screenshot_bytes,
-                    metadata={
-                        "type": "screenshots",
-                        "category": "screenshot",
-                        "timestamp": time.time(),
-                        "package_name": activity,
-                        "activity_name": activity,
-                        "session_id": self.__context.workflow_id,
-                        "filename": f"{int(time.time() * 1000)}__{activity}.png",
-                    },
-                )
-            )
-            storage_id = "pending_background_upload"
-
-            screen = ScreenCapture(
-                width=width,
-                height=height,
-                activity=activity,
-                image=screenshot_bytes,
-                timestamp=int(time.time() * 1000),
-                metadata={"storage_id": storage_id},
-            )
+            activity = screen.activity
 
             # XML Dump if enabled
-            xml: Optional[str] = None
-
-            if isinstance(xml_content, bytes):
-                xml = xml_content.decode("utf-8", errors="ignore")
-
-            elif isinstance(xml_content, str):
-                xml = xml_content
+            xml = screen.xml_content
 
             elements = None
 
@@ -406,7 +366,6 @@ class IntentNodeProvider:
             # Check injected context
             current_step = self.__context.agent_state.step_count
             state_injected = state.get(IntentStateKey.INJECTED_CONTEXT)
-
             guidance_snapshot = self.__context.context_manager.get_user_guidance()
             logger.debug(
                 f"[H3] Analysis Context | Step: {current_step} | "
@@ -422,10 +381,10 @@ class IntentNodeProvider:
                 elements = raw_elements
 
             # Get Device Dimensions for Accurate Normalization (Strict)
-            width, height = await self.__context.device.get_dimensions()
+            width, height = await self.__context.perception_port.get_dimensions()
 
             # Determine interactive mode & config for planner
-            is_interactive = not isinstance(self.__context.signal, NoopSignal)
+            is_interactive = self.__context.signal.supports_interruption()
             prompt_if_stuck = self.__context.configuration.intent.prompt_user_if_stuck
 
             # HITL: Check for pause request or context injection before planning
@@ -476,12 +435,6 @@ class IntentNodeProvider:
                     type=FathomEvent.PLANNED_ACTION,
                     step=current_step + 1,
                 )
-
-                self.__context.ux.render_fallback(
-                    reasoning=plan.reason or "No reasoning",
-                    action=plan.step.action.to_description(),
-                    step_number=self.__context.agent_state.step_count + 1,
-                )
             else:
                 logger.warning(
                     f"[NODE: ANALYZE] No step planned: is_complete={plan.is_complete}, "
@@ -497,7 +450,6 @@ class IntentNodeProvider:
             completion_reason = (
                 plan.reason if plan.is_complete else state.get(CommonStateKey.COMPLETION_REASON)
             )
-
             result = cast(
                 "IntentGraphState",
                 {
@@ -671,16 +623,16 @@ class IntentNodeProvider:
         )
 
         try:
-            post_screenshot = await self.__context.device.capture_screen()
+            post_capture = await self.__context.perception_port.capture()
 
-            if post_screenshot:
+            if post_capture.image:
                 # Construct a temporary ScreenCapture for hashing, inheriting metadata from pre_capture
                 temp_capture = ScreenCapture(
-                    image=post_screenshot,
+                    image=post_capture.image,
                     width=capture.width,
                     height=capture.height,
-                    activity=package_name,
-                    timestamp=int(time.time() * 1000),
+                    activity=post_capture.activity,
+                    timestamp=post_capture.timestamp,
                 )
                 post_hash = self.__context.perception.compute_visual_hash(capture=temp_capture)
             else:
@@ -787,7 +739,6 @@ class IntentNodeProvider:
                 current_activity = await self.__context.device.get_current_package()
             except Exception:
                 current_activity = "unknown"
-
             execution_activity = "unknown"
             screen_state_value = state.get(CommonStateKey.SCREEN_STATE)
             if isinstance(screen_state_value, ScreenState):
@@ -821,7 +772,9 @@ class IntentNodeProvider:
                     f"[NODE: RECORD] Recording step to history. Observed={current_activity}"
                 )
                 await self.__context.history.save_step(
-                    result=step_result, intent=self.__context.intent, activity=current_activity
+                    result=step_result,
+                    intent=self.__context.intent,
+                    package_name=current_activity,
                 )
 
             # Emit enriched telemetry for the UI to render full step details
@@ -911,27 +864,6 @@ class IntentNodeProvider:
                 await self.__context.context_manager.branch()
 
             execution_plan = state.get(IntentStateKey.PLAN)
-            current_screen = state.get(CommonStateKey.SCREEN_STATE)
-            is_new_screen = state.get(CommonStateKey.IS_NEW_SCREEN)
-
-            if (
-                isinstance(execution_plan, PlanResult)
-                and isinstance(current_screen, ScreenState)
-                and isinstance(is_new_screen, bool)
-            ):
-                self.__context.auditor.log_step(
-                    plan=execution_plan,
-                    state=current_screen,
-                    hierarchy_duration=0.0,
-                    is_new_screen=is_new_screen,
-                    result=step_result.to_record(),
-                    analysis_duration=analysis_duration,
-                    execution_duration=execution_duration,
-                    grounding_duration=grounding_duration,
-                    is_stuck=self.__context.agent_state.is_stuck,
-                    step_count=self.__context.agent_state.step_count,
-                    total_duration=grounding_duration + analysis_duration + execution_duration,
-                )
 
             if isinstance(execution_plan, PlanResult) and execution_plan.is_complete:
                 logger.info("[NODE: RECORD] Plan indicates completion. This is the final step.")
@@ -1001,7 +933,8 @@ class IntentNodeProvider:
 
         # 1. Capture the latest screen state
         try:
-            image_bytes = await self.__context.device.capture_screen()
+            capture = await self.__context.perception_port.capture()
+            image_bytes = capture.image
             if not image_bytes:
                 logger.warning("[NODE: VERIFY] Failed to capture screen for verification")
                 self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)

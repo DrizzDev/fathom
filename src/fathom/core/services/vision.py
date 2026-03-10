@@ -8,16 +8,17 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional, TypedDict
 
+from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import VisionError
 from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
-from fathom.core.services.audit import AuditService
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.storage import StoragePort
+from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
@@ -43,12 +44,12 @@ class VisionService:
         llm: LLMPort,
         memory: MemoryPort,
         storage: StoragePort,
+        telemetry: TelemetryPort,
         *,
         use_cache: bool,
         version: str = "pro",
         session_id: str = "not_set",
         package_name: str = "unknown",
-        auditor: Optional[AuditService] = None,
     ) -> None:
         """
         Initialize vision service.
@@ -57,12 +58,12 @@ class VisionService:
         self.__llm = llm
         self.__memory = memory
         self.__storage = storage
+        self.__telemetry = telemetry
 
         self.__version = version
         self.__use_cache = use_cache
         self.__session_id = session_id
         self.__package_name = package_name
-        self.__auditor = auditor or AuditService()
         self.__parser = ToolResponseParser()
 
         # Use the original prompt builder factory
@@ -142,6 +143,15 @@ class VisionService:
         full_context = context_manager.get_full_context()
         guidance = full_context.get("guidance")
 
+        await self.__telemetry.debug(
+            "Compiled execution context",
+            type=FathomEvent.CONTEXT_CAPTURED,
+            session_id=self.__session_id,
+            trace_count=len(full_context.get("trace", [])),
+            milestone_count=len(full_context.get("milestones", [])),
+            guidance_count=len(context_manager.get_user_guidance()),
+        )
+
         logger.debug(
             f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
         )
@@ -220,8 +230,13 @@ class VisionService:
             f"[VISION] Assembly | Manifest: {manifest_duration:.3f}s | Payload: {payload_duration:.3f}s"
         )
 
-        # Log prompt context for visibility
-        self.__auditor.log_prompt(payload=payload, instruction=instruction)
+        await self.__telemetry.debug(
+            "Built vision prompt",
+            type=FathomEvent.PROMPT_BUILT,
+            session_id=self.__session_id,
+            instruction=instruction,
+            payload=self.__sanitize_recursive(data=payload),
+        )
 
         # 4. EXECUTION WITH VALIDATION-AWARE RETRY
         max_validation_retries = 1
@@ -331,6 +346,19 @@ class VisionService:
         )
 
         return analysis
+
+    def __sanitize_recursive(self, data: Any) -> Any:
+        """
+        Replace binary prompt content with stable descriptors.
+        """
+
+        if isinstance(data, bytes):
+            return f"<binary:{len(data)}>"
+        if isinstance(data, dict):
+            return {key: self.__sanitize_recursive(data=value) for key, value in data.items()}
+        if isinstance(data, (list, tuple)):
+            return [self.__sanitize_recursive(item) for item in data]
+        return data
 
     async def check_completion(
         self,

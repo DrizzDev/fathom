@@ -20,9 +20,8 @@ except ImportError:
 from PIL import Image
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
-from fathom.interfaces.device import DevicePort
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.storage import StoragePort
-from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.screens import ScreenCapture
 
 logger = getLogger(__name__)
@@ -35,14 +34,12 @@ class PerceptionService:
 
     def __init__(
         self,
-        device: DevicePort,
+        perception: PerceptionPort,
         storage: StoragePort,
-        telemetry: TelemetryPort,
         session_id: Optional[str] = None,
     ) -> None:
-        self.__device = device
+        self.__perception = perception
         self.__storage = storage
-        self.__telemetry = telemetry
         self.__session_id = session_id
 
     async def perceive(self, session_id: Optional[str] = None) -> ScreenCapture:
@@ -57,32 +54,18 @@ class PerceptionService:
         if not effective_session_id:
             raise ValueError("session_id must be provided either in __init__ or perceive()")
 
-        screenshot_bytes = await self.__device.capture_screen()
-        width, height = await self.__device.get_dimensions()
-
-        # Get current activity
-        try:
-            activity = await self.__device.get_current_package()
-        except Exception as exception:
-            await self.__telemetry.warning("Failed to get current package", error=str(exception))
-            activity = "unknown"
+        capture = await self.__perception.capture()
 
         # Store screenshot artifact with metadata for structured storage
         storage_id = await self.__persist_capture(
-            data=screenshot_bytes,
-            package_name=activity,
-            activity_name=activity,
+            data=capture.image,
+            package_name=capture.activity,
+            activity_name=capture.activity,
             session_id=effective_session_id,
         )
-
-        return ScreenCapture(
-            width=width,
-            height=height,
-            activity=activity,
-            image=screenshot_bytes,
-            timestamp=int(time.time() * 1000),
-            metadata={"storage_id": storage_id},
-        )
+        metadata = dict(capture.metadata)
+        metadata["storage_id"] = storage_id
+        return capture.model_copy(update={"metadata": metadata})
 
     async def __persist_capture(
         self, data: bytes, package_name: str, activity_name: str, session_id: str

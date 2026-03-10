@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ActionType
-from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
 from fathom.processing.annotator import ImageAnnotator
 from fathom.processing.drawer import BoundsGenerator
@@ -24,12 +23,10 @@ class HierarchyService:
     Service responsible for UI hierarchy analysis. Optimized for high-speed grounding.
     """
 
-    def __init__(self, device: DevicePort, storage: Optional[StoragePort] = None) -> None:
+    def __init__(self, storage: Optional[StoragePort] = None) -> None:
         """
-        Initialize hierarchy service with device port.
+        Initialize hierarchy service.
         """
-
-        self.__device = device
         self.__storage = storage
         self.__label_map: Dict[str, Any] = {}
         self.__background_tasks: set[asyncio.Task[Any]] = set()

@@ -27,7 +27,7 @@ class FathomBaseWorkflow:
         try:
             workflow.info()
             workflow.logger.log(level, message)
-        except Exception:
+        except RuntimeError:
             logger.log(level, message)
 
     @workflow.signal  # type: ignore[untyped-decorator]

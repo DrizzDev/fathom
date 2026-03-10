@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.schemas.configuration import DeviceConfiguration
 from fathom.schemas.results import WorkflowResult
 from fathom.schemas.steps import StepResult
 
@@ -286,7 +287,10 @@ class WorkflowRequest(BaseModel):
     """
 
     intent: str = Field(..., description="User goal")
-    device_serial: Optional[str] = Field(default=None, description="Device serial number")
+    device: DeviceConfiguration = Field(
+        default_factory=DeviceConfiguration,
+        description="Explicit device adapter configuration",
+    )
     package_name: Optional[str] = Field(default=None, description="Target application package")
     session_id: str = Field(
         default_factory=lambda: uuid.uuid4().hex[:8], description="Unique session ID"

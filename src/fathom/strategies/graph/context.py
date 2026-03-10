@@ -9,7 +9,6 @@ from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.core.services.action import ActionExecutor
-from fathom.core.services.audit import AuditService
 from fathom.core.services.exporter import ScriptExporter
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
@@ -17,12 +16,12 @@ from fathom.core.services.hitl import HITLService
 from fathom.core.services.perception import PerceptionService
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.trace import TraceService
-from fathom.core.services.ux import UXService
 from fathom.core.services.vision import VisionService
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
@@ -45,6 +44,7 @@ class GraphContext:
         intent: str,
         llm: LLMPort,
         device: DevicePort,
+        perception: PerceptionPort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
@@ -56,19 +56,17 @@ class GraphContext:
         max_steps: int,
         workflow_id: str,
         package_name: str,
-        ux: Optional[UXService] = None,
         reasoner: Optional[Reasoner] = None,
         trace: Optional[TraceService] = None,
         planner: Optional[StepPlanner] = None,
         vision: Optional[VisionService] = None,
-        auditor: Optional[AuditService] = None,
         agent_state: Optional[AgentState] = None,
         history: Optional[HistoryService] = None,
         knowledge: Optional[KnowledgePort] = None,
         metrics: Optional[ExecutionMetrics] = None,
         cancel_event: Optional[asyncio.Event] = None,
         hierarchy: Optional[HierarchyService] = None,
-        perception: Optional[PerceptionService] = None,
+        perception_service: Optional[PerceptionService] = None,
         summarizer: Optional[SummarizationPort] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_manager: Optional[ContextManager] = None,
@@ -78,6 +76,7 @@ class GraphContext:
     ) -> None:
         self.__intent = intent
         self.__device = device
+        self.__perception_port = perception
 
         self.__llm = llm
         self.__memory = memory
@@ -99,9 +98,7 @@ class GraphContext:
         self.__realignment = realignment or RealignmentPolicy()
 
         # Injected services with defaults for backward compatibility
-        self.__ux = ux or UXService()
         self.__metrics = metrics or ExecutionMetrics()
-        self.__auditor = auditor or AuditService()
 
         self.__reasoner = reasoner or Reasoner(intent=intent)
         self.__agent_state = agent_state or AgentState(
@@ -113,8 +110,10 @@ class GraphContext:
         self.__signal = signal
         self.__hitl = HITLService(signal=signal, telemetry=telemetry)
 
-        self.__perception = perception or PerceptionService(
-            device=device, storage=storage, telemetry=telemetry, session_id=workflow_id
+        self.__perception = perception_service or PerceptionService(
+            perception=perception,
+            storage=storage,
+            session_id=workflow_id,
         )
 
         # GCC Context Manager with optional summarizer
@@ -126,7 +125,7 @@ class GraphContext:
             llm=llm,
             memory=memory,
             storage=storage,
-            auditor=self.__auditor,
+            telemetry=telemetry,
             session_id=workflow_id,
             package_name=package_name,
             use_cache=configuration.llm.use_cache,
@@ -139,7 +138,7 @@ class GraphContext:
             path_manager=path_manager,
         )
 
-        self.__hierarchy = hierarchy or HierarchyService(device=device, storage=storage)
+        self.__hierarchy = hierarchy or HierarchyService(storage=storage)
         self.__planner = planner or StepPlanner(vision_tool=self.__vision)
 
         self.__history = history or HistoryService(
@@ -167,6 +166,14 @@ class GraphContext:
         """
 
         return self.__device
+
+    @property
+    def perception_port(self) -> PerceptionPort:
+        """
+        Returns the PerceptionPort instance.
+        """
+
+        return self.__perception_port
 
     @property
     def llm(self) -> LLMPort:
@@ -394,21 +401,6 @@ class GraphContext:
         """
 
         return self.__trace
-
-    @property
-    def auditor(self) -> AuditService:
-        """
-        Returns the AuditService instance.
-        """
-
-        return self.__auditor
-
-    @property
-    def ux(self) -> UXService:
-        """
-        Returns the UXService instance.
-        """
-        return self.__ux
 
     @property
     def perception(self) -> PerceptionService:

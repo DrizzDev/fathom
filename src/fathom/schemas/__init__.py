@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.cli import ExploreCommandInput, LocalCommandInput, RunCommandInput
 from fathom.schemas.configuration import (
     ADBConfiguration,
     DeviceConfiguration,
+    DeviceRuntimeConfiguration,
     ExecutionConfiguration,
     ExplorationConfiguration,
     FathomConfiguration,
     IntentConfiguration,
+    IOSConfiguration,
     LLMConfiguration,
 )
 from fathom.schemas.decomposition import DecompositionSchema
@@ -40,19 +43,24 @@ __all__ = [
     "AnalysisResult",
     "Bounds",
     "DeviceConfiguration",
+    "DeviceRuntimeConfiguration",
     "ExecutionConfiguration",
     "ExecutionContext",
     "ExecutionResult",
     "ExplorationConfiguration",
     "ExplorationGraph",
     "ExplorationResult",
+    "ExploreCommandInput",
     "FathomConfiguration",
     "IntentConfiguration",
     "IntentResult",
+    "IOSConfiguration",
     "LabeledElement",
+    "LocalCommandInput",
     "LLMConfiguration",
     "DecompositionSchema",
     "PlanResult",
+    "RunCommandInput",
     "RunnerConfig",
     "RunnerResult",
     "ScreenCapture",

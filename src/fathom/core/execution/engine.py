@@ -12,6 +12,7 @@ from fathom.core.services.perception import PerceptionService
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
@@ -34,6 +35,7 @@ class ExecutionEngine:
         self,
         llm: LLMPort,
         device: DevicePort,
+        perception: PerceptionPort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
@@ -55,7 +57,10 @@ class ExecutionEngine:
         self.__stability_wait = stability_wait
 
         # Initialize Domain Services
-        self.__perception = PerceptionService(device=device, storage=storage, telemetry=telemetry)
+        self.__perception_service = PerceptionService(
+            perception=perception,
+            storage=storage,
+        )
         self.__action_executor = ActionExecutor(
             device=device,
             telemetry=telemetry,
@@ -83,9 +88,9 @@ class ExecutionEngine:
 
             # Phase 2: Perceive (capture pre-action state)
             if pre_capture is None:
-                pre_capture = await self.__perception.perceive(session_id=session_id)
+                pre_capture = await self.__perception_service.perceive(session_id=session_id)
 
-            pre_hash = self.__perception.compute_visual_hash(capture=pre_capture)
+            pre_hash = self.__perception_service.compute_visual_hash(capture=pre_capture)
 
             # Phase 3: Reason (Implicit)
             if injected_context:
@@ -105,8 +110,8 @@ class ExecutionEngine:
 
             # Wait for screen stability
             await asyncio.sleep(delay=self.__stability_wait)
-            post_capture = await self.__perception.perceive(session_id=session_id)
-            post_hash = self.__perception.compute_visual_hash(capture=post_capture)
+            post_capture = await self.__perception_service.perceive(session_id=session_id)
+            post_hash = self.__perception_service.compute_visual_hash(capture=post_capture)
 
             # Phase 5: Learn
             await self.__learn(

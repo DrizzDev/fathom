@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 
+from pydantic import ValidationError
 from temporalio import activity
 
-from fathom.adapters.llm.gemini import GeminiLLM
+from fathom.adapters.signal.noop import NoopSignal
+from fathom.adapters.signal.temporal import TemporalSignalAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.builder import Fathom
-from fathom.runtime.factories import DeviceFactory, StorageFactory, TelemetryFactory
+from fathom.runtime.factories import (
+    DeviceFactory,
+    LLMFactory,
+    PerceptionFactory,
+    StorageFactory,
+    TelemetryFactory,
+)
 from fathom.schemas.configuration import (
     DeviceConfiguration,
     ExecutionConfiguration,
@@ -19,9 +27,15 @@ from fathom.schemas.configuration import (
     StorageConfiguration,
     TelemetryConfiguration,
 )
+from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.settings.env import FathomSettings
 
+if TYPE_CHECKING:
+    from fathom.runtime.runner import FathomRunner
+
 logger = getLogger(__name__)
+
+RequestPayload = Dict[str, Any]
 
 
 class FathomActivities:
@@ -33,11 +47,30 @@ class FathomActivities:
     def __init__(self, settings: Optional[FathomSettings] = None) -> None:
         self.__settings = settings or FathomSettings()
 
+    def __resolve_device_configuration(
+        self,
+        *,
+        request: RequestPayload,
+    ) -> DeviceConfiguration:
+        """Resolve explicit device configuration passed by the caller."""
+        device_payload = request.get("device")
+        if isinstance(device_payload, dict):
+            try:
+                return DeviceConfiguration.model_validate(device_payload)
+            except ValidationError as exception:
+                raise ValueError(
+                    f"Invalid device configuration payload: {exception}"
+                ) from exception
+
+        raise ValueError(
+            "Missing device configuration in request payload. Caller must send explicit 'device'."
+        )
+
     @activity.defn(name="EXECUTE_INTENT")  # type: ignore[untyped-decorator]
     async def execute_intent(
         self,
         workflow_id: str,
-        request: Dict[str, Any],
+        request: RequestPayload,
     ) -> Dict[str, Any]:
         """
         Execute an intent-based workflow.
@@ -73,7 +106,7 @@ class FathomActivities:
 
             # Fetch package name for accurate tracing/storage
             # If this fails, let the error propagate or handle it explicitly without 'unknown_app'
-            package_name = await runner.device.get_current_package()
+            package_name = await runner.perception.get_current_application()
 
             result = await runner.run_intent(
                 request_id=workflow_id,
@@ -113,7 +146,7 @@ class FathomActivities:
     async def execute_exploration(
         self,
         workflow_id: str,
-        request: Dict[str, Any],
+        request: RequestPayload,
     ) -> Dict[str, Any]:
         """
         Execute an autonomous exploration workflow.
@@ -148,7 +181,7 @@ class FathomActivities:
             activity.heartbeat("Starting exploration")
 
             # Fetch package name for accurate tracing/storage
-            package_name = await runner.device.get_current_package()
+            package_name = await runner.perception.get_current_application()
 
             result = await runner.run_exploration(
                 request_id=workflow_id,
@@ -179,7 +212,7 @@ class FathomActivities:
         finally:
             await runner.cleanup()
 
-    def __build_configurations(self, workflow_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
+    def __build_configurations(self, workflow_id: str, request: RequestPayload) -> Dict[str, Any]:
         """
         Constructs configuration objects from request dictionary.
         """
@@ -187,6 +220,10 @@ class FathomActivities:
         # 1. LLM Configuration Merging (Legacy + New)
         llm_request_configuration = request.get("llm_config", {})
         planner_configuration = request.get("planner_configuration", {})
+        if not isinstance(llm_request_configuration, dict):
+            llm_request_configuration = {}
+        if not isinstance(planner_configuration, dict):
+            planner_configuration = {}
 
         # Populate parameters from legacy planner first
         llm_parameters: Dict[str, Any] = {
@@ -206,17 +243,9 @@ class FathomActivities:
         # 2. Device Configuration
         session_id = request["session_id"]
         execution_id = request.get("execution_id") or workflow_id
-
-        if enricher_url := request.get("enricher_url"):
-            device_configuration = DeviceConfiguration(
-                type="REMOTE",
-                session_id=session_id,
-                execution_id=execution_id,
-                provider_url=enricher_url,
-                authentication_token=request.get("auth_token"),
-            )
-        else:
-            device_configuration = DeviceConfiguration(type="LOCAL", serial_number=session_id)
+        device_configuration = self.__resolve_device_configuration(
+            request=request,
+        )
 
         if redis_url := (request.get("redis_url") or self.__settings.redis_url):
             telemetry_configuration = TelemetryConfiguration(
@@ -258,7 +287,7 @@ class FathomActivities:
     def __build_runner(
         self,
         workflow_id: str,
-        request: Dict[str, Any],
+        request: RequestPayload,
         llm_configuration: LLMConfiguration,
         device_configuration: DeviceConfiguration,
         intent_configuration: IntentConfiguration,
@@ -269,19 +298,14 @@ class FathomActivities:
         *,
         interactive: bool = True,
         realignment: Optional[Dict[str, Any]] = None,
-    ) -> Any:
+    ) -> FathomRunner:
         """
         Instantiates the Fathom runner with configured adapters.
         """
 
-        from fathom.adapters.signal.noop import NoopSignal
-        from fathom.schemas.orchestration import RealignmentPolicy
-
         signal_adapter: SignalPort
 
         if interactive:
-            from fathom.adapters.signal.temporal import TemporalSignalAdapter
-
             # Resolve cluster config: request takes precedence, env vars are the fallback
             temporal_host = request.get("temporal_host") or self.__settings.temporal_host
             if not temporal_host:
@@ -299,12 +323,17 @@ class FathomActivities:
         else:
             signal_adapter = NoopSignal()
 
-        path_manager = SharedPathManager(settings=FathomSettings())
-        device_adapter = DeviceFactory.create(configuration=device_configuration)
-        telemetry_adapter = TelemetryFactory.create(configuration=telemetry_configuration)
+        path_manager = SharedPathManager(settings=self.__settings)
+        device_adapter = DeviceFactory().create(configuration=device_configuration)
+        perception_adapter = PerceptionFactory().create(
+            configuration=device_configuration,
+            device=device_adapter,
+        )
+        telemetry_adapter = TelemetryFactory().create(configuration=telemetry_configuration)
+        llm_adapter = LLMFactory().create(configuration=llm_configuration)
 
         # Storage initialization (Always includes local + optional cloud)
-        storage_adapter = StorageFactory.create(
+        storage_adapter = StorageFactory().create(
             path_manager=path_manager,
             configuration=storage_configuration,
         )
@@ -312,11 +341,12 @@ class FathomActivities:
         builder = (
             Fathom.builder(path_manager=path_manager)
             .with_device(port=device_adapter)
+            .with_perception(port=perception_adapter)
             .with_signal(port=signal_adapter)
             .with_storage(port=storage_adapter)
             .with_telemetry(port=telemetry_adapter)
             .with_intent_config(configuration=intent_configuration)
-            .with_llm(port=GeminiLLM(configuration=llm_configuration))
+            .with_llm(port=llm_adapter)
             .with_execution_config(configuration=execution_configuration)
             .with_exploration_config(configuration=exploration_configuration)
         )

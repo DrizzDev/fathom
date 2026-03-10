@@ -3,9 +3,19 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.factory import (
+    DeviceFactoryPort,
+    HierarchyFactoryPort,
+    LLMFactoryPort,
+    PerceptionFactoryPort,
+    SignalFactoryPort,
+    TelemetryFactoryPort,
+)
+from fathom.interfaces.hierarchy import HierarchyPort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
@@ -74,9 +84,11 @@ class IResponseParser(Protocol):
 
 __all__ = [
     "DevicePort",
+    "HierarchyPort",
     "KnowledgePort",
     "LLMPort",
     "MemoryPort",
+    "PerceptionPort",
     "SignalPort",
     "StoragePort",
     "TelemetryPort",
@@ -85,4 +97,10 @@ __all__ = [
     "IVisionProvider",
     "IImageStorage",
     "IResponseParser",
+    "LLMFactoryPort",
+    "DeviceFactoryPort",
+    "PerceptionFactoryPort",
+    "SignalFactoryPort",
+    "TelemetryFactoryPort",
+    "HierarchyFactoryPort",
 ]

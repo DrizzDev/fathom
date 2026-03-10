@@ -11,7 +11,7 @@ from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.schemas.actions import Action
-from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.exploration.state import (
@@ -53,37 +53,7 @@ class ExplorationNodeProvider:
         start_time = time.time()
 
         try:
-            screenshot_bytes = await self.__context.device.capture_screen()
-            width, height = await self.__context.device.get_dimensions()
-
-            try:
-                activity = await self.__context.device.get_current_package()
-            except Exception as exception:
-                activity = "unknown"
-                await self.__context.telemetry.warning(
-                    "Failed to get current package", error=str(exception)
-                )
-
-            storage_id = await self.__context.storage.save(
-                data=screenshot_bytes,
-                metadata={
-                    "type": "screenshot",
-                    "category": "screenshot",
-                    "package_name": activity,
-                    "timestamp": time.time(),
-                    "session_id": self.__context.workflow_id,
-                    "filename": f"{int(time.time() * 1000)}__{activity}.png",
-                },
-            )
-
-            screen = ScreenCapture(
-                width=width,
-                height=height,
-                activity=activity,
-                image=screenshot_bytes,
-                timestamp=int(time.time() * 1000),
-                metadata={"storage_id": storage_id},
-            )
+            screen = await self.__context.perception.perceive(session_id=self.__context.workflow_id)
 
             visual_hash = hashlib.sha256(screen.image).hexdigest()[:VISUAL_HASH_LENGTH]
 
@@ -132,7 +102,8 @@ class ExplorationNodeProvider:
             return cast("ExplorationGraphState", result)
 
         start = time.time()
-        width, height = await self.__context.device.get_dimensions()
+        width = capture.width
+        height = capture.height
 
         analysis = await self.__context.vision.analyze(
             capture=capture,
@@ -246,11 +217,17 @@ class ExplorationNodeProvider:
             )
 
         self.__context.agent_state.record_step(result=step_result)
-        activity = screen_state.activity if isinstance(screen_state, ScreenState) else "unknown"
+        current_screen = state.get(CKey.SCREEN_STATE)
+        current_activity = (
+            current_screen.activity
+            if isinstance(current_screen, ScreenState) and current_screen.activity
+            else None
+        )
+
         await self.__context.history.save_step(
             result=step_result,
             intent="exploration",
-            activity=activity,
+            package_name=current_activity,
         )
 
         if self.__context.agent_state.step_count >= self.__context.max_steps:

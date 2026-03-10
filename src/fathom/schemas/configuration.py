@@ -4,6 +4,12 @@ from typing import Any, Dict, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, Field
 
+from fathom.constants.platform import (
+    DeviceConnectionType,
+    DevicePlatform,
+    IOSAutomationBackend,
+)
+
 
 class LLMConfiguration(BaseModel):
     """
@@ -45,14 +51,6 @@ class LLMConfiguration(BaseModel):
     timeout: float = Field(default=60.0, description="Request timeout in seconds")
     retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
     rate_limit_backoff: float = Field(default=5.0, description="Base backoff for rate limit errors")
-    confidence_threshold: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="Minimum acceptable LLM confidence for structured outputs (e.g. decomposition).",
-    )
-
-    # Backend storage (for artifacts like image caching)
     use_cache: bool = Field(default=True, description="Whether to use context caching for the LLM")
 
     # Extension hook for arbitrary provider settings
@@ -69,7 +67,6 @@ class StorageConfiguration(BaseModel):
     backends: Set[Literal["LOCAL", "CLOUD"]] = Field(
         default={"LOCAL"}, description="Storage backends to enable"
     )
-
     storage_bucket: Optional[str] = Field(
         default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"
     )
@@ -82,40 +79,183 @@ class StorageConfiguration(BaseModel):
     )
 
 
+class TapInteractionPolicy(BaseModel):
+    """
+    Runtime policy for tap interactions.
+    """
+
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Tap policy extension metadata",
+    )
+
+
+class TypeInteractionPolicy(BaseModel):
+    """
+    Runtime policy for text input interactions.
+    """
+
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Type policy extension metadata",
+    )
+
+
+class SwipeInteractionPolicy(BaseModel):
+    """
+    Runtime policy for swipe interactions.
+    """
+
+    duration_milliseconds: int = Field(
+        default=300,
+        description="Default swipe gesture duration in milliseconds",
+    )
+    distance_ratio: float = Field(
+        default=0.7,
+        description="Swipe distance ratio within the source bounds",
+    )
+
+
+class ScrollInteractionPolicy(BaseModel):
+    """
+    Runtime policy for scroll interactions.
+    """
+
+    distance_ratio: float = Field(
+        default=0.4,
+        description="Scroll distance ratio within the source bounds",
+    )
+
+
+class InteractionPolicyConfiguration(BaseModel):
+    """
+    Runtime interaction policy envelope grouped by action type.
+    """
+
+    tap: TapInteractionPolicy = Field(default_factory=TapInteractionPolicy)
+    type: TypeInteractionPolicy = Field(default_factory=TypeInteractionPolicy)
+    swipe: SwipeInteractionPolicy = Field(default_factory=SwipeInteractionPolicy)
+    scroll: ScrollInteractionPolicy = Field(default_factory=ScrollInteractionPolicy)
+
+
+class InteractionRuntimeConfiguration(BaseModel):
+    """
+    Runtime interaction configuration.
+    """
+
+    policy: InteractionPolicyConfiguration = Field(default_factory=InteractionPolicyConfiguration)
+
+
 class ADBConfiguration(BaseModel):
     """
-    Configuration for local ADB device interactions.
+    Configuration for local Android interactions via ADB.
     """
 
     executable_path: str = Field(default="adb", description="Path to ADB executable")
-    serial_number: Optional[str] = Field(default=None, description="Target device serial")
+    serial_number: Optional[str] = Field(
+        default=None, description="Target Android device identifier"
+    )
     command_timeout: float = Field(default=10.0, description="Shell command timeout in seconds")
 
-    swipe_duration: int = Field(default=300, description="Default swipe gesture duration in ms")
-    swipe_distance: float = Field(default=0.7, description="Percentage of screen to swipe")
-    scroll_distance: float = Field(default=0.5, description="Percentage of screen height to scroll")
-
-
-class DeviceConfiguration(BaseModel):
-    """
-    Unified configuration for device connection.
-    Determines whether to use local ADB or a remote provider.
-    """
-
-    type: Literal["LOCAL", "REMOTE"] = Field(
-        default="LOCAL", description="Device connection type: LOCAL or REMOTE"
+    interaction: InteractionRuntimeConfiguration = Field(
+        default_factory=InteractionRuntimeConfiguration,
+        description="Interaction policy configuration for Android actions",
     )
 
-    # Connectivity Details
+
+class IOSConfiguration(BaseModel):
+    """
+    Configuration for local iOS simulator interactions via native Apple tooling.
+    """
+
+    executable_path: str = Field(default="xcrun", description="Path to xcrun executable")
+    device_identifier: Optional[str] = Field(
+        default=None, description="Target iOS simulator device identifier"
+    )
+    bundle_identifier: Optional[str] = Field(
+        default=None, description="Default iOS bundle identifier context"
+    )
+    automation_backend: IOSAutomationBackend = Field(
+        default=IOSAutomationBackend.XCRUN_SIMCTL,
+        description="iOS automation backend strategy",
+    )
+    web_driver_agent_url: str = Field(
+        default="http://127.0.0.1:8100",
+        description="WebDriverAgent server URL for hierarchy extraction and optional fallback gestures",
+    )
+    web_driver_agent_bundle_identifier: Optional[str] = Field(
+        default=None,
+        description="Optional bundle identifier injected into WebDriverAgent session capabilities",
+    )
+    web_driver_agent_request_timeout_seconds: float = Field(
+        default=15.0,
+        description="WebDriverAgent request timeout in seconds",
+    )
+
+    command_timeout: float = Field(default=10.0, description="Shell command timeout in seconds")
+    interaction: InteractionRuntimeConfiguration = Field(
+        default_factory=InteractionRuntimeConfiguration,
+        description="Interaction policy configuration for iOS actions",
+    )
+
+
+class RemoteDeviceConfiguration(BaseModel):
+    """
+    Configuration for remote device providers.
+    """
+
     session_id: Optional[str] = Field(default=None, description="Remote session identifier")
-    execution_id: Optional[str] = Field(default=None, description="Execution/Workflow identifier")
+    execution_id: Optional[str] = Field(
+        default=None, description="Remote execution/workflow identifier"
+    )
     provider_url: Optional[str] = Field(default=None, description="Remote provider endpoint")
-    serial_number: Optional[str] = Field(default=None, description="Device serial identifier")
     authentication_token: Optional[str] = Field(
         default=None, description="Access token for remote provider"
     )
 
-    # Generic parameters for future adapters
+
+class DeviceRuntimeConfiguration(BaseModel):
+    """
+    Platform-neutral runtime settings exposed by DevicePort implementations.
+    """
+
+    platform: DevicePlatform = Field(
+        default=DevicePlatform.ANDROID,
+        description="Resolved runtime platform",
+    )
+    identifier: Optional[str] = Field(
+        default=None,
+        description="Device identifier (serial number, simulator id, session id, etc.)",
+    )
+    command_timeout: float = Field(default=10.0, description="Command timeout in seconds")
+    interaction: InteractionRuntimeConfiguration = Field(
+        default_factory=InteractionRuntimeConfiguration,
+        description="Runtime interaction contract and policies",
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Adapter-specific runtime metadata",
+    )
+
+
+class DeviceConfiguration(BaseModel):
+    """
+    Unified configuration for local and remote device adapters.
+    """
+
+    type: DeviceConnectionType = Field(
+        default=DeviceConnectionType.LOCAL,
+        description="Device connection type",
+    )
+    platform: DevicePlatform = Field(
+        default=DevicePlatform.ANDROID,
+        description="Target platform when using local connection",
+    )
+
+    ios: IOSConfiguration = Field(default_factory=IOSConfiguration)
+    android: ADBConfiguration = Field(default_factory=ADBConfiguration)
+    remote: RemoteDeviceConfiguration = Field(default_factory=RemoteDeviceConfiguration)
+
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional device metadata")
 
 

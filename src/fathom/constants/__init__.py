@@ -17,6 +17,7 @@ from fathom.constants.execution import (
     ExecutionPhase,
     SignalType,
 )
+from fathom.constants.platform import DeviceConnectionType, DevicePlatform, IOSAutomationBackend
 from fathom.constants.scope import ContextScope
 
 
@@ -102,4 +103,7 @@ __all__ = [
     "DEFAULT_STABILITY_WAIT",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_RETRY_DELAY",
+    "DevicePlatform",
+    "DeviceConnectionType",
+    "IOSAutomationBackend",
 ]

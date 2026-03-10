@@ -1,4 +1,5 @@
 from fathom.adapters.device.adb import ADBDevice
+from fathom.adapters.device.ios import IOSDevice
 from fathom.adapters.device.remote import RemoteDeviceAdapter
 from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
 from fathom.adapters.llm.cache import CacheService
@@ -14,6 +15,7 @@ from fathom.adapters.telemetry.structlog import StructlogAdapter
 
 __all__ = [
     "ADBDevice",
+    "IOSDevice",
     "GeminiLLM",
     "SQLiteMemory",
     "SQLiteKnowledge",
