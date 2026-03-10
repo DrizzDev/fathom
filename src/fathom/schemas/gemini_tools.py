@@ -218,15 +218,6 @@ class ValidateStateArgs(GeminiCompletionFlags):
     )
     condition_met: Optional[bool] = None
 
-    @model_validator(mode="after")
-    def _default_flags_from_condition(self) -> "ValidateStateArgs":
-        if self.goal_completed is None:
-            object.__setattr__(self, "goal_completed", False)
-        if self.sub_goal_completed is None:
-            completed = bool(self.condition_met)
-            object.__setattr__(self, "sub_goal_completed", completed)
-        return self
-
 
 class ExecuteAction(BaseModel):
     """

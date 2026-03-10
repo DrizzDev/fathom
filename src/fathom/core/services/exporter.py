@@ -5,6 +5,7 @@ import re
 from logging import getLogger
 from typing import Any, Dict, Literal, Optional, Sequence, Union, cast
 
+from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.core.exceptions import ScriptExportError
 from fathom.core.prompts.export import ExportPromptBuilder
 from fathom.core.prompts.factory import PromptFactory
@@ -49,16 +50,6 @@ class ScriptExporter:
         }
     )
     __SWIPE_ACTIONS = {"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"}
-    __LAUNCHER_PACKAGES = frozenset(
-        {
-            "com.google.android.apps.nexuslauncher",
-            "com.android.launcher",
-            "com.android.launcher3",
-            "com.sec.android.app.launchers",
-            "com.miui.home",
-            "com.oppo.launcher",
-        }
-    )
 
     __SCREEN_RE = re.compile(
         pattern=r"(?:the\s+)?(\w+(?:\s+\w+)?)\s+(screen|page)\b",
@@ -1380,7 +1371,7 @@ class ScriptExporter:
             return False
 
         package = text.split("/")[0]
-        return package in ScriptExporter.__LAUNCHER_PACKAGES
+        return package in LAUNCHER_PACKAGES
 
     @staticmethod
     def __is_overlay_detected(step: Union[StepResult, Dict[str, Any]]) -> bool:

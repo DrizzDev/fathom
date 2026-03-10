@@ -334,13 +334,7 @@ class AgentState:
         if self.__sub_goals:
             # Clamp to valid range
             clamped_index = max(0, min(index, len(self.__sub_goals) - 1))
-            # Mark old goal as no-op if already complete
-            if (
-                self.__current_sub_goal_index < len(self.__sub_goals)
-                and self.__sub_goals[self.__current_sub_goal_index].status == SubGoalStatus.PENDING
-            ):
-                self.__sub_goals[self.__current_sub_goal_index].status = SubGoalStatus.PENDING
-            # Update index and mark new goal
+            # Update index and mark the restored goal as in progress
             self.__current_sub_goal_index = clamped_index
             if clamped_index < len(self.__sub_goals):
                 self.__sub_goals[clamped_index].mark_in_progress()
@@ -422,27 +416,6 @@ class AgentState:
         else:
             logger.info("[AgentState] All sub-goals complete")
             return False
-
-    def __verify_sub_goal_trace(self) -> bool:
-        """
-        Verify trace/action history confirms sub-goal completion.
-
-        Checks:
-        1. At least one action was executed for this sub-goal
-        2. Screen state changed since sub-goal started
-
-        Returns:
-            True if both conditions met
-        """
-        # Check if any actions were executed
-        actions_executed = self.__sub_goal_action_count > 0
-
-        # Check if screen state changed
-        screen_changed = False
-        if self.__sub_goal_start_screen and self.__current_screen:
-            screen_changed = self.__sub_goal_start_screen != self.__current_screen.visual_hash
-
-        return actions_executed and screen_changed
 
     def record_sub_goal_action(self) -> None:
         """

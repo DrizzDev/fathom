@@ -5,6 +5,18 @@ from enum import StrEnum
 # Visual hashing
 VISUAL_HASH_LENGTH = 16
 
+# Launcher packages - actions on these should never persist/export during execution
+LAUNCHER_PACKAGES: frozenset[str] = frozenset(
+    {
+        "com.google.android.apps.nexuslauncher",  # Google Pixel default
+        "com.android.launcher",
+        "com.android.launcher3",
+        "com.sec.android.app.launchers",  # Samsung default
+        "com.miui.home",  # MIUI default
+        "com.oppo.launcher",  # OPPO default
+    }
+)
+
 # Swipe and scroll distances (pixels)
 DEFAULT_SWIPE_DISTANCE = 300
 DEFAULT_SCROLL_DISTANCE = 300

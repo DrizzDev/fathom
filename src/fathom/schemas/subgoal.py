@@ -12,9 +12,6 @@ class SubGoalStatus(str, Enum):
     IN_PROGRESS = "IN_PROGRESS"  # Currently being executed
     COMPLETE = "COMPLETE"  # Successfully completed
     FAILED = "FAILED"  # Execution attempt failed
-    SKIPPED = (
-        "SKIPPED"  # DEPRECATED: Sub-goals must always be executed. This status should not be set.
-    )
 
 
 class SubGoal(BaseModel):

@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 from pydantic import ValidationError
 
 from fathom.constants import ActionType
-from fathom.core.exceptions import VisionError
+from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.delta import GeminiDeltaSignal
@@ -19,7 +19,7 @@ from fathom.schemas.gemini_tools import (
     ValidateStateArgs,
     VerifyGoalArgs,
 )
-from fathom.schemas.results import AnalysisResult, GenerateResult
+from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
 
 logger = getLogger(__name__)
 
@@ -127,6 +127,10 @@ class ToolResponseParser:
 
             return result
 
+        except ToolValidationError:
+            # Propagate structured validation failures so callers can retry
+            # with explicit feedback instead of collapsing them into a generic error.
+            raise
         except Exception as exception:
             logger.exception("Failed to parse tool response")
             raise VisionError(f"Response parsing failed: {exception}") from exception
@@ -278,7 +282,13 @@ class ToolResponseParser:
             args = VerifyGoalArgs.model_validate(arguments or {})
         except ValidationError as error:
             logger.exception("verify_goal schema validation failed: %s", error)
-            raise VisionError(f"verify_goal arguments validation failed: {error}") from error
+            feedback = ToolErrorFeedback(
+                tool_name="verify_goal",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"verify_goal arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
 
         reason = args.assistant_message
         raw_goal_completed = getattr(args, "goal_completed", None)
@@ -319,7 +329,13 @@ class ToolResponseParser:
             args = ValidateStateArgs.model_validate(arguments or {})
         except ValidationError as error:
             logger.exception("validate_state schema validation failed: %s", error)
-            raise VisionError(f"validate_state arguments validation failed: {error}") from error
+            feedback = ToolErrorFeedback(
+                tool_name="validate_state",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"validate_state arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
 
         evidence = args.evidence
         reason = args.assistant_message
@@ -351,7 +367,13 @@ class ToolResponseParser:
             args = ExecuteUIArgs.model_validate(arguments or {})
         except ValidationError as error:
             logger.exception("execute_ui schema validation failed: %s", error)
-            raise VisionError(f"execute_ui arguments validation failed: {error}") from error
+            feedback = ToolErrorFeedback(
+                tool_name="execute_ui",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"execute_ui arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
 
         message = args.assistant_message
         raw_goal_completed = getattr(args, "goal_completed", None)
@@ -467,68 +489,11 @@ class ToolResponseParser:
         )
 
     @staticmethod
-    def __safe_float(value: Any, default: float) -> float:
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return default
-
-    @staticmethod
-    def __safe_optional_bool(value: Any) -> Optional[bool]:
-        if isinstance(value, bool):
-            return value
-
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {"true", "1", "yes"}:
-                return True
-            if lowered in {"false", "0", "no"}:
-                return False
-
-        return None
-
-    @staticmethod
     def __safe_int(value: Any, default: int) -> int:
         try:
             return int(value)
         except (ValueError, TypeError):
             return default
-
-    def __parse_bounds(self, data: Dict[str, Any]) -> Optional[Bounds]:
-        serialization = data.get("bbox")
-
-        if not isinstance(serialization, dict):
-            return None
-
-        x = self.__safe_int(serialization.get("x"), default=0)
-        y = self.__safe_int(serialization.get("y"), default=0)
-        width = self.__safe_int(serialization.get("width"), default=0)
-        height = self.__safe_int(serialization.get("height"), default=0)
-
-        if width <= 0 or height <= 0:
-            logger.warning(
-                "Ignoring invalid bbox with non-positive dimensions: width=%s height=%s",
-                width,
-                height,
-            )
-            return None
-
-        coord_system_raw = str(serialization.get("coord_system", "normalized")).strip().lower()
-        coord_system = (
-            coord_system_raw if coord_system_raw in {"normalized", "pixel"} else "normalized"
-        )
-
-        try:
-            return Bounds(
-                x=x,
-                y=y,
-                width=width,
-                height=height,
-                coord_system=coord_system,
-            )
-        except Exception:
-            logger.warning("Ignoring malformed bbox payload: %s", serialization)
-            return None
 
     def __parse_memory_storage(self, arguments: Any) -> AnalysisResult:
         """
@@ -539,7 +504,13 @@ class ToolResponseParser:
             args = StoreMemoryArgs.model_validate(arguments or {})
         except ValidationError as error:
             logger.exception("store_memory schema validation failed: %s", error)
-            raise VisionError(f"store_memory arguments validation failed: {error}") from error
+            feedback = ToolErrorFeedback(
+                tool_name="store_memory",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"store_memory arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
 
         key = args.key
         value = args.value
@@ -568,7 +539,13 @@ class ToolResponseParser:
             args = RecallMemoryArgs.model_validate(arguments or {})
         except ValidationError as error:
             logger.exception("recall_memory schema validation failed: %s", error)
-            raise VisionError(f"recall_memory arguments validation failed: {error}") from error
+            feedback = ToolErrorFeedback(
+                tool_name="recall_memory",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"recall_memory arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
 
         key = args.key
         reason = args.assistant_message
@@ -595,7 +572,13 @@ class ToolResponseParser:
             args = AskUserArgs.model_validate(arguments or {})
         except ValidationError as error:
             logger.exception("ask_user schema validation failed: %s", error)
-            raise VisionError(f"ask_user arguments validation failed: {error}") from error
+            feedback = ToolErrorFeedback(
+                tool_name="ask_user",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"ask_user arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
 
         question = (args.question or "").strip()
         context = (args.context or "").strip()

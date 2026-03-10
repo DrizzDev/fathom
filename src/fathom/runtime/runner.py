@@ -226,15 +226,6 @@ class FathomRunner:
                         else (execution_result.error or CompletionReason.FAILED.value)
                     )
 
-                # ENFORCE: All subgoals must be executed (not SKIPPED)
-                if skipped_subgoals:
-                    error_msg = f"Execution aborted: {len(skipped_subgoals)} subgoal(s) were skipped without execution: {skipped_subgoals}"
-                    logger.error(error_msg)
-                    success = False
-                    error = error_msg
-                    status = "failed"
-                    completion_reason = "SUBGOAL_SKIPPED"
-
             result = IntentResult(
                 error=error,
                 status=status,

@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
+from fathom.core.exceptions import VisionError
 from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.audit import AuditService
@@ -227,26 +228,77 @@ class VisionService:
         # Log prompt context for visibility
         self.__auditor.log_prompt(payload=payload, instruction=instruction)
 
-        # 4. EXECUTION
-        commence = time.time()
-        response = await self.__llm.generate(
-            tools=tools,
-            prompt=payload,
-            use_cache=self.__use_cache,
-            system_instruction=instruction,
-        )
-        duration = time.time() - commence
+        # 4. EXECUTION WITH VALIDATION-AWARE RETRY
+        max_validation_retries = 1
+        analysis: Optional[AnalysisResult] = None
+        response = None
+        duration = 0.0
+        parse_duration = 0.0
 
-        # Log Raw LLM output
-        raw_text = response.content[:200].replace("\n", " ") if response.content else "No text"
-        logger.info(
-            f"[VISION] LLM Response | Duration: {duration:.3f}s | Model: {self.__llm.model_name} | Raw: {raw_text}..."
-        )
+        for attempt in range(max_validation_retries + 1):
+            commence = time.time()
+            response = await self.__llm.generate(
+                tools=tools,
+                prompt=payload,
+                use_cache=self.__use_cache,
+                system_instruction=instruction,
+            )
+            duration = time.time() - commence
 
-        # 5. PARSE & ENRICH
-        parse_start = time.time()
-        analysis = self.__parser.parse(response)
-        parse_duration = time.time() - parse_start
+            # Log Raw LLM output
+            raw_text = response.content[:200].replace("\n", " ") if response.content else "No text"
+            logger.info(
+                f"[VISION] LLM Response | Duration: {duration:.3f}s | "
+                f"Model: {self.__llm.model_name} | Raw: {raw_text}..."
+            )
+
+            # 5. PARSE & ENRICH
+            parse_start = time.time()
+            try:
+                analysis = self.__parser.parse(response)
+                parse_duration = time.time() - parse_start
+                break
+            except Exception as exc:
+                from fathom.core.exceptions import (
+                    ToolValidationError,  # local import to avoid cycles
+                )
+
+                if isinstance(exc, ToolValidationError) and attempt < max_validation_retries:
+                    feedback = getattr(exc, "feedback", None)
+                    message = getattr(feedback, "message", str(exc))
+                    logger.warning(
+                        "[VISION] Tool validation failed (attempt %s/%s): %s",
+                        attempt + 1,
+                        max_validation_retries + 1,
+                        message,
+                    )
+
+                    # Inject concise, model-ready feedback so Gemini can correct the tool call.
+                    error_block = (
+                        "\n\n[TOOL_ERROR_FEEDBACK]\n"
+                        "The previous tool call had validation errors:\n"
+                        f"{message}\n"
+                        "Please call the tool again with corrected, schema-compliant arguments.\n"
+                        "[/TOOL_ERROR_FEEDBACK]"
+                    )
+                    dynamic_context = (dynamic_context or "") + error_block
+
+                    # Rebuild payload with augmented context for the next attempt.
+                    payload = self.__build_payload(
+                        intent=intent,
+                        manifest=manifest,
+                        failures=failures,
+                        knowledge=knowledge,
+                        screen=capture.image,
+                        context=dynamic_context,
+                    )
+                    continue
+
+                # Non-validation errors or exhausted retries propagate as before.
+                raise
+
+        if analysis is None or response is None:
+            raise VisionError("Vision analysis did not produce a valid result.", retryable=False)
 
         # Update metrics & metadata
         if response.metrics:
@@ -324,8 +376,8 @@ class VisionService:
 
         payload: List[Any] = []
 
-        if not context or "GOAL:" not in context:
-            payload.append(f"Goal: {intent}")
+        if not context or "goal:" not in context.lower():
+            payload.append(f"GOAL: {intent}")
 
         if knowledge.get("description"):
             payload.append(f"Screen Info: {knowledge['description']}")

@@ -202,7 +202,8 @@ class IntentStrategy:
 
         subgoals = self.__graph_context.agent_state.sub_goal_list
         executed = [sg.description for sg in subgoals if sg.status == SubGoalStatus.COMPLETE]
-        skipped = [sg.description for sg in subgoals if sg.status == SubGoalStatus.SKIPPED]
+        # SubGoalStatus.SKIPPED was removed; callers still expect a skipped list.
+        skipped: list[str] = []
 
         return executed, skipped, len(subgoals)
 
@@ -231,22 +232,38 @@ class IntentStrategy:
         Falls back to in-memory checkpoints if sqlite support is unavailable.
         """
 
-        checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exception:
+            logger.error(
+                "Failed to create checkpoint directory for SQLite checkpointer. "
+                f"checkpoint_db_path={checkpoint_db_path}. Reason: {exception}"
+            )
+            raise
 
         try:
-            # Use importlib to avoid static import resolution errors
+            # Use importlib to avoid static import resolution errors.
             sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite")
-            SqliteSaver = sqlite_module.SqliteSaver
-
-            # Create checkpointer using SqliteSaver
-            # The default serializer in SqliteSaver handles Pydantic models automatically
-            checkpointer = SqliteSaver.from_conn_string(str(checkpoint_db_path))
-            logger.info(f"Using SqliteSaver for checkpointing at {checkpoint_db_path}")
-            return checkpointer
-        except Exception as exception:
+        except (ImportError, ModuleNotFoundError) as exception:
             logger.warning(
                 "SQLite checkpoint saver unavailable; falling back to MemorySaver. "
                 "Install 'langgraph-checkpoint-sqlite' to enable persistent checkpoints. "
                 f"Reason: {exception}"
             )
             return MemorySaver()
+
+        SqliteSaver = sqlite_module.SqliteSaver
+
+        try:
+            # Create checkpointer using SqliteSaver.
+            # The default serializer in SqliteSaver handles Pydantic models automatically.
+            checkpointer = SqliteSaver.from_conn_string(str(checkpoint_db_path))
+        except Exception as exception:
+            logger.error(
+                "Failed to initialize SQLite checkpointer. "
+                f"checkpoint_db_path={checkpoint_db_path}. Reason: {exception}"
+            )
+            raise
+
+        logger.info(f"Using SqliteSaver for checkpointing at {checkpoint_db_path}")
+        return checkpointer

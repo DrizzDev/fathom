@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, Optional, Union, cast
 
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
-from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.constants.execution import LAUNCHER_PACKAGES, VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
@@ -22,16 +22,6 @@ from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
 
 logger = logging.getLogger(__name__)
-
-# Default launcher packages - actions on these should never persist during task execution
-DEFAULT_LAUNCHERS = {
-    "com.google.android.apps.nexuslauncher",  # Google Pixel default
-    "com.android.launcher",
-    "com.android.launcher3",
-    "com.sec.android.app.launchers",  # Samsung default
-    "com.miui.home",  # MIUI default
-    "com.oppo.launcher",  # OPPO default
-}
 
 
 class IntentNodeProvider:
@@ -809,7 +799,7 @@ class IntentNodeProvider:
 
             # LAUNCHER BLOCKING: Never persist actions taken on launcher apps
             execution_package_base = execution_activity.split("/")[0]
-            is_on_launcher = execution_package_base in DEFAULT_LAUNCHERS
+            is_on_launcher = execution_package_base in LAUNCHER_PACKAGES
 
             if is_on_launcher:
                 logger.warning(

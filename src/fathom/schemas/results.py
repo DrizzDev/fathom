@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,6 +54,30 @@ class AnalysisResult(BaseModel):
     )
     gemini_delta: Optional[GeminiDeltaSignal] = Field(
         default=None, description="Optional model-provided semantic delta hints"
+    )
+
+
+class ToolErrorFeedback(BaseModel):
+    """
+    Structured feedback about a failed tool invocation that can be shown to the model.
+    """
+
+    tool_name: str = Field(description="Name of the tool that failed")
+    tool_call_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional identifier correlating this error to the originating tool call "
+            "(if provided by the LLM adapter)."
+        ),
+    )
+    error_kind: Literal["validation", "execution"] = Field(
+        description="Whether the failure happened during validation or execution"
+    )
+    message: str = Field(
+        description=(
+            "Concise, model-ready description of what went wrong and how to fix it "
+            "(e.g. missing fields, wrong types, or device/runtime failure)."
+        )
     )
 
 

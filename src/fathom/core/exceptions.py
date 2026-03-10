@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import httpx
 
+from fathom.schemas.results import ToolErrorFeedback
+
 
 class FathomError(Exception):
     """
@@ -101,6 +103,22 @@ class VisionError(ToolError):
 
     def __init__(self, message: str, *, retryable: bool = False) -> None:
         super().__init__(message, tool_name="vision", retryable=retryable)
+
+
+class ToolValidationError(VisionError):
+    """
+    Tool output could not be validated against its schema.
+
+    This is recoverable at the strategy layer by surfacing the attached
+    feedback back to the model and retrying the tool call with corrected
+    arguments.
+    """
+
+    def __init__(self, feedback: ToolErrorFeedback) -> None:
+        # Use the feedback message directly so callers see a concise,
+        # model-ready description of what went wrong.
+        super().__init__(message=feedback.message, retryable=False)
+        self.feedback = feedback
 
 
 class ToolTimeoutError(ToolError):
