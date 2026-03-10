@@ -216,3 +216,12 @@ class WorkflowTimeoutError(WorkflowError):
 
         self.timeout = timeout
         self.workflow_id = workflow_id
+
+
+class ScriptExportError(FathomError):
+    """
+    Script export failed.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message, retryable=retryable)
