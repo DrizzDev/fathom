@@ -66,6 +66,9 @@ class IntentStateKey(StrEnum):
     PLAN = "PLAN"
     PLANNED_STEP = "PLANNED_STEP"
 
+    # History
+    STEP_RESULTS = "STEP_RESULTS"
+
 
 class ExplorationStateKey(StrEnum):
     """

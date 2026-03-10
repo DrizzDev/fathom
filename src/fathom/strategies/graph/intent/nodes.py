@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
@@ -636,6 +636,14 @@ class IntentNodeProvider:
         )
 
         self.__context.agent_state.record_step(result=step_result)
+
+        # Accumulate step results in graph state so MemorySaver checkpoints them.
+        # This ensures step history survives HITL interruptions and resumes.
+        existing_step_results = cast(
+            "List[StepResult]", state.get(IntentStateKey.STEP_RESULTS) or []
+        )
+        accumulated_step_results = existing_step_results + [step_result]
+
         script_data = await self.__context.history.save_step(
             result=step_result, intent=self.__context.intent
         )
@@ -778,13 +786,14 @@ class IntentNodeProvider:
             return {
                 CommonStateKey.IS_COMPLETE: True,
                 CommonStateKey.COMPLETION_REASON: execution_plan.reason,
+                IntentStateKey.STEP_RESULTS: accumulated_step_results,
             }
 
         logger.info(
             f"[NODE: RECORD] Step {self.__context.agent_state.step_count} recorded successfully"
         )
         logger.info("[NODE: RECORD] -> Will route to GROUND for next step")
-        return {}
+        return {IntentStateKey.STEP_RESULTS: accumulated_step_results}
 
     async def verify(self, state: IntentGraphState) -> IntentGraphState:
         """
