@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import time
+import xml.etree.ElementTree as ElementTree  # nosec
 from logging import getLogger
 from typing import Dict, List, Optional, Tuple
 
@@ -292,15 +293,76 @@ class IOSDevice(DevicePort):
         if len(stdout) < self.__adapter_defaults.screenshot_minimum_bytes:
             raise DeviceError("Capture screen: screenshot payload was empty or truncated")
 
+        self.__cache_dimensions_from_image(image=stdout)
         return stdout
+
+    async def dump_hierarchy(self) -> Optional[str]:
+        """
+        Capture hierarchy XML from the configured iOS automation backend.
+        """
+
+        if not self.__should_route_interactions_via_automation_gateway():
+            raise DeviceError(
+                "xcrun simctl does not currently expose a native XML hierarchy dump. "
+                "Use XCUITEST/WEBDRIVER_AGENT backend for hierarchy extraction."
+            )
+
+        try:
+            return await self.__automation_gateway.dump_source()
+        except DeviceError as exception:
+            raise DeviceError(
+                f"Dump hierarchy: failed to fetch iOS hierarchy XML: {exception}"
+            ) from exception
 
     async def get_current_package(self) -> str:
         """
-        Resolve foreground bundle identifier from simulator launchctl output.
+        Resolve foreground bundle identifier using automation, XML fallback, then launchctl.
+        """
+
+        configured_bundle_identifier = self.__configuration.bundle_identifier
+
+        automation_bundle_identifier = await self.__resolve_automation_bundle_identifier()
+        if automation_bundle_identifier:
+            return automation_bundle_identifier
+
+        return await self.__resolve_launchctl_bundle_identifier(
+            configured_bundle_identifier=configured_bundle_identifier
+        )
+
+    async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
+        """
+        Capture iOS screenshot and hierarchy together.
+        """
+
+        screenshot_result, hierarchy_result = await asyncio.gather(
+            self.capture_screen(),
+            self.dump_hierarchy(),
+        )
+
+        return screenshot_result, hierarchy_result
+
+    def __cache_dimensions_from_image(self, *, image: bytes) -> None:
+        """
+        Cache screenshot pixel dimensions from PNG bytes when available.
+        """
+
+        if self.__cached_dimensions:
+            return
+
+        width, height = self.__parse_png_dimensions(image=image)
+        if width > 0 and height > 0:
+            self.__cached_dimensions = (width, height)
+
+    async def __resolve_launchctl_bundle_identifier(
+        self,
+        *,
+        configured_bundle_identifier: str | None,
+    ) -> str:
+        """
+        Resolve the foreground bundle identifier using simulator launchctl output.
         """
 
         device_identifier = await self.__resolve_device_identifier()
-        configured_bundle_identifier = self.__configuration.bundle_identifier
 
         try:
             return_code, stdout, stderr = await self.__run_simctl(
@@ -331,6 +393,88 @@ class IOSDevice(DevicePort):
             return bundle_identifier
 
         return configured_bundle_identifier or self.__adapter_defaults.unknown_bundle_identifier
+
+    async def __resolve_automation_bundle_identifier(
+        self,
+    ) -> str | None:
+        """
+        Resolve the foreground bundle identifier through automation-backed sources.
+        """
+
+        if not self.__should_route_interactions_via_automation_gateway():
+            return None
+
+        bundle_identifier = await self.__resolve_active_application_bundle_identifier()
+        if bundle_identifier:
+            return bundle_identifier
+
+        return await self.__resolve_gateway_hierarchy_bundle_identifier()
+
+    async def __resolve_active_application_bundle_identifier(self) -> str | None:
+        """
+        Resolve the foreground bundle identifier through WebDriverAgent active app info.
+        """
+
+        try:
+            return await self.__automation_gateway.get_active_application_bundle_identifier()
+        except DeviceError as exception:
+            logger.warning(
+                "Get current package: active application lookup failed: %s",
+                exception,
+            )
+            return None
+
+    async def __resolve_gateway_hierarchy_bundle_identifier(self) -> str | None:
+        """
+        Resolve the foreground bundle identifier from WebDriverAgent hierarchy XML.
+        """
+
+        try:
+            hierarchy_content = await self.__automation_gateway.dump_source()
+        except DeviceError as exception:
+            logger.warning(
+                "Get current package: hierarchy fallback lookup failed: %s",
+                exception,
+            )
+            return None
+
+        return self.__extract_bundle_identifier_from_hierarchy(hierarchy_content=hierarchy_content)
+
+    def __extract_bundle_identifier_from_hierarchy(
+        self,
+        *,
+        hierarchy_content: str | None,
+    ) -> str | None:
+        """
+        Extract the foreground bundle identifier from iOS hierarchy XML when available.
+        """
+
+        if not hierarchy_content:
+            return None
+
+        try:
+            root = ElementTree.fromstring(hierarchy_content)  # nosec
+        except Exception as exception:
+            logger.warning(
+                "Get current package: failed to parse hierarchy XML fallback: %s",
+                exception,
+            )
+            return None
+
+        if root.tag == "XCUIElementTypeApplication":
+            bundle_identifier = root.attrib.get("bundleId")
+            if isinstance(bundle_identifier, str) and bundle_identifier.strip():
+                return bundle_identifier.strip()
+
+        application_node = root.find(".//*[@bundleId]")
+        if application_node is None:
+            return None
+
+        bundle_identifier = application_node.attrib.get("bundleId")
+        if not isinstance(bundle_identifier, str) or not bundle_identifier.strip():
+            return None
+
+        return bundle_identifier.strip()
 
     async def wait_for_device(self, *, timeout: float) -> bool:
         """

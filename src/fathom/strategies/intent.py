@@ -133,6 +133,7 @@ class IntentStrategy:
                     has_interrupts=self.__graph_context.signal.supports_interruption(),
                 )
                 await executor.run()
+                await self.__graph_context.history.flush_pending_operations()
 
                 script_data = await self.__graph_context.history.get_current_script(
                     intent=self.__intent
@@ -185,6 +186,7 @@ class IntentStrategy:
             is_cancelled = self.__graph_context.is_cancelled
 
             try:
+                await self.__graph_context.history.flush_pending_operations()
                 config = {"configurable": {"thread_id": self.__workflow_id}}
                 final_state = await self.__graph.aget_state(config) if self.__graph else None
                 self.__step_results = list(

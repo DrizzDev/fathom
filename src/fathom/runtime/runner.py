@@ -152,7 +152,7 @@ class FathomRunner:
 
         # Use provided package name or fetch from device
         if not package_name:
-            package_name = await self.__perception.get_current_application()
+            package_name = await self.__device.get_current_package()
 
         if self.__device.configuration:
             device_serial = self.__device.configuration.identifier
@@ -296,7 +296,7 @@ class FathomRunner:
 
         # Use provided package name or fetch from device
         if not package_name:
-            package_name = await self.__perception.get_current_application()
+            package_name = await self.__device.get_current_package()
 
         if self.__device.configuration:
             device_serial = self.__device.configuration.identifier

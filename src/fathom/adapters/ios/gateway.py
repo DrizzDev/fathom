@@ -162,6 +162,26 @@ class IOSAutomationGateway:
         finally:
             await self.__delete_session(session_identifier=session_identifier)
 
+    async def get_active_application_bundle_identifier(self) -> str | None:
+        """
+        Resolve the foreground bundle identifier through WebDriverAgent active app info.
+        """
+
+        payload = await self.__request(
+            method="GET",
+            path="wda/activeAppInfo",
+        )
+        value = payload.get("value")
+
+        if not isinstance(value, dict):
+            raise DeviceError("WebDriverAgent returned invalid active application payload")
+
+        bundle_identifier = value.get("bundleId")
+        if not isinstance(bundle_identifier, str) or not bundle_identifier.strip():
+            return None
+
+        return bundle_identifier.strip()
+
     async def press_home(self) -> None:
         """
         Trigger the iOS home screen through the automation gateway.
@@ -275,7 +295,9 @@ class IOSAutomationGateway:
                 f"iOS automation gateway {method} {path} request failed: {exception}"
             ) from exception
         except Exception as exception:
-            raise DeviceError(f"iOS automation gateway {method} {path} failed: {exception}") from exception
+            raise DeviceError(
+                f"iOS automation gateway {method} {path} failed: {exception}"
+            ) from exception
 
         if isinstance(payload, dict):
             return payload

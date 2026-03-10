@@ -141,6 +141,7 @@ class CommandExecutor:
         perception_adapter = self.__perception_factory.create(
             configuration=device_configuration,
             device=device_adapter,
+            use_xml=request.use_xml,
         )
         llm_adapter = self.__llm_factory.create(configuration=llm_configuration)
         telemetry_adapter = ConsoleTelemetryAdapter(

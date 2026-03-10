@@ -90,6 +90,7 @@ class FathomActivities:
         runner = self.__build_runner(
             request=request,
             workflow_id=workflow_id,
+            use_xml=bool(request.get("use_xml", True)),
             llm_configuration=configuration["llm"],
             interactive=request.get("interactive", True),
             device_configuration=configuration["device"],
@@ -106,7 +107,7 @@ class FathomActivities:
 
             # Fetch package name for accurate tracing/storage
             # If this fails, let the error propagate or handle it explicitly without 'unknown_app'
-            package_name = await runner.perception.get_current_application()
+            package_name = await runner.device.get_current_package()
 
             result = await runner.run_intent(
                 request_id=workflow_id,
@@ -166,6 +167,7 @@ class FathomActivities:
         runner = self.__build_runner(
             request=request,
             workflow_id=workflow_id,
+            use_xml=False,
             llm_configuration=configuration["llm"],
             device_configuration=configuration["device"],
             intent_configuration=configuration["intent"],
@@ -181,7 +183,7 @@ class FathomActivities:
             activity.heartbeat("Starting exploration")
 
             # Fetch package name for accurate tracing/storage
-            package_name = await runner.perception.get_current_application()
+            package_name = await runner.device.get_current_package()
 
             result = await runner.run_exploration(
                 request_id=workflow_id,
@@ -288,6 +290,7 @@ class FathomActivities:
         self,
         workflow_id: str,
         request: RequestPayload,
+        use_xml: bool,
         llm_configuration: LLMConfiguration,
         device_configuration: DeviceConfiguration,
         intent_configuration: IntentConfiguration,
@@ -328,6 +331,7 @@ class FathomActivities:
         perception_adapter = PerceptionFactory().create(
             configuration=device_configuration,
             device=device_adapter,
+            use_xml=use_xml,
         )
         telemetry_adapter = TelemetryFactory().create(configuration=telemetry_configuration)
         llm_adapter = LLMFactory().create(configuration=llm_configuration)

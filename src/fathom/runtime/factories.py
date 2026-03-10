@@ -6,7 +6,6 @@ from typing import Callable, Dict
 from fathom.adapters.device.adb import ADBDevice
 from fathom.adapters.device.ios import IOSDevice
 from fathom.adapters.device.remote import RemoteDeviceAdapter
-from fathom.adapters.hierarchy.ios import IOSHierarchyAdapterFactory
 from fathom.adapters.llm.gemini import GeminiLLM
 from fathom.adapters.perception.android import AndroidPerceptionAdapter
 from fathom.adapters.perception.ios import (
@@ -28,13 +27,11 @@ from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.factory import (
     DeviceFactoryPort,
-    HierarchyFactoryPort,
     LLMFactoryPort,
     PerceptionFactoryPort,
     SignalFactoryPort,
     TelemetryFactoryPort,
 )
-from fathom.interfaces.hierarchy import HierarchyPort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
@@ -42,29 +39,12 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import (
     DeviceConfiguration,
-    IOSConfiguration,
     LLMConfiguration,
     StorageConfiguration,
     TelemetryConfiguration,
 )
 
 logger = getLogger(__name__)
-
-
-class HierarchyFactory(HierarchyFactoryPort):
-    """
-    Factory for creating hierarchy adapters.
-    """
-
-    def __init__(self) -> None:
-        self.__ios_factory = IOSHierarchyAdapterFactory()
-
-    def create(self, *, configuration: IOSConfiguration) -> HierarchyPort:
-        """
-        Create hierarchy adapter from iOS configuration.
-        """
-
-        return self.__ios_factory.create(configuration=configuration)
 
 
 class DeviceFactory(DeviceFactoryPort):
@@ -114,42 +94,39 @@ class PerceptionFactory(PerceptionFactoryPort):
     Factory for creating perception adapters based on configuration and device binding.
     """
 
-    def __init__(self, *, hierarchy_factory: HierarchyFactoryPort | None = None) -> None:
-        self.__hierarchy_factory = hierarchy_factory or HierarchyFactory()
-
-    def create(self, *, configuration: DeviceConfiguration, device: DevicePort) -> PerceptionPort:
+    def create(
+        self,
+        *,
+        configuration: DeviceConfiguration,
+        device: DevicePort,
+        use_xml: bool,
+    ) -> PerceptionPort:
         """
         Create the appropriate PerceptionPort implementation.
         """
 
         if configuration.type == DeviceConnectionType.REMOTE:
-            if not isinstance(device, RemoteDeviceAdapter):
-                raise TypeError("Remote perception requires RemoteDeviceAdapter.")
-            return RemotePerceptionAdapter(device=device)
+            return RemotePerceptionAdapter(device=device, include_hierarchy=use_xml)
 
         if configuration.platform == DevicePlatform.IOS:
-            if not isinstance(device, IOSDevice):
-                raise TypeError("iOS perception requires IOSDevice.")
             backend = configuration.ios.automation_backend
             if backend == IOSAutomationBackend.XCRUN_SIMCTL:
+                if use_xml:
+                    return IOSEnhancedPerceptionAdapter(device=device)
+                return IOSNativePerceptionAdapter(device=device)
+            if not use_xml:
                 return IOSNativePerceptionAdapter(device=device)
             if backend in {
                 IOSAutomationBackend.XCUITEST,
                 IOSAutomationBackend.WEBDRIVER_AGENT,
             }:
-                hierarchy_adapter = self.__hierarchy_factory.create(configuration=configuration.ios)
-                return IOSEnhancedPerceptionAdapter(
-                    device=device,
-                    hierarchy=hierarchy_adapter,
-                )
+                return IOSEnhancedPerceptionAdapter(device=device)
             raise NotImplementedError(
                 f"Local iOS perception strategy is not implemented for backend {backend.value}"
             )
 
         if configuration.platform == DevicePlatform.ANDROID:
-            if not isinstance(device, ADBDevice):
-                raise TypeError("Android perception requires ADBDevice.")
-            return AndroidPerceptionAdapter(device=device)
+            return AndroidPerceptionAdapter(device=device, include_hierarchy=use_xml)
 
         raise NotImplementedError(
             f"Perception adapter for platform {configuration.platform} is not implemented"

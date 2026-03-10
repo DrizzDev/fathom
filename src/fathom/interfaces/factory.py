@@ -3,14 +3,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from fathom.interfaces.device import DevicePort
-from fathom.interfaces.hierarchy import HierarchyPort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import (
     DeviceConfiguration,
-    IOSConfiguration,
     LLMConfiguration,
     TelemetryConfiguration,
 )
@@ -36,9 +34,15 @@ class PerceptionFactoryPort(ABC):
     """
 
     @abstractmethod
-    def create(self, *, configuration: DeviceConfiguration, device: DevicePort) -> PerceptionPort:
+    def create(
+        self,
+        *,
+        configuration: DeviceConfiguration,
+        device: DevicePort,
+        use_xml: bool,
+    ) -> PerceptionPort:
         """
-        Create perception adapter from runtime device configuration and bound device port.
+        Create perception adapter from runtime configuration and bound ports.
         """
 
         raise NotImplementedError
@@ -81,20 +85,6 @@ class TelemetryFactoryPort(ABC):
     def create(self, *, configuration: TelemetryConfiguration) -> TelemetryPort:
         """
         Create telemetry adapter from runtime telemetry configuration.
-        """
-
-        raise NotImplementedError
-
-
-class HierarchyFactoryPort(ABC):
-    """
-    Abstract factory contract for hierarchy strategy creation.
-    """
-
-    @abstractmethod
-    def create(self, *, configuration: IOSConfiguration) -> HierarchyPort:
-        """
-        Create hierarchy strategy from iOS configuration.
         """
 
         raise NotImplementedError

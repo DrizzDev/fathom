@@ -5,8 +5,9 @@ import importlib
 import json
 import time
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
+from fathom.base.timing import time_it
 from fathom.core.services.exporter import ScriptExporter
 from fathom.interfaces.storage import StoragePort
 from fathom.schemas.steps import StepResult
@@ -36,16 +37,20 @@ class HistoryService:
         self,
         workflow_id: str,
         package_name: str,
-        path_manager: SharedPathManager,
         exporter: ScriptExporter,
+        path_manager: SharedPathManager,
         storage: Optional[StoragePort] = None,
     ) -> None:
         self.__workflow_id = workflow_id
         self.__package_name = package_name
+
         self.__storage = storage
-        self.__path_manager = path_manager
         self.__exporter = exporter
+        self.__path_manager = path_manager
+
         self.__background_tasks: set[asyncio.Task[Any]] = set()
+        self.__persistence_tasks: set[asyncio.Task[Any]] = set()
+        self.__persistence_chain: Optional[asyncio.Task[None]] = None
 
     def __fire_and_forget(self, coroutine: Any) -> None:
         """
@@ -59,13 +64,89 @@ class HistoryService:
         except Exception as exception:
             logger.exception(f"Failed to execute FAF task. Got exception {exception}")
 
+    def enqueue_save_step(
+        self,
+        *,
+        result: StepResult,
+        intent: str = "",
+        package_name: Optional[str] = None,
+        absolute_center: Optional[List[int]] = None,
+        on_complete: Optional[Callable[[str], Awaitable[None]]] = None,
+    ) -> None:
+        """
+        Queue ordered history persistence without blocking the step lifecycle.
+        """
+
+        async def __run_persistence() -> None:
+            script_data = await self.save_step(
+                result=result,
+                intent=intent,
+                package_name=package_name,
+                absolute_center=absolute_center,
+            )
+
+            if on_complete and script_data:
+                await on_complete(script_data)
+
+        previous_task = self.__persistence_chain
+
+        async def __run_serialized() -> None:
+            if previous_task and previous_task is not asyncio.current_task():
+                try:
+                    await previous_task
+                except Exception as exception:
+                    logger.exception("Previous history persistence task failed: %s", exception)
+
+            await __run_persistence()
+
+        try:
+            task = asyncio.create_task(__run_serialized())
+            self.__persistence_chain = task
+            self.__persistence_tasks.add(task)
+            task.add_done_callback(self.__persistence_tasks.discard)
+        except Exception as exception:
+            logger.exception("Failed to queue history persistence task: %s", exception)
+
+    @time_it(operation="history.flush_pending_operations")
+    async def flush_pending_operations(self) -> None:
+        """
+        Wait for queued history persistence and artifact uploads to complete.
+        """
+
+        if self.__persistence_chain:
+            try:
+                await self.__persistence_chain
+            finally:
+                self.__persistence_chain = None
+
+        if self.__background_tasks:
+            background_results = await asyncio.gather(
+                *tuple(self.__background_tasks),
+                return_exceptions=True,
+            )
+            self.__log_background_failures(
+                failures=background_results,
+                category="history.background_storage",
+            )
+
+        if self.__persistence_tasks:
+            persistence_results = await asyncio.gather(
+                *tuple(self.__persistence_tasks),
+                return_exceptions=True,
+            )
+            self.__log_background_failures(
+                failures=persistence_results,
+                category="history.persistence_queue",
+            )
+
+    @time_it(operation="history.save_step")
     async def save_step(
         self,
         result: StepResult,
         *,
         intent: str = "",
-        absolute_center: Optional[List[int]] = None,
         package_name: Optional[str] = None,
+        absolute_center: Optional[List[int]] = None,
     ) -> str:
         """
         Saves a single step result and updates associated artifact files.
@@ -79,6 +160,7 @@ class HistoryService:
             absolute_center=absolute_center,
             activity=resolved_package_name,
         ).model_dump()
+
         record["timestamp"] = int(time.time() * 1000)
         record["screen_changed"] = result.screen_changed
 
@@ -86,24 +168,29 @@ class HistoryService:
 
         await self.__save_json(data=history, package_name=resolved_package_name)
         await self.__save_yaml(history=history["history"], package_name=resolved_package_name)
+
         return await self.__update_script(
-            history=history["history"],
             intent=intent,
+            history=history["history"],
             package_name=resolved_package_name,
         )
 
+    @time_it(operation="history.get_current_script")
     async def get_current_script(self, intent: str) -> str:
         """
         Retrieves (or generates) the latest script based on saved history.
         """
 
+        await self.flush_pending_operations()
         history = self.__load_history(package_name=self.__package_name)
+
         return await self.__update_script(
-            history=history.get("history", []),
             intent=intent,
             package_name=self.__package_name,
+            history=history.get("history", []),
         )
 
+    @time_it(operation="history.load_history")
     def __load_history(self, *, package_name: str) -> Dict[str, Any]:
         """
         Loads existing history from the JSON artifact.
@@ -114,8 +201,8 @@ class HistoryService:
 
         if not path.exists() and package_name != self.__package_name:
             previous_path = self.__get_history_file_path(
-                package_name=self.__package_name,
                 filename="history.json",
+                package_name=self.__package_name,
             )
             if previous_path.exists():
                 path = previous_path
@@ -141,6 +228,7 @@ class HistoryService:
 
         return data
 
+    @time_it(operation="history.save_json")
     async def __save_json(self, data: Dict[str, Any], *, package_name: str) -> None:
         """
         Writes history to structured JSON format.
@@ -159,12 +247,13 @@ class HistoryService:
                     metadata={
                         "category": "history",
                         "filename": "history.json",
-                        "session_id": self.__workflow_id,
                         "package_name": package_name,
+                        "session_id": self.__workflow_id,
                     },
                 )
             )
 
+    @time_it(operation="history.save_yaml")
     async def __save_yaml(self, history: List[Dict[str, Any]], *, package_name: str) -> None:
         """
         Generates a YAML representation of the execution.
@@ -178,8 +267,8 @@ class HistoryService:
 
         if yaml:
             yaml_data = yaml.dump(
-                data=steps,
                 indent=2,
+                data=steps,
                 sort_keys=False,
                 default_flow_style=False,
             )
@@ -196,12 +285,13 @@ class HistoryService:
                     metadata={
                         "category": "history",
                         "filename": "history.yaml",
-                        "session_id": self.__workflow_id,
                         "package_name": package_name,
+                        "session_id": self.__workflow_id,
                     },
                 )
             )
 
+    @time_it(operation="history.update_script")
     async def __update_script(
         self,
         history: List[Dict[str, Any]],
@@ -236,8 +326,8 @@ class HistoryService:
                     metadata={
                         "category": "history",
                         "filename": "script.txt",
-                        "session_id": self.__workflow_id,
                         "package_name": package_name,
+                        "session_id": self.__workflow_id,
                     },
                 )
             )
@@ -281,6 +371,20 @@ class HistoryService:
             self.__package_name = str(package_name)
 
         return self.__package_name
+
+    def __log_background_failures(self, *, failures: List[Any], category: str) -> None:
+        """
+        Log any exceptions surfaced from gathered background tasks.
+        """
+
+        for failure in failures:
+            if isinstance(failure, Exception):
+                logger.error(
+                    "Background task failure in %s: %s",
+                    category,
+                    failure,
+                    exc_info=(type(failure), failure, failure.__traceback__),
+                )
 
     def __get_history_file_path(self, *, package_name: str, filename: str) -> Path:
         """

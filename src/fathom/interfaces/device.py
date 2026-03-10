@@ -72,6 +72,38 @@ class DevicePort(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_current_package(self) -> str:
+        """
+        Get the current foreground application identifier.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def capture_screen(self) -> bytes:
+        """
+        Capture the current screenshot payload.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def dump_hierarchy(self) -> Optional[str]:
+        """
+        Capture the current hierarchy payload.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
+        """
+        Capture the current screenshot and optional hierarchy payload.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
     async def get_dimensions(self) -> Tuple[int, int]:
         """
         Get screen dimensions (width, height).

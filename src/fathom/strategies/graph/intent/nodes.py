@@ -124,6 +124,39 @@ class IntentNodeProvider:
         result_dict[IntentStateKey.AGENT_STATE_CHECKPOINT.value] = checkpoint
         result_dict[IntentStateKey.CURRENT_SUB_GOAL_INDEX.value] = current_index
 
+    async def __publish_generated_script(self, *, script_data: str, step_number: int) -> None:
+        """
+        Publish generated script telemetry after background history persistence completes.
+        """
+
+        await self.__context.telemetry.info(
+            script_data,
+            type=FathomEvent.SCRIPT_GENERATED,
+            step=step_number + 1,
+        )
+
+    def __enqueue_history_persistence(
+        self,
+        *,
+        step_result: StepResult,
+        current_activity: Optional[str],
+    ) -> None:
+        """
+        Queue ordered history persistence for the completed step.
+        """
+
+        async def __publish(script_data: str) -> None:
+            await self.__publish_generated_script(
+                script_data=script_data,
+                step_number=step_result.step.step_number,
+            )
+
+        self.__context.history.enqueue_save_step(
+            result=step_result,
+            intent=self.__context.intent,
+            package_name=current_activity,
+            on_complete=__publish,
+        )
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
         Capture the screen and update state.
@@ -768,13 +801,12 @@ class IntentNodeProvider:
                     action_type=step_result.step.action.action_type.value,
                 )
             else:
+                self.__enqueue_history_persistence(
+                    step_result=step_result,
+                    current_activity=current_activity,
+                )
                 logger.debug(
                     f"[NODE: RECORD] Recording step to history. Observed={current_activity}"
-                )
-                await self.__context.history.save_step(
-                    result=step_result,
-                    intent=self.__context.intent,
-                    package_name=current_activity,
                 )
 
             # Emit enriched telemetry for the UI to render full step details

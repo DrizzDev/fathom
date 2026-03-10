@@ -224,7 +224,7 @@ class ExplorationNodeProvider:
             else None
         )
 
-        await self.__context.history.save_step(
+        self.__context.history.enqueue_save_step(
             result=step_result,
             intent="exploration",
             package_name=current_activity,

@@ -5,13 +5,11 @@ from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.factory import (
     DeviceFactoryPort,
-    HierarchyFactoryPort,
     LLMFactoryPort,
     PerceptionFactoryPort,
     SignalFactoryPort,
     TelemetryFactoryPort,
 )
-from fathom.interfaces.hierarchy import HierarchyPort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -84,7 +82,6 @@ class IResponseParser(Protocol):
 
 __all__ = [
     "DevicePort",
-    "HierarchyPort",
     "KnowledgePort",
     "LLMPort",
     "MemoryPort",
@@ -102,5 +99,4 @@ __all__ = [
     "PerceptionFactoryPort",
     "SignalFactoryPort",
     "TelemetryFactoryPort",
-    "HierarchyFactoryPort",
 ]
