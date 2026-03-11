@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Callable, Dict, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
@@ -774,9 +774,21 @@ class IntentNodeProvider:
             result_value = state.get(CommonStateKey.STEP_RESULT)
             if not isinstance(result_value, StepResult):
                 logger.error("[NODE: RECORD] No valid step result found")
-                return cast("IntentGraphState", {})
+                result = cast("IntentGraphState", {})
+                self.__persist_agent_state_to_graph(result)
+                return result
 
             step_result: StepResult = result_value
+
+            # Record in agent state (internal bookkeeping, always done)
+            self.__context.agent_state.record_step(result=step_result)
+
+            # Accumulate step results in graph state so MemorySaver checkpoints them.
+            existing_step_results = cast(
+                "List[StepResult]", state.get(IntentStateKey.STEP_RESULTS) or []
+            )
+            accumulated_step_results = existing_step_results + [step_result]
+
             current_activity = "unknown"
             try:
                 current_activity = await self.__context.device.get_current_package()
@@ -793,9 +805,6 @@ class IntentNodeProvider:
                 f"screen_changed={step_result.screen_changed}, duration={step_result.duration}ms, "
                 f"execution_package={execution_activity}, observed_package={current_activity}"
             )
-
-            # Record in agent state (internal bookkeeping, always done)
-            self.__context.agent_state.record_step(result=step_result)
 
             # LAUNCHER BLOCKING: Never persist actions taken on launcher apps
             execution_package_base = execution_activity.split("/")[0]
@@ -816,7 +825,6 @@ class IntentNodeProvider:
                 )
                 script_data = ""
             else:
-                # Not on launcher: persist to history/export
                 logger.debug(
                     f"[NODE: RECORD] Recording step to history. Observed={current_activity}"
                 )
@@ -827,7 +835,6 @@ class IntentNodeProvider:
             # Emit enriched telemetry for the UI to render full step details
             record = step_result.to_record(activity=current_activity)
 
-            # Calculate total duration for UI
             analysis_duration_raw = state.get(CommonStateKey.ANALYSIS_DURATION) or 0.0
             grounding_duration_raw = state.get(CommonStateKey.GROUNDING_DURATION) or 0.0
             execution_duration_raw = state.get(CommonStateKey.EXECUTION_DURATION) or 0.0
@@ -888,13 +895,11 @@ class IntentNodeProvider:
                 visual_hash=step_result.pre_hash,
             )
 
-            # Commit cycle to ContextManager (GCC Trace)
             logger.debug(
                 f"[H3] Committing to trace | thought={step_result.step.action.rationale[:50]}..."
             )
 
             analysis_result = state.get(CommonStateKey.ANALYSIS)
-
             analysis: Optional[AnalysisResult] = None
             if isinstance(analysis_result, AnalysisResult):
                 analysis = analysis_result
@@ -909,9 +914,6 @@ class IntentNodeProvider:
                 thought=step_result.step.action.rationale,
             )
 
-            # GCC Branching - Semantic compression for long-running workflows
-            # Threshold: 15 steps balances context freshness with compression benefits
-            # For 100-150 step workflows, this creates ~7-10 milestones
             full_context = self.__context.context_manager.get_full_context()
             active_count = full_context.get("active_count", 0)
 
@@ -920,7 +922,6 @@ class IntentNodeProvider:
                 logger.info(f"[NODE: RECORD] Triggering GCC branch: active_count={active_count}")
                 await self.__context.context_manager.branch()
 
-            # Audit logging
             execution_plan = state.get(IntentStateKey.PLAN)
             current_screen = state.get(CommonStateKey.SCREEN_STATE)
             is_new_screen = state.get(CommonStateKey.IS_NEW_SCREEN)
@@ -930,27 +931,6 @@ class IntentNodeProvider:
                 and isinstance(current_screen, ScreenState)
                 and isinstance(is_new_screen, bool)
             ):
-                # Explicit float conversion for metrics
-                analysis_duration_raw = state.get(CommonStateKey.ANALYSIS_DURATION) or 0.0
-                grounding_duration_raw = state.get(CommonStateKey.GROUNDING_DURATION) or 0.0
-                execution_duration_raw = state.get(CommonStateKey.EXECUTION_DURATION) or 0.0
-
-                analysis_duration = (
-                    float(analysis_duration_raw)
-                    if isinstance(analysis_duration_raw, (int, float, str))
-                    else 0.0
-                )
-                grounding_duration = (
-                    float(grounding_duration_raw)
-                    if isinstance(grounding_duration_raw, (int, float, str))
-                    else 0.0
-                )
-                execution_duration = (
-                    float(execution_duration_raw)
-                    if isinstance(execution_duration_raw, (int, float, str))
-                    else 0.0
-                )
-
                 self.__context.auditor.log_step(
                     plan=execution_plan,
                     state=current_screen,
@@ -965,8 +945,6 @@ class IntentNodeProvider:
                     total_duration=grounding_duration + analysis_duration + execution_duration,
                 )
 
-            # Check if the plan indicated completion
-            execution_plan = state.get(IntentStateKey.PLAN)
             if isinstance(execution_plan, PlanResult) and execution_plan.is_complete:
                 logger.info("[NODE: RECORD] Plan indicates completion. This is the final step.")
                 self.__context.agent_state.mark_complete(
@@ -978,6 +956,7 @@ class IntentNodeProvider:
                     {
                         CommonStateKey.IS_COMPLETE: True,
                         CommonStateKey.COMPLETION_REASON: execution_plan.reason,
+                        IntentStateKey.STEP_RESULTS: accumulated_step_results,
                     },
                 )
                 self.__persist_agent_state_to_graph(result)
@@ -988,8 +967,10 @@ class IntentNodeProvider:
             )
             logger.info("[NODE: RECORD] -> Will route to GROUND for next step")
 
-            # Persist state before returning
-            result = cast("IntentGraphState", {})
+            result = cast(
+                "IntentGraphState",
+                {IntentStateKey.STEP_RESULTS: accumulated_step_results},
+            )
             self.__persist_agent_state_to_graph(result)
             return result
 
@@ -999,8 +980,10 @@ class IntentNodeProvider:
                 f"Recording failed: {exception}",
                 step=self.__context.agent_state.step_count,
             )
-            # Return empty dict to continue execution - recording is not critical
-            result = cast("IntentGraphState", {})
+            existing_step_results = cast(
+                "List[StepResult]", state.get(IntentStateKey.STEP_RESULTS) or []
+            )
+            result = cast("IntentGraphState", {IntentStateKey.STEP_RESULTS: existing_step_results})
             self.__persist_agent_state_to_graph(result)
             return result
 

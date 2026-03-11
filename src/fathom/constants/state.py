@@ -70,6 +70,9 @@ class IntentStateKey(StrEnum):
     CURRENT_SUB_GOAL_INDEX = "CURRENT_SUB_GOAL_INDEX"
     AGENT_STATE_CHECKPOINT = "AGENT_STATE_CHECKPOINT"
 
+    # History
+    STEP_RESULTS = "STEP_RESULTS"
+
 
 class ExplorationStateKey(StrEnum):
     """

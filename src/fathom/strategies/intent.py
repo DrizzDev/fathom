@@ -4,7 +4,7 @@ import importlib
 import time
 from logging import getLogger
 from pathlib import Path  # noqa: TC003
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from langgraph.checkpoint.memory import MemorySaver
 from rich.console import Console
@@ -13,7 +13,7 @@ from fathom.adapters.signal.noop import NoopSignal
 from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
-from fathom.constants.state import CommonStateKey
+from fathom.constants.state import CommonStateKey, IntentStateKey
 from fathom.core.services.decomposer import IntentDecomposer
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
@@ -26,6 +26,7 @@ from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExecutionResult
+from fathom.schemas.steps import StepResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 
@@ -60,6 +61,7 @@ class IntentStrategy:
         self.__intent = intent
         self.__workflow_id = workflow_id
         self.__llm = llm
+        self.__step_results: List[StepResult] = []
 
         # Initialize Graph Context with injected summarizer
         self.__graph_context = GraphContext(
@@ -161,6 +163,7 @@ class IntentStrategy:
                 error = final_state.values.get("completion_reason")
             if not error:
                 error = self.__graph_context.agent_state.completion_reason
+            self.__step_results = list(final_state.values.get(IntentStateKey.STEP_RESULTS) or [])
 
             duration = int((time.time() - start_time) * 1000)
 
@@ -175,9 +178,30 @@ class IntentStrategy:
             logger.exception(f"Intent strategy execution failed: {exception}")
             duration = int((time.time() - start_time) * 1000)
             is_cancelled = self.__graph_context.is_cancelled
+
+            # Recover step history from last checkpoint so the execution transcript
+            # is not lost even when the run raises an exception.
+            try:
+                config = {"configurable": {"thread_id": self.__workflow_id}}
+                final_state = await self.__graph.aget_state(config)
+                self.__step_results = list(
+                    final_state.values.get(IntentStateKey.STEP_RESULTS) or []
+                )
+            except Exception as recovery_error:
+                logger.debug(f"Could not recover step results from checkpoint: {recovery_error}")
+
             return ExecutionResult(
                 success=False, duration=duration, error=str(exception), is_cancelled=is_cancelled
             )
+
+    @property
+    def step_results(self) -> List[StepResult]:
+        """
+        Step results accumulated during execution.
+        Available after execute() completes.
+        """
+
+        return self.__step_results
 
     def get_progress(self) -> Dict[str, Any]:
         """

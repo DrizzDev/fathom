@@ -241,6 +241,7 @@ class FathomRunner:
                 executed_subgoals=executed_subgoals,
                 skipped_subgoals=skipped_subgoals,
                 subgoal_count=subgoal_count,
+                step_results=strategy.step_results,
             )
 
             await self.__telemetry.info(
