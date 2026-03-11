@@ -49,8 +49,11 @@ class CoordinateConverter:
         x_px, y_px, width_px, height_px = bounds.to_pixels(
             screen_width=self.__width, screen_height=self.__height
         )
-        center_x = max(0, min(x_px + width_px // 2, self.__width))
-        center_y = max(0, min(y_px + height_px // 2, self.__height))
+        # Clamp to the last on-screen pixel (0..width-1 / 0..height-1).
+        max_x = max(0, self.__width - 1)
+        max_y = max(0, self.__height - 1)
+        center_x = max(0, min(x_px + width_px // 2, max_x))
+        center_y = max(0, min(y_px + height_px // 2, max_y))
 
         return center_x, center_y
 

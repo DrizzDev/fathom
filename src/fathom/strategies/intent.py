@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import importlib
 import time
+from contextlib import ExitStack, contextmanager
 from logging import getLogger
 from pathlib import Path  # noqa: TC003
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, Iterator, List, Optional, cast
 
 from langgraph.checkpoint.memory import MemorySaver
 from rich.console import Console
@@ -62,6 +63,7 @@ class IntentStrategy:
         self.__workflow_id = workflow_id
         self.__llm = llm
         self.__step_results: List[StepResult] = []
+        self.__graph = None
 
         # Initialize Graph Context with injected summarizer
         self.__graph_context = GraphContext(
@@ -93,14 +95,11 @@ class IntentStrategy:
         # Compatibility: newer langgraph JsonPlusSerializer() has no
         # allowed_json_modules argument, while older versions do.
 
-        # Build checkpointer for graph state persistence
-        checkpoint_db = path_manager.memory_path / "checkpoints.db"
-        checkpointer = self.__build_checkpointer(checkpoint_db_path=checkpoint_db)
-
-        self.__graph = builder.build(
-            checkpointer=checkpointer,
-            interrupt_before=interrupt_nodes,
-        )
+        # Defer checkpointer + graph construction to execute(), because SqliteSaver is a
+        # context manager and must stay open for the duration of the graph run.
+        self.__graph_builder = builder
+        self.__interrupt_nodes = interrupt_nodes
+        self.__checkpoint_db = path_manager.memory_path / "checkpoints.db"
 
     async def execute(self) -> ExecutionResult:
         """
@@ -112,49 +111,60 @@ class IntentStrategy:
         start_time = time.time()
 
         try:
-            # 1. Decompose intent into sub-goals using LLM
-            logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
-            decomposer = IntentDecomposer(llm=self.__llm)
-            sub_goals = await decomposer.decompose(intent=self.__intent)
-
-            # Set sub-goals in agent state
-            self.__graph_context.agent_state.set_sub_goals(sub_goals)
-            logger.info(
-                f"[IntentStrategy] Intent decomposed into {len(sub_goals)} sub-goals. "
-                f"Starting execution..."
-            )
-
-            # 2. Delegate execution lifecycle to the GraphExecutor (SRP)
-            # invalidate_on_injection=True forces re-planning when context is added
-            executor = GraphExecutor(
-                graph=self.__graph,
-                context=self.__graph_context,
-                thread_id=self.__workflow_id,
-                invalidate_on_injection=self.__graph_context.realignment.immediate,
-                has_interrupts=not isinstance(self.__graph_context.signal, NoopSignal),
-            )
-
-            await executor.run()
-
-            script_data = await self.__graph_context.history.get_current_script(
-                intent=self.__intent
-            )
-            if script_data:
-                await self.__graph_context.telemetry.info(
-                    script_data,
-                    type=FathomEvent.SCRIPT_GENERATED,
-                    step=self.__graph_context.agent_state.step_count,
+            with ExitStack() as stack:
+                checkpointer: Any = stack.enter_context(
+                    self.__build_checkpointer_context(checkpoint_db_path=self.__checkpoint_db)
                 )
-            else:
-                logger.warning(
-                    "Final script generation returned empty data; cannot publish SCRIPT_GENERATED event"
+                self.__graph = self.__graph_builder.build(
+                    checkpointer=checkpointer,
+                    interrupt_before=self.__interrupt_nodes,
+                )
+                # 1. Decompose intent into sub-goals using LLM
+                logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
+                decomposer = IntentDecomposer(llm=self.__llm)
+                sub_goals = await decomposer.decompose(intent=self.__intent)
+
+                # Set sub-goals in agent state
+                self.__graph_context.agent_state.set_sub_goals(sub_goals)
+                logger.info(
+                    f"[IntentStrategy] Intent decomposed into {len(sub_goals)} sub-goals. "
+                    f"Starting execution..."
                 )
 
-            # 3. Result extraction from final state
-            from langchain_core.runnables.config import RunnableConfig
+                # 2. Delegate execution lifecycle to the GraphExecutor (SRP)
+                # invalidate_on_injection=True forces re-planning when context is added
+                executor = GraphExecutor(
+                    graph=self.__graph,
+                    context=self.__graph_context,
+                    thread_id=self.__workflow_id,
+                    invalidate_on_injection=self.__graph_context.realignment.immediate,
+                    has_interrupts=not isinstance(self.__graph_context.signal, NoopSignal),
+                )
 
-            config = cast("RunnableConfig", {"configurable": {"thread_id": self.__workflow_id}})
-            final_state = await self.__graph.aget_state(config)
+                await executor.run()
+
+                script_data = await self.__graph_context.history.get_current_script(
+                    intent=self.__intent
+                )
+                if script_data:
+                    await self.__graph_context.telemetry.info(
+                        script_data,
+                        type=FathomEvent.SCRIPT_GENERATED,
+                        step=self.__graph_context.agent_state.step_count,
+                    )
+                else:
+                    logger.warning(
+                        "Final script generation returned empty data; cannot publish SCRIPT_GENERATED event"
+                    )
+
+                # 3. Result extraction from final state
+                from langchain_core.runnables.config import RunnableConfig
+
+                if self.__graph is None:
+                    raise RuntimeError("Intent graph is not initialized")
+
+                config = cast("RunnableConfig", {"configurable": {"thread_id": self.__workflow_id}})
+                final_state = await self.__graph.aget_state(config)
 
             is_cancelled = self.__graph_context.is_cancelled
             success = self.__graph_context.agent_state.is_complete
@@ -183,9 +193,13 @@ class IntentStrategy:
             # is not lost even when the run raises an exception.
             try:
                 config = {"configurable": {"thread_id": self.__workflow_id}}
-                final_state = await self.__graph.aget_state(config)
+                if self.__graph is not None:
+                    final_state = await self.__graph.aget_state(config)
+                else:
+                    final_state = None
                 self.__step_results = list(
-                    final_state.values.get(IntentStateKey.STEP_RESULTS) or []
+                    (final_state.values.get(IntentStateKey.STEP_RESULTS) if final_state else [])
+                    or []
                 )
             except Exception as recovery_error:
                 logger.debug(f"Could not recover step results from checkpoint: {recovery_error}")
@@ -245,12 +259,13 @@ class IntentStrategy:
 
         self.__graph_context.cancel()
 
-    def __build_checkpointer(
+    @contextmanager
+    def __build_checkpointer_context(
         self,
         checkpoint_db_path: Path,
-    ) -> Any:
+    ) -> Iterator[Any]:
         """
-        Build a persistence layer for graph checkpoints.
+        Build a persistence layer for graph checkpoints as a context manager.
 
         Prefers SQLite-backed checkpoints for crash-safe persistence.
         Falls back to in-memory checkpoints if sqlite support is unavailable.
@@ -274,20 +289,19 @@ class IntentStrategy:
                 "Install 'langgraph-checkpoint-sqlite' to enable persistent checkpoints. "
                 f"Reason: {exception}"
             )
-            return MemorySaver()
+            yield MemorySaver()
+            return
 
         SqliteSaver = sqlite_module.SqliteSaver
 
         try:
-            # Create checkpointer using SqliteSaver.
-            # The default serializer in SqliteSaver handles Pydantic models automatically.
-            checkpointer = SqliteSaver.from_conn_string(str(checkpoint_db_path))
+            # SqliteSaver is a context manager; keep it open for the duration of graph execution.
+            with SqliteSaver.from_conn_string(str(checkpoint_db_path)) as checkpointer:
+                logger.info(f"Using SqliteSaver for checkpointing at {checkpoint_db_path}")
+                yield checkpointer
         except Exception as exception:
             logger.error(
                 "Failed to initialize SQLite checkpointer. "
                 f"checkpoint_db_path={checkpoint_db_path}. Reason: {exception}"
             )
             raise
-
-        logger.info(f"Using SqliteSaver for checkpointing at {checkpoint_db_path}")
-        return checkpointer
