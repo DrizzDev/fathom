@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from fathom.base.logger import BaseLogger
+from fathom.constants.run import SignalAdapterType, TargetKind
 from fathom.core.exceptions import FathomError
 from fathom.runtime.command.executor import CommandExecutor
 from fathom.runtime.command.resolver import (
@@ -18,7 +19,20 @@ from fathom.runtime.command.resolver import (
 )
 from fathom.schemas.cli import ExploreCommandInput, LocalCommandInput, RunCommandInput
 from fathom.schemas.configuration import DeviceConfiguration
-from fathom.schemas.orchestration import RealignmentPolicy, WorkflowRequest
+from fathom.schemas.run import (
+    ExplorationObjectiveConfiguration,
+    ExplorationRunRequest,
+    IntentObjectiveConfiguration,
+    IntentRunRequest,
+    InteractionConfiguration,
+    MemoryConfiguration,
+    ModelSelectionConfiguration,
+    RealignmentPolicy,
+    ResourceConfiguration,
+    RunMetadata,
+    RuntimeConfiguration,
+    TargetConfiguration,
+)
 from fathom.settings.env import FathomSettings
 
 console = Console()
@@ -263,11 +277,11 @@ class CommandApplication:
     def __build_run_request(
         self,
         *,
-        command_input: RunCommandInput,
         settings: FathomSettings,
-    ) -> WorkflowRequest:
+        command_input: RunCommandInput,
+    ) -> IntentRunRequest:
         """
-        Build workflow request for run command.
+        Build canonical run request for the run command.
         """
 
         realignment = RealignmentPolicy(
@@ -275,17 +289,33 @@ class CommandApplication:
             immediate=command_input.immediate_realignment,
         )
 
-        return WorkflowRequest(
-            realignment=realignment,
-            intent=command_input.intent,
-            use_xml=command_input.use_xml,
-            signal_type=command_input.signal,
-            max_steps=command_input.max_steps,
-            interactive=command_input.interactive,
-            device=self.__build_device_configuration(
-                command_input=command_input,
-                settings=settings,
+        device_configuration = self.__build_device_configuration(
+            settings=settings,
+            command_input=command_input,
+        )
+
+        return IntentRunRequest(
+            objective=IntentObjectiveConfiguration(
+                intent=command_input.intent,
+                use_xml=command_input.use_xml,
+                max_steps=command_input.max_steps,
             ),
+            runtime=RuntimeConfiguration(
+                interactive=command_input.interactive,
+                signal_type=SignalAdapterType(command_input.signal),
+            ),
+            memory=MemoryConfiguration(),
+            resources=ResourceConfiguration(
+                targets=[
+                    TargetConfiguration(
+                        kind=TargetKind.DEVICE,
+                        device_configuration=device_configuration,
+                    )
+                ],
+                language_model_configuration=ModelSelectionConfiguration(),
+            ),
+            interaction=InteractionConfiguration(realignment=realignment),
+            metadata=RunMetadata(),
         )
 
     def __build_explore_request(
@@ -293,18 +323,35 @@ class CommandApplication:
         *,
         command_input: ExploreCommandInput,
         settings: FathomSettings,
-    ) -> WorkflowRequest:
+    ) -> ExplorationRunRequest:
         """
-        Build workflow request for explore command.
+        Build canonical run request for the explore command.
         """
 
-        return WorkflowRequest(
-            max_steps=command_input.max_steps,
-            intent="Explore application structure",
-            device=self.__build_device_configuration(
-                command_input=command_input,
-                settings=settings,
+        device_configuration = self.__build_device_configuration(
+            settings=settings,
+            command_input=command_input,
+        )
+
+        return ExplorationRunRequest(
+            objective=ExplorationObjectiveConfiguration(
+                max_steps=command_input.max_steps,
             ),
+            runtime=RuntimeConfiguration(
+                interactive=False,
+                signal_type=SignalAdapterType.INTERACTIVE,
+            ),
+            memory=MemoryConfiguration(),
+            resources=ResourceConfiguration(
+                targets=[
+                    TargetConfiguration(
+                        kind=TargetKind.DEVICE,
+                        device_configuration=device_configuration,
+                    )
+                ],
+                language_model_configuration=ModelSelectionConfiguration(),
+            ),
+            metadata=RunMetadata(),
         )
 
     def __resolve_command_inputs(
@@ -324,6 +371,7 @@ class CommandApplication:
         if command_name == "run":
             run_command_input = RunCommandInput.model_validate(arguments)
             self.__apply_run_overrides(settings=settings, command_input=run_command_input)
+
         elif command_name == "explore":
             explore_command_input = ExploreCommandInput.model_validate(arguments)
             self.__apply_explore_overrides(settings=settings, command_input=explore_command_input)
@@ -396,22 +444,22 @@ class CommandApplication:
                 console.print("[bold red]Invalid run command input.[/bold red]")
                 return 1
 
-            request = self.__build_run_request(
-                command_input=run_command_input,
+            run_request = self.__build_run_request(
                 settings=settings,
+                command_input=run_command_input,
             )
-            return asyncio.run(executor.run(request=request))
+            return asyncio.run(executor.run(request=run_request))
 
         if command_name == "explore":
             if explore_command_input is None:
                 console.print("[bold red]Invalid explore command input.[/bold red]")
                 return 1
 
-            request = self.__build_explore_request(
-                command_input=explore_command_input,
+            exploration_request = self.__build_explore_request(
                 settings=settings,
+                command_input=explore_command_input,
             )
-            return asyncio.run(executor.explore(request=request))
+            return asyncio.run(executor.explore(request=exploration_request))
 
         self.__parser.print_help()
         return 0

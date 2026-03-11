@@ -29,7 +29,7 @@ from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
-from fathom.schemas.orchestration import RealignmentPolicy
+from fathom.schemas.run import RealignmentPolicy
 
 
 class GraphContext:

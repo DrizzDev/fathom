@@ -21,8 +21,8 @@ from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
-from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExplorationResult, IntentResult
+from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
 

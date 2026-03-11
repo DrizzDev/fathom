@@ -12,7 +12,6 @@ from rich.panel import Panel
 from rich.table import Table
 
 from fathom.adapters.telemetry.console import ConsoleTelemetryAdapter
-from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.core.exceptions import FathomError
 from fathom.interfaces.factory import (
@@ -20,18 +19,26 @@ from fathom.interfaces.factory import (
     LLMFactoryPort,
     PerceptionFactoryPort,
     SignalFactoryPort,
+    TelemetryFactoryPort,
 )
 from fathom.interfaces.signal import SignalPort
+from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
 from fathom.runtime.command.resolver import (
     RuntimeDeviceDefaultsResolver,
     RuntimeDeviceDefaultsResolverPort,
 )
-from fathom.runtime.factories import DeviceFactory, LLMFactory, PerceptionFactory, SignalFactory
+from fathom.runtime.factories import (
+    DeviceFactory,
+    LLMFactory,
+    PerceptionFactory,
+    SignalFactory,
+    TelemetryFactory,
+)
 from fathom.runtime.runner import FathomRunner
-from fathom.schemas.configuration import DeviceConfiguration, LLMConfiguration
-from fathom.schemas.orchestration import WorkflowRequest
+from fathom.schemas.configuration import DeviceConfiguration
 from fathom.schemas.results import IntentResult
+from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest, RunRequest
 from fathom.settings.env import FathomSettings
 
 console = Console()
@@ -47,11 +54,12 @@ class CommandExecutor:
         self,
         *,
         settings: FathomSettings,
-        llm_factory: LLMFactoryPort | None = None,
-        device_factory: DeviceFactoryPort | None = None,
-        perception_factory: PerceptionFactoryPort | None = None,
-        signal_factory: SignalFactoryPort | None = None,
-        device_defaults_resolver: RuntimeDeviceDefaultsResolverPort | None = None,
+        llm_factory: Optional[LLMFactoryPort] = None,
+        device_factory: Optional[DeviceFactoryPort] = None,
+        signal_factory: Optional[SignalFactoryPort] = None,
+        telemetry_factory: Optional[TelemetryFactoryPort] = None,
+        perception_factory: Optional[PerceptionFactoryPort] = None,
+        device_defaults_resolver: Optional[RuntimeDeviceDefaultsResolverPort] = None,
     ) -> None:
         """
         Initialize executor with settings.
@@ -59,11 +67,15 @@ class CommandExecutor:
 
         self.__cancelled = False
         self.__settings = settings
+
         self.__runner: Optional[FathomRunner] = None
-        self.__device_factory = device_factory or DeviceFactory()
         self.__llm_factory = llm_factory or LLMFactory()
-        self.__perception_factory = perception_factory or PerceptionFactory()
+        self.__device_factory = device_factory or DeviceFactory()
+
         self.__signal_factory = signal_factory or SignalFactory()
+        self.__telemetry_factory = telemetry_factory or TelemetryFactory()
+        self.__perception_factory = perception_factory or PerceptionFactory()
+
         self.__device_defaults_resolver = device_defaults_resolver or RuntimeDeviceDefaultsResolver(
             settings=settings
         )
@@ -91,75 +103,70 @@ class CommandExecutor:
         if self.__runner:
             self.__runner.cancel()
 
-    def __build_llm_configuration(self) -> LLMConfiguration:
-        """
-        Build LLM configuration from runtime settings.
-        """
-
-        return LLMConfiguration(
-            model=self.__settings.gemini_model,
-            api_key=self.__settings.gemini_api_key,
-            location=self.__settings.vertex_location,
-            project_id=self.__settings.vertex_project_id,
-            use_cache=getattr(self.__settings, "use_cache", True),
-            credentials=self.__settings.google_application_credentials,
-        )
-
-    def __resolve_device_configuration(self, *, request: WorkflowRequest) -> DeviceConfiguration:
+    def __resolve_device_configuration(self, *, request: RunRequest) -> DeviceConfiguration:
         """
         Resolve request device configuration with safe defaults.
         """
-        return self.__device_defaults_resolver.resolve(configuration=request.device)
 
-    def __create_signal_adapter(self, *, request: WorkflowRequest) -> SignalPort:
+        assembly_builder = RunAssemblyBuilder(settings=self.__settings)
+        return self.__device_defaults_resolver.resolve(
+            configuration=assembly_builder.build_device_configuration(request=request)
+        )
+
+    def __create_signal_adapter(self, *, request: RunRequest) -> SignalPort:
         """
         Create signal adapter from request interaction mode.
         """
 
         signal_adapter = self.__signal_factory.create(
-            interactive=request.interactive,
-            signal_type=request.signal_type,
+            interactive=request.runtime.interactive,
+            signal_type=request.runtime.signal_type.value,
         )
 
-        if request.interactive:
+        if request.runtime.interactive:
             console.print("[bold cyan]Interactive mode enabled[/bold cyan]")
             console.print("[dim]Agent will ask questions when uncertain[/dim]")
 
         return signal_adapter
 
-    def __create_runner(
-        self, *, request: WorkflowRequest, signal_adapter: SignalPort
-    ) -> FathomRunner:
+    def __create_runner(self, *, request: RunRequest, signal_adapter: SignalPort) -> FathomRunner:
         """
         Build configured runtime runner for command execution.
         """
 
         path_manager = SharedPathManager(settings=self.__settings)
-        llm_configuration = self.__build_llm_configuration()
+        assembly_builder = RunAssemblyBuilder(settings=self.__settings)
+
         device_configuration = self.__resolve_device_configuration(request=request)
+        llm_configuration = assembly_builder.build_planner_model_configuration(request=request)
+        telemetry_configuration = assembly_builder.build_telemetry_configuration(request=request)
+
         device_adapter = self.__device_factory.create(configuration=device_configuration)
+
         perception_adapter = self.__perception_factory.create(
-            configuration=device_configuration,
             device=device_adapter,
-            use_xml=request.use_xml,
+            use_xml=request.objective.use_xml,
+            configuration=device_configuration,
         )
+
         llm_adapter = self.__llm_factory.create(configuration=llm_configuration)
+
         telemetry_adapter = ConsoleTelemetryAdapter(
-            inner=StructlogAdapter(),
             console=console,
+            inner=self.__telemetry_factory.create(configuration=telemetry_configuration),
         )
 
         return (
             Fathom.builder(path_manager=path_manager)
-            .with_device(port=device_adapter)
-            .with_perception(port=perception_adapter)
             .with_llm(port=llm_adapter)
+            .with_device(port=device_adapter)
             .with_signal(port=signal_adapter)
             .with_telemetry(port=telemetry_adapter)
+            .with_perception(port=perception_adapter)
             .build()
         )
 
-    async def __run_intent_workflow(self, *, request: WorkflowRequest) -> IntentResult:
+    async def __run_intent_workflow(self, *, request: IntentRunRequest) -> IntentResult:
         """
         Execute intent workflow with spinner in non-interactive mode.
         """
@@ -167,22 +174,22 @@ class CommandExecutor:
         if self.__runner is None:
             raise FathomError("Runner is not initialized")
 
-        if request.interactive:
+        if request.runtime.interactive:
             return await self.__runner.run_intent(
-                intent=request.intent,
-                use_xml=request.use_xml,
-                max_steps=request.max_steps,
-                request_id=request.session_id,
-                realignment=request.realignment,
+                intent=request.objective.intent,
+                use_xml=request.objective.use_xml,
+                max_steps=request.objective.max_steps,
+                request_id=request.runtime.session_id,
+                realignment=request.interaction.realignment,
             )
 
         with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
             return await self.__runner.run_intent(
-                intent=request.intent,
-                use_xml=request.use_xml,
-                max_steps=request.max_steps,
-                request_id=request.session_id,
-                realignment=request.realignment,
+                intent=request.objective.intent,
+                use_xml=request.objective.use_xml,
+                max_steps=request.objective.max_steps,
+                request_id=request.runtime.session_id,
+                realignment=request.interaction.realignment,
             )
 
     def __print_execution_summary(self, *, result: IntentResult) -> None:
@@ -285,7 +292,7 @@ class CommandExecutor:
         if self.__runner:
             await self.__runner.cleanup()
 
-    async def run(self, *, request: WorkflowRequest) -> int:
+    async def run(self, *, request: IntentRunRequest) -> int:
         """
         Execute intent command flow.
         """
@@ -294,7 +301,7 @@ class CommandExecutor:
 
         console.print(
             Panel.fit(
-                f"[bold blue]Fathom Agent[/bold blue]\n[cyan]Intent:[/cyan] {request.intent}",
+                f"[bold blue]Fathom Agent[/bold blue]\n[cyan]Intent:[/cyan] {request.objective.intent}",
                 border_style="blue",
             )
         )
@@ -320,7 +327,7 @@ class CommandExecutor:
         finally:
             await self.__cleanup_runner()
 
-    async def explore(self, *, request: WorkflowRequest) -> int:
+    async def explore(self, *, request: ExplorationRunRequest) -> int:
         """
         Execute exploration command flow.
         """
@@ -339,14 +346,14 @@ class CommandExecutor:
         try:
             signal_adapter = self.__signal_factory.create(
                 interactive=False,
-                signal_type=request.signal_type,
+                signal_type=request.runtime.signal_type.value,
             )
             self.__runner = self.__create_runner(request=request, signal_adapter=signal_adapter)
 
             with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
                 result = await self.__runner.run_exploration(
-                    max_steps=request.max_steps,
-                    request_id=request.session_id,
+                    max_steps=request.objective.max_steps,
+                    request_id=request.runtime.session_id,
                 )
 
             table = Table(title="Exploration Results", border_style="green")

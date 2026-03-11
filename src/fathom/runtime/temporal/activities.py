@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Dict, Optional, cast
+from typing import TYPE_CHECKING
 
-from pydantic import ValidationError
 from temporalio import activity
 
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.adapters.signal.temporal import TemporalSignalAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.interfaces.signal import SignalPort
+from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
 from fathom.runtime.factories import (
     DeviceFactory,
@@ -18,16 +18,7 @@ from fathom.runtime.factories import (
     StorageFactory,
     TelemetryFactory,
 )
-from fathom.schemas.configuration import (
-    DeviceConfiguration,
-    ExecutionConfiguration,
-    ExplorationConfiguration,
-    IntentConfiguration,
-    LLMConfiguration,
-    StorageConfiguration,
-    TelemetryConfiguration,
-)
-from fathom.schemas.orchestration import RealignmentPolicy
+from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest, RunRequest
 from fathom.settings.env import FathomSettings
 
 if TYPE_CHECKING:
@@ -35,92 +26,138 @@ if TYPE_CHECKING:
 
 logger = getLogger(__name__)
 
-RequestPayload = Dict[str, Any]
-
 
 class FathomActivities:
     """
-    Temporal activities implementation for Fathom agent tasks.
-    Encapsulates execution logic for intent and exploration workflows.
+    Temporal activities implementation for Fathom agent workflows.
     """
 
-    def __init__(self, settings: Optional[FathomSettings] = None) -> None:
-        self.__settings = settings or FathomSettings()
+    def __init__(self, settings: FathomSettings | None = None) -> None:
+        """
+        Initialize activities with runtime settings.
+        """
 
-    def __resolve_device_configuration(
+        self.__settings = settings or FathomSettings()
+        self.__assembly = RunAssemblyBuilder(settings=self.__settings)
+
+    def __validate_intent_request(self, *, request: dict[str, object]) -> IntentRunRequest:
+        """
+        Validate an intent run payload.
+        """
+
+        return IntentRunRequest.model_validate(request)
+
+    def __validate_exploration_request(
         self,
         *,
-        request: RequestPayload,
-    ) -> DeviceConfiguration:
-        """Resolve explicit device configuration passed by the caller."""
-        device_payload = request.get("device")
-        if isinstance(device_payload, dict):
-            try:
-                return DeviceConfiguration.model_validate(device_payload)
-            except ValidationError as exception:
-                raise ValueError(
-                    f"Invalid device configuration payload: {exception}"
-                ) from exception
+        request: dict[str, object],
+    ) -> ExplorationRunRequest:
+        """
+        Validate an exploration run payload.
+        """
 
-        raise ValueError(
-            "Missing device configuration in request payload. Caller must send explicit 'device'."
+        return ExplorationRunRequest.model_validate(request)
+
+    def __create_signal_adapter(self, *, workflow_id: str, request: RunRequest) -> SignalPort:
+        """
+        Create the signal adapter for the current workflow host.
+        """
+
+        if not request.runtime.interactive:
+            return NoopSignal()
+
+        temporal_host = self.__settings.temporal_host
+        if not temporal_host:
+            raise ValueError("temporal_host is required for interactive mode but is not configured")
+
+        return TemporalSignalAdapter(
+            workflow_id=workflow_id,
+            target_host=str(temporal_host),
+            api_key=self.__settings.temporal_api_key,
+            namespace=activity.info().workflow_namespace,
+        )
+
+    def __build_runner(self, *, workflow_id: str, request: RunRequest) -> FathomRunner:
+        """
+        Build the Fathom runner for the validated run request.
+        """
+
+        device_configuration = self.__assembly.build_device_configuration(request=request)
+        planner_configuration = self.__assembly.build_planner_model_configuration(request=request)
+        storage_configuration = self.__assembly.build_storage_configuration(request=request)
+        telemetry_configuration = self.__assembly.build_telemetry_configuration(
+            request=request,
+            workflow_id=workflow_id,
+        )
+
+        signal_adapter = self.__create_signal_adapter(
+            request=request,
+            workflow_id=workflow_id,
+        )
+        path_manager = SharedPathManager(settings=self.__settings)
+
+        device_adapter = DeviceFactory().create(configuration=device_configuration)
+        perception_adapter = PerceptionFactory().create(
+            configuration=device_configuration,
+            device=device_adapter,
+            use_xml=request.objective.use_xml,
+        )
+
+        llm_adapter = LLMFactory().create(configuration=planner_configuration)
+        telemetry_adapter = TelemetryFactory().create(configuration=telemetry_configuration)
+        storage_adapter = StorageFactory().create(
+            path_manager=path_manager,
+            configuration=storage_configuration,
+        )
+
+        return (
+            Fathom.builder(path_manager=path_manager)
+            .with_llm(port=llm_adapter)
+            .with_device(port=device_adapter)
+            .with_signal(port=signal_adapter)
+            .with_storage(port=storage_adapter)
+            .with_telemetry(port=telemetry_adapter)
+            .with_perception(port=perception_adapter)
+            .with_realignment(policy=request.interaction.realignment)
+            .with_intent_config(configuration=request.interaction.intent_configuration)
+            .with_execution_config(configuration=request.interaction.execution_configuration)
+            .with_exploration_config(configuration=request.interaction.exploration_configuration)
+            .build()
         )
 
     @activity.defn(name="EXECUTE_INTENT")  # type: ignore[untyped-decorator]
     async def execute_intent(
         self,
         workflow_id: str,
-        request: RequestPayload,
-    ) -> Dict[str, Any]:
+        request: dict[str, object],
+    ) -> dict[str, object]:
         """
-        Execute an intent-based workflow.
-
-        Args:
-            request: Activity input parameters.
-            workflow_id: ID of the parent workflow.
-
-        Returns:
-            Execution results.
+        Execute an intent run.
         """
 
-        activity.logger.info(f"Starting Fathom intent execution for workflow {workflow_id}")
-
-        configuration = self.__build_configurations(workflow_id=workflow_id, request=request)
-
-        runner = self.__build_runner(
-            request=request,
-            workflow_id=workflow_id,
-            use_xml=bool(request.get("use_xml", True)),
-            llm_configuration=configuration["llm"],
-            interactive=request.get("interactive", True),
-            device_configuration=configuration["device"],
-            intent_configuration=configuration["intent"],
-            storage_configuration=configuration["storage"],
-            execution_configuration=configuration["engine"],
-            telemetry_configuration=configuration["telemetry"],
-            exploration_configuration=configuration["exploration"],
-            realignment=cast("Optional[Dict[str, Any]]", request.get("realignment")),
-        )
+        activity.logger.info("Starting Fathom intent execution for workflow %s", workflow_id)
+        validated_request = self.__validate_intent_request(request=request)
+        runner = self.__build_runner(workflow_id=workflow_id, request=validated_request)
 
         try:
             activity.heartbeat("Starting execution")
 
-            # Fetch package name for accurate tracing/storage
-            # If this fails, let the error propagate or handle it explicitly without 'unknown_app'
-            package_name = await runner.device.get_current_package()
+            package_name = (
+                validated_request.objective.package_name
+                or await runner.device.get_current_package()
+            )
 
             result = await runner.run_intent(
                 request_id=workflow_id,
-                intent=request["intent"],
                 package_name=package_name,
-                use_xml=request.get("use_xml", True),
-                max_steps=request.get("max_steps", 50),
-                conversation_id=request.get("conversation_id"),
-                context_scope=request.get("context_scope", "execution"),
+                intent=validated_request.objective.intent,
+                use_xml=validated_request.objective.use_xml,
+                max_steps=validated_request.objective.max_steps,
+                context_scope=validated_request.memory.context_scope,
+                realignment=validated_request.interaction.realignment,
+                conversation_id=validated_request.memory.conversation_id,
             )
-
             activity.heartbeat(f"Completed: {result.steps_taken} steps")
-
             return {
                 "error": result.error,
                 "success": result.success,
@@ -128,9 +165,8 @@ class FathomActivities:
                 "duration": result.duration,
                 "metrics": result.metrics if result.metrics else None,
             }
-
         except Exception as exception:
-            activity.logger.exception(f"Fathom execution failed: {exception}")
+            activity.logger.exception("Fathom execution failed: %s", exception)
             return {
                 "steps": 0,
                 "duration": 0,
@@ -138,61 +174,35 @@ class FathomActivities:
                 "success": False,
                 "error": str(exception),
             }
-
         finally:
-            # Telemetry cleanup is handled by the adapter itself or GC in this simple case
             await runner.cleanup()
 
     @activity.defn(name="EXECUTE_EXPLORATION")  # type: ignore[untyped-decorator]
     async def execute_exploration(
         self,
         workflow_id: str,
-        request: RequestPayload,
-    ) -> Dict[str, Any]:
+        request: dict[str, object],
+    ) -> dict[str, object]:
         """
-        Execute an autonomous exploration workflow.
-
-        Args:
-            request: Activity input parameters.
-            workflow_id: ID of the parent workflow.
-
-        Returns:
-            Exploration results.
+        Execute an exploration run.
         """
 
-        activity.logger.info(f"Starting Fathom exploration for workflow {workflow_id}")
-
-        configuration = self.__build_configurations(workflow_id=workflow_id, request=request)
-
-        runner = self.__build_runner(
-            request=request,
-            workflow_id=workflow_id,
-            use_xml=False,
-            llm_configuration=configuration["llm"],
-            device_configuration=configuration["device"],
-            intent_configuration=configuration["intent"],
-            interactive=request.get("interactive", True),
-            storage_configuration=configuration["storage"],
-            execution_configuration=configuration["engine"],
-            telemetry_configuration=configuration["telemetry"],
-            exploration_configuration=configuration["exploration"],
-            realignment=cast("Optional[Dict[str, Any]]", request.get("realignment")),
-        )
+        activity.logger.info("Starting Fathom exploration for workflow %s", workflow_id)
+        validated_request = self.__validate_exploration_request(request=request)
+        runner = self.__build_runner(workflow_id=workflow_id, request=validated_request)
 
         try:
             activity.heartbeat("Starting exploration")
-
-            # Fetch package name for accurate tracing/storage
-            package_name = await runner.device.get_current_package()
-
+            package_name = (
+                validated_request.objective.package_name
+                or await runner.device.get_current_package()
+            )
             result = await runner.run_exploration(
                 request_id=workflow_id,
                 package_name=package_name,
-                max_steps=request.get("max_steps", 100),
+                max_steps=validated_request.objective.max_steps,
             )
-
             activity.heartbeat(f"Completed: {result.steps_executed} steps")
-
             return {
                 "metrics": None,
                 "error": result.error,
@@ -200,9 +210,8 @@ class FathomActivities:
                 "duration": result.duration,
                 "steps": result.steps_executed,
             }
-
         except Exception as exception:
-            activity.logger.exception(f"Exploration failed: {exception}")
+            activity.logger.exception("Exploration failed: %s", exception)
             return {
                 "steps": 0,
                 "duration": 0,
@@ -210,152 +219,5 @@ class FathomActivities:
                 "success": False,
                 "error": str(exception),
             }
-
         finally:
             await runner.cleanup()
-
-    def __build_configurations(self, workflow_id: str, request: RequestPayload) -> Dict[str, Any]:
-        """
-        Constructs configuration objects from request dictionary.
-        """
-
-        # 1. LLM Configuration Merging (Legacy + New)
-        llm_request_configuration = request.get("llm_config", {})
-        planner_configuration = request.get("planner_configuration", {})
-        if not isinstance(llm_request_configuration, dict):
-            llm_request_configuration = {}
-        if not isinstance(planner_configuration, dict):
-            planner_configuration = {}
-
-        # Populate parameters from legacy planner first
-        llm_parameters: Dict[str, Any] = {
-            "location": planner_configuration.get("location"),
-            "project_id": planner_configuration.get("project_id"),
-            "credentials": planner_configuration.get("credentials")
-            or self.__settings.google_credentials_dict,
-            "use_cache": planner_configuration.get("use_cache", True),
-            "model": planner_configuration.get("model", "gemini-3-flash-preview"),
-        }
-
-        llm_parameters.update(llm_request_configuration)
-        llm_parameters = {key: value for key, value in llm_parameters.items() if value is not None}
-
-        llm_configuration = LLMConfiguration(**llm_parameters)
-
-        # 2. Device Configuration
-        session_id = request["session_id"]
-        execution_id = request.get("execution_id") or workflow_id
-        device_configuration = self.__resolve_device_configuration(
-            request=request,
-        )
-
-        if redis_url := (request.get("redis_url") or self.__settings.redis_url):
-            telemetry_configuration = TelemetryConfiguration(
-                type="REDIS",
-                identity=execution_id,
-                session_id=session_id,
-                connection_string=redis_url,
-                topic="enricher:commands:v1:logs:{session_id}",
-            )
-        else:
-            telemetry_configuration = TelemetryConfiguration(type="STRUCTLOG")
-
-        # Fallback to LLM config / planner config for legacy compatibility
-        storage_parameters: Dict[str, Any] = {
-            "backends": ["LOCAL", "CLOUD"],
-            "project_id": planner_configuration.get("project_id"),
-            "credentials": planner_configuration.get("credentials")
-            or self.__settings.google_credentials_dict,
-            "storage_bucket": llm_request_configuration.get("storage_bucket")
-            or planner_configuration.get("storage_bucket"),
-        }
-        storage_parameters.update(request.get("storage_config", {}))
-        storage_parameters = {
-            key: value for key, value in storage_parameters.items() if value is not None
-        }
-
-        storage_configuration = StorageConfiguration(**storage_parameters)
-
-        return {
-            "llm": llm_configuration,
-            "device": device_configuration,
-            "storage": storage_configuration,
-            "telemetry": telemetry_configuration,
-            "intent": IntentConfiguration(**(request.get("intent_config", {}))),
-            "engine": ExecutionConfiguration(**(request.get("execution_config", {}))),
-            "exploration": ExplorationConfiguration(**(request.get("exploration_config", {}))),
-        }
-
-    def __build_runner(
-        self,
-        workflow_id: str,
-        request: RequestPayload,
-        use_xml: bool,
-        llm_configuration: LLMConfiguration,
-        device_configuration: DeviceConfiguration,
-        intent_configuration: IntentConfiguration,
-        storage_configuration: StorageConfiguration,
-        telemetry_configuration: TelemetryConfiguration,
-        execution_configuration: ExecutionConfiguration,
-        exploration_configuration: ExplorationConfiguration,
-        *,
-        interactive: bool = True,
-        realignment: Optional[Dict[str, Any]] = None,
-    ) -> FathomRunner:
-        """
-        Instantiates the Fathom runner with configured adapters.
-        """
-
-        signal_adapter: SignalPort
-
-        if interactive:
-            # Resolve cluster config: request takes precedence, env vars are the fallback
-            temporal_host = request.get("temporal_host") or self.__settings.temporal_host
-            if not temporal_host:
-                raise ValueError(
-                    "temporal_host is required for interactive mode but is not set in the request or environment (TEMPORAL_HOST / TEMPORAL_TARGET_HOST)"
-                )
-            temporal_api_key = request.get("temporal_api_key") or self.__settings.temporal_api_key
-
-            signal_adapter = TemporalSignalAdapter(
-                workflow_id=workflow_id,
-                api_key=temporal_api_key,
-                target_host=str(temporal_host),
-                namespace=activity.info().workflow_namespace or "default",
-            )
-        else:
-            signal_adapter = NoopSignal()
-
-        path_manager = SharedPathManager(settings=self.__settings)
-        device_adapter = DeviceFactory().create(configuration=device_configuration)
-        perception_adapter = PerceptionFactory().create(
-            configuration=device_configuration,
-            device=device_adapter,
-            use_xml=use_xml,
-        )
-        telemetry_adapter = TelemetryFactory().create(configuration=telemetry_configuration)
-        llm_adapter = LLMFactory().create(configuration=llm_configuration)
-
-        # Storage initialization (Always includes local + optional cloud)
-        storage_adapter = StorageFactory().create(
-            path_manager=path_manager,
-            configuration=storage_configuration,
-        )
-
-        builder = (
-            Fathom.builder(path_manager=path_manager)
-            .with_device(port=device_adapter)
-            .with_perception(port=perception_adapter)
-            .with_signal(port=signal_adapter)
-            .with_storage(port=storage_adapter)
-            .with_telemetry(port=telemetry_adapter)
-            .with_intent_config(configuration=intent_configuration)
-            .with_llm(port=llm_adapter)
-            .with_execution_config(configuration=execution_configuration)
-            .with_exploration_config(configuration=exploration_configuration)
-        )
-
-        if realignment:
-            builder.with_realignment(policy=RealignmentPolicy(**realignment))
-
-        return builder.build()

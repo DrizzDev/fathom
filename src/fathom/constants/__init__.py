@@ -18,6 +18,7 @@ from fathom.constants.execution import (
     SignalType,
 )
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform, IOSAutomationBackend
+from fathom.constants.run import ExecutionMode, SignalAdapterType, TargetKind
 from fathom.constants.scope import ContextScope
 
 
@@ -95,6 +96,7 @@ __all__ = [
     "StrategyStatus",
     "SignalType",
     "ExecutionPhase",
+    "ExecutionMode",
     "VISUAL_HASH_LENGTH",
     "DEFAULT_SWIPE_DISTANCE",
     "DEFAULT_SCROLL_DISTANCE",
@@ -106,4 +108,6 @@ __all__ = [
     "DevicePlatform",
     "DeviceConnectionType",
     "IOSAutomationBackend",
+    "SignalAdapterType",
+    "TargetKind",
 ]

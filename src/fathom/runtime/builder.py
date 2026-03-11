@@ -18,7 +18,7 @@ from fathom.schemas.configuration import (
     FathomConfiguration,
     IntentConfiguration,
 )
-from fathom.schemas.orchestration import RealignmentPolicy
+from fathom.schemas.run import RealignmentPolicy
 from fathom.settings.env import FathomSettings
 
 if TYPE_CHECKING:

@@ -1,10 +1,12 @@
 import logging
 from collections import deque
 from datetime import timedelta
-from typing import Any, Deque, Dict, Optional
+from typing import Deque, Optional
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+
+from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +80,7 @@ class FathomBaseWorkflow:
         self.__cancelled = True
 
     @workflow.query  # type: ignore[untyped-decorator]
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, object]:
         """
         Query current workflow state.
         """
@@ -121,24 +123,22 @@ class FathomWorkflow(FathomBaseWorkflow):
     """
 
     @workflow.run  # type: ignore[untyped-decorator]
-    async def run(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, request: dict[str, object]) -> dict[str, object]:
         """
         Execute Fathom intent with HITL support.
         """
 
-        workflow.logger.info(
-            f"Starting Fathom intent workflow for session {request.get('session_id')} "
-            f"with intent: {request.get('intent')}"
-        )
-
         try:
-            # Ensure identity is in request for telemetry
-            identity = workflow.info().workflow_id
-            request["identity"] = identity
+            validated_request = IntentRunRequest.model_validate(request)
+
+            workflow.logger.info(
+                f"Starting Fathom intent workflow for session {validated_request.runtime.session_id} "
+                f"with intent: {validated_request.objective.intent}"
+            )
 
             result = await workflow.execute_activity(
                 activity="EXECUTE_INTENT",
-                args=[identity, request],
+                args=[workflow.info().workflow_id, validated_request.model_dump(mode="json")],
                 heartbeat_timeout=timedelta(seconds=300),
                 start_to_close_timeout=timedelta(minutes=30),
                 retry_policy=RetryPolicy(maximum_attempts=1),
@@ -168,17 +168,21 @@ class FathomExplorationWorkflow(FathomBaseWorkflow):
     """
 
     @workflow.run  # type: ignore[untyped-decorator]
-    async def run(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, request: dict[str, object]) -> dict[str, object]:
         """
         Execute Fathom exploration with HITL support.
         """
 
-        workflow.logger.info(f"Starting Fathom exploration with payload {request}")
-
         try:
+            validated_request = ExplorationRunRequest.model_validate(request)
+
+            workflow.logger.info(
+                f"Starting Fathom exploration for session {validated_request.runtime.session_id}"
+            )
+
             result = await workflow.execute_activity(
                 activity="EXECUTE_EXPLORATION",
-                args=[workflow.info().workflow_id, request],
+                args=[workflow.info().workflow_id, validated_request.model_dump(mode="json")],
                 start_to_close_timeout=timedelta(minutes=30),
                 heartbeat_timeout=timedelta(seconds=60),
                 retry_policy=RetryPolicy(maximum_attempts=1),
