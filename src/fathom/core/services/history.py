@@ -396,6 +396,7 @@ class HistoryService:
             session_id=self.__workflow_id,
         )
         return directory / filename
+
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """
         Constructs a structured dictionary for a YAML step.

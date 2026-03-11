@@ -85,9 +85,7 @@ class IntentStrategy:
         )
 
         builder = IntentGraphBuilder(context=self.__graph_context)
-        interrupt_nodes = (
-            [] if not signal.supports_interruption() else [NodeName.EXECUTE.value]
-        )
+        interrupt_nodes = [] if not signal.supports_interruption() else [NodeName.EXECUTE.value]
 
         self.__graph_builder = builder
         self.__interrupt_nodes = interrupt_nodes

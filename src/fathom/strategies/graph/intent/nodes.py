@@ -157,6 +157,7 @@ class IntentNodeProvider:
             package_name=current_activity,
             on_complete=__publish,
         )
+
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
         Capture the screen and update state.
@@ -416,7 +417,7 @@ class IntentNodeProvider:
                 elements = raw_elements
 
             # Get Device Dimensions for Accurate Normalization (Strict)
-            width, height = await self.__context.perception_port.get_dimensions()
+            width, height = await self.__context.device.get_dimensions()
 
             # Determine interactive mode & config for planner
             is_interactive = self.__context.signal.supports_interruption()

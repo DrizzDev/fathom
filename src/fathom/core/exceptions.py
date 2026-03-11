@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fathom.schemas.results import ToolErrorFeedback
 
+
 class FathomError(Exception):
     """
     Base exception for all Fathom errors.
