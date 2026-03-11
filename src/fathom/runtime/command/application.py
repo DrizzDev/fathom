@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from logging import getLogger
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from pydantic import ValidationError
 from rich.console import Console
@@ -262,16 +262,16 @@ class CommandApplication:
     def __build_device_configuration(
         self,
         *,
-        command_input: LocalCommandInput,
         settings: FathomSettings,
+        command_input: LocalCommandInput,
     ) -> DeviceConfiguration:
         """
         Resolve local device configuration from command input.
         """
 
         return self.__local_device_resolver.resolve(
-            command_input=command_input,
             settings=settings,
+            command_input=command_input,
         )
 
     def __build_run_request(
@@ -321,8 +321,8 @@ class CommandApplication:
     def __build_explore_request(
         self,
         *,
-        command_input: ExploreCommandInput,
         settings: FathomSettings,
+        command_input: ExploreCommandInput,
     ) -> ExplorationRunRequest:
         """
         Build canonical run request for the explore command.
@@ -357,9 +357,9 @@ class CommandApplication:
     def __resolve_command_inputs(
         self,
         *,
-        arguments: dict[str, object],
         settings: FathomSettings,
-    ) -> tuple[str, Optional[RunCommandInput], Optional[ExploreCommandInput]]:
+        arguments: Dict[str, object],
+    ) -> Tuple[str, Optional[RunCommandInput], Optional[ExploreCommandInput]]:
         """
         Validate and resolve command-specific inputs.
         """

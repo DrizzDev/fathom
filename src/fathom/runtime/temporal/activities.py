@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict
 
 from temporalio import activity
 
@@ -40,18 +40,14 @@ class FathomActivities:
         self.__settings = settings or FathomSettings()
         self.__assembly = RunAssemblyBuilder(settings=self.__settings)
 
-    def __validate_intent_request(self, *, request: dict[str, object]) -> IntentRunRequest:
+    def __validate_intent_request(self, *, request: Dict[str, Any]) -> IntentRunRequest:
         """
         Validate an intent run payload.
         """
 
         return IntentRunRequest.model_validate(request)
 
-    def __validate_exploration_request(
-        self,
-        *,
-        request: dict[str, object],
-    ) -> ExplorationRunRequest:
+    def __validate_exploration_request(self, *, request: Dict[str, Any]) -> ExplorationRunRequest:
         """
         Validate an exploration run payload.
         """
@@ -126,11 +122,7 @@ class FathomActivities:
         )
 
     @activity.defn(name="EXECUTE_INTENT")  # type: ignore[untyped-decorator]
-    async def execute_intent(
-        self,
-        workflow_id: str,
-        request: dict[str, object],
-    ) -> dict[str, object]:
+    async def execute_intent(self, workflow_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute an intent run.
         """
@@ -179,10 +171,8 @@ class FathomActivities:
 
     @activity.defn(name="EXECUTE_EXPLORATION")  # type: ignore[untyped-decorator]
     async def execute_exploration(
-        self,
-        workflow_id: str,
-        request: dict[str, object],
-    ) -> dict[str, object]:
+        self, workflow_id: str, request: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Execute an exploration run.
         """

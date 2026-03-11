@@ -1,7 +1,7 @@
 import logging
 from collections import deque
 from datetime import timedelta
-from typing import Deque, Optional
+from typing import Any, Deque, Dict, Optional
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -80,7 +80,7 @@ class FathomBaseWorkflow:
         self.__cancelled = True
 
     @workflow.query  # type: ignore[untyped-decorator]
-    def get_state(self) -> dict[str, object]:
+    def get_state(self) -> Dict[str, Any]:
         """
         Query current workflow state.
         """
@@ -123,7 +123,7 @@ class FathomWorkflow(FathomBaseWorkflow):
     """
 
     @workflow.run  # type: ignore[untyped-decorator]
-    async def run(self, request: dict[str, object]) -> dict[str, object]:
+    async def run(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute Fathom intent with HITL support.
         """
@@ -168,7 +168,7 @@ class FathomExplorationWorkflow(FathomBaseWorkflow):
     """
 
     @workflow.run  # type: ignore[untyped-decorator]
-    async def run(self, request: dict[str, object]) -> dict[str, object]:
+    async def run(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute Fathom exploration with HITL support.
         """

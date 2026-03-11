@@ -5,7 +5,7 @@ import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from logging import getLogger
 from pathlib import Path  # noqa: TC003
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
@@ -246,7 +246,7 @@ class IntentStrategy:
             "completion_reason": self.__graph_context.agent_state.completion_reason,
         }
 
-    def get_subgoal_execution_audit(self) -> tuple[list[str], list[str], int]:
+    def get_subgoal_execution_audit(self) -> Tuple[List[str], List[str], int]:
         """
         Get audit trail of executed vs skipped subgoals.
         """
@@ -255,7 +255,7 @@ class IntentStrategy:
 
         subgoals = self.__graph_context.agent_state.sub_goal_list
         executed = [sg.description for sg in subgoals if sg.status == SubGoalStatus.COMPLETE]
-        skipped: list[str] = []
+        skipped: List[str] = []
         return executed, skipped, len(subgoals)
 
     @property
