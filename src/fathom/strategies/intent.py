@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import importlib
 import time
-from contextlib import ExitStack, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from logging import getLogger
 from pathlib import Path  # noqa: TC003
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 
 from fathom.base.paths import SharedPathManager
@@ -101,8 +102,8 @@ class IntentStrategy:
         start_time = time.time()
 
         try:
-            with ExitStack() as stack:
-                checkpointer: Any = stack.enter_context(
+            async with AsyncExitStack() as stack:
+                checkpointer: Any = await stack.enter_async_context(
                     self.__build_checkpointer_context(checkpoint_db_path=self.__checkpoint_db)
                 )
                 self.__graph = self.__graph_builder.build(
@@ -151,7 +152,7 @@ class IntentStrategy:
                 if self.__graph is None:
                     raise RuntimeError("Intent graph is not initialized")
 
-                config = {"configurable": {"thread_id": self.__workflow_id}}
+                config: RunnableConfig = {"configurable": {"thread_id": self.__workflow_id}}
                 final_state = await self.__graph.aget_state(config)
 
             is_cancelled = self.__graph_context.is_cancelled
@@ -279,11 +280,11 @@ class IntentStrategy:
 
         self.__graph_context.cancel()
 
-    @contextmanager
-    def __build_checkpointer_context(
+    @asynccontextmanager
+    async def __build_checkpointer_context(
         self,
         checkpoint_db_path: Path,
-    ) -> Iterator[Any]:
+    ) -> AsyncIterator[Any]:
         """
         Build a persistence layer for graph checkpoints as a context manager.
 
@@ -301,7 +302,7 @@ class IntentStrategy:
             raise
 
         try:
-            sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite")
+            sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite.aio")
         except (ImportError, ModuleNotFoundError) as exception:
             logger.warning(
                 "SQLite checkpoint saver unavailable; falling back to MemorySaver. "
@@ -311,11 +312,14 @@ class IntentStrategy:
             yield MemorySaver()
             return
 
-        SqliteSaver = sqlite_module.SqliteSaver
+        AsyncSqliteSaver = sqlite_module.AsyncSqliteSaver
 
         try:
-            with SqliteSaver.from_conn_string(str(checkpoint_db_path)) as checkpointer:
-                logger.info(f"Using SqliteSaver for checkpointing at {checkpoint_db_path}")
+            async with AsyncSqliteSaver.from_conn_string(str(checkpoint_db_path)) as checkpointer:
+                logger.info(
+                    "Using AsyncSqliteSaver for checkpointing at %s",
+                    checkpoint_db_path,
+                )
                 yield checkpointer
         except Exception as exception:
             logger.error(
