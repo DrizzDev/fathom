@@ -759,15 +759,38 @@ class IntentNodeProvider:
             logger.warning("[NODE: RECORD] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            result = cast(
-                "IntentGraphState",
-                {
-                    CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
-                },
-            )
-            self.__persist_agent_state_to_graph(result)
-            return result
+            return {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+            }
+
+        result = state.get(CommonStateKey.STEP_RESULT)
+        if not isinstance(result, StepResult):
+            logger.error("[NODE: RECORD] No valid step result found")
+            return {}
+
+        step_result: StepResult = result
+
+        logger.info(
+            f"[NODE: RECORD] Recording step: success={step_result.success}, "
+            f"screen_changed={step_result.screen_changed}, duration={step_result.duration}ms"
+        )
+
+        self.__context.agent_state.record_step(result=step_result)
+
+        # Accumulate step results in graph state so MemorySaver checkpoints them.
+        # This ensures step history survives HITL interruptions and resumes.
+        existing_step_results = cast(
+            "List[StepResult]", state.get(IntentStateKey.STEP_RESULTS) or []
+        )
+        accumulated_step_results = existing_step_results + [step_result]
+
+        script_data = await self.__context.history.save_step(
+            result=step_result, intent=self.__context.intent
+        )
+
+        # Emit enriched telemetry for the UI to render full step details
+        record = step_result.to_record()
 
         # ERROR BOUNDARY: Wrap recording logic
         try:
