@@ -6,9 +6,10 @@ from types import MappingProxyType
 COORD_RULES = (
     "COORDINATE SYSTEM (CRITICAL):\n"
     "- GROUNDING: IF the target exists in the Element Manifest, you MUST include its 'label_id' (e.g., label_id='4').\n"
-    "- VISION FALLBACK: If no label exists, use 'bbox' with normalized coordinates (0-1000).\n"
-    "- FORMULA: norm_x = (x / width) * 1000, norm_y = (y / height) * 1000.\n"
-    "- PIXEL MODE: Only use pixel coordinates if you explicitly set coord_system='pixel'. Default is normalized."
+    "- BBOX SHAPE: x,y are TOP-LEFT; width,height extend right/down.\n"
+    "- DEFAULT: Use normalized coordinates (0-1000) for bbox.\n"
+    "- PIXEL MODE: Use raw pixels ONLY when you explicitly set coord_system='pixel'.\n"
+    "- COORD_SYSTEM CONSISTENCY: coord_system must match the numbers you provide."
 )
 
 CONFIDENCE_RULES = "CONFIDENCE: 0.9+ clear match, 0.7-0.89 certain. Below 0.7 indicates ambiguity."
@@ -25,13 +26,18 @@ PRECISION_RULES = MappingProxyType(_PRECISION_RULES_RAW)
 # Action rules (Immutable)
 _ACTION_RULES_RAW = {
     "scroll": (
-        "SCROLL/SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
-        "Bbox wraps scrollable region only (exclude fixed headers/footers)."
+        "SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
+        "Bbox wraps scrollable region only (exclude fixed headers/footers). "
+        "Do NOT use 'scroll' as an action_type; always use the appropriate swipe_* variant."
     ),
     "wait": (
         "WAIT: Use if screen shows a SPINNER, LOADING TEXT, or SKELETON/SHIMMER (gray shapes). "
         "CRITICAL: Even if XML elements are present, if the visual is a Skeleton/Shimmer, you MUST WAIT. "
         "Include wait_duration (default 2.0)."
+    ),
+    "validate": (
+        "VALIDATE: Use when the next best step is an explicit check/confirmation rather than a touch action "
+        "(e.g., verify page state, banner text, toggle status)."
     ),
     "zoom": "ZOOM: 'zoom_in' to enlarge, 'zoom_out' to shrink. Target the relevant region.",
     "type": (
@@ -77,6 +83,7 @@ ACTIONS:
 - {ACTION_RULES["type"]}
 - {ACTION_RULES["scroll"]}
 - {ACTION_RULES["wait"]}
+- {ACTION_RULES["validate"]}
 - {ACTION_RULES["zoom"]}
 
 STRICT FORMAT: Return only valid tool calls using provided schema fields.
@@ -84,7 +91,12 @@ STRICT FORMAT: Return only valid tool calls using provided schema fields.
 
 TOOL_GUIDANCE = """
 TOOL SELECTION & VALIDATION:
-- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, zoom).
+- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).
+  * Delta telemetry is MANDATORY on every execute_ui call: always include both delta_observed (boolean) and delta_confidence (0.0-1.0).
+  * For explicit checks/validation, prefer execute_ui with action_type='validate'.
+  * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).
+  * Always provide condition text when visible; if omitted, conditional_type is used for default guard text.
+  * For overlay/popup dismissal steps, set overlay_detected=true and include condition with the visible guard when available.
   * Evaluate is_valid and validation_reason for EVERY action.
   * If action is risky/ambiguous, set is_valid=False and explain.
   * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
@@ -92,7 +104,7 @@ TOOL SELECTION & VALIDATION:
   * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.
     Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}
     ALWAYS use this to "tick off" requirements from the user's goal as you complete them.
-- validate_state: Use for explicit state checks when no immediate UI action is required.
+- validate_state: Legacy fallback for explicit checks when no immediate UI action is required.
 - verify_goal: Use for explicit completion checks.
 - store_memory: Secondary tool. Use ONLY for saving complex text data that doesn't fit in execute_ui.
 - recall_memory: Check what you've already done to avoid repeating actions.

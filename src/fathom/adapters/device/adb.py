@@ -335,6 +335,7 @@ class ADBDevice(DevicePort):
 
         if isinstance(image_result, Exception):
             logger.error(f"Snapshot: Screenshot capture failed: {image_result}")
+            raise DeviceError(f"Snapshot capture failed: {image_result}") from image_result
 
         image = image_result if isinstance(image_result, bytes) else b""
         xml = xml_result if isinstance(xml_result, str) else None

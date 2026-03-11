@@ -5,7 +5,7 @@ import json
 from logging import getLogger
 from typing import Any, Dict, List, Optional
 
-from google.genai.types import Content
+from google.genai.types import Content, Part
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.schemas.statistics import CacheStats
@@ -18,7 +18,14 @@ class CacheService:
     Service for managing LLM context caching with key hashing and stats.
     """
 
-    def __init__(self, client: Any, model_name: str, *, ttl_minutes: int = 60) -> None:
+    def __init__(
+        self,
+        client: Any,
+        model_name: str,
+        *,
+        ttl_minutes: int = 60,
+        max_entries: int = 2,
+    ) -> None:
         """
         Initialize CacheService.
 
@@ -26,14 +33,15 @@ class CacheService:
             client: The GenAI client instance.
             model_name: The model name to cache for.
             ttl_minutes: Time-to-live for cached content in minutes.
+            max_entries: Maximum number of distinct cache entries retained.
         """
 
         self.__client = client
         self.__model_name = model_name
         self.__ttl_minutes = ttl_minutes
+        self.__max_entries = max(1, max_entries)
 
-        self.__content_hash: Optional[str] = None
-        self.__cached_content: Optional[Any] = None
+        self.__cache_entries: Dict[str, Any] = {}
 
         self.stats = CacheStats()
 
@@ -53,24 +61,16 @@ class CacheService:
         """
 
         current_hash = self.__compute_hash(instruction=system_instruction, tools=tools)
+        cached_entry = self.__cache_entries.get(current_hash)
 
-        # Cache hit: same content, cache exists
-        if self.__cached_content and self.__content_hash == current_hash:
+        # Cache hit: matching entry exists
+        if cached_entry:
             self.stats.hits += 1
             logger.debug(f"Cache hit (hash={current_hash[:8]})")
-            return str(self.__cached_content.name)
+            return str(cached_entry.name)
 
-        # Cache miss: content changed or no cache
+        # Cache miss: hash not present yet
         self.stats.misses += 1
-
-        # Evict stale cache if content changed
-        if self.__cached_content and self.__content_hash != current_hash:
-            self.stats.evictions += 1
-            logger.info(
-                f"Cache invalidated (old={self.__content_hash[:8] if self.__content_hash else '?'}, new={current_hash[:8]})"
-            )
-
-            await self.__evict()
 
         try:
             if hasattr(self.__client, "aio") and hasattr(self.__client.aio, "caches"):
@@ -82,20 +82,28 @@ class CacheService:
                     "tools": tool_list,
                     "ttl": f"{self.__ttl_minutes * 60}s",
                     "tool_config": {"function_calling_config": {"mode": "ANY"}},
-                    "contents": [Content(role="user", parts=[{"text": system_instruction}])],
+                    "contents": [
+                        Content(role="user", parts=[Part.from_text(text=system_instruction)])
+                    ],
                 }
 
-                self.__cached_content = await self.__client.aio.caches.create(
+                cached_content = await self.__client.aio.caches.create(
                     model=self.__model_name, config=config
                 )
 
+                # Bounded in-memory tracking to avoid unbounded remote cache accumulation.
+                while len(self.__cache_entries) >= self.__max_entries:
+                    oldest_hash = next(iter(self.__cache_entries))
+                    await self.__evict_hash(content_hash=oldest_hash)
+                    self.stats.evictions += 1
+
                 self.stats.creates += 1
-                self.__content_hash = current_hash
+                self.__cache_entries[current_hash] = cached_content
 
                 logger.info(
-                    f"Created context cache: {self.__cached_content.name} (hash={current_hash[:8]})"
+                    f"Created context cache: {cached_content.name} (hash={current_hash[:8]})"
                 )
-                return str(self.__cached_content.name)
+                return str(cached_content.name)
 
         except Exception as exception:
             if "minimum token count" in str(exception):
@@ -112,22 +120,38 @@ class CacheService:
         Deletes the current cache if it exists.
         """
 
-        await self.__evict()
+        await self.__evict_all()
 
-    async def __evict(self) -> None:
+    async def invalidate_cache_name(self, cache_name: str) -> None:
         """
-        Evicts the current cache entry.
+        Evict a cache entry by remote cache name if tracked locally.
         """
 
-        if self.__cached_content:
-            try:
-                await self.__client.aio.caches.delete(name=self.__cached_content.name)
-                logger.info(f"Deleted cache: {self.__cached_content.name}")
-            except Exception as exception:
-                logger.warning(f"Failed to delete cache: {exception}")
-            finally:
-                self.__content_hash = None
-                self.__cached_content = None
+        for content_hash, cached_content in list(self.__cache_entries.items()):
+            if str(getattr(cached_content, "name", "")) == cache_name:
+                await self.__evict_hash(content_hash=content_hash)
+                break
+
+    async def __evict_all(self) -> None:
+        """
+        Evicts all current cache entries.
+        """
+
+        for content_hash in list(self.__cache_entries.keys()):
+            await self.__evict_hash(content_hash=content_hash)
+
+    async def __evict_hash(self, *, content_hash: str) -> None:
+        cached_content = self.__cache_entries.get(content_hash)
+        if not cached_content:
+            return
+
+        try:
+            await self.__client.aio.caches.delete(name=cached_content.name)
+            logger.info(f"Deleted cache: {cached_content.name}")
+        except Exception as exception:
+            logger.warning(f"Failed to delete cache: {exception}")
+        finally:
+            self.__cache_entries.pop(content_hash, None)
 
     @staticmethod
     def __compute_hash(instruction: str, tools: Optional[List[Dict[str, Any]]] = None) -> str:

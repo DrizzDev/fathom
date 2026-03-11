@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import importlib
 import time
+from contextlib import ExitStack, contextmanager
 from logging import getLogger
-from typing import Any, Dict, List, Optional
+from pathlib import Path  # noqa: TC003
+from typing import Any, Dict, Iterator, List, Optional, cast
 
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from rich.console import Console
 
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
-from fathom.constants.state import IntentStateKey
+from fathom.constants.state import CommonStateKey, IntentStateKey
+from fathom.core.services.decomposer import IntentDecomposer
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -58,7 +61,9 @@ class IntentStrategy:
     ) -> None:
         self.__intent = intent
         self.__workflow_id = workflow_id
+        self.__llm = llm
         self.__step_results: List[StepResult] = []
+        self.__graph = None
 
         # Initialize Graph Context with injected summarizer
         self.__graph_context = GraphContext(
@@ -87,24 +92,14 @@ class IntentStrategy:
 
         interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE.value]
 
-        # Configure serializer to allow fathom and langgraph modules for MsgPack
-        serializer = JsonPlusSerializer(
-            allowed_json_modules=[
-                "fathom",
-                "fathom.constants",
-                "fathom.constants.state",
-                "fathom.schemas.screens",
-                "fathom.schemas.steps",
-                "fathom.schemas.results",
-                "langgraph",
-            ]
-        )
-        checkpointer = MemorySaver(serde=serializer)
+        # Compatibility: newer langgraph JsonPlusSerializer() has no
+        # allowed_json_modules argument, while older versions do.
 
-        self.__graph = builder.build(
-            checkpointer=checkpointer,
-            interrupt_before=interrupt_nodes,
-        )
+        # Defer checkpointer + graph construction to execute(), because SqliteSaver is a
+        # context manager and must stay open for the duration of the graph run.
+        self.__graph_builder = builder
+        self.__interrupt_nodes = interrupt_nodes
+        self.__checkpoint_db = path_manager.memory_path / "checkpoints.db"
 
     async def execute(self) -> ExecutionResult:
         """
@@ -116,19 +111,40 @@ class IntentStrategy:
         start_time = time.time()
 
         try:
-            # 2. Delegate execution lifecycle to the GraphExecutor (SRP)
-            # invalidate_on_injection=True forces re-planning when context is added
-            executor = GraphExecutor(
-                graph=self.__graph,
-                context=self.__graph_context,
-                thread_id=self.__workflow_id,
-                invalidate_on_injection=self.__graph_context.realignment.immediate,
-                has_interrupts=not isinstance(self.__graph_context.signal, NoopSignal),
-            )
+            with ExitStack() as stack:
+                checkpointer: Any = stack.enter_context(
+                    self.__build_checkpointer_context(checkpoint_db_path=self.__checkpoint_db)
+                )
+                self.__graph = self.__graph_builder.build(
+                    checkpointer=checkpointer,
+                    interrupt_before=self.__interrupt_nodes,
+                )
+                # 1. Decompose intent into sub-goals using LLM
+                logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
+                decomposer = IntentDecomposer.with_configuration(
+                    llm=self.__llm, configuration=self.__graph_context.configuration.llm
+                )
+                sub_goals = await decomposer.decompose(intent=self.__intent)
 
-            await executor.run()
+                # Set sub-goals in agent state
+                self.__graph_context.agent_state.set_sub_goals(sub_goals)
+                logger.info(
+                    f"[IntentStrategy] Intent decomposed into {len(sub_goals)} sub-goals. "
+                    f"Starting execution..."
+                )
 
-            if self.__graph_context.is_cancelled:
+                # 2. Delegate execution lifecycle to the GraphExecutor (SRP)
+                # invalidate_on_injection=True forces re-planning when context is added
+                executor = GraphExecutor(
+                    graph=self.__graph,
+                    context=self.__graph_context,
+                    thread_id=self.__workflow_id,
+                    invalidate_on_injection=self.__graph_context.realignment.immediate,
+                    has_interrupts=not isinstance(self.__graph_context.signal, NoopSignal),
+                )
+
+                await executor.run()
+
                 script_data = await self.__graph_context.history.get_current_script(
                     intent=self.__intent
                 )
@@ -140,16 +156,25 @@ class IntentStrategy:
                     )
                 else:
                     logger.warning(
-                        "Execution is cancelled and script data is missing. Cannot publish SCRIPT_GENERATED event"
+                        "Final script generation returned empty data; cannot publish SCRIPT_GENERATED event"
                     )
 
-            # 3. Result extraction from final state
-            config = {"configurable": {"thread_id": self.__workflow_id}}
-            final_state = await self.__graph.aget_state(config)
+                # 3. Result extraction from final state
+                from langchain_core.runnables.config import RunnableConfig
+
+                if self.__graph is None:
+                    raise RuntimeError("Intent graph is not initialized")
+
+                config = cast("RunnableConfig", {"configurable": {"thread_id": self.__workflow_id}})
+                final_state = await self.__graph.aget_state(config)
 
             is_cancelled = self.__graph_context.is_cancelled
             success = self.__graph_context.agent_state.is_complete
-            error = final_state.values.get("completion_reason")
+            error = final_state.values.get(CommonStateKey.COMPLETION_REASON)
+            if not error:
+                error = final_state.values.get("completion_reason")
+            if not error:
+                error = self.__graph_context.agent_state.completion_reason
             self.__step_results = list(final_state.values.get(IntentStateKey.STEP_RESULTS) or [])
 
             duration = int((time.time() - start_time) * 1000)
@@ -170,9 +195,13 @@ class IntentStrategy:
             # is not lost even when the run raises an exception.
             try:
                 config = {"configurable": {"thread_id": self.__workflow_id}}
-                final_state = await self.__graph.aget_state(config)
+                if self.__graph is not None:
+                    final_state = await self.__graph.aget_state(config)
+                else:
+                    final_state = None
                 self.__step_results = list(
-                    final_state.values.get(IntentStateKey.STEP_RESULTS) or []
+                    (final_state.values.get(IntentStateKey.STEP_RESULTS) if final_state else [])
+                    or []
                 )
             except Exception as recovery_error:
                 logger.debug(f"Could not recover step results from checkpoint: {recovery_error}")
@@ -199,7 +228,24 @@ class IntentStrategy:
             "intent": self.__intent,
             "step_count": self.__graph_context.agent_state.step_count,
             "is_complete": self.__graph_context.agent_state.is_complete,
+            "completion_reason": self.__graph_context.agent_state.completion_reason,
         }
+
+    def get_subgoal_execution_audit(self) -> tuple[list[str], list[str], int]:
+        """
+        Get audit trail of executed vs skipped subgoals.
+
+        Returns:
+            Tuple of (executed_descriptions, skipped_descriptions, total_count)
+        """
+        from fathom.schemas.subgoal import SubGoalStatus
+
+        subgoals = self.__graph_context.agent_state.sub_goal_list
+        executed = [sg.description for sg in subgoals if sg.status == SubGoalStatus.COMPLETE]
+        # SubGoalStatus.SKIPPED was removed; callers still expect a skipped list.
+        skipped: list[str] = []
+
+        return executed, skipped, len(subgoals)
 
     def get_metrics(self) -> ExecutionMetrics:
         """
@@ -214,3 +260,50 @@ class IntentStrategy:
         """
 
         self.__graph_context.cancel()
+
+    @contextmanager
+    def __build_checkpointer_context(
+        self,
+        checkpoint_db_path: Path,
+    ) -> Iterator[Any]:
+        """
+        Build a persistence layer for graph checkpoints as a context manager.
+
+        Prefers SQLite-backed checkpoints for crash-safe persistence.
+        Falls back to in-memory checkpoints if sqlite support is unavailable.
+        """
+
+        try:
+            checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exception:
+            logger.error(
+                "Failed to create checkpoint directory for SQLite checkpointer. "
+                f"checkpoint_db_path={checkpoint_db_path}. Reason: {exception}"
+            )
+            raise
+
+        try:
+            # Use importlib to avoid static import resolution errors.
+            sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite")
+        except (ImportError, ModuleNotFoundError) as exception:
+            logger.warning(
+                "SQLite checkpoint saver unavailable; falling back to MemorySaver. "
+                "Install 'langgraph-checkpoint-sqlite' to enable persistent checkpoints. "
+                f"Reason: {exception}"
+            )
+            yield MemorySaver()
+            return
+
+        SqliteSaver = sqlite_module.SqliteSaver
+
+        try:
+            # SqliteSaver is a context manager; keep it open for the duration of graph execution.
+            with SqliteSaver.from_conn_string(str(checkpoint_db_path)) as checkpointer:
+                logger.info(f"Using SqliteSaver for checkpointing at {checkpoint_db_path}")
+                yield checkpointer
+        except Exception as exception:
+            logger.error(
+                "Failed to initialize SQLite checkpointer. "
+                f"checkpoint_db_path={checkpoint_db_path}. Reason: {exception}"
+            )
+            raise

@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, cast
 
 from fathom.constants import ActionType
 from fathom.constants.execution import VISUAL_HASH_LENGTH
@@ -14,7 +14,14 @@ from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.strategies.graph.context import GraphContext
-from fathom.strategies.graph.exploration.state import ExplorationGraphState
+from fathom.strategies.graph.exploration.state import (
+    ExplorationGraphState,
+    get_action,
+    get_capture,
+    get_screen_state,
+    get_step_result,
+    is_content_exhausted,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +45,10 @@ class ExplorationNodeProvider:
         """
 
         if self.__context.is_cancelled:
-            result = ExplorationGraphState(**state)
+            result = cast("dict[str, Any]", dict(state))
             result[CKey.IS_COMPLETE] = True
             result[CKey.COMPLETION_REASON] = "Cancelled"
-            return result
+            return cast("ExplorationGraphState", result)
 
         start_time = time.time()
 
@@ -92,21 +99,21 @@ class ExplorationNodeProvider:
 
             is_new = self.__context.agent_state.update_screen(screen=screen_state)
 
-            result = ExplorationGraphState(**state)
+            result = cast("dict[str, Any]", dict(state))
             result[CKey.CAPTURE] = screen
             result[CKey.SCREEN_STATE] = screen_state
             result[CKey.IS_NEW_SCREEN] = is_new
             result[CKey.GROUNDING_DURATION] = time.time() - start_time
             result[CKey.STEP_RESULT] = None
             result[EKey.ACTION] = None
-            return result
+            return cast("ExplorationGraphState", result)
 
         except Exception as exception:
             logger.error(f"Exploration grounding failed: {exception}")
-            result = ExplorationGraphState(**state)
+            result = cast("dict[str, Any]", dict(state))
             result[CKey.IS_COMPLETE] = True
             result[CKey.COMPLETION_REASON] = "Capture failed"
-            return result
+            return cast("ExplorationGraphState", result)
 
     async def scan(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
@@ -114,15 +121,15 @@ class ExplorationNodeProvider:
         """
 
         if self.__context.is_cancelled:
-            result = ExplorationGraphState()
+            result = cast("dict[str, Any]", {})
             result[CKey.IS_COMPLETE] = True
-            return result
+            return cast("ExplorationGraphState", result)
 
-        capture = state.get_capture()
+        capture = get_capture(state)
         if not capture:
-            result = ExplorationGraphState(**state)
+            result = cast("dict[str, Any]", dict(state))
             result[EKey.CONTENT_EXHAUSTED] = True
-            return result
+            return cast("ExplorationGraphState", result)
 
         start = time.time()
         width, height = await self.__context.device.get_dimensions()
@@ -145,13 +152,13 @@ class ExplorationNodeProvider:
         else:
             exhausted = False
 
-        result = ExplorationGraphState(**state)
+        result = cast("dict[str, Any]", dict(state))
         result[CKey.ANALYSIS] = analysis
         result[EKey.CONTENT_EXHAUSTED] = exhausted
         result[CKey.ANALYSIS_DURATION] = time.time() - start
         result[EKey.ACTION] = analysis.action if not exhausted else None
 
-        return result
+        return cast("ExplorationGraphState", result)
 
     async def execute(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
@@ -159,12 +166,12 @@ class ExplorationNodeProvider:
         """
 
         if self.__context.is_cancelled:
-            result = ExplorationGraphState()
+            result = cast("dict[str, Any]", {})
             result[CKey.IS_COMPLETE] = True
-            return result
+            return cast("ExplorationGraphState", result)
 
-        action = state.get_action()
-        capture = state.get_capture()
+        action = get_action(state)
+        capture = get_capture(state)
 
         if not action or not capture:
             return state
@@ -178,7 +185,7 @@ class ExplorationNodeProvider:
             step_number=self.__context.agent_state.step_count,
         )
 
-        screen_state = state.get_screen_state()
+        screen_state = get_screen_state(state)
 
         if screen_state and screen_state.activity:
             package_name = screen_state.activity
@@ -207,11 +214,11 @@ class ExplorationNodeProvider:
             pre_hash=screen_state.visual_hash if screen_state else "0",
         )
 
-        result = ExplorationGraphState(**state)
+        result = cast("dict[str, Any]", dict(state))
         result[CKey.STEP_RESULT] = step_result
         result[CKey.EXECUTION_DURATION] = duration
 
-        return result
+        return cast("ExplorationGraphState", result)
 
     async def record(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
@@ -219,15 +226,15 @@ class ExplorationNodeProvider:
         """
 
         if self.__context.is_cancelled:
-            result = ExplorationGraphState()
+            result = cast("dict[str, Any]", {})
             result[CKey.IS_COMPLETE] = True
-            return result
+            return cast("ExplorationGraphState", result)
 
-        step_result = state.get_step_result()
+        step_result = get_step_result(state)
         if not step_result:
             return state
 
-        screen_state = state.get_screen_state()
+        screen_state = get_screen_state(state)
         if isinstance(screen_state, ScreenState):
             self.__context.exploration_graph.add_screen(screen_state)
 
@@ -239,13 +246,18 @@ class ExplorationNodeProvider:
             )
 
         self.__context.agent_state.record_step(result=step_result)
-        await self.__context.history.save_step(result=step_result, intent="exploration")
+        activity = screen_state.activity if isinstance(screen_state, ScreenState) else "unknown"
+        await self.__context.history.save_step(
+            result=step_result,
+            intent="exploration",
+            activity=activity,
+        )
 
         if self.__context.agent_state.step_count >= self.__context.max_steps:
-            result = ExplorationGraphState(**state)
+            result = cast("dict[str, Any]", dict(state))
             result[CKey.IS_COMPLETE] = True
             result[CKey.COMPLETION_REASON] = "Max steps"
-            return result
+            return cast("ExplorationGraphState", result)
 
         return state
 
@@ -256,17 +268,17 @@ class ExplorationNodeProvider:
         """
 
         if self.__context.is_cancelled:
-            result = ExplorationGraphState(**state)
+            result = cast("dict[str, Any]", dict(state))
             result[CKey.IS_COMPLETE] = True
-            return result
+            return cast("ExplorationGraphState", result)
 
         pending_nav = state.get(EKey.PENDING_NAV, [])
 
         # If no pending navigation, we're done with this path
         if not pending_nav:
-            result = ExplorationGraphState(**state)
+            result = cast("dict[str, Any]", dict(state))
             result[EKey.BFS_PHASE] = "scan"
-            return result
+            return cast("ExplorationGraphState", result)
 
         # Pop the next action to execute
         action_dict = pending_nav[0]
@@ -281,11 +293,11 @@ class ExplorationNodeProvider:
             step_number=self.__context.agent_state.step_count,
         )
 
-        capture = state.get_capture()
+        capture = get_capture(state)
         if not capture:
-            result = ExplorationGraphState(**state)
+            result = cast("dict[str, Any]", dict(state))
             result[EKey.BFS_PHASE] = "scan"
-            return result
+            return cast("ExplorationGraphState", result)
 
         await self.__context.action_executor.act(
             step=step,
@@ -298,11 +310,11 @@ class ExplorationNodeProvider:
         await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
 
         # Update state with remaining navigation
-        result = ExplorationGraphState(**state)
+        result = cast("dict[str, Any]", dict(state))
         result[EKey.PENDING_NAV] = remaining_nav
         result[EKey.BFS_PHASE] = "scan" if not remaining_nav else "navigate"
 
-        return result
+        return cast("ExplorationGraphState", result)
 
     async def bfs_route(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
@@ -311,15 +323,15 @@ class ExplorationNodeProvider:
         """
 
         if self.__context.is_cancelled:
-            result = ExplorationGraphState(**state)
+            result = cast("dict[str, Any]", dict(state))
             result[CKey.IS_COMPLETE] = True
-            return result
+            return cast("ExplorationGraphState", result)
 
         # Get BFS state
         visited_hashes = state.get(EKey.VISITED_HASHES, set())
 
         # If current screen is exhausted, try to find next unexplored screen
-        if state.is_content_exhausted():
+        if is_content_exhausted(state):
             # Look for unexplored screens in the graph
             unexplored = []
             for hash_val, node in self.__context.exploration_graph.nodes.items():
@@ -334,23 +346,23 @@ class ExplorationNodeProvider:
                 # In a full implementation, this would use BFS to find the shortest path
                 visited_hashes.add(target_hash)
 
-                result = ExplorationGraphState(**state)
+                result = cast("dict[str, Any]", dict(state))
                 result[EKey.SCANNING_HASH] = target_hash
                 result[EKey.VISITED_HASHES] = visited_hashes
                 result[EKey.BFS_PHASE] = "navigate"
                 result[EKey.PENDING_NAV] = []  # Would contain path actions in full implementation
-                return result
+                return cast("ExplorationGraphState", result)
             else:
                 # No more screens to explore
-                result = ExplorationGraphState(**state)
+                result = cast("dict[str, Any]", dict(state))
                 result[CKey.IS_COMPLETE] = True
                 result[CKey.COMPLETION_REASON] = "All screens explored"
-                return result
+                return cast("ExplorationGraphState", result)
 
         # Continue scanning current screen
-        result = ExplorationGraphState(**state)
+        result = cast("dict[str, Any]", dict(state))
         result[EKey.BFS_PHASE] = "scan"
-        return result
+        return cast("ExplorationGraphState", result)
 
 
 class ExplorationGraphFactory:

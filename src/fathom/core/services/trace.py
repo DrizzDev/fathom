@@ -36,10 +36,14 @@ class TraceService:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             action_type = getattr(action, "action_type", "unknown")
 
-            if hasattr(action_type, "value"):
-                action_type = action_type.value
+            # Convert enum to string if needed
+            action_type_str = (
+                action_type.value
+                if hasattr(action_type, "value") and not isinstance(action_type, str)
+                else str(action_type)
+            )
 
-            filename = f"step_{step_number}_{action_type}_{timestamp}.png"
+            filename = f"step_{step_number}_{action_type_str}_{timestamp}.png"
 
             path = self.__path_manager.get_trace_path(
                 filename=filename,

@@ -79,6 +79,9 @@ class StepResult(BaseModel):
             bounds=bounds,
             activity=activity,
             condition=condition,
+            is_conditional=self.step.action.is_conditional,
+            conditional_type=self.step.action.conditional_type,
+            overlay_detected=self.step.action.overlay_detected,
             success=self.success,
             duration=self.duration,
             center=absolute_center,
@@ -126,6 +129,15 @@ class StepRecord(BaseModel):
     rationale: Optional[str] = Field(default=None, description="Reasoning for the action")
     observation: Optional[str] = Field(default=None, description="Screen state observation")
     condition: Optional[str] = Field(default=None, description="Condition for IF-block wrapping")
+    is_conditional: bool = Field(
+        default=False, description="Whether this action is explicitly conditional"
+    )
+    conditional_type: Optional[Literal["blocker", "transient", "error", "optional"]] = Field(
+        default=None, description="Conditional category for deterministic IF guards"
+    )
+    overlay_detected: bool = Field(
+        default=False, description="Whether this action handled an overlay/popup blocker"
+    )
     action_description: Optional[str] = Field(
         default=None, description="Human-readable NLP command"
     )

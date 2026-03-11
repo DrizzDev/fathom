@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import time
 from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
-
-try:
-    import yaml  # type: ignore[import-untyped]
-except ImportError:
-    yaml = None
 
 from fathom.core.services.exporter import ScriptExporter
 from fathom.interfaces.storage import StoragePort
@@ -17,6 +13,12 @@ from fathom.schemas.steps import StepResult
 
 if TYPE_CHECKING:
     from fathom.base.paths import SharedPathManager
+
+yaml: Any
+try:
+    yaml = importlib.import_module("yaml")
+except ImportError:
+    yaml = None
 
 
 logger = getLogger(__name__)
@@ -64,15 +66,16 @@ class HistoryService:
         *,
         intent: str = "",
         absolute_center: Optional[List[int]] = None,
+        activity: Optional[str] = None,
     ) -> str:
         """
         Saves a single step result and updates associated artifact files.
-        Returns the generated natural language script.
+        Returns the current script if already generated.
         """
 
         history = self.__load_history()
 
-        record = result.to_record(absolute_center=absolute_center).model_dump()
+        record = result.to_record(absolute_center=absolute_center, activity=activity).model_dump()
         record["timestamp"] = int(time.time() * 1000)
         record["screen_changed"] = result.screen_changed
 
@@ -80,11 +83,11 @@ class HistoryService:
 
         await self.__save_json(data=history)
         await self.__save_yaml(history=history["history"])
-        return await self.__update_script(history=history["history"], intent=intent)
+        return self.__read_existing_script()
 
     async def get_current_script(self, intent: str) -> str:
         """
-        Retrieves the current script based on the saved history.
+        Retrieves (or generates) the latest script based on saved history.
         """
 
         history = self.__load_history()
@@ -103,8 +106,19 @@ class HistoryService:
                 with path.open(mode="r") as handle:
                     data = json.load(fp=handle)
             except Exception as exception:  # nosec
-                _ = exception
-                pass
+                backup_path = path.with_suffix(f".corrupt.{int(time.time())}.json")
+                logger.error(
+                    "History file is corrupted; preserving backup at %s. Original error: %s",
+                    backup_path,
+                    exception,
+                )
+                try:
+                    path.replace(backup_path)
+                except Exception as backup_exception:  # nosec
+                    logger.warning(
+                        "Failed to preserve corrupt history backup: %s",
+                        backup_exception,
+                    )
 
         return data
 
@@ -171,17 +185,21 @@ class HistoryService:
 
     async def __update_script(self, history: List[Dict[str, Any]], intent: str) -> str:
         """
-        Generates a natural language test script with smart validation.
+        Generates and persists a final natural language script.
         """
 
         path = self.__directory / "script.txt"
 
-        script_data = self.__exporter.export(
+        export_package_name = self.__resolve_export_package_name(history=history)
+        script_data = await self.__exporter.export_with_llm(
             step_results=history,
             goal_state=intent,
-            package_name=self.__package_name,
+            package_name=export_package_name,
             intent=intent,
         )
+
+        if script_data is None or not script_data.strip():
+            return self.__read_existing_script()
 
         with path.open(mode="w") as handle:
             handle.write(script_data)
@@ -200,6 +218,34 @@ class HistoryService:
             )
 
         return script_data
+
+    def __read_existing_script(self) -> str:
+        """
+        Return script.txt content if it already exists.
+        """
+
+        path = self.__directory / "script.txt"
+        if not path.exists():
+            return ""
+
+        with path.open(mode="r") as handle:
+            return handle.read()
+
+    def __resolve_export_package_name(self, history: List[Dict[str, Any]]) -> str:
+        """
+        Resolve best package name for OPEN_APP from recorded runtime activity.
+        """
+
+        for item in reversed(history):
+            activity_raw = str(item.get("activity") or "").strip()
+            if not activity_raw or activity_raw.lower() == "unknown":
+                continue
+            if "/" in activity_raw:
+                activity_raw = activity_raw.split("/", 1)[0].strip()
+            if activity_raw:
+                return activity_raw
+
+        return self.__package_name
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """

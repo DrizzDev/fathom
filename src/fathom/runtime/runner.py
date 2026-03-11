@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from fathom.adapters.summarization.llm import LLMSummarizer
 from fathom.base.paths import SharedPathManager
@@ -131,8 +131,10 @@ class FathomRunner:
         workflow_id = request_id or uuid.uuid4().hex[:8]
 
         # Synchronize telemetry identity with workflow_id for routing
-        if hasattr(self.__telemetry, "update_identity"):
-            self.__telemetry.update_identity(identity=workflow_id)
+        # update_identity is available on some telemetry implementations
+        telemetry_with_identity = cast("Any", self.__telemetry)
+        if hasattr(telemetry_with_identity, "update_identity"):
+            telemetry_with_identity.update_identity(identity=workflow_id)
 
         # Use provided package name or fetch from device
         if not package_name:
@@ -191,6 +193,11 @@ class FathomRunner:
             # Get progress info
             progress = strategy.get_progress()
 
+            # Get subgoal execution audit trail
+            executed_subgoals, skipped_subgoals, subgoal_count = (
+                strategy.get_subgoal_execution_audit()
+            )
+
             # Collect metrics from strategy - use to_report_dict() for proper format
             strategy_metrics = strategy.get_metrics()
             metrics = strategy_metrics.to_report_dict() if strategy_metrics else {}
@@ -211,9 +218,13 @@ class FathomRunner:
                 success = execution_result.success
                 error = execution_result.error
                 status = "completed" if execution_result.success else "failed"
-                completion_reason = (
-                    "Completed successfully" if execution_result.success else "Failed"
-                )
+                completion_reason = str(progress.get("completion_reason") or "").strip()
+                if not completion_reason:
+                    completion_reason = (
+                        CompletionReason.SUCCESS.value
+                        if execution_result.success
+                        else (execution_result.error or CompletionReason.FAILED.value)
+                    )
 
             result = IntentResult(
                 error=error,
@@ -227,6 +238,9 @@ class FathomRunner:
                 completion_reason=completion_reason,
                 steps_taken=progress.get("step_count", 0),
                 steps_executed=progress.get("step_count", 0),
+                executed_subgoals=executed_subgoals,
+                skipped_subgoals=skipped_subgoals,
+                subgoal_count=subgoal_count,
                 step_results=strategy.step_results,
             )
 
@@ -257,8 +271,10 @@ class FathomRunner:
         workflow_id = request_id or uuid.uuid4().hex[:8]
 
         # Synchronize telemetry identity with workflow_id for routing
-        if hasattr(self.__telemetry, "update_identity"):
-            self.__telemetry.update_identity(identity=workflow_id)
+        # update_identity is available on some telemetry implementations
+        telemetry_with_identity = cast("Any", self.__telemetry)
+        if hasattr(telemetry_with_identity, "update_identity"):
+            telemetry_with_identity.update_identity(identity=workflow_id)
 
         # Use provided package name or fetch from device
         if not package_name:
@@ -363,8 +379,9 @@ class FathomRunner:
             logger.warning("Workflow cancellation requested")
 
             # Call cancel method on strategy if it has one
-            if hasattr(self.__current_strategy, "cancel"):
-                self.__current_strategy.cancel()
+            strategy_with_cancel = cast("Any", self.__current_strategy)
+            if hasattr(strategy_with_cancel, "cancel"):
+                strategy_with_cancel.cancel()
             else:
                 logger.warning("Strategy does not support cancellation")
 

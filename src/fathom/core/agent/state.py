@@ -6,9 +6,12 @@ from typing import Any, Dict, List, Optional, cast
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason
 from fathom.schemas.actions import Action
+from fathom.schemas.delta import GeminiDeltaSignal
+from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import ActionHistory, InteractionTracker, LoopDetector
 from fathom.schemas.steps import StepResult
+from fathom.schemas.subgoal import SubGoal, SubGoalStatus
 
 logger = getLogger(__name__)
 
@@ -71,9 +74,17 @@ class AgentState:
         self.__last_error: Optional[str] = None
         self.__last_action_type: Optional[str] = None
         self.__last_action_description: Optional[str] = None
+        self.__last_delta_score: Optional[float] = None
+        self.__low_delta_streak: int = 0
 
         # HITL Tracking
         self.__realignment_count = 0
+
+        # Sub-goal tracking for sequential intent execution
+        self.__sub_goals: List[SubGoal] = []
+        self.__current_sub_goal_index: int = 0
+        self.__sub_goal_start_screen: Optional[str] = None  # Track screen hash when sub-goal starts
+        self.__sub_goal_action_count: int = 0  # Track actions executed for current sub-goal
 
     @property
     def intent(self) -> str:
@@ -106,6 +117,14 @@ class AgentState:
         """
 
         return self.__completion_reason
+
+    @property
+    def last_action_type(self) -> Optional[str]:
+        """
+        The type of the most recently executed action, if any.
+        """
+
+        return self.__last_action_type
 
     @property
     def is_stuck(self) -> bool:
@@ -187,30 +206,20 @@ class AgentState:
         # Fuzzy matching for seen screens
         is_new_screen = self.__is_new_screen(screen=screen)
 
-        logger.debug(
-            msg=(
-                f"[H2] Screen update classification | "
-                f"is_new={is_new_screen} seen_count={len(self.__seen_screens)} "
-                f"current={screen.activity} hash={screen.activity_hash} "
-                f"prev={previous_screen.activity if previous_screen else None}"
-            )
-        )
-
         if is_new_screen:
             self.__seen_screens.append(screen)
             logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
             # If we reached a truly new screen (never seen in session), we have made progress.
             self.__loop_detector.reset()
         elif previous_screen and previous_screen.activity_hash != screen.activity_hash:
-            # Activity changed but screen was seen before (e.g., revisiting a page via
-            # a different navigation path). This is progress, not a loop.
+            # Keep loop history when revisiting known screens across activities.
+            # This preserves oscillation/stall evidence instead of masking it.
             logger.debug(
                 (
-                    f"Activity changed: {previous_screen.activity} -> {screen.activity}. "
-                    f"Resetting loop detector."
+                    f"Activity changed on known screen: {previous_screen.activity} -> "
+                    f"{screen.activity}. Preserving loop detector state."
                 )
             )
-            self.__loop_detector.reset()
         else:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
 
@@ -262,14 +271,6 @@ class AgentState:
         self.__last_action_type = result.step.action.action_type.value
         self.__last_action_description = result.step.action.to_description()
 
-        logger.debug(
-            (
-                f"[H7] Recorded executed action | "
-                f"step={self.__step_count} action={result.step.action.to_description()} "
-                f"type={result.step.action.action_type.value} success={result.success}"
-            )
-        )
-
         if result.step.action.action_type == ActionType.COMPLETE and result.success:
             self.mark_complete(reason=CompletionReason.SUCCESS.value)
 
@@ -291,6 +292,177 @@ class AgentState:
 
         self.__is_complete = False
         self.__completion_reason = None
+
+    def set_sub_goals(self, sub_goals: List[SubGoal]) -> None:
+        """
+        Set the decomposed sub-goals for this intent.
+
+        Args:
+            sub_goals: List of sequential sub-goals to execute.
+        """
+        self.__sub_goals = [goal.model_copy(deep=True) for goal in sub_goals]
+        self.__current_sub_goal_index = 0
+        if self.__sub_goals:
+            self.__sub_goals[0].mark_in_progress()
+            # Track starting screen for first sub-goal
+            if self.__current_screen:
+                self.__sub_goal_start_screen = self.__current_screen.visual_hash
+            self.__sub_goal_action_count = 0
+            logger.info(
+                f"[AgentState] Initialized with {len(self.__sub_goals)} sub-goals. "
+                f"Starting with: {self.__sub_goals[0].description}"
+            )
+
+    def get_current_sub_goal(self) -> Optional[SubGoal]:
+        """
+        Get the currently active sub-goal.
+
+        Returns:
+            Current sub-goal or None if no sub-goals defined.
+        """
+        if not self.__sub_goals or self.__current_sub_goal_index >= len(self.__sub_goals):
+            return None
+        return self.__sub_goals[self.__current_sub_goal_index]
+
+    def set_current_sub_goal_index(self, index: int) -> None:
+        """
+        Set the current sub-goal index (used for checkpoint restore).
+
+        Args:
+            index: Index to set (will be clamped to valid range)
+        """
+        if self.__sub_goals:
+            # Clamp to valid range
+            clamped_index = max(0, min(index, len(self.__sub_goals) - 1))
+            # Update index and mark the restored goal as in progress
+            self.__current_sub_goal_index = clamped_index
+            if clamped_index < len(self.__sub_goals):
+                self.__sub_goals[clamped_index].mark_in_progress()
+                logger.info(f"[AgentState] Sub-goal index restored to {clamped_index}")
+
+    @property
+    def sub_goal_list(self) -> List[SubGoal]:
+        """
+        List of all sub-goals.
+        """
+        return self.__sub_goals
+
+    @property
+    def current_sub_goal_index(self) -> int:
+        """
+        Current sub-goal index.
+        """
+        return self.__current_sub_goal_index
+
+    def mark_current_sub_goal_complete(
+        self,
+        completion_signal: SubGoalCompletionSignal,
+    ) -> bool:
+        """
+        Mark the current sub-goal as complete with multi-signal verification.
+
+        Args:
+            completion_signal: Multi-signal verification data
+
+        Returns:
+            True if advanced to next sub-goal, False if all complete.
+        """
+        current = self.get_current_sub_goal()
+        if not current:
+            return False
+
+        # NOTE: Completion gating happens in planner with two-signal policy (llm + rationale).
+        # This method just records the signals and advances. Trace verification is disabled
+        # to prevent false positives from screen changes unrelated to sub-goal completion.
+        updated_signal = SubGoalCompletionSignal(
+            evidence=completion_signal.evidence,
+            llm_confidence=completion_signal.llm_confidence,
+            keyword_match=completion_signal.keyword_match,
+            action_executed=completion_signal.action_executed,
+            llm_signaled=completion_signal.llm_signaled,
+            rationale_verified=completion_signal.rationale_verified,
+            trace_verified=False,
+        )
+
+        # Mark complete with all signals
+        current.mark_complete(
+            llm_signal=updated_signal.llm_signaled,
+            trace_verified=updated_signal.trace_verified,
+            rationale_verified=updated_signal.rationale_verified,
+        )
+
+        signal_count = updated_signal.count_signals()
+        logger.info(
+            f"[AgentState] Sub-goal {current.index} marked complete: {current.description} | "
+            f"Signals: {signal_count} [llm={updated_signal.llm_signaled}, "
+            f"trace={updated_signal.trace_verified}, rationale={updated_signal.rationale_verified}] | "
+            f"Evidence: {updated_signal.evidence}"
+        )
+
+        # Advance to next sub-goal
+        self.__current_sub_goal_index += 1
+
+        if self.__current_sub_goal_index < len(self.__sub_goals):
+            next_goal = self.__sub_goals[self.__current_sub_goal_index]
+            next_goal.mark_in_progress()
+            # Reset tracking for new sub-goal
+            if self.__current_screen:
+                self.__sub_goal_start_screen = self.__current_screen.visual_hash
+            self.__sub_goal_action_count = 0
+            logger.info(
+                f"[AgentState] Advanced to sub-goal {next_goal.index}: {next_goal.description}"
+            )
+            return True
+        else:
+            logger.info("[AgentState] All sub-goals complete")
+            return False
+
+    def record_sub_goal_action(self) -> None:
+        """
+        Record that an action was executed for the current sub-goal.
+        Call this from planner after executing each action.
+        """
+        self.__sub_goal_action_count += 1
+
+    def all_sub_goals_complete(self) -> bool:
+        """
+        Check if all sub-goals have been completed.
+
+        Returns:
+            True if all sub-goals are complete or no sub-goals defined.
+        """
+        if not self.__sub_goals:
+            return True
+        return all(sg.is_complete() for sg in self.__sub_goals)
+
+    def get_sub_goal_progress(self) -> tuple[int, int]:
+        """
+        Get current progress through sub-goals.
+
+        Returns:
+            Tuple of (current_index, total_count).
+        """
+        if not self.__sub_goals:
+            return (0, 0)
+        return (self.__current_sub_goal_index, len(self.__sub_goals))
+
+    def get_all_sub_goals(self) -> List[SubGoal]:
+        """
+        Get all sub-goals.
+
+        Returns:
+            List of all sub-goals.
+        """
+        return self.__sub_goals.copy()
+
+    def has_sub_goals(self) -> bool:
+        """
+        Check if sub-goals are defined.
+
+        Returns:
+            True if sub-goals exist.
+        """
+        return len(self.__sub_goals) > 0
 
     def get_recovery_action(self) -> Optional[Action]:
         """
@@ -332,6 +504,56 @@ class AgentState:
                 rationale="Loop detected (Screen repeating). Forcing HOME to reset agent.",
             )
 
+    def record_recovery_attempt(self) -> int:
+        """
+        Record a planner-level recovery attempt.
+        """
+
+        return self.__loop_detector.record_recovery_attempt()
+
+    def reset_loop_detector(self) -> None:
+        """
+        Reset loop detector state after an explicit progress signal.
+        """
+
+        self.__loop_detector.signal_content_exhausted()
+
+    def get_delta_context(self) -> Dict[str, object]:
+        """
+        Return compact no-XML delta context used for planning hints.
+        """
+
+        return {
+            "last_delta_score": self.__last_delta_score,
+            "low_delta_streak": self.__low_delta_streak,
+        }
+
+    def update_delta_context(self, gemini_delta: Optional[GeminiDeltaSignal]) -> None:
+        """
+        Update rolling delta metrics from model-provided semantic delta signal.
+        """
+
+        if gemini_delta is None:
+            return
+
+        score: Optional[float] = None
+        if gemini_delta.delta_confidence is not None:
+            score = max(0.0, min(1.0, float(gemini_delta.delta_confidence)))
+        elif gemini_delta.delta_observed is True:
+            score = 1.0
+        elif gemini_delta.delta_observed is False:
+            score = 0.0
+
+        if score is None:
+            return
+
+        self.__last_delta_score = score
+        low_progress_threshold = 0.3
+        if score < low_progress_threshold:
+            self.__low_delta_streak += 1
+        else:
+            self.__low_delta_streak = 0
+
     def build_context(self) -> Dict[str, object]:
         """
         Build context for vision-language model with token optimization.
@@ -349,6 +571,7 @@ class AgentState:
             "relevant_failures": self.__action_history.get_activity_failures(
                 current_activity=current_activity
             ),
+            "delta_context": self.get_delta_context(),
         }
 
     def should_avoid_action(self, action: Action) -> bool:
@@ -380,9 +603,13 @@ class AgentState:
             "realignment_count": self.__realignment_count,
             "completion_reason": self.__completion_reason,
             "realignment_budget": self.__realignment_budget,
+            "last_delta_score": self.__last_delta_score,
+            "low_delta_streak": self.__low_delta_streak,
             "action_stats": self.__action_history.get_stats(),
             "action_context": self.__action_history.get_context(),
             "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
+            "sub_goals": [goal.model_dump(mode="json") for goal in self.__sub_goals],
+            "current_sub_goal_index": self.__current_sub_goal_index,
         }
 
     def __restore_from_data(
@@ -393,6 +620,10 @@ class AgentState:
         seen_screens: List[Dict[str, Any]],
         *,
         realignment_count: int = 0,
+        last_delta_score: Optional[float] = None,
+        low_delta_streak: int = 0,
+        sub_goals: Optional[List[Dict[str, Any]]] = None,
+        current_sub_goal_index: int = 0,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -402,9 +633,27 @@ class AgentState:
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
         self.__realignment_count = realignment_count
+        self.__last_delta_score = last_delta_score
+        self.__low_delta_streak = max(0, low_delta_streak)
 
         for data in seen_screens:
             self.__seen_screens.append(ScreenState(**data))
+
+        self.__sub_goals = []
+        if sub_goals:
+            for goal in sub_goals:
+                self.__sub_goals.append(SubGoal.model_validate(goal))
+
+        if self.__sub_goals:
+            self.__current_sub_goal_index = min(
+                max(0, current_sub_goal_index), len(self.__sub_goals)
+            )
+            if self.__current_sub_goal_index < len(self.__sub_goals):
+                current = self.__sub_goals[self.__current_sub_goal_index]
+                if current.status == SubGoalStatus.PENDING:
+                    current.mark_in_progress()
+        else:
+            self.__current_sub_goal_index = 0
 
     @classmethod
     def from_checkpoint(cls, data: Dict[str, object]) -> "AgentState":
@@ -441,9 +690,16 @@ class AgentState:
 
         is_complete = bool(data.get("is_complete", False))
         realignment_count = int(cast("int", data.get("realignment_count", 0)))
+        low_delta_streak = int(cast("int", data.get("low_delta_streak", 0)))
 
         reason_value = data.get("completion_reason")
         completion_reason = str(reason_value) if reason_value else None
+        last_delta_raw = data.get("last_delta_score")
+        last_delta_score = (
+            float(cast("float", last_delta_raw))
+            if isinstance(last_delta_raw, (int, float))
+            else None
+        )
 
         seen_screens: List[Dict[str, Any]] = []
         screens_value = data.get("seen_screens")
@@ -451,12 +707,28 @@ class AgentState:
         if isinstance(screens_value, list):
             seen_screens = [dict(screen) for screen in screens_value]
 
+        sub_goals: List[Dict[str, Any]] = []
+        sub_goals_value = data.get("sub_goals")
+        if isinstance(sub_goals_value, list):
+            sub_goals = [dict(goal) for goal in sub_goals_value if isinstance(goal, dict)]
+
+        current_sub_goal_index_raw = data.get("current_sub_goal_index", 0)
+        current_sub_goal_index = (
+            int(cast("int", current_sub_goal_index_raw))
+            if isinstance(current_sub_goal_index_raw, (int, float))
+            else 0
+        )
+
         state.__restore_from_data(
             step_count=step_count,
             is_complete=is_complete,
             seen_screens=seen_screens,
             completion_reason=completion_reason,
             realignment_count=realignment_count,
+            last_delta_score=last_delta_score,
+            low_delta_streak=low_delta_streak,
+            sub_goals=sub_goals,
+            current_sub_goal_index=current_sub_goal_index,
         )
 
         return state

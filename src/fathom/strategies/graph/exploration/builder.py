@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from fathom.constants.graph import NodeName
+from fathom.constants.state import CommonStateKey, ExplorationStateKey
 from fathom.interfaces.graph import GraphBuilder
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.exploration.nodes import ExplorationGraphFactory
@@ -30,7 +31,7 @@ class ExplorationGraphBuilder(GraphBuilder):
         Builds and compiles the exploration graph.
         """
 
-        workflow = StateGraph(ExplorationGraphState)
+        workflow = StateGraph(cast("Any", ExplorationGraphState))
         nodes = ExplorationGraphFactory.build(self.__context)
 
         # 1. Add Nodes
@@ -78,7 +79,7 @@ class ExplorationGraphBuilder(GraphBuilder):
         Route after scan based on content exhaustion.
         """
 
-        if state.get("content_exhausted"):
+        if state.get(ExplorationStateKey.CONTENT_EXHAUSTED):
             return NodeName.BFS_ROUTE
 
         return NodeName.EXECUTE
@@ -88,7 +89,7 @@ class ExplorationGraphBuilder(GraphBuilder):
         Route after record based on completion status.
         """
 
-        if state.get("is_complete"):
+        if state.get(CommonStateKey.IS_COMPLETE):
             return NodeName.END
 
         return NodeName.GROUND

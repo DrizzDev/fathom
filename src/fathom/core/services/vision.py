@@ -6,10 +6,11 @@ import hashlib
 import json
 import time
 from logging import getLogger
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
+from fathom.core.exceptions import VisionError
 from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.audit import AuditService
@@ -22,6 +23,14 @@ from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
 
 logger = getLogger(__name__)
+
+
+class SubGoalContext(TypedDict):
+    """Minimal sub-goal context for vision prompts (no AgentState dependency)."""
+
+    index: int
+    total: int
+    description: str
 
 
 class VisionService:
@@ -54,6 +63,7 @@ class VisionService:
         self.__session_id = session_id
         self.__package_name = package_name
         self.__auditor = auditor or AuditService()
+        self.__parser = ToolResponseParser()
 
         # Use the original prompt builder factory
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
@@ -70,10 +80,16 @@ class VisionService:
         tracking_note: Optional[str] = None,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
+        is_stuck: bool = False,
+        last_action: Optional[str] = None,
+        delta_context: Optional[Dict[str, object]] = None,
+        sub_goal_info: Optional[SubGoalContext] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
         """
+
+        analyze_start = time.time()
 
         # Background persistence (original logic)
         asyncio.create_task(self.__persist(data=capture.image, activity=capture.activity))
@@ -130,21 +146,46 @@ class VisionService:
             f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
         )
 
-        instruction = self.__builder.build(
-            intent=intent,
-            hints={
-                "use_xml": use_xml,
-                "screen_width": screen_width,
-                "screen_height": screen_height,
-            },
-        )
+        instruction = self.__builder.build()
+
+        # Sub-goal context (if provided by caller) - SINGLE FOCUS MODE
+        # Only current sub-goal is passed to Gemini to prevent skip-ahead behavior.
+        if sub_goal_info:
+            logger.debug(
+                f"[Vision] Single sub-goal focus mode: step [{sub_goal_info['index'] + 1}/{sub_goal_info['total']}] | "
+                f"Task: {sub_goal_info['description'][:60]}"
+            )
 
         # Pass ALL persistent memory (not just screen-specific)
         dynamic_context = self.__builder.build_user_context(
             memory=all_memory,  # Cross-screen persistent memory
             history=full_context,
             tracking_note=tracking_note,
+            intent=intent,
+            hints={
+                "use_xml": use_xml,
+                "screen_width": screen_width,
+                "screen_height": screen_height,
+            },
+            sub_goal_info=sub_goal_info,
         )
+
+        if is_stuck:
+            dynamic_context += (
+                "\n\n<SYSTEM_ALERT>\n"
+                "Loop risk detected; avoid repeating the same ineffective action."
+                "\n</SYSTEM_ALERT>"
+            )
+
+        if last_action:
+            dynamic_context += (
+                f"\n\n<LAST_ACTION>\nMost recent action: {last_action}\n</LAST_ACTION>"
+            )
+
+        if delta_context:
+            dynamic_context += (
+                f"\n\n<DELTA_CONTEXT>\n{json.dumps(delta_context, default=str)}\n</DELTA_CONTEXT>"
+            )
 
         logger.debug(
             f"[H3] Dynamic Context Built | "
@@ -153,7 +194,9 @@ class VisionService:
             f"context_length={len(dynamic_context)}"
         )
 
+        tool_scope_start = time.time()
         tools = self.__scope_tools(intent=intent)
+        tool_scope_duration = time.time() - tool_scope_start
 
         # 3. CONTENT ASSEMBLY
         manifest_start = time.time()
@@ -180,25 +223,77 @@ class VisionService:
         # Log prompt context for visibility
         self.__auditor.log_prompt(payload=payload, instruction=instruction)
 
-        # 4. EXECUTION
-        commence = time.time()
-        response = await self.__llm.generate(
-            tools=tools,
-            prompt=payload,
-            use_cache=self.__use_cache,
-            system_instruction=instruction,
-        )
-        duration = time.time() - commence
+        # 4. EXECUTION WITH VALIDATION-AWARE RETRY
+        max_validation_retries = 1
+        analysis: Optional[AnalysisResult] = None
+        response = None
+        duration = 0.0
+        parse_duration = 0.0
 
-        # Log Raw LLM output
-        raw_text = response.content[:200].replace("\n", " ") if response.content else "No text"
-        logger.info(
-            f"[VISION] LLM Response | Duration: {duration:.3f}s | Model: {self.__llm.model_name} | Raw: {raw_text}..."
-        )
+        for attempt in range(max_validation_retries + 1):
+            commence = time.time()
+            response = await self.__llm.generate(
+                tools=tools,
+                prompt=payload,
+                use_cache=self.__use_cache,
+                system_instruction=instruction,
+            )
+            duration = time.time() - commence
 
-        # 5. PARSE & ENRICH
-        parser = ToolResponseParser()
-        analysis = parser.parse(response)
+            # Log Raw LLM output
+            raw_text = response.content[:200].replace("\n", " ") if response.content else "No text"
+            logger.info(
+                f"[VISION] LLM Response | Duration: {duration:.3f}s | "
+                f"Model: {self.__llm.model_name} | Raw: {raw_text}..."
+            )
+
+            # 5. PARSE & ENRICH
+            parse_start = time.time()
+            try:
+                analysis = self.__parser.parse(response)
+                parse_duration = time.time() - parse_start
+                break
+            except Exception as exc:
+                from fathom.core.exceptions import (
+                    ToolValidationError,  # local import to avoid cycles
+                )
+
+                if isinstance(exc, ToolValidationError) and attempt < max_validation_retries:
+                    feedback = getattr(exc, "feedback", None)
+                    message = getattr(feedback, "message", str(exc))
+                    logger.warning(
+                        "[VISION] Tool validation failed (attempt %s/%s): %s",
+                        attempt + 1,
+                        max_validation_retries + 1,
+                        message,
+                    )
+
+                    # Inject concise, model-ready feedback so Gemini can correct the tool call.
+                    error_block = (
+                        "\n\n[TOOL_ERROR_FEEDBACK]\n"
+                        "The previous tool call had validation errors:\n"
+                        f"{message}\n"
+                        "Please call the tool again with corrected, schema-compliant arguments.\n"
+                        "[/TOOL_ERROR_FEEDBACK]"
+                    )
+                    dynamic_context = (dynamic_context or "") + error_block
+
+                    # Rebuild payload with augmented context for the next attempt.
+                    payload = self.__build_payload(
+                        intent=intent,
+                        manifest=manifest,
+                        failures=failures,
+                        knowledge=knowledge,
+                        screen=capture.image,
+                        context=dynamic_context,
+                    )
+                    continue
+
+                # Non-validation errors or exhausted retries propagate as before.
+                raise
+
+        if analysis is None or response is None:
+            raise VisionError("Vision analysis did not produce a valid result.", retryable=False)
 
         # Update metrics & metadata
         if response.metrics:
@@ -213,6 +308,13 @@ class VisionService:
         analysis.memories = len(knowledge.get("previous_actions", []))
         analysis.metrics["llm_analysis"] = duration
         analysis.metrics["memory_retrieval"] = retrieval
+        analysis.metrics["tool_scope_ms"] = tool_scope_duration * 1000
+        analysis.metrics["manifest_ms"] = manifest_duration * 1000
+        analysis.metrics["payload_ms"] = payload_duration * 1000
+        analysis.metrics["parse_ms"] = parse_duration * 1000
+        analysis.metrics["analyze_ms"] = (time.time() - analyze_start) * 1000
+        analysis.metrics["llm_analysis_ms"] = duration * 1000
+        analysis.metrics["memory_retrieval_ms"] = retrieval * 1000
 
         # 6. BRAIN UPDATE (Store observation)
         await self.__memory.store_observation(
@@ -267,7 +369,10 @@ class VisionService:
         Assembles request with token-locality (strictly mirrored).
         """
 
-        payload: List[Any] = [f"Goal: {intent}"]
+        payload: List[Any] = []
+
+        if not context or "goal:" not in context.lower():
+            payload.append(f"GOAL: {intent}")
 
         if knowledge.get("description"):
             payload.append(f"Screen Info: {knowledge['description']}")

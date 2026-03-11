@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from fathom.core.context.engines.gcc import GitContextEngine
 from fathom.interfaces.context import ContextEngine
@@ -213,7 +213,8 @@ class ContextManager:
             # If engine doesn't support semantic branching, we do nothing or simple commit
             return
 
-        segment = self.__engine.prepare_summarization()
+        engine_with_summarization = cast("Any", self.__engine)
+        segment = engine_with_summarization.prepare_summarization()
         if not segment:
             return
 

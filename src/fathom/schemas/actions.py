@@ -48,23 +48,29 @@ class Bounds(BaseModel):
         """
         Converts coordinates to absolute device pixels.
         Handles both normalized and already-pixel coordinates.
+        Clamps results to valid screen bounds.
         """
 
         # If explicitly told it's pixels, don't normalize
         if self.system == "pixel":
-            return self.x, self.y, self.width, self.height
+            x, y, width, height = self.x, self.y, self.width, self.height
+        elif self.is_normalized:
+            x = int(self.x * screen_width / 1000)
+            y = int(self.y * screen_height / 1000)
+            width = int(self.width * screen_width / 1000)
+            height = int(self.height * screen_height / 1000)
+        else:
+            # Fallback for large values that must be pixels
+            x, y, width, height = self.x, self.y, self.width, self.height
 
-        # Use heuristic if system is normalized (default)
-        if self.is_normalized:
-            x_pixel = int(self.x * screen_width / 1000)
-            y_pixel = int(self.y * screen_height / 1000)
-            width_pixel = int(self.width * screen_width / 1000)
-            height_pixel = int(self.height * screen_height / 1000)
+        max_x = max(0, screen_width - 1)
+        max_y = max(0, screen_height - 1)
+        x = max(0, min(x, max_x))
+        y = max(0, min(y, max_y))
+        width = max(1, min(width, max(1, screen_width - x)))
+        height = max(1, min(height, max(1, screen_height - y)))
 
-            return x_pixel, y_pixel, width_pixel, height_pixel
-
-        # Fallback for large values that must be pixels
-        return self.x, self.y, self.width, self.height
+        return x, y, width, height
 
 
 class Action(BaseModel):
@@ -101,6 +107,18 @@ class Action(BaseModel):
         default=None,
         description="Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
     )
+    is_conditional: bool = Field(
+        default=False,
+        description="True when the action should execute only under a visible guard condition.",
+    )
+    conditional_type: Optional[Literal["blocker", "transient", "error", "optional"]] = Field(
+        default=None,
+        description="Optional conditional category: blocker, transient, error, or optional.",
+    )
+    overlay_detected: bool = Field(
+        default=False,
+        description="True when this action is specifically handling an overlay/popup blocker.",
+    )
 
     # Script export classification (VLM-provided; optional; fallback is TargetClassifier)
     target_type: Optional[Literal["stable", "positional", "dynamic"]] = Field(
@@ -110,6 +128,44 @@ class Action(BaseModel):
     script_target: Optional[str] = Field(
         default=None,
         description="When target_type is positional or dynamic, the exact phrase for script export (e.g. 'the first search result', 'the promotional banner'). Omit for stable.",
+    )
+
+    # Launch semantics (optional; used to disambiguate launcher icon taps from regular taps)
+    is_app_launcher: bool = Field(
+        default=False,
+        description="Set to true when this tap action is specifically intended to launch or focus the target app. Helps the exporter replace launcher taps with OPEN_APP semantics.",
+    )
+
+    # Structured signal details for export (VLM-provided; avoids regex parsing of rationale)
+    scroll_target: Optional[str] = Field(
+        default=None,
+        description="For scroll/swipe actions: the element or section being scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and packages'). Use the exact phrase from the UI when possible.",
+    )
+    wait_subject: Optional[str] = Field(
+        default=None,
+        description="For wait actions: what we're waiting for (e.g., 'app to load', 'search results to appear', 'Home page content'). Describe the expected state or element.",
+    )
+    validation_subject: Optional[str] = Field(
+        default=None,
+        description="For validate actions: what specifically is being validated (e.g., 'login status', 'banner visibility', 'item alignment'). Be specific about the validation target.",
+    )
+    target_is_generic: Optional[bool] = Field(
+        default=None,
+        description="Set to true when this action taps/selects a non-specific target (e.g., 'any item', 'random category', 'first result'). Signals that target should be generalized in export.",
+    )
+    target_element_type: Optional[
+        Literal["button", "icon", "option", "link", "field", "text", "checkbox"]
+    ] = Field(
+        default=None,
+        description="For tap/interact actions: the element type/role (button, icon, option, etc.). Helps refine target descriptions when product-specific elements are tapped.",
+    )
+    validation_pattern: Optional[Literal["blocker", "transient", "error", "generic"]] = Field(
+        default=None,
+        description="For validate actions: the pattern category - blocker (permission/popup/consent), transient (loading/spinner), error (network/validation error), or generic check.",
+    )
+    wait_pattern: Optional[Literal["ad", "splash", "load", "search", "generic"]] = Field(
+        default=None,
+        description="For wait actions: the wait category - ad (ad to finish), splash (app splash screen), load (content loading), search (search results), or generic.",
     )
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
@@ -122,7 +178,8 @@ class Action(BaseModel):
         # Resolve best target description.
         name = self.natural_language_target
 
-        if not name or name.lower() in ("element", "ui element", "none", "label", "unknown"):
+        lowered = (name or "").strip().lower()
+        if not name or lowered in ("element", "ui element", "none", "label", "unknown"):
             # Fallback to label ID or bounds if natural language target is generic/missing
             if self.label_id:
                 name = f"Element (Label {self.label_id})"
@@ -131,7 +188,7 @@ class Action(BaseModel):
                 name = f"Element at [{self.bounds.x}, {self.bounds.y}]"
 
             else:
-                name = self.target or "UI Element"
+                name = self.target or "element"
 
         if self.action_type == ActionType.TAP:
             return f"Tap on {name}"

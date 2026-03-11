@@ -10,11 +10,7 @@ class PromptBuilder(ABC):
     """
 
     @abstractmethod
-    def build(
-        self,
-        intent: str,
-        hints: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    def build(self) -> str:
         """
         Constructs the stable system instruction string (for caching).
         """

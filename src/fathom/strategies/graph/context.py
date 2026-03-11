@@ -147,7 +147,7 @@ class GraphContext:
             workflow_id=workflow_id,
             package_name=package_name,
             path_manager=path_manager,
-            exporter=ScriptExporter(),
+            exporter=ScriptExporter(llm=llm, use_cache=configuration.llm.use_cache),
         )
         self.__trace = trace or TraceService(path_manager=path_manager)
         self.__resolution = resolution or ReferenceResolutionService(ledger=memory)
@@ -315,6 +315,15 @@ class GraphContext:
         Note: AgentState is intentionally mutable as it tracks execution progress.
         """
         return self.__agent_state
+
+    def set_agent_state(self, state: AgentState) -> None:
+        """
+        Set/replace the AgentState instance (used for checkpoint restore).
+
+        Args:
+            state: New AgentState instance to use
+        """
+        self.__agent_state = state
 
     @property
     def context_manager(self) -> ContextManager:

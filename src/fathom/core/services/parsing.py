@@ -1,13 +1,25 @@
 from __future__ import annotations
 
-import contextlib
 from logging import getLogger
-from typing import Any, Dict, Literal, Optional, cast
+from typing import Any, Dict, Optional
+
+from pydantic import ValidationError
 
 from fathom.constants import ActionType
-from fathom.core.exceptions import VisionError
+from fathom.core.exceptions import ToolValidationError, VisionError
+from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.actions import Action, Bounds
-from fathom.schemas.results import AnalysisResult, GenerateResult
+from fathom.schemas.delta import GeminiDeltaSignal
+from fathom.schemas.gemini_tools import (
+    AskUserArgs,
+    ExecuteAction,
+    ExecuteUIArgs,
+    RecallMemoryArgs,
+    StoreMemoryArgs,
+    ValidateStateArgs,
+    VerifyGoalArgs,
+)
+from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
 
 logger = getLogger(__name__)
 
@@ -20,6 +32,46 @@ class ToolResponseParser:
     # Primary tools produce the AnalysisResult; side-effect tools merge into it.
     __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
     __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state", "ask_user"}
+
+    @staticmethod
+    def __require_bool(
+        arguments: Any,
+        key: str,
+        tool_name: str,
+        *,
+        default_if_missing: Optional[bool] = None,
+    ) -> bool:
+        """Read a boolean field from model tool arguments with compatibility fallback."""
+
+        if key not in arguments:
+            if default_if_missing is not None:
+                logger.warning(
+                    "Missing mandatory Gemini completion signal '%s' in %s response; defaulting to %s",
+                    key,
+                    tool_name,
+                    default_if_missing,
+                )
+                return default_if_missing
+            raise VisionError(
+                f"Missing mandatory Gemini completion signal '{key}' in {tool_name} response"
+            )
+
+        value = arguments.get(key)
+        if isinstance(value, bool):
+            return value
+
+        if default_if_missing is not None:
+            logger.warning(
+                "Invalid completion signal type for '%s' in %s response; defaulting to %s",
+                key,
+                tool_name,
+                default_if_missing,
+            )
+            return default_if_missing
+
+        raise VisionError(
+            f"Invalid completion signal type for '{key}' in {tool_name}: expected bool"
+        )
 
     def parse(self, response: GenerateResult) -> AnalysisResult:
         """
@@ -75,6 +127,10 @@ class ToolResponseParser:
 
             return result
 
+        except ToolValidationError:
+            # Propagate structured validation failures so callers can retry
+            # with explicit feedback instead of collapsing them into a generic error.
+            raise
         except Exception as exception:
             logger.exception("Failed to parse tool response")
             raise VisionError(f"Response parsing failed: {exception}") from exception
@@ -99,19 +155,154 @@ class ToolResponseParser:
         elif name == "recall_memory":
             return self.__parse_memory_retrieval(arguments=arguments)
 
+        elif name == "ask_user":
+            return self.__parse_ask_user(arguments=arguments)
+
         else:
             raise VisionError(f"Unknown function call: {name}")
+
+    def __normalize_completion_flags(
+        self,
+        *,
+        result: AnalysisResult,
+        source_tool: str,
+        raw_goal_completed: Any,
+        raw_sub_goal_completed: Any,
+    ) -> AnalysisResult:
+        """
+        Single source of truth for aligning completion flags with terminal COMPLETE actions.
+
+        - Preserves raw Gemini signals in metadata for auditability.
+        - Normalizes is_goal_complete / is_sub_goal_complete when action_type is COMPLETE.
+        """
+
+        # Preserve raw model emissions for debugging and analytics.
+        raw_flags = {
+            "goal_completed": raw_goal_completed,
+            "sub_goal_completed": raw_sub_goal_completed,
+        }
+        result.metadata.setdefault("raw_completion_flags", raw_flags)
+
+        # Only enforce invariants for terminal COMPLETE actions.
+        if result.action.action_type == ActionType.COMPLETE:
+            # In decomposed flows, COMPLETE may mean "current sub-goal complete" but not
+            # necessarily "intent complete". Do not promote local completion into full
+            # intent completion unless the model explicitly signals goal_completed.
+            #
+            # Policy:
+            # - COMPLETE always implies sub-goal completion.
+            # - Goal completion is respected only when explicitly signaled by the tool flags.
+            normalized = {
+                "is_goal_complete": bool(raw_goal_completed) or bool(result.is_goal_complete),
+                "is_sub_goal_complete": True,
+                "source_tool": source_tool,
+                "reason": "COMPLETE→sub-goal complete; goal completion requires explicit signal",
+            }
+
+            if not result.is_sub_goal_complete:
+                logger.warning(
+                    "Inconsistent completion signals from %s: action_type=COMPLETE, "
+                    "is_sub_goal_complete=%s, raw_flags=%s. Normalizing sub-goal to True.",
+                    source_tool,
+                    result.is_sub_goal_complete,
+                    raw_flags,
+                )
+
+            object.__setattr__(result, "is_sub_goal_complete", True)
+            object.__setattr__(result, "is_goal_complete", normalized["is_goal_complete"])
+            result.metadata.setdefault("normalized_completion_flags", normalized)
+
+        return result
+
+    def __parse_delta_telemetry(self, args: ExecuteUIArgs) -> Optional[GeminiDeltaSignal]:
+        """
+        Normalize raw Gemini delta telemetry into a GeminiDeltaSignal.
+
+        Contract:
+        - If the model provides NO delta-specific fields (all None/empty), this
+          returns None so downstream code can treat it as "no signal".
+        - If the model provides values, we:
+            * Preserve raw values for auditability.
+            * Clamp confidence into [0.0, 1.0] when out-of-range.
+            * Do NOT fabricate default confidence or booleans when missing.
+        """
+
+        # Fast path: detect complete absence of delta signal
+        if (
+            args.delta_observed is None
+            and args.delta_confidence is None
+            and args.previous_screen_summary is None
+            and args.current_screen_summary is None
+            and not args.visible_anchors
+            and args.top_anchor is None
+            and args.bottom_anchor is None
+            and (args.delta_reasoning is None or not str(args.delta_reasoning).strip())
+        ):
+            return None
+
+        raw_observed = args.delta_observed
+        raw_confidence = args.delta_confidence
+
+        # Normalize confidence into [0.0, 1.0] when present.
+        normalized_confidence: Optional[float] = None
+        confidence_source: Optional[str] = None
+
+        if raw_confidence is not None:
+            try:
+                normalized_confidence = float(raw_confidence)
+                if normalized_confidence < 0.0 or normalized_confidence > 1.0:
+                    normalized_confidence = max(0.0, min(1.0, normalized_confidence))
+                    confidence_source = "system_clamped"
+                else:
+                    confidence_source = "model"
+            except (TypeError, ValueError):
+                # Invalid numeric payload – drop confidence but preserve raw for debugging.
+                normalized_confidence = None
+                confidence_source = None
+
+        # For now, we treat delta_observed as already boolean-normalized by the schema.
+        normalized_observed: Optional[bool] = raw_observed
+
+        return GeminiDeltaSignal(
+            previous_screen_summary=args.previous_screen_summary,
+            current_screen_summary=args.current_screen_summary,
+            delta_observed=normalized_observed,
+            delta_confidence=normalized_confidence,
+            delta_reasoning=args.delta_reasoning,
+            raw_delta_observed=raw_observed,
+            raw_delta_confidence=raw_confidence,
+            confidence_source=confidence_source,
+            observed_source=None,
+            visible_anchors=list(args.visible_anchors or []),
+            top_anchor=args.top_anchor,
+            bottom_anchor=args.bottom_anchor,
+        )
 
     def __parse_goal_verification(self, arguments: Any) -> AnalysisResult:
         """
         Parses the verify_goal tool arguments.
         """
 
-        reason = str(arguments.get("assistant_message", ""))
-        completed = bool(arguments.get("goal_completed", False))
-        screen = str(arguments.get("current_screen", "Goal State"))
+        try:
+            args = VerifyGoalArgs.model_validate(arguments or {})
+        except ValidationError as error:
+            logger.exception("verify_goal schema validation failed: %s", error)
+            feedback = ToolErrorFeedback(
+                tool_name="verify_goal",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"verify_goal arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
 
-        return AnalysisResult(
+        reason = args.assistant_message
+        raw_goal_completed = getattr(args, "goal_completed", None)
+        raw_sub_goal_completed = getattr(args, "sub_goal_completed", None)
+        completed = bool(raw_goal_completed)
+        sub_completed = bool(raw_sub_goal_completed)
+        screen = args.current_screen
+
+        result = AnalysisResult(
             action=Action(
                 confidence=1.0,
                 rationale=reason,
@@ -121,8 +312,17 @@ class ToolResponseParser:
             alternatives=[],
             reasoning=reason,
             is_goal_complete=completed,
+            is_sub_goal_complete=sub_completed,
             metadata={"event_type": "validation"},
             screen_description="Goal verification step",
+        )
+
+        # Normalize completion flags for terminal COMPLETE actions while preserving raw signals.
+        return self.__normalize_completion_flags(
+            result=result,
+            source_tool="verify_goal",
+            raw_goal_completed=raw_goal_completed,
+            raw_sub_goal_completed=raw_sub_goal_completed,
         )
 
     def __parse_state_validation(self, arguments: Any) -> AnalysisResult:
@@ -130,9 +330,23 @@ class ToolResponseParser:
         Parses the validate_state tool arguments.
         """
 
-        evidence = str(arguments.get("evidence", ""))
-        reason = str(arguments.get("assistant_message", ""))
-        condition = str(arguments.get("condition_to_verify", "State Validation"))
+        try:
+            args = ValidateStateArgs.model_validate(arguments or {})
+        except ValidationError as error:
+            logger.exception("validate_state schema validation failed: %s", error)
+            feedback = ToolErrorFeedback(
+                tool_name="validate_state",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"validate_state arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
+
+        evidence = args.evidence
+        reason = args.assistant_message
+        condition = args.condition_to_verify
+        completed = bool(args.goal_completed)
+        sub_completed = bool(args.sub_goal_completed)
 
         return AnalysisResult(
             action=Action(
@@ -143,7 +357,8 @@ class ToolResponseParser:
             ),
             alternatives=[],
             reasoning=reason,
-            is_goal_complete=False,
+            is_goal_complete=completed,
+            is_sub_goal_complete=sub_completed,
             metadata={"event_type": "validation"},
             screen_description="State validation step",
         )
@@ -153,100 +368,158 @@ class ToolResponseParser:
         Parses the execute_ui tool arguments.
         """
 
-        actions = arguments.get("actions", [])
-        message = str(arguments.get("assistant_message", ""))
-        completed = bool(arguments.get("goal_completed", False))
+        try:
+            args = ExecuteUIArgs.model_validate(arguments or {})
+        except ValidationError as error:
+            logger.exception("execute_ui schema validation failed: %s", error)
+            feedback = ToolErrorFeedback(
+                tool_name="execute_ui",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"execute_ui arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
 
-        if not actions:
+        message = args.assistant_message
+        raw_goal_completed = getattr(args, "goal_completed", None)
+        raw_sub_goal_completed = getattr(args, "sub_goal_completed", None)
+        completed = bool(raw_goal_completed)
+        sub_completed = bool(raw_sub_goal_completed)
+
+        if not args.actions:
             return self.__create_fallback_result(message=message, completed=completed)
 
-        bounds = None
-        data = actions[0]
-        serialization = data.get("bbox")
+        data: ExecuteAction = args.actions[0]
 
-        if serialization:
-            bounds = Bounds(
-                x=int(serialization.get("x", 0)),
-                y=int(serialization.get("y", 0)),
-                width=int(serialization.get("width", 0)),
-                height=int(serialization.get("height", 0)),
-                coord_system=serialization.get("coord_system", "normalized"),
-            )
+        bounds = None
+        if data.bbox:
+            try:
+                bounds = Bounds(
+                    x=data.bbox.x,
+                    y=data.bbox.y,
+                    width=data.bbox.width,
+                    height=data.bbox.height,
+                    coord_system=data.bbox.coord_system,
+                )
+            except Exception:
+                logger.warning("Ignoring malformed bbox payload from GeminiBBox: %s", data.bbox)
 
         try:
-            action_type = ActionType(str(data.get("action_type", "wait")).lower())
+            action_type = ActionType(str(data.action_type or "wait").lower())
         except ValueError:
             action_type = ActionType.WAIT
 
         # Support variations from different prompt/model versions
-        text = data.get("text") or data.get("text_to_type")
-        wait_duration: Optional[float] = data.get("wait_duration")
+        text = data.text or data.text_to_type
+        wait_duration: Optional[float] = data.wait_duration
 
-        if wait_duration is not None:
-            with contextlib.suppress(ValueError, TypeError):
-                wait_duration = float(wait_duration)
+        validation_reason = data.validation_reason
 
-        validation_reason = (
-            str(data.get("validation_reason")) if data.get("validation_reason") else None
-        )
-        target_name = data.get("target_name") or data.get("element_name") or "UI Element"
+        # Prefer model-provided structured targets when the primary name is generic.
+        raw_target_name = data.target_name or data.element_name
+        script_target = data.script_target
 
-        condition_raw = data.get("condition")
-        condition = str(condition_raw).strip() if condition_raw else None
+        resolved_target_name: Optional[str] = raw_target_name
+        if Normalizer.is_generic_target_name(resolved_target_name):
+            structured_fallback = None
+            if script_target and not Normalizer.is_generic_target_name(script_target):
+                structured_fallback = script_target
 
-        raw_target_type = (data.get("target_type") or "").strip().lower()
-        target_type: Optional[Literal["stable", "positional", "dynamic"]] = (
-            cast("Literal['stable', 'positional', 'dynamic']", raw_target_type)
-            if raw_target_type in ("stable", "positional", "dynamic")
-            else None
-        )
+            if structured_fallback:
+                logger.info(
+                    "Repaired generic Gemini target '%s' using structured field '%s'",
+                    raw_target_name,
+                    structured_fallback,
+                )
+                resolved_target_name = structured_fallback
+            else:
+                # Do not synthesize label- or bounds-based tags; keep a simple fallback.
+                resolved_target_name = raw_target_name or "element"
 
-        script_target_raw = data.get("script_target")
-        script_target = (
-            str(script_target_raw).strip()
-            if script_target_raw and str(script_target_raw).strip()
-            else None
-        )
+        condition = data.condition
+        is_conditional = data.is_conditional
+        conditional_type = data.conditional_type
+        overlay_detected = data.overlay_detected
+
+        target_type = data.target_type
 
         action = Action(
             bounds=bounds,
-            target=target_name,
+            target=resolved_target_name or "element",
             condition=condition,
+            is_conditional=is_conditional,
+            conditional_type=conditional_type,
+            overlay_detected=overlay_detected,
             action_type=action_type,
             target_type=target_type,
             script_target=script_target,
             wait_duration=wait_duration,
             text=str(text) if text else None,
             validation_reason=validation_reason,
-            natural_language_target=target_name,
-            rationale=str(data.get("rationale", "")),
-            is_valid=bool(data.get("is_valid", True)),
-            confidence=float(data.get("confidence", 1.0)),
-            memory_updates=arguments.get("memory_updates"),
-            label_id=str(data.get("label_id")) if data.get("label_id") else None,
+            natural_language_target=resolved_target_name or "element",
+            rationale=str(data.rationale or ""),
+            is_valid=bool(data.is_valid),
+            confidence=float(data.confidence),
+            memory_updates=args.memory_updates,
+            label_id=data.label_id,
         )
 
         metadata_dict: Dict[str, Any] = {}
         if action_type == ActionType.VALIDATE:
             metadata_dict["event_type"] = "validation"
 
-        return AnalysisResult(
+        parsed_delta = self.__parse_delta_telemetry(args=args)
+
+        result = AnalysisResult(
             action=action,
             alternatives=[],
             reasoning=message,
             metadata=metadata_dict,
             is_goal_complete=completed,
+            goal_completion_reason=args.goal_completion_reason if completed else None,
+            is_sub_goal_complete=sub_completed,
+            subgoal_completion_reason=args.subgoal_completion_reason if sub_completed else None,
+            completion_criteria_met=args.completion_criteria_met,
+            content_exhausted=bool(args.content_exhausted),
+            gemini_delta=parsed_delta,
             screen_description=message or action.rationale or "Analyzing screen...",
         )
+
+        # Normalize completion flags for terminal COMPLETE actions while preserving raw signals.
+        return self.__normalize_completion_flags(
+            result=result,
+            source_tool="execute_ui",
+            raw_goal_completed=raw_goal_completed,
+            raw_sub_goal_completed=raw_sub_goal_completed,
+        )
+
+    @staticmethod
+    def __safe_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
 
     def __parse_memory_storage(self, arguments: Any) -> AnalysisResult:
         """
         Parses memory storage tool call.
         """
 
-        key = str(arguments.get("key", ""))
-        value = str(arguments.get("value", ""))
-        reason = str(arguments.get("assistant_message", ""))
+        try:
+            args = StoreMemoryArgs.model_validate(arguments or {})
+        except ValidationError as error:
+            logger.exception("store_memory schema validation failed: %s", error)
+            feedback = ToolErrorFeedback(
+                tool_name="store_memory",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"store_memory arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
+
+        key = args.key
+        value = args.value
+        reason = args.assistant_message
 
         return AnalysisResult(
             action=Action(
@@ -267,8 +540,20 @@ class ToolResponseParser:
         Parses memory retrieval tool call.
         """
 
-        key = str(arguments.get("key", ""))
-        reason = str(arguments.get("assistant_message", ""))
+        try:
+            args = RecallMemoryArgs.model_validate(arguments or {})
+        except ValidationError as error:
+            logger.exception("recall_memory schema validation failed: %s", error)
+            feedback = ToolErrorFeedback(
+                tool_name="recall_memory",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"recall_memory arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
+
+        key = args.key
+        reason = args.assistant_message
 
         return AnalysisResult(
             action=Action(
@@ -281,6 +566,45 @@ class ToolResponseParser:
             reasoning=reason,
             is_goal_complete=False,
             screen_description="Memory retrieval step",
+        )
+
+    def __parse_ask_user(self, arguments: Any) -> AnalysisResult:
+        """
+        Parses ask_user tool arguments.
+        """
+
+        try:
+            args = AskUserArgs.model_validate(arguments or {})
+        except ValidationError as error:
+            logger.exception("ask_user schema validation failed: %s", error)
+            feedback = ToolErrorFeedback(
+                tool_name="ask_user",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"ask_user arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
+
+        question = (args.question or "").strip()
+        context = (args.context or "").strip()
+        rationale = context or question or "Requesting user clarification"
+        completed = bool(args.goal_completed)
+        sub_completed = bool(args.sub_goal_completed)
+
+        return AnalysisResult(
+            action=Action(
+                confidence=1.0,
+                rationale=rationale,
+                action_type=ActionType.ASK_USER,
+                target="human_assistance",
+                natural_language_target="User",
+                text=question or rationale,
+            ),
+            alternatives=[],
+            reasoning=rationale,
+            is_goal_complete=completed,
+            is_sub_goal_complete=sub_completed,
+            screen_description="User guidance requested",
         )
 
     def __create_fallback_result(self, message: str, completed: bool = False) -> AnalysisResult:

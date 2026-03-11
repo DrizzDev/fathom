@@ -4,10 +4,9 @@ import asyncio
 import random
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, Optional, Sequence, Union, cast
 
-from google import genai
-from google.genai import types
+from google.genai import Client, types
 from google.oauth2 import service_account
 
 from fathom.adapters.llm.cache import CacheService
@@ -29,7 +28,7 @@ class GeminiLLM(LLMPort):
         self,
         *,
         api_key: Optional[str] = None,
-        model: str = "gemini-3-flash-preview",
+        model: str = "gemini-3.1-flash-lite-preview",
         configuration: Optional[LLMConfiguration] = None,
     ) -> None:
         """
@@ -86,20 +85,20 @@ class GeminiLLM(LLMPort):
                 else:
                     logger.warning(f"Credential file not found at: {path}")
 
-        http_options = {"timeout": self.__configuration.timeout * 1000}
+        http_options = {"timeout": int(self.__configuration.timeout * 1000)}
 
         try:
             if self.__configuration.api_key:
-                self.__client = genai.Client(
-                    http_options=http_options,
+                self.__client = Client(
+                    http_options=cast("Any", http_options),
                     api_key=self.__configuration.api_key,
                 )
             else:
-                self.__client = genai.Client(
+                self.__client = Client(
                     vertexai=True,
                     project=project,
                     location=location,
-                    http_options=http_options,
+                    http_options=cast("Any", http_options),
                     credentials=self.__credentials,
                 )
 
@@ -117,17 +116,41 @@ class GeminiLLM(LLMPort):
         Constructs the GenerateContentConfig using current configuration.
         """
 
+        media_resolution_map = {
+            "low": types.MediaResolution.MEDIA_RESOLUTION_LOW,
+            "medium": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+            "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
+        }
+        configured_resolution = str(self.__configuration.media_resolution).lower()
+
+        thinking_level_map = {
+            "low": types.ThinkingLevel.LOW,
+            "medium": types.ThinkingLevel.MEDIUM,
+            "high": types.ThinkingLevel.HIGH,
+        }
+        configured_thinking = getattr(self.__configuration, "thinking_level", "low")
+        if isinstance(configured_thinking, str):
+            configured_thinking = configured_thinking.lower()
+        else:
+            configured_thinking = "low"
+
         config_args: Dict[str, Any] = {
             "candidate_count": 1,
             "automatic_function_calling": {"disable": True},
             "temperature": self.__configuration.temperature,
-            "media_resolution": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+            "media_resolution": media_resolution_map.get(
+                configured_resolution,
+                types.MediaResolution.MEDIA_RESOLUTION_LOW,
+            ),
         }
 
         # Add thinking configuration for Gemini 3 series
         if "gemini-3" in self.model_name:
             config_args["thinking_config"] = types.ThinkingConfig(
-                thinking_level=getattr(self.__configuration, "thinking_level", "low"),
+                thinking_level=thinking_level_map.get(
+                    configured_thinking,
+                    types.ThinkingLevel.LOW,
+                ),
                 include_thoughts=getattr(self.__configuration, "include_thoughts", True),
             )
 
@@ -145,9 +168,9 @@ class GeminiLLM(LLMPort):
 
     async def generate(
         self,
+        *,
         use_cache: bool,
         prompt: Sequence[Union[str, bytes, Dict[str, str]]],
-        *,
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
     ) -> GenerateResult:
@@ -182,15 +205,15 @@ class GeminiLLM(LLMPort):
             else:
                 parts.append(item)
 
-        config = self.__get_generation_configuration(
-            tools=tools,
-            cache_name=cache_name,
-            system_instruction=system_instruction,
-        )
-
         max_retries = self.__configuration.max_retries
+        active_cache_name = cache_name
 
         for attempt in range(max_retries + 1):
+            config = self.__get_generation_configuration(
+                tools=tools,
+                cache_name=active_cache_name,
+                system_instruction=system_instruction,
+            )
             try:
                 response = await self.__client.aio.models.generate_content(
                     config=config,
@@ -234,6 +257,26 @@ class GeminiLLM(LLMPort):
             except Exception as exception:
                 error_msg = str(exception)
                 is_quota_error = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
+                lower_error = error_msg.lower()
+                stale_cached_content = (
+                    active_cache_name is not None
+                    and (
+                        "cached content" in lower_error
+                        or "cached_content" in lower_error
+                        or "cachedcontent" in lower_error
+                    )
+                    and ("not found" in lower_error or "invalid" in lower_error)
+                )
+
+                if stale_cached_content:
+                    logger.warning(
+                        "Stale cached content detected (%s); retrying without cache.",
+                        active_cache_name,
+                    )
+                    if self.__cache and active_cache_name is not None:
+                        await self.__cache.invalidate_cache_name(cache_name=active_cache_name)
+                    active_cache_name = None
+                    continue
 
                 if attempt == max_retries:
                     raise VisionError(f"LLM fail: {exception}") from exception
