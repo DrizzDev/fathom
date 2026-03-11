@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import hashlib
 import json
@@ -17,7 +16,6 @@ from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
-from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
@@ -43,13 +41,10 @@ class VisionService:
         self,
         llm: LLMPort,
         memory: MemoryPort,
-        storage: StoragePort,
         telemetry: TelemetryPort,
         *,
         use_cache: bool,
-        version: str = "pro",
         session_id: str = "not_set",
-        package_name: str = "unknown",
     ) -> None:
         """
         Initialize vision service.
@@ -57,13 +52,10 @@ class VisionService:
 
         self.__llm = llm
         self.__memory = memory
-        self.__storage = storage
         self.__telemetry = telemetry
 
-        self.__version = version
         self.__use_cache = use_cache
         self.__session_id = session_id
-        self.__package_name = package_name
         self.__parser = ToolResponseParser()
 
         # Use the original prompt builder factory
@@ -91,10 +83,6 @@ class VisionService:
         """
 
         analyze_start = time.time()
-
-        # Background persistence (original logic)
-        asyncio.create_task(self.__persist(data=capture.image, activity=capture.activity))
-
         # 1. BRAIN RETRIEVAL
         fingerprint = hashlib.sha256(capture.image).hexdigest()[:16]
 
@@ -491,21 +479,3 @@ class VisionService:
                 if definition["name"] in allowed
             ]
         }
-
-    async def __persist(self, data: bytes, activity: str) -> None:
-        """
-        Background persistence.
-        """
-
-        package = activity if activity and activity != "unknown" else self.__package_name
-
-        with contextlib.suppress(Exception):
-            await self.__storage.save(
-                data=data,
-                metadata={
-                    "type": "screenshots",
-                    "package_name": package,
-                    "activity_name": activity,
-                    "session_id": self.__session_id,
-                },
-            )

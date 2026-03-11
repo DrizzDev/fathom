@@ -35,6 +35,7 @@ class IOSNativePerceptionAdapter(PerceptionPort):
         Capture iOS screenshot without hierarchy enhancement.
         """
 
+        capture_start = time.time()
         screenshot_bytes = await self.__device.capture_screen()
         if not screenshot_bytes:
             raise DeviceError("iOS native perception captured an empty screenshot.")
@@ -45,10 +46,13 @@ class IOSNativePerceptionAdapter(PerceptionPort):
         return ScreenCapture(
             width=width,
             height=height,
-            activity=application_identifier,
             image=screenshot_bytes,
+            activity=application_identifier,
             timestamp=int(time.time() * 1000),
-            metadata={"perception_strategy": "native"},
+            metadata={
+                "perception_strategy": "native",
+                "capture_duration": time.time() - capture_start,
+            },
         )
 
 
@@ -77,6 +81,7 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
         Capture iOS screenshot with optional hierarchy enhancement.
         """
 
+        capture_start = time.time()
         screenshot_bytes, hierarchy_content = await self.__device.get_snapshot()
 
         if not screenshot_bytes:
@@ -85,16 +90,21 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
         width, height = await self.__device.get_dimensions()
         application_identifier = await self.__device.get_current_package()
 
-        metadata = {"perception_strategy": "enhanced"}
+        metadata = {
+            "perception_strategy": "enhanced",
+            "capture_duration": time.time() - capture_start,
+        }
         if hierarchy_content is None:
             metadata["hierarchy_error"] = "Hierarchy unavailable"
+        else:
+            metadata["hierarchy_dump_duration"] = time.time() - capture_start
 
         return ScreenCapture(
             width=width,
             height=height,
-            activity=application_identifier,
+            metadata=metadata,
             image=screenshot_bytes,
             xml_content=hierarchy_content,
+            activity=application_identifier,
             timestamp=int(time.time() * 1000),
-            metadata=metadata,
         )

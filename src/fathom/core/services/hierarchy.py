@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import tempfile
 import xml.etree.ElementTree as ET  # nosec
 from datetime import datetime
 from logging import getLogger
@@ -74,30 +76,18 @@ class HierarchyService:
             logger.warning(f"XML too small ({xml_size_kb:.2f} KB), possibly invalid.")
             return screen, {}
 
+        screenshot_path: Optional[Path] = None
+        created_temporary_screenshot = False
+
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename_base = f"{timestamp}"
 
-            # 1. Save Raw Screenshot (using path manager)
-            screenshot_path = path_manager.get_screenshot_path(
-                package_name=package_name, session_id=session_id, filename=f"{filename_base}.png"
+            screenshot_path, created_temporary_screenshot = self.__resolve_source_screenshot_path(
+                screen=screen
             )
-            self.__save_file(path=screenshot_path, data=screen.image, mode="wb")
 
-            if self.__storage:
-                self.__fire_and_forget(
-                    self.__storage.save(
-                        data=screen.image,
-                        metadata={
-                            "category": "screenshot",
-                            "session_id": session_id,
-                            "package_name": package_name,
-                            "filename": f"{filename_base}.png",
-                        },
-                    )
-                )
-
-            # 2. Save Raw XML (using path manager)
+            # 1. Save Raw XML (using path manager)
             xml_path = path_manager.get_xml_path(
                 package_name=package_name, session_id=session_id, filename=f"{filename_base}.xml"
             )
@@ -117,12 +107,12 @@ class HierarchyService:
                     )
                 )
 
-            # 3. Parse Elements
+            # 2. Parse Elements
             elements = self.__parse_elements(
                 xml=xml, image_path=screenshot_path, action=action_type
             )
 
-            # 4. Generate Annotated Image
+            # 3. Generate Annotated Image
             annotated_path = path_manager.get_annotated_path(
                 package_name=package_name, session_id=session_id, filename=f"{filename_base}.png"
             )
@@ -149,7 +139,7 @@ class HierarchyService:
                     )
                 )
 
-            # 5. Build Result Capture
+            # 4. Build Result Capture
             capture = self.__build_capture(original=screen, path=annotated_result)
 
             # Inject metadata
@@ -169,6 +159,10 @@ class HierarchyService:
         except Exception as exception:
             logger.exception(f"Hierarchy processing failed: {exception}")
             return screen, {}
+        finally:
+            if created_temporary_screenshot and screenshot_path is not None:
+                with contextlib.suppress(FileNotFoundError):
+                    screenshot_path.unlink()
 
     def __save_file(self, path: Path, data: bytes, mode: str = "wb") -> None:
         """
@@ -177,6 +171,28 @@ class HierarchyService:
 
         with path.open(mode) as handle:
             handle.write(data)
+
+    def __create_working_screenshot(self, *, image: bytes) -> Path:
+        """
+        Persist a temporary screenshot file for XML parsing and annotation only.
+        """
+
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".png", delete=False) as handle:
+            handle.write(image)
+            return Path(handle.name)
+
+    def __resolve_source_screenshot_path(self, *, screen: ScreenCapture) -> Tuple[Path, bool]:
+        """
+        Resolve the screenshot path to use for hierarchy parsing and annotation.
+        """
+
+        raw_path = screen.metadata.get("path")
+        if isinstance(raw_path, str):
+            candidate = Path(raw_path)
+            if candidate.exists():
+                return candidate, False
+
+        return self.__create_working_screenshot(image=screen.image), True
 
     def __parse_elements(
         self, xml: str, image_path: Path, action: Optional[ActionType]

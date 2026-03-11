@@ -64,7 +64,7 @@ class ExplorationObjectiveConfiguration(BaseModel):
     )
     max_steps: int = Field(default=250, description="Maximum exploration steps")
     use_xml: bool = Field(
-        default=True,
+        default=False,
         description="Exploration runs do not use XML grounding by default",
     )
 

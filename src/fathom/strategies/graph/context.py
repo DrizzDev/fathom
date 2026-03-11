@@ -124,10 +124,8 @@ class GraphContext:
         self.__vision = vision or VisionService(
             llm=llm,
             memory=memory,
-            storage=storage,
             telemetry=telemetry,
             session_id=workflow_id,
-            package_name=package_name,
             use_cache=configuration.llm.use_cache,
         )
 

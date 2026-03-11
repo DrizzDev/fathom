@@ -36,6 +36,7 @@ class AndroidPerceptionAdapter(PerceptionPort):
         Capture Android screenshot and optional hierarchy in a single snapshot.
         """
 
+        capture_start = time.time()
         if self.__include_hierarchy:
             screenshot_bytes, hierarchy_content = await self.__device.get_snapshot()
         else:
@@ -51,8 +52,16 @@ class AndroidPerceptionAdapter(PerceptionPort):
         return ScreenCapture(
             width=width,
             height=height,
-            activity=application_identifier,
             image=screenshot_bytes,
             xml_content=hierarchy_content,
+            activity=application_identifier,
             timestamp=int(time.time() * 1000),
+            metadata={
+                "capture_duration": time.time() - capture_start,
+                **(
+                    {"hierarchy_dump_duration": time.time() - capture_start}
+                    if hierarchy_content is not None
+                    else {}
+                ),
+            },
         )

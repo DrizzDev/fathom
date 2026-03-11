@@ -265,10 +265,12 @@ class IntentNodeProvider:
             )
 
             if self.__context.use_xml and xml:
-                dump_start = time.time()
-                self.__context.metrics.record(
-                    operation="hierarchy_dump", duration=time.time() - dump_start
-                )
+                hierarchy_dump_duration = screen.metadata.get("hierarchy_dump_duration")
+                if isinstance(hierarchy_dump_duration, (int, float)):
+                    self.__context.metrics.record(
+                        operation="hierarchy_dump",
+                        duration=float(hierarchy_dump_duration),
+                    )
 
                 process_start = time.time()
                 (

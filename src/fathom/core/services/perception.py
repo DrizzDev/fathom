@@ -5,6 +5,7 @@ import io
 import time
 import xml.etree.ElementTree as ElementTree  # nosec
 from logging import getLogger
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 try:
@@ -65,6 +66,10 @@ class PerceptionService:
         )
         metadata = dict(capture.metadata)
         metadata["storage_id"] = storage_id
+
+        if self.__is_local_artifact_path(storage_id=storage_id):
+            metadata["path"] = storage_id
+
         return capture.model_copy(update={"metadata": metadata})
 
     async def __persist_capture(
@@ -84,6 +89,13 @@ class PerceptionService:
                 "session_id": session_id,
             },
         )
+
+    def __is_local_artifact_path(self, *, storage_id: str) -> bool:
+        """
+        Determine whether the storage identifier points to a local filesystem artifact.
+        """
+
+        return Path(storage_id).is_absolute() and Path(storage_id).exists()
 
     def compute_visual_hash(self, capture: ScreenCapture) -> str:
         """
