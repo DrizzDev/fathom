@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from typing import Awaitable, Callable, Optional, Tuple
+from typing import Awaitable, Callable, Optional, Set, Tuple
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import (
@@ -48,7 +48,7 @@ class ActionExecutor:
 
         self.__storage = storage
         self.__path_manager = path_manager
-        self.__background_tasks: set[asyncio.Task[None]] = set()
+        self.__background_tasks: Set[asyncio.Task[None]] = set()
 
     async def act(
         self,

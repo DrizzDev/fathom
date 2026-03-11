@@ -6,7 +6,7 @@ import time
 import xml.etree.ElementTree as ElementTree  # nosec
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     import cv2
@@ -156,7 +156,7 @@ class PerceptionService:
             grayscale_image = pillow_image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
             # getdata() returns values that need to be safely converted to int
             # Values can be int, float, tuple, or None - handle each case
-            pixel_data: list[int] = []
+            pixel_data: List[int] = []
             for p in grayscale_image.getdata():
                 if isinstance(p, int):
                     pixel_data.append(p)
@@ -265,7 +265,7 @@ class PerceptionService:
             logger.warning(f"Could not compute interaction_hash: {exception}")
             return "0" * VISUAL_HASH_LENGTH
 
-    def __extract_element_identities(self, elements: Dict[str, Any]) -> list[str]:
+    def __extract_element_identities(self, elements: Dict[str, Any]) -> List[str]:
         """
         Extracts semantic identities from a collection of UI elements.
         """

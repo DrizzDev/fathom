@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -66,7 +66,7 @@ class ConsoleTelemetryAdapter(TelemetryPort):
         if hasattr(self.__inner, "update_identity"):
             self.__inner.update_identity(identity=identity)
 
-    def __render(self, *, level: str, message: str, context: dict[str, Any]) -> None:
+    def __render(self, *, level: str, message: str, context: Dict[str, Any]) -> None:
         """
         Render selected telemetry events for CLI operators.
         """
@@ -103,7 +103,7 @@ class ConsoleTelemetryAdapter(TelemetryPort):
         if level == "error":
             self.__console.print(f"[bold red]{message}[/bold red]")
 
-    def __render_reasoning(self, *, message: str, context: dict[str, Any]) -> None:
+    def __render_reasoning(self, *, message: str, context: Dict[str, Any]) -> None:
         """
         Render reasoning details for the current step.
         """
@@ -117,7 +117,7 @@ class ConsoleTelemetryAdapter(TelemetryPort):
             )
         )
 
-    def __render_planned_action(self, *, message: str, context: dict[str, Any]) -> None:
+    def __render_planned_action(self, *, message: str, context: Dict[str, Any]) -> None:
         """
         Render the planned action for the current step.
         """
@@ -130,7 +130,7 @@ class ConsoleTelemetryAdapter(TelemetryPort):
             )
         )
 
-    def __render_step_completed(self, *, context: dict[str, Any]) -> None:
+    def __render_step_completed(self, *, context: Dict[str, Any]) -> None:
         """
         Render step completion summary.
         """

@@ -5,7 +5,7 @@ import importlib
 import json
 import time
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from fathom.base.timing import time_it
 from fathom.core.services.exporter import ScriptExporter
@@ -48,8 +48,8 @@ class HistoryService:
         self.__exporter = exporter
         self.__path_manager = path_manager
 
-        self.__background_tasks: set[asyncio.Task[Any]] = set()
-        self.__persistence_tasks: set[asyncio.Task[Any]] = set()
+        self.__background_tasks: Set[asyncio.Task[Any]] = set()
+        self.__persistence_tasks: Set[asyncio.Task[Any]] = set()
         self.__persistence_chain: Optional[asyncio.Task[None]] = None
 
     def __fire_and_forget(self, coroutine: Any) -> None:

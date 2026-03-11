@@ -57,18 +57,22 @@ class RunAssemblyBuilder:
         Resolve planner model configuration using request values with environment defaults.
         """
 
+        credentials = (
+            self.__settings.google_credentials_dict
+            or self.__settings.google_application_credentials
+        )
         request_values = (
             request.resources.language_model_configuration.planner_configuration.model_dump(
                 exclude_none=True
             )
         )
         default_values = {
-            "api_key": self.__settings.gemini_api_key,
+            "credentials": credentials,
             "model": self.__settings.gemini_model,
+            "api_key": self.__settings.gemini_api_key,
             "location": self.__settings.vertex_location,
             "project_id": self.__settings.vertex_project_id,
             "use_cache": getattr(self.__settings, "use_cache", True),
-            "credentials": self.__settings.google_application_credentials,
         }
         default_values.update(request_values)
         return LLMConfiguration.model_validate(default_values)
@@ -78,11 +82,15 @@ class RunAssemblyBuilder:
         Resolve storage configuration using request values with environment defaults.
         """
 
+        credentials = (
+            self.__settings.google_credentials_dict
+            or self.__settings.google_application_credentials
+        )
         request_values = request.resources.storage_configuration.model_dump(exclude_none=True)
 
         default_values = {
+            "credentials": credentials,
             "project_id": self.__settings.vertex_project_id,
-            "credentials": self.__settings.google_application_credentials,
         }
         default_values.update(request_values)
 

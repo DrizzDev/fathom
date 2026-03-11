@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
@@ -137,7 +137,7 @@ class IOSAutomationGateway:
         finally:
             await self.__delete_session(session_identifier=session_identifier)
 
-    async def get_window_size(self) -> tuple[int, int]:
+    async def get_window_size(self) -> Tuple[int, int]:
         """
         Resolve iOS automation window size in logical points.
         """

@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET  # nosec
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ActionType
@@ -31,7 +31,7 @@ class HierarchyService:
         """
         self.__storage = storage
         self.__label_map: Dict[str, Any] = {}
-        self.__background_tasks: set[asyncio.Task[Any]] = set()
+        self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
     def __fire_and_forget(self, coroutine: Any) -> None:
         """
