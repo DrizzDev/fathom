@@ -771,38 +771,8 @@ class IntentNodeProvider:
 
         step_result: StepResult = result
 
-        logger.info(
-            f"[NODE: RECORD] Recording step: success={step_result.success}, "
-            f"screen_changed={step_result.screen_changed}, duration={step_result.duration}ms"
-        )
-
-        self.__context.agent_state.record_step(result=step_result)
-
-        # Accumulate step results in graph state so MemorySaver checkpoints them.
-        # This ensures step history survives HITL interruptions and resumes.
-        existing_step_results = cast(
-            "List[StepResult]", state.get(IntentStateKey.STEP_RESULTS) or []
-        )
-        accumulated_step_results = existing_step_results + [step_result]
-
-        script_data = await self.__context.history.save_step(
-            result=step_result, intent=self.__context.intent
-        )
-
-        # Emit enriched telemetry for the UI to render full step details
-        record = step_result.to_record()
-
         # ERROR BOUNDARY: Wrap recording logic
         try:
-            result_value = state.get(CommonStateKey.STEP_RESULT)
-            if not isinstance(result_value, StepResult):
-                logger.error("[NODE: RECORD] No valid step result found")
-                result = cast("IntentGraphState", {})
-                self.__persist_agent_state_to_graph(result)
-                return result
-
-            step_result: StepResult = result_value
-
             # Record in agent state (internal bookkeeping, always done)
             self.__context.agent_state.record_step(result=step_result)
 
