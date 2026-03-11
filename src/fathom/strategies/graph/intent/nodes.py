@@ -68,7 +68,13 @@ class IntentNodeProvider:
     def __restore_agent_state_from_graph(self, state: IntentGraphState) -> None:
         """
         Restore agent_state from graph checkpoint if present.
-        This ensures sub-goal index and other state survive graph boundaries.
+        This is intended for graph resume / checkpoint recovery.
+
+        IMPORTANT: Do not call this at the start of every node. Replacing the live
+        AgentState object repeatedly can discard in-flight updates made by earlier
+        nodes within the same graph run. Restore once at loop entry (e.g. ANALYZE),
+        then rely on the live AgentState across EXECUTE/RECORD/VERIFY, while
+        persisting back to graph state at node boundaries.
         """
 
         checkpoint = state.get(IntentStateKey.AGENT_STATE_CHECKPOINT)
@@ -552,9 +558,6 @@ class IntentNodeProvider:
         logger.info("=" * 80)
         logger.info("[NODE: EXECUTE] Starting execution node")
 
-        # Restore agent_state from graph checkpoint if available
-        self.__restore_agent_state_from_graph(state)
-
         if await self.__is_cancelled():
             logger.warning("[NODE: EXECUTE] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
@@ -752,9 +755,6 @@ class IntentNodeProvider:
         logger.info("=" * 80)
         logger.info("[NODE: RECORD] Starting record node")
 
-        # Restore agent_state from graph checkpoint if available
-        self.__restore_agent_state_from_graph(state)
-
         if await self.__is_cancelled():
             logger.warning("[NODE: RECORD] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
@@ -823,12 +823,11 @@ class IntentNodeProvider:
                     step_number=step_result.step.step_number + 1,
                     action_type=step_result.step.action.action_type.value,
                 )
-                script_data = ""
             else:
                 logger.debug(
                     f"[NODE: RECORD] Recording step to history. Observed={current_activity}"
                 )
-                script_data = await self.__context.history.save_step(
+                await self.__context.history.save_step(
                     result=step_result, intent=self.__context.intent, activity=current_activity
                 )
 
@@ -882,12 +881,8 @@ class IntentNodeProvider:
                 analysis_total_ms=float(plan_metrics.get("analyze_ms", 0.0) or 0.0),
             )
 
-            if script_data:
-                await self.__context.telemetry.info(
-                    script_data,
-                    type=FathomEvent.SCRIPT_GENERATED,
-                    step=step_result.step.step_number + 1,
-                )
+            # SCRIPT_GENERATED is emitted only when the run completes (intent strategy),
+            # not on every step, to avoid sending stale script content to the client.
 
             await self.__context.memory.store_experience(
                 success=step_result.success,
@@ -994,9 +989,6 @@ class IntentNodeProvider:
         """
 
         logger.info("[NODE: VERIFY] Starting verification phase")
-
-        # Restore agent_state from graph checkpoint if available
-        self.__restore_agent_state_from_graph(state)
 
         if await self.__is_cancelled():
             logger.warning("[NODE: VERIFY] Execution cancelled")

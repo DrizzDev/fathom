@@ -2,17 +2,22 @@ from __future__ import annotations
 
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, TypeAlias, Union
 
 from PIL import Image, ImageDraw, ImageFont
 
 if TYPE_CHECKING:
     from PIL.ImageFont import FreeTypeFont
+    from PIL.ImageFont import ImageFont as PILImageFont
+
+    FontType: TypeAlias = Union[FreeTypeFont, PILImageFont]
 else:
     try:
         from PIL.ImageFont import FreeTypeFont
     except ImportError:
         FreeTypeFont = Any
+
+    FontType = Any
 
 from fathom.processing.geometry import GeometryUtils
 from fathom.schemas.ui import LabeledElement
@@ -28,7 +33,7 @@ class ImageAnnotator:
 
     @classmethod
     def __get_text_size(
-        cls, draw: ImageDraw.ImageDraw, text: str, font: FreeTypeFont
+        cls, draw: ImageDraw.ImageDraw, text: str, font: FontType
     ) -> Tuple[int, int]:
         """
         Gets the width and height of a text string for a given font.
@@ -48,7 +53,7 @@ class ImageAnnotator:
     @classmethod
     def __load_fonts(
         cls, font_name: str, default_size: int, min_size: int, step: int = 2
-    ) -> Dict[int, Any]:
+    ) -> Dict[int, FontType]:
         """
         Pre-loads all required font sizes into a cache once.
         """
@@ -101,8 +106,8 @@ class ImageAnnotator:
         padding: int,
         draw: ImageDraw.ImageDraw,
         sorted_font_sizes: List[int],
-        font_cache: Dict[int, Any],
-    ) -> Optional[Tuple[Any, int, int]]:
+        font_cache: Dict[int, FontType],
+    ) -> Optional[Tuple[FontType, int, int]]:
         """
         Finds the largest font from the cache that fits the label inside the box.
         """

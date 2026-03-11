@@ -9,7 +9,7 @@ from fathom.constants.state import CompletionReason
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
-from fathom.core.services.vision import VisionService
+from fathom.core.services.vision import SubGoalContext, VisionService
 from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
@@ -114,6 +114,17 @@ class StepPlanner:
                         step_number=state.step_count,
                     )
 
+        # Build minimal sub-goal context for vision (avoid passing AgentState into VisionService)
+        sub_goal_info: Optional[SubGoalContext] = None
+        current_sub_goal = state.get_current_sub_goal()
+        if current_sub_goal and state.has_sub_goals():
+            current_idx, total = state.get_sub_goal_progress()
+            sub_goal_info = {
+                "index": current_idx,
+                "total": total,
+                "description": current_sub_goal.description,
+            }
+
         analysis = await self.__vision.analyze(
             use_xml=use_xml,
             capture=capture,
@@ -127,21 +138,14 @@ class StepPlanner:
             last_action=state.last_action_type,
             delta_context=state.get_delta_context(),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
-            agent_state=state,
+            sub_goal_info=sub_goal_info,
         )
         state.update_delta_context(analysis.gemini_delta)
 
         if analysis.content_exhausted:
             state.reset_loop_detector()
-            state.mark_complete(reason="Content exhaustion signaled by model")
-            return PlanResult(
-                step=None,
-                is_complete=True,
-                metrics=analysis.metrics,
-                metadata=analysis.metadata,
-                memories=analysis.memories,
-                reason="Model signaled content exhaustion (end of list/carousel).",
-            )
+            # Do not mark_complete here: content_exhausted means "no more content on this list/feed",
+            # not "task done". Marking complete would cause early exits; fall through and plan next.
 
         # Get current sub-goal for sequential intent execution
         current_sub_goal = state.get_current_sub_goal()

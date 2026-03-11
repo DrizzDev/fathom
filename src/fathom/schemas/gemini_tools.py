@@ -192,12 +192,6 @@ class VerifyGoalArgs(GeminiCompletionFlags):
         description="Current screen description or identifier.",
     )
 
-    @model_validator(mode="after")
-    def _fill_missing_sub_goal(self) -> "VerifyGoalArgs":
-        if self.sub_goal_completed is None:
-            object.__setattr__(self, "sub_goal_completed", self.goal_completed)
-        return self
-
 
 class ValidateStateArgs(GeminiCompletionFlags):
     """
@@ -346,11 +340,3 @@ class AskUserArgs(GeminiCompletionFlags):
         "",
         description="Optional context to help the user answer.",
     )
-
-    @model_validator(mode="after")
-    def _default_completion_flags(self) -> "AskUserArgs":
-        if self.goal_completed is None:
-            object.__setattr__(self, "goal_completed", False)
-        if self.sub_goal_completed is None:
-            object.__setattr__(self, "sub_goal_completed", False)
-        return self

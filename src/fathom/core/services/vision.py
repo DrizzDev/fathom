@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from logging import getLogger
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
@@ -23,6 +23,14 @@ from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
 
 logger = getLogger(__name__)
+
+
+class SubGoalContext(TypedDict):
+    """Minimal sub-goal context for vision prompts (no AgentState dependency)."""
+
+    index: int
+    total: int
+    description: str
 
 
 class VisionService:
@@ -75,7 +83,7 @@ class VisionService:
         is_stuck: bool = False,
         last_action: Optional[str] = None,
         delta_context: Optional[Dict[str, object]] = None,
-        agent_state: Optional[Any] = None,
+        sub_goal_info: Optional[SubGoalContext] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
@@ -140,26 +148,13 @@ class VisionService:
 
         instruction = self.__builder.build()
 
-        # Extract sub-goal progress if available - SINGLE FOCUS MODE
-        # Only pass current sub-goal to Gemini, not remaining ones
-        # This prevents skip-ahead behavior and forces step-wise execution
-        sub_goal_info = None
-        if agent_state and hasattr(agent_state, "get_current_sub_goal"):
-            current_sub_goal = agent_state.get_current_sub_goal()
-            if current_sub_goal:
-                current_idx, total = agent_state.get_sub_goal_progress()
-
-                # SINGLE FOCUS MODE: Only include current sub-goal
-                sub_goal_info = {
-                    "index": current_idx,
-                    "total": total,
-                    "description": current_sub_goal.description,
-                }
-
-                logger.debug(
-                    f"[Vision] Single sub-goal focus mode: step [{current_idx + 1}/{total}] | "
-                    f"Task: {current_sub_goal.description[:60]}"
-                )
+        # Sub-goal context (if provided by caller) - SINGLE FOCUS MODE
+        # Only current sub-goal is passed to Gemini to prevent skip-ahead behavior.
+        if sub_goal_info:
+            logger.debug(
+                f"[Vision] Single sub-goal focus mode: step [{sub_goal_info['index'] + 1}/{sub_goal_info['total']}] | "
+                f"Task: {sub_goal_info['description'][:60]}"
+            )
 
         # Pass ALL persistent memory (not just screen-specific)
         dynamic_context = self.__builder.build_user_context(
