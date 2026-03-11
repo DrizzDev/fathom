@@ -45,6 +45,12 @@ class LLMConfiguration(BaseModel):
     timeout: float = Field(default=60.0, description="Request timeout in seconds")
     retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
     rate_limit_backoff: float = Field(default=5.0, description="Base backoff for rate limit errors")
+    confidence_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum acceptable LLM confidence for structured outputs (e.g. decomposition).",
+    )
 
     # Backend storage (for artifacts like image caching)
     use_cache: bool = Field(default=True, description="Whether to use context caching for the LLM")

@@ -185,26 +185,31 @@ class ToolResponseParser:
 
         # Only enforce invariants for terminal COMPLETE actions.
         if result.action.action_type == ActionType.COMPLETE:
+            # In decomposed flows, COMPLETE may mean "current sub-goal complete" but not
+            # necessarily "intent complete". Do not promote local completion into full
+            # intent completion unless the model explicitly signals goal_completed.
+            #
+            # Policy:
+            # - COMPLETE always implies sub-goal completion.
+            # - Goal completion is respected only when explicitly signaled by the tool flags.
             normalized = {
-                "is_goal_complete": True,
+                "is_goal_complete": bool(raw_goal_completed) or bool(result.is_goal_complete),
                 "is_sub_goal_complete": True,
                 "source_tool": source_tool,
-                "reason": "enforced COMPLETE→flags invariant",
+                "reason": "COMPLETE→sub-goal complete; goal completion requires explicit signal",
             }
 
-            if not result.is_goal_complete or not result.is_sub_goal_complete:
+            if not result.is_sub_goal_complete:
                 logger.warning(
                     "Inconsistent completion signals from %s: action_type=COMPLETE, "
-                    "is_goal_complete=%s, is_sub_goal_complete=%s, raw_flags=%s. "
-                    "Normalizing both flags to True.",
+                    "is_sub_goal_complete=%s, raw_flags=%s. Normalizing sub-goal to True.",
                     source_tool,
-                    result.is_goal_complete,
                     result.is_sub_goal_complete,
                     raw_flags,
                 )
 
-            object.__setattr__(result, "is_goal_complete", True)
             object.__setattr__(result, "is_sub_goal_complete", True)
+            object.__setattr__(result, "is_goal_complete", normalized["is_goal_complete"])
             result.metadata.setdefault("normalized_completion_flags", normalized)
 
         return result

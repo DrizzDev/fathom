@@ -121,7 +121,9 @@ class IntentStrategy:
                 )
                 # 1. Decompose intent into sub-goals using LLM
                 logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
-                decomposer = IntentDecomposer(llm=self.__llm)
+                decomposer = IntentDecomposer.with_configuration(
+                    llm=self.__llm, configuration=self.__graph_context.configuration.llm
+                )
                 sub_goals = await decomposer.decompose(intent=self.__intent)
 
                 # Set sub-goals in agent state

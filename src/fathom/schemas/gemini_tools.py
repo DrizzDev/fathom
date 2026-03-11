@@ -17,7 +17,7 @@ class EmitScriptConditionalBlockArgs(BaseModel):
     - condition text is optional (empty strings are normalized to None).
     - action_ids are coerced to a list of strings.
     All semantic invariants (e.g., non-empty conditions, required IDs) are
-    enforced later by ScriptExportStructuredPayload in export.py.
+    enforced later by ScriptExportStructuredPayload.enforce_policy in export.py.
     """
 
     condition: Optional[str] = None

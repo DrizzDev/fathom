@@ -433,7 +433,7 @@ class AgentState:
         """
         if not self.__sub_goals:
             return True
-        return all(sg.is_complete for sg in self.__sub_goals)
+        return all(sg.is_complete() for sg in self.__sub_goals)
 
     def get_sub_goal_progress(self) -> tuple[int, int]:
         """

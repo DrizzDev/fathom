@@ -10,6 +10,7 @@ from fathom.schemas.configuration import (
     IntentConfiguration,
     LLMConfiguration,
 )
+from fathom.schemas.decomposition import DecompositionSchema
 from fathom.schemas.exploration import ActionGenerator, ExplorationGraph, ScreenNode
 from fathom.schemas.orchestration import (
     ExecutionContext,
@@ -50,6 +51,7 @@ __all__ = [
     "IntentResult",
     "LabeledElement",
     "LLMConfiguration",
+    "DecompositionSchema",
     "PlanResult",
     "RunnerConfig",
     "RunnerResult",

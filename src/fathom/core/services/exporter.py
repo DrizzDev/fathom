@@ -12,7 +12,11 @@ from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.normalizer import Normalizer
 from fathom.interfaces.llm import LLMPort
-from fathom.schemas.export import ScriptExportPayload, ScriptExportStructuredPayload
+from fathom.schemas.export import (
+    ScriptExportPayload,
+    ScriptExportStructuredPayload,
+    ScriptExportStructuredPayloadShape,
+)
 from fathom.schemas.gemini_tools import EmitScriptArgs
 from fathom.schemas.steps import StepResult
 
@@ -713,15 +717,14 @@ class ScriptExporter:
         )
 
         try:
-            structured_payload = ScriptExportStructuredPayload.model_validate(
-                {
-                    **normalized_structured_args,
-                    "action_catalog": action_catalog,
-                    "required_action_ids": required_action_ids,
-                    "required_open_app_id": required_open_app_id,
-                    "require_if_block": require_if_block,
-                    "expected_validation_count": len(validation_subjects),
-                }
+            shape = ScriptExportStructuredPayloadShape.model_validate(normalized_structured_args)
+            structured_payload = ScriptExportStructuredPayload.enforce_policy(
+                shape=shape,
+                action_catalog=action_catalog,
+                required_action_ids=required_action_ids,
+                required_open_app_id=required_open_app_id,
+                require_if_block=require_if_block,
+                expected_validation_count=len(validation_subjects),
             )
         except Exception as exception:
             logger.warning(

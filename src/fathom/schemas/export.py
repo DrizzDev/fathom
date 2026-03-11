@@ -18,9 +18,12 @@ class ConditionalBlockPayload(BaseModel):
     )
 
 
-class ScriptExportStructuredPayload(BaseModel):
+class ScriptExportStructuredPayloadShape(BaseModel):
     """
-    Structured Gemini payload that is rendered into script text.
+    Shape-only structured Gemini payload (schema validation only).
+
+    Export policy/rule enforcement (e.g., OPEN_APP requirements, action coverage,
+    canonical ordering) is handled separately by `ScriptExportStructuredPayload.enforce_policy`.
     """
 
     conditional_blocks: List[ConditionalBlockPayload] = Field(
@@ -39,6 +42,15 @@ class ScriptExportStructuredPayload(BaseModel):
             "Each value must start with 'Validate' and is emitted after that action."
         ),
     )
+
+
+class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
+    """
+    Structured payload bound to an export context (catalog + requirements).
+
+    This model is used for rendering (`to_script`). It does not embed export policy
+    enforcement in Pydantic validators; call `enforce_policy(...)` explicitly.
+    """
 
     action_catalog: Dict[str, str] = Field(
         default_factory=dict,
@@ -71,13 +83,40 @@ class ScriptExportStructuredPayload(BaseModel):
         repr=False,
     )
 
-    @model_validator(mode="after")
-    def __validate_against_allowed_actions(self) -> "ScriptExportStructuredPayload":
-        if not self.final_validation.strip().lower().startswith("validate"):
+    @classmethod
+    def enforce_policy(
+        cls,
+        *,
+        shape: ScriptExportStructuredPayloadShape,
+        action_catalog: Dict[str, str],
+        required_action_ids: List[str],
+        required_open_app_id: Optional[str],
+        require_if_block: bool,
+        expected_validation_count: int,
+    ) -> "ScriptExportStructuredPayload":
+        """
+        Apply export policy/rule enforcement to an already shape-validated payload.
+
+        Raises:
+            ValueError: when policy invariants are violated.
+        """
+
+        payload = cls.model_validate(
+            {
+                **shape.model_dump(),
+                "action_catalog": action_catalog,
+                "required_action_ids": required_action_ids,
+                "required_open_app_id": required_open_app_id,
+                "require_if_block": require_if_block,
+                "expected_validation_count": expected_validation_count,
+            }
+        )
+
+        if not payload.final_validation.strip().lower().startswith("validate"):
             raise ValueError("final_validation must start with 'Validate'.")
 
         cleaned_action_validations: Dict[str, str] = {}
-        for action_id, validation_line in self.action_validations.items():
+        for action_id, validation_line in payload.action_validations.items():
             aid = str(action_id).strip()
             line = str(validation_line).strip()
             if not aid or not line:
@@ -85,21 +124,21 @@ class ScriptExportStructuredPayload(BaseModel):
             if not line.lower().startswith("validate"):
                 raise ValueError(f"action_validations[{aid}] must start with 'Validate'.")
             cleaned_action_validations[aid] = line
-        self.action_validations = cleaned_action_validations
+        payload.action_validations = cleaned_action_validations
 
         non_empty_blocks = [
             block
-            for block in self.conditional_blocks
+            for block in payload.conditional_blocks
             if any(action_id.strip() for action_id in block.action_ids)
         ]
-        if len(non_empty_blocks) != len(self.conditional_blocks):
-            self.conditional_blocks = non_empty_blocks
+        if len(non_empty_blocks) != len(payload.conditional_blocks):
+            payload.conditional_blocks = non_empty_blocks
 
-        if self.require_if_block and not self.conditional_blocks:
+        if payload.require_if_block and not payload.conditional_blocks:
             raise ValueError("At least one conditional block is required for this intent.")
 
         ordered_action_ids: List[str] = []
-        for block in self.conditional_blocks:
+        for block in payload.conditional_blocks:
             # Normalize condition text and enforce non-empty after stripping.
             condition_text = block.condition.strip()
             if not condition_text:
@@ -109,38 +148,38 @@ class ScriptExportStructuredPayload(BaseModel):
                 action_id.strip() for action_id in block.action_ids if action_id.strip()
             )
         ordered_action_ids.extend(
-            action_id.strip() for action_id in self.remaining_action_ids if action_id.strip()
+            action_id.strip() for action_id in payload.remaining_action_ids if action_id.strip()
         )
 
         if not ordered_action_ids:
             raise ValueError("No executable action IDs were provided.")
 
-        if self.required_open_app_id:
-            if self.required_open_app_id not in ordered_action_ids:
+        if payload.required_open_app_id:
+            if payload.required_open_app_id not in ordered_action_ids:
                 raise ValueError(
-                    f"Required OPEN_APP action ID is missing: {self.required_open_app_id}"
+                    f"Required OPEN_APP action ID is missing: {payload.required_open_app_id}"
                 )
-            ordered_action_ids = [self.required_open_app_id] + [
+            ordered_action_ids = [payload.required_open_app_id] + [
                 action_id
                 for action_id in ordered_action_ids
-                if action_id != self.required_open_app_id
+                if action_id != payload.required_open_app_id
             ]
-            if ordered_action_ids[0] != self.required_open_app_id:
+            if ordered_action_ids[0] != payload.required_open_app_id:
                 raise ValueError(
-                    f"First executable action ID must be exactly: {self.required_open_app_id}"
+                    f"First executable action ID must be exactly: {payload.required_open_app_id}"
                 )
 
         # Enforce that action IDs inside each conditional block respect the canonical
         # execution order when we have required_action_ids available. This keeps
         # conditionals structurally aligned with the underlying trace while leaving
         # Gemini free to choose which subset to include.
-        if self.required_action_ids:
+        if payload.required_action_ids:
             rank = {
                 action_id.strip(): index
-                for index, action_id in enumerate(self.required_action_ids)
+                for index, action_id in enumerate(payload.required_action_ids)
                 if action_id.strip()
             }
-            for block in self.conditional_blocks:
+            for block in payload.conditional_blocks:
                 indices = [rank.get(aid.strip(), -1) for aid in block.action_ids if aid.strip()]
                 filtered = [index for index in indices if index >= 0]
                 if not filtered:
@@ -150,29 +189,29 @@ class ScriptExportStructuredPayload(BaseModel):
                         "Conditional block action_ids must follow the canonical step order."
                     )
 
-        if self.required_action_ids and Counter(ordered_action_ids) != Counter(
-            self.required_action_ids
+        if payload.required_action_ids and Counter(ordered_action_ids) != Counter(
+            payload.required_action_ids
         ):
             raise ValueError(
                 "Executable action IDs must match step data exactly (no missing, extra, or duplicated IDs)."
             )
 
         for action_id in ordered_action_ids:
-            if action_id not in self.action_catalog:
+            if action_id not in payload.action_catalog:
                 raise ValueError(f"Unknown action ID referenced: {action_id}")
 
-        for action_id in self.action_validations:
-            if action_id not in self.action_catalog:
+        for action_id in payload.action_validations:
+            if action_id not in payload.action_catalog:
                 raise ValueError(f"Unknown action ID in action_validations: {action_id}")
-            if self.action_catalog[action_id].strip().lower().startswith("open_app "):
+            if payload.action_catalog[action_id].strip().lower().startswith("open_app "):
                 raise ValueError("action_validations cannot target OPEN_APP actions.")
 
         # Reject degenerate duplicated conditional blocks that use the same condition
         # text but whose action ID sets are strict subsets of one another. This keeps
         # IF structure meaningful without inspecting the semantic content of conditions.
-        if self.conditional_blocks:
+        if payload.conditional_blocks:
             normalized_blocks: List[tuple[str, set[str]]] = []
-            for block in self.conditional_blocks:
+            for block in payload.conditional_blocks:
                 condition_text = block.condition.strip().lower()
                 id_set = {aid.strip() for aid in block.action_ids if aid.strip()}
                 normalized_blocks.append((condition_text, id_set))
@@ -193,19 +232,19 @@ class ScriptExportStructuredPayload(BaseModel):
         # Enforce validation distribution when multiple validations are expected.
         # When require_if_block is True we relax this so conditional blocks are not
         # rejected solely for under-provided validations (e.g. 1 final only).
-        if self.expected_validation_count > 1:
-            total_validations = len(self.action_validations) + 1  # +1 for final_validation
-            min_required = 1 if self.require_if_block else 2
+        if payload.expected_validation_count > 1:
+            total_validations = len(payload.action_validations) + 1  # +1 for final_validation
+            min_required = 1 if payload.require_if_block else 2
             if total_validations < min_required:
                 raise ValueError(
-                    f"Intent has {self.expected_validation_count} validation subjects, "
+                    f"Intent has {payload.expected_validation_count} validation subjects, "
                     f"but only {total_validations} validation statement(s) were provided. "
                     f"Expected at least {min_required} validations total "
-                    f"(found {len(self.action_validations)} intermediate + 1 final). "
+                    f"(found {len(payload.action_validations)} intermediate + 1 final). "
                     f"Multiple subjects can be covered by a single validation statement."
                 )
 
-        return self
+        return payload
 
     def to_script(self) -> str:
         """
