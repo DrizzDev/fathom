@@ -122,7 +122,7 @@ class ScrollInteractionPolicy(BaseModel):
     """
 
     distance_ratio: float = Field(
-        default=0.4,
+        default=0.5,
         description="Scroll distance ratio within the source bounds",
     )
 
