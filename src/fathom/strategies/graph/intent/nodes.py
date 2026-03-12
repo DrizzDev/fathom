@@ -123,6 +123,21 @@ class IntentNodeProvider:
         result_dict[IntentStateKey.AGENT_STATE_CHECKPOINT.value] = checkpoint
         result_dict[IntentStateKey.CURRENT_SUB_GOAL_INDEX.value] = current_index
 
+    def __should_skip_launcher_persistence(
+        self, *, execution_activity: str, observed_activity: str
+    ) -> bool:
+        """
+        Skip persistence only when the step both starts and ends on the launcher.
+        """
+
+        execution_package = execution_activity.split("/")[0]
+        observed_package = observed_activity.split("/")[0]
+
+        if execution_package not in LAUNCHER_PACKAGES:
+            return False
+
+        return observed_package in LAUNCHER_PACKAGES or observed_package == "unknown"
+
     async def __publish_generated_script(self, *, script_data: str, step_number: int) -> None:
         """
         Publish generated script telemetry after background history persistence completes.
@@ -786,12 +801,17 @@ class IntentNodeProvider:
 
             # LAUNCHER BLOCKING: Never persist actions taken on launcher apps
             execution_package_base = execution_activity.split("/")[0]
-            is_on_launcher = execution_package_base in LAUNCHER_PACKAGES
+            observed_package_base = current_activity.split("/")[0]
+            is_on_launcher = self.__should_skip_launcher_persistence(
+                execution_activity=execution_activity,
+                observed_activity=current_activity,
+            )
 
             if is_on_launcher:
                 logger.warning(
                     f"[NODE: RECORD] Skipping persistence: on launcher app. "
                     f"Launcher={execution_package_base}, "
+                    f"Observed={observed_package_base}, "
                     f"step_num={step_result.step.step_number}, action_type={step_result.step.action.action_type.value}"
                 )
                 await self.__context.telemetry.warning(
