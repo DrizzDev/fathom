@@ -42,8 +42,10 @@ class IOSDevice(DevicePort):
         """
 
         self.__configuration = configuration or IOSConfiguration()
+
         self.__cached_dimensions: Optional[Tuple[int, int]] = None
         self.__cached_automation_dimensions: Optional[Tuple[int, int]] = None
+
         self.__adapter_defaults = IOSAdapterDefaults()
         self.__gesture_defaults = IOSGestureDefaults()
         self.__automation_gateway = IOSAutomationGateway(configuration=self.__configuration)

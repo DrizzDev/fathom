@@ -19,7 +19,6 @@ from tenacity import (
 )
 
 from fathom.constants.interaction import InteractionAction, SwipeSpeed
-from fathom.constants.platform import DevicePlatform
 from fathom.core.exceptions import DeviceError, PortError
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.configuration import (
@@ -35,7 +34,7 @@ from fathom.schemas.results import ActionResult
 logger = getLogger(__name__)
 
 
-class RemoteDeviceAdapter(DevicePort):
+class ADBRemoteDeviceAdapter(DevicePort):
     """
     Adapter for controlling devices hosted on remote providers (e.g., Enricher).
     Implements the standard Fathom Remote Device Protocol.
@@ -59,7 +58,7 @@ class RemoteDeviceAdapter(DevicePort):
 
         self.__runtime_configuration = DeviceRuntimeConfiguration(
             identifier=self.__session,
-            platform=DevicePlatform.REMOTE,
+            platform=configuration.platform,
             interaction=InteractionRuntimeConfiguration(
                 policy=InteractionPolicyConfiguration(
                     swipe=SwipeInteractionPolicy(),

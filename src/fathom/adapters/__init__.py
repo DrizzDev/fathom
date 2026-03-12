@@ -1,6 +1,7 @@
-from fathom.adapters.device.adb import ADBDevice
-from fathom.adapters.device.ios import IOSDevice
-from fathom.adapters.device.remote import RemoteDeviceAdapter
+from fathom.adapters.device.local.adb import ADBDevice
+from fathom.adapters.device.local.ios import IOSDevice
+from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
+from fathom.adapters.device.remote.ios import IOSRemoteDeviceAdapter
 from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
 from fathom.adapters.llm.cache import CacheService
 from fathom.adapters.llm.gemini import GeminiLLM
@@ -23,7 +24,8 @@ __all__ = [
     "LocalStorage",
     "CacheService",
     "StructlogAdapter",
-    "RemoteDeviceAdapter",
+    "ADBRemoteDeviceAdapter",
+    "IOSRemoteDeviceAdapter",
     "InteractiveSignal",
     "SocketSignal",
     "CloudStorage",

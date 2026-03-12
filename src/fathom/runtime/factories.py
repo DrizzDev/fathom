@@ -3,9 +3,10 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Callable, Dict
 
-from fathom.adapters.device.adb import ADBDevice
-from fathom.adapters.device.ios import IOSDevice
-from fathom.adapters.device.remote import RemoteDeviceAdapter
+from fathom.adapters.device.local.adb import ADBDevice
+from fathom.adapters.device.local.ios import IOSDevice
+from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
+from fathom.adapters.device.remote.ios import IOSRemoteDeviceAdapter
 from fathom.adapters.llm.gemini import GeminiLLM
 from fathom.adapters.perception.android import AndroidPerceptionAdapter
 from fathom.adapters.perception.ios import (
@@ -58,7 +59,15 @@ class DeviceFactory(DeviceFactoryPort):
         """
 
         if configuration.type == DeviceConnectionType.REMOTE:
-            return RemoteDeviceAdapter(configuration=configuration)
+            if configuration.platform == DevicePlatform.IOS:
+                return IOSRemoteDeviceAdapter(configuration=configuration)
+
+            if configuration.platform == DevicePlatform.ANDROID:
+                return ADBRemoteDeviceAdapter(configuration=configuration)
+
+            raise NotImplementedError(
+                f"Remote device adapter for platform {configuration.platform} is not implemented"
+            )
 
         if configuration.platform == DevicePlatform.IOS:
             return IOSDevice(configuration=configuration.ios)

@@ -105,6 +105,7 @@ class ADBDevice(DevicePort):
 
         if speed is not None:
             logger.debug("Ignoring swipe speed for ADB adapter: %s", speed)
+
         duration = duration or (
             self.__configuration.interaction.policy.swipe.duration_milliseconds
             if self.__configuration
@@ -130,6 +131,7 @@ class ADBDevice(DevicePort):
     async def __run_safe_subprocess(
         self,
         arguments: List[str],
+        *,
         timeout: float,
         capture_stdout: bool = True,
         capture_stderr: bool = True,

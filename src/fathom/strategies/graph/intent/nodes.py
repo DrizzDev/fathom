@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# mypy: disable-error-code="misc"
 import asyncio
 import hashlib
 import json
@@ -166,7 +165,6 @@ class IntentNodeProvider:
         to ensure graph execution completes gracefully even on device failures.
         """
 
-        logger.info("=" * 80)
         logger.info("[NODE: GROUND] Starting grounding node")
         logger.info(f"[NODE: GROUND] Current step count: {self.__context.agent_state.step_count}")
         logger.info(
@@ -368,7 +366,6 @@ class IntentNodeProvider:
         ERROR BOUNDARY: Wraps planning in try/except to handle LLM/network failures gracefully.
         """
 
-        logger.info("=" * 80)
         logger.info("[NODE: ANALYZE] Starting analysis node")
 
         # Restore agent_state from graph checkpoint if available
@@ -543,7 +540,6 @@ class IntentNodeProvider:
         ERROR BOUNDARY: Wraps execution in try/except to handle device/action failures gracefully.
         """
 
-        logger.info("=" * 80)
         logger.info("[NODE: EXECUTE] Starting execution node")
 
         if await self.__is_cancelled():
@@ -740,17 +736,19 @@ class IntentNodeProvider:
         ERROR BOUNDARY: Wraps recording in try/except to handle storage/telemetry failures gracefully.
         """
 
-        logger.info("=" * 80)
         logger.info("[NODE: RECORD] Starting record node")
 
         if await self.__is_cancelled():
             logger.warning("[NODE: RECORD] Execution cancelled")
             self.__context.agent_state.mark_complete(reason=CompletionReason.CANCELLED.value)
 
-            return {
-                CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
-            }
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
+                },
+            )
 
         result = state.get(CommonStateKey.STEP_RESULT)
         if not isinstance(result, StepResult):

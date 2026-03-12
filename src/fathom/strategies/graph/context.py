@@ -66,12 +66,12 @@ class GraphContext:
         metrics: Optional[ExecutionMetrics] = None,
         cancel_event: Optional[asyncio.Event] = None,
         hierarchy: Optional[HierarchyService] = None,
-        perception_service: Optional[PerceptionService] = None,
         summarizer: Optional[SummarizationPort] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_manager: Optional[ContextManager] = None,
         action_executor: Optional[ActionExecutor] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
+        perception_service: Optional[PerceptionService] = None,
         resolution: Optional[ReferenceResolutionService] = None,
     ) -> None:
         self.__intent = intent
@@ -111,8 +111,8 @@ class GraphContext:
         self.__hitl = HITLService(signal=signal, telemetry=telemetry)
 
         self.__perception = perception_service or PerceptionService(
-            perception=perception,
             storage=storage,
+            perception=perception,
             session_id=workflow_id,
         )
 
@@ -311,6 +311,7 @@ class GraphContext:
         Note: ExplorationGraph is designed to be mutated.
         If immutability is needed, implement copy() method on ExplorationGraph.
         """
+
         return self.__exploration_graph
 
     @property
@@ -319,15 +320,14 @@ class GraphContext:
         Returns the AgentState instance.
         Note: AgentState is intentionally mutable as it tracks execution progress.
         """
+
         return self.__agent_state
 
     def set_agent_state(self, state: AgentState) -> None:
         """
         Set/replace the AgentState instance (used for checkpoint restore).
-
-        Args:
-            state: New AgentState instance to use
         """
+
         self.__agent_state = state
 
     @property
@@ -335,6 +335,7 @@ class GraphContext:
         """
         Returns the ContextManager instance.
         """
+
         return self.__context_manager
 
     @property
@@ -350,6 +351,7 @@ class GraphContext:
         """
         Returns the Reasoner instance.
         """
+
         return self.__reasoner
 
     @property
@@ -358,6 +360,7 @@ class GraphContext:
         Returns the ExecutionMetrics instance.
         Note: Metrics are intentionally mutable for recording execution data.
         """
+
         return self.__metrics
 
     @property

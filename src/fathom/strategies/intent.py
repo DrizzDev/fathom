@@ -33,6 +33,17 @@ from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 
 logger = getLogger(name=__name__)
 
+CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
+    ("fathom.schemas.screens", "ScreenCapture"),
+    ("fathom.schemas.screens", "ScreenState"),
+    ("fathom.schemas.results", "PlanResult"),
+    ("fathom.schemas.steps", "Step"),
+    ("fathom.schemas.steps", "StepResult"),
+    ("fathom.constants", "ActionType"),
+    ("fathom.constants.state", "CommonStateKey"),
+    ("fathom.constants.state", "IntentStateKey"),
+)
+
 
 class IntentStrategy:
     """
@@ -303,6 +314,8 @@ class IntentStrategy:
 
         try:
             sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite.aio")
+            serde_module = importlib.import_module("langgraph.checkpoint.serde.jsonplus")
+            aiosqlite_module = importlib.import_module("aiosqlite")
         except (ImportError, ModuleNotFoundError) as exception:
             logger.warning(
                 "SQLite checkpoint saver unavailable; falling back to MemorySaver. "
@@ -313,9 +326,14 @@ class IntentStrategy:
             return
 
         AsyncSqliteSaver = sqlite_module.AsyncSqliteSaver
+        JsonPlusSerializer = serde_module.JsonPlusSerializer
+        serializer = JsonPlusSerializer(
+            allowed_json_modules=CHECKPOINT_ALLOWED_JSON_MODULES,
+        )
 
         try:
-            async with AsyncSqliteSaver.from_conn_string(str(checkpoint_db_path)) as checkpointer:
+            async with aiosqlite_module.connect(str(checkpoint_db_path)) as connection:
+                checkpointer = AsyncSqliteSaver(connection, serde=serializer)
                 logger.info(
                     "Using AsyncSqliteSaver for checkpointing at %s",
                     checkpoint_db_path,
