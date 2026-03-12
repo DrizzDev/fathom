@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from logging import getLogger
@@ -42,6 +43,9 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     ("fathom.constants", "ActionType"),
     ("fathom.constants.state", "CommonStateKey"),
     ("fathom.constants.state", "IntentStateKey"),
+)
+CHECKPOINT_ALLOWED_MSGPACK_MODULES: Tuple[Tuple[str, ...], ...] = (
+    CHECKPOINT_ALLOWED_JSON_MODULES
 )
 
 
@@ -327,9 +331,17 @@ class IntentStrategy:
 
         AsyncSqliteSaver = sqlite_module.AsyncSqliteSaver
         JsonPlusSerializer = serde_module.JsonPlusSerializer
-        serializer = JsonPlusSerializer(
-            allowed_json_modules=CHECKPOINT_ALLOWED_JSON_MODULES,
-        )
+        serializer_configuration: Dict[str, Any] = {
+            "allowed_json_modules": CHECKPOINT_ALLOWED_JSON_MODULES,
+        }
+
+        serializer_signature = inspect.signature(JsonPlusSerializer)
+        if "allowed_msgpack_modules" in serializer_signature.parameters:
+            serializer_configuration["allowed_msgpack_modules"] = (
+                CHECKPOINT_ALLOWED_MSGPACK_MODULES
+            )
+
+        serializer = JsonPlusSerializer(**serializer_configuration)
 
         try:
             async with aiosqlite_module.connect(str(checkpoint_db_path)) as connection:
