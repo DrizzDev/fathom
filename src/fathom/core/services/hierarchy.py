@@ -184,7 +184,9 @@ class HierarchyService:
 
             duration = (datetime.now() - start_time).total_seconds()
             logger.info(
-                f"Hierarchy processing complete in {duration:.2f}s. Elements found: {len(element_extraction.label_map)}"
+                f"Hierarchy processing complete in {duration:.2f}s. "
+                f"Elements found: {len(labeled_elements)} "
+                f"(raw: {len(element_extraction.label_map)})"
             )
 
             return HierarchyProcessingResult(

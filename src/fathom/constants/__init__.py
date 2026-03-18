@@ -52,6 +52,46 @@ class ActionType(StrEnum):
     ASK_USER = "ask_user"
 
 
+# Action types that operate on a specific UI element at a pixel location.
+# Only spatial actions warrant label-ID snapping to ground-truth coordinates.
+# Non-spatial actions (wait, validate, complete, etc.) carry no meaningful target bounds.
+SPATIAL_ACTION_TYPES: frozenset[ActionType] = frozenset(
+    {
+        ActionType.TAP,
+        ActionType.TYPE,
+        ActionType.SWIPE,
+        ActionType.SCROLL,
+        ActionType.SWIPE_UP,
+        ActionType.LONG_PRESS,
+        ActionType.SWIPE_DOWN,
+        ActionType.SWIPE_LEFT,
+        ActionType.SWIPE_RIGHT,
+    }
+)
+
+# Action types that, when planned during a sub-goal check, indicate the agent is
+# actively executing a next-phase task — used to infer opener sub-goal completion.
+NEXT_PHASE_ACTION_TYPES: frozenset[ActionType] = frozenset(
+    {
+        ActionType.TAP,
+        ActionType.WAIT,
+        ActionType.TYPE,
+        ActionType.SWIPE,
+    }
+)
+
+# Action types that count as "an action was executed" for sub-goal completion signalling.
+ACTION_EXECUTED_TYPES: frozenset[ActionType] = frozenset(
+    {
+        ActionType.TAP,
+        ActionType.TYPE,
+        ActionType.SWIPE,
+        ActionType.SCROLL,
+        ActionType.COMPLETE,
+    }
+)
+
+
 class FlowType(StrEnum):
     """
     Type of execution flow.
@@ -88,26 +128,29 @@ class StrategyStatus(StrEnum):
 
 
 __all__ = [
-    "ActionType",
     "FlowType",
-    "ContextScope",
+    "ActionType",
+    "SignalType",
+    "TargetKind",
     "FathomEvent",
+    "ContextScope",
+    "ExecutionMode",
     "WorkflowStatus",
     "StrategyStatus",
-    "SignalType",
     "ExecutionPhase",
-    "ExecutionMode",
+    "DevicePlatform",
+    "SignalAdapterType",
     "VISUAL_HASH_LENGTH",
-    "DEFAULT_SWIPE_DISTANCE",
-    "DEFAULT_SCROLL_DISTANCE",
-    "BOUNDS_SWIPE_DISTANCE",
-    "DEFAULT_SWIPE_DURATION",
-    "DEFAULT_STABILITY_WAIT",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_RETRY_DELAY",
-    "DevicePlatform",
+    "SPATIAL_ACTION_TYPES",
     "DeviceConnectionType",
     "IOSAutomationBackend",
-    "SignalAdapterType",
-    "TargetKind",
+    "ACTION_EXECUTED_TYPES",
+    "BOUNDS_SWIPE_DISTANCE",
+    "DEFAULT_SWIPE_DISTANCE",
+    "DEFAULT_SWIPE_DURATION",
+    "DEFAULT_STABILITY_WAIT",
+    "NEXT_PHASE_ACTION_TYPES",
+    "DEFAULT_SCROLL_DISTANCE",
 ]

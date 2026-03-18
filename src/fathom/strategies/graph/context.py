@@ -46,11 +46,11 @@ class GraphContext:
         intent: str,
         llm: LLMPort,
         device: DevicePort,
-        perception: PerceptionPort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
         telemetry: TelemetryPort,
+        perception: PerceptionPort,
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
         *,
@@ -116,8 +116,8 @@ class GraphContext:
         self.__perception = perception_service or PerceptionService(
             storage=storage,
             perception=perception,
-            hierarchy_signature_builder=HierarchySignatureBuilder(),
             session_id=workflow_id,
+            hierarchy_signature_builder=HierarchySignatureBuilder(),
         )
 
         # GCC Context Manager with optional summarizer
