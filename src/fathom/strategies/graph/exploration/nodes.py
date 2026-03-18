@@ -55,7 +55,7 @@ class ExplorationNodeProvider:
         try:
             screen = await self.__context.perception.perceive(session_id=self.__context.workflow_id)
 
-            visual_hash = hashlib.sha256(screen.image).hexdigest()[:VISUAL_HASH_LENGTH]
+            visual_hash = self.__context.perception.compute_visual_hash(capture=screen)
 
             screen_state = ScreenState(
                 visual_hash=visual_hash,
@@ -64,25 +64,28 @@ class ExplorationNodeProvider:
                 activity_hash=hashlib.md5(
                     screen.activity.encode(), usedforsecurity=False
                 ).hexdigest()[:VISUAL_HASH_LENGTH],
-                structural_hash="0" * VISUAL_HASH_LENGTH,
             )
+            screen = screen.model_copy(update={"state": screen_state})
 
             is_new = self.__context.agent_state.update_screen(screen=screen_state)
 
             result = cast("Dict[str, Any]", dict(state))
-            result[CKey.CAPTURE] = screen
-            result[CKey.SCREEN_STATE] = screen_state
-            result[CKey.IS_NEW_SCREEN] = is_new
-            result[CKey.GROUNDING_DURATION] = time.time() - start_time
-            result[CKey.STEP_RESULT] = None
+
             result[EKey.ACTION] = None
+            result[CKey.CAPTURE] = screen
+            result[CKey.STEP_RESULT] = None
+            result[CKey.IS_NEW_SCREEN] = is_new
+            result[CKey.SCREEN_STATE] = screen_state
+            result[CKey.GROUNDING_DURATION] = time.time() - start_time
             return cast("ExplorationGraphState", result)
 
         except Exception as exception:
             logger.error(f"Exploration grounding failed: {exception}")
             result = cast("Dict[str, Any]", dict(state))
+
             result[CKey.IS_COMPLETE] = True
             result[CKey.COMPLETION_REASON] = "Capture failed"
+
             return cast("ExplorationGraphState", result)
 
     async def scan(self, state: ExplorationGraphState) -> ExplorationGraphState:
@@ -112,6 +115,7 @@ class ExplorationNodeProvider:
             screen_height=height,
             context_manager=self.__context.context_manager,
             intent="Explore this app. Find a unique interactive element.",
+            visual_hash=capture.state.visual_hash if capture.state is not None else "",
         )
 
         if (

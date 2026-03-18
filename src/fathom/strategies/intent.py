@@ -44,9 +44,7 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     ("fathom.constants.state", "CommonStateKey"),
     ("fathom.constants.state", "IntentStateKey"),
 )
-CHECKPOINT_ALLOWED_MSGPACK_MODULES: Tuple[Tuple[str, ...], ...] = (
-    CHECKPOINT_ALLOWED_JSON_MODULES
-)
+CHECKPOINT_ALLOWED_MSGPACK_MODULES: Tuple[Tuple[str, ...], ...] = CHECKPOINT_ALLOWED_JSON_MODULES
 
 
 class IntentStrategy:
@@ -337,9 +335,7 @@ class IntentStrategy:
 
         serializer_signature = inspect.signature(JsonPlusSerializer)
         if "allowed_msgpack_modules" in serializer_signature.parameters:
-            serializer_configuration["allowed_msgpack_modules"] = (
-                CHECKPOINT_ALLOWED_MSGPACK_MODULES
-            )
+            serializer_configuration["allowed_msgpack_modules"] = CHECKPOINT_ALLOWED_MSGPACK_MODULES
 
         serializer = JsonPlusSerializer(**serializer_configuration)
 

@@ -25,7 +25,9 @@ logger = getLogger(__name__)
 
 
 class SubGoalContext(TypedDict):
-    """Minimal sub-goal context for vision prompts (no AgentState dependency)."""
+    """
+    Minimal sub-goal context for vision prompts (no AgentState dependency).
+    """
 
     index: int
     total: int
@@ -44,7 +46,7 @@ class VisionService:
         telemetry: TelemetryPort,
         *,
         use_cache: bool,
-        session_id: str = "not_set",
+        session_id: str = "",
     ) -> None:
         """
         Initialize vision service.
@@ -66,25 +68,28 @@ class VisionService:
         intent: str,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        *,
+        visual_hash: str,
         screen_width: int,
         screen_height: int,
-        *,
         use_xml: bool = False,
+        is_stuck: bool = False,
+        last_action: Optional[str] = None,
         tracking_note: Optional[str] = None,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
-        is_stuck: bool = False,
-        last_action: Optional[str] = None,
-        delta_context: Optional[Dict[str, object]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
+        delta_context: Optional[Dict[str, object]] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
         """
 
         analyze_start = time.time()
+
         # 1. BRAIN RETRIEVAL
-        fingerprint = hashlib.sha256(capture.image).hexdigest()[:16]
+        fingerprint = self.__resolve_capture_fingerprint(capture=capture, visual_hash=visual_hash)
+        prompt_image = self.__resolve_prompt_image(capture=capture)
 
         start = time.time()
         knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
@@ -208,7 +213,7 @@ class VisionService:
             manifest=manifest,
             failures=failures,
             knowledge=knowledge,
-            screen=capture.image,
+            screen=prompt_image,
             context=dynamic_context,
         )
         payload_duration = time.time() - payload_start
@@ -256,14 +261,12 @@ class VisionService:
                 analysis = self.__parser.parse(response)
                 parse_duration = time.time() - parse_start
                 break
-            except Exception as exc:
-                from fathom.core.exceptions import (
-                    ToolValidationError,  # local import to avoid cycles
-                )
+            except Exception as exception:
+                from fathom.core.exceptions import ToolValidationError
 
-                if isinstance(exc, ToolValidationError) and attempt < max_validation_retries:
-                    feedback = getattr(exc, "feedback", None)
-                    message = getattr(feedback, "message", str(exc))
+                if isinstance(exception, ToolValidationError) and attempt < max_validation_retries:
+                    feedback = getattr(exception, "feedback", None)
+                    message = getattr(feedback, "message", str(exception))
                     logger.warning(
                         "[VISION] Tool validation failed (attempt %s/%s): %s",
                         attempt + 1,
@@ -287,7 +290,7 @@ class VisionService:
                         manifest=manifest,
                         failures=failures,
                         knowledge=knowledge,
-                        screen=capture.image,
+                        screen=prompt_image,
                         context=dynamic_context,
                     )
                     continue
@@ -328,12 +331,34 @@ class VisionService:
                 activity_hash=hashlib.md5(  # nosec
                     capture.activity.encode(), usedforsecurity=False
                 ).hexdigest()[:VISUAL_HASH_LENGTH],
-                structural_hash="0" * VISUAL_HASH_LENGTH,
             ),
             description=analysis.screen_description,
         )
 
         return analysis
+
+    def __resolve_capture_fingerprint(self, *, visual_hash: str, capture: ScreenCapture) -> str:
+        """
+        Resolve the stable visual fingerprint used for memory lookup.
+        """
+
+        if visual_hash:
+            return visual_hash[:VISUAL_HASH_LENGTH]
+
+        if capture.state is not None and capture.state.visual_hash:
+            return capture.state.visual_hash[:VISUAL_HASH_LENGTH]
+
+        raise ValueError("Vision analysis requires a prepared visual_hash")
+
+    def __resolve_prompt_image(self, *, capture: ScreenCapture) -> bytes:
+        """
+        Resolve the image payload to send to the vision model.
+        """
+
+        if capture.annotated_image:
+            return capture.annotated_image
+
+        return capture.image
 
     def __sanitize_recursive(self, data: Any) -> Any:
         """
@@ -342,19 +367,24 @@ class VisionService:
 
         if isinstance(data, bytes):
             return f"<binary:{len(data)}>"
+
         if isinstance(data, dict):
             return {key: self.__sanitize_recursive(data=value) for key, value in data.items()}
+
         if isinstance(data, (list, tuple)):
             return [self.__sanitize_recursive(item) for item in data]
+
         return data
 
     async def check_completion(
         self,
         intent: str,
+        visual_hash: str,
         screen_width: int,
         screen_height: int,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        *,
         tracking_note: Optional[str] = None,
     ) -> bool:
         """
@@ -364,6 +394,7 @@ class VisionService:
         result = await self.analyze(
             intent=intent,
             capture=capture,
+            visual_hash=visual_hash,
             screen_width=screen_width,
             screen_height=screen_height,
             tracking_note=tracking_note,

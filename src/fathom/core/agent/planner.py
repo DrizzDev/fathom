@@ -130,15 +130,16 @@ class StepPlanner:
             capture=capture,
             elements=elements,
             intent=state.intent,
+            is_stuck=state.is_stuck,
             screen_width=screen_width,
             screen_height=screen_height,
-            context_manager=context_manager,
-            tracking_note=current_tracking_note,
-            is_stuck=state.is_stuck,
-            last_action=state.last_action_type,
-            delta_context=state.get_delta_context(),
-            failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
             sub_goal_info=sub_goal_info,
+            context_manager=context_manager,
+            last_action=state.last_action_type,
+            tracking_note=current_tracking_note,
+            delta_context=state.get_delta_context(),
+            visual_hash=self.__compute_simple_hash(capture=capture),
+            failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
         state.update_delta_context(analysis.gemini_delta)
 
@@ -227,9 +228,9 @@ class StepPlanner:
                         step=None,  # No physical actions after goal completion
                         is_complete=True,
                         metrics=analysis.metrics,
-                        reason="All sub-goals completed sequentially",
                         metadata=analysis.metadata,
                         memories=analysis.memories,
+                        reason="All sub-goals completed sequentially",
                     )
             else:
                 # Completion gates not met - log detailed reason
@@ -394,7 +395,7 @@ class StepPlanner:
 
         screen_hash: str = self.__compute_simple_hash(capture=capture)
 
-        validated_event_type: Literal["action", "validation"] | None = None
+        validated_event_type: Optional[Literal["action", "validation"]] = None
 
         if event_type == "action":
             validated_event_type = "action"
@@ -411,10 +412,17 @@ class StepPlanner:
             condition="recovery" if is_recovery else None,
         )
 
-    def __compute_simple_hash(self, capture: ScreenCapture) -> str:
+    def __compute_simple_hash(self, *, capture: ScreenCapture) -> str:
         """
-        Compute a simple hash of the screen capture
+        Return a stable screen identity for the current capture.
         """
 
-        data: bytes = f"{capture.activity}:{len(capture.image)}".encode()
-        return hashlib.md5(string=data, usedforsecurity=False).hexdigest()[:16]
+        if capture.state is not None and capture.state.visual_hash:
+            return capture.state.visual_hash[:16]
+
+        logger.warning("Screen capture state missing visual_hash; falling back to activity hash")
+
+        return hashlib.md5(
+            capture.activity.encode("utf-8"),
+            usedforsecurity=False,
+        ).hexdigest()[:16]

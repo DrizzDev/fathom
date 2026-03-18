@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from fathom.constants import ActionType
 from fathom.processing.geometry import GeometryUtils
 from fathom.processing.parsers.base import PlatformParser
+from fathom.schemas.hierarchy import NormalizedHierarchyNodeSignature
 from fathom.schemas.ui import LabeledElement, UIBounds
 
 logger = getLogger(__name__)
@@ -106,6 +107,29 @@ class IOSParser(PlatformParser):
         "XCUIElementTypeWebView",
         "XCUIElementTypeApplication",
     }
+    __SIGNATURE_IGNORE_TYPES = {
+        "XCUIElementTypeStatusBar",
+        "XCUIElementTypeNavigationBar",
+    }
+    __SIGNATURE_IGNORE_IDENTIFIER_TOKENS = {
+        "nav_bar",
+        "statusbar",
+        "status_bar",
+        "navigationbar",
+    }
+    __VALUE_SENSITIVE_TYPES = {
+        "XCUIElementTypeSlider",
+        "XCUIElementTypeSwitch",
+        "XCUIElementTypeCheckBox",
+        "XCUIElementTypePageIndicator",
+    }
+    __CHECKABLE_TYPES = {
+        "XCUIElementTypeSwitch",
+        "XCUIElementTypeToggle",
+        "XCUIElementTypeCheckBox",
+        "XCUIElementTypeRadioButton",
+    }
+    __CHECKED_VALUE = "1"
 
     @classmethod
     def is_platform_match(cls, root: ET.Element) -> bool:
@@ -491,6 +515,66 @@ class IOSParser(PlatformParser):
 
         return False
 
+    def build_signature_metadata(self, *, node: ET.Element) -> NormalizedHierarchyNodeSignature:
+        """
+        Normalize one iOS node into structural-signature metadata.
+        """
+
+        element_type = str(node.get("type", node.tag))
+        raw_value = str(node.get("value", "")).strip()
+
+        try:
+            x = int(node.get("x", "0"))
+            y = int(node.get("y", "0"))
+            width = int(node.get("width", "0"))
+            height = int(node.get("height", "0"))
+            bounds = f"[{x},{y}][{x + width},{y + height}]"
+        except (TypeError, ValueError):
+            bounds = ""
+
+        label = str(node.get("label", "")).strip()
+        identifier = str(node.get("name", "")).strip()
+
+        return NormalizedHierarchyNodeSignature(
+            bounds=bounds,
+            include_value_in_signature=(
+                bool(raw_value)
+                and len(raw_value) <= 20
+                and element_type in self.__VALUE_SENSITIVE_TYPES
+            ),
+            raw_value=raw_value,
+            identifier=identifier,
+            source_type=element_type,
+            content_description=identifier,
+            text=label if label else identifier,
+            is_scrollable=element_type in self.__SCROLLABLE_TYPES,
+            is_focused=str(node.get("focused", "false")).lower() == "true",
+            is_selected=str(node.get("selected", "false")).lower() == "true",
+            class_name=element_type.replace("XCUIElementType", "") or element_type,
+            is_checked=self.__is_ios_checked(element_type=element_type, raw_value=raw_value),
+        )
+
+    def should_ignore_signature_node(self, *, metadata: NormalizedHierarchyNodeSignature) -> bool:
+        """
+        Return whether an iOS node should be excluded from the signature.
+        """
+
+        lowered_identifier = metadata.identifier.lower()
+
+        if metadata.source_type in self.__SIGNATURE_IGNORE_TYPES:
+            return True
+
+        return any(
+            token in lowered_identifier for token in self.__SIGNATURE_IGNORE_IDENTIFIER_TOKENS
+        )
+
+    def __is_ios_checked(self, *, element_type: str, raw_value: str) -> bool:
+        """
+        Return whether an iOS toggle-like control is in the checked state.
+        """
+
+        return element_type in self.__CHECKABLE_TYPES and raw_value == self.__CHECKED_VALUE
+
     def __score_element(self, element: LabeledElement, action: Any = None) -> float:
         """
         Score element utility for overlap suppression and pruning.
@@ -638,6 +722,7 @@ class IOSParser(PlatformParser):
     def filter_and_deduplicate(
         self,
         elements: List[LabeledElement],
+        *,
         iou_threshold: float = 0.4,
         action: Optional[Any] = None,
     ) -> List[LabeledElement]:

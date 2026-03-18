@@ -6,6 +6,7 @@ from typing import Optional
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import DEFAULT_MAX_RETRIES, DEFAULT_STABILITY_WAIT, SignalType
+from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.perception import PerceptionService
@@ -16,8 +17,9 @@ from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.actions import Action
-from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 
 
@@ -58,8 +60,9 @@ class ExecutionEngine:
 
         # Initialize Domain Services
         self.__perception_service = PerceptionService(
-            perception=perception,
             storage=storage,
+            perception=perception,
+            hierarchy_signature_builder=HierarchySignatureBuilder(),
         )
         self.__action_executor = ActionExecutor(
             device=device,
@@ -122,7 +125,13 @@ class ExecutionEngine:
 
             # Phase 6: Checkpoint
             duration = int((time.time() - start_time) * 1000)
-            screen_changed = pre_hash != post_hash
+            screen_changed = (
+                ScreenState.hamming_distance(
+                    left_hash=pre_hash,
+                    right_hash=post_hash,
+                )
+                > ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
+            )
 
             step_result = StepResult(
                 step=step,
@@ -141,9 +150,7 @@ class ExecutionEngine:
         except (ToolError, PortError) as exception:
             duration = int((time.time() - start_time) * 1000)
             await self.__telemetry.error(
-                "Step execution failed",
-                step_number=step.step_number,
-                error=str(exception),
+                "Step execution failed", error=str(exception), step_number=step.step_number
             )
 
             return StepResult(
@@ -159,8 +166,8 @@ class ExecutionEngine:
             duration = int((time.time() - start_time) * 1000)
             await self.__telemetry.error(
                 "Unexpected error in step execution",
-                step_number=step.step_number,
                 error=str(exception),
+                step_number=step.step_number,
             )
             raise ExecutionError(f"Step {step.step_number} failed unexpectedly") from exception
 

@@ -10,12 +10,22 @@ from typing import Any, Callable, Dict, List, Optional, Union, cast
 from fathom.constants import ActionType, FathomEvent
 from fathom.constants.execution import LAUNCHER_PACKAGES, VISUAL_HASH_LENGTH
 from fathom.constants.graph import NodeName
+from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
+from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
+from fathom.schemas.hierarchy import HierarchyProcessingResult
 from fathom.schemas.results import AnalysisResult, PlanResult
-from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.screens import (
+    PostActionScreenComparison,
+    ScreenCapture,
+    ScreenDiff,
+    ScreenHashBundle,
+    ScreenState,
+)
 from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.ui import LabeledElement
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
 
@@ -28,12 +38,113 @@ class IntentNodeProvider:
     Encapsulates dependencies and shared private logic.
     """
 
-    def __init__(self, context: GraphContext) -> None:
+    def __init__(
+        self,
+        *,
+        context: GraphContext,
+        screen_comparator: ScreenComparator,
+    ) -> None:
         """
         Initialize provider with shared context.
         """
 
         self.__context = context
+        self.__screen_comparator = screen_comparator
+
+    def __build_screen_state(
+        self,
+        *,
+        capture: ScreenCapture,
+        visual_hash: str,
+        xml_hash: Optional[str] = None,
+        interaction_hash: Optional[str] = None,
+    ) -> ScreenState:
+        """
+        Build a normalized `ScreenState` from the available capture signals.
+        """
+
+        return ScreenState(
+            activity=capture.activity,
+            timestamp=capture.timestamp,
+            activity_hash=hashlib.md5(
+                capture.activity.encode("utf-8"),
+                usedforsecurity=False,
+            ).hexdigest()[:VISUAL_HASH_LENGTH],
+            visual_hash=visual_hash,
+            xml_hash=xml_hash,
+            interaction_hash=interaction_hash,
+        )
+
+    def __resolve_capture_hashes(
+        self,
+        *,
+        capture: ScreenCapture,
+        elements: Optional[List[LabeledElement]] = None,
+    ) -> ScreenHashBundle:
+        """
+        Compute the visual, XML, and interaction hashes for one capture.
+        """
+
+        return ScreenHashBundle(
+            visual_hash=self.__context.perception.compute_visual_hash(capture=capture),
+            xml_hash=self.__context.perception.compute_xml_hash(capture=capture),
+            interaction_hash=self.__context.perception.compute_interaction_hash(elements=elements),
+        )
+
+    def __build_post_action_elements(
+        self,
+        *,
+        capture: ScreenCapture,
+    ) -> List[LabeledElement]:
+        """
+        Extract post-action interactive elements when XML is available.
+        """
+
+        if not self.__context.use_xml or not capture.xml_content:
+            return []
+
+        return self.__context.hierarchy.extract_elements(
+            xml=capture.xml_content,
+            screen=capture,
+            action_type=ActionType.TAP,
+        )
+
+    async def __capture_post_action_screen(
+        self,
+        *,
+        before_capture: ScreenCapture,
+        before_state: Optional[ScreenState],
+    ) -> PostActionScreenComparison:
+        """
+        Capture the post-action screen and compare it to the pre-action state.
+        """
+
+        post_capture = await self.__context.perception_port.capture()
+        if not post_capture.image:
+            return PostActionScreenComparison()
+
+        post_elements = self.__build_post_action_elements(capture=post_capture)
+        post_hashes = self.__resolve_capture_hashes(
+            capture=post_capture,
+            elements=post_elements,
+        )
+
+        after_state = self.__build_screen_state(
+            capture=post_capture,
+            visual_hash=post_hashes.visual_hash,
+            xml_hash=post_hashes.xml_hash,
+            interaction_hash=post_hashes.interaction_hash,
+        )
+        screen_diff = self.__screen_comparator.compare(
+            before=before_capture,
+            after=post_capture,
+            before_state=before_state,
+            after_state=after_state,
+        )
+        return PostActionScreenComparison(
+            post_visual_hash=post_hashes.visual_hash,
+            screen_diff=screen_diff,
+        )
 
     async def __is_cancelled(self) -> bool:
         """
@@ -63,7 +174,7 @@ class IntentNodeProvider:
             )
             await self.__context.hitl.wait_for_resume()
 
-    def __restore_agent_state_from_graph(self, state: IntentGraphState) -> None:
+    def __restore_agent_state_from_graph(self, *, state: IntentGraphState) -> None:
         """
         Restore agent_state from graph checkpoint if present.
         This is intended for graph resume / checkpoint recovery.
@@ -102,7 +213,9 @@ class IntentNodeProvider:
                 self.__context.agent_state.set_current_sub_goal_index(current_index)
 
     def __persist_agent_state_to_graph(
-        self, result: Union[IntentGraphState, Dict[str, Any]]
+        self,
+        *,
+        result: Union[IntentGraphState, Dict[str, Any]],
     ) -> None:
         """
         Serialize agent_state updates back to graph state for checkpoint persistence.
@@ -269,8 +382,9 @@ class IntentNodeProvider:
 
             activity = screen.activity
 
+            raw_screen = screen
             # XML Dump if enabled
-            xml = screen.xml_content
+            xml = raw_screen.xml_content
 
             elements = None
 
@@ -279,7 +393,7 @@ class IntentNodeProvider:
             )
 
             if self.__context.use_xml and xml:
-                hierarchy_dump_duration = screen.metadata.get("hierarchy_dump_duration")
+                hierarchy_dump_duration = raw_screen.metadata.get("hierarchy_dump_duration")
                 if isinstance(hierarchy_dump_duration, (int, float)):
                     self.__context.metrics.record(
                         operation="hierarchy_dump",
@@ -287,40 +401,36 @@ class IntentNodeProvider:
                     )
 
                 process_start = time.time()
-                (
-                    annotated_screen,
-                    elements,
-                ) = await self.__context.hierarchy.process_xml_and_screen(
+                hierarchy_result = await self.__context.hierarchy.process_xml_and_screen(
                     xml=xml,
-                    screen=screen,
-                    package_name=activity,
-                    action_type=ActionType.TAP,
                     session_id=self.__context.workflow_id,
+                    package_name=activity,
                     path_manager=self.__context.path_manager,
+                    action_type=ActionType.TAP,
+                    screen=raw_screen,
                 )
                 self.__context.metrics.record(
                     operation="hierarchy_processing", duration=time.time() - process_start
                 )
 
-                if annotated_screen:
-                    screen = annotated_screen
+                elements = hierarchy_result.label_map
+                if hierarchy_result.annotated_capture is not None:
+                    screen = hierarchy_result.annotated_capture
+            else:
+                hierarchy_result = HierarchyProcessingResult()
 
-            # Update Agent State with robust multi-layer hashing
-            xml_hash = self.__context.perception.compute_xml_hash(capture=screen)
-            visual_hash = self.__context.perception.compute_visual_hash(capture=screen)
-            interaction_hash = self.__context.perception.compute_interaction_hash(elements=elements)
-
-            screen_state = ScreenState(
-                xml_hash=xml_hash,
-                visual_hash=visual_hash,
-                activity=screen.activity,
-                timestamp=screen.timestamp,
-                interaction_hash=interaction_hash,
-                activity_hash=hashlib.md5(
-                    screen.activity.encode(), usedforsecurity=False
-                ).hexdigest()[:VISUAL_HASH_LENGTH],
-                structural_hash="0" * VISUAL_HASH_LENGTH,
+            capture_hashes = self.__resolve_capture_hashes(
+                capture=raw_screen,
+                elements=hierarchy_result.labeled_elements,
             )
+
+            screen_state = self.__build_screen_state(
+                capture=raw_screen,
+                visual_hash=capture_hashes.visual_hash,
+                xml_hash=capture_hashes.xml_hash,
+                interaction_hash=capture_hashes.interaction_hash,
+            )
+            screen = screen.model_copy(update={"state": screen_state})
 
             is_new_screen = self.__context.agent_state.update_screen(screen=screen_state)
 
@@ -328,7 +438,7 @@ class IntentNodeProvider:
             self.__context.metrics.record(operation="screenshot", duration=duration)
 
             logger.info(
-                f"[NODE: GROUND] Screen captured: hash={visual_hash}, activity={activity}, is_new={is_new_screen}, elements={len(elements) if elements else 0}"
+                f"[NODE: GROUND] Screen captured: hash={capture_hashes.visual_hash}, activity={activity}, is_new={is_new_screen}, elements={len(elements) if elements else 0}"
             )
             logger.info(f"[NODE: GROUND] Grounding completed in {duration:.2f}s")
             logger.info("[NODE: GROUND] -> Transitioning to ANALYZE")
@@ -351,7 +461,7 @@ class IntentNodeProvider:
             )
 
             # Persist sub-goal state to graph for checkpoint recovery
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
 
             return result
 
@@ -370,7 +480,7 @@ class IntentNodeProvider:
             )
 
             # Persist failure state
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
 
             return result
 
@@ -384,7 +494,7 @@ class IntentNodeProvider:
         logger.info("[NODE: ANALYZE] Starting analysis node")
 
         # Restore agent_state from graph checkpoint if available
-        self.__restore_agent_state_from_graph(state)
+        self.__restore_agent_state_from_graph(state=state)
 
         if await self.__is_cancelled():
             logger.warning("[NODE: ANALYZE] Execution cancelled")
@@ -397,7 +507,7 @@ class IntentNodeProvider:
                     CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
                 },
             )
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
             return result
 
         # Use type guard to satisfy MyPy
@@ -526,7 +636,7 @@ class IntentNodeProvider:
                 logger.info("[NODE: ANALYZE] -> Will route to EXECUTE")
 
             # Persist sub-goal state to graph for checkpoint recovery
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
 
             return result
 
@@ -545,7 +655,7 @@ class IntentNodeProvider:
                     IntentStateKey.INJECTED_CONTEXT: None,
                 },
             )
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
             return result
 
     async def execute(self, state: IntentGraphState) -> IntentGraphState:
@@ -568,7 +678,7 @@ class IntentNodeProvider:
                     CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
                 },
             )
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
             return result
 
         # Type guards for planned_step and capture
@@ -666,23 +776,22 @@ class IntentNodeProvider:
         pre_hash = (
             current_screen_state.visual_hash
             if isinstance(current_screen_state, ScreenState)
-            else "0"
+            else ZERO_HASH
         )
 
-        try:
-            post_capture = await self.__context.perception_port.capture()
+        screen_diff: Optional[ScreenDiff] = None
 
-            if post_capture.image:
-                # Construct a temporary ScreenCapture for hashing, inheriting metadata from pre_capture
-                temp_capture = ScreenCapture(
-                    image=post_capture.image,
-                    width=capture.width,
-                    height=capture.height,
-                    activity=post_capture.activity,
-                    timestamp=post_capture.timestamp,
-                )
-                post_hash = self.__context.perception.compute_visual_hash(capture=temp_capture)
-            else:
+        try:
+            current_state = (
+                current_screen_state if isinstance(current_screen_state, ScreenState) else None
+            )
+            post_action_comparison = await self.__capture_post_action_screen(
+                before_capture=capture,
+                before_state=current_state,
+            )
+            post_hash = post_action_comparison.post_visual_hash
+            screen_diff = post_action_comparison.screen_diff
+            if post_hash is None:
                 post_hash = pre_hash
 
         except Exception as exception:
@@ -694,7 +803,31 @@ class IntentNodeProvider:
         duration = time.time() - start_time
         self.__context.metrics.record(operation="action", duration=duration)
 
-        screen_changed = pre_hash != post_hash
+        if screen_diff is not None:
+            screen_changed = screen_diff.action_had_effect
+            ssim_str = (
+                f"{screen_diff.ssim_score:.4f}" if screen_diff.ssim_score is not None else "N/A"
+            )
+            pixel_diff_str = (
+                f"{screen_diff.content_pixel_diff_ratio:.4f}"
+                if screen_diff.content_pixel_diff_ratio is not None
+                else "N/A"
+            )
+            logger.info(
+                f"[NODE: EXECUTE] ScreenDiff: phash={screen_diff.phash_distance}, "
+                f"ssim={ssim_str}, content_diff={pixel_diff_str}, "
+                f"regions={len(screen_diff.changed_regions)}, "
+                f"scroll={screen_diff.scroll_translation}, "
+                f"action_had_effect={screen_diff.action_had_effect}"
+            )
+        else:
+            screen_changed = (
+                ScreenState.hamming_distance(
+                    left_hash=pre_hash,
+                    right_hash=post_hash,
+                )
+                > ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
+            )
 
         logger.info(
             f"[NODE: EXECUTE] Execution completed in {duration:.2f}s: "
@@ -740,7 +873,7 @@ class IntentNodeProvider:
             result_dict[CommonStateKey.COMPLETION_REASON] = None
 
         # Persist sub-goal state to graph for checkpoint recovery
-        self.__persist_agent_state_to_graph(result_dict)
+        self.__persist_agent_state_to_graph(result=result_dict)
 
         return result_dict  # type: ignore[return-value]
 
@@ -932,7 +1065,7 @@ class IntentNodeProvider:
                         IntentStateKey.STEP_RESULTS: accumulated_step_results,
                     },
                 )
-                self.__persist_agent_state_to_graph(result)
+                self.__persist_agent_state_to_graph(result=result)
                 return result
 
             logger.info(
@@ -944,7 +1077,7 @@ class IntentNodeProvider:
                 "IntentGraphState",
                 {IntentStateKey.STEP_RESULTS: accumulated_step_results},
             )
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
             return result
 
         except Exception as exception:
@@ -957,7 +1090,7 @@ class IntentNodeProvider:
                 "List[StepResult]", state.get(IntentStateKey.STEP_RESULTS) or []
             )
             result = cast("IntentGraphState", {IntentStateKey.STEP_RESULTS: existing_step_results})
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
             return result
 
     async def verify(self, state: IntentGraphState) -> IntentGraphState:
@@ -979,7 +1112,7 @@ class IntentNodeProvider:
                     CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
                 },
             )
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
             return result
 
         start_time = time.time()
@@ -1016,7 +1149,8 @@ class IntentNodeProvider:
         system_prompt = VERIFICATION_SYSTEM
 
         guidance_section = ""
-        if user_guidance := self.__context.context_manager.get_user_guidance():
+        user_guidance = self.__context.context_manager.get_user_guidance()
+        if user_guidance:
             guidance_text = "\n".join([f"- {guidance.content}" for guidance in user_guidance])
             guidance_section = f"\nUser Guidance:\n{guidance_text}\n"
 
@@ -1063,7 +1197,7 @@ class IntentNodeProvider:
                     CommonStateKey.COMPLETION_REASON: reason,
                 },
             )
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
             return result
         else:
             # Inject negative feedback to force the agent to continue
@@ -1086,7 +1220,7 @@ class IntentNodeProvider:
                     IntentStateKey.INJECTED_CONTEXT: feedback,
                 },
             )
-            self.__persist_agent_state_to_graph(result)
+            self.__persist_agent_state_to_graph(result=result)
             return result
 
 
@@ -1097,12 +1231,15 @@ class IntentGraphFactory:
     """
 
     @staticmethod
-    def build(context: GraphContext) -> Dict[str, Callable[..., Any]]:
+    def build(*, context: GraphContext) -> Dict[str, Callable[..., Any]]:
         """
         Builds the node functions for the intent graph.
         """
 
-        provider = IntentNodeProvider(context=context)
+        provider = IntentNodeProvider(
+            context=context,
+            screen_comparator=context.comparator,
+        )
 
         return {
             NodeName.GROUND: provider.ground,

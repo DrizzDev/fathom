@@ -9,6 +9,7 @@ from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.core.services.action import ActionExecutor
+from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.exporter import ScriptExporter
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
@@ -26,6 +27,7 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
@@ -66,6 +68,7 @@ class GraphContext:
         metrics: Optional[ExecutionMetrics] = None,
         cancel_event: Optional[asyncio.Event] = None,
         hierarchy: Optional[HierarchyService] = None,
+        comparator: Optional[ScreenComparator] = None,
         summarizer: Optional[SummarizationPort] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_manager: Optional[ContextManager] = None,
@@ -113,6 +116,7 @@ class GraphContext:
         self.__perception = perception_service or PerceptionService(
             storage=storage,
             perception=perception,
+            hierarchy_signature_builder=HierarchySignatureBuilder(),
             session_id=workflow_id,
         )
 
@@ -136,6 +140,7 @@ class GraphContext:
             path_manager=path_manager,
         )
 
+        self.__comparator = comparator or ScreenComparator()
         self.__hierarchy = hierarchy or HierarchyService(storage=storage)
         self.__planner = planner or StepPlanner(vision_tool=self.__vision)
 
@@ -212,6 +217,14 @@ class GraphContext:
         """
 
         return self.__telemetry
+
+    @property
+    def comparator(self) -> ScreenComparator:
+        """
+        Returns the screen comparator service.
+        """
+
+        return self.__comparator
 
     @property
     def signal(self) -> SignalPort:
