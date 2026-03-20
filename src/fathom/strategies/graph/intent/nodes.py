@@ -10,7 +10,11 @@ from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
-from fathom.constants.execution import LAUNCHER_PACKAGES, VISUAL_HASH_LENGTH
+from fathom.constants.execution import (
+    LAUNCHER_PACKAGES,
+    MAX_STABILITY_WAIT_SECONDS,
+    VISUAL_HASH_LENGTH,
+)
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
@@ -659,8 +663,16 @@ class IntentNodeProvider:
             f"duration={execution_result.duration}ms, error={execution_result.error}"
         )
 
-        # Wait for screen stability after action
-        await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
+        # Wait for screen stability after action with a hard upper bound.
+        stability_wait = min(
+            float(self.__context.configuration.engine.stability_wait), MAX_STABILITY_WAIT_SECONDS
+        )
+        logger.debug(
+            "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs",
+            float(self.__context.configuration.engine.stability_wait),
+            stability_wait,
+        )
+        await asyncio.sleep(delay=stability_wait)
 
         # Capture post-execution screen to compute post_hash
         current_screen_state = state.get(CommonStateKey.SCREEN_STATE)

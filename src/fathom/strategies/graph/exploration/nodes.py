@@ -7,7 +7,7 @@ import time
 from typing import Any, Callable, Dict, cast
 
 from fathom.constants import ActionType
-from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.constants.execution import MAX_STABILITY_WAIT_SECONDS, VISUAL_HASH_LENGTH
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.schemas.actions import Action
@@ -200,8 +200,16 @@ class ExplorationNodeProvider:
             session_id=self.__context.workflow_id,
         )
 
-        # Post-action stability wait
-        await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
+        # Post-action stability wait with hard cap for consistency.
+        stability_wait = min(
+            float(self.__context.configuration.engine.stability_wait), MAX_STABILITY_WAIT_SECONDS
+        )
+        logger.debug(
+            "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs",
+            float(self.__context.configuration.engine.stability_wait),
+            stability_wait,
+        )
+        await asyncio.sleep(delay=stability_wait)
 
         duration = time.time() - start_time
 
@@ -306,8 +314,16 @@ class ExplorationNodeProvider:
             package_name=self.__context.package_name,
         )
 
-        # Wait for stability
-        await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
+        # Wait for stability with hard cap for consistency.
+        stability_wait = min(
+            float(self.__context.configuration.engine.stability_wait), MAX_STABILITY_WAIT_SECONDS
+        )
+        logger.debug(
+            "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs",
+            float(self.__context.configuration.engine.stability_wait),
+            stability_wait,
+        )
+        await asyncio.sleep(delay=stability_wait)
 
         # Update state with remaining navigation
         result = cast("dict[str, Any]", dict(state))

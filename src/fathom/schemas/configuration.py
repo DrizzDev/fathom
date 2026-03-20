@@ -172,7 +172,10 @@ class ExecutionConfiguration(BaseModel):
 
     max_retries: int = Field(default=3, description="Maximum retries for physical actions")
     stability_wait: float = Field(
-        default=0.5, description="Wait time after action for screen settlement"
+        default=0.5,
+        ge=0.0,
+        le=1.5,
+        description="Wait time after action for screen settlement (max 1.5s)",
     )
 
 

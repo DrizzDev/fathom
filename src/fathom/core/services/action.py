@@ -91,7 +91,13 @@ class ActionExecutor:
                     )
 
             if attempt < self.__max_retries:
-                await asyncio.sleep(delay=(DEFAULT_RETRY_DELAY / 1000.0) * (attempt + 1))
+                retry_delay = (DEFAULT_RETRY_DELAY / 1000.0) * (attempt + 1)
+                logger.debug(
+                    "[WAIT] source=retry_backoff attempt=%s delay=%.3fs",
+                    attempt + 1,
+                    retry_delay,
+                )
+                await asyncio.sleep(delay=retry_delay)
 
         return ExecutionResult(
             duration=0,
@@ -124,7 +130,14 @@ class ActionExecutor:
             ActionType.SAVE_MEMORY,
             ActionType.RETRIEVE_MEMORY,
         ):
-            await asyncio.sleep(delay=float(action.wait_duration or 1.0))
+            requested_wait = float(action.wait_duration or 1.0)
+            applied_wait = max(0.0, requested_wait)
+            logger.debug(
+                "[WAIT] source=model_wait_duration requested=%.3fs applied=%.3fs",
+                requested_wait,
+                applied_wait,
+            )
+            await asyncio.sleep(delay=applied_wait)
             return (
                 ExecutionResult(success=True, duration=int((time.time() - start_time) * 1000)),
                 None,
