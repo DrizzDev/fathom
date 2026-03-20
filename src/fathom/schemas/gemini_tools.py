@@ -64,11 +64,17 @@ class EmitScriptArgs(BaseModel):
     )
     action_validations: Dict[str, str] = Field(
         default_factory=dict,
-        description="Optional map of action_id -> intermediate validation line.",
+        description=(
+            "Optional map of action_id -> intermediate validation after that action; values start with 'Validate'. "
+            "Mid-flow checks only—not the terminal script line."
+        ),
     )
     final_validation: Optional[str] = Field(
         default=None,
-        description="Final goal validation line, typically starting with 'Validate'.",
+        description=(
+            "Single terminal UI-state line after the last catalog action; start with 'Validate'. "
+            "State visible/displayed only—no tap/click/type/select/navigate/search phrasing."
+        ),
     )
 
     @field_validator("remaining_action_ids", mode="before")

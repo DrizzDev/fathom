@@ -11,7 +11,10 @@ class ConditionalBlockPayload(BaseModel):
     Structured conditional block for script generation.
     """
 
-    condition: str = Field(min_length=1, description="IF block condition text.")
+    condition: str = Field(
+        min_length=1,
+        description="IF block condition text. Rendered as 'IF <condition>' with '{' on the following line.",
+    )
     action_ids: List[str] = Field(
         default_factory=list,
         description="Executable action IDs under this condition.",
@@ -33,13 +36,17 @@ class ScriptExportStructuredPayloadShape(BaseModel):
         default_factory=list, description="Ordered executable action IDs outside IF blocks."
     )
     final_validation: str = Field(
-        min_length=1, description="Final goal validation line starting with 'Validate'."
+        min_length=1,
+        description=(
+            "Terminal UI-state validation after the last catalog action; must start with 'Validate'. "
+            "Single concise visible/displayed assertion—no imperative tap/click/type steps."
+        ),
     )
     action_validations: Dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Optional map of action_id -> intermediate validation line. "
-            "Each value must start with 'Validate' and is emitted after that action."
+            "Optional map of action_id -> intermediate validation emitted after that action. "
+            "Each value must start with 'Validate'. Use for mid-flow state checks; not for the terminal line."
         ),
     )
 
@@ -307,7 +314,8 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                 if selected_block_index in emitted_block_indices:
                     continue
                 block = self.conditional_blocks[selected_block_index]
-                lines.append(f"IF {block.condition.strip()} {{")
+                lines.append(f"IF {block.condition.strip()}")
+                lines.append("{")
                 for block_action_id in block.action_ids:
                     block_action_id = block_action_id.strip()
                     if not block_action_id:
@@ -378,16 +386,17 @@ class ScriptExportPayload(BaseModel):
                 current = raw.strip()
                 if not current:
                     continue
-
-                if current.startswith("IF "):
+                if current == "{" or current == "}":
+                    continue
+                lower = current.lower()
+                if lower.startswith("if "):
                     if "{" not in current:
                         continue
-                    current = current.split("{", 1)[1].strip()
-
-                current = current.strip("{} ").strip()
-                if current:
-                    statements.append(current)
-
+                    tail = current.split("{", 1)[1].strip().rstrip("}").strip()
+                    if tail:
+                        statements.append(tail)
+                    continue
+                statements.append(current)
             return statements
 
         if "```" in self.script:
@@ -411,8 +420,20 @@ class ScriptExportPayload(BaseModel):
             raise ValueError("Script has unbalanced IF block braces.")
 
         if self.require_if_block:
-            has_if_block = any(line.lower().startswith("if ") and "{" in line for line in lines)
-            if not has_if_block:
+
+            def __script_has_if_block(line_list: List[str]) -> bool:
+                n = len(line_list)
+                for idx, line in enumerate(line_list):
+                    lower = line.lower()
+                    if not lower.startswith("if "):
+                        continue
+                    if "{" in line:
+                        return True
+                    if idx + 1 < n and line_list[idx + 1] == "{":
+                        return True
+                return False
+
+            if not __script_has_if_block(lines):
                 raise ValueError("Script must contain at least one IF conditional block.")
 
             # Additionally require that at least one IF block guards a non-trivial body with
@@ -421,25 +442,36 @@ class ScriptExportPayload(BaseModel):
             max_body_statements = 0
             in_if_block = False
             current_body_count = 0
-            for raw in lines:
-                line = raw.strip()
-                if not line:
-                    continue
-                if line.lower().startswith("if ") and "{" in line:
-                    # Starting a new IF block.
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                lower = line.lower()
+                if lower.startswith("if "):
                     if in_if_block:
                         max_body_statements = max(max_body_statements, current_body_count)
                     in_if_block = True
                     current_body_count = 0
+                    if "{" in line:
+                        tail = line.split("{", 1)[1].strip().rstrip("}").strip()
+                        if tail:
+                            current_body_count = 1
+                        i += 1
+                        continue
+                    if i + 1 < len(lines) and lines[i + 1] == "{":
+                        i += 2
+                        continue
+                    i += 1
                     continue
                 if line == "}":
                     if in_if_block:
                         max_body_statements = max(max_body_statements, current_body_count)
                         in_if_block = False
                         current_body_count = 0
+                    i += 1
                     continue
                 if in_if_block:
                     current_body_count += 1
+                i += 1
 
             if in_if_block:
                 max_body_statements = max(max_body_statements, current_body_count)

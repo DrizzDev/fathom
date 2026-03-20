@@ -474,7 +474,11 @@ class ToolRegistry:
 
         return {
             "name": "emit_script",
-            "description": "Return structured script sections derived only from allowed step action lines. Do not paraphrase executable actions.",
+            "description": (
+                "Return structured script sections derived only from allowed step action lines. "
+                "Do not paraphrase executable actions. Rendered scripts use IF <condition> on one line "
+                "and the opening { on the following line before indented block body lines."
+            ),
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
@@ -505,15 +509,20 @@ class ToolRegistry:
                     "action_validations": {
                         "type": "OBJECT",
                         "description": (
-                            "Optional mapping of action ID to intermediate validation line "
-                            "(e.g., {'A3': 'Validate that results are visible'}). "
-                            "Each value must start with 'Validate'."
+                            "Optional map of catalog action_id -> intermediate validation line after that action "
+                            "(e.g. list or results visible right after a search or scroll). Each value must start "
+                            "with 'Validate'. Use for mid-flow checks; do not put those in final_validation."
                         ),
                         "additionalProperties": {"type": "STRING"},
                     },
                     "final_validation": {
                         "type": "STRING",
-                        "description": "Final goal-validation line. Must start with 'Validate'.",
+                        "description": (
+                            "Single terminal UI-state line after the last catalog action. Must start with 'Validate'. "
+                            "State only: what screen/page/primary content is visible or displayed. One short clause—"
+                            "no tap/click/type/select/navigate/search instructions (those belong in catalog actions "
+                            "or action_validations). No chained 'and then' procedures."
+                        ),
                     },
                 },
                 "required": ["remaining_action_ids", "final_validation"],
