@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections import Counter
+from logging import getLogger
 from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+logger = getLogger(__name__)
 
 
 class ConditionalBlockPayload(BaseModel):
@@ -240,19 +243,18 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                             "Degenerate duplicate conditional blocks detected for the same condition."
                         )
 
-        # Enforce validation distribution when multiple validations are expected.
-        # When require_if_block is True we relax this so conditional blocks are not
-        # rejected solely for under-provided validations (e.g. 1 final only).
+        # Log when validation distribution is sparse but do not reject — the LLM
+        # may legitimately cover multiple subjects in a single validation statement.
         if payload.expected_validation_count > 1:
             total_validations = len(payload.action_validations) + 1  # +1 for final_validation
-            min_required = 1 if payload.require_if_block else 2
-            if total_validations < min_required:
-                raise ValueError(
-                    f"Intent has {payload.expected_validation_count} validation subjects, "
-                    f"but only {total_validations} validation statement(s) were provided. "
-                    f"Expected at least {min_required} validations total "
-                    f"(found {len(payload.action_validations)} intermediate + 1 final). "
-                    f"Multiple subjects can be covered by a single validation statement."
+            if total_validations < 2:
+                logger.warning(
+                    "Intent has %d validation subjects but only %d validation statement(s) "
+                    "were provided (%d intermediate + 1 final). The final_validation may "
+                    "cover multiple subjects.",
+                    payload.expected_validation_count,
+                    total_validations,
+                    len(payload.action_validations),
                 )
 
         return payload
