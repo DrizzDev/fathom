@@ -56,49 +56,6 @@ class Normalizer:
         return Normalizer.sentence(text=text)
 
     @staticmethod
-    def wait_subject(rationale: Optional[str]) -> str:
-        """Derive a specific subject for a wait action from rationale."""
-        rationale_lower = Normalizer.clean(text=rationale).lower()
-
-        if re.search(pattern=r"\bad\b", string=rationale_lower) and (
-            "play" in rationale_lower or "finish" in rationale_lower or "skip" in rationale_lower
-        ):
-            return "ad to finish"
-
-        if (
-            "splash" in rationale_lower
-            or "load" in rationale_lower
-            or "main interface" in rationale_lower
-        ):
-            return "app to finish loading"
-
-        return "screen to load"
-
-    @staticmethod
-    def wait_condition(condition: Optional[str], rationale: Optional[str] = None) -> Optional[str]:
-        """Normalize wait condition wording into clear, deterministic phrases."""
-
-        cleaned = Normalizer.clean(text=condition)
-        if not cleaned:
-            return condition
-
-        lower = cleaned.lower()
-        rationale_lower = Normalizer.clean(text=rationale).lower()
-
-        if "app to finish loading" in lower or "splash" in lower:
-            return "the app is still loading"
-
-        if "first search result" in lower or "search result" in lower:
-            return "search results are still loading"
-
-        if "loading indicator" in lower:
-            if "search" in rationale_lower or "result" in rationale_lower:
-                return "search results are still loading"
-            return "content is still loading"
-
-        return cleaned
-
-    @staticmethod
     def action(
         target: str,
         action_type: str,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import ValidationError
 
@@ -312,7 +312,11 @@ class ToolResponseParser:
             alternatives=[],
             reasoning=reason,
             is_goal_complete=completed,
+            goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
+            subgoal_completion_reason=args.subgoal_completion_reason,
+            completion_criteria_met=args.completion_criteria_met,
+            content_exhausted=bool(args.content_exhausted),
             metadata={"event_type": "validation"},
             screen_description="Goal verification step",
         )
@@ -345,10 +349,16 @@ class ToolResponseParser:
         evidence = args.evidence
         reason = args.assistant_message
         condition = args.condition_to_verify
-        completed = bool(args.goal_completed)
-        sub_completed = bool(args.sub_goal_completed)
+        raw_goal_completed = getattr(args, "goal_completed", None)
+        raw_sub_goal_completed = getattr(args, "sub_goal_completed", None)
+        completed = bool(raw_goal_completed)
+        sub_completed = bool(raw_sub_goal_completed)
 
-        return AnalysisResult(
+        metadata: Dict[str, Any] = {"event_type": "validation"}
+        if args.condition_met is not None:
+            metadata["condition_met"] = args.condition_met
+
+        result = AnalysisResult(
             action=Action(
                 confidence=1.0,
                 target=condition,
@@ -358,9 +368,20 @@ class ToolResponseParser:
             alternatives=[],
             reasoning=reason,
             is_goal_complete=completed,
+            goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
-            metadata={"event_type": "validation"},
+            subgoal_completion_reason=args.subgoal_completion_reason,
+            completion_criteria_met=args.completion_criteria_met,
+            content_exhausted=bool(args.content_exhausted),
+            metadata=metadata,
             screen_description="State validation step",
+        )
+
+        return self.__normalize_completion_flags(
+            result=result,
+            source_tool="validate_state",
+            raw_goal_completed=raw_goal_completed,
+            raw_sub_goal_completed=raw_sub_goal_completed,
         )
 
     def __parse_execution(self, arguments: Any) -> AnalysisResult:
@@ -404,9 +425,13 @@ class ToolResponseParser:
             except Exception:
                 logger.warning("Ignoring malformed bbox payload from GeminiBBox: %s", data.bbox)
 
+        raw_action_type_str = str(data.action_type or "").strip().lower()
         try:
-            action_type = ActionType(str(data.action_type or "wait").lower())
+            action_type = ActionType(raw_action_type_str or "wait")
         except ValueError:
+            logger.warning(
+                "Invalid action_type '%s' from VLM; defaulting to WAIT.", raw_action_type_str
+            )
             action_type = ActionType.WAIT
 
         # Support variations from different prompt/model versions
@@ -462,7 +487,38 @@ class ToolResponseParser:
             confidence=float(data.confidence),
             memory_updates=args.memory_updates,
             label_id=data.label_id,
+            # Structured export signals (VLM-provided, authoritative).
+            export_target=data.export_target,
+            scroll_target=data.scroll_target,
+            wait_subject=data.wait_subject,
+            wait_pattern=data.wait_pattern,
+            is_app_launcher=data.is_app_launcher,
+            target_is_generic=data.target_is_generic,
+            target_element_type=data.target_element_type,
+            validation_subject=data.validation_subject,
+            validation_pattern=data.validation_pattern,
         )
+
+        # Parse alternative actions from actions[1:] if provided.
+        alternatives: List[Action] = []
+        for alt_data in args.actions[1:]:
+            try:
+                alt_at_str = str(alt_data.action_type or "").strip().lower()
+                alt_at = ActionType(alt_at_str) if alt_at_str else ActionType.WAIT
+            except ValueError:
+                alt_at = ActionType.WAIT
+            alt_target = alt_data.target_name or alt_data.element_name or "element"
+            alternatives.append(
+                Action(
+                    action_type=alt_at,
+                    target=alt_target,
+                    natural_language_target=alt_target,
+                    rationale=str(alt_data.rationale or ""),
+                    confidence=float(alt_data.confidence),
+                    is_valid=bool(alt_data.is_valid),
+                    export_target=alt_data.export_target,
+                )
+            )
 
         metadata_dict: Dict[str, Any] = {}
         if action_type == ActionType.VALIDATE:
@@ -472,13 +528,13 @@ class ToolResponseParser:
 
         result = AnalysisResult(
             action=action,
-            alternatives=[],
+            alternatives=alternatives,
             reasoning=message,
             metadata=metadata_dict,
             is_goal_complete=completed,
-            goal_completion_reason=args.goal_completion_reason if completed else None,
+            goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
-            subgoal_completion_reason=args.subgoal_completion_reason if sub_completed else None,
+            subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
             gemini_delta=parsed_delta,
@@ -603,7 +659,11 @@ class ToolResponseParser:
             alternatives=[],
             reasoning=rationale,
             is_goal_complete=completed,
+            goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
+            subgoal_completion_reason=args.subgoal_completion_reason,
+            completion_criteria_met=args.completion_criteria_met,
+            content_exhausted=bool(args.content_exhausted),
             screen_description="User guidance requested",
         )
 

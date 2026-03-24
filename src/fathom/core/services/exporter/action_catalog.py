@@ -3,23 +3,24 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Any, Dict, Optional, Sequence, Union
 
-from fathom.core.services.exporter.constants import GENERIC_TARGETS, SWIPE_ACTIONS
-from fathom.core.services.exporter.step_inference import infer_scroll_target, infer_wait_subject
+from fathom.core.services.exporter.constants import SWIPE_ACTIONS
 from fathom.core.services.exporter.step_record import (
     get_action_type,
     get_activity,
     is_launcher_activity,
     swipe_direction_label,
 )
-from fathom.core.services.exporter.step_targets import (
-    extract_goal_label,
-    is_likely_launch_tap,
-    resolve_target,
-)
 from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.steps import StepResult
 
 logger = getLogger(__name__)
+
+
+def _get_field(step: Union[StepResult, Dict[str, Any]], field: str, default: Any = None) -> Any:
+    """Extract a field from a StepResult or dict, reading from the Action when available."""
+    if isinstance(step, StepResult):
+        return getattr(step.step.action, field, default)
+    return step.get(field, default)
 
 
 def build_action_catalog_from_steps(
@@ -40,64 +41,52 @@ def build_action_catalog_from_steps(
             i += 1
             continue
         action_type_val = get_action_type(step=step)
-        target = resolve_target(step=step)
 
-        if isinstance(step, StepResult):
-            text = step.step.action.text
-            rationale = step.step.action.rationale
-            wait_duration = step.step.action.wait_duration
-            is_app_launcher_signal = step.step.action.is_app_launcher
-            wait_subject = step.step.action.wait_subject
-            wait_pattern = step.step.action.wait_pattern
-            scroll_target = step.step.action.scroll_target
-        else:
-            text = step.get("text")
-            rationale = str(object=step.get("rationale", ""))
-            wait_duration = step.get("wait_duration")
-            is_app_launcher_signal = step.get("is_app_launcher", False)
-            wait_subject = step.get("wait_subject")
-            wait_pattern = step.get("wait_pattern")
-            scroll_target = step.get("scroll_target")
+        # Use authoritative export_target from VLM; fall back to natural_language_target.
+        export_target = _get_field(step, "export_target")
+        if not export_target:
+            export_target = _get_field(step, "natural_language_target") or "element"
 
-        if action_type_val == "wait" and target.lower() in GENERIC_TARGETS:
-            if wait_subject:
-                target = wait_subject
-            elif wait_pattern:
-                pattern_map = {
-                    "ad": "ad to finish",
-                    "splash": "app to finish loading",
-                    "load": "app to finish loading",
-                    "search": "search results to appear",
-                }
-                target = pattern_map.get(wait_pattern, "screen to load")
-            else:
-                target = infer_wait_subject(rationale=rationale, wait_subject=None)
+        text = _get_field(step, "text")
+        wait_duration = _get_field(step, "wait_duration")
+        is_app_launcher_signal = _get_field(step, "is_app_launcher", False)
+        wait_subject = _get_field(step, "wait_subject")
+        scroll_target = _get_field(step, "scroll_target")
+
+        # For wait actions, use authoritative wait_subject as the target.
+        if action_type_val == "wait" and wait_subject:
+            export_target = wait_subject
 
         if action_type_val in SWIPE_ACTIONS:
             swipe_direction = action_type_val
-            swipe_start = i
             j = i + 1
             while j < n and get_action_type(step=step_results[j]) == swipe_direction:
                 j += 1
             i = j
 
-            if i < n:
-                next_target = resolve_target(step=step_results[i])
-            else:
-                next_target = (
-                    scroll_target
-                    or infer_scroll_target(steps=step_results, start=swipe_start, end=i)
-                    or extract_goal_label(goal_state=intent)
+            # Use authoritative scroll_target; fall back to next step's target.
+            if scroll_target:
+                visible_target = scroll_target
+            elif i < n:
+                next_export = _get_field(step_results[i], "export_target")
+                visible_target = (
+                    next_export
+                    or _get_field(step_results[i], "natural_language_target")
                     or intent
                     or "the target"
                 )
+            else:
+                visible_target = intent or "the target"
 
             label = swipe_direction_label(action_type=swipe_direction)
-            lines.append(f"{label} until {next_target} is visible")
+            lines.append(f"{label} until {visible_target} is visible")
             continue
 
         description = Normalizer.action(
-            action_type=action_type_val, target=target, text=text, wait_duration=wait_duration
+            action_type=action_type_val,
+            target=export_target,
+            text=text,
+            wait_duration=wait_duration,
         )
 
         lowered = description.lower()
@@ -105,25 +94,15 @@ def build_action_catalog_from_steps(
             i += 1
             continue
 
+        # Trust is_app_launcher exclusively — no heuristic fallback.
         is_first_step_derived_action = (
             bool(package_name) and len(lines) == 1 and lines[0].lower().startswith("open_app ")
         )
-        is_launch_tap = (
-            is_first_step_derived_action
-            and action_type_val == "tap"
-            and (
-                is_app_launcher_signal
-                or is_likely_launch_tap(
-                    target=target,
-                    description=description,
-                )
-            )
-        )
-        if is_launch_tap:
+        if is_first_step_derived_action and action_type_val == "tap" and is_app_launcher_signal:
             logger.debug(
-                f"[EXPORTER] Collapsing launcher tap into OPEN_APP: target='{target}' "
-                f"description='{description}' package={package_name} "
-                f"launcher_signal={is_app_launcher_signal}"
+                "[EXPORTER] Collapsing launcher tap into OPEN_APP: target='%s' package=%s",
+                export_target,
+                package_name,
             )
             i += 1
             continue

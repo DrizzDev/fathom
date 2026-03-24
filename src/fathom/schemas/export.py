@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -14,6 +14,10 @@ class ConditionalBlockPayload(BaseModel):
     condition: str = Field(
         min_length=1,
         description="IF block condition text. Rendered as 'IF <condition>' with '{' on the following line.",
+    )
+    condition_type: Optional[Literal["blocker", "transient", "error", "optional"]] = Field(
+        default=None,
+        description="Classification of this condition: blocker, transient, error, or optional.",
     )
     action_ids: List[str] = Field(
         default_factory=list,

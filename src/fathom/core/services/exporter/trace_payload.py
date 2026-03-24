@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from typing import Any, Dict, Sequence, Union
 
-from fathom.core.services.exporter.step_inference import get_condition
 from fathom.core.services.exporter.step_record import (
     get_action_type,
     get_conditional_type,
     get_event_type,
     is_explicit_conditional,
 )
-from fathom.core.services.exporter.step_targets import resolve_target
 from fathom.schemas.steps import StepResult
+
+
+def _get_field(step: Union[StepResult, Dict[str, Any]], field: str, default: Any = None) -> Any:
+    """Extract a field from a StepResult or dict, reading from the Action when available."""
+    if isinstance(step, StepResult):
+        return getattr(step.step.action, field, default)
+    return step.get(field, default)
 
 
 def build_export_payload(
@@ -19,11 +24,17 @@ def build_export_payload(
     payload: list[Dict[str, Any]] = []
     for index, step in enumerate(step_results, start=1):
         action_type_val = get_action_type(step=step)
-        target = resolve_target(step=step)
-        condition = get_condition(step=step)
         event_type = get_event_type(step=step)
         is_conditional = is_explicit_conditional(step=step)
         conditional_type = get_conditional_type(step=step)
+
+        # Use authoritative fields from VLM structured output.
+        target = (
+            _get_field(step, "export_target")
+            or _get_field(step, "natural_language_target")
+            or "element"
+        )
+        condition = _get_field(step, "condition")
 
         if isinstance(step, StepResult):
             text = step.step.action.text

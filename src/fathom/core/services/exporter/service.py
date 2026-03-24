@@ -8,18 +8,13 @@ from fathom.core.prompts.export import ExportPromptBuilder
 from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.exporter.action_catalog import build_action_catalog_from_steps
-from fathom.core.services.exporter.script_text import (
-    extract_target_from_action_line,
-    normalize_script_output,
-)
+from fathom.core.services.exporter.script_text import normalize_script_output
 from fathom.core.services.exporter.structured_export import (
     contains_goal_validation,
     is_valid_llm_script,
-    normalize_structured_action_ids,
 )
 from fathom.core.services.exporter.trace_payload import build_export_payload
 from fathom.core.services.exporter.validation_subjects import extract_validation_subjects_with_llm
-from fathom.core.services.normalizer import Normalizer
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.export import (
     ScriptExportPayload,
@@ -83,18 +78,6 @@ class ScriptExporter:
             line.strip().lower() for line in action_catalog.values() if line.strip()
         ]
 
-        for action_id, line in action_catalog.items():
-            if line.strip().lower().startswith("open_app "):
-                continue
-            target_phrase = extract_target_from_action_line(line=line) or ""
-            if Normalizer.is_generic_target_name(target_phrase):
-                logger.warning(
-                    "Gemini structured export catalog contains generic target name "
-                    "[export_violation=generic_target_name, action_id=%s, line=%s].",
-                    action_id,
-                    line,
-                )
-
         require_if_block = False
         required_open_app_line = (
             str(action_catalog.get(required_open_app_id) or "").strip().lower()
@@ -143,13 +126,10 @@ class ScriptExporter:
                 "[export_violation=raw_parse]."
             ) from exception
 
-        normalized_structured_args = normalize_structured_action_ids(
-            structured_args=raw_emit_args.model_dump(exclude_unset=True),
-            required_action_ids=required_action_ids,
-        )
-
         try:
-            shape = ScriptExportStructuredPayloadShape.model_validate(normalized_structured_args)
+            shape = ScriptExportStructuredPayloadShape.model_validate(
+                raw_emit_args.model_dump(exclude_unset=True)
+            )
             structured_payload = ScriptExportStructuredPayload.enforce_policy(
                 shape=shape,
                 action_catalog=action_catalog,

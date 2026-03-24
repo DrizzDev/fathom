@@ -156,6 +156,17 @@ class ToolRegistry:
                                     "type": "BOOLEAN",
                                     "description": "Set true when this action is specifically handling an overlay/popup blocker.",
                                 },
+                                "export_target": {
+                                    "type": "STRING",
+                                    "description": (
+                                        "The canonical phrase for this action in exported test scripts. "
+                                        "Must be specific and human-readable (e.g., 'Search box', "
+                                        "'the first search result', 'Add to cart button'). "
+                                        "REQUIRED for tap, type, long_press, scroll, swipe, and wait actions. "
+                                        "NEVER use generic placeholders like 'element', 'UI Element', "
+                                        "'button', 'label', 'icon', 'field', or 'text' alone."
+                                    ),
+                                },
                                 "target_type": {
                                     "type": "STRING",
                                     "enum": ["stable", "positional", "dynamic"],
@@ -175,11 +186,20 @@ class ToolRegistry:
                                 },
                                 "scroll_target": {
                                     "type": "STRING",
-                                    "description": "For scroll/swipe actions: the element or section being scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and packages'). Use the exact phrase from the UI when possible.",
+                                    "description": (
+                                        "REQUIRED for all scroll/swipe actions. The element or section being "
+                                        "scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and "
+                                        "packages'). Use the exact phrase from the UI when possible. "
+                                        "Must not be empty for swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
+                                    ),
                                 },
                                 "wait_subject": {
                                     "type": "STRING",
-                                    "description": "For wait actions: what we're waiting for (e.g., 'app to load', 'search results to appear', 'Home page content'). Describe the expected state or element.",
+                                    "description": (
+                                        "REQUIRED for all wait actions. What we're waiting for (e.g., 'app to "
+                                        "load', 'search results to appear', 'Home page content'). Describe the "
+                                        "expected state or element. Must not be empty for wait actions."
+                                    ),
                                 },
                                 "validation_subject": {
                                     "type": "STRING",
@@ -491,6 +511,15 @@ class ToolRegistry:
                                 "condition": {
                                     "type": "STRING",
                                     "description": "Condition text for IF block.",
+                                },
+                                "condition_type": {
+                                    "type": "STRING",
+                                    "enum": ["blocker", "transient", "error", "optional"],
+                                    "description": (
+                                        "Classification of this condition: blocker (popup/permission/consent "
+                                        "that blocks progress), transient (loading/splash/spinner that will pass), "
+                                        "error (error message that may appear), or optional (nice-to-have check)."
+                                    ),
                                 },
                                 "action_ids": {
                                     "type": "ARRAY",

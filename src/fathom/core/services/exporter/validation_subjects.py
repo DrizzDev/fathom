@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from logging import getLogger
 from typing import TYPE_CHECKING, List
 
@@ -11,6 +12,15 @@ if TYPE_CHECKING:
     from fathom.interfaces.llm import LLMPort
 
 logger = getLogger(__name__)
+
+
+@dataclass
+class ValidationSubjectsResult:
+    """Result of validation subject extraction with provenance tracking."""
+
+    subjects: list[str] = field(default_factory=list)
+    source: str = "regex"  # "llm" or "regex"
+    error: str | None = None
 
 
 def extract_validation_subjects_regex(intent: str) -> list[str]:
@@ -36,8 +46,24 @@ def extract_validation_subjects(intent: str) -> list[str]:
 
 
 async def extract_validation_subjects_with_llm(*, llm: "LLMPort", intent: str) -> list[str]:
+    """Extract validation subjects, returning the subject list.
+
+    Use extract_validation_subjects_with_llm_tracked() for provenance tracking.
+    """
+    result = await extract_validation_subjects_with_llm_tracked(llm=llm, intent=intent)
+    return result.subjects
+
+
+async def extract_validation_subjects_with_llm_tracked(
+    *, llm: "LLMPort", intent: str
+) -> ValidationSubjectsResult:
+    """Extract validation subjects with source provenance tracking."""
     if not intent or not llm:
-        return extract_validation_subjects_regex(intent=intent)
+        return ValidationSubjectsResult(
+            subjects=extract_validation_subjects_regex(intent=intent),
+            source="regex",
+            error="no intent or llm" if not intent else None,
+        )
 
     try:
         system_instruction = (
@@ -64,7 +90,11 @@ async def extract_validation_subjects_with_llm(*, llm: "LLMPort", intent: str) -
             logger.warning(
                 "Gemini validation subject extraction returned empty response; using regex fallback."
             )
-            return extract_validation_subjects_regex(intent=intent)
+            return ValidationSubjectsResult(
+                subjects=extract_validation_subjects_regex(intent=intent),
+                source="regex",
+                error="empty_llm_response",
+            )
 
         try:
             content = response.content.strip()
@@ -79,7 +109,11 @@ async def extract_validation_subjects_with_llm(*, llm: "LLMPort", intent: str) -
             subjects = json.loads(content)
             if not isinstance(subjects, list):
                 logger.warning("Gemini returned non-list JSON; using regex fallback.")
-                return extract_validation_subjects_regex(intent=intent)
+                return ValidationSubjectsResult(
+                    subjects=extract_validation_subjects_regex(intent=intent),
+                    source="regex",
+                    error="non_list_json",
+                )
 
             normalized: List[str] = []
             for subject in subjects:
@@ -90,17 +124,29 @@ async def extract_validation_subjects_with_llm(*, llm: "LLMPort", intent: str) -
 
             if normalized:
                 logger.info(f"Gemini extracted {len(normalized)} validation subjects from intent.")
-                return normalized
+                return ValidationSubjectsResult(subjects=normalized, source="llm")
             else:
                 logger.warning("Gemini extracted empty subjects; using regex fallback.")
-                return extract_validation_subjects_regex(intent=intent)
+                return ValidationSubjectsResult(
+                    subjects=extract_validation_subjects_regex(intent=intent),
+                    source="regex",
+                    error="empty_llm_subjects",
+                )
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse Gemini JSON response ({e}); using regex fallback.")
-            return extract_validation_subjects_regex(intent=intent)
+            return ValidationSubjectsResult(
+                subjects=extract_validation_subjects_regex(intent=intent),
+                source="regex",
+                error=f"json_decode: {e}",
+            )
 
     except Exception as e:
         logger.warning(
             f"Gemini validation subject extraction failed ({e}); falling back to regex extraction."
         )
-        return extract_validation_subjects_regex(intent=intent)
+        return ValidationSubjectsResult(
+            subjects=extract_validation_subjects_regex(intent=intent),
+            source="regex",
+            error=f"exception: {e}",
+        )
