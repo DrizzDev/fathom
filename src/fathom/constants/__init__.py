@@ -19,7 +19,6 @@ from fathom.constants.execution import (
 )
 from fathom.constants.scope import ContextScope
 
-
 SWIPE_ACTIONS = frozenset({"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"})
 
 EXECUTABLE_ACTION_PREFIXES = (
