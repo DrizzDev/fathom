@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict
 
+from fathom.core.services.exporter.constants import VALIDATE_PREFIX
 from fathom.core.services.exporter.script_text import (
     action_kind_from_line,
     is_structural_script_line,
@@ -65,4 +66,4 @@ def contains_goal_validation(script: str) -> bool:
     last_line = last_non_structural_line(script=script)
     if not last_line:
         return False
-    return last_line.lower().startswith("validate")
+    return last_line.lower().startswith(VALIDATE_PREFIX)

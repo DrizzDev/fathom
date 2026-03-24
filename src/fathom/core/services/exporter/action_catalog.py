@@ -3,7 +3,11 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Any, Dict, Optional, Sequence, Union
 
-from fathom.core.services.exporter.constants import SWIPE_ACTIONS
+from fathom.core.services.exporter.constants import (
+    EXECUTABLE_ACTION_PREFIXES,
+    SWIPE_ACTIONS,
+    VALIDATE_PREFIX,
+)
 from fathom.core.services.exporter.step_record import (
     get_action_type,
     get_activity,
@@ -90,7 +94,7 @@ def build_action_catalog_from_steps(
         )
 
         lowered = description.lower()
-        if lowered.startswith("validate "):
+        if lowered.startswith(VALIDATE_PREFIX):
             i += 1
             continue
 
@@ -110,20 +114,10 @@ def build_action_catalog_from_steps(
         lines.append(description)
         i += 1
 
-    executable_prefixes = (
-        "open_app ",
-        "tap ",
-        "type ",
-        "scroll ",
-        "swipe ",
-        "wait ",
-        "press ",
-        "long press ",
-    )
     executable_lines = [
         line.strip()
         for line in lines
-        if line.strip() and line.strip().lower().startswith(executable_prefixes)
+        if line.strip() and line.strip().lower().startswith(EXECUTABLE_ACTION_PREFIXES)
     ]
 
     action_catalog: Dict[str, str] = {}

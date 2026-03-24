@@ -20,6 +20,22 @@ from fathom.constants.execution import (
 from fathom.constants.scope import ContextScope
 
 
+SWIPE_ACTIONS = frozenset({"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"})
+
+EXECUTABLE_ACTION_PREFIXES = (
+    "open_app ",
+    "tap ",
+    "type ",
+    "scroll ",
+    "swipe ",
+    "wait ",
+    "press ",
+    "long press ",
+)
+
+VALIDATE_PREFIX = "validate"
+
+
 class ActionType(StrEnum):
     """
     Types of actions that can be executed on a device.
@@ -102,4 +118,7 @@ __all__ = [
     "DEFAULT_STABILITY_WAIT",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_RETRY_DELAY",
+    "SWIPE_ACTIONS",
+    "EXECUTABLE_ACTION_PREFIXES",
+    "VALIDATE_PREFIX",
 ]

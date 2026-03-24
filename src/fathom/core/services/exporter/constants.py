@@ -1,3 +1,5 @@
 from __future__ import annotations
 
-SWIPE_ACTIONS = frozenset({"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"})
+from fathom.constants import EXECUTABLE_ACTION_PREFIXES, SWIPE_ACTIONS, VALIDATE_PREFIX
+
+__all__ = ["EXECUTABLE_ACTION_PREFIXES", "SWIPE_ACTIONS", "VALIDATE_PREFIX"]

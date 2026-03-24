@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fathom.constants import VALIDATE_PREFIX
+
 CoordSystem = Literal["normalized", "pixel"]
 ConditionalType = Literal["blocker", "transient", "error", "optional"]
 TargetType = Literal["stable", "positional", "dynamic"]
@@ -98,7 +100,7 @@ class EmitScriptArgs(BaseModel):
         text = str(value).strip()
         if not text:
             raise ValueError("final_validation must not be empty.")
-        if not text.lower().startswith("validate"):
+        if not text.lower().startswith(VALIDATE_PREFIX):
             raise ValueError(f"final_validation must start with 'Validate', got: '{text[:30]}...'")
         return text
 
@@ -124,7 +126,7 @@ class EmitScriptArgs(BaseModel):
             text = str(line).strip()
             if not aid or not text:
                 continue
-            if not text.lower().startswith("validate"):
+            if not text.lower().startswith(VALIDATE_PREFIX):
                 raise ValueError(
                     f"action_validations['{aid}'] must start with 'Validate', got: '{text[:30]}...'"
                 )

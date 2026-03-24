@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from typing import Optional
 
+from fathom.core.services.exporter.constants import EXECUTABLE_ACTION_PREFIXES
+
+# Map prefix → action kind. Most are the prefix without the trailing space;
+# "swipe " is the exception and maps to "scroll".
+_PREFIX_TO_KIND = {
+    prefix: "scroll" if prefix == "swipe " else prefix.strip().replace(" ", "_")
+    for prefix in EXECUTABLE_ACTION_PREFIXES
+}
+
 
 def normalize_script_output(script: str) -> str:
     cleaned_lines = [line.rstrip() for line in str(script).replace("\r\n", "\n").split("\n")]
@@ -26,20 +35,7 @@ def action_kind_from_line(line: str) -> Optional[str]:
     if not normalized:
         return None
 
-    if normalized.startswith("open_app "):
-        return "open_app"
-    if normalized.startswith("tap "):
-        return "tap"
-    if normalized.startswith("type "):
-        return "type"
-    if normalized.startswith("scroll "):
-        return "scroll"
-    if normalized.startswith("swipe "):
-        return "scroll"
-    if normalized.startswith("wait "):
-        return "wait"
-    if normalized.startswith("press "):
-        return "press"
-    if normalized.startswith("long press "):
-        return "long_press"
+    for prefix, kind in _PREFIX_TO_KIND.items():
+        if normalized.startswith(prefix):
+            return kind
     return None

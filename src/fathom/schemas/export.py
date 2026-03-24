@@ -6,6 +6,8 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fathom.constants import EXECUTABLE_ACTION_PREFIXES, VALIDATE_PREFIX
+
 logger = getLogger(__name__)
 
 
@@ -126,7 +128,7 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
             }
         )
 
-        if not payload.final_validation.strip().lower().startswith("validate"):
+        if not payload.final_validation.strip().lower().startswith(VALIDATE_PREFIX):
             raise ValueError("final_validation must start with 'Validate'.")
 
         cleaned_action_validations: Dict[str, str] = {}
@@ -135,7 +137,7 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
             line = str(validation_line).strip()
             if not aid or not line:
                 continue
-            if not line.lower().startswith("validate"):
+            if not line.lower().startswith(VALIDATE_PREFIX):
                 raise ValueError(f"action_validations[{aid}] must start with 'Validate'.")
             cleaned_action_validations[aid] = line
         payload.action_validations = cleaned_action_validations
@@ -492,23 +494,13 @@ class ScriptExportPayload(BaseModel):
         statements = __extract_action_statements(raw_lines=lines)
         last_non_structural = statements[-1] if statements else ""
 
-        if not last_non_structural.lower().startswith("validate"):
+        if not last_non_structural.lower().startswith(VALIDATE_PREFIX):
             raise ValueError("Script must end with a goal validation line.")
 
-        executable_prefixes = (
-            "open_app ",
-            "tap ",
-            "type ",
-            "scroll ",
-            "swipe ",
-            "wait ",
-            "press ",
-            "long press ",
-        )
         executable_statements = [
             statement.lower()
             for statement in statements
-            if statement.lower().startswith(executable_prefixes)
+            if statement.lower().startswith(EXECUTABLE_ACTION_PREFIXES)
         ]
 
         required_open_app = (self.required_open_app or "").strip().lower()
@@ -526,7 +518,7 @@ class ScriptExportPayload(BaseModel):
 
             for statement in statements:
                 lowered = statement.lower()
-                if not any(lowered.startswith(prefix) for prefix in executable_prefixes):
+                if not any(lowered.startswith(prefix) for prefix in EXECUTABLE_ACTION_PREFIXES):
                     continue
 
                 seen_counts[lowered] += 1
