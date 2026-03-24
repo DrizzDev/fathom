@@ -184,8 +184,12 @@ class IntentNodeProvider:
 
             start_time = time.time()
 
-            # 1. Capture State (Screenshot + XML)
-            screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
+            # 1. Capture State — skip XML dump when use_xml is disabled to avoid delay.
+            if self.__context.use_xml:
+                screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
+            else:
+                screenshot_bytes = await self.__context.device.capture_screen()
+                xml_content = None
 
             if not screenshot_bytes or len(screenshot_bytes) == 0:
                 await self.__context.telemetry.error(
