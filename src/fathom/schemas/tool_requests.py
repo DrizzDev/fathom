@@ -29,6 +29,28 @@ class ExecuteUIRequest(BaseModel):
     memory_updates: Optional[Dict[str, str]] = Field(
         default=None, description="Key-value memory updates"
     )
+    previous_screen_summary: Optional[str] = Field(
+        default=None, description="Optional summary of the previous screen"
+    )
+    current_screen_summary: Optional[str] = Field(
+        default=None, description="Optional summary of the current screen"
+    )
+    delta_observed: Optional[bool] = Field(
+        default=None, description="Optional model signal whether meaningful change was observed"
+    )
+    delta_reasoning: Optional[str] = Field(
+        default=None, description="Optional explanation for observed/no observed delta"
+    )
+    delta_confidence: Optional[float] = Field(
+        default=None, description="Optional confidence for delta_observed in [0,1]"
+    )
+    visible_anchors: Optional[list[str]] = Field(
+        default=None, description="Optional anchor labels visible on the current screen"
+    )
+    top_anchor: Optional[str] = Field(default=None, description="Optional top-most anchor label")
+    bottom_anchor: Optional[str] = Field(
+        default=None, description="Optional bottom-most anchor label"
+    )
 
     model_config = ConfigDict(extra="allow")
 

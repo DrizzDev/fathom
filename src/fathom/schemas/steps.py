@@ -5,6 +5,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.schemas.actions import Action
+from fathom.schemas.delta import ScreenDeltaSignal
 
 
 class Step(BaseModel):
@@ -51,6 +52,10 @@ class StepResult(BaseModel):
         default=False,
         description="Whether the generalized_target is a positional/ordinal reference",
     )
+    screen_delta: Optional[ScreenDeltaSignal] = Field(
+        default=None,
+        description="No-XML delta signal computed for this step",
+    )
 
     def to_record(
         self,
@@ -83,6 +88,7 @@ class StepResult(BaseModel):
             is_positional=self.is_positional,
             activity=activity,
             event_type=self.step.event_type or "action",
+            screen_delta=self.screen_delta,
         )
 
 
@@ -124,3 +130,7 @@ class StepRecord(BaseModel):
         default=None, description="Normalized [x1, y1, x2, y2] bounds"
     )
     center: Optional[List[int]] = Field(default=None, description="Absolute [x, y] coordinates")
+    screen_delta: Optional[ScreenDeltaSignal] = Field(
+        default=None,
+        description="No-XML delta signal persisted with this step",
+    )

@@ -21,7 +21,7 @@ from fathom.constants import ActionType
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
-from fathom.schemas.steps import Step
+from fathom.schemas.steps import Step, StepResult
 from fathom.services.parsing import ToolResponseParser
 
 # ── Fixtures ────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ class TestLangChainAdapterShim:
     def test_function_call_shim(self) -> None:
         from fathom.infrastructure.llm.langchain_adapter import _FunctionCallShim
 
-        tc = {"name": "execute_ui", "args": {"assistant_message": "test", "actions": []}}
+        tc = {"name": "execute_ui", "args": {"assistant_message": "test", "action": {}}}
         shim = _FunctionCallShim(tc)
         assert shim.name == "execute_ui"
         assert shim.args["assistant_message"] == "test"
@@ -131,17 +131,14 @@ class TestLangChainAdapterShim:
                 "name": "execute_ui",
                 "args": {
                     "assistant_message": "Tapping the button",
-                    "actions": [
-                        {
-                            "action_type": "tap",
-                            "rationale": "Tap submit",
-                            "is_valid": True,
-                            "target_name": "Submit",
-                            "bbox": {"x": 400, "y": 600, "width": 200, "height": 100},
-                            "confidence": 0.9,
-                        }
-                    ],
-                    "goal_completed": False,
+                    "action": {
+                        "action_type": "tap",
+                        "rationale": "Tap submit",
+                        "is_valid": True,
+                        "target_name": "Submit",
+                        "bbox": {"x": 400, "y": 600, "width": 200, "height": 100},
+                        "confidence": 0.9,
+                    },
                 },
                 "id": "call_123",
             }
@@ -184,6 +181,7 @@ class TestLangChainAdapterShim:
 
         assert result.is_goal_complete is True
         assert result.action.action_type == ActionType.COMPLETE
+        assert result.metadata.get("event_type") == "validation"
 
     def test_shim_text_fallback(self) -> None:
         """When no tool calls, text fallback should produce a valid result."""
@@ -212,9 +210,7 @@ class TestToolConversion:
         # Access the static method
         lc_tools = LangChainLLMClient._LangChainLLMClient__convert_tools(gemini_tools)
 
-        assert (
-            len(lc_tools) == 5
-        )  # execute_ui, validate_state, verify_goal, store_memory, recall_memory
+        assert len(lc_tools) == 6
         for tool in lc_tools:
             assert tool["type"] == "function"
             assert "function" in tool
@@ -232,9 +228,8 @@ class TestToolConversion:
         params = execute_ui["function"]["parameters"]
 
         assert params["type"] == "object"
-        assert "actions" in params["properties"]
+        assert "action" in params["properties"]
         assert "assistant_message" in params["properties"]
-        assert "goal_completed" in params["properties"]
 
     def test_type_mapping(self) -> None:
         from fathom.infrastructure.llm.langchain_adapter import LangChainLLMClient
@@ -246,7 +241,8 @@ class TestToolConversion:
         store_mem = next(t for t in lc_tools if t["function"]["name"] == "store_memory")
         params = store_mem["function"]["parameters"]
 
-        assert params["properties"]["key"]["type"] == "string"
+        assert params["properties"]["category"]["type"] == "string"
+        assert params["properties"]["item"]["type"] == "string"
         assert params["properties"]["value"]["type"] == "string"
 
 
@@ -262,6 +258,7 @@ class TestLangChainTools:
         names = {t.name for t in ALL_TOOLS}
         assert names == {
             "execute_ui",
+            "complete_goal",
             "validate_state",
             "verify_goal",
             "store_memory",
@@ -276,7 +273,6 @@ class TestLangChainTools:
         assert "execute_ui" in names
         assert "store_memory" in names
         assert "recall_memory" in names
-        assert "validate_state" in names
         assert "verify_goal" in names
 
     def test_get_tools_for_mode_discovery(self) -> None:
@@ -284,16 +280,16 @@ class TestLangChainTools:
 
         tools = get_tools_for_mode("discovery")
         names = {t.name for t in tools}
-        assert names == {"execute_ui", "store_memory"}
+        assert names == {"execute_ui", "complete_goal", "store_memory"}
 
     def test_get_tools_for_mode_verification(self) -> None:
         from fathom.graph.tools import get_tools_for_mode
 
         tools = get_tools_for_mode("verification")
         names = {t.name for t in tools}
-        assert "validate_state" in names
         assert "verify_goal" in names
         assert "recall_memory" in names
+        assert "complete_goal" in names
 
 
 # ── 5. Routing Function Tests ──────────────────────────────────────────
@@ -328,7 +324,7 @@ class TestRoutingFunctions:
         route = make_route_after_ground(ctx)
 
         state = {"capture": MagicMock()}
-        assert route(state) == "hierarchy"
+        assert route(state) == "validate"
 
     def test_route_after_analyze_complete_no_step(self) -> None:
         from fathom.graph.nodes import make_route_after_analyze
@@ -386,6 +382,215 @@ class TestRoutingFunctions:
         assert route(state) == "ground"
 
 
+class TestValidationRequestGuards:
+    def test_intent_requests_validation_keyword_detection(self) -> None:
+        from fathom.graph.nodes import _intent_requests_validation
+
+        assert _intent_requests_validation("validate the logged in state") is True
+        assert _intent_requests_validation("verify checkout summary is visible") is True
+        assert _intent_requests_validation("open cart and continue") is False
+
+    def test_has_validation_event_detects_validate_steps(self) -> None:
+        from fathom.graph.nodes import _has_validation_event
+        from fathom.schemas.steps import StepResult
+
+        action = Action(
+            action_type=ActionType.VALIDATE,
+            rationale="Validate banner",
+            target="banner",
+            natural_language_target="banner",
+        )
+        step = Step(
+            action=action,
+            screen_hash="hash1",
+            step_number=1,
+            event_type="validation",
+        )
+        result = StepResult(
+            step=step,
+            success=True,
+            pre_hash="pre",
+            post_hash="post",
+            screen_changed=False,
+            duration=10,
+        )
+
+        assert _has_validation_event([result]) is True
+
+    def test_extract_validation_target_prefers_required_items(self) -> None:
+        from fathom.graph.nodes import _extract_validation_target
+
+        target = _extract_validation_target(
+            "validate that lemon has a price",
+            required_items=["lemon item with price", "logged-in indicator"],
+        )
+        assert target == "lemon item with price, logged-in indicator"
+
+    def test_extract_validation_target_from_intent_phrase(self) -> None:
+        from fathom.graph.nodes import _extract_validation_target
+
+        target = _extract_validation_target(
+            "Open app and validate that the user is logged in, then continue"
+        )
+        assert "user is logged in" in target
+
+    def test_should_force_pre_action_validation_for_interactive_steps(self) -> None:
+        from fathom.graph.nodes import _should_force_pre_action_validation
+
+        action = Action(
+            action_type=ActionType.TAP,
+            rationale="Tap search",
+            target="search bar",
+            natural_language_target="search bar",
+        )
+        step = Step(action=action, screen_hash="h1", step_number=2)
+        should_force = _should_force_pre_action_validation(
+            intent="validate login then search lemon",
+            already_validated=False,
+            step_count=2,
+            planned_step=step,
+        )
+        assert should_force is True
+
+    def test_should_not_force_pre_action_validation_on_first_step_or_wait(self) -> None:
+        from fathom.graph.nodes import _should_force_pre_action_validation
+
+        wait_step = Step(
+            action=Action(
+                action_type=ActionType.WAIT,
+                rationale="Wait for app load",
+                target="loading",
+                natural_language_target="loading",
+            ),
+            screen_hash="h2",
+            step_number=1,
+        )
+        assert (
+            _should_force_pre_action_validation(
+                intent="validate login then search lemon",
+                already_validated=False,
+                step_count=0,
+                planned_step=wait_step,
+            )
+            is False
+        )
+        assert (
+            _should_force_pre_action_validation(
+                intent="validate login then search lemon",
+                already_validated=False,
+                step_count=1,
+                planned_step=wait_step,
+            )
+            is False
+        )
+
+    def test_is_validation_step_helper(self) -> None:
+        from fathom.graph.nodes import (
+            _is_validation_step,
+            _last_step_was_validation,
+            _trailing_validation_count,
+        )
+        from fathom.schemas.steps import StepResult
+
+        validate_step = Step(
+            action=Action(
+                action_type=ActionType.VALIDATE,
+                rationale="Validate login",
+                target="profile icon",
+                natural_language_target="profile icon",
+            ),
+            screen_hash="v1",
+            step_number=1,
+            event_type="validation",
+        )
+        tap_step = Step(
+            action=Action(
+                action_type=ActionType.TAP,
+                rationale="Tap search",
+                target="search",
+                natural_language_target="search",
+            ),
+            screen_hash="a1",
+            step_number=2,
+        )
+
+        assert _is_validation_step(validate_step) is True
+        assert _is_validation_step(tap_step) is False
+        validate_result = StepResult(
+            step=validate_step,
+            success=True,
+            pre_hash="p",
+            post_hash="q",
+            screen_changed=False,
+            duration=11,
+        )
+        tap_result = StepResult(
+            step=tap_step,
+            success=True,
+            pre_hash="p",
+            post_hash="q",
+            screen_changed=True,
+            duration=12,
+        )
+        assert _last_step_was_validation([validate_result]) is True
+        assert _last_step_was_validation([validate_result, tap_result]) is False
+        assert _trailing_validation_count([validate_result]) == 1
+        assert _trailing_validation_count([validate_result, tap_result]) == 0
+        assert _trailing_validation_count([tap_result, validate_result, validate_result]) == 2
+
+    def test_overlay_condition_guard_detects_missing_condition(self) -> None:
+        from fathom.graph.nodes import _is_overlay_step_missing_condition
+
+        overlay_step = Step(
+            action=Action(
+                action_type=ActionType.TAP,
+                rationale="Dismiss promotional overlay",
+                target="Got It! button",
+                natural_language_target="Got It! button",
+                overlay_detected=True,
+            ),
+            screen_hash="ov1",
+            step_number=1,
+        )
+        assert _is_overlay_step_missing_condition(overlay_step) is True
+
+    def test_overlay_condition_guard_allows_guarded_overlay_step(self) -> None:
+        from fathom.graph.nodes import _is_overlay_step_missing_condition
+
+        overlay_step = Step(
+            action=Action(
+                action_type=ActionType.TAP,
+                rationale="Dismiss promotional overlay",
+                target="Got It! button",
+                natural_language_target="Got It! button",
+                overlay_detected=True,
+                condition="Promotional overlay is visible",
+            ),
+            screen_hash="ov2",
+            step_number=1,
+        )
+        assert _is_overlay_step_missing_condition(overlay_step) is False
+
+    def test_overlay_condition_fallback_autofills_missing_condition(self) -> None:
+        from fathom.graph.nodes import _apply_overlay_condition_fallback
+
+        overlay_step = Step(
+            action=Action(
+                action_type=ActionType.TAP,
+                rationale="Dismiss promotional overlay",
+                target="Got It! button",
+                natural_language_target="Got It! button",
+                overlay_detected=True,
+            ),
+            screen_hash="ov3",
+            step_number=1,
+        )
+
+        patched = _apply_overlay_condition_fallback(overlay_step)
+        assert patched is not None
+        assert patched.action.condition == "Promotional overlay is visible"
+
+
 # ── 6. Settings Feature Flag Test ──────────────────────────────────────
 
 
@@ -402,6 +607,132 @@ class TestFeatureFlag:
         with patch.dict("os.environ", {"USE_LANGGRAPH": "false"}):
             settings = FathomSettings()
             assert settings.use_langgraph is False
+
+
+class TestValidationEventRecord:
+    def test_step_result_to_record_includes_validation_event_type(self) -> None:
+        action = Action(
+            action_type=ActionType.WAIT,
+            rationale="Validate loading transient state",
+            target="State Validation",
+            natural_language_target="State Validation",
+        )
+        step = Step(
+            action=action,
+            screen_hash="abc123",
+            step_number=1,
+            event_type="validation",
+        )
+        step_result = StepResult(
+            step=step,
+            success=True,
+            pre_hash="pre",
+            post_hash="post",
+            screen_changed=False,
+            duration=123,
+        )
+
+        record = step_result.to_record().model_dump()
+        assert record["event_type"] == "validation"
+
+
+class TestPlannerValidationEventPropagation:
+    @pytest.mark.asyncio
+    async def test_completion_path_preserves_validation_event_type(self) -> None:
+        from fathom.agent.planner import StepPlanner
+        from fathom.agent.reasoner import Reasoner
+        from fathom.agent.state import AgentState
+
+        capture = ScreenCapture(
+            width=1080,
+            height=2400,
+            activity="com.example/.MainActivity",
+            image=b"\x89PNG\r\n\x1a\n" + b"\x00" * 100,
+            timestamp=1000000,
+            state=ScreenState(
+                activity="com.example/.MainActivity",
+                timestamp=1000000,
+                activity_hash="abcd1234",
+                structural_hash="struct1234",
+                visual_hash="visual1234567890",
+            ),
+        )
+        analysis = AnalysisResult(
+            action=Action(
+                action_type=ActionType.VALIDATE,
+                rationale="Validation requested",
+                target="profile icon",
+                natural_language_target="profile icon",
+                confidence=1.0,
+            ),
+            alternatives=[],
+            reasoning="Validation succeeded",
+            screen_description="Home screen",
+            is_goal_complete=True,
+            metadata={"event_type": "validation"},
+        )
+
+        vision = MagicMock()
+        vision.analyze = AsyncMock(return_value=analysis)
+        planner = StepPlanner(vision_tool=vision)
+        state = AgentState(intent="validate login", max_steps=5)
+        reasoner = Reasoner(intent="validate login")
+
+        plan = await planner.plan_step(
+            state=state,
+            reasoner=reasoner,
+            capture=capture,
+        )
+
+        assert plan.step is not None
+        assert plan.step.event_type == "validation"
+
+
+class TestNoXmlDeltaHelpers:
+    def test_compute_no_xml_delta_marks_activity_change(self) -> None:
+        from fathom.graph.nodes import _compute_no_xml_delta
+
+        pre = ScreenState(
+            activity="com.example/.A",
+            timestamp=1000,
+            activity_hash="aaaa1111",
+            structural_hash="struct",
+            visual_hash="11112222",
+        )
+        post = ScreenState(
+            activity="com.example/.B",
+            timestamp=1001,
+            activity_hash="bbbb2222",
+            structural_hash="struct",
+            visual_hash="11112222",
+        )
+
+        delta = _compute_no_xml_delta(pre_state=pre, post_state=post)
+        assert delta.changed is True
+        assert delta.reason == "activity_changed"
+        assert delta.delta_score == 1.0
+
+    def test_compute_no_xml_delta_marks_visual_unchanged(self) -> None:
+        from fathom.graph.nodes import _compute_no_xml_delta
+
+        pre = ScreenState(
+            activity="com.example/.A",
+            timestamp=1000,
+            activity_hash="aaaa1111",
+            structural_hash="struct",
+            visual_hash="11112222",
+        )
+        post = ScreenState(
+            activity="com.example/.A",
+            timestamp=1001,
+            activity_hash="aaaa1111",
+            structural_hash="struct",
+            visual_hash="11112222",
+        )
+
+        delta = _compute_no_xml_delta(pre_state=pre, post_state=post)
+        assert delta.changed is False
+        assert delta.reason == "visual_unchanged"
 
 
 # ── 7. MIME Detection Test ──────────────────────────────────────────────

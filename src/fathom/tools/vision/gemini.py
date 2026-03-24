@@ -78,6 +78,7 @@ class GeminiVisionTool(VisionTool):
         failures: Optional[List[str]] = None,
         is_stuck: bool = False,
         last_action: Optional[str] = None,
+        delta_context: Optional[Dict[str, Any]] = None,
         elements: Optional[Dict[str, Any]] = None,
         mode: Optional[PromptMode] = None,
     ) -> AnalysisResult:
@@ -104,7 +105,13 @@ class GeminiVisionTool(VisionTool):
 
         # 2. PROMPT & TOOL SCOPING
         resolved_mode = mode if mode is not None else self.__detect_mode(intent=intent)
-        hints = {"use_xml": use_xml, "is_stuck": is_stuck, "last_action": last_action}
+        hints = {
+            "use_xml": use_xml,
+            "is_stuck": is_stuck,
+            "last_action": last_action,
+            "delta_low_streak": (delta_context or {}).get("low_delta_streak", 0),
+            "delta_score": (delta_context or {}).get("last_delta_score"),
+        }
 
         instruction = self.__builder.build(
             mode=resolved_mode.value,
@@ -134,6 +141,7 @@ class GeminiVisionTool(VisionTool):
             context=dynamic_context,
             manifest=manifest,
             failures=failures,
+            delta_context=delta_context,
         )
 
         # Debug logs
@@ -244,6 +252,7 @@ class GeminiVisionTool(VisionTool):
         context: Optional[str] = None,
         manifest: str = "N/A",
         failures: Optional[List[str]] = None,
+        delta_context: Optional[Dict[str, Any]] = None,
     ) -> List[Any]:
         """
         Assembles request with token-locality.
@@ -273,6 +282,9 @@ class GeminiVisionTool(VisionTool):
 
         if failures:
             payload.append(f"FAILURES: {', '.join(failures)}")
+
+        if delta_context:
+            payload.append(f"DELTA_CONTEXT: {json.dumps(delta_context)}")
 
         if manifest != "N/A":
             payload.append(f"ELEMENTS: {manifest}")

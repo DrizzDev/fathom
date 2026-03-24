@@ -60,7 +60,7 @@ async def execute_device_action(device: DeviceTool, action: Action) -> ActionRes
                 duration=0,
                 error=f"Focus tap failed: {focus.error or 'unknown'}",
             )
-        return await device.type_text(text=action.text or "")
+        return await device.type_text(text=action.text or "", replace=True)
 
     if action.action_type == ActionType.LONG_PRESS:
         coords = (

@@ -78,6 +78,8 @@ class AgentState:
         self.__last_error: Optional[str] = None
         self.__last_action_description: Optional[str] = None
         self.__last_action_type: Optional[ActionType] = None
+        self.__last_delta_score: Optional[float] = None
+        self.__low_delta_streak: int = 0
 
         # Validation fields
         self.__validation_requirements: List[ValidationRequirement] = []
@@ -127,7 +129,11 @@ class AgentState:
         Whether the agent is stuck in a loop.
         """
 
-        return self.__loop_detector.is_stuck()
+        if self.__loop_detector.is_stuck():
+            return True
+
+        # No-XML delta fallback: repeated minimal change indicates no progress.
+        return self.__low_delta_streak >= 3
 
     @property
     def can_continue(self) -> bool:
@@ -305,6 +311,9 @@ class AgentState:
         if self.__current_screen:
             screen_name = self.__current_screen.activity or "Unknown Screen"
             lines.append(f"Current Screen: {screen_name}")
+        if self.__last_delta_score is not None:
+            lines.append(f"Last Delta Score: {self.__last_delta_score:.3f}")
+            lines.append(f"Low Delta Streak: {self.__low_delta_streak}")
 
         if self.__knowledge:
             lines.append("Known Facts:")
@@ -351,6 +360,12 @@ class AgentState:
             screen_changed=result.screen_changed,
         )
         self.__last_action_description = result.step.action.to_description()
+        if result.screen_delta is not None:
+            self.__last_delta_score = float(result.screen_delta.delta_score)
+            if self.__last_delta_score < 0.08:
+                self.__low_delta_streak += 1
+            else:
+                self.__low_delta_streak = 0
 
         logger.debug(
             f"[H7] Recorded executed action | "
@@ -418,6 +433,13 @@ class AgentState:
         """
         return self.__loop_detector.record_recovery_attempt()
 
+    def get_delta_context(self) -> Dict[str, object]:
+        """Return compact no-XML delta context for planner/vision hints."""
+        return {
+            "last_delta_score": self.__last_delta_score,
+            "low_delta_streak": self.__low_delta_streak,
+        }
+
     def build_context(self) -> Dict[str, object]:
         """
         Build context for vision-language model with token optimization.
@@ -441,6 +463,7 @@ class AgentState:
             "relevant_failures": self.__action_history.get_activity_failures(
                 current_activity=current_activity
             ),
+            "delta_context": self.get_delta_context(),
         }
 
     def should_avoid_action(self, action: Action) -> bool:

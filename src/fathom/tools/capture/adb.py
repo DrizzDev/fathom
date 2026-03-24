@@ -165,6 +165,8 @@ class ADBCaptureTool(CaptureTool):
         Safe fallback. Returns last known valid image or a blank one if everything fails.
         """
 
+        blank_image = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+
         try:
             image_data = await self.__capture_image_only()
 
@@ -172,7 +174,9 @@ class ADBCaptureTool(CaptureTool):
                 with Image.open(fp=io.BytesIO(initial_bytes=image_data)) as image:
                     width, height = image.size
             except Exception:
-                width, height = 1080, 1920
+                # If we cannot parse the image, use the blank image data
+                width, height = 1, 1
+                image_data = blank_image
 
             return ScreenCapture(
                 width=width,
@@ -183,10 +187,9 @@ class ADBCaptureTool(CaptureTool):
             )
         except Exception:
             # Absolute last resort: return a 1x1 transparent pixel
-            blank_image = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
             return ScreenCapture(
-                width=1080,
-                height=1920,
+                width=1,
+                height=1,
                 image=blank_image,
                 activity="unknown",
                 timestamp=int(time.time() * 1000),

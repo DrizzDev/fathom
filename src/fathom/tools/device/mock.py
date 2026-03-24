@@ -30,6 +30,7 @@ class MockDeviceTool(DeviceTool):
 
         self.__tap_calls: List[Tuple[int, int]] = []
         self.__type_calls: List[str] = []
+        self.__type_replace_calls: List[bool] = []
         self.__swipe_calls: List[Tuple[int, int, int, int, int]] = []
         self.__back_calls: int = 0
         self.__home_calls: int = 0
@@ -55,6 +56,11 @@ class MockDeviceTool(DeviceTool):
         """
         return self.__type_calls.copy()
 
+    @property
+    def type_replace_calls(self) -> List[bool]:
+        """Recorded replace flags for type actions."""
+        return self.__type_replace_calls.copy()
+
     def set_activity(self, activity: str) -> None:
         """
         Set mock activity name.
@@ -71,7 +77,7 @@ class MockDeviceTool(DeviceTool):
         self.__tap_calls.append((x, y))
         return ActionResult(success=True, duration=50)
 
-    async def type_text(self, text: str) -> ActionResult:
+    async def type_text(self, text: str, replace: bool = False) -> ActionResult:
         """
         Record type action.
         """
@@ -79,6 +85,7 @@ class MockDeviceTool(DeviceTool):
             return ActionResult(success=False, duration=0, error="Mock type failure")
 
         self.__type_calls.append(text)
+        self.__type_replace_calls.append(replace)
         return ActionResult(success=True, duration=len(text) * 10)
 
     async def swipe(
@@ -145,6 +152,7 @@ class MockDeviceTool(DeviceTool):
         """
         self.__tap_calls.clear()
         self.__type_calls.clear()
+        self.__type_replace_calls.clear()
         self.__swipe_calls.clear()
         self.__back_calls = 0
         self.__home_calls = 0

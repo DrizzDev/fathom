@@ -158,6 +158,7 @@ class StepPlanner:
             last_action=(state.last_action_type.value if state.last_action_type else None),
             context=full_context,
             failures=context.get("relevant_failures", []),  # type: ignore[arg-type]
+            delta_context=context.get("delta_context", {}),  # type: ignore[arg-type]
         )
 
         # Content Exhaustion Signal:

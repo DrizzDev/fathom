@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
+from fathom.schemas.delta import GeminiDeltaSignal, ScreenDeltaSignal
 from fathom.schemas.steps import Step, StepResult
 
 
@@ -34,6 +35,14 @@ class AnalysisResult(BaseModel):
     )
     content_exhausted: bool = Field(
         default=False, description="Model signals end of scrollable content"
+    )
+    screen_delta: Optional[ScreenDeltaSignal] = Field(
+        default=None,
+        description="No-XML runtime/computed delta signal for screen change progress",
+    )
+    gemini_delta: Optional[GeminiDeltaSignal] = Field(
+        default=None,
+        description="Optional Gemini-provided semantic change hints",
     )
 
 

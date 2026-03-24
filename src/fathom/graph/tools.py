@@ -101,6 +101,38 @@ class ExecuteUIInput(BaseModel):
         default=None,
         description="Key-value pairs to persist in memory",
     )
+    previous_screen_summary: Optional[str] = Field(
+        default=None,
+        description="Optional semantic summary of the previous screen",
+    )
+    current_screen_summary: Optional[str] = Field(
+        default=None,
+        description="Optional semantic summary of the current screen",
+    )
+    delta_observed: Optional[bool] = Field(
+        default=None,
+        description="Optional signal if meaningful change was observed",
+    )
+    delta_reasoning: Optional[str] = Field(
+        default=None,
+        description="Optional explanation for delta_observed",
+    )
+    delta_confidence: Optional[float] = Field(
+        default=None,
+        description="Optional confidence for delta_observed (0.0-1.0)",
+    )
+    visible_anchors: Optional[List[str]] = Field(
+        default=None,
+        description="Optional labels of currently visible anchors",
+    )
+    top_anchor: Optional[str] = Field(
+        default=None,
+        description="Optional top-most visible anchor label",
+    )
+    bottom_anchor: Optional[str] = Field(
+        default=None,
+        description="Optional bottom-most visible anchor label",
+    )
 
 
 class CompleteGoalInput(BaseModel):
@@ -170,6 +202,14 @@ def execute_ui(
     screen_description: Optional[str] = None,
     content_exhausted: Optional[bool] = None,
     memory_updates: Optional[Dict[str, str]] = None,
+    previous_screen_summary: Optional[str] = None,
+    current_screen_summary: Optional[str] = None,
+    delta_observed: Optional[bool] = None,
+    delta_reasoning: Optional[str] = None,
+    delta_confidence: Optional[float] = None,
+    visible_anchors: Optional[List[str]] = None,
+    top_anchor: Optional[str] = None,
+    bottom_anchor: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute a UI action on the device (tap, type, scroll, swipe, validate, etc.).
 
@@ -185,6 +225,14 @@ def execute_ui(
         "screen_description": screen_description,
         "content_exhausted": content_exhausted,
         "memory_updates": memory_updates,
+        "previous_screen_summary": previous_screen_summary,
+        "current_screen_summary": current_screen_summary,
+        "delta_observed": delta_observed,
+        "delta_reasoning": delta_reasoning,
+        "delta_confidence": delta_confidence,
+        "visible_anchors": visible_anchors,
+        "top_anchor": top_anchor,
+        "bottom_anchor": bottom_anchor,
     }
 
 

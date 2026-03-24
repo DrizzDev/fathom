@@ -144,6 +144,39 @@ class ToolRegistry:
                         "type": "OBJECT",
                         "description": "Key-value pairs for persistent memory updates.",
                     },
+                    "previous_screen_summary": {
+                        "type": "STRING",
+                        "description": "Optional semantic summary of the previous screen.",
+                    },
+                    "current_screen_summary": {
+                        "type": "STRING",
+                        "description": "Optional semantic summary of the current screen.",
+                    },
+                    "delta_observed": {
+                        "type": "BOOLEAN",
+                        "description": "Optional: whether a meaningful screen change was observed.",
+                    },
+                    "delta_reasoning": {
+                        "type": "STRING",
+                        "description": "Optional reasoning for delta_observed.",
+                    },
+                    "delta_confidence": {
+                        "type": "NUMBER",
+                        "description": "Optional confidence for delta_observed (0.0-1.0).",
+                    },
+                    "visible_anchors": {
+                        "type": "ARRAY",
+                        "description": "Optional list of visible anchor labels on current screen.",
+                        "items": {"type": "STRING"},
+                    },
+                    "top_anchor": {
+                        "type": "STRING",
+                        "description": "Optional top-most visible anchor label.",
+                    },
+                    "bottom_anchor": {
+                        "type": "STRING",
+                        "description": "Optional bottom-most visible anchor label.",
+                    },
                 },
                 "required": ["assistant_message", "action"],
             },

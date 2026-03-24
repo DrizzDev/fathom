@@ -31,13 +31,34 @@ class ADBDeviceTool(DeviceTool):
 
         return await self.__shell(command=f"input tap {x} {y}")
 
-    async def type_text(self, text: str) -> ActionResult:
+    async def type_text(self, text: str, replace: bool = False) -> ActionResult:
         """
         Type text on device.
         """
+        if replace:
+            cleared = await self.__clear_focused_text()
+            if not cleared.success:
+                return cleared
 
-        escaped_text = self.__escape(text=text)
-        return await self.__shell(command=f'input text "{escaped_text}"')
+        overall_duration = 0
+        for char in str(text):
+            if char == " ":
+                char_result = await self.__keyevent(keycode=62)  # SPACE
+            elif char == "\n":
+                char_result = await self.__keyevent(keycode=66)  # ENTER
+            else:
+                escaped_char = self.__escape(text=char)
+                char_result = await self.__shell(command=f'input text "{escaped_char}"')
+
+            overall_duration += int(char_result.duration or 0)
+            if not char_result.success:
+                return ActionResult(
+                    success=False,
+                    error=char_result.error,
+                    duration=overall_duration,
+                )
+
+        return ActionResult(success=True, duration=overall_duration)
 
     async def swipe(
         self,
@@ -292,6 +313,23 @@ class ADBDeviceTool(DeviceTool):
         """
 
         return await self.__shell(command=f"input keyevent {keycode}")
+
+    async def __clear_focused_text(self, max_chars: int = 128) -> ActionResult:
+        """
+        Best-effort clear of currently focused text field.
+        """
+        move_end = await self.__keyevent(keycode=123)  # MOVE_END
+        total_duration = int(move_end.duration or 0)
+        if not move_end.success:
+            return move_end
+
+        for _ in range(max_chars):
+            delete = await self.__keyevent(keycode=67)  # DEL
+            total_duration += int(delete.duration or 0)
+            if not delete.success:
+                return ActionResult(success=False, error=delete.error, duration=total_duration)
+
+        return ActionResult(success=True, duration=total_duration)
 
     def __build_arguments(self, parts: List[str]) -> List[str]:
         """

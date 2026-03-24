@@ -23,7 +23,8 @@ ACTION_RULES = {
         "SCROLL/SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
         "Bbox wraps scrollable region only (exclude fixed headers/footers). "
         "If the screen does not change after swiping (same items visible, carousel at last dot, "
-        "bounce effect), set content_exhausted=true to signal end of scrollable content."
+        "bounce effect), set content_exhausted=true to signal end of scrollable content. "
+        "Optionally include delta_observed, delta_reasoning, and anchor fields when available."
     ),
     "wait": (
         "WAIT: ONLY for active loading (skeleton, spinner, 'Loading...' text). "
@@ -97,6 +98,9 @@ TOOL ROUTING & RESPONSE FORMAT:
 - validate_state: Legacy fallback only. Prefer execute_ui(action_type='validate').
 - Validation: If the goal requires validation (e.g., price or presence), include a short evidence note in assistant_message or evidence.
   Use clear statements like "The first lemon item shows a $0.40 price."
+- Optional no-XML delta hints: provide `delta_observed`, `delta_reasoning`, `delta_confidence`,
+  `previous_screen_summary`, `current_screen_summary`, and anchors (`visible_anchors`, `top_anchor`, `bottom_anchor`)
+  when they are clear. These are soft signals for loop detection.
 - verify_goal: Detailed goal completion verification.
 - store_memory / recall_memory: Persistent cross-step memory (use same category+item keys).
 

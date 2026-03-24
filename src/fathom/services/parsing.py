@@ -9,6 +9,7 @@ from fathom.constants import ActionType
 from fathom.exceptions import VisionError
 from fathom.interfaces import IResponseParser
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.delta import GeminiDeltaSignal
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.tool_requests import (
     CompleteGoalRequest,
@@ -395,6 +396,32 @@ class ToolResponseParser(IResponseParser):
         if action_type == ActionType.VALIDATE:
             metadata["event_type"] = "validation"
 
+        parsed_delta = GeminiDeltaSignal(
+            previous_screen_summary=request.previous_screen_summary,
+            current_screen_summary=request.current_screen_summary,
+            delta_observed=request.delta_observed,
+            delta_reasoning=request.delta_reasoning,
+            delta_confidence=self.__safe_float(request.delta_confidence, default=0.0)
+            if request.delta_confidence is not None
+            else None,
+            visible_anchors=list(request.visible_anchors or []),
+            top_anchor=request.top_anchor,
+            bottom_anchor=request.bottom_anchor,
+        )
+        has_delta_signal = any(
+            (
+                parsed_delta.previous_screen_summary,
+                parsed_delta.current_screen_summary,
+                parsed_delta.delta_observed is not None,
+                parsed_delta.delta_reasoning,
+                parsed_delta.delta_confidence is not None,
+                parsed_delta.visible_anchors,
+                parsed_delta.top_anchor,
+                parsed_delta.bottom_anchor,
+            )
+        )
+        gemini_delta: Optional[GeminiDeltaSignal] = parsed_delta if has_delta_signal else None
+
         return AnalysisResult(
             action=action,
             alternatives=[],
@@ -403,6 +430,7 @@ class ToolResponseParser(IResponseParser):
             content_exhausted=request.content_exhausted or False,
             screen_description=request.screen_description or "Tool-based analysis",
             metadata=metadata,
+            gemini_delta=gemini_delta,
         )
 
     @staticmethod

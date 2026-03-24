@@ -44,6 +44,7 @@ class VisionTool(Tool[AnalysisResult], ABC):
         failures: Optional[List[str]] = None,
         is_stuck: bool = False,
         last_action: Optional[str] = None,
+        delta_context: Optional[Dict[str, Any]] = None,
         elements: Optional[Dict[str, Any]] = None,
         mode: Optional[PromptMode] = None,
     ) -> AnalysisResult:

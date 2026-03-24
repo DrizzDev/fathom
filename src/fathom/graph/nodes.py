@@ -27,6 +27,7 @@ from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.prompts.preprocessor import PromptPreprocessor
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.delta import GeminiDeltaSignal, ScreenDeltaSignal
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.results import ActionResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
@@ -201,6 +202,16 @@ def _is_overlay_step_missing_condition(step: Optional[Step]) -> bool:
         return False
     condition = (step.action.condition or "").strip() if step else ""
     return not condition
+
+
+def _apply_overlay_condition_fallback(step: Optional[Step]) -> Optional[Step]:
+    """Auto-fill a safe overlay condition for overlay-related actions."""
+    if not _is_overlay_step_missing_condition(step):
+        return step
+    if step is None:
+        return step
+    action = step.action.model_copy(update={"condition": "Promotional overlay is visible"})
+    return step.model_copy(update={"action": action})
 
 
 def _maybe_switch_knowledge_db(
@@ -614,6 +625,22 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
 
         # Ensure overlay dismissal actions are exported under explicit IF guards.
         if _is_overlay_step_missing_condition(plan.step):
+            if overlay_attempts < 1:
+                patched_step = _apply_overlay_condition_fallback(plan.step)
+                if patched_step is not None:
+                    return {
+                        **state,
+                        "plan": plan.model_copy(update={"step": patched_step}),
+                        "planned_step": patched_step,
+                        "knowledge": knowledge,
+                        "analysis_duration": analysis_duration,
+                        "should_retry": False,
+                        "is_complete": plan.is_complete,
+                        "validation_followup_attempts": followup_attempts,
+                        "validation_completion_attempts": completion_attempts,
+                        "overlay_condition_attempts": overlay_attempts + 1,
+                        "completion_reason": state.get("completion_reason"),
+                    }
             if overlay_attempts >= 2:
                 return {
                     **state,
@@ -1104,6 +1131,54 @@ def build_nodes(ctx: NodeContext) -> Dict[str, Callable[..., Any]]:
             return state
 
         step = step_result.step
+        non_physical_actions = {
+            ActionType.WAIT,
+            ActionType.VALIDATE,
+            ActionType.COMPLETE,
+            ActionType.SAVE_MEMORY,
+            ActionType.RETRIEVE_MEMORY,
+        }
+
+        if screen_state is not None:
+            gemini_delta = _extract_gemini_delta(plan)
+            runtime_delta = None
+            post_hash = screen_state.visual_hash
+            screen_changed = step_result.screen_changed
+
+            if step.action.action_type not in non_physical_actions:
+                try:
+                    post_capture = await ctx.capture_tool.capture_stable(timeout=1200)
+                    if post_capture:
+                        post_state = ctx.capture_tool.compute_state(capture=post_capture)
+                        runtime_delta = _compute_no_xml_delta(
+                            pre_state=screen_state,
+                            post_state=post_state,
+                            gemini_delta=gemini_delta,
+                        )
+                        post_hash = post_state.visual_hash
+                        screen_changed = runtime_delta.changed
+                except Exception as exc:
+                    logger.warning("Post-action delta capture failed: %s", exc)
+
+            if runtime_delta is None:
+                runtime_delta = ScreenDeltaSignal(
+                    changed=screen_changed,
+                    delta_score=1.0 if screen_changed else 0.0,
+                    reason="non_physical_or_capture_unavailable",
+                    pre_activity=screen_state.activity,
+                    post_activity=screen_state.activity,
+                    pre_visual_hash=screen_state.visual_hash,
+                    post_visual_hash=post_hash,
+                    gemini=gemini_delta,
+                )
+
+            step_result = step_result.model_copy(
+                update={
+                    "post_hash": post_hash,
+                    "screen_changed": screen_changed,
+                    "screen_delta": runtime_delta,
+                }
+            )
 
         # Extract screen_description from plan metadata for classifier context
         screen_description = ""
@@ -1292,15 +1367,82 @@ def _build_step_result(
     result: ActionResult,
     step_start: float,
 ) -> StepResult:
+    pre_hash = screen_state.visual_hash if screen_state else "0"
     return StepResult(
         step=step,
-        post_hash="0",
-        screen_changed=True,
+        post_hash=pre_hash,
+        screen_changed=False,
         success=result.success,
         error=result.error,
-        pre_hash=screen_state.visual_hash if screen_state else "0",
+        pre_hash=pre_hash,
         duration=int((time.time() - step_start) * 1000),
         generalized_target=None,
+    )
+
+
+def _extract_gemini_delta(plan: Optional[PlanResult]) -> Optional[GeminiDeltaSignal]:
+    if not plan or not plan.metadata:
+        return None
+    tool_args = plan.metadata.get("tool_args", {})
+    if not isinstance(tool_args, dict):
+        return None
+    signal = GeminiDeltaSignal(
+        previous_screen_summary=tool_args.get("previous_screen_summary"),
+        current_screen_summary=tool_args.get("current_screen_summary"),
+        delta_observed=tool_args.get("delta_observed"),
+        delta_reasoning=tool_args.get("delta_reasoning"),
+        delta_confidence=tool_args.get("delta_confidence"),
+        visible_anchors=list(tool_args.get("visible_anchors") or []),
+        top_anchor=tool_args.get("top_anchor"),
+        bottom_anchor=tool_args.get("bottom_anchor"),
+    )
+    if not any(
+        (
+            signal.previous_screen_summary,
+            signal.current_screen_summary,
+            signal.delta_observed is not None,
+            signal.delta_reasoning,
+            signal.delta_confidence is not None,
+            signal.visible_anchors,
+            signal.top_anchor,
+            signal.bottom_anchor,
+        )
+    ):
+        return None
+    return signal
+
+
+def _compute_no_xml_delta(
+    pre_state: ScreenState,
+    post_state: ScreenState,
+    gemini_delta: Optional[GeminiDeltaSignal] = None,
+) -> ScreenDeltaSignal:
+    if pre_state.activity_hash != post_state.activity_hash:
+        score = 1.0
+        return ScreenDeltaSignal(
+            changed=True,
+            delta_score=score,
+            reason="activity_changed",
+            pre_activity=pre_state.activity,
+            post_activity=post_state.activity,
+            pre_visual_hash=pre_state.visual_hash,
+            post_visual_hash=post_state.visual_hash,
+            gemini=gemini_delta,
+        )
+
+    score = 0.0 if pre_state.visual_hash == post_state.visual_hash else 0.5
+    changed = score >= 0.2
+    reason = "visual_unchanged" if not changed else "visual_changed"
+
+    return ScreenDeltaSignal(
+        changed=changed,
+        delta_score=score,
+        reason=reason,
+        pre_activity=pre_state.activity,
+        post_activity=post_state.activity,
+        pre_visual_hash=pre_state.visual_hash,
+        post_visual_hash=post_state.visual_hash,
+        gemini=gemini_delta,
     )
 
 

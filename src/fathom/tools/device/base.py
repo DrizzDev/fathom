@@ -37,12 +37,13 @@ class DeviceTool(Tool[ActionResult], ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def type_text(self, text: str) -> ActionResult:
+    async def type_text(self, text: str, replace: bool = False) -> ActionResult:
         """
         Type text into focused element.
 
         Args:
             text: Text to type.
+            replace: If True, clear existing field content before typing.
 
         Returns:
             Action result.
@@ -194,7 +195,7 @@ class DeviceTool(Tool[ActionResult], ABC):
             return await self.tap(request["x"], request["y"])
 
         elif action == "type":
-            return await self.type_text(request["text"])
+            return await self.type_text(request["text"], bool(request.get("replace", False)))
 
         elif action == "swipe":
             return await self.swipe(

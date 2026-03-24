@@ -122,6 +122,11 @@ class GeminiPromptBuilder(PromptBuilder):
                     "- CRITICAL: LOOP DETECTED. You are stuck (screen repeating). You MUST break this loop. Use 'back', 'scroll', or 'home'."
                 )
 
+        if hints and int(hints.get("delta_low_streak", 0)) >= 3:
+            rules.append(
+                "- DELTA SIGNAL: recent actions produced little/no screen change. Prefer strategy shift (back, different target, or completion if exhausted)."
+            )
+
         if hints and hints.get("use_xml"):
             rules.append("- XML Grounding enabled.")
 
