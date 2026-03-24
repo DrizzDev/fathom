@@ -28,6 +28,9 @@ DEFAULT_STABILITY_WAIT = 500  # Wait after action for screen to stabilize
 # Hard upper-bound for "screen stability" waits.
 # Stored as milliseconds to keep all timing constants consistent.
 MAX_STABILITY_WAIT_MS = 1500
+# Hard upper-bound for LLM-requested action waits.
+# Stored as milliseconds to keep all timing constants consistent.
+MAX_ACTION_WAIT_MS = 10_000
 
 # Retry configuration
 DEFAULT_MAX_RETRIES = 2

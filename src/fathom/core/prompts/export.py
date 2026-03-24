@@ -72,7 +72,7 @@ class GeminiExportPromptBuilder(ExportPromptBuilder):
             "15) action_validations keys must be action IDs from the catalog. CRITICAL: Every validation statement MUST explicitly start with 'Validate that ' (or 'Validate ') and end with a proper full stop.\n"
             "16) Use only action IDs from the provided action catalog; do not emit raw executable action text.\n"
             "17) CRITICAL: If the execution trace has intermediate points where user validations should occur (between actions), anchor each validation to the nearest preceding action ID in action_validations.\n"
-            "18) conditional_blocks must inherently handle sequential logic. If a condition handles closing or clicking 'outside a dropdown' (e.g., 'outside the us dropdown'), you MUST group the required consecutive scrolling and selection taps belonging to that segment inside the block's action_ids.\n"
+            "18) conditional_blocks must handle sequential logic atomically. When a condition guards a multi-step interaction (e.g., dismissing a dropdown, then scrolling and selecting within it), group ALL consecutive actions belonging to that interaction inside the block's action_ids.\n"
             "19) final_validation must not restate imperative steps already covered by catalog actions—avoid click/tap/type/select/navigate/search-for phrasing and chained 'and then' procedures in that line.\n"
             "20) Use action_validations for state checks tied to specific earlier actions (e.g. list visible after search); use final_validation only for the terminal UI state after the last catalog action."
         )

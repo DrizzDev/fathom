@@ -14,6 +14,7 @@ from fathom.constants import (
     DEFAULT_SWIPE_DURATION,
     ActionType,
 )
+from fathom.constants.execution import MAX_ACTION_WAIT_MS
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
@@ -130,8 +131,16 @@ class ActionExecutor:
             ActionType.SAVE_MEMORY,
             ActionType.RETRIEVE_MEMORY,
         ):
+            max_wait_s = MAX_ACTION_WAIT_MS / 1000.0
             requested_wait = float(action.wait_duration or 1.0)
-            applied_wait = max(0.0, requested_wait)
+            applied_wait = max(0.0, min(requested_wait, max_wait_s))
+            if requested_wait > max_wait_s:
+                logger.warning(
+                    "[WAIT] Capping wait_duration from %.1fs to %.1fs (MAX_ACTION_WAIT_MS=%d).",
+                    requested_wait,
+                    max_wait_s,
+                    MAX_ACTION_WAIT_MS,
+                )
             logger.debug(
                 "[WAIT] source=model_wait_duration requested=%.3fs applied=%.3fs",
                 requested_wait,

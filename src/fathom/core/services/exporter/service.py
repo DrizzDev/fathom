@@ -102,7 +102,10 @@ class ScriptExporter:
                 system_instruction=system_instruction,
             )
         except Exception as exception:
-            raise ScriptExportError(f"Gemini script generation failed: {exception}") from exception
+            logger.warning(
+                "Gemini script generation failed: %s [export_violation=llm_generation].", exception
+            )
+            return None
 
         structured_args: Dict[str, Any] = {}
         if response.tool_calls:
@@ -114,17 +117,19 @@ class ScriptExporter:
                 break
 
         if not structured_args:
-            raise ScriptExportError(
+            logger.warning(
                 "Gemini emit_script arguments missing [export_violation=missing_tool_args]."
             )
+            return None
 
         try:
             raw_emit_args = EmitScriptArgs.model_validate(structured_args)
         except Exception as exception:
-            raise ScriptExportError(
-                f"Gemini emit_script raw payload parsing failed: {exception} "
-                "[export_violation=raw_parse]."
-            ) from exception
+            logger.warning(
+                "Gemini emit_script raw payload parsing failed: %s [export_violation=raw_parse].",
+                exception,
+            )
+            return None
 
         try:
             shape = ScriptExportStructuredPayloadShape.model_validate(
@@ -139,10 +144,12 @@ class ScriptExporter:
                 expected_validation_count=len(validation_subjects),
             )
         except Exception as exception:
-            raise ScriptExportError(
-                f"Gemini structured payload validation failed: {exception} "
-                "[export_violation=structured_payload]."
-            ) from exception
+            logger.warning(
+                "Gemini structured payload validation failed: %s "
+                "[export_violation=structured_payload].",
+                exception,
+            )
+            return None
 
         raw_structured_script = structured_payload.to_script()
         candidate = normalize_script_output(script=raw_structured_script)
@@ -157,22 +164,25 @@ class ScriptExporter:
                 }
             )
         except Exception as exception:
-            raise ScriptExportError(
-                f"Gemini script schema validation failed: {exception} "
-                "[export_violation=script_schema]."
-            ) from exception
+            logger.warning(
+                "Gemini script schema validation failed: %s [export_violation=script_schema].",
+                exception,
+            )
+            return None
 
         candidate = parsed_script.script
         if not is_valid_llm_script(candidate=candidate, catalog_action_count=len(action_catalog)):
-            raise ScriptExportError(
+            logger.warning(
                 "Gemini script failed structural/action coverage validation "
                 "[export_violation=post_validation_coverage]."
             )
+            return None
         if not contains_goal_validation(script=candidate):
-            raise ScriptExportError(
+            logger.warning(
                 "Gemini script missing final goal validation "
                 "[export_violation=missing_goal_validation]."
             )
+            return None
 
         logger.info(
             "Gemini script export succeeded via structured payload [export_mode=llm_structured]."

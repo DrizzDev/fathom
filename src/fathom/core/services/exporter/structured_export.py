@@ -4,7 +4,6 @@ from typing import Dict
 
 from fathom.core.services.exporter.script_text import (
     action_kind_from_line,
-    count_action_lines,
     is_structural_script_line,
 )
 
@@ -44,7 +43,10 @@ def is_valid_llm_script(candidate: str, catalog_action_count: int) -> bool:
     if balance != 0:
         return False
 
-    candidate_actions = count_action_lines(script=candidate)
+    action_counts = executable_action_counts(script=candidate)
+    candidate_actions = sum(
+        count for kind, count in action_counts.items() if kind.lower() != "validate"
+    )
     return not (catalog_action_count > 0 and candidate_actions <= 0)
 
 

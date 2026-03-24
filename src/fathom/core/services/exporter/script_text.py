@@ -21,15 +21,6 @@ def is_structural_script_line(line: str) -> bool:
     return stripped.lower().startswith("if ")
 
 
-def count_action_lines(script: str) -> int:
-    count = 0
-    for line in script.splitlines():
-        if is_structural_script_line(line):
-            continue
-        count += 1
-    return count
-
-
 def action_kind_from_line(line: str) -> Optional[str]:
     normalized = line.strip().lower()
     if not normalized:
