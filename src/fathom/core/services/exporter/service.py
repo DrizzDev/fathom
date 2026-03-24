@@ -14,13 +14,9 @@ from fathom.core.services.exporter.structured_export import (
     is_valid_llm_script,
 )
 from fathom.core.services.exporter.trace_payload import build_export_payload
-<<<<<<< HEAD
-from fathom.core.services.exporter.validation_subjects import extract_validation_subjects_with_llm_tracked
-=======
 from fathom.core.services.exporter.validation_subjects import (
     extract_validation_subjects_with_llm_tracked,
 )
->>>>>>> 885ff26 (Deduplicate shared logic and fix design violations across the codebase)
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.export import (
     ScriptExportPayload,

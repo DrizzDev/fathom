@@ -61,21 +61,21 @@ class ExplorationNodeProvider:
                 return_exceptions=True,
             )
 
-            if isinstance(screenshot_result, Exception):
+            if isinstance(screenshot_result, BaseException):
                 raise screenshot_result
-            screenshot_bytes = screenshot_result
+            screenshot_bytes: bytes = screenshot_result
 
-            if isinstance(dimensions_result, Exception):
+            if isinstance(dimensions_result, BaseException):
                 raise dimensions_result
             width, height = dimensions_result
 
-            if isinstance(activity_result, Exception):
+            if isinstance(activity_result, BaseException):
                 activity = "unknown"
                 await self.__context.telemetry.warning(
                     "Failed to get current package", error=str(activity_result)
                 )
             else:
-                activity = activity_result
+                activity = str(activity_result)
 
             storage_id = await self.__context.storage.save(
                 data=screenshot_bytes,

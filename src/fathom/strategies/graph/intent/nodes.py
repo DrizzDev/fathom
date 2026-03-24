@@ -250,14 +250,14 @@ class IntentNodeProvider:
                 )
 
             # 3. Extract package result
-            if isinstance(activity_result, Exception):
+            if isinstance(activity_result, BaseException):
                 await self.__context.telemetry.warning(
                     f"Ground: Failed to get current package: {activity_result}",
                     step=self.__context.agent_state.step_count + 1,
                 )
                 activity = "unknown"
             else:
-                activity = activity_result
+                activity = str(activity_result)
 
             # Persist capture in background to avoid blocking
             asyncio.create_task(
