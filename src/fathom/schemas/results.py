@@ -159,7 +159,7 @@ class ExplorationResult(WorkflowResult):
     discovered_activities: List[str] = Field(default_factory=list)
     coverage_percentage: float = Field(ge=0.0, le=100.0, description="App coverage")
 
-    screen_graph: Dict[str, List[str]] = Field(default_factory=dict)
+    screen_graph: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ActionResult(BaseModel):

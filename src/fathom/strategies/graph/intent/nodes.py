@@ -12,7 +12,7 @@ from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
 from fathom.constants.execution import (
     LAUNCHER_PACKAGES,
-    MAX_STABILITY_WAIT_SECONDS,
+    MAX_STABILITY_WAIT_MS,
     VISUAL_HASH_LENGTH,
 )
 from fathom.constants.graph import NodeName
@@ -664,15 +664,16 @@ class IntentNodeProvider:
         )
 
         # Wait for screen stability after action with a hard upper bound.
-        stability_wait = min(
-            float(self.__context.configuration.engine.stability_wait), MAX_STABILITY_WAIT_SECONDS
-        )
+        requested_wait_s = float(self.__context.configuration.engine.stability_wait)
+        requested_wait_ms = requested_wait_s * 1000.0
+        applied_wait_ms = min(requested_wait_ms, MAX_STABILITY_WAIT_MS)
+        stability_wait_s = applied_wait_ms / 1000.0
         logger.debug(
             "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs",
-            float(self.__context.configuration.engine.stability_wait),
-            stability_wait,
+            requested_wait_s,
+            stability_wait_s,
         )
-        await asyncio.sleep(delay=stability_wait)
+        await asyncio.sleep(delay=stability_wait_s)
 
         # Capture post-execution screen to compute post_hash
         current_screen_state = state.get(CommonStateKey.SCREEN_STATE)

@@ -25,7 +25,9 @@ BOUNDS_SWIPE_DISTANCE = 100
 # Timing (milliseconds)
 DEFAULT_SWIPE_DURATION = 500
 DEFAULT_STABILITY_WAIT = 500  # Wait after action for screen to stabilize
-MAX_STABILITY_WAIT_SECONDS = 1.5
+# Hard upper-bound for "screen stability" waits.
+# Stored as milliseconds to keep all timing constants consistent.
+MAX_STABILITY_WAIT_MS = 1500
 
 # Retry configuration
 DEFAULT_MAX_RETRIES = 2

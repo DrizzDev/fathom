@@ -7,7 +7,7 @@ import time
 from typing import Any, Callable, Dict, cast
 
 from fathom.constants import ActionType
-from fathom.constants.execution import MAX_STABILITY_WAIT_SECONDS, VISUAL_HASH_LENGTH
+from fathom.constants.execution import MAX_STABILITY_WAIT_MS, VISUAL_HASH_LENGTH
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.schemas.actions import Action
@@ -201,15 +201,16 @@ class ExplorationNodeProvider:
         )
 
         # Post-action stability wait with hard cap for consistency.
-        stability_wait = min(
-            float(self.__context.configuration.engine.stability_wait), MAX_STABILITY_WAIT_SECONDS
-        )
+        requested_wait_s = float(self.__context.configuration.engine.stability_wait)
+        requested_wait_ms = requested_wait_s * 1000.0
+        applied_wait_ms = min(requested_wait_ms, MAX_STABILITY_WAIT_MS)
+        stability_wait_s = applied_wait_ms / 1000.0
         logger.debug(
             "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs",
-            float(self.__context.configuration.engine.stability_wait),
-            stability_wait,
+            requested_wait_s,
+            stability_wait_s,
         )
-        await asyncio.sleep(delay=stability_wait)
+        await asyncio.sleep(delay=stability_wait_s)
 
         duration = time.time() - start_time
 
@@ -315,15 +316,16 @@ class ExplorationNodeProvider:
         )
 
         # Wait for stability with hard cap for consistency.
-        stability_wait = min(
-            float(self.__context.configuration.engine.stability_wait), MAX_STABILITY_WAIT_SECONDS
-        )
+        requested_wait_s = float(self.__context.configuration.engine.stability_wait)
+        requested_wait_ms = requested_wait_s * 1000.0
+        applied_wait_ms = min(requested_wait_ms, MAX_STABILITY_WAIT_MS)
+        stability_wait_s = applied_wait_ms / 1000.0
         logger.debug(
             "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs",
-            float(self.__context.configuration.engine.stability_wait),
-            stability_wait,
+            requested_wait_s,
+            stability_wait_s,
         )
-        await asyncio.sleep(delay=stability_wait)
+        await asyncio.sleep(delay=stability_wait_s)
 
         # Update state with remaining navigation
         result = cast("dict[str, Any]", dict(state))

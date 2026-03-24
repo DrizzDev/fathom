@@ -4,7 +4,6 @@ from logging import getLogger
 from typing import Any, Dict, Optional, Sequence, Union
 
 from fathom.core.services.exporter.constants import GENERIC_TARGETS, SWIPE_ACTIONS
-from fathom.core.services.exporter.script_text import sanitize_script_targets
 from fathom.core.services.exporter.step_inference import infer_scroll_target, infer_wait_subject
 from fathom.core.services.exporter.step_record import (
     get_action_type,
@@ -142,13 +141,9 @@ def build_action_catalog_from_steps(
         "press ",
         "long press ",
     )
-    sanitized_script = sanitize_script_targets(
-        script="\n".join(lines) + ("\n" if lines else ""),
-        intent=intent,
-    )
     executable_lines = [
         line.strip()
-        for line in sanitized_script.splitlines()
+        for line in lines
         if line.strip() and line.strip().lower().startswith(executable_prefixes)
     ]
 

@@ -61,21 +61,3 @@ SCROLL_VERB_RE = re.compile(
     flags=re.IGNORECASE,
 )
 PROPER_PHRASE_RE = re.compile(pattern=r"\b([A-Z][a-z]+(?:\s+[a-z]+)*(?:\s+[A-Z][a-z]+)+)")
-DYNAMIC_TARGET_PREFIXES = (
-    "add to cart button for ",
-    "increase quantity button for ",
-    "decrease quantity button for ",
-    "remove item button for ",
-)
-STORE_NAME_PATTERN = re.compile(
-    pattern=(
-        r"\b(?:"
-        r"walmart|costco|target|kroger|safeway|publix|aldi|instacart|"
-        r"whole\s+foods|trader\s+joe'?s|amazon\s+fresh|tesco"
-        r")\b\s+"
-        r"(?=(?:"
-        r"continue\s+shopping|cart|button|item|entry|row|store|aisle|checkout|basket"
-        r")\b)"
-    ),
-    flags=re.IGNORECASE,
-)

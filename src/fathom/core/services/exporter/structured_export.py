@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import re
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Sequence
 
 from fathom.core.services.exporter.script_text import (
     action_kind_from_line,
@@ -12,18 +11,7 @@ from fathom.core.services.exporter.script_text import (
 
 def normalize_validation_line(value: Any, *, fallback: str) -> str:
     raw = str(value or "").strip()
-    if not raw:
-        return fallback
-
-    match = re.search(pattern=r"\bvalidate\b.*", string=raw, flags=re.IGNORECASE)
-    if match:
-        extracted = match.group(0).strip()
-        return "Validate" + extracted[len("validate") :] if extracted else fallback
-
-    cleaned = raw.rstrip(".")
-    if cleaned.lower().startswith("that "):
-        return f"Validate {cleaned}."
-    return f"Validate that {cleaned[0].lower() + cleaned[1:] if len(cleaned) > 1 else cleaned.lower()}."
+    return raw if raw else fallback
 
 
 def normalize_final_validation(value: Any) -> str:
@@ -47,7 +35,7 @@ def executable_action_counts(script: str) -> Dict[str, int]:
     return counts
 
 
-def is_valid_llm_script(candidate: str, baseline: str) -> bool:
+def is_valid_llm_script(candidate: str, catalog_action_count: int) -> bool:
     if not candidate.strip():
         return False
     if "```" in candidate:
@@ -68,9 +56,8 @@ def is_valid_llm_script(candidate: str, baseline: str) -> bool:
     if balance != 0:
         return False
 
-    baseline_actions = count_action_lines(script=baseline)
     candidate_actions = count_action_lines(script=candidate)
-    return not (baseline_actions > 0 and candidate_actions <= 0)
+    return not (catalog_action_count > 0 and candidate_actions <= 0)
 
 
 def last_non_structural_line(script: str) -> str:
@@ -94,7 +81,6 @@ def contains_goal_validation(script: str) -> bool:
 def normalize_structured_action_ids(
     structured_args: Dict[str, Any],
     required_action_ids: Sequence[str],
-    action_catalog: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     normalized = dict(structured_args)
     normalized["final_validation"] = normalize_final_validation(
@@ -144,43 +130,6 @@ def normalize_structured_action_ids(
         if required_id not in seen:
             cleaned_remaining.append(required_id)
             seen.add(required_id)
-
-    action_catalog = action_catalog or {}
-    order_rank = {action_id: idx for idx, action_id in enumerate(required_action_ids)}
-    moved_to_blocks: list[str] = []
-    for block in cleaned_blocks:
-        condition_lower = str(block.get("condition") or "").strip().lower()
-        block_ids = list(block.get("action_ids") or [])
-        if "outside the us dropdown" not in condition_lower or not block_ids:
-            continue
-
-        last_rank = max(order_rank.get(action_id, -1) for action_id in block_ids)
-        candidate_ids: list[str] = []
-        for action_id in cleaned_remaining:
-            rank = order_rank.get(action_id, -1)
-            if rank <= last_rank:
-                continue
-            action_line = str(action_catalog.get(action_id) or "").strip().lower()
-            is_scroll = action_line.startswith("scroll ")
-            is_location_selection_tap = action_line.startswith("tap on ") and (
-                "washington" in action_line or action_line.endswith(" option")
-            )
-            if is_scroll or is_location_selection_tap:
-                candidate_ids.append(action_id)
-                last_rank = rank
-                continue
-            if candidate_ids:
-                break
-
-        if candidate_ids:
-            block["action_ids"] = block_ids + candidate_ids
-            moved_to_blocks.extend(candidate_ids)
-
-    if moved_to_blocks:
-        moved_set = set(moved_to_blocks)
-        cleaned_remaining = [
-            action_id for action_id in cleaned_remaining if action_id not in moved_set
-        ]
 
     normalized["conditional_blocks"] = cleaned_blocks
     normalized["remaining_action_ids"] = cleaned_remaining

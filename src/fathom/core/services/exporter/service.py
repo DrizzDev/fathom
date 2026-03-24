@@ -8,12 +8,9 @@ from fathom.core.prompts.export import ExportPromptBuilder
 from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.exporter.action_catalog import build_action_catalog_from_steps
-from fathom.core.services.exporter.deterministic_export import export_steps_to_script
 from fathom.core.services.exporter.script_text import (
     extract_target_from_action_line,
-    intent_requires_if_block,
     normalize_script_output,
-    sanitize_script_targets,
 )
 from fathom.core.services.exporter.structured_export import (
     contains_goal_validation,
@@ -47,25 +44,6 @@ class ScriptExporter:
             PromptFactory.get_export_builder(model_name=llm.model_name) if llm else None
         )
 
-    @staticmethod
-    def export(
-        step_results: Sequence[Union[StepResult, Dict[str, Any]]],
-        *,
-        intent: str = "",
-        goal_state: str = "",
-        package_name: str = "",
-        include_final_validation: bool = True,
-        validation_subjects_override: Optional[Sequence[str]] = None,
-    ) -> str:
-        return export_steps_to_script(
-            step_results,
-            intent=intent,
-            goal_state=goal_state,
-            package_name=package_name,
-            include_final_validation=include_final_validation,
-            validation_subjects_override=validation_subjects_override,
-        )
-
     async def export_with_llm(
         self,
         step_results: Sequence[Union[StepResult, Dict[str, Any]]],
@@ -93,32 +71,6 @@ class ScriptExporter:
                 "for LLM export baseline generation."
             )
 
-        llm_baseline_script = ScriptExporter.export(
-            step_results=step_results,
-            intent=intent,
-            goal_state=goal_state,
-            package_name=package_name,
-            include_final_validation=False,
-            validation_subjects_override=validation_subjects,
-        )
-        deterministic_fallback_script = ScriptExporter.export(
-            step_results=step_results,
-            intent=intent,
-            goal_state=goal_state,
-            package_name=package_name,
-            include_final_validation=True,
-            validation_subjects_override=validation_subjects,
-        )
-        deterministic_fallback_script = normalize_script_output(
-            script=deterministic_fallback_script
-        )
-        deterministic_fallback_script = sanitize_script_targets(
-            script=deterministic_fallback_script, intent=(intent or goal_state)
-        )
-        llm_baseline_script = normalize_script_output(script=llm_baseline_script)
-        llm_baseline_script = sanitize_script_targets(
-            script=llm_baseline_script, intent=(intent or goal_state)
-        )
         action_catalog, required_action_ids, required_open_app_id = build_action_catalog_from_steps(
             step_results=step_results,
             package_name=package_name,
@@ -143,16 +95,7 @@ class ScriptExporter:
                     line,
                 )
 
-        action_validation_baseline_script = normalize_script_output(
-            script="\n".join(action_catalog.values())
-        )
-        action_validation_baseline_script = sanitize_script_targets(
-            script=action_validation_baseline_script,
-            intent=(intent or goal_state),
-        )
-        if not action_validation_baseline_script.strip():
-            action_validation_baseline_script = llm_baseline_script
-        require_if_block = intent_requires_if_block(intent=(intent or goal_state))
+        require_if_block = False
         required_open_app_line = (
             str(action_catalog.get(required_open_app_id) or "").strip().lower()
             if required_open_app_id
@@ -164,7 +107,6 @@ class ScriptExporter:
             intent=intent,
             goal_state=goal_state,
             package_name=package_name,
-            baseline_script=llm_baseline_script,
             trace_payload=payload,
             action_catalog_lines=action_catalog_lines,
         )
@@ -189,28 +131,21 @@ class ScriptExporter:
                 break
 
         if not structured_args:
-            logger.warning(
-                "Gemini emit_script arguments missing; "
-                "falling back to deterministic exporter output "
-                "[export_mode=fallback_deterministic, export_violation=missing_tool_args]."
+            raise ScriptExportError(
+                "Gemini emit_script arguments missing [export_violation=missing_tool_args]."
             )
-            return deterministic_fallback_script
 
         try:
             raw_emit_args = EmitScriptArgs.model_validate(structured_args)
         except Exception as exception:
-            logger.warning(
-                "Gemini emit_script raw payload parsing failed (%s); "
-                "falling back to deterministic exporter output "
-                "[export_mode=invalid_structured, export_violation=raw_parse].",
-                exception,
-            )
-            return deterministic_fallback_script
+            raise ScriptExportError(
+                f"Gemini emit_script raw payload parsing failed: {exception} "
+                "[export_violation=raw_parse]."
+            ) from exception
 
         normalized_structured_args = normalize_structured_action_ids(
             structured_args=raw_emit_args.model_dump(exclude_unset=True),
             required_action_ids=required_action_ids,
-            action_catalog=action_catalog,
         )
 
         try:
@@ -224,17 +159,13 @@ class ScriptExporter:
                 expected_validation_count=len(validation_subjects),
             )
         except Exception as exception:
-            logger.warning(
-                "Gemini structured payload validation failed (%s); "
-                "falling back to deterministic exporter output "
-                "[export_mode=fallback_deterministic, export_violation=structured_payload].",
-                exception,
-            )
-            return deterministic_fallback_script
+            raise ScriptExportError(
+                f"Gemini structured payload validation failed: {exception} "
+                "[export_violation=structured_payload]."
+            ) from exception
 
         raw_structured_script = structured_payload.to_script()
         candidate = normalize_script_output(script=raw_structured_script)
-        candidate = sanitize_script_targets(script=candidate, intent=(intent or goal_state))
 
         try:
             parsed_script = ScriptExportPayload.model_validate(
@@ -246,29 +177,22 @@ class ScriptExporter:
                 }
             )
         except Exception as exception:
-            logger.warning(
-                "Gemini script schema validation failed (%s); "
-                "falling back to deterministic exporter output "
-                "[export_mode=fallback_deterministic, export_violation=script_schema].",
-                exception,
-            )
-            return deterministic_fallback_script
+            raise ScriptExportError(
+                f"Gemini script schema validation failed: {exception} "
+                "[export_violation=script_schema]."
+            ) from exception
 
         candidate = parsed_script.script
-        if not is_valid_llm_script(candidate=candidate, baseline=action_validation_baseline_script):
-            logger.warning(
-                "Gemini script failed structural/action coverage validation; "
-                "falling back to deterministic exporter output "
-                "[export_mode=fallback_deterministic, export_violation=post_validation_coverage]."
+        if not is_valid_llm_script(candidate=candidate, catalog_action_count=len(action_catalog)):
+            raise ScriptExportError(
+                "Gemini script failed structural/action coverage validation "
+                "[export_violation=post_validation_coverage]."
             )
-            return deterministic_fallback_script
         if not contains_goal_validation(script=candidate):
-            logger.warning(
-                "Gemini script missing final goal validation; "
-                "falling back to deterministic exporter output "
-                "[export_mode=fallback_deterministic, export_violation=missing_goal_validation]."
+            raise ScriptExportError(
+                "Gemini script missing final goal validation "
+                "[export_violation=missing_goal_validation]."
             )
-            return deterministic_fallback_script
 
         logger.info(
             "Gemini script export succeeded via structured payload [export_mode=llm_structured]."
