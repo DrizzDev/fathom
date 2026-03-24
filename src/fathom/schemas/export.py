@@ -170,18 +170,20 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
 
         if payload.required_open_app_id:
             if payload.required_open_app_id not in ordered_action_ids:
-                raise ValueError(
-                    f"Required OPEN_APP action ID is missing: {payload.required_open_app_id}"
+                # Auto-prepend the OPEN_APP action instead of hard-failing.
+                # The LLM sometimes omits it because it considers it implicit.
+                logger.warning(
+                    "LLM omitted required OPEN_APP action %s; auto-prepending.",
+                    payload.required_open_app_id,
                 )
-            ordered_action_ids = [payload.required_open_app_id] + [
-                action_id
-                for action_id in ordered_action_ids
-                if action_id != payload.required_open_app_id
-            ]
-            if ordered_action_ids[0] != payload.required_open_app_id:
-                raise ValueError(
-                    f"First executable action ID must be exactly: {payload.required_open_app_id}"
-                )
+                ordered_action_ids.insert(0, payload.required_open_app_id)
+            else:
+                # Move it to position 0 if present but not first.
+                ordered_action_ids = [payload.required_open_app_id] + [
+                    action_id
+                    for action_id in ordered_action_ids
+                    if action_id != payload.required_open_app_id
+                ]
 
         # Enforce that action IDs inside each conditional block respect the canonical
         # execution order when we have required_action_ids available. This keeps
