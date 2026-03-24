@@ -65,12 +65,21 @@ class GCSImageStorage(IImageStorage):
                 folder = datetime.now().strftime("%Y-%m-%d")
 
                 if meta.filename:
+<<<<<<< HEAD
                     filename = f"{meta.category}/{folder}/{meta.package}/{meta.session}/{meta.filename}"
                 else:
                     timestamp = int(time.time() * 1000)
                     filename = (
                         f"{meta.category}/{folder}/{meta.package}/{meta.session}/{timestamp}__{meta.activity}.png"
                     )
+=======
+                    filename = (
+                        f"{meta.category}/{folder}/{meta.package}/{meta.session}/{meta.filename}"
+                    )
+                else:
+                    timestamp = int(time.time() * 1000)
+                    filename = f"{meta.category}/{folder}/{meta.package}/{meta.session}/{timestamp}__{meta.activity}.png"
+>>>>>>> 885ff26 (Deduplicate shared logic and fix design violations across the codebase)
 
                 content_type = "application/octet-stream"
 
