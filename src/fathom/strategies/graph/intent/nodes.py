@@ -8,11 +8,9 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
-from fathom.adapters.signal.noop import NoopSignal
 from fathom.constants import ActionType, FathomEvent
 from fathom.constants.execution import (
     LAUNCHER_PACKAGES,
-    MAX_STABILITY_WAIT_MS,
     VISUAL_HASH_LENGTH,
 )
 from fathom.constants.graph import NodeName
@@ -24,6 +22,8 @@ from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
+from fathom.utils.parsing import strip_code_fences
+from fathom.utils.wait import stability_wait
 
 logger = logging.getLogger(__name__)
 
@@ -185,10 +185,29 @@ class IntentNodeProvider:
             start_time = time.time()
 
             # 1. Capture State — skip XML dump when use_xml is disabled to avoid delay.
+            #    Parallelize screenshot, dimensions, and package retrieval.
             if self.__context.use_xml:
-                screenshot_bytes, xml_content = await self.__context.device.get_snapshot()
+                snapshot_result, dimensions_result, activity_result = await asyncio.gather(
+                    self.__context.device.get_snapshot(),
+                    self.__context.device.get_dimensions(),
+                    self.__context.device.get_current_package(),
+                    return_exceptions=True,
+                )
+
+                if isinstance(snapshot_result, Exception):
+                    raise snapshot_result
+                screenshot_bytes, xml_content = snapshot_result
             else:
-                screenshot_bytes = await self.__context.device.capture_screen()
+                screenshot_result, dimensions_result, activity_result = await asyncio.gather(
+                    self.__context.device.capture_screen(),
+                    self.__context.device.get_dimensions(),
+                    self.__context.device.get_current_package(),
+                    return_exceptions=True,
+                )
+
+                if isinstance(screenshot_result, Exception):
+                    raise screenshot_result
+                screenshot_bytes = screenshot_result
                 xml_content = None
 
             if not screenshot_bytes or len(screenshot_bytes) == 0:
@@ -207,8 +226,10 @@ class IntentNodeProvider:
                     },
                 )
 
-            # 2. Capture Dimensions (Independent hardware metadata)
-            width, height = await self.__context.device.get_dimensions()
+            # 2. Extract dimensions result
+            if isinstance(dimensions_result, Exception):
+                raise dimensions_result
+            width, height = dimensions_result
             logger.info(f"Device dimension is {height=}x{width=}")
 
             # Validate dimensions
@@ -228,15 +249,15 @@ class IntentNodeProvider:
                     },
                 )
 
-            # Get current package
-            try:
-                activity = await self.__context.device.get_current_package()
-            except Exception as exception:
+            # 3. Extract package result
+            if isinstance(activity_result, Exception):
                 await self.__context.telemetry.warning(
-                    f"Ground: Failed to get current package: {exception}",
+                    f"Ground: Failed to get current package: {activity_result}",
                     step=self.__context.agent_state.step_count + 1,
                 )
                 activity = "unknown"
+            else:
+                activity = activity_result
 
             # Persist capture in background to avoid blocking
             asyncio.create_task(
@@ -433,7 +454,7 @@ class IntentNodeProvider:
             width, height = await self.__context.device.get_dimensions()
 
             # Determine interactive mode & config for planner
-            is_interactive = not isinstance(self.__context.signal, NoopSignal)
+            is_interactive = self.__context.signal.is_interactive
             prompt_if_stuck = self.__context.configuration.intent.prompt_user_if_stuck
 
             # HITL: Check for pause request or context injection before planning
@@ -668,16 +689,7 @@ class IntentNodeProvider:
         )
 
         # Wait for screen stability after action with a hard upper bound.
-        requested_wait_s = float(self.__context.configuration.engine.stability_wait)
-        requested_wait_ms = requested_wait_s * 1000.0
-        applied_wait_ms = min(requested_wait_ms, MAX_STABILITY_WAIT_MS)
-        stability_wait_s = applied_wait_ms / 1000.0
-        logger.debug(
-            "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs",
-            requested_wait_s,
-            stability_wait_s,
-        )
-        await asyncio.sleep(delay=stability_wait_s)
+        await stability_wait(self.__context.configuration)
 
         # Capture post-execution screen to compute post_hash
         current_screen_state = state.get(CommonStateKey.SCREEN_STATE)
@@ -1063,14 +1075,7 @@ class IntentNodeProvider:
                 prompt=[user_prompt, image_bytes],
             )
 
-            text = llm_result.content.strip()
-
-            if text.startswith("```json"):
-                text = text[7:-3]
-
-            elif text.startswith("```"):
-                text = text[3:-3]
-
+            text = strip_code_fences(llm_result.content)
             data = json.loads(text)
             is_truly_complete = bool(data.get("is_complete", False))
             reason = str(data.get("reason", "Verification failed without specific reason."))

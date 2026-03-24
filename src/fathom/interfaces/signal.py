@@ -10,6 +10,11 @@ class SignalPort(ABC):
     Defines the contract for external interruptions and context injection.
     """
 
+    @property
+    def is_interactive(self) -> bool:
+        """Whether this signal adapter supports interactive (human-in-the-loop) control."""
+        return True
+
     @abstractmethod
     async def check_signal(self) -> Optional[str]:
         """

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from fathom.constants import VALIDATE_PREFIX
+from fathom.schemas.validators import enforce_validate_prefix
 
 CoordSystem = Literal["normalized", "pixel"]
 ConditionalType = Literal["blocker", "transient", "error", "optional"]
@@ -97,12 +97,7 @@ class EmitScriptArgs(BaseModel):
                 "final_validation is required. Provide a terminal validation line "
                 "starting with 'Validate' (e.g., 'Validate cart page is displayed.')."
             )
-        text = str(value).strip()
-        if not text:
-            raise ValueError("final_validation must not be empty.")
-        if not text.lower().startswith(VALIDATE_PREFIX):
-            raise ValueError(f"final_validation must start with 'Validate', got: '{text[:30]}...'")
-        return text
+        return enforce_validate_prefix(str(value), "final_validation")
 
     @field_validator("remaining_action_ids", mode="before")
     @classmethod
@@ -126,10 +121,7 @@ class EmitScriptArgs(BaseModel):
             text = str(line).strip()
             if not aid or not text:
                 continue
-            if not text.lower().startswith(VALIDATE_PREFIX):
-                raise ValueError(
-                    f"action_validations['{aid}'] must start with 'Validate', got: '{text[:30]}...'"
-                )
+            enforce_validate_prefix(text, f"action_validations['{aid}']")
             cleaned[aid] = text
         return cleaned
 

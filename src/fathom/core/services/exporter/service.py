@@ -14,7 +14,7 @@ from fathom.core.services.exporter.structured_export import (
     is_valid_llm_script,
 )
 from fathom.core.services.exporter.trace_payload import build_export_payload
-from fathom.core.services.exporter.validation_subjects import extract_validation_subjects_with_llm
+from fathom.core.services.exporter.validation_subjects import extract_validation_subjects_with_llm_tracked
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.export import (
     ScriptExportPayload,
@@ -57,9 +57,10 @@ class ScriptExporter:
         if not self.__prompt_builder:
             raise ScriptExportError("Script exporter prompt builder is not configured.")
 
-        validation_subjects = await extract_validation_subjects_with_llm(
+        validation_result = await extract_validation_subjects_with_llm_tracked(
             llm=self.__llm, intent=(intent or goal_state)
         )
+        validation_subjects = validation_result.subjects
         if validation_subjects:
             logger.info(
                 f"Using Gemini-extracted validation subjects ({len(validation_subjects)} found) "

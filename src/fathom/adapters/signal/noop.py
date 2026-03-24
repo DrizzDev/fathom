@@ -12,6 +12,10 @@ class NoopSignal(SignalPort):
     Returns None for all signals, enabling fully autonomous operation.
     """
 
+    @property
+    def is_interactive(self) -> bool:
+        return False
+
     async def check_signal(self) -> Optional[str]:
         """
         Check for control signal - always returns None for autonomous mode.

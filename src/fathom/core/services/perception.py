@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import time
@@ -20,6 +21,7 @@ except ImportError:
 from PIL import Image
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.core.exceptions import ConfigurationError, MissingDependencyError, VisionError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
@@ -55,24 +57,23 @@ class PerceptionService:
 
         effective_session_id = session_id or self.__session_id
         if not effective_session_id:
-            raise ValueError("session_id must be provided either in __init__ or perceive()")
+            raise ConfigurationError("session_id must be provided either in __init__ or perceive()")
 
-        screenshot_bytes = await self.__device.capture_screen()
-        width, height = await self.__device.get_dimensions()
+        # Capture screenshot, dimensions, and package in parallel
+        screenshot_bytes, (width, height), activity = await asyncio.gather(
+            self.__device.capture_screen(),
+            self.__device.get_dimensions(),
+            self.__get_safe_package(),
+        )
 
-        # Get current activity
-        try:
-            activity = await self.__device.get_current_package()
-        except Exception as exception:
-            await self.__telemetry.warning("Failed to get current package", error=str(exception))
-            activity = "unknown"
-
-        # Store screenshot artifact with metadata for structured storage
-        storage_id = await self.__persist_capture(
-            data=screenshot_bytes,
-            package_name=activity,
-            activity_name=activity,
-            session_id=effective_session_id,
+        # Persist capture in background to avoid blocking the pipeline
+        asyncio.create_task(
+            self.__persist_capture(
+                data=screenshot_bytes,
+                package_name=activity,
+                activity_name=activity,
+                session_id=effective_session_id,
+            )
         )
 
         return ScreenCapture(
@@ -81,8 +82,18 @@ class PerceptionService:
             activity=activity,
             image=screenshot_bytes,
             timestamp=int(time.time() * 1000),
-            metadata={"storage_id": storage_id},
+            metadata={"storage_id": "pending_background_upload"},
         )
+
+    async def __get_safe_package(self) -> str:
+        """
+        Get current package name, returning 'unknown' on failure.
+        """
+        try:
+            return await self.__device.get_current_package()
+        except Exception as exception:
+            await self.__telemetry.warning("Failed to get current package", error=str(exception))
+            return "unknown"
 
     async def __persist_capture(
         self, data: bytes, package_name: str, activity_name: str, session_id: str
@@ -124,7 +135,7 @@ class PerceptionService:
         """
 
         if not OPENCV_AVAILABLE or cv2 is None or numpy is None:
-            raise RuntimeError("OpenCV not available")
+            raise MissingDependencyError(dependency="opencv-python", feature="pHash computation")
 
         logger.info("Computing pHash using OpenCV")
 
@@ -132,7 +143,7 @@ class PerceptionService:
         decoded_image: Any = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
 
         if decoded_image is None:
-            raise ValueError("Could not decode image with OpenCV")
+            raise VisionError("Could not decode image with OpenCV")
 
         resized_image: Any = cv2.resize(decoded_image, (32, 32), interpolation=cv2.INTER_AREA)
         float_image: Any = numpy.float32(resized_image)

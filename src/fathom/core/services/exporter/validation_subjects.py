@@ -7,6 +7,7 @@ from logging import getLogger
 from typing import TYPE_CHECKING, List
 
 from fathom.core.services.normalizer import Normalizer
+from fathom.utils.parsing import strip_code_fences
 
 if TYPE_CHECKING:
     from fathom.interfaces.llm import LLMPort
@@ -39,19 +40,6 @@ def extract_validation_subjects_regex(intent: str) -> list[str]:
             subjects.append(subject)
 
     return subjects
-
-
-def extract_validation_subjects(intent: str) -> list[str]:
-    return extract_validation_subjects_regex(intent=intent)
-
-
-async def extract_validation_subjects_with_llm(*, llm: "LLMPort", intent: str) -> list[str]:
-    """Extract validation subjects, returning the subject list.
-
-    Use extract_validation_subjects_with_llm_tracked() for provenance tracking.
-    """
-    result = await extract_validation_subjects_with_llm_tracked(llm=llm, intent=intent)
-    return result.subjects
 
 
 async def extract_validation_subjects_with_llm_tracked(
@@ -97,14 +85,7 @@ async def extract_validation_subjects_with_llm_tracked(
             )
 
         try:
-            content = response.content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+            content = strip_code_fences(response.content)
 
             subjects = json.loads(content)
             if not isinstance(subjects, list):

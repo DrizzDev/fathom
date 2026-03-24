@@ -7,7 +7,7 @@ import time
 from typing import Any, Callable, Dict, cast
 
 from fathom.constants import ActionType
-from fathom.constants.execution import MAX_STABILITY_WAIT_MS, VISUAL_HASH_LENGTH
+from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.schemas.actions import Action
@@ -22,6 +22,7 @@ from fathom.strategies.graph.exploration.state import (
     get_step_result,
     is_content_exhausted,
 )
+from fathom.utils.wait import stability_wait
 
 logger = logging.getLogger(__name__)
 
@@ -53,16 +54,28 @@ class ExplorationNodeProvider:
         start_time = time.time()
 
         try:
-            screenshot_bytes = await self.__context.device.capture_screen()
-            width, height = await self.__context.device.get_dimensions()
+            screenshot_result, dimensions_result, activity_result = await asyncio.gather(
+                self.__context.device.capture_screen(),
+                self.__context.device.get_dimensions(),
+                self.__context.device.get_current_package(),
+                return_exceptions=True,
+            )
 
-            try:
-                activity = await self.__context.device.get_current_package()
-            except Exception as exception:
+            if isinstance(screenshot_result, Exception):
+                raise screenshot_result
+            screenshot_bytes = screenshot_result
+
+            if isinstance(dimensions_result, Exception):
+                raise dimensions_result
+            width, height = dimensions_result
+
+            if isinstance(activity_result, Exception):
                 activity = "unknown"
                 await self.__context.telemetry.warning(
-                    "Failed to get current package", error=str(exception)
+                    "Failed to get current package", error=str(activity_result)
                 )
+            else:
+                activity = activity_result
 
             storage_id = await self.__context.storage.save(
                 data=screenshot_bytes,
@@ -201,16 +214,7 @@ class ExplorationNodeProvider:
         )
 
         # Post-action stability wait with hard cap for consistency.
-        requested_wait_s = float(self.__context.configuration.engine.stability_wait)
-        requested_wait_ms = requested_wait_s * 1000.0
-        applied_wait_ms = min(requested_wait_ms, MAX_STABILITY_WAIT_MS)
-        stability_wait_s = applied_wait_ms / 1000.0
-        logger.debug(
-            "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs",
-            requested_wait_s,
-            stability_wait_s,
-        )
-        await asyncio.sleep(delay=stability_wait_s)
+        await stability_wait(self.__context.configuration)
 
         duration = time.time() - start_time
 
@@ -316,16 +320,7 @@ class ExplorationNodeProvider:
         )
 
         # Wait for stability with hard cap for consistency.
-        requested_wait_s = float(self.__context.configuration.engine.stability_wait)
-        requested_wait_ms = requested_wait_s * 1000.0
-        applied_wait_ms = min(requested_wait_ms, MAX_STABILITY_WAIT_MS)
-        stability_wait_s = applied_wait_ms / 1000.0
-        logger.debug(
-            "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs",
-            requested_wait_s,
-            stability_wait_s,
-        )
-        await asyncio.sleep(delay=stability_wait_s)
+        await stability_wait(self.__context.configuration)
 
         # Update state with remaining navigation
         result = cast("dict[str, Any]", dict(state))

@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import importlib
 import time
-from contextlib import ExitStack, contextmanager
+from contextlib import asynccontextmanager
 from logging import getLogger
 from pathlib import Path  # noqa: TC003
-from typing import Any, Dict, Iterator, List, Optional, cast
+from typing import Any, AsyncIterator, Dict, List, Optional, cast
 
 from langgraph.checkpoint.memory import MemorySaver
 from rich.console import Console
 
-from fathom.adapters.signal.noop import NoopSignal
 from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
@@ -90,7 +89,7 @@ class IntentStrategy:
         # Use checkpointer only for interactive mode (with interrupts)
         # Autonomous mode doesn't need checkpointing
 
-        interrupt_nodes = [] if isinstance(signal, NoopSignal) else [NodeName.EXECUTE.value]
+        interrupt_nodes = [] if not signal.is_interactive else [NodeName.EXECUTE.value]
 
         # Compatibility: newer langgraph JsonPlusSerializer() has no
         # allowed_json_modules argument, while older versions do.
@@ -111,10 +110,9 @@ class IntentStrategy:
         start_time = time.time()
 
         try:
-            with ExitStack() as stack:
-                checkpointer: Any = stack.enter_context(
-                    self.__build_checkpointer_context(checkpoint_db_path=self.__checkpoint_db)
-                )
+            async with self.__build_checkpointer_context(
+                checkpoint_db_path=self.__checkpoint_db
+            ) as checkpointer:
                 self.__graph = self.__graph_builder.build(
                     checkpointer=checkpointer,
                     interrupt_before=self.__interrupt_nodes,
@@ -140,7 +138,7 @@ class IntentStrategy:
                     context=self.__graph_context,
                     thread_id=self.__workflow_id,
                     invalidate_on_injection=self.__graph_context.realignment.immediate,
-                    has_interrupts=not isinstance(self.__graph_context.signal, NoopSignal),
+                    has_interrupts=self.__graph_context.signal.is_interactive,
                 )
 
                 await executor.run()
@@ -261,15 +259,15 @@ class IntentStrategy:
 
         self.__graph_context.cancel()
 
-    @contextmanager
-    def __build_checkpointer_context(
+    @asynccontextmanager
+    async def __build_checkpointer_context(
         self,
         checkpoint_db_path: Path,
-    ) -> Iterator[Any]:
+    ) -> AsyncIterator[Any]:
         """
-        Build a persistence layer for graph checkpoints as a context manager.
+        Build a persistence layer for graph checkpoints as an async context manager.
 
-        Prefers SQLite-backed checkpoints for crash-safe persistence.
+        Prefers AsyncSqliteSaver for crash-safe persistence.
         Falls back to in-memory checkpoints if sqlite support is unavailable.
         """
 
@@ -284,26 +282,25 @@ class IntentStrategy:
 
         try:
             # Use importlib to avoid static import resolution errors.
-            sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite")
+            aio_module = importlib.import_module("langgraph.checkpoint.sqlite.aio")
         except (ImportError, ModuleNotFoundError) as exception:
             logger.warning(
-                "SQLite checkpoint saver unavailable; falling back to MemorySaver. "
-                "Install 'langgraph-checkpoint-sqlite' to enable persistent checkpoints. "
-                f"Reason: {exception}"
+                "AsyncSqliteSaver unavailable; falling back to MemorySaver. "
+                "Install 'langgraph-checkpoint-sqlite' and 'aiosqlite' to enable "
+                f"persistent checkpoints. Reason: {exception}"
             )
             yield MemorySaver()
             return
 
-        SqliteSaver = sqlite_module.SqliteSaver
+        AsyncSqliteSaver = aio_module.AsyncSqliteSaver
 
         try:
-            # SqliteSaver is a context manager; keep it open for the duration of graph execution.
-            with SqliteSaver.from_conn_string(str(checkpoint_db_path)) as checkpointer:
-                logger.info(f"Using SqliteSaver for checkpointing at {checkpoint_db_path}")
+            async with AsyncSqliteSaver.from_conn_string(str(checkpoint_db_path)) as checkpointer:
+                logger.info(f"Using AsyncSqliteSaver for checkpointing at {checkpoint_db_path}")
                 yield checkpointer
         except Exception as exception:
             logger.error(
-                "Failed to initialize SQLite checkpointer. "
+                "Failed to initialize AsyncSqliteSaver. "
                 f"checkpoint_db_path={checkpoint_db_path}. Reason: {exception}"
             )
             raise

@@ -7,6 +7,7 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fathom.constants import EXECUTABLE_ACTION_PREFIXES, VALIDATE_PREFIX
+from fathom.schemas.validators import enforce_validate_prefix
 
 logger = getLogger(__name__)
 
@@ -128,8 +129,7 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
             }
         )
 
-        if not payload.final_validation.strip().lower().startswith(VALIDATE_PREFIX):
-            raise ValueError("final_validation must start with 'Validate'.")
+        enforce_validate_prefix(payload.final_validation, "final_validation")
 
         cleaned_action_validations: Dict[str, str] = {}
         for action_id, validation_line in payload.action_validations.items():
@@ -137,8 +137,7 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
             line = str(validation_line).strip()
             if not aid or not line:
                 continue
-            if not line.lower().startswith(VALIDATE_PREFIX):
-                raise ValueError(f"action_validations[{aid}] must start with 'Validate'.")
+            enforce_validate_prefix(line, f"action_validations[{aid}]")
             cleaned_action_validations[aid] = line
         payload.action_validations = cleaned_action_validations
 

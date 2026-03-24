@@ -5,6 +5,7 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.core.exceptions import VisionError
+from fathom.infrastructure.storage.metadata import extract_metadata
 from fathom.interfaces import IImageStorage
 
 if TYPE_CHECKING:
@@ -29,36 +30,14 @@ class LocalImageStorage(IImageStorage):
         """
 
         try:
-            if not metadata:
-                raise ValueError("Storage metadata is required for saving screenshots")
+            meta = extract_metadata(metadata or {})
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-            session = metadata.get("session_id")
-            package = metadata.get("package_name")
-            # Activity name is optional, fallback to package if missing
-            activity = metadata.get("activity_name") or package
-            filename_meta = metadata.get("filename")
-
-            if not all([session, package]):
-                raise ValueError(f"Missing required screenshot metadata: {session=}, {package=}")
-
-            # Ensure types for mypy after validation
-            package_str = str(package)
-            session_str = str(session)
-            activity_str = str(activity)
-
-            # Sanitize components to be safe for filenames
-            package = "".join(char for char in package_str if char.isalnum() or char in "._-")
-            session = "".join(char for char in session_str if char.isalnum() or char in "._-")
-            activity = "".join(char for char in activity_str if char.isalnum() or char in "._-")
-
-            # Use explicit filename if provided (e.g. for history artifacts), otherwise generate one
-            filename = filename_meta or f"{timestamp}__{activity}.png"
+            filename = meta.filename or f"{timestamp}__{meta.activity}.png"
 
             # Use path manager to enforce unified structure
             path = self.__path_manager.get_screenshot_path(
-                package_name=package, session_id=session, filename=filename
+                package_name=meta.package, session_id=meta.session, filename=filename
             )
 
             self.__write(path=path, data=data)
