@@ -259,6 +259,28 @@ class IntentStrategy:
 
         self.__graph_context.cancel()
 
+    @staticmethod
+    def __build_checkpoint_serde() -> Any:
+        """
+        Build a JsonPlusSerializer that whitelists Fathom types for checkpoint
+        deserialization, suppressing 'Deserializing unregistered type' warnings.
+        """
+
+        from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+        return JsonPlusSerializer(
+            allowed_msgpack_modules={
+                ("fathom.schemas.screens", "ScreenCapture"),
+                ("fathom.schemas.screens", "ScreenState"),
+                ("fathom.schemas.results", "PlanResult"),
+                ("fathom.schemas.steps", "Step"),
+                ("fathom.schemas.steps", "StepResult"),
+                ("fathom.constants", "ActionType"),
+                ("fathom.constants.state", "CommonStateKey"),
+                ("fathom.constants.state", "IntentStateKey"),
+            }
+        )
+
     @asynccontextmanager
     async def __build_checkpointer_context(
         self,
@@ -289,13 +311,16 @@ class IntentStrategy:
                 "Install 'langgraph-checkpoint-sqlite' and 'aiosqlite' to enable "
                 f"persistent checkpoints. Reason: {exception}"
             )
-            yield MemorySaver()
+            yield MemorySaver(serde=self.__build_checkpoint_serde())
             return
 
         AsyncSqliteSaver = aio_module.AsyncSqliteSaver
 
         try:
-            async with AsyncSqliteSaver.from_conn_string(str(checkpoint_db_path)) as checkpointer:
+            aiosqlite = importlib.import_module("aiosqlite")
+            serde = self.__build_checkpoint_serde()
+            async with aiosqlite.connect(str(checkpoint_db_path)) as conn:
+                checkpointer = AsyncSqliteSaver(conn, serde=serde)
                 logger.info(f"Using AsyncSqliteSaver for checkpointing at {checkpoint_db_path}")
                 yield checkpointer
         except Exception as exception:

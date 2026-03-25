@@ -184,6 +184,10 @@ class Action(BaseModel):
         """
 
         # Resolve best target description.
+        # For validate actions, prefer validation_subject over generic targets.
+        if self.action_type == ActionType.VALIDATE and self.validation_subject:
+            return f"Validate {self.validation_subject}"
+
         name = self.natural_language_target
 
         lowered = (name or "").strip().lower()
@@ -197,6 +201,9 @@ class Action(BaseModel):
 
             else:
                 name = self.target or "element"
+
+        if self.action_type == ActionType.VALIDATE:
+            return f"Validate {name}"
 
         if self.action_type == ActionType.TAP:
             return f"Tap on {name}"

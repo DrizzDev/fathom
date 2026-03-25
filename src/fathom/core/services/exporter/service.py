@@ -36,7 +36,10 @@ class ScriptExporter:
 
     def __init__(self, *, llm: Optional[LLMPort] = None, use_cache: bool = True) -> None:
         self.__llm = llm
-        self.__use_cache = use_cache
+        # use_cache is accepted for interface compatibility but not used:
+        # export tool schemas contain dynamic enum values that change per call,
+        # making Gemini context caching ineffective (zero reuse).
+        _ = use_cache
         self.__prompt_builder: Optional[ExportPromptBuilder] = (
             PromptFactory.get_export_builder(model_name=llm.model_name) if llm else None
         )
@@ -98,10 +101,13 @@ class ScriptExporter:
         )
 
         try:
+            # use_cache=False: the tool schema now contains dynamic enum values
+            # (action catalog IDs) that change per export, so caching the tools
+            # would create a new Gemini cache entry every call with zero reuse.
             response = await self.__llm.generate(
-                use_cache=self.__use_cache,
+                use_cache=False,
                 prompt=[prompt_text],
-                tools=ToolRegistry.get_export_definitions(),
+                tools=ToolRegistry.get_export_definitions(action_ids=required_action_ids),
                 system_instruction=system_instruction,
             )
         except Exception as exception:

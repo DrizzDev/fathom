@@ -61,6 +61,7 @@ class Normalizer:
         action_type: str,
         text: Optional[str] = None,
         wait_duration: Optional[int | float] = None,
+        validation_subject: Optional[str] = None,
     ) -> str:
         """Build canonical action descriptions with stable grammar."""
 
@@ -68,6 +69,12 @@ class Normalizer:
         cleaned_target = Normalizer.clean(text=target)
         if not cleaned_target:
             cleaned_target = "element"
+
+        # For validate actions, prefer the dedicated validation_subject field.
+        if kind == "validate" and validation_subject:
+            cleaned_subject = Normalizer.clean(text=validation_subject)
+            if cleaned_subject:
+                cleaned_target = cleaned_subject
 
         if kind == "tap":
             return f"Tap on {cleaned_target}"

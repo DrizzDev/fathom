@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class ToolRegistry:
@@ -26,12 +26,18 @@ class ToolRegistry:
         }
 
     @classmethod
-    def get_export_definitions(cls) -> Dict[str, List[Dict[str, Any]]]:
+    def get_export_definitions(
+        cls, *, action_ids: Optional[List[str]] = None
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Returns tool definitions for script export composition.
+
+        Args:
+            action_ids: When provided, constrains action ID fields to only
+                        these values via enum in the tool schema.
         """
 
-        return {"function_declarations": [cls.__emit_script()]}
+        return {"function_declarations": [cls.__emit_script(action_ids=action_ids)]}
 
     @staticmethod
     def __execute_ui() -> Dict[str, Any]:
@@ -490,10 +496,18 @@ class ToolRegistry:
         }
 
     @staticmethod
-    def __emit_script() -> Dict[str, Any]:
+    def __emit_script(
+        action_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
         Definition for script export output tool.
         """
+
+        # When action_ids are provided, constrain the schema so Gemini can
+        # only output valid catalog IDs (prevents missing/extra/duplicated IDs).
+        action_id_item: Dict[str, Any] = {"type": "STRING"}
+        if action_ids:
+            action_id_item["enum"] = list(action_ids)
 
         return {
             "name": "emit_script",
@@ -527,7 +541,7 @@ class ToolRegistry:
                                 "action_ids": {
                                     "type": "ARRAY",
                                     "description": "Executable action IDs under this IF block. Must be selected from provided action catalog.",
-                                    "items": {"type": "STRING"},
+                                    "items": action_id_item,
                                 },
                             },
                             "required": ["condition", "action_ids"],
@@ -536,7 +550,7 @@ class ToolRegistry:
                     "remaining_action_ids": {
                         "type": "ARRAY",
                         "description": "Ordered executable action IDs outside IF blocks. Must be selected from provided action catalog.",
-                        "items": {"type": "STRING"},
+                        "items": action_id_item,
                     },
                     "action_validations": {
                         "type": "OBJECT",

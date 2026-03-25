@@ -56,6 +56,7 @@ def build_action_catalog_from_steps(
         is_app_launcher_signal = _get_field(step, "is_app_launcher", False)
         wait_subject = _get_field(step, "wait_subject")
         scroll_target = _get_field(step, "scroll_target")
+        validation_subject = _get_field(step, "validation_subject")
 
         # For wait actions, use authoritative wait_subject as the target.
         if action_type_val == "wait" and wait_subject:
@@ -91,6 +92,7 @@ def build_action_catalog_from_steps(
             target=export_target,
             text=text,
             wait_duration=wait_duration,
+            validation_subject=validation_subject,
         )
 
         lowered = description.lower()
