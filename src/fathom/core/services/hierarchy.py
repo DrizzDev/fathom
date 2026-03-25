@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import tempfile
 import xml.etree.ElementTree as ET  # nosec
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Set
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ActionType
-from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
 from fathom.processing.annotator import ImageAnnotator
 from fathom.processing.drawer import BoundsGenerator
+from fathom.schemas.hierarchy import (
+    HierarchyElementExtraction,
+    HierarchyProcessingResult,
+    ResolvedHierarchyScreenshot,
+)
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
 
@@ -24,15 +30,13 @@ class HierarchyService:
     Service responsible for UI hierarchy analysis. Optimized for high-speed grounding.
     """
 
-    def __init__(self, device: DevicePort, storage: Optional[StoragePort] = None) -> None:
+    def __init__(self, storage: Optional[StoragePort] = None) -> None:
         """
-        Initialize hierarchy service with device port.
+        Initialize hierarchy service.
         """
 
-        self.__device = device
         self.__storage = storage
-        self.__label_map: Dict[str, Any] = {}
-        self.__background_tasks: set[asyncio.Task[Any]] = set()
+        self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
     def __fire_and_forget(self, coroutine: Any) -> None:
         """
@@ -46,13 +50,31 @@ class HierarchyService:
         except Exception as exception:
             logger.warning(f"Failed to create background task: {exception}", stack_info=True)
 
-    @property
-    def label_map(self) -> Dict[str, Any]:
+    def extract_elements(
+        self,
+        *,
+        xml: str,
+        screen: ScreenCapture,
+        action_type: Optional[ActionType] = None,
+    ) -> List[LabeledElement]:
         """
-        Returns current label mapping.
+        Extract interactive elements from XML without producing annotated artifacts.
         """
 
-        return self.__label_map.copy()
+        resolved_screenshot: Optional[ResolvedHierarchyScreenshot] = None
+
+        try:
+            resolved_screenshot = self.__resolve_source_screenshot_path(screen=screen)
+            element_extraction = self.__parse_elements(
+                xml=xml,
+                action=action_type,
+                image_path=Path(resolved_screenshot.path),
+            )
+            return element_extraction.labeled_elements
+        finally:
+            if resolved_screenshot is not None and resolved_screenshot.created_temporary_file:
+                with contextlib.suppress(FileNotFoundError):
+                    Path(resolved_screenshot.path).unlink()
 
     async def process_xml_and_screen(
         self,
@@ -63,7 +85,7 @@ class HierarchyService:
         package_name: str,
         path_manager: SharedPathManager,
         action_type: Optional[ActionType] = None,
-    ) -> Tuple[Optional[ScreenCapture], Dict[str, Any]]:
+    ) -> HierarchyProcessingResult:
         """
         Processes XML and screen data to identify UI elements.
         """
@@ -75,32 +97,21 @@ class HierarchyService:
 
         if xml_size_kb < 0.2:
             logger.warning(f"XML too small ({xml_size_kb:.2f} KB), possibly invalid.")
-            return screen, {}
+            return HierarchyProcessingResult(
+                label_map={},
+                labeled_elements=[],
+                annotated_capture=screen,
+            )
+
+        resolved_screenshot: Optional[ResolvedHierarchyScreenshot] = None
 
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename_base = f"{timestamp}"
 
-            # 1. Save Raw Screenshot (using path manager)
-            screenshot_path = path_manager.get_screenshot_path(
-                package_name=package_name, session_id=session_id, filename=f"{filename_base}.png"
-            )
-            self.__save_file(path=screenshot_path, data=screen.image, mode="wb")
+            resolved_screenshot = self.__resolve_source_screenshot_path(screen=screen)
 
-            if self.__storage:
-                self.__fire_and_forget(
-                    self.__storage.save(
-                        data=screen.image,
-                        metadata={
-                            "category": "screenshot",
-                            "session_id": session_id,
-                            "package_name": package_name,
-                            "filename": f"{filename_base}.png",
-                        },
-                    )
-                )
-
-            # 2. Save Raw XML (using path manager)
+            # 1. Save Raw XML (using path manager)
             xml_path = path_manager.get_xml_path(
                 package_name=package_name, session_id=session_id, filename=f"{filename_base}.xml"
             )
@@ -120,21 +131,30 @@ class HierarchyService:
                     )
                 )
 
-            # 3. Parse Elements
-            elements = self.__parse_elements(
-                xml=xml, image_path=screenshot_path, action=action_type
+            # 2. Parse Elements
+            element_extraction = self.__parse_elements(
+                xml=xml,
+                action=action_type,
+                image_path=Path(resolved_screenshot.path),
             )
+            labeled_elements = element_extraction.labeled_elements
 
-            # 4. Generate Annotated Image
+            # 3. Generate Annotated Image
             annotated_path = path_manager.get_annotated_path(
                 package_name=package_name, session_id=session_id, filename=f"{filename_base}.png"
             )
             annotated_result = self.__annotate(
-                source=screenshot_path, destination=annotated_path, elements=elements
+                elements=labeled_elements,
+                destination=annotated_path,
+                source=Path(resolved_screenshot.path),
             )
 
             if not annotated_result:
-                return screen, self.__label_map.copy()
+                return HierarchyProcessingResult(
+                    annotated_capture=screen,
+                    labeled_elements=labeled_elements,
+                    label_map=element_extraction.label_map,
+                )
 
             if self.__storage:
                 with annotated_result.open("rb") as handle:
@@ -152,7 +172,7 @@ class HierarchyService:
                     )
                 )
 
-            # 5. Build Result Capture
+            # 4. Build Result Capture
             capture = self.__build_capture(original=screen, path=annotated_result)
 
             # Inject metadata
@@ -164,16 +184,30 @@ class HierarchyService:
 
             duration = (datetime.now() - start_time).total_seconds()
             logger.info(
-                f"Hierarchy processing complete in {duration:.2f}s. Elements found: {len(self.__label_map)}"
+                f"Hierarchy processing complete in {duration:.2f}s. "
+                f"Elements found: {len(labeled_elements)} "
+                f"(raw: {len(element_extraction.label_map)})"
             )
 
-            return capture, self.__label_map.copy()
+            return HierarchyProcessingResult(
+                annotated_capture=capture,
+                labeled_elements=labeled_elements,
+                label_map=element_extraction.label_map,
+            )
 
         except Exception as exception:
             logger.exception(f"Hierarchy processing failed: {exception}")
-            return screen, {}
+            return HierarchyProcessingResult(
+                label_map={},
+                labeled_elements=[],
+                annotated_capture=screen,
+            )
+        finally:
+            if resolved_screenshot is not None and resolved_screenshot.created_temporary_file:
+                with contextlib.suppress(FileNotFoundError):
+                    Path(resolved_screenshot.path).unlink()
 
-    def __save_file(self, path: Path, data: bytes, mode: str = "wb") -> None:
+    def __save_file(self, *, path: Path, data: bytes, mode: str = "wb") -> None:
         """
         Helper to save file.
         """
@@ -181,9 +215,54 @@ class HierarchyService:
         with path.open(mode) as handle:
             handle.write(data)
 
+    def __create_working_screenshot(self, *, image: bytes) -> Path:
+        """
+        Persist a temporary screenshot file for XML parsing and annotation only.
+        """
+
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".png", delete=False) as handle:
+            handle.write(image)
+            return Path(handle.name)
+
+    def __resolve_source_screenshot_path(
+        self, *, screen: ScreenCapture
+    ) -> ResolvedHierarchyScreenshot:
+        """
+        Resolve the screenshot path to use for hierarchy parsing and annotation.
+        """
+
+        raw_path = screen.metadata.get("raw_path")
+
+        if isinstance(raw_path, str):
+            candidate = Path(raw_path)
+            if candidate.exists():
+                return ResolvedHierarchyScreenshot(
+                    path=str(candidate),
+                    created_temporary_file=False,
+                )
+
+        if screen.annotated_image is None:
+            rendered_path = screen.metadata.get("path")
+            if isinstance(rendered_path, str):
+                candidate = Path(rendered_path)
+                if candidate.exists():
+                    return ResolvedHierarchyScreenshot(
+                        path=str(candidate),
+                        created_temporary_file=False,
+                    )
+
+        return ResolvedHierarchyScreenshot(
+            created_temporary_file=True,
+            path=str(self.__create_working_screenshot(image=screen.image)),
+        )
+
     def __parse_elements(
-        self, xml: str, image_path: Path, action: Optional[ActionType]
-    ) -> List[LabeledElement]:
+        self,
+        *,
+        xml: str,
+        image_path: Path,
+        action: Optional[ActionType],
+    ) -> HierarchyElementExtraction:
         """
         Identifies elements from XML.
         """
@@ -195,13 +274,17 @@ class HierarchyService:
             xml = xml[start : end + 1]
 
         root = ET.fromstring(xml)  # nosec
-        elements, self.__label_map = BoundsGenerator.create_element(
+        elements, label_map = BoundsGenerator.create_element(
             root=root, image_path=str(image_path), action=action or ActionType.TAP
         )
-        return elements
+        return HierarchyElementExtraction(label_map=label_map, labeled_elements=elements)
 
     def __annotate(
-        self, source: Path, destination: Path, elements: List[LabeledElement]
+        self,
+        *,
+        source: Path,
+        destination: Path,
+        elements: List[LabeledElement],
     ) -> Optional[Path]:
         """
         Annotates image with identified elements.
@@ -212,17 +295,33 @@ class HierarchyService:
         )
         return Path(path) if path else None
 
-    def __build_capture(self, original: ScreenCapture, path: Path) -> ScreenCapture:
+    def __build_capture(
+        self,
+        *,
+        path: Path,
+        original: ScreenCapture,
+    ) -> ScreenCapture:
         """
         Builds capture object from annotated image.
         """
 
         with path.open("rb") as handle:
+            metadata = dict(original.metadata)
+            raw_path = original.metadata.get("raw_path") or original.metadata.get("path")
+
+            if isinstance(raw_path, str):
+                metadata["raw_path"] = raw_path
+
+            metadata["path"] = str(path)
+
             return ScreenCapture(
-                image=handle.read(),
+                metadata=metadata,
+                state=original.state,
+                image=original.image,
                 width=original.width,
                 height=original.height,
                 activity=original.activity,
                 timestamp=original.timestamp,
-                metadata={"path": str(path)},
+                annotated_image=handle.read(),
+                xml_content=original.xml_content,
             )

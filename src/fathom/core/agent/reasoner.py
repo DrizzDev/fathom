@@ -4,7 +4,18 @@ from difflib import SequenceMatcher
 from logging import getLogger
 from typing import List, Optional, Set
 
-from fathom.constants import ActionType
+from fathom.constants import ACTION_EXECUTED_TYPES, NEXT_PHASE_ACTION_TYPES, ActionType
+from fathom.constants.reasoning import (
+    ACTION_MIN_CONFIDENCE,
+    ACTION_MIN_CONFIDENCE_AFTER_FAILURE,
+    ACTION_NEXT_PHASE_CONFIDENCE,
+    COMPLETION_KEYWORDS,
+    NEXT_PHASE_KEYWORDS,
+    OPENER_GOAL_WORDS,
+    RATIONALE_CONTEXT_RELEVANCE_THRESHOLD,
+    RATIONALE_KEYWORD_MATCH_THRESHOLD,
+    RATIONALE_MIN_SIMILARITY_FLOOR,
+)
 from fathom.schemas.actions import Action
 from fathom.schemas.reasoning import CompletionSignal, SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult
@@ -14,10 +25,13 @@ logger = getLogger(name=__name__)
 
 class Reasoner:
     """
-    High-speed intent reasoning engine.
+    High-speed intent reasoning engine that derives completion signals from LLM output.
     """
 
     def __init__(self, intent: str) -> None:
+        """
+        Initialize with the full intent string used for semantic alignment checks.
+        """
         self.__intent = intent.lower()
 
     def analyze_completion(
@@ -38,7 +52,7 @@ class Reasoner:
             Completion signal with evidence.
         """
 
-        evidence_list = []
+        evidence_list: List[str] = []
 
         # Determine what we're checking completion for
         target_goal = (current_sub_goal or self.__intent).lower()
@@ -65,10 +79,10 @@ class Reasoner:
         # Quick ratio check - O(N) but very fast for short strings
         similarity = SequenceMatcher(None, target_goal, context).ratio()
 
-        if similarity > 0.6:  # Threshold for "relevant context"
+        if similarity > RATIONALE_CONTEXT_RELEVANCE_THRESHOLD:
             evidence_list.append(f"Context alignment score: {similarity:.2f}")
 
-        keyword_match = similarity >= 0.72
+        keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
         action_indicates_complete = analysis.action.action_type == ActionType.COMPLETE
 
         # 4. Additional Signal for Sub-Goals: Action Execution on Non-Opening Tasks
@@ -77,16 +91,8 @@ class Reasoner:
         action_suggests_next_phase = False
         if (
             current_sub_goal
-            and analysis.action.action_type
-            in {
-                ActionType.TAP,
-                ActionType.TYPE,
-                ActionType.SWIPE,
-                ActionType.WAIT,
-            }
-            and any(
-                word in target_goal for word in ["open", "launch", "navigate", "go to", "start"]
-            )
+            and analysis.action.action_type in NEXT_PHASE_ACTION_TYPES
+            and any(word in target_goal for word in OPENER_GOAL_WORDS)
         ):
             # LLM is actively performing actions. If the current sub-goal is an opener
             # (contains "open", "launch", "navigate to", "go to"), then performing
@@ -94,31 +100,7 @@ class Reasoner:
             # Check if reasoning suggests we're at a next phase
             reasoning_lower = analysis.reasoning.lower()
             # More flexible keyword matching - check for partial matches
-            next_phase_keywords = [
-                "login",
-                "sign",
-                "click",
-                "select",
-                "check",
-                "scroll",
-                "swipe",
-                "fill",
-                "enter",
-                "tap",
-                "type",
-                "verify",
-                "confirm",
-                "accept",
-                "dismiss",
-                "close",
-                "navigate",
-                "go",
-                "set",
-                "choose",
-                "pick",
-            ]
-            # Check if reasoning contains any of these keywords (including as substrings)
-            if any(keyword in reasoning_lower for keyword in next_phase_keywords):
+            if any(keyword in reasoning_lower for keyword in NEXT_PHASE_KEYWORDS):
                 evidence_list.append(
                     f"LLM performing next-phase action ({analysis.action.action_type.value})"
                 )
@@ -133,28 +115,36 @@ class Reasoner:
         )
 
         llm_confidence = 0.0
+
         if analysis.is_goal_complete:
             llm_confidence = max(llm_confidence, analysis.action.confidence)
+
         if action_indicates_complete:
             llm_confidence = max(llm_confidence, analysis.action.confidence)
+
         if keyword_match:
             llm_confidence = max(llm_confidence, similarity)
+
         if action_suggests_next_phase:
-            llm_confidence = max(llm_confidence, 0.85)  # High confidence for phase transitions
+            llm_confidence = max(llm_confidence, ACTION_NEXT_PHASE_CONFIDENCE)
 
         logger.debug(
             f"[Reasoner] {goal_type.capitalize()} completion: {is_complete} "
             f"(evidence: {'; '.join(evidence_list) if evidence_list else 'none'})"
         )
 
-        return CompletionSignal(
-            success_indicator=is_complete,
-            evidence="; ".join(evidence_list)
+        evidence = (
+            "; ".join(evidence_list)
             if evidence_list
-            else f"No {goal_type} completion signals detected",
-            expected_screen=analysis.is_goal_complete,
+            else f"No {goal_type} completion signals detected"
+        )
+
+        return CompletionSignal(
+            evidence=evidence,
             keyword_match=keyword_match,
             llm_confidence=llm_confidence,
+            success_indicator=is_complete,
+            expected_screen=analysis.is_goal_complete,
         )
 
     def analyze_subgoal_completion(
@@ -174,7 +164,7 @@ class Reasoner:
         Returns:
             SubGoalCompletionSignal with all verification flags
         """
-        evidence_list = []
+        evidence_list: List[str] = []
         target_goal = sub_goal_description.lower()
 
         logger.debug(
@@ -193,46 +183,36 @@ class Reasoner:
         if llm_signaled:
             evidence_list.append("LLM signaled sub-goal completion via tool output")
 
-        # Rationale verification signal (restored for diagnostics/telemetry).
+        # Signal 2: Rationale verification signal (restored for diagnostics/telemetry).
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
         similarity = SequenceMatcher(None, target_goal, context).ratio()
-        keyword_match = similarity >= 0.72
+        keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
 
-        completion_keywords = [
-            "complete",
-            "completed",
-            "finished",
-            "achieved",
-            "done",
-            "accomplished",
-            "successful",
-            "verified",
-            "confirmed",
-            "satisfied",
-        ]
-        rationale_verified = keyword_match or any(
-            keyword in analysis.reasoning.lower() for keyword in completion_keywords
+        reasoning_lower = analysis.reasoning.lower()
+        keywords_found = any(kw in reasoning_lower for kw in COMPLETION_KEYWORDS)
+
+        # Require a minimum semantic similarity floor even when keywords are present.
+        # Prevents near-zero similarity accidental keyword hits (e.g. similarity=0.04)
+        # from passing rationale verification on term overlap alone.
+        rationale_verified = keyword_match or (
+            similarity >= RATIONALE_MIN_SIMILARITY_FLOOR and keywords_found
         )
         if rationale_verified:
             evidence_list.append(
-                f"Rationale verified (similarity={similarity:.2f}, keywords={'found' if any(kw in analysis.reasoning.lower() for kw in completion_keywords) else 'none'})"
+                f"Rationale verified (similarity={similarity:.2f}, keywords={'found' if keywords_found else 'none'})"
             )
 
         # Signal 3: Action Execution (did we execute an action?)
-        action_executed = analysis.action.action_type in {
-            ActionType.TAP,
-            ActionType.TYPE,
-            ActionType.SWIPE,
-            ActionType.SCROLL,
-            ActionType.COMPLETE,
-        }
+        action_executed = analysis.action.action_type in ACTION_EXECUTED_TYPES
         if action_executed:
             evidence_list.append(f"Action executed: {analysis.action.action_type.value}")
 
         # Calculate LLM confidence
         llm_confidence = 0.0
+
         if analysis.is_sub_goal_complete or analysis.is_goal_complete:
             llm_confidence = max(llm_confidence, analysis.action.confidence)
+
         if keyword_match:
             llm_confidence = max(llm_confidence, similarity)
 
@@ -242,16 +222,18 @@ class Reasoner:
             f"confidence={llm_confidence:.2f}"
         )
 
+        evidence = (
+            "; ".join(evidence_list) if evidence_list else "No sub-goal completion signals detected"
+        )
+
         return SubGoalCompletionSignal(
-            evidence="; ".join(evidence_list)
-            if evidence_list
-            else "No sub-goal completion signals detected",
-            llm_confidence=llm_confidence,
-            keyword_match=keyword_match,
-            action_executed=action_executed,
-            llm_signaled=llm_signaled,
-            rationale_verified=rationale_verified,
+            evidence=evidence,
             trace_verified=False,  # Will be set by state manager
+            llm_signaled=llm_signaled,
+            keyword_match=keyword_match,
+            llm_confidence=llm_confidence,
+            action_executed=action_executed,
+            rationale_verified=rationale_verified,
         )
 
     def should_accept_action(
@@ -261,13 +243,13 @@ class Reasoner:
         has_failed_before: bool = False,
     ) -> bool:
         """
-        Fast safety check.
+        Fast safety check. Returns True if the action meets minimum confidence requirements.
         """
 
-        if action.confidence < 0.4:
+        if action.confidence < ACTION_MIN_CONFIDENCE:
             return False
 
-        return not (has_failed_before and action.confidence < 0.8)
+        return not (has_failed_before and action.confidence < ACTION_MIN_CONFIDENCE_AFTER_FAILURE)
 
     def select_best_action(
         self,
@@ -277,14 +259,17 @@ class Reasoner:
         failed_actions: Set[str],
     ) -> Action:
         """
-        Fast selection logic.
+        Fast selection logic. Returns the highest-confidence non-failed action from candidates.
         """
 
         if primary.to_description() not in failed_actions:
             return primary
 
         for alternative in alternatives:
-            if alternative.to_description() not in failed_actions and alternative.confidence > 0.5:
+            if (
+                alternative.to_description() not in failed_actions
+                and alternative.confidence > ACTION_MIN_CONFIDENCE
+            ):
                 return alternative
 
         return primary

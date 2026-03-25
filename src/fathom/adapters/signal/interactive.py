@@ -73,6 +73,13 @@ class InteractiveSignal(SignalPort):
         # UI Rendering
         self.__render_instructions()
 
+    def supports_interruption(self) -> bool:
+        """
+        Return interruption support for this adapter.
+        """
+
+        return True
+
     @classmethod
     def __ensure_listener(cls) -> None:
         """
@@ -86,8 +93,8 @@ class InteractiveSignal(SignalPort):
             loop = asyncio.get_running_loop()
             loop.add_reader(sys.stdin.fileno(), cls.__on_tty_readiness)
             cls.__listener_active = True
-        except (RuntimeError, ValueError):
-            pass
+        except (RuntimeError, ValueError) as exception:
+            logger.debug("Interactive stdin reader unavailable: %s", exception)
 
     @classmethod
     def __on_tty_readiness(cls) -> None:
@@ -103,8 +110,8 @@ class InteractiveSignal(SignalPort):
                 loop = asyncio.get_running_loop()
                 loop.remove_reader(sys.stdin.fileno())
                 cls.__listener_active = False
-            except Exception:  # nosec
-                pass
+            except Exception as exception:  # nosec
+                logger.debug("Failed to remove stdin reader: %s", exception)
             return
 
         if line is not None:
@@ -294,5 +301,4 @@ class InteractiveSignal(SignalPort):
         Cleanup singleton listener if this was the last instance (Optional).
         """
 
-        # In a CLI, stdin listener typically stays for the process lifetime.
-        pass
+        return None

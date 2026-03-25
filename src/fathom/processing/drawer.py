@@ -52,9 +52,6 @@ class BoundsGenerator:
         )
 
         parser = PlatformParserFactory.get_parser(root=root)
-        if not parser:
-            logger.error(f"No parser found for XML root tag: {root.tag}")
-            return [], {}
 
         logger.info(f"Using parser: {type(parser).__name__}")
 
@@ -96,7 +93,7 @@ class BoundsGenerator:
         logger.info(f"Final element count after all filtering: {len(filtered)}")
 
         for index, element in enumerate(iterable=filtered, start=1):
-            # Keep original logical bounds for label map (used for tapping)
+            # Keep original logical bounds for platform-specific metadata.
             logic = element.bounds
 
             # Create scaled bounds for drawing on high-res screenshot
@@ -125,8 +122,11 @@ class BoundsGenerator:
 
             labeled.append(element)
 
-            # Use logical coordinates in label map for all touch actions
-            serialization = f"[{int(logic.x1)},{int(logic.y1)}][{int(logic.x2)},{int(logic.y2)}]"
+            # Use rendered screenshot coordinates in the label map for action execution.
+            serialization = (
+                f"[{int(round(scaled.x1))},{int(round(scaled.y1))}]"
+                f"[{int(round(scaled.x2))},{int(round(scaled.y2))}]"
+            )
 
             mapping[element.label] = {
                 **{
@@ -135,8 +135,14 @@ class BoundsGenerator:
                     if key != "logical_bounds"
                 },
                 "bounds": serialization,
-                "center_x": int((logic.x1 + logic.x2) / 2),
-                "center_y": int((logic.y1 + logic.y2) / 2),
+                "center_x": int(round((scaled.x1 + scaled.x2) / 2.0)),
+                "center_y": int(round((scaled.y1 + scaled.y2) / 2.0)),
+                "logical_bounds": {
+                    "x1": int(logic.x1),
+                    "y1": int(logic.y1),
+                    "x2": int(logic.x2),
+                    "y2": int(logic.y2),
+                },
             }
 
         mapping["__scale_factor__"] = float(factor)

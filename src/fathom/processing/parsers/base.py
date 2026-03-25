@@ -1,7 +1,12 @@
-import xml.etree.ElementTree as ET  # nosec
-from abc import ABC, abstractmethod
-from typing import Any, List
+from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, List, Optional
+
+if TYPE_CHECKING:
+    import xml.etree.ElementTree as ET  # nosec
+
+from fathom.schemas.hierarchy import NormalizedHierarchyNodeSignature
 from fathom.schemas.ui import LabeledElement
 
 
@@ -37,7 +42,11 @@ class PlatformParser(ABC):
 
     @abstractmethod
     def filter_and_deduplicate(
-        self, elements: List[LabeledElement], iou_threshold: float = 0.4, action: Any = None
+        self,
+        elements: List[LabeledElement],
+        *,
+        iou_threshold: float = 0.4,
+        action: Optional[Any] = None,
     ) -> List[LabeledElement]:
         """
         Filter and deduplicate elements.
@@ -49,6 +58,22 @@ class PlatformParser(ABC):
     def filter_by_action(self, elements: List[LabeledElement], action: Any) -> List[LabeledElement]:
         """
         Filter elements relevant to a specific action.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def build_signature_metadata(self, *, node: ET.Element) -> NormalizedHierarchyNodeSignature:
+        """
+        Normalize one hierarchy node into structural-signature metadata.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def should_ignore_signature_node(self, *, metadata: NormalizedHierarchyNodeSignature) -> bool:
+        """
+        Return whether a normalized node should be ignored in structural signatures.
         """
 
         raise NotImplementedError

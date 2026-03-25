@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import httpx
-
 from fathom.schemas.results import ToolErrorFeedback
 
 
@@ -87,13 +85,9 @@ class DeviceError(FathomError):
         """
         Check if an error is transient and should be retried.
         """
-
-        if isinstance(exception, httpx.HTTPStatusError):
-            # Fail fast on client errors (4xx) like 404. Retry on server errors (5xx)
-            return not (400 <= exception.response.status_code < 500)
-
-        # Retry on transport/network errors
-        return bool(isinstance(exception, httpx.RequestError))
+        if isinstance(exception, FathomError):
+            return exception.retryable
+        return isinstance(exception, (ConnectionError, TimeoutError))
 
 
 class VisionError(ToolError):

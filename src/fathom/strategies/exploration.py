@@ -9,6 +9,7 @@ from fathom.base.paths import SharedPathManager
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
@@ -36,6 +37,7 @@ class ExplorationStrategy:
         *,
         llm: LLMPort,
         device: DevicePort,
+        perception: PerceptionPort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
@@ -53,6 +55,7 @@ class ExplorationStrategy:
             intent=intent,
             use_xml=False,
             device=device,
+            perception=perception,
             signal=signal,
             memory=memory,
             storage=storage,

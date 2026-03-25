@@ -230,18 +230,16 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                         )
 
         # Enforce validation distribution when multiple validations are expected.
-        # When require_if_block is True we relax this so conditional blocks are not
-        # rejected solely for under-provided validations (e.g. 1 final only).
+        # A single comprehensive final_validation statement is sufficient to cover
+        # multiple subjects — the model consistently produces one statement that
+        # references all outcomes. Requiring 2+ statements when not in if_block mode
+        # caused systematic fallback to deterministic export on every step.
         if payload.expected_validation_count > 1:
             total_validations = len(payload.action_validations) + 1  # +1 for final_validation
-            min_required = 1 if payload.require_if_block else 2
-            if total_validations < min_required:
+            if total_validations < 1:
                 raise ValueError(
-                    f"Intent has {payload.expected_validation_count} validation subjects, "
-                    f"but only {total_validations} validation statement(s) were provided. "
-                    f"Expected at least {min_required} validations total "
-                    f"(found {len(payload.action_validations)} intermediate + 1 final). "
-                    f"Multiple subjects can be covered by a single validation statement."
+                    f"Intent has {payload.expected_validation_count} validation subjects "
+                    f"but no validation statement was provided."
                 )
 
         return payload

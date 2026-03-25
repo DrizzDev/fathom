@@ -104,6 +104,9 @@ class GeminiLLM(LLMPort):
 
             self.__cache = CacheService(client=self.__client, model_name=self.__configuration.model)
         except Exception as exception:
+            if not self.__configuration.api_key and not self.__configuration.credentials:
+                raise VisionError("Init failed: Missing Gemini authentication") from exception
+
             raise VisionError(f"Init failed: {exception}") from exception
 
     def __get_generation_configuration(

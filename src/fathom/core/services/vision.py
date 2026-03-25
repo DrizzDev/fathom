@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import hashlib
 import json
@@ -8,16 +7,16 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional, TypedDict
 
+from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import VisionError
 from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
-from fathom.core.services.audit import AuditService
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
-from fathom.interfaces.storage import StoragePort
+from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
@@ -26,7 +25,9 @@ logger = getLogger(__name__)
 
 
 class SubGoalContext(TypedDict):
-    """Minimal sub-goal context for vision prompts (no AgentState dependency)."""
+    """
+    Minimal sub-goal context for vision prompts (no AgentState dependency).
+    """
 
     index: int
     total: int
@@ -42,13 +43,10 @@ class VisionService:
         self,
         llm: LLMPort,
         memory: MemoryPort,
-        storage: StoragePort,
+        telemetry: TelemetryPort,
         *,
         use_cache: bool,
-        version: str = "pro",
-        session_id: str = "not_set",
-        package_name: str = "unknown",
-        auditor: Optional[AuditService] = None,
+        session_id: str = "",
     ) -> None:
         """
         Initialize vision service.
@@ -56,13 +54,10 @@ class VisionService:
 
         self.__llm = llm
         self.__memory = memory
-        self.__storage = storage
+        self.__telemetry = telemetry
 
-        self.__version = version
         self.__use_cache = use_cache
         self.__session_id = session_id
-        self.__package_name = package_name
-        self.__auditor = auditor or AuditService()
         self.__parser = ToolResponseParser()
 
         # Use the original prompt builder factory
@@ -73,17 +68,18 @@ class VisionService:
         intent: str,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        *,
+        visual_hash: str,
         screen_width: int,
         screen_height: int,
-        *,
         use_xml: bool = False,
+        is_stuck: bool = False,
+        last_action: Optional[str] = None,
         tracking_note: Optional[str] = None,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
-        is_stuck: bool = False,
-        last_action: Optional[str] = None,
-        delta_context: Optional[Dict[str, object]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
+        delta_context: Optional[Dict[str, object]] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
@@ -91,11 +87,9 @@ class VisionService:
 
         analyze_start = time.time()
 
-        # Background persistence (original logic)
-        asyncio.create_task(self.__persist(data=capture.image, activity=capture.activity))
-
         # 1. BRAIN RETRIEVAL
-        fingerprint = hashlib.sha256(capture.image).hexdigest()[:16]
+        fingerprint = self.__resolve_capture_fingerprint(capture=capture, visual_hash=visual_hash)
+        prompt_image = self.__resolve_prompt_image(capture=capture)
 
         start = time.time()
         knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
@@ -141,6 +135,15 @@ class VisionService:
         # Dynamic context from ContextManager (GCC-Inspired)
         full_context = context_manager.get_full_context()
         guidance = full_context.get("guidance")
+
+        await self.__telemetry.debug(
+            "Compiled execution context",
+            type=FathomEvent.CONTEXT_CAPTURED,
+            session_id=self.__session_id,
+            trace_count=len(full_context.get("trace", [])),
+            milestone_count=len(full_context.get("milestones", [])),
+            guidance_count=len(context_manager.get_user_guidance()),
+        )
 
         logger.debug(
             f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
@@ -210,7 +213,7 @@ class VisionService:
             manifest=manifest,
             failures=failures,
             knowledge=knowledge,
-            screen=capture.image,
+            screen=prompt_image,
             context=dynamic_context,
         )
         payload_duration = time.time() - payload_start
@@ -220,8 +223,13 @@ class VisionService:
             f"[VISION] Assembly | Manifest: {manifest_duration:.3f}s | Payload: {payload_duration:.3f}s"
         )
 
-        # Log prompt context for visibility
-        self.__auditor.log_prompt(payload=payload, instruction=instruction)
+        await self.__telemetry.debug(
+            "Built vision prompt",
+            type=FathomEvent.PROMPT_BUILT,
+            session_id=self.__session_id,
+            instruction=instruction,
+            payload=self.__sanitize_recursive(data=payload),
+        )
 
         # 4. EXECUTION WITH VALIDATION-AWARE RETRY
         max_validation_retries = 1
@@ -253,14 +261,12 @@ class VisionService:
                 analysis = self.__parser.parse(response)
                 parse_duration = time.time() - parse_start
                 break
-            except Exception as exc:
-                from fathom.core.exceptions import (
-                    ToolValidationError,  # local import to avoid cycles
-                )
+            except Exception as exception:
+                from fathom.core.exceptions import ToolValidationError
 
-                if isinstance(exc, ToolValidationError) and attempt < max_validation_retries:
-                    feedback = getattr(exc, "feedback", None)
-                    message = getattr(feedback, "message", str(exc))
+                if isinstance(exception, ToolValidationError) and attempt < max_validation_retries:
+                    feedback = getattr(exception, "feedback", None)
+                    message = getattr(feedback, "message", str(exception))
                     logger.warning(
                         "[VISION] Tool validation failed (attempt %s/%s): %s",
                         attempt + 1,
@@ -284,7 +290,7 @@ class VisionService:
                         manifest=manifest,
                         failures=failures,
                         knowledge=knowledge,
-                        screen=capture.image,
+                        screen=prompt_image,
                         context=dynamic_context,
                     )
                     continue
@@ -325,20 +331,60 @@ class VisionService:
                 activity_hash=hashlib.md5(  # nosec
                     capture.activity.encode(), usedforsecurity=False
                 ).hexdigest()[:VISUAL_HASH_LENGTH],
-                structural_hash="0" * VISUAL_HASH_LENGTH,
             ),
             description=analysis.screen_description,
         )
 
         return analysis
 
+    def __resolve_capture_fingerprint(self, *, visual_hash: str, capture: ScreenCapture) -> str:
+        """
+        Resolve the stable visual fingerprint used for memory lookup.
+        """
+
+        if visual_hash:
+            return visual_hash[:VISUAL_HASH_LENGTH]
+
+        if capture.state is not None and capture.state.visual_hash:
+            return capture.state.visual_hash[:VISUAL_HASH_LENGTH]
+
+        raise ValueError("Vision analysis requires a prepared visual_hash")
+
+    def __resolve_prompt_image(self, *, capture: ScreenCapture) -> bytes:
+        """
+        Resolve the image payload to send to the vision model.
+        """
+
+        if capture.annotated_image:
+            return capture.annotated_image
+
+        return capture.image
+
+    def __sanitize_recursive(self, data: Any) -> Any:
+        """
+        Replace binary prompt content with stable descriptors.
+        """
+
+        if isinstance(data, bytes):
+            return f"<binary:{len(data)}>"
+
+        if isinstance(data, dict):
+            return {key: self.__sanitize_recursive(data=value) for key, value in data.items()}
+
+        if isinstance(data, (list, tuple)):
+            return [self.__sanitize_recursive(item) for item in data]
+
+        return data
+
     async def check_completion(
         self,
         intent: str,
+        visual_hash: str,
         screen_width: int,
         screen_height: int,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        *,
         tracking_note: Optional[str] = None,
     ) -> bool:
         """
@@ -348,6 +394,7 @@ class VisionService:
         result = await self.analyze(
             intent=intent,
             capture=capture,
+            visual_hash=visual_hash,
             screen_width=screen_width,
             screen_height=screen_height,
             tracking_note=tracking_note,
@@ -463,21 +510,3 @@ class VisionService:
                 if definition["name"] in allowed
             ]
         }
-
-    async def __persist(self, data: bytes, activity: str) -> None:
-        """
-        Background persistence.
-        """
-
-        package = activity if activity and activity != "unknown" else self.__package_name
-
-        with contextlib.suppress(Exception):
-            await self.__storage.save(
-                data=data,
-                metadata={
-                    "type": "screenshots",
-                    "package_name": package,
-                    "activity_name": activity,
-                    "session_id": self.__session_id,
-                },
-            )

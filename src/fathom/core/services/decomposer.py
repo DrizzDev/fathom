@@ -13,6 +13,7 @@ from fathom.schemas.decomposition import DecompositionSchema
 from fathom.schemas.subgoal import SubGoal, SubGoalStatus
 
 logger = logging.getLogger(__name__)
+MINIMUM_DECOMPOSITION_CONFIDENCE = 0.6
 
 
 class IntentDecomposer:
@@ -77,25 +78,22 @@ class IntentDecomposer:
                 system_instruction=self.__prompt_builder.build_system_instruction(),
             )
             response = result.content
-        except Exception as e:
-            logger.warning(f"[Decomposer] LLM decomposition failed: {e}, using fallback")
+        except Exception as exception:
+            logger.warning(f"[Decomposer] LLM decomposition failed: {exception}, using fallback")
             return self.__fallback_decomposition(intent)
 
         # Parse response with strict Schema validation
         try:
             parsed = json.loads(response)
             schema = DecompositionSchema(**parsed)
-        except (json.JSONDecodeError, ValidationError) as e:
+        except (json.JSONDecodeError, ValidationError) as exception:
             logger.warning(
-                f"[Decomposer] Failed to parse response (schema validation failed: {e}), using fallback"
+                f"[Decomposer] Failed to parse response (schema validation failed: {exception}), using fallback"
             )
             return self.__fallback_decomposition(intent)
 
         # Check confidence threshold
-        if (
-            schema.confidence is not None
-            and schema.confidence < self.__llm_configuration.confidence_threshold
-        ):
+        if schema.confidence is not None and schema.confidence < MINIMUM_DECOMPOSITION_CONFIDENCE:
             logger.warning(f"[Decomposer] Low confidence {schema.confidence}, using fallback")
             return self.__fallback_decomposition(intent)
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import io
 import time
-import xml.etree.ElementTree as ElementTree  # nosec
 from logging import getLogger
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import List, Optional
 
 try:
     import cv2
@@ -20,10 +20,12 @@ except ImportError:
 from PIL import Image
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
-from fathom.interfaces.device import DevicePort
+from fathom.constants.screen import INTERACTION_TEXT_PREVIEW_LENGTH, ZERO_HASH
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.storage import StoragePort
-from fathom.interfaces.telemetry import TelemetryPort
+from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.ui import LabeledElement
 
 logger = getLogger(__name__)
 
@@ -35,17 +37,19 @@ class PerceptionService:
 
     def __init__(
         self,
-        device: DevicePort,
         storage: StoragePort,
-        telemetry: TelemetryPort,
+        perception: PerceptionPort,
+        hierarchy_signature_builder: HierarchySignatureBuilder,
+        *,
         session_id: Optional[str] = None,
     ) -> None:
-        self.__device = device
         self.__storage = storage
-        self.__telemetry = telemetry
+        self.__perception = perception
+        self.__hierarchy_signature_builder = hierarchy_signature_builder
+
         self.__session_id = session_id
 
-    async def perceive(self, session_id: Optional[str] = None) -> ScreenCapture:
+    async def perceive(self, *, session_id: Optional[str] = None) -> ScreenCapture:
         """
         Capture current screen state via DevicePort.
 
@@ -54,38 +58,29 @@ class PerceptionService:
         """
 
         effective_session_id = session_id or self.__session_id
+
         if not effective_session_id:
             raise ValueError("session_id must be provided either in __init__ or perceive()")
 
-        screenshot_bytes = await self.__device.capture_screen()
-        width, height = await self.__device.get_dimensions()
-
-        # Get current activity
-        try:
-            activity = await self.__device.get_current_package()
-        except Exception as exception:
-            await self.__telemetry.warning("Failed to get current package", error=str(exception))
-            activity = "unknown"
+        capture = await self.__perception.capture()
 
         # Store screenshot artifact with metadata for structured storage
         storage_id = await self.__persist_capture(
-            data=screenshot_bytes,
-            package_name=activity,
-            activity_name=activity,
+            data=capture.image,
+            package_name=capture.activity,
+            activity_name=capture.activity,
             session_id=effective_session_id,
         )
+        metadata = dict(capture.metadata)
+        metadata["storage_id"] = storage_id
 
-        return ScreenCapture(
-            width=width,
-            height=height,
-            activity=activity,
-            image=screenshot_bytes,
-            timestamp=int(time.time() * 1000),
-            metadata={"storage_id": storage_id},
-        )
+        if self.__is_local_artifact_path(storage_id=storage_id):
+            metadata["path"] = storage_id
+
+        return capture.model_copy(update={"metadata": metadata})
 
     async def __persist_capture(
-        self, data: bytes, package_name: str, activity_name: str, session_id: str
+        self, *, data: bytes, session_id: str, package_name: str, activity_name: str
     ) -> str:
         """
         Persists screenshot to storage.
@@ -96,13 +91,20 @@ class PerceptionService:
             metadata={
                 "type": "screenshot",
                 "timestamp": time.time(),
+                "session_id": session_id,
                 "package_name": package_name,
                 "activity_name": activity_name,
-                "session_id": session_id,
             },
         )
 
-    def compute_visual_hash(self, capture: ScreenCapture) -> str:
+    def __is_local_artifact_path(self, *, storage_id: str) -> bool:
+        """
+        Determine whether the storage identifier points to a local filesystem artifact.
+        """
+
+        return Path(storage_id).is_absolute() and Path(storage_id).exists()
+
+    def compute_visual_hash(self, *, capture: ScreenCapture) -> str:
         """
         Compute a robust Perceptual Hash (pHash) for the screen capture.
         Resilient to minor noise, status bar changes, and compression artifacts.
@@ -118,7 +120,7 @@ class PerceptionService:
             logger.warning(f"Could not compute pHash, falling back to SHA256: {exception}")
             return hashlib.sha256(capture.image).hexdigest()[:VISUAL_HASH_LENGTH]
 
-    def __compute_phash_opencv(self, image_data: bytes) -> str:
+    def __compute_phash_opencv(self, *, image_data: bytes) -> str:
         """
         Computes pHash using OpenCV and NumPy (Primary).
         """
@@ -126,20 +128,20 @@ class PerceptionService:
         if not OPENCV_AVAILABLE or cv2 is None or numpy is None:
             raise RuntimeError("OpenCV not available")
 
-        logger.info("Computing pHash using OpenCV")
+        logger.debug("Computing pHash using OpenCV")
 
-        image_array: Any = numpy.frombuffer(image_data, numpy.uint8)
-        decoded_image: Any = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
+        image_array = numpy.frombuffer(image_data, numpy.uint8)
+        decoded_image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
 
         if decoded_image is None:
             raise ValueError("Could not decode image with OpenCV")
 
-        resized_image: Any = cv2.resize(decoded_image, (32, 32), interpolation=cv2.INTER_AREA)
-        float_image: Any = numpy.float32(resized_image)
-        dct_transform: Any = cv2.dct(float_image)
+        resized_image = cv2.resize(decoded_image, (32, 32), interpolation=cv2.INTER_AREA)
+        float_image = numpy.float32(resized_image)
+        dct_transform = cv2.dct(float_image)
 
-        low_frequencies: Any = dct_transform[0:8, 0:8]
-        average_frequency: Any = (numpy.sum(low_frequencies) - low_frequencies[0, 0]) / 63.0
+        low_frequencies = dct_transform[0:8, 0:8]
+        average_frequency = (numpy.sum(low_frequencies) - low_frequencies[0, 0]) / 63.0
 
         hash_integer = 0
         flattened_frequencies = (low_frequencies > average_frequency).flatten()
@@ -150,29 +152,34 @@ class PerceptionService:
 
         return f"{hash_integer:016x}"
 
-    def __compute_phash_pillow(self, image_data: bytes) -> str:
+    def __compute_phash_pillow(self, *, image_data: bytes) -> str:
         """
-        Computes dHash using PIL (Fallback).
+        Compute a lightweight fallback perceptual hash using Pillow.
         """
 
-        logger.info("Computing pHash using Pillow")
+        logger.debug("Computing fallback perceptual hash using Pillow")
 
         with Image.open(io.BytesIO(image_data)) as pillow_image:
             grayscale_image = pillow_image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
             # getdata() returns values that need to be safely converted to int
             # Values can be int, float, tuple, or None - handle each case
-            pixel_data: list[int] = []
-            for p in grayscale_image.getdata():
-                if isinstance(p, int):
-                    pixel_data.append(p)
-                elif isinstance(p, float):
-                    pixel_data.append(int(p))
-                elif isinstance(p, (tuple, list)) and len(p) > 0:
-                    pixel_data.append(int(p[0]))
+            pixel_data: List[int] = []
+
+            for pixel_value in grayscale_image.getdata():
+                if isinstance(pixel_value, int):
+                    pixel_data.append(pixel_value)
+
+                elif isinstance(pixel_value, float):
+                    pixel_data.append(int(pixel_value))
+
+                elif isinstance(pixel_value, (tuple, list)) and len(pixel_value) > 0:
+                    pixel_data.append(int(pixel_value[0]))
+
                 else:
                     pixel_data.append(0)  # Fallback for None or unknown types
 
             hash_integer = 0
+
             for row_index in range(8):
                 for col_index in range(8):
                     pixel_index = row_index * 9 + col_index
@@ -181,82 +188,39 @@ class PerceptionService:
 
             return f"{hash_integer:016x}"
 
-    def __get_tree_signature(self, node: ElementTree.Element, depth: int = 0) -> str:
+    def compute_xml_hash(self, *, capture: ScreenCapture) -> str:
         """
-        Recursive helper to generate a structural signature for an XML node.
-        Ignores dynamic system elements.
-        """
-
-        resource_id = str(node.get("resource-id", "")).split("/")[-1]
-
-        if any(
-            ignored_element in resource_id.lower()
-            for ignored_element in ["systemui", "statusbar", "navigationbar"]
-        ):
-            return ""
-
-        class_name = str(node.get("class", node.tag)).split(".")[-1]
-
-        # Content-awareness: Include text and description to catch state changes
-        # Truncation prevents signature explosion while maintaining uniqueness
-        element_text = str(node.get("text", "")).strip()[:32]
-        element_desc = str(node.get("content-desc", "")).strip()[:32]
-
-        signature = f"{depth}:{class_name}#{resource_id}[{element_text}|{element_desc}]"
-
-        child_signatures = []
-
-        for child_node in node:
-            if child_signature := self.__get_tree_signature(child_node, depth + 1):
-                child_signatures.append(child_signature)
-
-        if child_signatures:
-            return f"({signature}[" + ",".join(child_signatures) + "])"
-
-        return signature
-
-    def compute_xml_hash(self, capture: ScreenCapture) -> str:
-        """
-        Compute a robust structural hash of the XML skeleton.
-        Builds a tree signature using only Class and Resource-ID.
+        Compute a structural hash from the normalized XML hierarchy.
         """
 
         xml_content = capture.xml_content
 
         if not xml_content:
-            return "0" * VISUAL_HASH_LENGTH
+            return ZERO_HASH
 
         try:
-            start_index = xml_content.find("<")
-            end_index = xml_content.rfind(">")
-
-            if start_index != -1 and end_index != -1:
-                xml_content = xml_content[start_index : end_index + 1]
-
-            root_node = ElementTree.fromstring(xml_content)  # nosec
-            tree_signature = self.__get_tree_signature(root_node)
-
-            return hashlib.md5(tree_signature.encode("utf-8"), usedforsecurity=False).hexdigest()[
-                :VISUAL_HASH_LENGTH
-            ]
-
+            return self.__hierarchy_signature_builder.compute_hash(xml_content=xml_content)
         except Exception as exception:
             logger.warning(f"Could not compute xml_hash: {exception}")
-            return "0" * VISUAL_HASH_LENGTH
+            return ZERO_HASH
 
-    def compute_interaction_hash(self, elements: Optional[Dict[str, Any]] = None) -> str:
+    def compute_interaction_hash(
+        self,
+        *,
+        elements: Optional[List[LabeledElement]] = None,
+    ) -> str:
         """
         Compute a stable hash of interactive elements based strictly on their semantic identity (Class, ID, Text, Desc).
         """
 
         if not elements:
-            return "0" * VISUAL_HASH_LENGTH
+            return ZERO_HASH
 
         try:
             stable_identities = self.__extract_element_identities(elements=elements)
 
             if not stable_identities:
-                return "0" * VISUAL_HASH_LENGTH
+                return ZERO_HASH
 
             # Sort to ensure order independence
             stable_identities.sort()
@@ -268,33 +232,43 @@ class PerceptionService:
 
         except Exception as exception:
             logger.warning(f"Could not compute interaction_hash: {exception}")
-            return "0" * VISUAL_HASH_LENGTH
+            return ZERO_HASH
 
-    def __extract_element_identities(self, elements: Dict[str, Any]) -> list[str]:
+    def __extract_element_identities(self, elements: List[LabeledElement]) -> List[str]:
         """
         Extracts semantic identities from a collection of UI elements.
         """
 
-        stable_identities = []
-        interactive_elements = elements.values() if isinstance(elements, dict) else elements
+        stable_identities: List[str] = []
 
-        for element_info in interactive_elements:
-            attributes = (
-                element_info.get("attributes", {})
-                if isinstance(element_info, dict)
-                else getattr(element_info, "attributes", {})
-            )
-
+        for element_info in elements:
+            attributes = element_info.attributes
             if not attributes:
                 continue
 
-            class_name = str(attributes.get("class", "Unknown")).split(".")[-1]
-            resource_id = str(attributes.get("resource-id", "")).split("/")[-1]
+            raw_class = str(attributes.get("class", "")).strip()
+            raw_type = str(attributes.get("type", "")).strip()
 
-            element_text = str(attributes.get("text", "")).strip()[:30]
-            element_description = str(attributes.get("content-desc", "")).strip()[:30]
+            if raw_class:
+                class_name = raw_class.split(".")[-1]
+                identifier = str(attributes.get("resource-id", "")).split("/")[-1]
+                element_text = str(attributes.get("text", "")).strip()[
+                    :INTERACTION_TEXT_PREVIEW_LENGTH
+                ]
+                element_description = str(attributes.get("content-desc", "")).strip()[
+                    :INTERACTION_TEXT_PREVIEW_LENGTH
+                ]
+            else:
+                class_name = raw_type.replace("XCUIElementType", "") or raw_type or "Unknown"
+                identifier = str(attributes.get("name", "")).strip()[
+                    :INTERACTION_TEXT_PREVIEW_LENGTH
+                ]
+                label = str(attributes.get("label", "")).strip()[:INTERACTION_TEXT_PREVIEW_LENGTH]
+                value = str(attributes.get("value", "")).strip()[:INTERACTION_TEXT_PREVIEW_LENGTH]
+                element_text = label if label else identifier
+                element_description = value
 
-            semantic_identity = f"{class_name}|{resource_id}|{element_text}|{element_description}"
+            semantic_identity = f"{class_name}|{identifier}|{element_text}|{element_description}"
             stable_identities.append(semantic_identity)
 
         return stable_identities

@@ -1,8 +1,10 @@
 import xml.etree.ElementTree as ET  # nosec
-from typing import List, Optional, Type
+from typing import List, Type
 
+from fathom.core.exceptions import ConfigurationError
 from fathom.processing.parsers.android import AndroidParser
 from fathom.processing.parsers.base import PlatformParser
+from fathom.processing.parsers.ios import IOSParser
 
 
 class PlatformParserFactory:
@@ -10,10 +12,10 @@ class PlatformParserFactory:
     Factory class for creating platform parsers.
     """
 
-    __parsers: List[Type[PlatformParser]] = [AndroidParser]
+    __parsers: List[Type[PlatformParser]] = [IOSParser, AndroidParser]
 
     @classmethod
-    def get_parser(cls, root: ET.Element) -> Optional[PlatformParser]:
+    def get_parser(cls, root: ET.Element) -> PlatformParser:
         """
         Get a parser for the platform.
         """
@@ -22,4 +24,6 @@ class PlatformParserFactory:
             if parser.is_platform_match(root):
                 return parser()
 
-        return AndroidParser()
+        raise ConfigurationError(
+            f"Unable to resolve platform parser for XML root tag '{root.tag}'."
+        )

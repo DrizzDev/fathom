@@ -6,17 +6,20 @@ from typing import Optional
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import DEFAULT_MAX_RETRIES, DEFAULT_STABILITY_WAIT, SignalType
+from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.perception import PerceptionService
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.actions import Action
-from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
 
 
@@ -34,6 +37,7 @@ class ExecutionEngine:
         self,
         llm: LLMPort,
         device: DevicePort,
+        perception: PerceptionPort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
@@ -55,7 +59,11 @@ class ExecutionEngine:
         self.__stability_wait = stability_wait
 
         # Initialize Domain Services
-        self.__perception = PerceptionService(device=device, storage=storage, telemetry=telemetry)
+        self.__perception_service = PerceptionService(
+            storage=storage,
+            perception=perception,
+            hierarchy_signature_builder=HierarchySignatureBuilder(),
+        )
         self.__action_executor = ActionExecutor(
             device=device,
             telemetry=telemetry,
@@ -83,9 +91,9 @@ class ExecutionEngine:
 
             # Phase 2: Perceive (capture pre-action state)
             if pre_capture is None:
-                pre_capture = await self.__perception.perceive(session_id=session_id)
+                pre_capture = await self.__perception_service.perceive(session_id=session_id)
 
-            pre_hash = self.__perception.compute_visual_hash(capture=pre_capture)
+            pre_hash = self.__perception_service.compute_visual_hash(capture=pre_capture)
 
             # Phase 3: Reason (Implicit)
             if injected_context:
@@ -105,8 +113,8 @@ class ExecutionEngine:
 
             # Wait for screen stability
             await asyncio.sleep(delay=self.__stability_wait)
-            post_capture = await self.__perception.perceive(session_id=session_id)
-            post_hash = self.__perception.compute_visual_hash(capture=post_capture)
+            post_capture = await self.__perception_service.perceive(session_id=session_id)
+            post_hash = self.__perception_service.compute_visual_hash(capture=post_capture)
 
             # Phase 5: Learn
             await self.__learn(
@@ -117,7 +125,13 @@ class ExecutionEngine:
 
             # Phase 6: Checkpoint
             duration = int((time.time() - start_time) * 1000)
-            screen_changed = pre_hash != post_hash
+            screen_changed = (
+                ScreenState.hamming_distance(
+                    left_hash=pre_hash,
+                    right_hash=post_hash,
+                )
+                > ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
+            )
 
             step_result = StepResult(
                 step=step,
@@ -136,9 +150,7 @@ class ExecutionEngine:
         except (ToolError, PortError) as exception:
             duration = int((time.time() - start_time) * 1000)
             await self.__telemetry.error(
-                "Step execution failed",
-                step_number=step.step_number,
-                error=str(exception),
+                "Step execution failed", error=str(exception), step_number=step.step_number
             )
 
             return StepResult(
@@ -154,8 +166,8 @@ class ExecutionEngine:
             duration = int((time.time() - start_time) * 1000)
             await self.__telemetry.error(
                 "Unexpected error in step execution",
-                step_number=step.step_number,
                 error=str(exception),
+                step_number=step.step_number,
             )
             raise ExecutionError(f"Step {step.step_number} failed unexpectedly") from exception
 

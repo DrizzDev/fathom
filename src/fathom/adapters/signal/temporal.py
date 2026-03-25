@@ -54,6 +54,13 @@ class TemporalSignalAdapter(SignalPort):
 
         return self.__workflow_id
 
+    def supports_interruption(self) -> bool:
+        """
+        Return interruption support for this adapter.
+        """
+
+        return True
+
     async def __get_workflow_handle(self) -> Any:
         """
         Get or create workflow handle for querying state using an isolated client.
