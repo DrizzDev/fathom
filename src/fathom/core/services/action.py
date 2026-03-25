@@ -168,7 +168,7 @@ class ActionExecutor:
             elif action.action_type == ActionType.TYPE:
                 device_result, coords = await self.__execute_type(action, converter, width, height)
 
-            elif action.action_type.value.startswith(ActionType.SWIPE.lower()):
+            elif action.action_type.value.startswith(ActionType.SWIPE.value):
                 device_result, coords = await self.__execute_swipe(action, converter, width, height)
 
             elif action.action_type == ActionType.SCROLL:
@@ -313,7 +313,9 @@ class ActionExecutor:
                 x2, y2 = cx, cy - offset
 
         coords = (x1, y1, x2, y2)
-        result = await self.__device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
+        result = await self.__device.swipe(
+            x1=x1, y1=y1, x2=x2, y2=y2, duration=DEFAULT_SWIPE_DURATION
+        )
         return result, coords
 
     async def __execute_scroll(

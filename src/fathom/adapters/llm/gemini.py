@@ -28,7 +28,7 @@ class GeminiLLM(LLMPort):
         self,
         *,
         api_key: Optional[str] = None,
-        model: str = "gemini-3.1-flash-lite-preview",
+        model: str = "gemini-3.1-flash-preview",
         configuration: Optional[LLMConfiguration] = None,
     ) -> None:
         """
@@ -124,6 +124,7 @@ class GeminiLLM(LLMPort):
         configured_resolution = str(self.__configuration.media_resolution).lower()
 
         thinking_level_map = {
+            "minimal": types.ThinkingLevel.MINIMAL,
             "low": types.ThinkingLevel.LOW,
             "medium": types.ThinkingLevel.MEDIUM,
             "high": types.ThinkingLevel.HIGH,
@@ -203,7 +204,12 @@ class GeminiLLM(LLMPort):
                 parts.append(types.Part.from_text(text=item))
 
             else:
-                parts.append(item)
+                # Dict[str, str] prompt parts — convert to SDK Part
+                text = item.get("text", "")
+                if text:
+                    parts.append(types.Part.from_text(text=text))
+                else:
+                    parts.append(types.Part(inline_data=item))
 
         max_retries = self.__configuration.max_retries
         active_cache_name = cache_name

@@ -64,6 +64,7 @@ class VisionService:
         self.__package_name = package_name
         self.__auditor = auditor or AuditService()
         self.__parser = ToolResponseParser()
+        self.__background_tasks: set[asyncio.Task[Any]] = set()
 
         # Use the original prompt builder factory
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
@@ -91,8 +92,10 @@ class VisionService:
 
         analyze_start = time.time()
 
-        # Background persistence (original logic)
-        asyncio.create_task(self.__persist(data=capture.image, activity=capture.activity))
+        # Background persistence (tracked to avoid silent exception loss)
+        task = asyncio.create_task(self.__persist(data=capture.image, activity=capture.activity))
+        self.__background_tasks.add(task)
+        task.add_done_callback(self.__background_tasks.discard)
 
         # 1. BRAIN RETRIEVAL
         fingerprint = hashlib.sha256(capture.image).hexdigest()[:16]

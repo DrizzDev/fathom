@@ -46,6 +46,7 @@ class PerceptionService:
         self.__storage = storage
         self.__telemetry = telemetry
         self.__session_id = session_id
+        self.__background_tasks: set[asyncio.Task[Any]] = set()
 
     async def perceive(self, session_id: Optional[str] = None) -> ScreenCapture:
         """
@@ -66,8 +67,8 @@ class PerceptionService:
             self.__get_safe_package(),
         )
 
-        # Persist capture in background to avoid blocking the pipeline
-        asyncio.create_task(
+        # Persist capture in background (tracked to avoid silent exception loss)
+        task = asyncio.create_task(
             self.__persist_capture(
                 data=screenshot_bytes,
                 package_name=activity,
@@ -75,6 +76,8 @@ class PerceptionService:
                 session_id=effective_session_id,
             )
         )
+        self.__background_tasks.add(task)
+        task.add_done_callback(self.__background_tasks.discard)
 
         return ScreenCapture(
             width=width,

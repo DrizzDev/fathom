@@ -98,13 +98,14 @@ class AuditService:
             content = str(item)
             label = f"Part {index + 1}:"
 
-            # Highlight instructions if they appear in text parts
+            # Escape first, then inject Rich markup so tags aren't escaped
+            content = escape(content)
             if "USER INSTRUCTIONS" in content:
                 content = content.replace(
                     "USER INSTRUCTIONS", "[bold red]USER INSTRUCTIONS[/bold red]"
                 )
 
-            prompt_table.add_row(label, escape(content))
+            prompt_table.add_row(label, content)
 
         self.__console.print(
             Panel(
