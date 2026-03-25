@@ -23,8 +23,9 @@ DEFAULT_SCROLL_DISTANCE = 300
 BOUNDS_SWIPE_DISTANCE = 100
 
 # Timing (milliseconds)
-DEFAULT_SWIPE_DURATION = 500
+DEFAULT_SWIPE_DURATION = 350  # Swipe gesture duration; 350ms reliable on modern devices
 DEFAULT_STABILITY_WAIT = 500  # Wait after action for screen to stabilize
+CAPTURE_OVERHEAD_MS = 150.0  # Estimated screenshot I/O time subtracted from stability wait
 # Hard upper-bound for "screen stability" waits.
 # Stored as milliseconds to keep all timing constants consistent.
 MAX_STABILITY_WAIT_MS = 1500

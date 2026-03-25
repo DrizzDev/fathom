@@ -73,6 +73,9 @@ class IntentStateKey(StrEnum):
     # History
     STEP_RESULTS = "STEP_RESULTS"
 
+    # Post-action activity captured in EXECUTE, consumed in RECORD
+    POST_ACTIVITY = "POST_ACTIVITY"
+
 
 class ExplorationStateKey(StrEnum):
     """

@@ -120,16 +120,16 @@ class HierarchyService:
                     )
                 )
 
-            # 3. Parse Elements
-            elements = self.__parse_elements(
+            # 3. Parse Elements (threaded to avoid blocking event loop)
+            elements = await self.__parse_elements(
                 xml=xml, image_path=screenshot_path, action=action_type
             )
 
-            # 4. Generate Annotated Image
+            # 4. Generate Annotated Image (threaded to avoid blocking event loop)
             annotated_path = path_manager.get_annotated_path(
                 package_name=package_name, session_id=session_id, filename=f"{filename_base}.png"
             )
-            annotated_result = self.__annotate(
+            annotated_result = await self.__annotate(
                 source=screenshot_path, destination=annotated_path, elements=elements
             )
 
@@ -181,11 +181,12 @@ class HierarchyService:
         with path.open(mode) as handle:
             handle.write(data)
 
-    def __parse_elements(
+    async def __parse_elements(
         self, xml: str, image_path: Path, action: Optional[ActionType]
     ) -> List[LabeledElement]:
         """
         Identifies elements from XML.
+        Offloaded to thread pool to avoid blocking the event loop.
         """
 
         start = xml.find("<")
@@ -194,21 +195,29 @@ class HierarchyService:
         if start != -1 and end != -1:
             xml = xml[start : end + 1]
 
-        root = ET.fromstring(xml)  # nosec
-        elements, self.__label_map = BoundsGenerator.create_element(
-            root=root, image_path=str(image_path), action=action or ActionType.TAP
-        )
+        def _parse() -> Tuple[List[LabeledElement], Dict[str, Any]]:
+            root = ET.fromstring(xml)  # nosec
+            return BoundsGenerator.create_element(
+                root=root, image_path=str(image_path), action=action or ActionType.TAP
+            )
+
+        elements, label_map = await asyncio.to_thread(_parse)
+        self.__label_map = label_map
         return elements
 
-    def __annotate(
+    async def __annotate(
         self, source: Path, destination: Path, elements: List[LabeledElement]
     ) -> Optional[Path]:
         """
         Annotates image with identified elements.
+        Offloaded to thread pool to avoid blocking the event loop.
         """
 
-        path = ImageAnnotator.annotate(
-            image_path=str(source), output_path=str(destination), elements=elements
+        path = await asyncio.to_thread(
+            ImageAnnotator.annotate,
+            image_path=str(source),
+            output_path=str(destination),
+            elements=elements,
         )
         return Path(path) if path else None
 

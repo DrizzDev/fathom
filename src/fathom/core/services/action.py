@@ -50,6 +50,7 @@ class ActionExecutor:
         self.__storage = storage
         self.__path_manager = path_manager
         self.__background_tasks: set[asyncio.Task[None]] = set()
+        self.__cached_dimensions: Optional[Tuple[int, int]] = None
 
     async def act(
         self,
@@ -116,8 +117,9 @@ class ActionExecutor:
         action = step.action
         start_time = time.time()
 
-        screen_size = await self.__device.get_dimensions()
-        width, height = screen_size
+        if self.__cached_dimensions is None:
+            self.__cached_dimensions = await self.__device.get_dimensions()
+        width, height = self.__cached_dimensions
 
         configuration = self.__device.configuration or ADBConfiguration()
         converter = CoordinateConverter(

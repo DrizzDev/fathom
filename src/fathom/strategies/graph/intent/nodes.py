@@ -699,8 +699,25 @@ class IntentNodeProvider:
             else "0"
         )
 
+        # Capture post-screenshot and post-action package in parallel
+        post_activity = package_name
         try:
-            post_screenshot = await self.__context.device.capture_screen()
+            post_screenshot_result, post_package_result = await asyncio.gather(
+                self.__context.device.capture_screen(),
+                self.__context.device.get_current_package(),
+                return_exceptions=True,
+            )
+
+            if isinstance(post_package_result, BaseException):
+                logger.warning(
+                    "Execute: Failed to get post-action package: %s", post_package_result
+                )
+            else:
+                post_activity = post_package_result or package_name
+
+            if isinstance(post_screenshot_result, BaseException):
+                raise post_screenshot_result
+            post_screenshot: bytes = post_screenshot_result
 
             if post_screenshot:
                 # Construct a temporary ScreenCapture for hashing, inheriting metadata from pre_capture
@@ -708,7 +725,7 @@ class IntentNodeProvider:
                     image=post_screenshot,
                     width=capture.width,
                     height=capture.height,
-                    activity=package_name,
+                    activity=post_activity,
                     timestamp=int(time.time() * 1000),
                 )
                 post_hash = self.__context.perception.compute_visual_hash(capture=temp_capture)
@@ -757,6 +774,7 @@ class IntentNodeProvider:
             CommonStateKey.STEP_RESULT: step_result,
             CommonStateKey.EXECUTION_DURATION: duration,
             IntentStateKey.ELEMENTS: state.get(IntentStateKey.ELEMENTS),
+            IntentStateKey.POST_ACTIVITY: post_activity,
         }
 
         # If ASK_USER was executed, always clear state to force re-planning
@@ -811,11 +829,9 @@ class IntentNodeProvider:
             )
             accumulated_step_results = existing_step_results + [step_result]
 
-            current_activity = "unknown"
-            try:
-                current_activity = await self.__context.device.get_current_package()
-            except Exception:
-                current_activity = "unknown"
+            # Use post-action activity captured in EXECUTE node (avoids extra device call)
+            post_activity_raw = state.get(IntentStateKey.POST_ACTIVITY)
+            current_activity = str(post_activity_raw) if post_activity_raw else "unknown"
 
             execution_activity = "unknown"
             screen_state_value = state.get(CommonStateKey.SCREEN_STATE)
