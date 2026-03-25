@@ -159,11 +159,21 @@ class ToolRegistry:
                                 "conditional_type": {
                                     "type": "STRING",
                                     "enum": ["blocker", "transient", "error", "optional"],
-                                    "description": "Optional condition class when is_conditional=true. Use blocker/transient/error/optional.",
+                                    "description": (
+                                        "Condition class when is_conditional=true: "
+                                        "blocker (overlay/popup/permission dialog blocking the UI), "
+                                        "transient (spinner, skeleton shimmer, or splash screen that will auto-resolve), "
+                                        "error (red/orange error banner, toast, or validation message), "
+                                        "optional (non-blocking informational element)."
+                                    ),
                                 },
                                 "overlay_detected": {
                                     "type": "BOOLEAN",
-                                    "description": "Set true when this action is specifically handling an overlay/popup blocker.",
+                                    "description": (
+                                        "Set true when the screenshot shows an overlay blocking the main UI "
+                                        "(dimmed scrim, modal dialog, bottom sheet, permission prompt, or banner). "
+                                        "This action must dismiss it."
+                                    ),
                                 },
                                 "export_target": {
                                     "type": "STRING",
@@ -234,12 +244,22 @@ class ToolRegistry:
                                 "validation_pattern": {
                                     "type": "STRING",
                                     "enum": ["blocker", "transient", "error", "generic"],
-                                    "description": "For validate actions: the pattern category - blocker (permission/popup/consent), transient (loading/spinner), error (network/validation error), or generic check.",
+                                    "description": (
+                                        "For validate actions: blocker (modal/scrim/permission dialog blocking content), "
+                                        "transient (spinner, progress bar, or shimmer placeholder still visible), "
+                                        "error (red/orange text, error icon, or 'try again' message on screen), "
+                                        "or generic (general state check like toggle position or text presence)."
+                                    ),
                                 },
                                 "wait_pattern": {
                                     "type": "STRING",
                                     "enum": ["ad", "splash", "load", "search", "generic"],
-                                    "description": "For wait actions: the wait category - ad (ad to finish), splash (app splash screen), load (content loading), search (search results), or generic.",
+                                    "description": (
+                                        "For wait actions: ad (full-screen interstitial ad with countdown/skip button), "
+                                        "splash (branded launch screen with app logo, no interactive elements), "
+                                        "load (spinner, progress bar, skeleton/shimmer placeholders, or 'Loading...' text), "
+                                        "search (waiting for search results list to populate), or generic."
+                                    ),
                                 },
                             },
                             "required": ["action_type", "rationale", "is_valid"],
@@ -325,7 +345,12 @@ class ToolRegistry:
 
         return {
             "name": "validate_state",
-            "description": "Verify if the screen state matches specific criteria. Use this when the intent implies checking, validating, or verifying something.",
+            "description": (
+                "Verify if the screen state matches specific criteria by inspecting the screenshot. "
+                "Use when the intent implies checking or verifying something: "
+                "e.g., a toggle is green/on, a success toast is visible, a specific tab is highlighted, "
+                "or an expected heading/text is displayed on screen."
+            ),
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
@@ -343,7 +368,11 @@ class ToolRegistry:
                     },
                     "evidence": {
                         "type": "STRING",
-                        "description": "Visual evidence supporting the conclusion.",
+                        "description": (
+                            "Visual evidence from the screenshot supporting the conclusion "
+                            "(e.g., 'Toggle is green and positioned right', 'Success banner shows Order Confirmed', "
+                            "'Error text not visible anywhere on screen')."
+                        ),
                     },
                     "goal_completed": {
                         "type": "BOOLEAN",

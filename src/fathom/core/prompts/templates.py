@@ -31,13 +31,16 @@ _ACTION_RULES_RAW = {
         "Do NOT use 'scroll' as an action_type; always use the appropriate swipe_* variant."
     ),
     "wait": (
-        "WAIT: Use if screen shows a SPINNER, LOADING TEXT, or SKELETON/SHIMMER (gray shapes). "
+        "WAIT: Use if screen shows a SPINNER (circular animation), LOADING TEXT, PROGRESS BAR, "
+        "or SKELETON/SHIMMER (gray rectangular placeholders where content will appear). "
         "CRITICAL: Even if XML elements are present, if the visual is a Skeleton/Shimmer, you MUST WAIT. "
+        "Also wait for pull-to-refresh indicators and full-screen interstitial ads with countdown. "
         "Include wait_duration (default 2.0)."
     ),
     "validate": (
-        "VALIDATE: Use when the next best step is an explicit check/confirmation rather than a touch action "
-        "(e.g., verify page state, banner text, toggle status)."
+        "VALIDATE: Use when the next best step is an explicit check rather than a touch action. "
+        "Visual cues: confirm toggle is on/off (green vs gray), banner/toast text is visible, "
+        "expected page title or section header is displayed, error message is present or absent."
     ),
     "zoom": "ZOOM: 'zoom_in' to enlarge, 'zoom_out' to shrink. Target the relevant region.",
     "type": (
@@ -51,12 +54,20 @@ ACTION_RULES = MappingProxyType(_ACTION_RULES_RAW)
 # UI handling rules (Immutable)
 _UI_RULES_RAW = {
     "goal_lock": (
-        "GOAL LOCK: Never change intent. Dismiss blockers (cookie consent, permission prompts, "
-        "privacy popups, login walls, app update dialogs, survey popups, rating requests) FIRST, "
-        "then proceed."
+        "GOAL LOCK: Never change intent. Dismiss blockers FIRST, then proceed. "
+        "Common blockers: cookie banners (bottom bar with Accept/Reject), permission dialogs "
+        "(system-styled Allow/Deny), privacy popups, login walls, app update dialogs, "
+        "rating requests (star icons with Maybe Later), survey popups."
     ),
-    "dropdown": "DROPDOWN DISMISS: Dismiss obstructions first: down arrows, X, 'Close'/'Done'.",
-    "overlay": "OVERLAY: Ignore system overlays. Focus on actual app UI elements.",
+    "dropdown": (
+        "DROPDOWN DISMISS: If a dropdown, picker, or action sheet is open (floating list over dimmed content, "
+        "or bottom tray with options), dismiss it first via X, 'Close', 'Done', or tapping outside."
+    ),
+    "overlay": (
+        "OVERLAY DETECTION: Identify app overlays by visual cues: dimmed/darkened background scrim, "
+        "centered card/dialog, bottom sheet rising from screen edge, or full-screen modal with X/close button. "
+        "Dismiss these BEFORE interacting with underlying content. Ignore only fixed system chrome (status bar, nav bar)."
+    ),
     "icon_vs_page": (
         "ICON vs PAGE: Distinguish small icons vs full-page content. "
         "If menu/page is open, interact WITHIN it."
@@ -96,7 +107,7 @@ TOOL SELECTION & VALIDATION:
   * For explicit checks/validation, prefer execute_ui with action_type='validate'.
   * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).
   * Always provide condition text when visible; if omitted, conditional_type is used for default guard text.
-  * For overlay/popup dismissal steps, set overlay_detected=true and include condition with the visible guard when available.
+  * For overlay/popup dismissal: if the screenshot shows a scrim, dialog, sheet, or banner over the main UI, set overlay_detected=true and condition to describe the overlay (e.g., 'Cookie consent banner visible').
   * Evaluate is_valid and validation_reason for EVERY action.
   * If action is risky/ambiguous, set is_valid=False and explain.
   * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
