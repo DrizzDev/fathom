@@ -275,38 +275,6 @@ class StepPlanner:
                 reason=CompletionReason.FAILED.value,
             )
 
-        if not reasoner.should_accept_action(
-            action=action, has_failed_before=state.should_avoid_action(action=action)
-        ):
-            # If interactive, yield to user for guidance on low confidence
-            if interactive_mode and prompt_if_stuck:
-                return PlanResult(
-                    step=self.__build_step(
-                        action=Action(
-                            confidence=1.0,
-                            target="ask_user",
-                            action_type=ActionType.ASK_USER,
-                            rationale=f"Confidence low ({action.confidence:.2f}): {action.rationale}",
-                            text=f"I'm not sure what to do next. I thought about: {action.to_description()}, but my confidence is low. How should I proceed?",
-                        ),
-                        capture=capture,
-                        is_recovery=True,
-                        step_number=state.step_count,
-                    ),
-                    is_complete=False,
-                    reason=CompletionReason.INTERVENTION_REQUIRED.value,
-                )
-
-            return PlanResult(
-                step=None,
-                is_complete=False,
-                should_retry=True,
-                metrics=analysis.metrics,
-                metadata=analysis.metadata,
-                memories=analysis.memories,
-                reason=CompletionReason.FAILED.value,
-            )
-
         # Record action for sub-goal trace verification
         if state.has_sub_goals() and action.action_type not in {
             ActionType.ASK_USER,

@@ -68,6 +68,7 @@ class ToolRegistry:
                         "items": {
                             "type": "OBJECT",
                             "properties": {
+                                # --- Critical execution fields (prioritized) ---
                                 "action_type": {
                                     "type": "STRING",
                                     "description": "The type of action to perform. Use swipe_* for all scrolling gestures.",
@@ -84,21 +85,6 @@ class ToolRegistry:
                                         "back",
                                         "enter",
                                     ],
-                                },
-                                "rationale": {
-                                    "type": "STRING",
-                                    "description": "Why this specific action is being taken.",
-                                },
-                                "target_name": {
-                                    "type": "STRING",
-                                    "description": (
-                                        "Descriptive, user-facing name of the element "
-                                        "(e.g., 'Search box', 'Add to cart button', "
-                                        "'Settings tab'). MUST NOT be a generic placeholder "
-                                        "like 'element', 'UI Element', 'button', 'label', "
-                                        "or 'icon'. Always choose the text a human tester "
-                                        "would naturally say when referring to this element."
-                                    ),
                                 },
                                 "label_id": {
                                     "type": "STRING",
@@ -119,6 +105,17 @@ class ToolRegistry:
                                         },
                                     },
                                 },
+                                "target_name": {
+                                    "type": "STRING",
+                                    "description": (
+                                        "Descriptive, user-facing name of the element "
+                                        "(e.g., 'Search box', 'Add to cart button', "
+                                        "'Settings tab'). MUST NOT be a generic placeholder "
+                                        "like 'element', 'UI Element', 'button', 'label', "
+                                        "or 'icon'. Always choose the text a human tester "
+                                        "would naturally say when referring to this element."
+                                    ),
+                                },
                                 "text_to_type": {
                                     "type": "STRING",
                                     "description": "Text to type (only for 'type' action).",
@@ -127,6 +124,7 @@ class ToolRegistry:
                                     "type": "NUMBER",
                                     "description": "Duration to wait in seconds (e.g. 2.0, 5.0). Use this for 'wait' actions to specify how long to pause.",
                                 },
+                                # --- Execution signals ---
                                 "confidence": {
                                     "type": "NUMBER",
                                     "description": "Confidence level (0.0-1.0) for this action.",
@@ -134,6 +132,11 @@ class ToolRegistry:
                                 "is_valid": {
                                     "type": "BOOLEAN",
                                     "description": "Self-correction: Is this action valid given the current screen state?",
+                                },
+                                # --- Non-critical metadata ---
+                                "rationale": {
+                                    "type": "STRING",
+                                    "description": "Why this specific action is being taken.",
                                 },
                                 "validation_reason": {
                                     "type": "STRING",
