@@ -205,6 +205,113 @@ class GeminiLLMClient(IVisionProvider):
 
         raise VisionError("Unreachable")
 
+    async def generate_structured(
+        self,
+        system_instruction: str,
+        user_content: List[Any],
+        tools: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Call the LLM with tool declarations and return the raw tool call arguments.
+
+        Unlike ``analyze()``, this bypasses ``ToolResponseParser`` and returns
+        the structured fields directly as a dictionary.  Used for dedicated
+        calls like screen translation where the output is not an AnalysisResult.
+        """
+
+        if not self.__client:
+            raise VisionError("Client not ready")
+
+        parts = []
+        for item in user_content:
+            if isinstance(item, bytes):
+                if not item:
+                    raise VisionError("Received empty image data")
+                mime_type = self.__detect_mime(data=item)
+                parts.append(types.Part.from_bytes(data=item, mime_type=mime_type))
+            elif isinstance(item, str):
+                parts.append(types.Part.from_text(text=item))
+            else:
+                parts.append(item)
+
+        config_args: Dict[str, Any] = {
+            "candidate_count": 1,
+            "temperature": self.__configuration.temperature,
+            "max_output_tokens": self.__configuration.max_output_tokens,
+            "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
+            "system_instruction": [{"text": system_instruction}],
+        }
+
+        if tools:
+            config_args["tools"] = [tools]
+            config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
+
+        config = types.GenerateContentConfig(**config_args)
+
+        max_retries = self.__configuration.max_retries
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self.__client.aio.models.generate_content(
+                    config=config,
+                    model=self.__configuration.model,
+                    contents=[types.Content(role="user", parts=parts)],
+                )
+
+                # Log token usage
+                usage = getattr(response, "usage_metadata", None)
+                if usage:
+                    prompt_t = getattr(usage, "prompt_token_count", 0) or 0
+                    completion_t = getattr(usage, "candidates_token_count", 0) or 0
+                    logger.debug(
+                        "generate_structured token usage: prompt=%d, completion=%d",
+                        prompt_t,
+                        completion_t,
+                    )
+
+                # Extract raw function call arguments
+                candidates = response.candidates
+                if not candidates:
+                    raise VisionError("No candidates in response")
+
+                content = candidates[0].content
+                if not content or not content.parts:
+                    raise VisionError("Empty response content")
+
+                for part in content.parts:
+                    if part.function_call:
+                        return dict(part.function_call.args)
+
+                # Fallback: no function call found, return text if available
+                text_parts = [p.text for p in content.parts if p.text]
+                raise VisionError(
+                    f"No function call in response. Text: {''.join(text_parts)[:200]}"
+                )
+
+            except VisionError:
+                raise
+            except Exception as exception:
+                error_msg = str(exception)
+                is_quota_error = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
+
+                if attempt == max_retries:
+                    raise VisionError(f"LLM fail: {exception}") from exception
+
+                if is_quota_error:
+                    logger.warning(
+                        "Quota exceeded (429). Pausing for 30s before retry %d/%d...",
+                        attempt + 1,
+                        max_retries,
+                    )
+                    jitter = random.random() * 5.0  # nosec
+                    delay = 30.0 + jitter
+                else:
+                    jitter = random.random() * 0.5  # nosec
+                    delay = (self.__configuration.retry_delay * (2**attempt)) + jitter
+
+                await asyncio.sleep(delay)
+
+        raise VisionError("Unreachable")
+
     async def cleanup(self) -> None:
         """
         Cleanup resources.

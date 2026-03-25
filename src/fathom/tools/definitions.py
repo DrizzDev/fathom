@@ -354,3 +354,66 @@ class ToolRegistry:
                 "required": ["category", "item", "assistant_message"],
             },
         }
+
+    @classmethod
+    def get_screen_translation_tools(cls) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Returns tool definitions for the screen translation VLM call.
+        """
+
+        return {
+            "function_declarations": [
+                cls.__describe_screen(),
+            ]
+        }
+
+    @staticmethod
+    def __describe_screen() -> Dict[str, Any]:
+        """
+        Definition for describe_screen tool.
+
+        Provides a thorough rich-text translation of all visible UI
+        designs, features, and content on a mobile app screen.
+        """
+
+        return {
+            "name": "describe_screen",
+            "description": "Provide a thorough translation of all visible UI designs and features on the screen.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "layout_and_structure": {
+                        "type": "STRING",
+                        "description": "Detailed description of page layout, regions, spacing, visual hierarchy, header/body/footer arrangement.",
+                    },
+                    "navigation": {
+                        "type": "STRING",
+                        "description": "Navigation elements: top/bottom bars, tabs, menus, breadcrumbs, back buttons, sidebars and their labels.",
+                    },
+                    "content": {
+                        "type": "STRING",
+                        "description": "All visible text content, headings, images, media, cards, lists, badges, tags, and data displayed.",
+                    },
+                    "interactive_elements": {
+                        "type": "STRING",
+                        "description": "All interactive controls: buttons with labels, inputs, toggles, switches, checkboxes, dropdowns, sliders, links, and their states.",
+                    },
+                    "visual_design": {
+                        "type": "STRING",
+                        "description": "Colors, typography, iconography, branding, shadows, borders, rounded corners, and overall design language.",
+                    },
+                    "summary": {
+                        "type": "STRING",
+                        "description": "2-4 sentence prose summary of the screen's purpose, primary user task, and overall user experience.",
+                    },
+                },
+                "required": [
+                    "layout_and_structure",
+                    "navigation",
+                    "content",
+                    "interactive_elements",
+                    "visual_design",
+                    "summary",
+                ],
+            },
+        }

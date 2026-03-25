@@ -11,3 +11,4 @@ class PromptMode(Enum):
     INTERACTION = "interaction"  # Typing, tapping, forms
     VERIFICATION = "verification"  # Assertions, checks
     EXPLORATION = "exploration"  # BFS app mapping, screen discovery
+    SCREEN_TRANSLATION = "screen_translation"  # Rich screen description

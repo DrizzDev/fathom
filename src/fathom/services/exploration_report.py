@@ -67,6 +67,15 @@ class ExplorationReportGenerator:
         # Find all paths to target/exit screens
         paths_to_targets = self._find_all_paths_to_targets()
 
+        # Collect screen translations keyed by visual_hash for KG cross-reference
+        screen_translations: Dict[str, Dict[str, Any]] = {}
+        for node in self.kg.nodes.values():
+            if node.rich_description:
+                screen_translations[node.visual_hash] = {
+                    "description": node.description,
+                    "rich_description": node.rich_description,
+                }
+
         report = {
             "metadata": {
                 "generated_at": datetime.now().isoformat(),
@@ -97,6 +106,7 @@ class ExplorationReportGenerator:
             "navigation_paths": key_paths,
             "paths_to_targets": paths_to_targets,
             "activity_breakdown": self._analyze_activities(),
+            "screen_translations": screen_translations,
             "recommendations": self._generate_recommendations(stats, cycles),
         }
 
@@ -453,8 +463,64 @@ class ExplorationReportGenerator:
         with md_filepath.open("w") as f:
             f.write(markdown_content)
 
-        logger.info(f"Exploration report saved to {json_filepath} and {md_filepath}")
+        # Save screen translations file to per-app memory directory
+        translations_path = self.save_translations_file(
+            report=report,
+            workflow_id=workflow_id,
+            timestamp=timestamp,
+        )
+
+        logger.info(
+            "Exploration report saved to %s, %s, and %s",
+            json_filepath,
+            md_filepath,
+            translations_path or "no translations",
+        )
         return json_filepath
+
+    def save_translations_file(
+        self,
+        report: Dict[str, Any],
+        workflow_id: str,
+        timestamp: str,
+    ) -> Optional[Path]:
+        """
+        Save all screen translations to a single combined markdown file
+        in the per-app memory directory (assets/memory/{package}/).
+
+        Returns the file path, or None if there are no translations.
+        """
+
+        translations = report.get("screen_translations", {})
+        if not translations:
+            return None
+
+        package: str = report["metadata"].get("target_package", "unknown")
+        app_dir = Path("assets/memory") / package
+        app_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"screen_translations_{workflow_id}_{timestamp}.md"
+        filepath = app_dir / filename
+
+        lines = [f"# Screen Translations: {workflow_id}\n"]
+        meta = report.get("metadata", {})
+        lines.append(f"**Generated:** {meta.get('generated_at', 'unknown')}")
+        lines.append(f"**Package:** `{meta.get('target_package', 'unknown')}`")
+        lines.append(f"**Screens translated:** {len(translations)}\n")
+        lines.append("---\n")
+
+        for visual_hash, entry in translations.items():
+            desc = entry["description"] or "Unnamed screen"
+            lines.append(f"### {desc}")
+            lines.append(f"`{visual_hash}`\n")
+            lines.append(entry["rich_description"])
+            lines.append("\n---\n")
+
+        with filepath.open("w") as f:
+            f.write("\n".join(lines))
+
+        logger.info("Screen translations saved to %s", filepath)
+        return filepath
 
     def export_report_markdown(self, report: Dict[str, Any]) -> str:
         """Export report as comprehensive human-readable markdown."""

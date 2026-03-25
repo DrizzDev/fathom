@@ -233,6 +233,88 @@ class LangChainLLMClient(IVisionProvider):
             tools=tools,
         )
 
+    # ── IVisionProvider.generate_structured ────────────────────────────
+
+    async def generate_structured(
+        self,
+        system_instruction: str,
+        user_content: List[Any],
+        tools: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Call the LLM with tool declarations and return the raw tool call
+        arguments as a dictionary.  Uses the LangChain invoke path.
+        """
+
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        await self._ensure_model_ready()
+
+        messages: List[Any] = [SystemMessage(content=system_instruction)]
+
+        human_parts: List[Any] = []
+        for item in user_content:
+            if isinstance(item, bytes):
+                if not item:
+                    raise VisionError("Received empty image data")
+                mime = self.__detect_mime(data=item)
+                b64 = base64.b64encode(item).decode("utf-8")
+                human_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    }
+                )
+            elif isinstance(item, str):
+                human_parts.append({"type": "text", "text": item})
+            else:
+                human_parts.append(item)
+
+        messages.append(HumanMessage(content=human_parts))
+
+        model = self.__model
+        if tools:
+            lc_tools = self.__convert_tools(tools)
+            if lc_tools:
+                model = model.bind_tools(lc_tools, tool_choice="any")
+
+        max_retries = self.__configuration.max_retries
+        for attempt in range(max_retries + 1):
+            try:
+                response = await model.ainvoke(messages)
+
+                tool_calls = getattr(response, "tool_calls", None) or []
+                if tool_calls:
+                    args: Dict[str, Any] = tool_calls[0].get("args", {})
+                    return args
+
+                text = getattr(response, "content", "") or ""
+                raise VisionError(f"No tool calls in response. Text: {str(text)[:200]}")
+            except VisionError:
+                raise
+            except Exception as exc:
+                error_msg = str(exc)
+                is_quota = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
+
+                if attempt == max_retries:
+                    raise VisionError(f"LLM fail: {exc}") from exc
+
+                if is_quota:
+                    logger.warning(
+                        "Quota exceeded (429). Pausing 30s before retry %d/%d…",
+                        attempt + 1,
+                        max_retries,
+                    )
+                    jitter = random.random() * 5.0  # nosec
+                    delay = 30.0 + jitter
+                else:
+                    jitter = random.random() * 0.5  # nosec
+                    delay = (self.__configuration.retry_delay * (2**attempt)) + jitter
+
+                await asyncio.sleep(delay)
+
+        raise VisionError("Unreachable")  # pragma: no cover
+
     # ── IVisionProvider.cleanup ────────────────────────────────────────
 
     async def cleanup(self) -> None:

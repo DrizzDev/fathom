@@ -198,6 +198,61 @@ class GeminiVisionTool(VisionTool):
 
         return analysis
 
+    async def describe_screen(
+        self,
+        capture: ScreenCapture,
+        *,
+        context: Optional[str] = None,
+    ) -> str:
+        """
+        Generate a rich markdown translation of all visible designs and
+        features on the screen via a dedicated VLM call using the
+        ``describe_screen`` tool declaration.
+        """
+
+        from fathom.tools.definitions import ToolRegistry
+
+        instruction = self.__builder.build(
+            mode=PromptMode.SCREEN_TRANSLATION.value,
+        )
+
+        image = ImageProcessor.optimize_for_vision(capture.image)
+        payload: List[Any] = [image]
+        if context:
+            payload.append(context)
+
+        tools = ToolRegistry.get_screen_translation_tools()
+
+        result = await self.__model.generate_structured(
+            system_instruction=instruction,
+            user_content=payload,
+            tools=tools,
+        )
+
+        return self.__format_translation(result)
+
+    @staticmethod
+    def __format_translation(data: Dict[str, Any]) -> str:
+        """
+        Formats the structured describe_screen tool call args into markdown.
+        """
+
+        sections = [
+            ("Layout & Structure", data.get("layout_and_structure", "")),
+            ("Navigation", data.get("navigation", "")),
+            ("Content", data.get("content", "")),
+            ("Interactive Elements", data.get("interactive_elements", "")),
+            ("Visual Design", data.get("visual_design", "")),
+            ("Summary", data.get("summary", "")),
+        ]
+
+        parts = []
+        for heading, body in sections:
+            if body:
+                parts.append(f"## {heading}\n{body}")
+
+        return "\n\n".join(parts)
+
     async def check_completion(self, intent: str, capture: ScreenCapture) -> bool:
         """
         Check if intent is complete.

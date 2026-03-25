@@ -68,6 +68,13 @@ class IVisionProvider(Protocol):
         tools: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult: ...
 
+    async def generate_structured(
+        self,
+        system_instruction: str,
+        user_content: List[Any],
+        tools: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]: ...
+
     async def cleanup(self) -> None: ...
 
 

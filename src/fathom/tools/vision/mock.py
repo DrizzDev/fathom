@@ -75,6 +75,24 @@ class MockGeminiVisionTool(VisionTool):
             is_goal_complete=False,
         )
 
+    async def describe_screen(
+        self,
+        capture: ScreenCapture,
+        *,
+        context: Optional[str] = None,
+    ) -> str:
+        """
+        Return a mock rich screen translation.
+        """
+        return (
+            "## Layout & Structure\nMock layout description\n\n"
+            "## Navigation\nMock navigation description\n\n"
+            "## Content\nMock content description\n\n"
+            "## Interactive Elements\nMock interactive elements\n\n"
+            "## Visual Design\nMock visual design\n\n"
+            "## Summary\nThis is a mock screen translation for testing purposes."
+        )
+
     async def check_completion(self, intent: str, capture: ScreenCapture) -> bool:
         """
         Check mock completion.

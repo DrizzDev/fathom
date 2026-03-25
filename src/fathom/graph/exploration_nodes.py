@@ -284,6 +284,20 @@ def build_exploration_nodes(
             state=screen_state, description=analysis.screen_description
         )
 
+        # Rich screen translation (deduplicated: only on first visit)
+        node = ctx.knowledge_graph.get_screen(fingerprint)
+        if node and node.rich_description is None:
+            try:
+                rich_text = await ctx.vision.describe_screen(capture=capture)
+                await ctx.knowledge_graph.update_rich_description(fingerprint, rich_text)
+                logger.debug("Rich description generated for screen %s", fingerprint[:8])
+            except Exception:
+                logger.warning(
+                    "Rich description failed for %s",
+                    fingerprint[:8],
+                    exc_info=True,
+                )
+
         # VLM signals all elements exhausted
         if analysis.content_exhausted:
             ctx.fully_scanned.add(fingerprint)

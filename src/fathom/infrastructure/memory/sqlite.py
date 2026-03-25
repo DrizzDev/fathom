@@ -75,7 +75,8 @@ class SQLiteMemoryProvider(IMemoryProvider):
                 "description TEXT, "
                 "first_seen INTEGER, "
                 "last_seen INTEGER, "
-                "visit_count INTEGER DEFAULT 0"
+                "visit_count INTEGER DEFAULT 0, "
+                "rich_description TEXT"
                 ")"
             )
             await db.execute(
@@ -133,6 +134,10 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute("UPDATE screens SET visit_count = 1 WHERE visit_count = 0")
             migrations_applied = True
 
+        if "rich_description" not in columns:
+            await db.execute("ALTER TABLE screens ADD COLUMN rich_description TEXT")
+            migrations_applied = True
+
         if migrations_applied:
             await db.commit()
             logger.info("Applied schema migrations to knowledge database")
@@ -159,6 +164,23 @@ class SQLiteMemoryProvider(IMemoryProvider):
                 "last_seen = excluded.last_seen, "
                 "visit_count = screens.visit_count + 1",
                 (screen.visual_hash, screen.activity, description, now, now),
+            )
+            await db.commit()
+
+    async def update_rich_description(self, visual_hash: str, rich_description: str) -> None:
+        """
+        Updates the rich_description column for an existing screen.
+        """
+
+        if self.__readonly:
+            return
+
+        await self.__initialize()
+
+        async with aiosqlite.connect(self.__path) as db:
+            await db.execute(
+                "UPDATE screens SET rich_description = ? WHERE visual_hash = ?",
+                (rich_description, visual_hash),
             )
             await db.commit()
 
@@ -333,7 +355,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
         async with (
             aiosqlite.connect(self.__path) as db,
             db.execute(
-                "SELECT visual_hash, activity, description, first_seen, last_seen, visit_count "
+                "SELECT visual_hash, activity, description, first_seen, last_seen, visit_count, rich_description "
                 "FROM screens ORDER BY last_seen DESC"
             ) as cursor,
         ):
@@ -346,6 +368,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         "first_seen": row[3],
                         "last_seen": row[4],
                         "visit_count": row[5],
+                        "rich_description": row[6],
                     }
                 )
 

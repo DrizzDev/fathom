@@ -43,6 +43,9 @@ class GeminiPromptBuilder(PromptBuilder):
         if mode == PromptMode.EXPLORATION.value:
             return self.__build_exploration_prompt()
 
+        if mode == PromptMode.SCREEN_TRANSLATION.value:
+            return self.__build_screen_translation_prompt()
+
         parts = [
             self.__get_persona(),
             TOOL_GUIDANCE,
@@ -317,4 +320,33 @@ class GeminiPromptBuilder(PromptBuilder):
             "- Prefer elements that navigate to new screens (buttons, tabs, links).\n\n"
             "OUTPUT: ONE execute_ui call (one untried element) or content_exhausted=true if none remain.\n\n"
             + RESPONSE_DIRECTIVE
+        )
+
+    def __build_screen_translation_prompt(self) -> str:
+        """
+        Screen Translation Mode: thorough rich-text description of all
+        visible designs, features, and content on a mobile app screen.
+
+        Uses the ``describe_screen`` tool to return structured sections.
+        """
+        return (
+            "You are a meticulous UI design analyst. Given a screenshot of a mobile app screen, "
+            "produce a thorough textual translation of EVERYTHING visible.\n\n"
+            "You MUST call the describe_screen tool with detailed content for each section:\n\n"
+            "- layout_and_structure: Describe the overall page layout — regions, columns, cards, "
+            "spacing, visual hierarchy, header/body/footer arrangement, and how content is organized.\n"
+            "- navigation: Describe all navigation elements — top/bottom bars, tabs, menus, "
+            "breadcrumbs, back buttons, hamburger icons, sidebars, and their labels.\n"
+            "- content: Describe ALL visible text, headings, subheadings, body text, labels, "
+            "images, icons, media, cards, lists, badges, tags, and data displayed.\n"
+            "- interactive_elements: Describe every interactive control — buttons (with labels), "
+            "text inputs, search bars, toggles, switches, checkboxes, radio buttons, dropdowns, "
+            "sliders, links, FABs, and their current states (enabled/disabled/selected).\n"
+            "- visual_design: Describe colors (background, text, accents), typography (font sizes, "
+            "weights, styles), iconography, branding elements, shadows, borders, rounded corners, "
+            "and overall design language/theme.\n"
+            "- summary: A 2-4 sentence flowing prose paragraph summarizing the screen's purpose, "
+            "the primary user task it supports, and the overall user experience.\n\n"
+            "Be comprehensive — capture every visible element, label, icon, and design detail. "
+            "Do not omit anything visible on screen."
         )

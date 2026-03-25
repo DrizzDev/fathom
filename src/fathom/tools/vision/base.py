@@ -56,6 +56,20 @@ class VisionTool(Tool[AnalysisResult], ABC):
 
         raise NotImplementedError
 
+    @abstractmethod
+    async def describe_screen(
+        self,
+        capture: ScreenCapture,
+        *,
+        context: Optional[str] = None,
+    ) -> str:
+        """
+        Generate a rich markdown translation of all visible designs and
+        features on the screen via a dedicated VLM call.
+        """
+
+        raise NotImplementedError
+
     async def cleanup(self) -> None:
         """
         Perform any necessary cleanup (e.g., closing connections, deleting caches).

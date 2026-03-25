@@ -117,7 +117,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
             compiled_graph.ainvoke(
                 initial_state,
                 config={
-                    "recursion_limit": 710,
+                    "recursion_limit": 5000,
                     "configurable": {"thread_id": self.workflow_id},
                 },
             )

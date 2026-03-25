@@ -29,6 +29,7 @@ class GraphNode:
     visual_hash: str
     activity: str
     description: Optional[str] = None
+    rich_description: Optional[str] = None
     first_seen: Optional[int] = None
     last_seen: Optional[int] = None
     visit_count: int = 0
@@ -140,11 +141,14 @@ class KnowledgeGraph:
                 existing.last_seen = max(existing.last_seen or 0, screen["last_seen"] or 0)
                 if not existing.description and screen["description"]:
                     existing.description = screen["description"]
+                if not existing.rich_description and screen.get("rich_description"):
+                    existing.rich_description = screen["rich_description"]
             else:
                 node = GraphNode(
                     visual_hash=canonical,
                     activity=screen["activity"],
                     description=screen["description"],
+                    rich_description=screen.get("rich_description"),
                     first_seen=screen["first_seen"],
                     last_seen=screen["last_seen"],
                     visit_count=screen["visit_count"] or 0,
@@ -228,6 +232,25 @@ class KnowledgeGraph:
         )
         self.__nodes[state.visual_hash] = node
         return node
+
+    async def update_rich_description(
+        self,
+        visual_hash: str,
+        rich_description: str,
+    ) -> None:
+        """
+        Stores a rich (detailed markdown) screen description on the node
+        and persists it to SQLite.
+        """
+
+        canonical = self._resolve_canonical(visual_hash)
+        node = self.__nodes.get(canonical)
+        if node:
+            node.rich_description = rich_description
+        await self.__provider.update_rich_description(
+            visual_hash=canonical,
+            rich_description=rich_description,
+        )
 
     async def record_transition(
         self,
@@ -826,16 +849,17 @@ class KnowledgeGraph:
 
         nodes = []
         for node in self.__nodes.values():
-            nodes.append(
-                {
-                    "visual_hash": node.visual_hash,
-                    "activity": node.activity,
-                    "description": node.description,
-                    "first_seen": node.first_seen,
-                    "last_seen": node.last_seen,
-                    "visit_count": node.visit_count,
-                }
-            )
+            node_dict: Dict[str, Any] = {
+                "visual_hash": node.visual_hash,
+                "activity": node.activity,
+                "description": node.description,
+                "first_seen": node.first_seen,
+                "last_seen": node.last_seen,
+                "visit_count": node.visit_count,
+            }
+            if node.rich_description:
+                node_dict["rich_description"] = node.rich_description
+            nodes.append(node_dict)
 
         edges = []
         for edge_list in self.__edges.values():
