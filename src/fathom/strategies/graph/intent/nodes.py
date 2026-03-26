@@ -188,6 +188,9 @@ class IntentNodeProvider:
     async def __handle_hitl(self, current_step: int) -> None:
         """
         Orchestrates Human-In-The-Loop interruptions.
+
+        After resume, drains any injected context from the signal queue
+        and injects it as user guidance so the next LLM call sees it.
         """
 
         _ = current_step
@@ -201,6 +204,25 @@ class IntentNodeProvider:
                 "Waiting for resume/context."
             )
             await self.__context.hitl.wait_for_resume()
+
+            # Drain injected context after resume — same logic as executor.__handle_interrupt
+            consumed = 0
+            while await self.__context.hitl.has_injected_context():
+                context = await self.__context.hitl.peek_next_context()
+                if not context:
+                    break
+
+                consumed += 1
+                logger.info("[HITL] Processing injected context %d: '%s...'", consumed, context)
+
+                await self.__context.context_manager.inject_user_guidance(
+                    guidance=context,
+                    step=self.__context.agent_state.step_count,
+                )
+                await self.__context.hitl.consume_context()
+
+            if consumed > 0:
+                logger.info("[HITL] Processed %d user contexts after resume", consumed)
 
     def __restore_agent_state_from_graph(self, *, state: IntentGraphState) -> None:
         """

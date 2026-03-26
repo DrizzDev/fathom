@@ -179,7 +179,9 @@ class ScreenComparator:
         new_width = max_width
         new_height = int(height * scale)
 
-        return cast("ImageMatrix", cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA))
+        return cast(
+            "ImageMatrix", cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        )
 
     def __get_content_bounds(self, *, image_height: int) -> Tuple[int, int]:
         """
