@@ -151,6 +151,10 @@ class Reasoner:
         analysis: AnalysisResult,
         sub_goal_description: str,
         screen_description: Optional[str] = None,
+        *,
+        screen_changed: bool = False,
+        pre_screen_hash: Optional[str] = None,
+        post_screen_hash: Optional[str] = None,
     ) -> SubGoalCompletionSignal:
         """
         Multi-signal verification for sub-goal completion.
@@ -225,6 +229,22 @@ class Reasoner:
         if action_executed:
             evidence_list.append(f"Action executed: {analysis.action.action_type.value}")
 
+        # Signal 4: Screen Verification — post-execution sanity check.
+        # If the action didn't change the screen AND the LLM claimed sub-goal
+        # completion, the action may have failed silently (e.g. tap on a blocking
+        # overlay, wrong screen).  ``screen_verified`` gates ``action_executed``
+        # in count_signals() to prevent premature sub-goal advancement.
+        screen_verified = False
+        if screen_changed:
+            screen_verified = True
+            evidence_list.append("Screen changed after action execution")
+        elif pre_screen_hash and post_screen_hash and pre_screen_hash != post_screen_hash:
+            screen_verified = True
+            evidence_list.append("Screen hash changed after action execution")
+        else:
+            if llm_signaled:
+                evidence_list.append("WARNING: LLM signaled completion but screen did not change")
+
         # Calculate LLM confidence
         llm_confidence = 0.0
 
@@ -237,6 +257,7 @@ class Reasoner:
         logger.debug(
             f"[Reasoner] Sub-goal signals: llm={llm_signaled}, "
             f"rationale={rationale_verified}, action={action_executed}, "
+            f"screen_verified={screen_verified}, "
             f"confidence={llm_confidence:.2f}"
         )
 
@@ -251,6 +272,7 @@ class Reasoner:
             keyword_match=keyword_match,
             llm_confidence=llm_confidence,
             action_executed=action_executed,
+            screen_verified=screen_verified,
             rationale_verified=rationale_verified,
         )
 

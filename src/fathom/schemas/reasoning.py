@@ -30,6 +30,10 @@ class SubGoalCompletionSignal(BaseModel):
         default=False,
         description="Whether action trace confirms sub-goal completion",
     )
+    screen_verified: bool = Field(
+        default=False,
+        description="Whether the screen changed after action execution, confirming the action had effect",
+    )
 
     model_config = ConfigDict(frozen=True)
 
@@ -41,7 +45,7 @@ class SubGoalCompletionSignal(BaseModel):
         - LLM confidence >= 0.8: +0.5
         - LLM confidence >= 0.5: +0.25
         - Keyword match: +0.3
-        - Action executed: +0.15
+        - Action executed (with screen change): +0.15
         - LLM signaled: +0.2 (explicit signal)
         - Trace verified: +0.2
         - Rationale verified: +0.1
@@ -57,7 +61,7 @@ class SubGoalCompletionSignal(BaseModel):
         # Signal contributions
         if self.keyword_match:
             score += 0.3
-        if self.action_executed:
+        if self.action_executed and self.screen_verified:
             score += 0.15
         if self.llm_signaled:
             score += 0.2
@@ -74,13 +78,18 @@ class SubGoalCompletionSignal(BaseModel):
 
         Returns:
             Number of True boolean signals used by the completion gate.
-            Policy: llm_signaled + rationale_verified + action_executed.
+            Policy: llm_signaled + rationale_verified + effective_action.
+            ``action_executed`` is only counted when ``screen_verified`` is
+            also True — this prevents premature sub-goal advancement when an
+            action fires but the screen does not actually change (e.g. tap
+            failed, blocking overlay, wrong screen).
         """
+        effective_action = self.action_executed and self.screen_verified
         return sum(
             [
                 self.llm_signaled,
                 self.rationale_verified,
-                self.action_executed,
+                effective_action,
             ]
         )
 

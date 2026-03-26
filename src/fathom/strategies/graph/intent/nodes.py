@@ -1238,18 +1238,28 @@ class IntentNodeProvider:
         if analysis is None:
             return None
 
-        sub_goal_signal = self.__context.reasoner.analyze_subgoal_completion(
-            analysis=analysis,
-            sub_goal_description=current_sub_goal.description,
-            screen_description=step_result.step.action.target or "",
-        )
-
-        # Three-signal policy: llm_signaled + rationale_verified + action_executed.
-        # Validation checks advance with 2-of-3, action steps require all 3.
+        # Validation-type sub-goals (verify, confirm, check) don't require
+        # a screen change — observing the screen IS the goal.  We pass
+        # ``screen_changed=True`` for these so the screen-verification gate
+        # in the reasoner is automatically satisfied.
         is_validation_step = any(
             keyword in current_sub_goal.description.lower()
             for keyword in ["validate", "verify", "confirm", "check if", "check that"]
         )
+
+        sub_goal_signal = self.__context.reasoner.analyze_subgoal_completion(
+            analysis=analysis,
+            sub_goal_description=current_sub_goal.description,
+            screen_description=step_result.observation or step_result.step.action.target or "",
+            screen_changed=step_result.screen_changed or is_validation_step,
+            pre_screen_hash=step_result.pre_hash,
+            post_screen_hash=step_result.post_hash,
+        )
+
+        # Three-signal policy: llm_signaled + rationale_verified + action_executed.
+        # ``action_executed`` is now gated by ``screen_verified`` — the action must
+        # actually change the screen to count (validation steps are exempt above).
+        # Validation checks advance with 2-of-3, action steps require all 3.
         required_threshold = 2 if is_validation_step else 3
         signal_count = sub_goal_signal.count_signals()
         current_idx, total = agent_state.get_sub_goal_progress()
@@ -1260,6 +1270,7 @@ class IntentNodeProvider:
             f"llm={sub_goal_signal.llm_signaled} | "
             f"rationale={sub_goal_signal.rationale_verified} | "
             f"action={sub_goal_signal.action_executed} | "
+            f"screen_verified={sub_goal_signal.screen_verified} | "
             f"evidence: {sub_goal_signal.evidence}"
         )
 
