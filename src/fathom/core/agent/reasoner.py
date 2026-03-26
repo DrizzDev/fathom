@@ -193,8 +193,7 @@ class Reasoner:
         #   2. Fallback: keyword-based heuristic for cases where the LLM didn't explicitly
         #      signal but reasoning text implies completion.
         has_explicit_reason = bool(
-            llm_signaled
-            and (analysis.subgoal_completion_reason or analysis.goal_completion_reason)
+            llm_signaled and (analysis.subgoal_completion_reason or analysis.goal_completion_reason)
         )
 
         # Fallback heuristic: keyword + similarity check

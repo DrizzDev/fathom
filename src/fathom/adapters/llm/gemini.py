@@ -14,7 +14,7 @@ from fathom.core.exceptions import VisionError
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import LLMConfiguration
-from fathom.schemas.conversation import ConversationTurn, TurnPart
+from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.results import GenerateResult
 
 logger = getLogger(__name__)
@@ -229,9 +229,9 @@ class GeminiLLM(LLMPort):
                 # Build contents: convert provider-neutral turns to Gemini SDK types,
                 # then append current user turn.
                 if conversation_history:
-                    contents = [
-                        self.__to_gemini_content(turn) for turn in conversation_history
-                    ] + [types.Content(role="user", parts=parts)]
+                    contents = [self.__to_gemini_content(turn) for turn in conversation_history] + [
+                        types.Content(role="user", parts=parts)
+                    ]
                 else:
                     contents = [types.Content(role="user", parts=parts)]
 

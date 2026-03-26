@@ -437,7 +437,6 @@ class GraphContext:
 
         return self.__perception
 
-
     @property
     def resolution(self) -> ReferenceResolutionService:
         """

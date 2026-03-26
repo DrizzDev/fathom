@@ -1221,9 +1221,7 @@ class IntentNodeProvider:
             )
             return None
 
-        has_more = agent_state.mark_current_sub_goal_complete(
-            completion_signal=sub_goal_signal
-        )
+        has_more = agent_state.mark_current_sub_goal_complete(completion_signal=sub_goal_signal)
 
         if has_more:
             next_sub_goal = agent_state.get_current_sub_goal()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, Dict, Optional, Sequence, Union
 
@@ -90,8 +90,7 @@ def resolve_app_launch(
             action_type = get_action_type(step=step)
             is_app_launcher_signal = _get_field(step, "is_app_launcher", False)
             if action_type == "tap" and (
-                is_app_launcher_signal
-                or is_launcher_activity(activity=get_activity(step))
+                is_app_launcher_signal or is_launcher_activity(activity=get_activity(step))
             ):
                 skip += 1
             break
@@ -180,10 +179,12 @@ def build_action_catalog_from_steps(
                 visible_target = intent or "the target"
 
             label = swipe_direction_label(action_type=swipe_direction)
-            entries.append(CatalogEntry(
-                description=f"{label} until {visible_target} is visible",
-                action_kind="scroll",
-            ))
+            entries.append(
+                CatalogEntry(
+                    description=f"{label} until {visible_target} is visible",
+                    action_kind="scroll",
+                )
+            )
             continue
 
         description = Normalizer.action(

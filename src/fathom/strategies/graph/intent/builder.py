@@ -145,7 +145,10 @@ class IntentGraphBuilder(GraphBuilder):
             # When sub-goals are defined, verification must wait until all sub-goals
             # complete (handled in RECORD node). The planner's overall completion
             # signal is treated as a soft hint — reset and continue working.
-            if self.__context.agent_state.has_sub_goals() and not self.__context.agent_state.all_sub_goals_complete():
+            if (
+                self.__context.agent_state.has_sub_goals()
+                and not self.__context.agent_state.all_sub_goals_complete()
+            ):
                 logger.info(
                     "[ROUTING] -> GROUND (is_complete=True but sub-goals remain; "
                     "deferring verification until all sub-goals complete)"
