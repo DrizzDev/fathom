@@ -34,14 +34,12 @@ except ImportError:
 if TEMPORAL_AVAILABLE:
     from .activities import FathomActivities
     from .constants import WORKFLOW_PASSTHROUGH_MODULES
-    from .state import SignalStateRegistry
     from .workflow import FathomWorkflow
 
     __all__ = [
         "FathomWorkflow",
         "FathomActivities",
         "TEMPORAL_AVAILABLE",
-        "SignalStateRegistry",
         "WORKFLOW_PASSTHROUGH_MODULES",
     ]
 else:

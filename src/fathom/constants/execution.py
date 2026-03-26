@@ -33,6 +33,9 @@ DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
 # Signal adapter heartbeat interval (seconds)
 SIGNAL_HEARTBEAT_INTERVAL = 5.0
 
+# Maximum time (seconds) to wait for background tasks during shutdown
+DRAIN_TIMEOUT = 10.0
+
 
 class SignalType(StrEnum):
     """

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Set
 
 from fathom.base.paths import SharedPathManager
-from fathom.constants import ActionType
+from fathom.constants import DRAIN_TIMEOUT, ActionType
 from fathom.interfaces.storage import StoragePort
 from fathom.processing.annotator import ImageAnnotator
 from fathom.processing.drawer import BoundsGenerator
@@ -52,13 +52,31 @@ class HierarchyService:
 
     async def drain_background_tasks(self) -> None:
         """
-        Await all pending background upload tasks.
+        Await all pending background upload tasks with a bounded timeout.
         """
 
+        
+
         pending = [task for task in self.__background_tasks if not task.done()]
-        if pending:
-            logger.info(f"[HierarchyService] draining {len(pending)} background tasks")
-            await asyncio.gather(*pending, return_exceptions=True)
+        if not pending:
+            return
+
+        logger.info(
+            f"[HierarchyService] draining {len(pending)} background tasks (timeout={DRAIN_TIMEOUT}s)"
+        )
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True),
+                timeout=DRAIN_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[HierarchyService] drain timed out, cancelling {len(pending)} remaining tasks"
+            )
+            for task in pending:
+                if not task.done():
+                    task.cancel()
 
     def extract_elements(
         self,

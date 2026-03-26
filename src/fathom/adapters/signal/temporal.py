@@ -8,8 +8,8 @@ from typing import Optional
 from temporalio import activity
 
 from fathom.constants import SIGNAL_HEARTBEAT_INTERVAL, SignalType
+from fathom.infrastructure.temporal.state import SignalStateRegistry, WorkflowSignalState
 from fathom.interfaces.signal import SignalPort
-from fathom.runtime.temporal.state import SignalStateRegistry, WorkflowSignalState
 
 logger = getLogger(__name__)
 

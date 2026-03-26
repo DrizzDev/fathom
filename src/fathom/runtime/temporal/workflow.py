@@ -6,7 +6,7 @@ from typing import Any, Deque, Dict, Optional
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from fathom.runtime.temporal.state import SignalStateRegistry, WorkflowSignalState
+from fathom.infrastructure.temporal.state import SignalStateRegistry, WorkflowSignalState
 from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest
 
 logger = logging.getLogger(__name__)

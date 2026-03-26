@@ -5,9 +5,8 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from temporalio import activity
 
-from fathom.adapters.signal.noop import NoopSignal
-from fathom.adapters.signal.temporal import TemporalSignalAdapter
 from fathom.base.paths import SharedPathManager
+from fathom.infrastructure.temporal.state import SignalStateRegistry
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
@@ -15,10 +14,10 @@ from fathom.runtime.factories import (
     DeviceFactory,
     LLMFactory,
     PerceptionFactory,
+    SignalFactory,
     StorageFactory,
     TelemetryFactory,
 )
-from fathom.runtime.temporal.state import SignalStateRegistry
 from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest, RunRequest
 from fathom.settings.env import FathomSettings
 
@@ -57,19 +56,22 @@ class FathomActivities:
 
     def __create_signal_adapter(self, *, workflow_id: str, request: RunRequest) -> SignalPort:
         """
-        Create the signal adapter for the current workflow host.
+        Create the signal adapter for the current workflow host via factory.
         """
 
-        if not request.runtime.interactive:
-            logger.info(
-                f"[activity] workflow={workflow_id} event=signal_adapter adapter=NoopSignal mode=autonomous"
-            )
-            return NoopSignal()
+        adapter = SignalFactory().create(
+            workflow_id=workflow_id,
+            signal_type=request.runtime.signal_type,
+            interactive=request.runtime.interactive,
+        )
 
         logger.info(
-            f"[activity] workflow={workflow_id} event=signal_adapter adapter=TemporalSignalAdapter mode=interactive"
+            f"[activity] workflow={workflow_id} event=signal_adapter "
+            f"adapter={type(adapter).__name__} interactive={request.runtime.interactive} "
+            f"signal_type={request.runtime.signal_type}"
         )
-        return TemporalSignalAdapter(workflow_id=workflow_id)
+
+        return adapter
 
     def __build_runner(self, *, workflow_id: str, request: RunRequest) -> "FathomRunner":
         """

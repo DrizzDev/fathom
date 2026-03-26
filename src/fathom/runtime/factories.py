@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 from fathom.adapters.device.local.adb import ADBDevice
 from fathom.adapters.device.local.ios import IOSDevice
@@ -17,6 +17,7 @@ from fathom.adapters.perception.remote import RemotePerceptionAdapter
 from fathom.adapters.signal.interactive import InteractiveSignal
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.adapters.signal.socket import SocketSignal
+from fathom.adapters.signal.temporal import TemporalSignalAdapter
 from fathom.adapters.storage.cloud import CloudStorage
 from fathom.adapters.storage.composite import CompositeStorage
 from fathom.adapters.storage.local import LocalStorage
@@ -24,6 +25,7 @@ from fathom.adapters.telemetry.redis import RedisTelemetryAdapter
 from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform, IOSAutomationBackend
+from fathom.constants.run import SignalAdapterType
 from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.factory import (
@@ -147,17 +149,27 @@ class SignalFactory(SignalFactoryPort):
     Factory for creating signal adapters.
     """
 
-    __SOCKET_MODE = "socket"
-
-    def create(self, *, interactive: bool, signal_type: str) -> SignalPort:
+    def create(
+        self,
+        *,
+        signal_type: str,
+        interactive: bool,
+        workflow_id: Optional[str] = None,
+    ) -> SignalPort:
         """
         Create signal adapter from interaction mode and signal type.
+
+        When workflow_id is provided, the adapter runs inside a Temporal activity
+        and always resolves to TemporalSignalAdapter regardless of signal_type.
         """
 
         if not interactive:
             return NoopSignal()
 
-        if signal_type == self.__SOCKET_MODE:
+        if workflow_id is not None:
+            return TemporalSignalAdapter(workflow_id=workflow_id)
+
+        if signal_type == SignalAdapterType.SOCKET:
             return SocketSignal()
 
         return InteractiveSignal()
