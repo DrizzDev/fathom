@@ -24,7 +24,7 @@ async def stability_wait(configuration: FathomConfiguration) -> None:
     capped_wait_ms = min(requested_wait_ms, MAX_STABILITY_WAIT_MS)
     applied_wait_ms = max(0.0, capped_wait_ms - CAPTURE_OVERHEAD_MS)
     stability_wait_s = applied_wait_ms / 1000.0
-    logger.debug(
+    logger.info(
         "[WAIT] source=stability_wait requested=%.3fs applied=%.3fs (capture_overhead=%.0fms)",
         requested_wait_s,
         stability_wait_s,

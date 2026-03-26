@@ -39,8 +39,8 @@ if TEMPORAL_AVAILABLE:
     __all__ = [
         "FathomWorkflow",
         "FathomActivities",
-        "WORKFLOW_PASSTHROUGH_MODULES",
         "TEMPORAL_AVAILABLE",
+        "WORKFLOW_PASSTHROUGH_MODULES",
     ]
 else:
     __all__ = ["TEMPORAL_AVAILABLE"]

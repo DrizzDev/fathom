@@ -40,6 +40,13 @@ MAX_ACTION_WAIT_MS = 10_000
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
 
+# Signal adapter heartbeat interval (seconds)
+SIGNAL_HEARTBEAT_INTERVAL = 5.0
+RECOMMENDED_WORKFLOW_TASK_TIMEOUT_SECONDS = 60
+
+# Maximum time (seconds) to wait for background tasks during shutdown
+DRAIN_TIMEOUT = 30.0
+
 
 class SignalType(StrEnum):
     """

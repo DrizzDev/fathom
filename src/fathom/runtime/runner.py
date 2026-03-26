@@ -406,15 +406,44 @@ class FathomRunner:
 
     async def cleanup(self) -> None:
         """
-        Cleanup resources.
+        Cleanup all resources held by the runner and its ports.
         """
 
+        # 1. Context manager — drain persist queue, cancel background tasks
+        if self.__context_manager is not None:
+            try:
+                await self.__context_manager.shutdown()
+            except Exception as exception:
+                logger.warning(f"[FathomRunner] context_manager shutdown failed: {exception}")
+
+        # 2. LLM — delete cached content, close clients
         try:
             await self.__llm.cleanup()
         except Exception as exception:
-            await self.__telemetry.warning(f"LLM cleanup failed: {exception}")
+            logger.warning(f"[FathomRunner] llm cleanup failed: {exception}")
 
-        await self.__telemetry.info("Runner cleanup completed")
+        # 3. Device — close HTTP client (ADB remote, iOS remote)
+        if hasattr(self.__device, "close"):
+            try:
+                await self.__device.close()
+            except Exception as exception:
+                logger.warning(f"[FathomRunner] device close failed: {exception}")
+
+        # 4. Telemetry — close Redis connection if applicable
+        if hasattr(self.__telemetry, "close"):
+            try:
+                await self.__telemetry.close()
+            except Exception as exception:
+                logger.warning(f"[FathomRunner] telemetry close failed: {exception}")
+
+        # 5. Storage — close any open handles
+        if hasattr(self.__storage, "close"):
+            try:
+                await self.__storage.close()
+            except Exception as exception:
+                logger.warning(f"[FathomRunner] storage close failed: {exception}")
+
+        logger.info("[FathomRunner] cleanup completed")
 
     async def __get_memory_summary(self) -> Dict[str, Any]:
         """

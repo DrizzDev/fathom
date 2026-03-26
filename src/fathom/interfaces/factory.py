@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
@@ -68,7 +69,13 @@ class SignalFactoryPort(ABC):
     """
 
     @abstractmethod
-    def create(self, *, interactive: bool, signal_type: str) -> SignalPort:
+    def create(
+        self,
+        *,
+        signal_type: str,
+        interactive: bool,
+        workflow_id: Optional[str] = None,
+    ) -> SignalPort:
         """
         Create signal adapter from runtime interaction mode.
         """
