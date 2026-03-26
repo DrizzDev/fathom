@@ -12,6 +12,7 @@ from fathom.constants import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY,
     DEFAULT_SWIPE_DURATION,
+    DRAIN_TIMEOUT,
     ActionType,
 )
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
@@ -450,3 +451,29 @@ class ActionExecutor:
             task.add_done_callback(self.__background_tasks.discard)
         except Exception as exception:
             logger.exception(f"Failed to schedule tracing: {exception}", stack_info=True)
+
+    async def drain_background_tasks(self) -> None:
+        """
+        Await all pending background trace/upload tasks with a bounded timeout.
+        """
+
+        pending = [task for task in self.__background_tasks if not task.done()]
+        if not pending:
+            return
+
+        logger.info(
+            f"[ActionExecutor] draining {len(pending)} background tasks (timeout={DRAIN_TIMEOUT}s)"
+        )
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True),
+                timeout=DRAIN_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[ActionExecutor] drain timed out, cancelling {len(pending)} remaining tasks"
+            )
+            for task in pending:
+                if not task.done():
+                    task.cancel()

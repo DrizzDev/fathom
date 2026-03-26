@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from logging import getLogger
 from typing import List, Optional, Tuple, TypeAlias, cast
 
@@ -51,32 +52,42 @@ class ScreenComparator:
         Compare two captures and return a rich diff object.
         """
 
+        compare_start = time.time()
+
         structural_signals = self.__resolve_structural_signals(
             after_state=after_state,
             before_state=before_state,
         )
 
+        ssim_start = time.time()
+        ssim_score = self.__compute_ssim(after=after.image, before=before.image)
+        logger.info("[ScreenDiff] SSIM completed in %.2fs", time.time() - ssim_start)
+
+        pixel_start = time.time()
+        pixel_diff = self.__compute_content_pixel_diff_ratio(after=after.image, before=before.image)
+        logger.info("[ScreenDiff] Pixel diff completed in %.2fs", time.time() - pixel_start)
+
+        regions_start = time.time()
+        regions = self.__compute_changed_regions(after=after.image, before=before.image)
+        logger.info("[ScreenDiff] Changed regions completed in %.2fs", time.time() - regions_start)
+
+        scroll_start = time.time()
+        scroll = self.__compute_scroll_translation(after=after.image, before=before.image)
+        logger.info(
+            "[ScreenDiff] Scroll translation completed in %.2fs", time.time() - scroll_start
+        )
+
+        logger.info("[ScreenDiff] Total compare completed in %.2fs", time.time() - compare_start)
+
         return ScreenDiff(
+            ssim_score=ssim_score,
+            changed_regions=regions,
+            scroll_translation=scroll,
+            content_pixel_diff_ratio=pixel_diff,
             phash_distance=structural_signals.phash_distance,
             activity_changed=before.activity != after.activity,
             xml_hash_changed=structural_signals.xml_hash_changed,
             interaction_hash_changed=structural_signals.interaction_hash_changed,
-            ssim_score=self.__compute_ssim(
-                after=after.image,
-                before=before.image,
-            ),
-            content_pixel_diff_ratio=self.__compute_content_pixel_diff_ratio(
-                after=after.image,
-                before=before.image,
-            ),
-            changed_regions=self.__compute_changed_regions(
-                after=after.image,
-                before=before.image,
-            ),
-            scroll_translation=self.__compute_scroll_translation(
-                after=after.image,
-                before=before.image,
-            ),
         )
 
     def __resolve_structural_signals(
@@ -150,6 +161,28 @@ class ScreenComparator:
             logger.debug("Image decode failed: %s", exception)
             return None
 
+    @staticmethod
+    def __downscale_for_ssim(*, image: ImageMatrix, max_width: int = 540) -> ImageMatrix:
+        """
+        Downscale a grayscale image for SSIM computation.
+
+        SSIM measures structural similarity which is preserved at lower resolutions.
+        Downscaling from 1080px to 540px reduces pixel count by 4x and compute by ~4-8x.
+        """
+
+        height, width = image.shape[:2]
+
+        if width <= max_width:
+            return image
+
+        scale = max_width / width
+        new_width = max_width
+        new_height = int(height * scale)
+
+        return cast(
+            "ImageMatrix", cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        )
+
     def __get_content_bounds(self, *, image_height: int) -> Tuple[int, int]:
         """
         Return the vertical crop bounds for the meaningful content area.
@@ -172,6 +205,10 @@ class ScreenComparator:
     def __compute_ssim(self, *, before: bytes, after: bytes) -> Optional[float]:
         """
         Compute SSIM over the content region.
+
+        Images are downscaled to max 540px width before SSIM computation.
+        SSIM is a structural metric designed to work at any resolution —
+        downscaling preserves accuracy while reducing compute by 4-16x.
         """
 
         try:
@@ -183,6 +220,9 @@ class ScreenComparator:
 
             if image_before.shape != image_after.shape:
                 return 0.0
+
+            image_before = self.__downscale_for_ssim(image=image_before)
+            image_after = self.__downscale_for_ssim(image=image_after)
 
             return self.__compute_ssim_map_mean(
                 after_image=self.__get_content_region(image=image_after),
@@ -208,8 +248,8 @@ class ScreenComparator:
         contrast_stabilizer = (SSIM_K2 * 255.0) ** 2
         luminance_stabilizer = (SSIM_K1 * 255.0) ** 2
 
-        after_float = after_image.astype(numpy.float64)
-        before_float = before_image.astype(numpy.float64)
+        after_float = after_image.astype(numpy.float32)
+        before_float = before_image.astype(numpy.float32)
 
         gaussian_column = cv2.getGaussianKernel(kernel_size, sigma)
         gaussian_kernel = numpy.outer(gaussian_column, gaussian_column.transpose())

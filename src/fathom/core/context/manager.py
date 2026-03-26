@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import uuid
+from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
+from fathom.constants import DRAIN_TIMEOUT
 from fathom.core.context.engines.gcc import GitContextEngine
 from fathom.interfaces.context import ContextEngine
 from fathom.interfaces.memory import MemoryPort
@@ -13,7 +14,7 @@ from fathom.interfaces.summarization import SummarizationPort
 from fathom.schemas.actions import Action
 from fathom.schemas.context import UserGuidance
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 class ContextManager:
@@ -318,14 +319,38 @@ class ContextManager:
 
     async def shutdown(self) -> None:
         """
-        Gracefully shuts down the persistence worker.
+        Gracefully shuts down all background tasks and the persistence worker.
         """
 
+        # 1. Wait for in-flight summarization tasks with bounded timeout
+        pending = [task for task in self.__background_tasks if not task.done()]
+        if pending:
+            logger.info(
+                f"[ContextManager] awaiting {len(pending)} background tasks (timeout={DRAIN_TIMEOUT}s)"
+            )
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True),
+                    timeout=DRAIN_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[ContextManager] background task drain timed out, cancelling remaining"
+                )
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+
+        # 2. Drain the persistence queue
         if self.__persistence_task:
-            # Wait for queue to drain
             if not self.__persist_queue.empty():
-                await self.__persist_queue.join()
+                try:
+                    await asyncio.wait_for(self.__persist_queue.join(), timeout=DRAIN_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logger.warning("[ContextManager] persistence queue drain timed out")
 
             self.__persistence_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self.__persistence_task
+
+        logger.info(f"[ContextManager] workflow={self.__workflow_id} shutdown complete")

@@ -13,6 +13,8 @@ from fathom.constants.execution import (
     DEFAULT_STABILITY_WAIT,
     DEFAULT_SWIPE_DISTANCE,
     DEFAULT_SWIPE_DURATION,
+    DRAIN_TIMEOUT,
+    SIGNAL_HEARTBEAT_INTERVAL,
     VISUAL_HASH_LENGTH,
     ExecutionPhase,
     SignalType,
@@ -135,6 +137,7 @@ __all__ = [
     "FathomEvent",
     "ContextScope",
     "ExecutionMode",
+    "DRAIN_TIMEOUT",
     "WorkflowStatus",
     "StrategyStatus",
     "ExecutionPhase",
@@ -153,4 +156,5 @@ __all__ = [
     "DEFAULT_STABILITY_WAIT",
     "NEXT_PHASE_ACTION_TYPES",
     "DEFAULT_SCROLL_DISTANCE",
+    "SIGNAL_HEARTBEAT_INTERVAL",
 ]
