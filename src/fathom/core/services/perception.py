@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio  # noqa: TC003 — used at runtime for Task types
 import hashlib
 import io
 import time
 from logging import getLogger
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 try:
     import cv2
@@ -21,6 +22,7 @@ from PIL import Image
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.screen import INTERACTION_TEXT_PREVIEW_LENGTH, ZERO_HASH
+from fathom.core.exceptions import ConfigurationError, MissingDependencyError, VisionError
 from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.storage import StoragePort
 from fathom.processing.parsers.signature import HierarchySignatureBuilder
@@ -48,6 +50,7 @@ class PerceptionService:
         self.__hierarchy_signature_builder = hierarchy_signature_builder
 
         self.__session_id = session_id
+        self.__background_tasks: set[asyncio.Task[Any]] = set()
 
     async def perceive(self, *, session_id: Optional[str] = None) -> ScreenCapture:
         """
@@ -60,7 +63,7 @@ class PerceptionService:
         effective_session_id = session_id or self.__session_id
 
         if not effective_session_id:
-            raise ValueError("session_id must be provided either in __init__ or perceive()")
+            raise ConfigurationError("session_id must be provided either in __init__ or perceive()")
 
         capture = await self.__perception.capture()
 
@@ -71,6 +74,7 @@ class PerceptionService:
             activity_name=capture.activity,
             session_id=effective_session_id,
         )
+
         metadata = dict(capture.metadata)
         metadata["storage_id"] = storage_id
 
@@ -126,7 +130,7 @@ class PerceptionService:
         """
 
         if not OPENCV_AVAILABLE or cv2 is None or numpy is None:
-            raise RuntimeError("OpenCV not available")
+            raise MissingDependencyError(dependency="opencv-python", feature="pHash computation")
 
         logger.debug("Computing pHash using OpenCV")
 
@@ -134,7 +138,7 @@ class PerceptionService:
         decoded_image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
 
         if decoded_image is None:
-            raise ValueError("Could not decode image with OpenCV")
+            raise VisionError("Could not decode image with OpenCV")
 
         resized_image = cv2.resize(decoded_image, (32, 32), interpolation=cv2.INTER_AREA)
         float_image = numpy.float32(resized_image)

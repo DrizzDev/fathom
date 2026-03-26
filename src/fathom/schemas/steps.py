@@ -75,28 +75,39 @@ class StepResult(BaseModel):
             self.step.action, "condition", None
         )
 
+        act = self.step.action
         return StepRecord(
             bounds=bounds,
             activity=activity,
             condition=condition,
-            is_conditional=self.step.action.is_conditional,
-            conditional_type=self.step.action.conditional_type,
-            overlay_detected=self.step.action.overlay_detected,
+            is_conditional=act.is_conditional,
+            conditional_type=act.conditional_type,
+            overlay_detected=act.overlay_detected,
             success=self.success,
             duration=self.duration,
             center=absolute_center,
-            text=self.step.action.text,
+            text=act.text,
             observation=self.observation,
-            target=self.step.action.target,
+            target=act.target,
             is_positional=self.is_positional,
             step_number=self.step.step_number,
             screen_changed=self.screen_changed,
-            rationale=self.step.action.rationale,
+            rationale=act.rationale,
             generalized_target=self.generalized_target,
             event_type=self.step.event_type or "action",
-            action_type=self.step.action.action_type.value,
-            action_description=self.step.action.to_description(),
-            natural_language_target=self.step.action.natural_language_target,
+            action_type=act.action_type.value,
+            action_description=act.to_description(),
+            natural_language_target=act.natural_language_target,
+            # Export-critical fields
+            export_target=act.export_target,
+            scroll_target=act.scroll_target,
+            wait_subject=act.wait_subject,
+            wait_pattern=act.wait_pattern,
+            is_app_launcher=act.is_app_launcher,
+            target_is_generic=act.target_is_generic,
+            target_element_type=act.target_element_type,
+            confidence=act.confidence,
+            label_id=act.label_id,
         )
 
 
@@ -152,3 +163,28 @@ class StepRecord(BaseModel):
         default=None, description="Normalized [x1, y1, x2, y2] bounds"
     )
     center: Optional[List[int]] = Field(default=None, description="Absolute [x, y] coordinates")
+
+    # Export-critical fields (VLM-provided, persisted for downstream consumers)
+    export_target: Optional[str] = Field(
+        default=None, description="Canonical phrase for exported test scripts"
+    )
+    scroll_target: Optional[str] = Field(
+        default=None, description="Element or section being scrolled to find"
+    )
+    wait_subject: Optional[str] = Field(default=None, description="What is being waited for")
+    wait_pattern: Optional[str] = Field(
+        default=None, description="Wait category: ad, splash, load, search, generic"
+    )
+    is_app_launcher: bool = Field(default=False, description="Whether this tap launches an app")
+    target_is_generic: Optional[bool] = Field(
+        default=None, description="Whether target is non-specific"
+    )
+    target_element_type: Optional[str] = Field(
+        default=None, description="Element type/role (button, icon, etc.)"
+    )
+    confidence: Optional[float] = Field(
+        default=None, description="VLM confidence score for this action"
+    )
+    label_id: Optional[str] = Field(
+        default=None, description="Grounding label ID from XML manifest"
+    )

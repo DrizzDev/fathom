@@ -23,6 +23,21 @@ from fathom.constants.platform import DeviceConnectionType, DevicePlatform, IOSA
 from fathom.constants.run import ExecutionMode, SignalAdapterType, TargetKind
 from fathom.constants.scope import ContextScope
 
+SWIPE_ACTIONS = frozenset({"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"})
+
+EXECUTABLE_ACTION_PREFIXES = (
+    "open_app ",
+    "tap ",
+    "type ",
+    "scroll ",
+    "swipe ",
+    "wait ",
+    "press ",
+    "long press ",
+)
+
+VALIDATE_PREFIX = "validate"
+
 
 class ActionType(StrEnum):
     """
@@ -90,6 +105,7 @@ ACTION_EXECUTED_TYPES: frozenset[ActionType] = frozenset(
         ActionType.SWIPE,
         ActionType.SCROLL,
         ActionType.COMPLETE,
+        ActionType.VALIDATE,
     }
 )
 
@@ -146,6 +162,9 @@ __all__ = [
     "VISUAL_HASH_LENGTH",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_RETRY_DELAY",
+    "SWIPE_ACTIONS",
+    "EXECUTABLE_ACTION_PREFIXES",
+    "VALIDATE_PREFIX",
     "SPATIAL_ACTION_TYPES",
     "DeviceConnectionType",
     "IOSAutomationBackend",

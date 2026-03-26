@@ -12,6 +12,10 @@ class NoopSignal(SignalPort):
     Returns None for all signals, enabling fully autonomous operation.
     """
 
+    @property
+    def is_interactive(self) -> bool:
+        return False
+
     def supports_interruption(self) -> bool:
         """
         Return interruption support for this adapter.

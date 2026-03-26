@@ -11,6 +11,7 @@ class CompletionReason(StrEnum):
     MAX_STEPS = "Max steps reached"
     SUCCESS = "Completed successfully"
     STUCK = "Stuck: Recovery exhausted"
+    ACTION_BLOCKED = "Action blocked: repeated without progress"
     INTERVENTION_REQUIRED = "Human intervention required"
     USER_DIRECTIVE = "Marked complete via user directive"
 
@@ -72,6 +73,9 @@ class IntentStateKey(StrEnum):
 
     # History
     STEP_RESULTS = "STEP_RESULTS"
+
+    # Post-action activity captured in EXECUTE, consumed in RECORD
+    POST_ACTIVITY = "POST_ACTIVITY"
 
 
 class ExplorationStateKey(StrEnum):

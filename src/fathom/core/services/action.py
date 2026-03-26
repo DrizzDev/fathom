@@ -15,6 +15,7 @@ from fathom.constants import (
     DRAIN_TIMEOUT,
     ActionType,
 )
+from fathom.constants.execution import MAX_ACTION_WAIT_MS
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
@@ -50,6 +51,7 @@ class ActionExecutor:
         self.__storage = storage
         self.__path_manager = path_manager
         self.__background_tasks: Set[asyncio.Task[None]] = set()
+        self.__cached_dimensions: Optional[Tuple[int, int]] = None
 
     async def act(
         self,
@@ -92,7 +94,13 @@ class ActionExecutor:
                     )
 
             if attempt < self.__max_retries:
-                await asyncio.sleep(delay=(DEFAULT_RETRY_DELAY / 1000.0) * (attempt + 1))
+                retry_delay = (DEFAULT_RETRY_DELAY / 1000.0) * (attempt + 1)
+                logger.debug(
+                    "[WAIT] source=retry_backoff attempt=%s delay=%.3fs",
+                    attempt + 1,
+                    retry_delay,
+                )
+                await asyncio.sleep(delay=retry_delay)
 
         return ExecutionResult(
             duration=0,
@@ -110,8 +118,9 @@ class ActionExecutor:
         action = step.action
         start_time = time.time()
 
-        screen_size = await self.__device.get_dimensions()
-        width, height = screen_size
+        if self.__cached_dimensions is None:
+            self.__cached_dimensions = await self.__device.get_dimensions()
+        width, height = self.__cached_dimensions
 
         configuration = self.__device.configuration or DeviceRuntimeConfiguration()
         converter = CoordinateConverter(
@@ -197,6 +206,8 @@ class ActionExecutor:
     ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
         """
         Execute non-interactive action and return success result.
+        Applies wait duration capping via MAX_ACTION_WAIT_MS to prevent
+        excessively long waits requested by the model.
         """
 
         if action.action_type in {
@@ -205,7 +216,22 @@ class ActionExecutor:
             ActionType.SAVE_MEMORY,
             ActionType.RETRIEVE_MEMORY,
         }:
-            await asyncio.sleep(delay=float(action.wait_duration or 1.0))
+            max_wait_s = MAX_ACTION_WAIT_MS / 1000.0
+            requested_wait = float(action.wait_duration or 1.0)
+            applied_wait = max(0.0, min(requested_wait, max_wait_s))
+            if requested_wait > max_wait_s:
+                logger.warning(
+                    "[WAIT] Capping wait_duration from %.1fs to %.1fs (MAX_ACTION_WAIT_MS=%d).",
+                    requested_wait,
+                    max_wait_s,
+                    MAX_ACTION_WAIT_MS,
+                )
+            logger.debug(
+                "[WAIT] source=model_wait_duration requested=%.3fs applied=%.3fs",
+                requested_wait,
+                applied_wait,
+            )
+            await asyncio.sleep(delay=applied_wait)
 
         return (
             ExecutionResult(success=True, duration=int((time.time() - start_time) * 1000)),
@@ -339,7 +365,9 @@ class ActionExecutor:
                 x2, y2 = cx, cy - offset
 
         coords = (x1, y1, x2, y2)
-        result = await self.__device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
+        result = await self.__device.swipe(
+            x1=x1, y1=y1, x2=x2, y2=y2, duration=DEFAULT_SWIPE_DURATION
+        )
         return result, coords
 
     async def __execute_scroll(

@@ -10,6 +10,7 @@ from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.core.services.action import ActionExecutor
+from fathom.core.services.audit import AuditService
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.exporter import ScriptExporter
 from fathom.core.services.hierarchy import HierarchyService
@@ -78,6 +79,7 @@ class GraphContext:
         action_executor: Optional[ActionExecutor] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
         perception_service: Optional[PerceptionService] = None,
+        auditor: Optional[AuditService] = None,
         resolution: Optional[ReferenceResolutionService] = None,
     ) -> None:
         self.__intent = intent
@@ -128,11 +130,14 @@ class GraphContext:
             memory=memory, workflow_id=workflow_id, summarizer=summarizer
         )
 
+        self.__auditor = auditor or AuditService()
+
         self.__vision = vision or VisionService(
             llm=llm,
             memory=memory,
             telemetry=telemetry,
             session_id=workflow_id,
+            auditor=self.__auditor,
             use_cache=configuration.llm.use_cache,
         )
 
@@ -394,6 +399,14 @@ class GraphContext:
         """
 
         return self.__planner
+
+    @property
+    def auditor(self) -> AuditService:
+        """
+        Returns the AuditService instance for console logging.
+        """
+
+        return self.__auditor
 
     @property
     def hierarchy(self) -> HierarchyService:

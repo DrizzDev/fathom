@@ -142,6 +142,20 @@ class IntentGraphBuilder(GraphBuilder):
                 logger.info(f"[ROUTING] -> END (Fatal Error / Max Steps: {reason})")
                 return NodeName.END
 
+            # When sub-goals are defined, verification must wait until all sub-goals
+            # complete (handled in RECORD node). The planner's overall completion
+            # signal is treated as a soft hint — reset and continue working.
+            if (
+                self.__context.agent_state.has_sub_goals()
+                and not self.__context.agent_state.all_sub_goals_complete()
+            ):
+                logger.info(
+                    "[ROUTING] -> GROUND (is_complete=True but sub-goals remain; "
+                    "deferring verification until all sub-goals complete)"
+                )
+                self.__context.agent_state.reset_completion()
+                return NodeName.GROUND
+
             # Otherwise, it's a normal goal completion, proceed to verification
             logger.info("[ROUTING] -> VERIFY (is_complete=True)")
             return NodeName.VERIFY

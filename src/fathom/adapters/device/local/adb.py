@@ -418,4 +418,4 @@ class ADBDevice(DevicePort):
         Escapes text for ADB.
         """
 
-        return text.replace(r"\\", r"\\\\").replace(r'"', r"\"").replace(r" ", r"%s")
+        return text.replace("\\", "\\\\").replace('"', '\\"').replace(" ", "%s")

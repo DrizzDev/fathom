@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Dict, List, Optional
+from logging import getLogger
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from fathom.constants import EXECUTABLE_ACTION_PREFIXES, VALIDATE_PREFIX
+from fathom.schemas.validators import enforce_validate_prefix
+
+logger = getLogger(__name__)
 
 
 class ConditionalBlockPayload(BaseModel):
@@ -11,7 +17,14 @@ class ConditionalBlockPayload(BaseModel):
     Structured conditional block for script generation.
     """
 
-    condition: str = Field(min_length=1, description="IF block condition text.")
+    condition: str = Field(
+        min_length=1,
+        description="IF block condition text. Rendered as 'IF <condition>' with '{' on the following line.",
+    )
+    condition_type: Optional[Literal["blocker", "transient", "error", "optional"]] = Field(
+        default=None,
+        description="Classification of this condition: blocker, transient, error, or optional.",
+    )
     action_ids: List[str] = Field(
         default_factory=list,
         description="Executable action IDs under this condition.",
@@ -33,13 +46,17 @@ class ScriptExportStructuredPayloadShape(BaseModel):
         default_factory=list, description="Ordered executable action IDs outside IF blocks."
     )
     final_validation: str = Field(
-        min_length=1, description="Final goal validation line starting with 'Validate'."
+        min_length=1,
+        description=(
+            "Terminal UI-state validation after the last catalog action; must start with 'Validate'. "
+            "Single concise visible/displayed assertion—no imperative tap/click/type steps."
+        ),
     )
     action_validations: Dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Optional map of action_id -> intermediate validation line. "
-            "Each value must start with 'Validate' and is emitted after that action."
+            "Optional map of action_id -> intermediate validation emitted after that action. "
+            "Each value must start with 'Validate'. Use for mid-flow state checks; not for the terminal line."
         ),
     )
 
@@ -112,8 +129,7 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
             }
         )
 
-        if not payload.final_validation.strip().lower().startswith("validate"):
-            raise ValueError("final_validation must start with 'Validate'.")
+        enforce_validate_prefix(payload.final_validation, "final_validation")
 
         cleaned_action_validations: Dict[str, str] = {}
         for action_id, validation_line in payload.action_validations.items():
@@ -121,8 +137,7 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
             line = str(validation_line).strip()
             if not aid or not line:
                 continue
-            if not line.lower().startswith("validate"):
-                raise ValueError(f"action_validations[{aid}] must start with 'Validate'.")
+            enforce_validate_prefix(line, f"action_validations[{aid}]")
             cleaned_action_validations[aid] = line
         payload.action_validations = cleaned_action_validations
 
@@ -156,18 +171,20 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
 
         if payload.required_open_app_id:
             if payload.required_open_app_id not in ordered_action_ids:
-                raise ValueError(
-                    f"Required OPEN_APP action ID is missing: {payload.required_open_app_id}"
+                # Auto-prepend the OPEN_APP action instead of hard-failing.
+                # The LLM sometimes omits it because it considers it implicit.
+                logger.warning(
+                    "LLM omitted required OPEN_APP action %s; auto-prepending.",
+                    payload.required_open_app_id,
                 )
-            ordered_action_ids = [payload.required_open_app_id] + [
-                action_id
-                for action_id in ordered_action_ids
-                if action_id != payload.required_open_app_id
-            ]
-            if ordered_action_ids[0] != payload.required_open_app_id:
-                raise ValueError(
-                    f"First executable action ID must be exactly: {payload.required_open_app_id}"
-                )
+                ordered_action_ids.insert(0, payload.required_open_app_id)
+            else:
+                # Move it to position 0 if present but not first.
+                ordered_action_ids = [payload.required_open_app_id] + [
+                    action_id
+                    for action_id in ordered_action_ids
+                    if action_id != payload.required_open_app_id
+                ]
 
         # Enforce that action IDs inside each conditional block respect the canonical
         # execution order when we have required_action_ids available. This keeps
@@ -229,17 +246,18 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                             "Degenerate duplicate conditional blocks detected for the same condition."
                         )
 
-        # Enforce validation distribution when multiple validations are expected.
-        # A single comprehensive final_validation statement is sufficient to cover
-        # multiple subjects — the model consistently produces one statement that
-        # references all outcomes. Requiring 2+ statements when not in if_block mode
-        # caused systematic fallback to deterministic export on every step.
+        # Log when validation distribution is sparse but do not reject — the LLM
+        # may legitimately cover multiple subjects in a single validation statement.
         if payload.expected_validation_count > 1:
             total_validations = len(payload.action_validations) + 1  # +1 for final_validation
-            if total_validations < 1:
-                raise ValueError(
-                    f"Intent has {payload.expected_validation_count} validation subjects "
-                    f"but no validation statement was provided."
+            if total_validations < 2:
+                logger.warning(
+                    "Intent has %d validation subjects but only %d validation statement(s) "
+                    "were provided (%d intermediate + 1 final). The final_validation may "
+                    "cover multiple subjects.",
+                    payload.expected_validation_count,
+                    total_validations,
+                    len(payload.action_validations),
                 )
 
         return payload
@@ -305,7 +323,12 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                 if selected_block_index in emitted_block_indices:
                     continue
                 block = self.conditional_blocks[selected_block_index]
-                lines.append(f"IF {block.condition.strip()} {{")
+                condition_text = block.condition.strip()
+                # Strip leading "if" to avoid "IF if ..." duplication
+                if condition_text.lower().startswith("if "):
+                    condition_text = condition_text[3:].strip()
+                lines.append(f"IF {condition_text}")
+                lines.append("{")
                 for block_action_id in block.action_ids:
                     block_action_id = block_action_id.strip()
                     if not block_action_id:
@@ -376,16 +399,17 @@ class ScriptExportPayload(BaseModel):
                 current = raw.strip()
                 if not current:
                     continue
-
-                if current.startswith("IF "):
+                if current == "{" or current == "}":
+                    continue
+                lower = current.lower()
+                if lower.startswith("if "):
                     if "{" not in current:
                         continue
-                    current = current.split("{", 1)[1].strip()
-
-                current = current.strip("{} ").strip()
-                if current:
-                    statements.append(current)
-
+                    tail = current.split("{", 1)[1].strip().rstrip("}").strip()
+                    if tail:
+                        statements.append(tail)
+                    continue
+                statements.append(current)
             return statements
 
         if "```" in self.script:
@@ -409,8 +433,20 @@ class ScriptExportPayload(BaseModel):
             raise ValueError("Script has unbalanced IF block braces.")
 
         if self.require_if_block:
-            has_if_block = any(line.lower().startswith("if ") and "{" in line for line in lines)
-            if not has_if_block:
+
+            def __script_has_if_block(line_list: List[str]) -> bool:
+                n = len(line_list)
+                for idx, line in enumerate(line_list):
+                    lower = line.lower()
+                    if not lower.startswith("if "):
+                        continue
+                    if "{" in line:
+                        return True
+                    if idx + 1 < n and line_list[idx + 1] == "{":
+                        return True
+                return False
+
+            if not __script_has_if_block(lines):
                 raise ValueError("Script must contain at least one IF conditional block.")
 
             # Additionally require that at least one IF block guards a non-trivial body with
@@ -419,25 +455,36 @@ class ScriptExportPayload(BaseModel):
             max_body_statements = 0
             in_if_block = False
             current_body_count = 0
-            for raw in lines:
-                line = raw.strip()
-                if not line:
-                    continue
-                if line.lower().startswith("if ") and "{" in line:
-                    # Starting a new IF block.
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                lower = line.lower()
+                if lower.startswith("if "):
                     if in_if_block:
                         max_body_statements = max(max_body_statements, current_body_count)
                     in_if_block = True
                     current_body_count = 0
+                    if "{" in line:
+                        tail = line.split("{", 1)[1].strip().rstrip("}").strip()
+                        if tail:
+                            current_body_count = 1
+                        i += 1
+                        continue
+                    if i + 1 < len(lines) and lines[i + 1] == "{":
+                        i += 2
+                        continue
+                    i += 1
                     continue
                 if line == "}":
                     if in_if_block:
                         max_body_statements = max(max_body_statements, current_body_count)
                         in_if_block = False
                         current_body_count = 0
+                    i += 1
                     continue
                 if in_if_block:
                     current_body_count += 1
+                i += 1
 
             if in_if_block:
                 max_body_statements = max(max_body_statements, current_body_count)
@@ -450,23 +497,13 @@ class ScriptExportPayload(BaseModel):
         statements = __extract_action_statements(raw_lines=lines)
         last_non_structural = statements[-1] if statements else ""
 
-        if not last_non_structural.lower().startswith("validate"):
+        if not last_non_structural.lower().startswith(VALIDATE_PREFIX):
             raise ValueError("Script must end with a goal validation line.")
 
-        executable_prefixes = (
-            "open_app ",
-            "tap ",
-            "type ",
-            "scroll ",
-            "swipe ",
-            "wait ",
-            "press ",
-            "long press ",
-        )
         executable_statements = [
             statement.lower()
             for statement in statements
-            if statement.lower().startswith(executable_prefixes)
+            if statement.lower().startswith(EXECUTABLE_ACTION_PREFIXES)
         ]
 
         required_open_app = (self.required_open_app or "").strip().lower()
@@ -484,7 +521,7 @@ class ScriptExportPayload(BaseModel):
 
             for statement in statements:
                 lowered = statement.lower()
-                if not any(lowered.startswith(prefix) for prefix in executable_prefixes):
+                if not any(lowered.startswith(prefix) for prefix in EXECUTABLE_ACTION_PREFIXES):
                     continue
 
                 seen_counts[lowered] += 1

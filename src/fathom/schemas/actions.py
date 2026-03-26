@@ -136,7 +136,15 @@ class Action(BaseModel):
         description="Set to true when this tap action is specifically intended to launch or focus the target app. Helps the exporter replace launcher taps with OPEN_APP semantics.",
     )
 
-    # Structured signal details for export (VLM-provided; avoids regex parsing of rationale)
+    # Structured signal details for export (VLM-provided; authoritative)
+    export_target: Optional[str] = Field(
+        default=None,
+        description=(
+            "Canonical phrase for this action in exported test scripts. Must be specific "
+            "and human-readable (e.g., 'Search box', 'the first search result', 'Add to cart button'). "
+            "NEVER use generic placeholders like 'element', 'button', 'label'."
+        ),
+    )
     scroll_target: Optional[str] = Field(
         default=None,
         description="For scroll/swipe actions: the element or section being scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and packages'). Use the exact phrase from the UI when possible.",
@@ -176,6 +184,10 @@ class Action(BaseModel):
         """
 
         # Resolve best target description.
+        # For validate actions, prefer validation_subject over generic targets.
+        if self.action_type == ActionType.VALIDATE and self.validation_subject:
+            return f"Validate {self.validation_subject}"
+
         name = self.natural_language_target
 
         lowered = (name or "").strip().lower()
@@ -189,6 +201,9 @@ class Action(BaseModel):
 
             else:
                 name = self.target or "element"
+
+        if self.action_type == ActionType.VALIDATE:
+            return f"Validate {name}"
 
         if self.action_type == ActionType.TAP:
             return f"Tap on {name}"

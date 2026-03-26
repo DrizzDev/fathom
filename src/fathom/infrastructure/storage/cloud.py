@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from google.cloud import storage
 
 from fathom.core.exceptions import VisionError
+from fathom.infrastructure.storage.metadata import extract_metadata
 from fathom.interfaces import IImageStorage
 from fathom.schemas.configuration import StorageConfiguration
 
@@ -57,42 +58,19 @@ class GCSImageStorage(IImageStorage):
                     # Use positional argument for project if available
                     client = storage.Client(project=project) if project else storage.Client()
 
-                if not metadata:
-                    raise ValueError("Storage metadata is required for GCS uploads")
+                meta = extract_metadata(metadata or {})
 
                 storage_bucket = client.bucket(bucket)
 
-                category = metadata.get("category", "screenshot")
-                session = metadata.get("session_id")
-                package = metadata.get("package_name")
-                filename_meta = metadata.get("filename")
-                # Fallback activity to package if missing
-                activity = metadata.get("activity_name") or package or "unknown_screen"
-
                 folder = datetime.now().strftime("%Y-%m-%d")
 
-                if not all([package, session]):
-                    raise ValueError(f"Missing required GCS metadata: {package=}, {session=}")
-
-                # Ensure types for mypy after validation
-                package_str = str(package)
-                session_str = str(session)
-                activity_str = str(activity)
-                category_str = str(category)
-
-                # Sanitize
-                package = "".join(char for char in package_str if char.isalnum() or char in "._-")
-                session = "".join(char for char in session_str if char.isalnum() or char in "._-")
-                activity = "".join(char for char in activity_str if char.isalnum() or char in "._-")
-                category = "".join(char for char in category_str if char.isalnum() or char in "._-")
-
-                if filename_meta:
-                    filename = f"{category}/{folder}/{package}/{session}/{filename_meta}"
+                if meta.filename:
+                    filename = (
+                        f"{meta.category}/{folder}/{meta.package}/{meta.session}/{meta.filename}"
+                    )
                 else:
                     timestamp = int(time.time() * 1000)
-                    filename = (
-                        f"{category}/{folder}/{package}/{session}/{timestamp}__{activity}.png"
-                    )
+                    filename = f"{meta.category}/{folder}/{meta.package}/{meta.session}/{timestamp}__{meta.activity}.png"
 
                 content_type = "application/octet-stream"
 

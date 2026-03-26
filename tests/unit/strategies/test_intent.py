@@ -26,7 +26,7 @@ async def test_build_checkpointer_context_configures_allowed_modules(
     async with context_builder(checkpoint_path) as checkpointer:
         assert type(checkpointer).__name__ == "AsyncSqliteSaver"
         assert type(checkpointer.serde).__name__ == "JsonPlusSerializer"
-        assert checkpointer.serde._allowed_modules == set(CHECKPOINT_ALLOWED_JSON_MODULES)
+        assert checkpointer.serde._allowed_json_modules == set(CHECKPOINT_ALLOWED_JSON_MODULES)
         if hasattr(checkpointer.serde, "_allowed_msgpack_modules"):
             assert checkpointer.serde._allowed_msgpack_modules == set(
                 CHECKPOINT_ALLOWED_MSGPACK_MODULES

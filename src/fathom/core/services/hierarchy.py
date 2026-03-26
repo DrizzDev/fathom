@@ -157,19 +157,20 @@ class HierarchyService:
                     )
                 )
 
-            # 2. Parse Elements
-            element_extraction = self.__parse_elements(
+            # 2. Parse Elements (threaded to avoid blocking event loop)
+            element_extraction = await asyncio.to_thread(
+                self.__parse_elements,
                 xml=xml,
                 action=action_type,
                 image_path=Path(resolved_screenshot.path),
             )
             labeled_elements = element_extraction.labeled_elements
 
-            # 3. Generate Annotated Image
+            # 3. Generate Annotated Image (threaded to avoid blocking event loop)
             annotated_path = path_manager.get_annotated_path(
                 package_name=package_name, session_id=session_id, filename=f"{filename_base}.png"
             )
-            annotated_result = self.__annotate(
+            annotated_result = await self.__annotate(
                 elements=labeled_elements,
                 destination=annotated_path,
                 source=Path(resolved_screenshot.path),
@@ -291,6 +292,7 @@ class HierarchyService:
     ) -> HierarchyElementExtraction:
         """
         Identifies elements from XML.
+        Offloaded to thread pool to avoid blocking the event loop.
         """
 
         start = xml.find("<")
@@ -305,7 +307,7 @@ class HierarchyService:
         )
         return HierarchyElementExtraction(label_map=label_map, labeled_elements=elements)
 
-    def __annotate(
+    async def __annotate(
         self,
         *,
         source: Path,
@@ -314,10 +316,14 @@ class HierarchyService:
     ) -> Optional[Path]:
         """
         Annotates image with identified elements.
+        Offloaded to thread pool to avoid blocking the event loop.
         """
 
-        path = ImageAnnotator.annotate(
-            image_path=str(source), output_path=str(destination), elements=elements
+        path = await asyncio.to_thread(
+            ImageAnnotator.annotate,
+            image_path=str(source),
+            output_path=str(destination),
+            elements=elements,
         )
         return Path(path) if path else None
 

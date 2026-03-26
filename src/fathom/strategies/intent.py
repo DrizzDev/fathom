@@ -101,6 +101,8 @@ class IntentStrategy:
         builder = IntentGraphBuilder(context=self.__graph_context)
         interrupt_nodes = [] if not signal.supports_interruption() else [NodeName.EXECUTE.value]
 
+        # Defer checkpointer + graph construction to execute(), because SqliteSaver is a
+        # context manager and must stay open for the duration of the graph run.
         self.__graph_builder = builder
         self.__interrupt_nodes = interrupt_nodes
         self.__checkpoint_db = path_manager.memory_path / "checkpoints.db"
@@ -298,15 +300,35 @@ class IntentStrategy:
 
         self.__graph_context.cancel()
 
+    @staticmethod
+    def __build_checkpoint_serde() -> Any:
+        """
+        Build a JsonPlusSerializer that whitelists Fathom types for checkpoint
+        deserialization, suppressing 'Deserializing unregistered type' warnings.
+        Uses the module-level CHECKPOINT_ALLOWED_* constants for consistency.
+        """
+
+        from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+        serializer_configuration: Dict[str, Any] = {
+            "allowed_json_modules": CHECKPOINT_ALLOWED_JSON_MODULES,
+        }
+
+        serializer_signature = inspect.signature(JsonPlusSerializer)
+        if "allowed_msgpack_modules" in serializer_signature.parameters:
+            serializer_configuration["allowed_msgpack_modules"] = CHECKPOINT_ALLOWED_MSGPACK_MODULES
+
+        return JsonPlusSerializer(**serializer_configuration)
+
     @asynccontextmanager
     async def __build_checkpointer_context(
         self,
         checkpoint_db_path: Path,
     ) -> AsyncIterator[Any]:
         """
-        Build a persistence layer for graph checkpoints as a context manager.
+        Build a persistence layer for graph checkpoints as an async context manager.
 
-        Prefers SQLite-backed checkpoints for crash-safe persistence.
+        Prefers AsyncSqliteSaver for crash-safe persistence.
         Falls back to in-memory checkpoints if sqlite support is unavailable.
         """
 
@@ -320,33 +342,24 @@ class IntentStrategy:
             raise
 
         try:
+            # Use importlib to avoid static import resolution errors.
             sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite.aio")
-            serde_module = importlib.import_module("langgraph.checkpoint.serde.jsonplus")
             aiosqlite_module = importlib.import_module("aiosqlite")
         except (ImportError, ModuleNotFoundError) as exception:
             logger.warning(
-                "SQLite checkpoint saver unavailable; falling back to MemorySaver. "
-                "Install 'langgraph-checkpoint-sqlite' to enable persistent checkpoints. "
-                f"Reason: {exception}"
+                "AsyncSqliteSaver unavailable; falling back to MemorySaver. "
+                "Install 'langgraph-checkpoint-sqlite' and 'aiosqlite' to enable "
+                f"persistent checkpoints. Reason: {exception}"
             )
-            yield MemorySaver()
+            yield MemorySaver(serde=self.__build_checkpoint_serde())
             return
 
         AsyncSqliteSaver = sqlite_module.AsyncSqliteSaver
-        JsonPlusSerializer = serde_module.JsonPlusSerializer
-        serializer_configuration: Dict[str, Any] = {
-            "allowed_json_modules": CHECKPOINT_ALLOWED_JSON_MODULES,
-        }
-
-        serializer_signature = inspect.signature(JsonPlusSerializer)
-        if "allowed_msgpack_modules" in serializer_signature.parameters:
-            serializer_configuration["allowed_msgpack_modules"] = CHECKPOINT_ALLOWED_MSGPACK_MODULES
-
-        serializer = JsonPlusSerializer(**serializer_configuration)
+        serde = self.__build_checkpoint_serde()
 
         try:
             async with aiosqlite_module.connect(str(checkpoint_db_path)) as connection:
-                checkpointer = AsyncSqliteSaver(connection, serde=serializer)
+                checkpointer = AsyncSqliteSaver(connection, serde=serde)
                 logger.info(
                     "Using AsyncSqliteSaver for checkpointing at %s",
                     checkpoint_db_path,
@@ -354,7 +367,7 @@ class IntentStrategy:
                 yield checkpointer
         except Exception as exception:
             logger.error(
-                "Failed to initialize SQLite checkpointer. "
+                "Failed to initialize AsyncSqliteSaver. "
                 f"checkpoint_db_path={checkpoint_db_path}. Reason: {exception}"
             )
             raise

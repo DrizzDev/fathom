@@ -38,6 +38,9 @@ class IntentGraphState(TypedDict, total=False):
     EXECUTION_DURATION: float
     GROUNDING_DURATION: float
 
+    # Post-action activity captured in EXECUTE, consumed in RECORD
+    POST_ACTIVITY: Optional[str]
+
     # Sub-goal state (for global propagation across graph nodes)
     CURRENT_SUB_GOAL_INDEX: int
     AGENT_STATE_CHECKPOINT: Optional[Dict[str, object]]

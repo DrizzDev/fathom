@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio  # noqa: TC003 — used at runtime for Task types
 import contextlib
 import hashlib
 import json
@@ -10,14 +11,16 @@ from typing import Any, Dict, List, Optional, TypedDict
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
-from fathom.core.exceptions import VisionError
+from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
+from fathom.core.services.audit import AuditService
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.schemas.results import AnalysisResult
+from fathom.schemas.conversation import ConversationTurn, TurnPart
+from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
 
@@ -47,6 +50,7 @@ class VisionService:
         *,
         use_cache: bool,
         session_id: str = "",
+        auditor: Optional[AuditService] = None,
     ) -> None:
         """
         Initialize vision service.
@@ -55,10 +59,12 @@ class VisionService:
         self.__llm = llm
         self.__memory = memory
         self.__telemetry = telemetry
+        self.__auditor = auditor or AuditService()
 
         self.__use_cache = use_cache
         self.__session_id = session_id
         self.__parser = ToolResponseParser()
+        self.__background_tasks: set[asyncio.Task[Any]] = set()
 
         # Use the original prompt builder factory
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
@@ -80,12 +86,16 @@ class VisionService:
         elements: Optional[Dict[str, Any]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
         delta_context: Optional[Dict[str, object]] = None,
+        prior_rejection_history: Optional[List[ConversationTurn]] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
         """
 
         analyze_start = time.time()
+
+        # Note: Screenshot persistence is now handled upstream by PerceptionService.
+        # No background persistence needed here.
 
         # 1. BRAIN RETRIEVAL
         fingerprint = self.__resolve_capture_fingerprint(capture=capture, visual_hash=visual_hash)
@@ -171,6 +181,8 @@ class VisionService:
                 "screen_height": screen_height,
             },
             sub_goal_info=sub_goal_info,
+            # Thread current screen hash so the trace can annotate stale observations
+            current_screen_hash=fingerprint[:8],
         )
 
         if is_stuck:
@@ -178,6 +190,16 @@ class VisionService:
                 "\n\n<SYSTEM_ALERT>\n"
                 "Loop risk detected; avoid repeating the same ineffective action."
                 "\n</SYSTEM_ALERT>"
+            )
+
+        if failures:
+            failed_actions = "; ".join(failures)
+            dynamic_context += (
+                "\n\n<SYSTEM_ALERT>\n"
+                "CRITICAL: The following actions have FAILED or been repeated without progress "
+                "on this screen. You MUST choose a DIFFERENT action or approach to achieve "
+                f"the same goal.\nFailed: {failed_actions}\n"
+                "</SYSTEM_ALERT>"
             )
 
         if last_action:
@@ -231,12 +253,27 @@ class VisionService:
             payload=self.__sanitize_recursive(data=payload),
         )
 
-        # 4. EXECUTION WITH VALIDATION-AWARE RETRY
+        # Log prompt context for console visibility
+        self.__auditor.log_prompt(payload=payload, instruction=instruction)
+
+        # 4. EXECUTION WITH MULTI-TURN FEEDBACK LOOP
+        #
+        # Instead of appending error text to a flat prompt (stateless retry), we use
+        # Gemini's native multi-turn conversation: on rejection, the model sees its own
+        # rejected tool call as a prior model turn, followed by a user turn explaining
+        # exactly why it was rejected. This creates a genuine feedback loop where the
+        # model can reason about its mistake and correct course.
         max_validation_retries = 1
         analysis: Optional[AnalysisResult] = None
         response = None
         duration = 0.0
         parse_duration = 0.0
+
+        # Conversation history accumulates across retry attempts for multi-turn feedback.
+        # Seed with prior rejection history from previous graph iterations (outer loop).
+        conversation_history: List[ConversationTurn] = list(prior_rejection_history or [])
+        # Preserve original payload so multi-turn history always references the full prompt.
+        original_payload = list(payload)
 
         for attempt in range(max_validation_retries + 1):
             commence = time.time()
@@ -245,6 +282,7 @@ class VisionService:
                 prompt=payload,
                 use_cache=self.__use_cache,
                 system_instruction=instruction,
+                conversation_history=conversation_history if conversation_history else None,
             )
             duration = time.time() - commence
 
@@ -262,8 +300,6 @@ class VisionService:
                 parse_duration = time.time() - parse_start
                 break
             except Exception as exception:
-                from fathom.core.exceptions import ToolValidationError
-
                 if isinstance(exception, ToolValidationError) and attempt < max_validation_retries:
                     feedback = getattr(exception, "feedback", None)
                     message = getattr(feedback, "message", str(exception))
@@ -274,25 +310,25 @@ class VisionService:
                         message,
                     )
 
-                    # Inject concise, model-ready feedback so Gemini can correct the tool call.
-                    error_block = (
-                        "\n\n[TOOL_ERROR_FEEDBACK]\n"
-                        "The previous tool call had validation errors:\n"
-                        f"{message}\n"
-                        "Please call the tool again with corrected, schema-compliant arguments.\n"
-                        "[/TOOL_ERROR_FEEDBACK]"
+                    # Build multi-turn feedback: the model sees its own rejected output
+                    # as a prior turn, then a correction turn explaining why it was wrong.
+                    # This is structurally stronger than appending text to a flat prompt.
+                    # Extend (not replace) to preserve any prior_rejection_history seeded
+                    # from previous graph iterations.
+                    conversation_history.extend(
+                        self.__build_rejection_history(
+                            original_payload=original_payload,
+                            rejected_response=response,
+                        )
                     )
-                    dynamic_context = (dynamic_context or "") + error_block
 
-                    # Rebuild payload with augmented context for the next attempt.
-                    payload = self.__build_payload(
-                        intent=intent,
-                        manifest=manifest,
-                        failures=failures,
-                        knowledge=knowledge,
-                        screen=prompt_image,
-                        context=dynamic_context,
-                    )
+                    # On retry with conversation history, payload becomes just the
+                    # correction instruction (the history already contains the original prompt).
+                    payload = [
+                        f"Your previous tool call was rejected: {message}\n"
+                        "You MUST call the tool again with a DIFFERENT action. "
+                        "Choose an alternative approach to achieve the same goal."
+                    ]
                     continue
 
                 # Non-validation errors or exhausted retries propagate as before.
@@ -305,9 +341,11 @@ class VisionService:
         if response.metrics:
             analysis.metrics.update(response.metrics)
 
-        # Expose payload for debugging/audit
+        # Expose original payload for debugging/audit (not the mutated correction text
+        # that replaces payload on validation retry).
         analysis.metadata["prompt_payload"] = [
-            str(item) if not isinstance(item, (dict, bytes)) else "Image(...)" for item in payload
+            str(item) if not isinstance(item, (dict, bytes)) else "Image(...)"
+            for item in original_payload
         ]
         analysis.metadata["system_instruction"] = instruction
 
@@ -336,6 +374,94 @@ class VisionService:
         )
 
         return analysis
+
+    def build_rejection_history_from_analysis(
+        self,
+        *,
+        analysis: AnalysisResult,
+        rejection_reason: str,
+    ) -> List[ConversationTurn]:
+        """
+        Build multi-turn rejection history from an AnalysisResult for cross-iteration
+        feedback. The planner calls this when rejecting a repeated action so the next
+        vision.analyze() cycle can pass it as conversation_history.
+
+        Returns provider-neutral ConversationTurn objects representing the model's
+        rejected tool call and the rejection reason.
+        """
+
+        # Model turn: reconstruct the rejected tool call
+        model_parts: List[TurnPart] = []
+        if analysis.action:
+            model_parts.append(
+                TurnPart.from_function_call(
+                    name="execute_ui",
+                    args=analysis.metadata.get("tool_args", {}),
+                )
+            )
+        if not model_parts:
+            model_parts.append(TurnPart.from_text(text=analysis.reasoning or "(empty)"))
+
+        model_turn = ConversationTurn(role="model", parts=model_parts)
+
+        # User turn: rejection feedback
+        user_turn = ConversationTurn(
+            role="user",
+            parts=[TurnPart.from_text(text=rejection_reason)],
+        )
+
+        return [model_turn, user_turn]
+
+    @staticmethod
+    def __build_rejection_history(
+        *,
+        original_payload: List[Any],
+        rejected_response: GenerateResult,
+    ) -> List[ConversationTurn]:
+        """
+        Build a multi-turn conversation history from a rejected LLM response.
+
+        Returns a list of ConversationTurn objects representing:
+          1. Original user turn (prompt + image)
+          2. Model's rejected response (its own tool call)
+          3. (The next user turn with correction will be sent as the current prompt)
+
+        This gives the LLM full visibility into what it proposed and why it was wrong,
+        enabling genuine self-correction rather than stateless retry.
+        """
+
+        # Turn 1: Original user prompt
+        user_parts: List[TurnPart] = []
+        for item in original_payload:
+            if isinstance(item, bytes):
+                mime = "image/png"
+                if item[:3] == b"\xff\xd8\xff":
+                    mime = "image/jpeg"
+                user_parts.append(TurnPart.from_image(data=item, mime_type=mime))
+            elif isinstance(item, str):
+                user_parts.append(TurnPart.from_text(text=item))
+
+        user_turn = ConversationTurn(role="user", parts=user_parts)
+
+        # Turn 2: Model's rejected response (reconstruct from GenerateResult)
+        model_parts: List[TurnPart] = []
+        if rejected_response.content:
+            model_parts.append(TurnPart.from_text(text=rejected_response.content))
+        if rejected_response.tool_calls:
+            for tc in rejected_response.tool_calls:
+                model_parts.append(
+                    TurnPart.from_function_call(
+                        name=getattr(tc, "name", "execute_ui"),
+                        args=dict(getattr(tc, "args", {})),
+                    )
+                )
+
+        if not model_parts:
+            model_parts.append(TurnPart.from_text(text="(empty response)"))
+
+        model_turn = ConversationTurn(role="model", parts=model_parts)
+
+        return [user_turn, model_turn]
 
     def __resolve_capture_fingerprint(self, *, visual_hash: str, capture: ScreenCapture) -> str:
         """

@@ -7,7 +7,6 @@ from typing import List, Optional, Set
 from fathom.constants import ACTION_EXECUTED_TYPES, NEXT_PHASE_ACTION_TYPES, ActionType
 from fathom.constants.reasoning import (
     ACTION_MIN_CONFIDENCE,
-    ACTION_MIN_CONFIDENCE_AFTER_FAILURE,
     ACTION_NEXT_PHASE_CONFIDENCE,
     COMPLETION_KEYWORDS,
     NEXT_PHASE_KEYWORDS,
@@ -152,6 +151,10 @@ class Reasoner:
         analysis: AnalysisResult,
         sub_goal_description: str,
         screen_description: Optional[str] = None,
+        *,
+        screen_changed: bool = False,
+        pre_screen_hash: Optional[str] = None,
+        post_screen_hash: Optional[str] = None,
     ) -> SubGoalCompletionSignal:
         """
         Multi-signal verification for sub-goal completion.
@@ -183,7 +186,21 @@ class Reasoner:
         if llm_signaled:
             evidence_list.append("LLM signaled sub-goal completion via tool output")
 
-        # Signal 2: Rationale verification signal (restored for diagnostics/telemetry).
+        # Signal 2: Rationale verification — leverages Gemini's own completion reason.
+        #
+        # When the LLM explicitly signals sub-goal completion, it also provides a
+        # `subgoal_completion_reason` explaining WHY it's complete. This is Gemini's
+        # own semantic understanding — far more reliable than SequenceMatcher.
+        #
+        # Priority:
+        #   1. LLM provided an explicit completion reason → trust it (Gemini intelligence)
+        #   2. Fallback: keyword-based heuristic for cases where the LLM didn't explicitly
+        #      signal but reasoning text implies completion.
+        has_explicit_reason = bool(
+            llm_signaled and (analysis.subgoal_completion_reason or analysis.goal_completion_reason)
+        )
+
+        # Fallback heuristic: keyword + similarity check
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
         similarity = SequenceMatcher(None, target_goal, context).ratio()
         keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
@@ -191,21 +208,42 @@ class Reasoner:
         reasoning_lower = analysis.reasoning.lower()
         keywords_found = any(kw in reasoning_lower for kw in COMPLETION_KEYWORDS)
 
-        # Require a minimum semantic similarity floor even when keywords are present.
-        # Prevents near-zero similarity accidental keyword hits (e.g. similarity=0.04)
-        # from passing rationale verification on term overlap alone.
-        rationale_verified = keyword_match or (
+        heuristic_match = keyword_match or (
             similarity >= RATIONALE_MIN_SIMILARITY_FLOOR and keywords_found
         )
+
+        rationale_verified = has_explicit_reason or heuristic_match
         if rationale_verified:
-            evidence_list.append(
-                f"Rationale verified (similarity={similarity:.2f}, keywords={'found' if keywords_found else 'none'})"
-            )
+            if has_explicit_reason:
+                reason_text = analysis.subgoal_completion_reason or analysis.goal_completion_reason
+                evidence_list.append(
+                    f"Rationale verified via LLM completion reason: '{reason_text}'"
+                )
+            else:
+                evidence_list.append(
+                    f"Rationale verified via heuristic (similarity={similarity:.2f}, keywords={'found' if keywords_found else 'none'})"
+                )
 
         # Signal 3: Action Execution (did we execute an action?)
         action_executed = analysis.action.action_type in ACTION_EXECUTED_TYPES
         if action_executed:
             evidence_list.append(f"Action executed: {analysis.action.action_type.value}")
+
+        # Signal 4: Screen Verification — post-execution sanity check.
+        # If the action didn't change the screen AND the LLM claimed sub-goal
+        # completion, the action may have failed silently (e.g. tap on a blocking
+        # overlay, wrong screen).  ``screen_verified`` gates ``action_executed``
+        # in count_signals() to prevent premature sub-goal advancement.
+        screen_verified = False
+        if screen_changed:
+            screen_verified = True
+            evidence_list.append("Screen changed after action execution")
+        elif pre_screen_hash and post_screen_hash and pre_screen_hash != post_screen_hash:
+            screen_verified = True
+            evidence_list.append("Screen hash changed after action execution")
+        else:
+            if llm_signaled:
+                evidence_list.append("WARNING: LLM signaled completion but screen did not change")
 
         # Calculate LLM confidence
         llm_confidence = 0.0
@@ -219,6 +257,7 @@ class Reasoner:
         logger.debug(
             f"[Reasoner] Sub-goal signals: llm={llm_signaled}, "
             f"rationale={rationale_verified}, action={action_executed}, "
+            f"screen_verified={screen_verified}, "
             f"confidence={llm_confidence:.2f}"
         )
 
@@ -233,6 +272,7 @@ class Reasoner:
             keyword_match=keyword_match,
             llm_confidence=llm_confidence,
             action_executed=action_executed,
+            screen_verified=screen_verified,
             rationale_verified=rationale_verified,
         )
 
@@ -243,13 +283,12 @@ class Reasoner:
         has_failed_before: bool = False,
     ) -> bool:
         """
-        Fast safety check. Returns True if the action meets minimum confidence requirements.
+        Fast safety check — always accepts actions to avoid silently
+        dropping planned steps before they reach the executor.
         """
 
-        if action.confidence < ACTION_MIN_CONFIDENCE:
-            return False
-
-        return not (has_failed_before and action.confidence < ACTION_MIN_CONFIDENCE_AFTER_FAILURE)
+        _ = action, has_failed_before
+        return True
 
     def select_best_action(
         self,

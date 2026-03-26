@@ -136,6 +136,53 @@ class LoopDetector(BaseModel):
 
         return False
 
+    def has_repeated_action_on_same_screen(
+        self,
+        action_description: str,
+        screen_hash: str,
+        *,
+        repeat_threshold: int = 3,
+    ) -> bool:
+        """
+        Check if the same tap/type action has been executed N+ times on the same screen.
+        Excludes swipe/scroll actions which legitimately repeat on the same screen.
+
+        Args:
+            action_description: The action being proposed.
+            screen_hash: Visual hash of the current screen.
+            repeat_threshold: Number of repeats before triggering (default 3).
+
+        Returns:
+            True if the action has been repeated on this screen at or above threshold.
+        """
+
+        action_lower = action_description.lower()
+
+        # Only track tap/type actions — swipes and scrolls legitimately repeat
+        if any(token in action_lower for token in ("swipe", "scroll", "flick")):
+            return False
+
+        count = 0
+        for i in range(len(self.__recent_actions)):
+            if i >= len(self.__recent_hashes):
+                break
+            if (
+                self.__recent_actions[i] == action_description
+                and self.__recent_hashes[i] == screen_hash
+            ):
+                count += 1
+
+        if count >= repeat_threshold:
+            logger.warning(
+                "LoopDetector: Same action '%s' repeated %dx on screen %s",
+                action_description,
+                count,
+                screen_hash[:8],
+            )
+            return True
+
+        return False
+
     def __detect_oscillation(self) -> bool:
         """
         Detect bouncing between 2 or 3 screens.

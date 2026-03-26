@@ -8,12 +8,15 @@ VISUAL_HASH_LENGTH = 16
 # Launcher packages - actions on these should never persist/export during execution
 LAUNCHER_PACKAGES: frozenset[str] = frozenset(
     {
+        # Android
         "com.google.android.apps.nexuslauncher",  # Google Pixel default
         "com.android.launcher",
         "com.android.launcher3",
         "com.sec.android.app.launchers",  # Samsung default
         "com.miui.home",  # MIUI default
         "com.oppo.launcher",  # OPPO default
+        # iOS
+        "com.apple.springboard",  # iOS home screen
     }
 )
 
@@ -23,8 +26,15 @@ DEFAULT_SCROLL_DISTANCE = 300
 BOUNDS_SWIPE_DISTANCE = 100
 
 # Timing (milliseconds)
-DEFAULT_SWIPE_DURATION = 500
+DEFAULT_SWIPE_DURATION = 350  # Swipe gesture duration; 350ms reliable on modern devices
 DEFAULT_STABILITY_WAIT = 500  # Wait after action for screen to stabilize
+CAPTURE_OVERHEAD_MS = 150.0  # Estimated screenshot I/O time subtracted from stability wait
+# Hard upper-bound for "screen stability" waits.
+# Stored as milliseconds to keep all timing constants consistent.
+MAX_STABILITY_WAIT_MS = 1500
+# Hard upper-bound for LLM-requested action waits.
+# Stored as milliseconds to keep all timing constants consistent.
+MAX_ACTION_WAIT_MS = 10_000
 
 # Retry configuration
 DEFAULT_MAX_RETRIES = 2

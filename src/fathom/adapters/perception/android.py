@@ -47,7 +47,11 @@ class AndroidPerceptionAdapter(PerceptionPort):
             raise DeviceError("Android perception captured an empty screenshot.")
 
         width, height = await self.__device.get_dimensions()
-        application_identifier = await self.__device.get_current_package()
+
+        try:
+            application_identifier = await self.__device.get_current_package()
+        except Exception:
+            application_identifier = "unknown"
 
         return ScreenCapture(
             width=width,

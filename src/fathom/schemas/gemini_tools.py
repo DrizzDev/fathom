@@ -4,23 +4,33 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fathom.schemas.validators import enforce_validate_prefix
+
 CoordSystem = Literal["normalized", "pixel"]
 ConditionalType = Literal["blocker", "transient", "error", "optional"]
 TargetType = Literal["stable", "positional", "dynamic"]
+WaitPattern = Literal["ad", "splash", "load", "search", "generic"]
+TargetElementType = Literal["button", "icon", "option", "link", "field", "text", "checkbox"]
+ValidationPattern = Literal["blocker", "transient", "error", "generic"]
 
 
 class EmitScriptConditionalBlockArgs(BaseModel):
     """
     Raw conditional block arguments for the emit_script tool.
 
-    This model mirrors the Gemini tool JSON schema but stays permissive:
-    - condition text is optional (empty strings are normalized to None).
-    - action_ids are coerced to a list of strings.
-    All semantic invariants (e.g., non-empty conditions, required IDs) are
-    enforced later by ScriptExportStructuredPayload.enforce_policy in export.py.
+    Performs light type coercion. Semantic invariants (e.g., non-empty
+    conditions, required IDs) are enforced by EmitScriptArgs validators
+    and ScriptExportStructuredPayload.enforce_policy in export.py.
     """
 
     condition: Optional[str] = None
+    condition_type: Optional[ConditionalType] = Field(
+        default=None,
+        description=(
+            "Classification of this condition: blocker (popup/permission/consent), "
+            "transient (loading/splash), error (error message), or optional (nice-to-have check)."
+        ),
+    )
     action_ids: List[str] = Field(
         default_factory=list,
         description="Executable action IDs under this condition.",
@@ -48,10 +58,11 @@ class EmitScriptArgs(BaseModel):
     """
     Raw emit_script tool arguments as produced by Gemini.
 
-    This model is intentionally lax and only performs light type coercion so
-    that downstream code can distinguish:
-      - raw provider output that is structurally parseable
-      - normalization/validation failures applied later
+    Enforces structural invariants at parse time:
+    - final_validation must start with "Validate"
+    - action_validations values must start with "Validate"
+    - No duplicate action IDs within remaining_action_ids or conditional blocks
+    - No empty conditional blocks
     """
 
     conditional_blocks: List[EmitScriptConditionalBlockArgs] = Field(
@@ -64,12 +75,29 @@ class EmitScriptArgs(BaseModel):
     )
     action_validations: Dict[str, str] = Field(
         default_factory=dict,
-        description="Optional map of action_id -> intermediate validation line.",
+        description=(
+            "Optional map of action_id -> intermediate validation after that action; values start with 'Validate'. "
+            "Mid-flow checks only—not the terminal script line."
+        ),
     )
-    final_validation: Optional[str] = Field(
-        default=None,
-        description="Final goal validation line, typically starting with 'Validate'.",
+    final_validation: str = Field(
+        ...,
+        min_length=10,
+        description=(
+            "Single terminal UI-state line after the last catalog action; MUST start with 'Validate'. "
+            "State visible/displayed only—no tap/click/type/select/navigate/search phrasing."
+        ),
     )
+
+    @field_validator("final_validation", mode="before")
+    @classmethod
+    def _enforce_final_validation_format(cls, value: Any) -> str:
+        if value is None:
+            raise ValueError(
+                "final_validation is required. Provide a terminal validation line "
+                "starting with 'Validate' (e.g., 'Validate cart page is displayed.')."
+            )
+        return enforce_validate_prefix(str(value), "final_validation")
 
     @field_validator("remaining_action_ids", mode="before")
     @classmethod
@@ -82,7 +110,7 @@ class EmitScriptArgs(BaseModel):
 
     @field_validator("action_validations", mode="before")
     @classmethod
-    def _coerce_action_validations(cls, value: Any) -> Dict[str, str]:
+    def _coerce_and_validate_action_validations(cls, value: Any) -> Dict[str, str]:
         if value is None:
             return {}
         if not isinstance(value, dict):
@@ -93,8 +121,32 @@ class EmitScriptArgs(BaseModel):
             text = str(line).strip()
             if not aid or not text:
                 continue
+            enforce_validate_prefix(text, f"action_validations['{aid}']")
             cleaned[aid] = text
         return cleaned
+
+    @model_validator(mode="after")
+    def _reject_duplicates_and_empty_blocks(self) -> "EmitScriptArgs":
+        # Reject duplicate action IDs in remaining_action_ids.
+        seen: set[str] = set()
+        for aid in self.remaining_action_ids:
+            if aid in seen:
+                raise ValueError(f"Duplicate action ID '{aid}' in remaining_action_ids.")
+            seen.add(aid)
+
+        # Reject empty conditional blocks and duplicate IDs within blocks.
+        for i, block in enumerate(self.conditional_blocks):
+            if not block.action_ids:
+                raise ValueError(f"conditional_blocks[{i}] has no action_ids; remove empty blocks.")
+            block_seen: set[str] = set()
+            for aid in block.action_ids:
+                if aid in block_seen:
+                    raise ValueError(
+                        f"Duplicate action ID '{aid}' in conditional_blocks[{i}].action_ids."
+                    )
+                block_seen.add(aid)
+
+        return self
 
 
 class GeminiBBox(BaseModel):
@@ -213,6 +265,27 @@ class ValidateStateArgs(GeminiCompletionFlags):
     condition_met: Optional[bool] = None
 
 
+_SWIPE_SCROLL_TYPES = frozenset(
+    {
+        "swipe_up",
+        "swipe_down",
+        "swipe_left",
+        "swipe_right",
+        "scroll",
+    }
+)
+_GENERIC_EXPORT_TARGETS = frozenset(
+    {
+        "element",
+        "ui element",
+        "none",
+        "label",
+        "unknown",
+        "a visible item",
+    }
+)
+
+
 class ExecuteAction(BaseModel):
     """
     Single low-level UI action emitted by execute_ui.
@@ -238,9 +311,20 @@ class ExecuteAction(BaseModel):
     target_type: Optional[TargetType] = None
     script_target: Optional[str] = None
 
+    # Structured export signals — authoritative; no heuristic fallback.
+    export_target: Optional[str] = None
+    scroll_target: Optional[str] = None
+    wait_subject: Optional[str] = None
+    wait_pattern: Optional[WaitPattern] = None
+    is_app_launcher: bool = False
+    target_is_generic: Optional[bool] = None
+    target_element_type: Optional[TargetElementType] = None
+    validation_subject: Optional[str] = None
+    validation_pattern: Optional[ValidationPattern] = None
+
     rationale: Optional[str] = None
     is_valid: bool = True
-    confidence: float = 1.0
+    confidence: float = 0.5  # Conservative default; VLM should provide explicit confidence
     label_id: Optional[str] = None
 
     @field_validator("wait_duration", mode="before")
@@ -260,25 +344,60 @@ class ExecuteAction(BaseModel):
             return None
         return str(value)
 
+    @field_validator("export_target", mode="before")
+    @classmethod
+    def _reject_generic_export_target(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.lower() in _GENERIC_EXPORT_TARGETS:
+            raise ValueError(
+                f"export_target must be specific, not a generic placeholder like '{text}'. "
+                "Use the actual element name visible on screen."
+            )
+        return text
+
+    @model_validator(mode="after")
+    def _enforce_structured_signals(self) -> "ExecuteAction":
+        at = (self.action_type or "").strip().lower()
+
+        # scroll_target is required for swipe/scroll actions.
+        if at in _SWIPE_SCROLL_TYPES and not (self.scroll_target or "").strip():
+            raise ValueError(
+                f"scroll_target is required for action_type='{at}'. "
+                "Provide the element or section being scrolled to find."
+            )
+
+        # wait_subject is required for wait actions.
+        if at == "wait" and not (self.wait_subject or "").strip():
+            raise ValueError(
+                "wait_subject is required for action_type='wait'. "
+                "Describe what we're waiting for (e.g., 'app to load', 'search results to appear')."
+            )
+
+        return self
+
     @model_validator(mode="after")
     def _normalize_conditionals(self) -> "ExecuteAction":
         condition = (self.condition or "").strip() or None
         conditional_type = self.conditional_type
         is_conditional = self.is_conditional or bool(self.overlay_detected)
 
+        # overlay_detected is a system signal — provide sensible defaults.
         if self.overlay_detected and not condition:
             condition = "Overlay is visible"
         if self.overlay_detected and not conditional_type:
             conditional_type = "blocker"
 
+        # For all other conditional actions, require explicit condition text.
         if is_conditional and not condition:
-            default_map = {
-                "blocker": "Blocker prompt is visible",
-                "transient": "Transient screen is visible",
-                "error": "Error message is displayed",
-                "optional": "Optional UI state is visible",
-            }
-            condition = default_map.get(conditional_type or "", "Conditional UI state is visible")
+            raise ValueError(
+                "condition is required when is_conditional=True. "
+                "Provide the guard condition text (e.g., 'Popup is visible', "
+                "'Permission dialog is displayed', 'Loading spinner is active')."
+            )
 
         object.__setattr__(self, "condition", condition)
         object.__setattr__(self, "conditional_type", conditional_type)

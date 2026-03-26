@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class ToolRegistry:
@@ -26,12 +26,18 @@ class ToolRegistry:
         }
 
     @classmethod
-    def get_export_definitions(cls) -> Dict[str, List[Dict[str, Any]]]:
+    def get_export_definitions(
+        cls, *, action_ids: Optional[List[str]] = None
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Returns tool definitions for script export composition.
+
+        Args:
+            action_ids: When provided, constrains action ID fields to only
+                        these values via enum in the tool schema.
         """
 
-        return {"function_declarations": [cls.__emit_script()]}
+        return {"function_declarations": [cls.__emit_script(action_ids=action_ids)]}
 
     @staticmethod
     def __execute_ui() -> Dict[str, Any]:
@@ -68,6 +74,7 @@ class ToolRegistry:
                         "items": {
                             "type": "OBJECT",
                             "properties": {
+                                # --- Critical execution fields (prioritized) ---
                                 "action_type": {
                                     "type": "STRING",
                                     "description": "The type of action to perform. Use swipe_* for all scrolling gestures.",
@@ -84,21 +91,6 @@ class ToolRegistry:
                                         "back",
                                         "enter",
                                     ],
-                                },
-                                "rationale": {
-                                    "type": "STRING",
-                                    "description": "Why this specific action is being taken.",
-                                },
-                                "target_name": {
-                                    "type": "STRING",
-                                    "description": (
-                                        "Descriptive, user-facing name of the element "
-                                        "(e.g., 'Search box', 'Add to cart button', "
-                                        "'Settings tab'). MUST NOT be a generic placeholder "
-                                        "like 'element', 'UI Element', 'button', 'label', "
-                                        "or 'icon'. Always choose the text a human tester "
-                                        "would naturally say when referring to this element."
-                                    ),
                                 },
                                 "label_id": {
                                     "type": "STRING",
@@ -119,6 +111,17 @@ class ToolRegistry:
                                         },
                                     },
                                 },
+                                "target_name": {
+                                    "type": "STRING",
+                                    "description": (
+                                        "Descriptive, user-facing name of the element "
+                                        "(e.g., 'Search box', 'Add to cart button', "
+                                        "'Settings tab'). MUST NOT be a generic placeholder "
+                                        "like 'element', 'UI Element', 'button', 'label', "
+                                        "or 'icon'. Always choose the text a human tester "
+                                        "would naturally say when referring to this element."
+                                    ),
+                                },
                                 "text_to_type": {
                                     "type": "STRING",
                                     "description": "Text to type (only for 'type' action).",
@@ -127,6 +130,7 @@ class ToolRegistry:
                                     "type": "NUMBER",
                                     "description": "Duration to wait in seconds (e.g. 2.0, 5.0). Use this for 'wait' actions to specify how long to pause.",
                                 },
+                                # --- Execution signals ---
                                 "confidence": {
                                     "type": "NUMBER",
                                     "description": "Confidence level (0.0-1.0) for this action.",
@@ -134,6 +138,11 @@ class ToolRegistry:
                                 "is_valid": {
                                     "type": "BOOLEAN",
                                     "description": "Self-correction: Is this action valid given the current screen state?",
+                                },
+                                # --- Non-critical metadata ---
+                                "rationale": {
+                                    "type": "STRING",
+                                    "description": "Why this specific action is being taken.",
                                 },
                                 "validation_reason": {
                                     "type": "STRING",
@@ -150,11 +159,32 @@ class ToolRegistry:
                                 "conditional_type": {
                                     "type": "STRING",
                                     "enum": ["blocker", "transient", "error", "optional"],
-                                    "description": "Optional condition class when is_conditional=true. Use blocker/transient/error/optional.",
+                                    "description": (
+                                        "Condition class when is_conditional=true: "
+                                        "blocker (overlay/popup/permission dialog blocking the UI), "
+                                        "transient (spinner, skeleton shimmer, or splash screen that will auto-resolve), "
+                                        "error (red/orange error banner, toast, or validation message), "
+                                        "optional (non-blocking informational element)."
+                                    ),
                                 },
                                 "overlay_detected": {
                                     "type": "BOOLEAN",
-                                    "description": "Set true when this action is specifically handling an overlay/popup blocker.",
+                                    "description": (
+                                        "Set true when the screenshot shows an overlay blocking the main UI "
+                                        "(dimmed scrim, modal dialog, bottom sheet, permission prompt, or banner). "
+                                        "This action must dismiss it."
+                                    ),
+                                },
+                                "export_target": {
+                                    "type": "STRING",
+                                    "description": (
+                                        "The canonical phrase for this action in exported test scripts. "
+                                        "Must be specific and human-readable (e.g., 'Search box', "
+                                        "'the first search result', 'Add to cart button'). "
+                                        "REQUIRED for tap, type, long_press, scroll, swipe, and wait actions. "
+                                        "NEVER use generic placeholders like 'element', 'UI Element', "
+                                        "'button', 'label', 'icon', 'field', or 'text' alone."
+                                    ),
                                 },
                                 "target_type": {
                                     "type": "STRING",
@@ -175,11 +205,20 @@ class ToolRegistry:
                                 },
                                 "scroll_target": {
                                     "type": "STRING",
-                                    "description": "For scroll/swipe actions: the element or section being scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and packages'). Use the exact phrase from the UI when possible.",
+                                    "description": (
+                                        "REQUIRED for all scroll/swipe actions. The element or section being "
+                                        "scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and "
+                                        "packages'). Use the exact phrase from the UI when possible. "
+                                        "Must not be empty for swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
+                                    ),
                                 },
                                 "wait_subject": {
                                     "type": "STRING",
-                                    "description": "For wait actions: what we're waiting for (e.g., 'app to load', 'search results to appear', 'Home page content'). Describe the expected state or element.",
+                                    "description": (
+                                        "REQUIRED for all wait actions. What we're waiting for (e.g., 'app to "
+                                        "load', 'search results to appear', 'Home page content'). Describe the "
+                                        "expected state or element. Must not be empty for wait actions."
+                                    ),
                                 },
                                 "validation_subject": {
                                     "type": "STRING",
@@ -205,12 +244,22 @@ class ToolRegistry:
                                 "validation_pattern": {
                                     "type": "STRING",
                                     "enum": ["blocker", "transient", "error", "generic"],
-                                    "description": "For validate actions: the pattern category - blocker (permission/popup/consent), transient (loading/spinner), error (network/validation error), or generic check.",
+                                    "description": (
+                                        "For validate actions: blocker (modal/scrim/permission dialog blocking content), "
+                                        "transient (spinner, progress bar, or shimmer placeholder still visible), "
+                                        "error (red/orange text, error icon, or 'try again' message on screen), "
+                                        "or generic (general state check like toggle position or text presence)."
+                                    ),
                                 },
                                 "wait_pattern": {
                                     "type": "STRING",
                                     "enum": ["ad", "splash", "load", "search", "generic"],
-                                    "description": "For wait actions: the wait category - ad (ad to finish), splash (app splash screen), load (content loading), search (search results), or generic.",
+                                    "description": (
+                                        "For wait actions: ad (full-screen interstitial ad with countdown/skip button), "
+                                        "splash (branded launch screen with app logo, no interactive elements), "
+                                        "load (spinner, progress bar, skeleton/shimmer placeholders, or 'Loading...' text), "
+                                        "search (waiting for search results list to populate), or generic."
+                                    ),
                                 },
                             },
                             "required": ["action_type", "rationale", "is_valid"],
@@ -296,7 +345,12 @@ class ToolRegistry:
 
         return {
             "name": "validate_state",
-            "description": "Verify if the screen state matches specific criteria. Use this when the intent implies checking, validating, or verifying something.",
+            "description": (
+                "Verify if the screen state matches specific criteria by inspecting the screenshot. "
+                "Use when the intent implies checking or verifying something: "
+                "e.g., a toggle is green/on, a success toast is visible, a specific tab is highlighted, "
+                "or an expected heading/text is displayed on screen."
+            ),
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
@@ -314,7 +368,11 @@ class ToolRegistry:
                     },
                     "evidence": {
                         "type": "STRING",
-                        "description": "Visual evidence supporting the conclusion.",
+                        "description": (
+                            "Visual evidence from the screenshot supporting the conclusion "
+                            "(e.g., 'Toggle is green and positioned right', 'Success banner shows Order Confirmed', "
+                            "'Error text not visible anywhere on screen')."
+                        ),
                     },
                     "goal_completed": {
                         "type": "BOOLEAN",
@@ -467,14 +525,26 @@ class ToolRegistry:
         }
 
     @staticmethod
-    def __emit_script() -> Dict[str, Any]:
+    def __emit_script(
+        action_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
         Definition for script export output tool.
         """
 
+        # When action_ids are provided, constrain the schema so Gemini can
+        # only output valid catalog IDs (prevents missing/extra/duplicated IDs).
+        action_id_item: Dict[str, Any] = {"type": "STRING"}
+        if action_ids:
+            action_id_item["enum"] = list(action_ids)
+
         return {
             "name": "emit_script",
-            "description": "Return structured script sections derived only from allowed step action lines. Do not paraphrase executable actions.",
+            "description": (
+                "Return structured script sections derived only from allowed step action lines. "
+                "Do not paraphrase executable actions. Rendered scripts use IF <condition> on one line "
+                "and the opening { on the following line before indented block body lines."
+            ),
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
@@ -488,10 +558,19 @@ class ToolRegistry:
                                     "type": "STRING",
                                     "description": "Condition text for IF block.",
                                 },
+                                "condition_type": {
+                                    "type": "STRING",
+                                    "enum": ["blocker", "transient", "error", "optional"],
+                                    "description": (
+                                        "Classification of this condition: blocker (popup/permission/consent "
+                                        "that blocks progress), transient (loading/splash/spinner that will pass), "
+                                        "error (error message that may appear), or optional (nice-to-have check)."
+                                    ),
+                                },
                                 "action_ids": {
                                     "type": "ARRAY",
                                     "description": "Executable action IDs under this IF block. Must be selected from provided action catalog.",
-                                    "items": {"type": "STRING"},
+                                    "items": action_id_item,
                                 },
                             },
                             "required": ["condition", "action_ids"],
@@ -500,20 +579,25 @@ class ToolRegistry:
                     "remaining_action_ids": {
                         "type": "ARRAY",
                         "description": "Ordered executable action IDs outside IF blocks. Must be selected from provided action catalog.",
-                        "items": {"type": "STRING"},
+                        "items": action_id_item,
                     },
                     "action_validations": {
                         "type": "OBJECT",
                         "description": (
-                            "Optional mapping of action ID to intermediate validation line "
-                            "(e.g., {'A3': 'Validate that results are visible'}). "
-                            "Each value must start with 'Validate'."
+                            "Optional map of catalog action_id -> intermediate validation line after that action "
+                            "(e.g. list or results visible right after a search or scroll). Each value must start "
+                            "with 'Validate'. Use for mid-flow checks; do not put those in final_validation."
                         ),
                         "additionalProperties": {"type": "STRING"},
                     },
                     "final_validation": {
                         "type": "STRING",
-                        "description": "Final goal-validation line. Must start with 'Validate'.",
+                        "description": (
+                            "Single terminal UI-state line after the last catalog action. Must start with 'Validate'. "
+                            "State only: what screen/page/primary content is visible or displayed. One short clause—"
+                            "no tap/click/type/select/navigate/search instructions (those belong in catalog actions "
+                            "or action_validations). No chained 'and then' procedures."
+                        ),
                     },
                 },
                 "required": ["remaining_action_ids", "final_validation"],

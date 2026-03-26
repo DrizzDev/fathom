@@ -6,6 +6,7 @@ from typing import List
 
 from pydantic import ValidationError
 
+from fathom.core.exceptions import ConfigurationError
 from fathom.core.prompts.factory import PromptFactory
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import LLMConfiguration
@@ -64,7 +65,7 @@ class IntentDecomposer:
             ValueError: If decomposition fails or produces invalid schema
         """
         if not intent or not intent.strip():
-            raise ValueError("Intent cannot be empty")
+            raise ConfigurationError("Intent cannot be empty")
 
         logger.info(f"[Decomposer] Starting decomposition: {intent[:100]}...")
 

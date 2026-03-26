@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import time
@@ -22,6 +21,7 @@ from fathom.strategies.graph.exploration.state import (
     get_step_result,
     is_content_exhausted,
 )
+from fathom.utils.wait import stability_wait
 
 logger = logging.getLogger(__name__)
 
@@ -175,8 +175,8 @@ class ExplorationNodeProvider:
             session_id=self.__context.workflow_id,
         )
 
-        # Post-action stability wait
-        await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
+        # Post-action stability wait with hard cap for consistency.
+        await stability_wait(self.__context.configuration)
 
         duration = time.time() - start_time
 
@@ -287,8 +287,8 @@ class ExplorationNodeProvider:
             package_name=self.__context.package_name,
         )
 
-        # Wait for stability
-        await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
+        # Wait for stability with hard cap for consistency.
+        await stability_wait(self.__context.configuration)
 
         # Update state with remaining navigation
         result = cast("Dict[str, Any]", dict(state))
