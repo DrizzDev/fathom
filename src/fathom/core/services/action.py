@@ -457,7 +457,6 @@ class ActionExecutor:
         Await all pending background trace/upload tasks with a bounded timeout.
         """
 
-
         pending = [task for task in self.__background_tasks if not task.done()]
         if not pending:
             return

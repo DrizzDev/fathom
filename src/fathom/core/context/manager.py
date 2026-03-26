@@ -334,7 +334,9 @@ class ContextManager:
                     timeout=DRAIN_TIMEOUT,
                 )
             except asyncio.TimeoutError:
-                logger.warning("[ContextManager] background task drain timed out, cancelling remaining")
+                logger.warning(
+                    "[ContextManager] background task drain timed out, cancelling remaining"
+                )
                 for task in pending:
                     if not task.done():
                         task.cancel()

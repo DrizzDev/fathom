@@ -55,8 +55,6 @@ class HierarchyService:
         Await all pending background upload tasks with a bounded timeout.
         """
 
-        
-
         pending = [task for task in self.__background_tasks if not task.done()]
         if not pending:
             return

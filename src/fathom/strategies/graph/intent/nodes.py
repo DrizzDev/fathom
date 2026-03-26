@@ -119,31 +119,59 @@ class IntentNodeProvider:
         Capture the post-action screen and compare it to the pre-action state.
         """
 
+        capture_start = time.time()
         post_capture = await self.__context.perception_port.capture()
+        capture_duration = time.time() - capture_start
+
+        logger.info(
+            "[NODE: EXECUTE] Post-action capture completed in %.2fs (image=%d bytes)",
+            capture_duration,
+            len(post_capture.image) if post_capture.image else 0,
+        )
+
         if not post_capture.image:
             return PostActionScreenComparison()
 
+        elements_start = time.time()
         post_elements = self.__build_post_action_elements(capture=post_capture)
+        logger.info(
+            "[NODE: EXECUTE] Post-action elements extracted in %.3fs (count=%d)",
+            time.time() - elements_start,
+            len(post_elements),
+        )
+
+        hash_start = time.time()
         post_hashes = self.__resolve_capture_hashes(
             capture=post_capture,
             elements=post_elements,
         )
+        logger.info(
+            "[NODE: EXECUTE] Post-action hashes computed in %.3fs", time.time() - hash_start
+        )
 
         after_state = self.__build_screen_state(
             capture=post_capture,
-            visual_hash=post_hashes.visual_hash,
             xml_hash=post_hashes.xml_hash,
+            visual_hash=post_hashes.visual_hash,
             interaction_hash=post_hashes.interaction_hash,
         )
-        screen_diff = self.__screen_comparator.compare(
-            before=before_capture,
+
+        diff_start = time.time()
+        screen_diff = await asyncio.to_thread(
+            self.__screen_comparator.compare,
             after=post_capture,
-            before_state=before_state,
+            before=before_capture,
             after_state=after_state,
+            before_state=before_state,
         )
+        logger.info(
+            "[NODE: EXECUTE] Screen diff completed in %.2fs (off event loop)",
+            time.time() - diff_start,
+        )
+
         return PostActionScreenComparison(
-            post_visual_hash=post_hashes.visual_hash,
             screen_diff=screen_diff,
+            post_visual_hash=post_hashes.visual_hash,
         )
 
     async def __is_cancelled(self) -> bool:
@@ -769,7 +797,9 @@ class IntentNodeProvider:
         )
 
         # Wait for screen stability after action
-        await asyncio.sleep(delay=self.__context.configuration.engine.stability_wait)
+        stability_delay = float(self.__context.configuration.engine.stability_wait)
+        logger.info("[NODE: EXECUTE] Stability wait: %.2fs", stability_delay)
+        await asyncio.sleep(delay=stability_delay)
 
         # Capture post-execution screen to compute post_hash
         current_screen_state = state.get(CommonStateKey.SCREEN_STATE)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from logging import getLogger
 from typing import List, Optional, Tuple, TypeAlias, cast
 
@@ -51,32 +52,42 @@ class ScreenComparator:
         Compare two captures and return a rich diff object.
         """
 
+        compare_start = time.time()
+
         structural_signals = self.__resolve_structural_signals(
             after_state=after_state,
             before_state=before_state,
         )
 
+        ssim_start = time.time()
+        ssim_score = self.__compute_ssim(after=after.image, before=before.image)
+        logger.info("[ScreenDiff] SSIM completed in %.2fs", time.time() - ssim_start)
+
+        pixel_start = time.time()
+        pixel_diff = self.__compute_content_pixel_diff_ratio(after=after.image, before=before.image)
+        logger.info("[ScreenDiff] Pixel diff completed in %.2fs", time.time() - pixel_start)
+
+        regions_start = time.time()
+        regions = self.__compute_changed_regions(after=after.image, before=before.image)
+        logger.info("[ScreenDiff] Changed regions completed in %.2fs", time.time() - regions_start)
+
+        scroll_start = time.time()
+        scroll = self.__compute_scroll_translation(after=after.image, before=before.image)
+        logger.info(
+            "[ScreenDiff] Scroll translation completed in %.2fs", time.time() - scroll_start
+        )
+
+        logger.info("[ScreenDiff] Total compare completed in %.2fs", time.time() - compare_start)
+
         return ScreenDiff(
+            ssim_score=ssim_score,
+            changed_regions=regions,
+            scroll_translation=scroll,
+            content_pixel_diff_ratio=pixel_diff,
             phash_distance=structural_signals.phash_distance,
             activity_changed=before.activity != after.activity,
             xml_hash_changed=structural_signals.xml_hash_changed,
             interaction_hash_changed=structural_signals.interaction_hash_changed,
-            ssim_score=self.__compute_ssim(
-                after=after.image,
-                before=before.image,
-            ),
-            content_pixel_diff_ratio=self.__compute_content_pixel_diff_ratio(
-                after=after.image,
-                before=before.image,
-            ),
-            changed_regions=self.__compute_changed_regions(
-                after=after.image,
-                before=before.image,
-            ),
-            scroll_translation=self.__compute_scroll_translation(
-                after=after.image,
-                before=before.image,
-            ),
         )
 
     def __resolve_structural_signals(

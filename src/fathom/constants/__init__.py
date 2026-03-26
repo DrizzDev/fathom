@@ -13,9 +13,9 @@ from fathom.constants.execution import (
     DEFAULT_STABILITY_WAIT,
     DEFAULT_SWIPE_DISTANCE,
     DEFAULT_SWIPE_DURATION,
+    DRAIN_TIMEOUT,
     SIGNAL_HEARTBEAT_INTERVAL,
     VISUAL_HASH_LENGTH,
-    DRAIN_TIMEOUT,
     ExecutionPhase,
     SignalType,
 )
