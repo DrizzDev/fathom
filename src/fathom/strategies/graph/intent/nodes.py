@@ -1238,11 +1238,10 @@ class IntentNodeProvider:
         if analysis is None:
             return None
 
-        # Validation-type sub-goals (verify, confirm, check) don't require
-        # a screen change — observing the screen IS the goal.  We pass
-        # ``screen_changed=True`` for these so the screen-verification gate
-        # in the reasoner is automatically satisfied.
-        is_validation_step = any(
+        # Validation-type steps don't require a screen change — observing
+        # the screen IS the goal.  Detected from the step's event_type
+        # (set by the LLM tool schema) OR from sub-goal description keywords.
+        is_validation_step = step_result.step.event_type == "validation" or any(
             keyword in current_sub_goal.description.lower()
             for keyword in ["validate", "verify", "confirm", "check if", "check that"]
         )
@@ -1255,6 +1254,42 @@ class IntentNodeProvider:
             pre_screen_hash=step_result.pre_hash,
             post_screen_hash=step_result.post_hash,
         )
+
+        # For validation steps where the LLM explicitly signals completion,
+        # short-circuit — the screen is not expected to change so the normal
+        # multi-signal gate would be overly strict.
+        if is_validation_step and sub_goal_signal.llm_signaled:
+            logger.info(
+                f"[NODE: RECORD] Validation step with LLM completion signal — "
+                f"completing sub-goal '{current_sub_goal.description[:50]}...'"
+            )
+            has_more = agent_state.mark_current_sub_goal_complete(completion_signal=sub_goal_signal)
+
+            if has_more:
+                next_sub_goal = agent_state.get_current_sub_goal()
+                logger.info(
+                    f"[NODE: RECORD] ✓ Sub-goal {current_sub_goal.index} COMPLETE (validation). "
+                    f"Advancing to sub-goal {next_sub_goal.index if next_sub_goal else '(none)'}: "
+                    f"'{next_sub_goal.description if next_sub_goal else ''}'"
+                )
+                return cast(
+                    "IntentGraphState",
+                    {
+                        IntentStateKey.STEP_RESULTS: accumulated_step_results,
+                        IntentStateKey.SHOULD_RETRY: True,
+                    },
+                )
+            else:
+                logger.info("[NODE: RECORD] All sub-goals complete (final was validation).")
+                agent_state.mark_complete(reason="All sub-goals completed sequentially")
+                return cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: "All sub-goals completed sequentially",
+                        IntentStateKey.STEP_RESULTS: accumulated_step_results,
+                    },
+                )
 
         # Three-signal policy: llm_signaled + rationale_verified + action_executed.
         # ``action_executed`` is now gated by ``screen_verified`` — the action must
@@ -1336,6 +1371,15 @@ class IntentNodeProvider:
             self.__persist_agent_state_to_graph(result=result)
             return result
 
+        # When all sub-goals are definitively complete, force closure after
+        # the first validation pass.  The VERIFY LLM still runs (so we log
+        # its assessment), but its verdict cannot reject completion — the
+        # sub-goal chain is the source of truth.
+        all_sub_goals_done = (
+            self.__context.agent_state.has_sub_goals()
+            and self.__context.agent_state.all_sub_goals_complete()
+        )
+
         start_time = time.time()
 
         # 1. Capture the latest screen state
@@ -1402,7 +1446,16 @@ class IntentNodeProvider:
             f"[NODE: VERIFY] Verification finished in {duration:.2f}s: is_complete={is_truly_complete}, reason={reason}"
         )
 
-        if is_truly_complete:
+        if is_truly_complete or all_sub_goals_done:
+            # When all sub-goals are done, the first validation pass forces
+            # closure regardless of the LLM's verdict.
+            if all_sub_goals_done and not is_truly_complete:
+                logger.warning(
+                    f"[NODE: VERIFY] LLM rejected completion but all sub-goals are done — "
+                    f"forcing closure. LLM reason: {reason}"
+                )
+                reason = f"All sub-goals completed (LLM disagreed: {reason})"
+
             self.__context.agent_state.mark_complete(reason=reason)
             result = cast(
                 "IntentGraphState",
