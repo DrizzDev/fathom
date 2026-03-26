@@ -35,7 +35,7 @@ SIGNAL_HEARTBEAT_INTERVAL = 5.0
 RECOMMENDED_WORKFLOW_TASK_TIMEOUT_SECONDS = 60
 
 # Maximum time (seconds) to wait for background tasks during shutdown
-DRAIN_TIMEOUT = 10.0
+DRAIN_TIMEOUT = 30.0
 
 
 class SignalType(StrEnum):
