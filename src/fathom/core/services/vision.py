@@ -68,6 +68,47 @@ class VisionService:
 
         # Use the original prompt builder factory
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
+        self.__tool_definitions = ToolRegistry.get_all_definitions()
+
+    async def prewarm(self) -> None:
+        """
+        Prewarm the planner prompt cache for the known planner tool variants.
+
+        Called concurrently with intent decomposition to reduce first-call latency.
+        Each variant creates a separate cached content entry in the provider.
+        """
+
+        instruction = self.__builder.build()
+
+        start = time.time()
+        for tools in self.__planner_tool_variants():
+            await self.__llm.prewarm(tools=tools, system_instruction=instruction)
+
+        duration = time.time() - start
+
+        await self.__telemetry.debug(
+            "Latency phase completed",
+            phase="planner_prewarm",
+            duration=duration,
+            type=FathomEvent.LATENCY_PHASE,
+        )
+
+    def __planner_tool_variants(self) -> List[Dict[str, Any]]:
+        """
+        Return the small fixed set of planner tool variants worth prewarming.
+        """
+
+        try:
+            definitions = self.__tool_definitions["function_declarations"]
+            by_name = {definition["name"]: definition for definition in definitions}
+
+            return [
+                {"function_declarations": [by_name["execute_ui"]]},
+                {"function_declarations": [by_name["execute_ui"], by_name["verify_goal"]]},
+            ]
+        except KeyError as exception:
+            logger.warning("[VisionService] Tool definition missing for prewarm: %s", exception)
+            return []
 
     async def analyze(
         self,

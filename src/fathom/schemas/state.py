@@ -68,27 +68,37 @@ class LoopDetector(BaseModel):
         Evaluate if current interaction sequence indicates a loop.
         """
 
-        if len(self.__recent_screens) < self.threshold:
+        has_enough_screens = len(self.__recent_screens) >= self.threshold
+        has_enough_actions = len(self.__recent_actions) >= self.threshold
+
+        if not has_enough_screens and not has_enough_actions:
             return False
 
-        # 1. Direct Repetition (Existing logic)
-        if self.__detect_repetition():
-            return True
+        # Screen-based detectors require sufficient screen history.
+        if has_enough_screens:
+            # 1. Direct Repetition (screen + action counts)
+            if self.__detect_repetition():
+                return True
 
-        # 2. State Oscillation (A-B-A-B or A-B-C-A)
-        if self.__detect_oscillation():
-            return True
+            # 2. State Oscillation (A-B-A-B or A-B-C-A)
+            if self.__detect_oscillation():
+                return True
 
-        # 3. Scroll Stalling (Repetitive scrolling with minimal progress)
-        if self.__detect_scroll_stall():
-            return True
+            # 3. Scroll Stalling (Repetitive scrolling with minimal progress)
+            if self.__detect_scroll_stall():
+                return True
 
-        # 4. Action Velocity (Rapid firing with no progress)
-        return bool(self.__detect_action_velocity_loop())
+            # 4. Action Velocity (Rapid firing with no progress)
+            if self.__detect_action_velocity_loop():
+                return True
+
+        # Action-based detection survives screen resets (advance).
+        # Catches repeated actions across visually-different screens.
+        return has_enough_actions and self.__detect_action_repetition()
 
     def __detect_repetition(self) -> bool:
         """
-        Detect simple repetition of screens or actions.
+        Detect simple screen repetition.
         """
 
         def _is_scroll_navigation_sequence(window: int = 4) -> bool:
@@ -99,7 +109,6 @@ class LoopDetector(BaseModel):
                 any(token in t for token in ("scroll", "swipe", "flick")) for t in recent_types
             )
 
-        # Check screen repeats (using semantic identity)
         for index in range(len(self.__recent_screens)):
             count = 1
             current = self.__recent_screens[index]
@@ -108,30 +117,36 @@ class LoopDetector(BaseModel):
                     count += 1
 
             if count >= self.threshold:
-                # Intent-aligned scrolling can legitimately revisit near-identical visual hashes.
-                # Let scroll-specific detectors (stall/velocity) decide these cases.
                 if _is_scroll_navigation_sequence():
                     continue
-                # Bypass if actions are diverse despite similar screens
                 if len(set(self.__recent_actions)) >= self.threshold:
                     continue
 
                 logger.warning(f"LoopDetector: Stuck via screen repetition ({count}x)")
                 return True
 
-        # Check action repeats
+        return False
+
+    def __detect_action_repetition(self) -> bool:
+        """
+        Detect repeated identical actions regardless of screen state.
+
+        Survives screen resets (advance) so it can catch loops where each
+        action produces a visually-different screen (e.g. incrementing a counter).
+        """
+
         action_counts: Dict[str, int] = {}
         for action in self.__recent_actions:
             if action == "None":
                 continue
             action_counts[action] = action_counts.get(action, 0) + 1
-            if action_counts[action] >= self.threshold + 1:  # Slightly higher for actions
+            if action_counts[action] >= self.threshold + 1:
                 action_lower = action.lower()
-                # Intent-guided exploration often requires many consecutive swipes/scrolls;
-                # let dedicated scroll-stall/velocity detectors decide those cases.
                 if any(token in action_lower for token in ("swipe", "scroll", "flick")):
                     continue
-                logger.warning(f"LoopDetector: Stuck via action repetition '{action}'")
+                logger.warning(
+                    f"LoopDetector: Stuck via action repetition '{action}' ({action_counts[action]}x)"
+                )
                 return True
 
         return False
@@ -303,9 +318,30 @@ class LoopDetector(BaseModel):
         self.__recovery_attempts += 1
         return self.__recovery_attempts
 
+    def advance(self) -> None:
+        """
+        Signal forward progress while preserving action history.
+
+        Clears screen-based tracking (hashes, screens) so screen repetition
+        and oscillation detectors reset on genuine visual progress. Preserves
+        action descriptions, types, and timestamps so action-repeat and
+        velocity detectors can catch loops across visually-different screens
+        (e.g. tapping a counter button that changes the displayed number).
+        """
+
+        prev_size = len(self.__recent_screens)
+
+        self.__recent_screens.clear()
+        self.__recent_hashes.clear()
+
+        self.__recovery_attempts = 0
+        logger.info(
+            f"LoopDetector.advance: cleared {prev_size} screens, preserved {len(self.__recent_actions)} actions"
+        )
+
     def reset(self) -> None:
         """
-        Reset loop detection state.
+        Full reset of all loop detection state.
         """
 
         prev_size = len(self.__recent_screens)
