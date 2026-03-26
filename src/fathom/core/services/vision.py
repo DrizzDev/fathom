@@ -19,7 +19,8 @@ from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
+from fathom.schemas.conversation import ConversationTurn, TurnPart
+from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
 
@@ -85,7 +86,7 @@ class VisionService:
         elements: Optional[Dict[str, Any]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
         delta_context: Optional[Dict[str, object]] = None,
-        prior_rejection_history: Optional[List[Any]] = None,
+        prior_rejection_history: Optional[List[ConversationTurn]] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
@@ -159,17 +160,6 @@ class VisionService:
         )
 
         instruction = self.__builder.build()
-
-        # Inject failure constraints into system instruction for strongest LLM adherence.
-        # Gemini treats system instruction as highest priority — stronger than user-turn text.
-        if failures:
-            failed_actions = "; ".join(failures)
-            instruction += (
-                "\n\nCRITICAL CONSTRAINT: The following actions have been attempted and "
-                "FAILED or proven INEFFECTIVE on the current screen. You MUST NOT repeat them. "
-                "Choose a DIFFERENT action or approach to achieve the same goal.\n"
-                f"Blocked actions: {failed_actions}"
-            )
 
         # Sub-goal context (if provided by caller) - SINGLE FOCUS MODE
         # Only current sub-goal is passed to Gemini to prevent skip-ahead behavior.
@@ -277,14 +267,9 @@ class VisionService:
         duration = 0.0
         parse_duration = 0.0
 
-        # Build a set of blocked action descriptions for post-parse enforcement.
-        blocked_actions: set[str] = set()
-        if failures:
-            blocked_actions = {f.strip().lower() for f in failures if f.strip()}
-
         # Conversation history accumulates across retry attempts for multi-turn feedback.
         # Seed with prior rejection history from previous graph iterations (outer loop).
-        conversation_history: List[Any] = list(prior_rejection_history or [])
+        conversation_history: List[ConversationTurn] = list(prior_rejection_history or [])
         # Preserve original payload so multi-turn history always references the full prompt.
         original_payload = list(payload)
 
@@ -310,29 +295,6 @@ class VisionService:
             parse_start = time.time()
             try:
                 analysis = self.__parser.parse(response)
-
-                # Post-parse enforcement: reject actions that match blocked failures.
-                # Structurally blocks the action even if the LLM ignores prompt text.
-                if blocked_actions and analysis.action:
-                    proposed = analysis.action.to_description().strip().lower()
-                    if proposed in blocked_actions:
-                        logger.warning(
-                            "[VISION] Post-parse rejection: LLM proposed blocked action '%s'",
-                            proposed[:60],
-                        )
-                        raise ToolValidationError(
-                            feedback=ToolErrorFeedback(
-                                tool_name="execute_ui",
-                                error_kind="validation",
-                                message=(
-                                    f"REJECTED: The action '{analysis.action.to_description()}' "
-                                    "has already been attempted and failed/proven ineffective on "
-                                    "this screen. You MUST choose a completely DIFFERENT action "
-                                    "or approach to achieve the same goal. Do not repeat this action."
-                                ),
-                            )
-                        )
-
                 parse_duration = time.time() - parse_start
                 break
             except Exception as exception:
@@ -349,9 +311,13 @@ class VisionService:
                     # Build multi-turn feedback: the model sees its own rejected output
                     # as a prior turn, then a correction turn explaining why it was wrong.
                     # This is structurally stronger than appending text to a flat prompt.
-                    conversation_history = self.__build_rejection_history(
-                        original_payload=original_payload,
-                        rejected_response=response,
+                    # Extend (not replace) to preserve any prior_rejection_history seeded
+                    # from previous graph iterations.
+                    conversation_history.extend(
+                        self.__build_rejection_history(
+                            original_payload=original_payload,
+                            rejected_response=response,
+                        )
                     )
 
                     # On retry with conversation history, payload becomes just the
@@ -373,9 +339,11 @@ class VisionService:
         if response.metrics:
             analysis.metrics.update(response.metrics)
 
-        # Expose payload for debugging/audit
+        # Expose original payload for debugging/audit (not the mutated correction text
+        # that replaces payload on validation retry).
         analysis.metadata["prompt_payload"] = [
-            str(item) if not isinstance(item, (dict, bytes)) else "Image(...)" for item in payload
+            str(item) if not isinstance(item, (dict, bytes)) else "Image(...)"
+            for item in original_payload
         ]
         analysis.metadata["system_instruction"] = instruction
 
@@ -410,108 +378,88 @@ class VisionService:
         *,
         analysis: AnalysisResult,
         rejection_reason: str,
-    ) -> List[Any]:
+    ) -> List[ConversationTurn]:
         """
         Build multi-turn rejection history from an AnalysisResult for cross-iteration
         feedback. The planner calls this when rejecting a repeated action so the next
         vision.analyze() cycle can pass it as conversation_history.
 
-        Returns provider-native Content objects representing the model's rejected
-        tool call and the rejection reason.
+        Returns provider-neutral ConversationTurn objects representing the model's
+        rejected tool call and the rejection reason.
         """
 
-        try:
-            from google.genai import types
-
-            # Model turn: reconstruct the rejected tool call
-            model_parts = []
-            if analysis.action:
-                model_parts.append(
-                    types.Part(
-                        function_call=types.FunctionCall(
-                            name="execute_ui",
-                            args=analysis.metadata.get("tool_args", {}),
-                        )
-                    )
+        # Model turn: reconstruct the rejected tool call
+        model_parts: List[TurnPart] = []
+        if analysis.action:
+            model_parts.append(
+                TurnPart.from_function_call(
+                    name="execute_ui",
+                    args=analysis.metadata.get("tool_args", {}),
                 )
-            if not model_parts:
-                model_parts.append(types.Part.from_text(text=analysis.reasoning or "(empty)"))
-
-            model_turn = types.Content(role="model", parts=model_parts)
-
-            # User turn: rejection feedback
-            user_turn = types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=rejection_reason)],
             )
+        if not model_parts:
+            model_parts.append(TurnPart.from_text(text=analysis.reasoning or "(empty)"))
 
-            return [model_turn, user_turn]
-        except Exception as exception:
-            logger.warning("Failed to build cross-iteration rejection history: %s", exception)
-            return []
+        model_turn = ConversationTurn(role="model", parts=model_parts)
+
+        # User turn: rejection feedback
+        user_turn = ConversationTurn(
+            role="user",
+            parts=[TurnPart.from_text(text=rejection_reason)],
+        )
+
+        return [model_turn, user_turn]
 
     @staticmethod
     def __build_rejection_history(
         *,
         original_payload: List[Any],
         rejected_response: GenerateResult,
-    ) -> List[Any]:
+    ) -> List[ConversationTurn]:
         """
         Build a multi-turn conversation history from a rejected LLM response.
 
-        Returns a list of Content objects representing:
+        Returns a list of ConversationTurn objects representing:
           1. Original user turn (prompt + image)
           2. Model's rejected response (its own tool call)
           3. (The next user turn with correction will be sent as the current prompt)
 
-        This gives Gemini full visibility into what it proposed and why it was wrong,
+        This gives the LLM full visibility into what it proposed and why it was wrong,
         enabling genuine self-correction rather than stateless retry.
         """
 
-        try:
-            from google.genai import types
+        # Turn 1: Original user prompt
+        user_parts: List[TurnPart] = []
+        for item in original_payload:
+            if isinstance(item, bytes):
+                mime = "image/png"
+                if item[:3] == b"\xff\xd8\xff":
+                    mime = "image/jpeg"
+                user_parts.append(TurnPart.from_image(data=item, mime_type=mime))
+            elif isinstance(item, str):
+                user_parts.append(TurnPart.from_text(text=item))
 
-            # Turn 1: Original user prompt
-            user_parts = []
-            for item in original_payload:
-                if isinstance(item, bytes):
-                    mime = "image/png"
-                    if item[:3] == b"\xff\xd8\xff":
-                        mime = "image/jpeg"
-                    user_parts.append(types.Part.from_bytes(data=item, mime_type=mime))
-                elif isinstance(item, str):
-                    user_parts.append(types.Part.from_text(text=item))
+        user_turn = ConversationTurn(role="user", parts=user_parts)
 
-            user_turn = types.Content(role="user", parts=user_parts)
-
-            # Turn 2: Model's rejected response (reconstruct from GenerateResult)
-            model_parts = []
-            if rejected_response.content:
-                model_parts.append(types.Part.from_text(text=rejected_response.content))
-            if rejected_response.tool_calls:
-                for tc in rejected_response.tool_calls:
-                    model_parts.append(
-                        types.Part(
-                            function_call=types.FunctionCall(
-                                name=getattr(tc, "name", "execute_ui"),
-                                args=dict(getattr(tc, "args", {})),
-                            )
-                        )
+        # Turn 2: Model's rejected response (reconstruct from GenerateResult)
+        model_parts: List[TurnPart] = []
+        if rejected_response.content:
+            model_parts.append(TurnPart.from_text(text=rejected_response.content))
+        if rejected_response.tool_calls:
+            for tc in rejected_response.tool_calls:
+                model_parts.append(
+                    TurnPart.from_function_call(
+                        name=getattr(tc, "name", "execute_ui"),
+                        args=dict(getattr(tc, "args", {})),
                     )
+                )
 
-            if not model_parts:
-                model_parts.append(types.Part.from_text(text="(empty response)"))
+        if not model_parts:
+            model_parts.append(TurnPart.from_text(text="(empty response)"))
 
-            model_turn = types.Content(role="model", parts=model_parts)
+        model_turn = ConversationTurn(role="model", parts=model_parts)
 
-            return [user_turn, model_turn]
-
-        except Exception as exception:
-            logger.warning(
-                "Failed to build multi-turn rejection history, falling back to stateless retry: %s",
-                exception,
-            )
-            return []
+        return [user_turn, model_turn]
 
     def __resolve_capture_fingerprint(self, *, visual_hash: str, capture: ScreenCapture) -> str:
         """

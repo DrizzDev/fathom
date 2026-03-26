@@ -182,7 +182,22 @@ class Reasoner:
         if llm_signaled:
             evidence_list.append("LLM signaled sub-goal completion via tool output")
 
-        # Signal 2: Rationale verification signal (restored for diagnostics/telemetry).
+        # Signal 2: Rationale verification — leverages Gemini's own completion reason.
+        #
+        # When the LLM explicitly signals sub-goal completion, it also provides a
+        # `subgoal_completion_reason` explaining WHY it's complete. This is Gemini's
+        # own semantic understanding — far more reliable than SequenceMatcher.
+        #
+        # Priority:
+        #   1. LLM provided an explicit completion reason → trust it (Gemini intelligence)
+        #   2. Fallback: keyword-based heuristic for cases where the LLM didn't explicitly
+        #      signal but reasoning text implies completion.
+        has_explicit_reason = bool(
+            llm_signaled
+            and (analysis.subgoal_completion_reason or analysis.goal_completion_reason)
+        )
+
+        # Fallback heuristic: keyword + similarity check
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
         similarity = SequenceMatcher(None, target_goal, context).ratio()
         keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
@@ -190,16 +205,21 @@ class Reasoner:
         reasoning_lower = analysis.reasoning.lower()
         keywords_found = any(kw in reasoning_lower for kw in COMPLETION_KEYWORDS)
 
-        # Require a minimum semantic similarity floor even when keywords are present.
-        # Prevents near-zero similarity accidental keyword hits (e.g. similarity=0.04)
-        # from passing rationale verification on term overlap alone.
-        rationale_verified = keyword_match or (
+        heuristic_match = keyword_match or (
             similarity >= RATIONALE_MIN_SIMILARITY_FLOOR and keywords_found
         )
+
+        rationale_verified = has_explicit_reason or heuristic_match
         if rationale_verified:
-            evidence_list.append(
-                f"Rationale verified (similarity={similarity:.2f}, keywords={'found' if keywords_found else 'none'})"
-            )
+            if has_explicit_reason:
+                reason_text = analysis.subgoal_completion_reason or analysis.goal_completion_reason
+                evidence_list.append(
+                    f"Rationale verified via LLM completion reason: '{reason_text}'"
+                )
+            else:
+                evidence_list.append(
+                    f"Rationale verified via heuristic (similarity={similarity:.2f}, keywords={'found' if keywords_found else 'none'})"
+                )
 
         # Signal 3: Action Execution (did we execute an action?)
         action_executed = analysis.action.action_type in ACTION_EXECUTED_TYPES

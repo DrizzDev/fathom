@@ -176,3 +176,20 @@ Return ONLY a valid JSON object matching this schema. Do not include markdown fo
 VERIFICATION_USER_TEMPLATE = """User Intent: {intent}
 {guidance_section}
 Task: Analyze the provided screenshot. Has the user's intent been fully and definitively achieved according to the verification framework?"""
+
+# Validation subject extraction prompt templates
+VALIDATION_SUBJECT_EXTRACTION_SYSTEM = (
+    "You are an expert at parsing user intents for mobile UI automation. "
+    "Your task is to extract all validation requirements from a user's intent."
+)
+
+VALIDATION_SUBJECT_EXTRACTION_USER = (
+    "Extract all validation requirements from this intent. "
+    "Return a JSON list of validation subjects (what to validate/confirm/check). "
+    "Each subject should be a complete, standalone assertion "
+    "(e.g., 'the cart page is displayed', 'api validation succeeded'). "
+    "Handle numbered lists, conditionals, and complex sentences. "
+    "Do not include keywords like 'Validate' or 'Check'. "
+    "Return ONLY valid JSON list of strings, no other text.\n\n"
+    "Intent: {intent}"
+)

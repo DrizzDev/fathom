@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Sequence, Union
 
+from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.results import GenerateResult
 
 # Type alias for LLM prompt parts (text, images, or structured content)
@@ -31,7 +32,7 @@ class LLMPort(ABC):
         prompt: Sequence[PromptPart],
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
-        conversation_history: Optional[Sequence[Any]] = None,
+        conversation_history: Optional[Sequence[ConversationTurn]] = None,
     ) -> GenerateResult:
         """
         Generate response from LLM.
@@ -41,7 +42,7 @@ class LLMPort(ABC):
             system_instruction: Optional system prompt
             tools: Optional tool definitions
             conversation_history: Optional prior turns for multi-turn feedback loops.
-                Each entry is a provider-native content object (e.g. google.genai.types.Content).
+                Each entry is a provider-neutral ConversationTurn.
                 When provided, prompt is appended as the final user turn.
 
         Returns:

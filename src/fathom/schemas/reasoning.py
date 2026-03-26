@@ -74,12 +74,13 @@ class SubGoalCompletionSignal(BaseModel):
 
         Returns:
             Number of True boolean signals used by the completion gate.
-            Current policy: llm_signaled + rationale_verified participate in gating.
+            Policy: llm_signaled + rationale_verified + action_executed.
         """
         return sum(
             [
                 self.llm_signaled,
                 self.rationale_verified,
+                self.action_executed,
             ]
         )
 

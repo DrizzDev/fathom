@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from logging import getLogger
 from typing import TYPE_CHECKING, List
 
+from fathom.core.prompts.templates import (
+    VALIDATION_SUBJECT_EXTRACTION_SYSTEM,
+    VALIDATION_SUBJECT_EXTRACTION_USER,
+)
 from fathom.core.services.normalizer import Normalizer
 from fathom.utils.parsing import strip_code_fences
 
@@ -54,24 +58,10 @@ async def extract_validation_subjects_with_llm_tracked(
         )
 
     try:
-        system_instruction = (
-            "You are an expert at parsing user intents for mobile UI automation. "
-            "Your task is to extract all validation requirements from a user's intent."
-        )
-
-        prompt = (
-            f"Extract all validation requirements from this intent. "
-            f"Return a JSON list of validation subjects (what to validate/confirm/check). "
-            f"Each subject should be a complete, standalone assertion (e.g., 'the cart page is displayed', 'api validation succeeded'). "
-            f"Handle numbered lists, conditionals, and complex sentences. Do not include keywords like 'Validate' or 'Check'. "
-            f"Return ONLY valid JSON list of strings, no other text.\n\n"
-            f"Intent: {intent}"
-        )
-
         response = await llm.generate(
             use_cache=False,
-            prompt=[prompt],
-            system_instruction=system_instruction,
+            prompt=[VALIDATION_SUBJECT_EXTRACTION_USER.format(intent=intent)],
+            system_instruction=VALIDATION_SUBJECT_EXTRACTION_SYSTEM,
         )
 
         if not response or not response.content:

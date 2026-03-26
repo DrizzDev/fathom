@@ -103,6 +103,7 @@ ACTION_EXECUTED_TYPES: frozenset[ActionType] = frozenset(
         ActionType.SWIPE,
         ActionType.SCROLL,
         ActionType.COMPLETE,
+        ActionType.VALIDATE,
     }
 )
 

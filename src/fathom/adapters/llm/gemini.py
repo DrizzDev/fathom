@@ -14,6 +14,7 @@ from fathom.core.exceptions import VisionError
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import LLMConfiguration
+from fathom.schemas.conversation import ConversationTurn, TurnPart
 from fathom.schemas.results import GenerateResult
 
 logger = getLogger(__name__)
@@ -177,7 +178,7 @@ class GeminiLLM(LLMPort):
         prompt: Sequence[Union[str, bytes, Dict[str, str]]],
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
-        conversation_history: Optional[Sequence[Any]] = None,
+        conversation_history: Optional[Sequence[ConversationTurn]] = None,
     ) -> GenerateResult:
         """
         Main handler for LLM interaction.
@@ -225,11 +226,12 @@ class GeminiLLM(LLMPort):
                 system_instruction=system_instruction,
             )
             try:
-                # Build contents: multi-turn history + current user turn
+                # Build contents: convert provider-neutral turns to Gemini SDK types,
+                # then append current user turn.
                 if conversation_history:
-                    contents = list(conversation_history) + [
-                        types.Content(role="user", parts=parts)
-                    ]
+                    contents = [
+                        self.__to_gemini_content(turn) for turn in conversation_history
+                    ] + [types.Content(role="user", parts=parts)]
                 else:
                     contents = [types.Content(role="user", parts=parts)]
 
@@ -321,6 +323,38 @@ class GeminiLLM(LLMPort):
 
         if self.__cache:
             await self.__cache.delete_cache()
+
+    @staticmethod
+    def __to_gemini_content(turn: ConversationTurn) -> types.Content:
+        """
+        Convert a provider-neutral ConversationTurn to a Gemini SDK Content object.
+
+        This is the adapter boundary where domain models are translated to
+        provider-specific types.
+        """
+
+        sdk_parts: list[types.Part] = []
+        for part in turn.parts:
+            if part.function_call:
+                sdk_parts.append(
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            name=part.function_call.name,
+                            args=dict(part.function_call.args),
+                        )
+                    )
+                )
+            elif part.image_data is not None:
+                sdk_parts.append(
+                    types.Part.from_bytes(
+                        data=part.image_data,
+                        mime_type=part.mime_type or "image/png",
+                    )
+                )
+            elif part.text is not None:
+                sdk_parts.append(types.Part.from_text(text=part.text))
+
+        return types.Content(role=turn.role, parts=sdk_parts)
 
     @staticmethod
     def __detect_mime(data: bytes) -> str:

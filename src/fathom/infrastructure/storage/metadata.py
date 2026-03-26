@@ -6,7 +6,11 @@ from typing import Any, Dict
 
 def sanitize_path_component(value: str) -> str:
     """Remove characters that are unsafe for filenames/path segments."""
-    return "".join(char for char in value if char.isalnum() or char in "._-")
+    sanitized = "".join(char for char in value if char.isalnum() or char in "._-")
+    # Reject empty or directory traversal segments like "." and ".."
+    if sanitized in {"", ".", ".."}:
+        raise ValueError(f"Invalid path component: {value!r}")
+    return sanitized
 
 
 @dataclass(frozen=True)

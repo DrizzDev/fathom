@@ -398,6 +398,14 @@ class GraphContext:
         return self.__planner
 
     @property
+    def auditor(self) -> AuditService:
+        """
+        Returns the AuditService instance for console logging.
+        """
+
+        return self.__auditor
+
+    @property
     def hierarchy(self) -> HierarchyService:
         """
         Returns the HierarchyService instance.
@@ -429,13 +437,6 @@ class GraphContext:
 
         return self.__perception
 
-    @property
-    def auditor(self) -> AuditService:
-        """
-        Returns the AuditService instance for console logging.
-        """
-
-        return self.__auditor
 
     @property
     def resolution(self) -> ReferenceResolutionService:

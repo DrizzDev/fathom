@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, cast
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason
 from fathom.schemas.actions import Action
+from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.delta import GeminiDeltaSignal
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenState
@@ -78,9 +79,9 @@ class AgentState:
         self.__low_delta_streak: int = 0
 
         # Multi-turn rejection history for cross-iteration feedback loops.
-        # Stores (original_payload, rejected_response, rejection_reason) so the
-        # next vision.analyze() call can pass it as conversation_history.
-        self.__rejection_history: Optional[List[Any]] = None
+        # Stores provider-neutral ConversationTurn objects so the next
+        # vision.analyze() call can pass them as conversation_history.
+        self.__rejection_history: Optional[List[ConversationTurn]] = None
 
         # HITL Tracking
         self.__realignment_count = 0
@@ -593,14 +594,14 @@ class AgentState:
         return self.__action_history.has_repeated_failure(action=action)
 
     @property
-    def rejection_history(self) -> Optional[List[Any]]:
+    def rejection_history(self) -> Optional[List[ConversationTurn]]:
         """
         Returns stored multi-turn rejection history for cross-iteration feedback.
         """
 
         return self.__rejection_history
 
-    def set_rejection_history(self, history: List[Any]) -> None:
+    def set_rejection_history(self, history: List[ConversationTurn]) -> None:
         """
         Store multi-turn rejection history so the next vision.analyze() cycle
         can pass it as conversation_history to the LLM.

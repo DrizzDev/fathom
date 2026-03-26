@@ -8,12 +8,15 @@ VISUAL_HASH_LENGTH = 16
 # Launcher packages - actions on these should never persist/export during execution
 LAUNCHER_PACKAGES: frozenset[str] = frozenset(
     {
+        # Android
         "com.google.android.apps.nexuslauncher",  # Google Pixel default
         "com.android.launcher",
         "com.android.launcher3",
         "com.sec.android.app.launchers",  # Samsung default
         "com.miui.home",  # MIUI default
         "com.oppo.launcher",  # OPPO default
+        # iOS
+        "com.apple.springboard",  # iOS home screen
     }
 )
 

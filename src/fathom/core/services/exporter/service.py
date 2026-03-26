@@ -9,17 +9,13 @@ from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.exporter.action_catalog import build_action_catalog_from_steps
 from fathom.core.services.exporter.script_text import normalize_script_output
-from fathom.core.services.exporter.structured_export import (
-    contains_goal_validation,
-    is_valid_llm_script,
-)
+from fathom.core.services.exporter.structured_export import contains_goal_validation
 from fathom.core.services.exporter.trace_payload import build_export_payload
 from fathom.core.services.exporter.validation_subjects import (
     extract_validation_subjects_with_llm_tracked,
 )
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.export import (
-    ScriptExportPayload,
     ScriptExportStructuredPayload,
     ScriptExportStructuredPayloadShape,
 )
@@ -78,18 +74,9 @@ class ScriptExporter:
             intent=(intent or goal_state),
         )
         action_catalog_lines = [
-            f"{action_id}: {line}" for action_id, line in action_catalog.items()
+            f"{action_id}: {entry.description}" for action_id, entry in action_catalog.items()
         ]
-        allowed_action_lines = [
-            line.strip().lower() for line in action_catalog.values() if line.strip()
-        ]
-
         require_if_block = False
-        required_open_app_line = (
-            str(action_catalog.get(required_open_app_id) or "").strip().lower()
-            if required_open_app_id
-            else None
-        )
 
         system_instruction = self.__prompt_builder.build_system_instruction()
         prompt_text = self.__prompt_builder.build_user_prompt(
@@ -144,9 +131,14 @@ class ScriptExporter:
             shape = ScriptExportStructuredPayloadShape.model_validate(
                 raw_emit_args.model_dump(exclude_unset=True)
             )
+            # Convert CatalogEntry → str for the Pydantic export schema which
+            # operates on rendered text (action_catalog is Dict[str, str] there).
+            action_catalog_strings = {
+                action_id: entry.description for action_id, entry in action_catalog.items()
+            }
             structured_payload = ScriptExportStructuredPayload.enforce_policy(
                 shape=shape,
-                action_catalog=action_catalog,
+                action_catalog=action_catalog_strings,
                 required_action_ids=required_action_ids,
                 required_open_app_id=required_open_app_id,
                 require_if_block=require_if_block,
@@ -160,32 +152,12 @@ class ScriptExporter:
             )
             return None
 
-        raw_structured_script = structured_payload.to_script()
-        candidate = normalize_script_output(script=raw_structured_script)
-
-        try:
-            parsed_script = ScriptExportPayload.model_validate(
-                {
-                    "script": candidate,
-                    "allowed_action_lines": allowed_action_lines,
-                    "required_open_app": required_open_app_line,
-                    "require_if_block": require_if_block,
-                }
-            )
-        except Exception as exception:
-            logger.warning(
-                "Gemini script schema validation failed: %s [export_violation=script_schema].",
-                exception,
-            )
-            return None
-
-        candidate = parsed_script.script
-        if not is_valid_llm_script(candidate=candidate, catalog_action_count=len(action_catalog)):
-            logger.warning(
-                "Gemini script failed structural/action coverage validation "
-                "[export_violation=post_validation_coverage]."
-            )
-            return None
+        # Render to text. The structured payload is already fully validated by
+        # enforce_policy() — action coverage, ordering, IF blocks, validations are
+        # all checked there. to_script() is deterministic and always produces
+        # well-formed output (balanced braces, correct ordering). No need to
+        # re-parse the rendered text through ScriptExportPayload or is_valid_llm_script.
+        candidate = normalize_script_output(script=structured_payload.to_script())
         if not contains_goal_validation(script=candidate):
             logger.warning(
                 "Gemini script missing final goal validation "

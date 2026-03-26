@@ -605,6 +605,23 @@ class IntentNodeProvider:
                     f"should_retry={plan.should_retry}, reason={plan.reason}"
                 )
 
+            # Handle ACTION_BLOCKED signal from planner: inject guidance into
+            # the context manager so the next GROUND→ANALYZE cycle sees it as
+            # a <SYSTEM_OVERRIDE>. This keeps guidance mutation in the graph node
+            # rather than the planner (SRP).
+            blocked_action = (plan.metadata or {}).get("blocked_action")
+            if plan.reason == CompletionReason.ACTION_BLOCKED.value and blocked_action:
+                await self.__context.context_manager.inject_user_guidance(
+                    guidance=(
+                        f"ACTION BLOCKED: '{blocked_action}' has been repeated 3+ times on this "
+                        "screen without progress and is now BLOCKED. You MUST use a completely "
+                        "different action or interaction path to achieve the same goal. "
+                        "Consider alternative UI elements, different navigation paths, or "
+                        "scrolling to reveal new elements."
+                    ),
+                    step=current_step,
+                )
+
             logger.info(
                 f"[NODE: ANALYZE] Analysis completed in {duration:.2f}s: "
                 f"is_complete={plan.is_complete}, should_retry={plan.should_retry}, "
@@ -1029,19 +1046,19 @@ class IntentNodeProvider:
 
             # Console audit logging for rich step visualization
             current_screen = state.get(CommonStateKey.SCREEN_STATE)
-            is_new_screen = state.get(CommonStateKey.IS_NEW_SCREEN)
+            is_new_screen_state = state.get(CommonStateKey.IS_NEW_SCREEN)
             execution_plan = state.get(IntentStateKey.PLAN)
 
             if (
                 isinstance(execution_plan, PlanResult)
                 and isinstance(current_screen, ScreenState)
-                and isinstance(is_new_screen, bool)
+                and isinstance(is_new_screen_state, bool)
             ):
                 self.__context.auditor.log_step(
                     plan=execution_plan,
                     state=current_screen,
                     hierarchy_duration=0.0,
-                    is_new_screen=is_new_screen,
+                    is_new_screen=is_new_screen_state,
                     result=step_result.to_record(),
                     analysis_duration=analysis_duration,
                     execution_duration=execution_duration,
@@ -1106,6 +1123,18 @@ class IntentNodeProvider:
                 self.__persist_agent_state_to_graph(result=result)
                 return result
 
+            # ── Sub-goal completion check (post-execution) ──
+            # Evaluated here — after the action has executed and been recorded —
+            # so we never advance a sub-goal on an action that didn't run.
+            subgoal_result = self.__evaluate_subgoal_completion(
+                plan=execution_plan,
+                step_result=step_result,
+                accumulated_step_results=accumulated_step_results,
+            )
+            if subgoal_result is not None:
+                self.__persist_agent_state_to_graph(result=subgoal_result)
+                return subgoal_result
+
             logger.info(
                 f"[NODE: RECORD] Step {self.__context.agent_state.step_count} recorded successfully"
             )
@@ -1130,6 +1159,100 @@ class IntentNodeProvider:
             result = cast("IntentGraphState", {IntentStateKey.STEP_RESULTS: existing_step_results})
             self.__persist_agent_state_to_graph(result=result)
             return result
+
+    def __evaluate_subgoal_completion(
+        self,
+        *,
+        plan: Any,
+        step_result: StepResult,
+        accumulated_step_results: List[StepResult],
+    ) -> Optional[IntentGraphState]:
+        """
+        Evaluate sub-goal completion after action execution.
+
+        Returns an IntentGraphState if the sub-goal completed (or all sub-goals
+        finished), otherwise None to continue normal flow.
+        """
+
+        agent_state = self.__context.agent_state
+        current_sub_goal = agent_state.get_current_sub_goal()
+        if not current_sub_goal or not agent_state.has_sub_goals():
+            return None
+
+        # Extract the analysis from the plan metadata (set by planner).
+        analysis = None
+        if isinstance(plan, PlanResult) and plan.metadata:
+            analysis = plan.metadata.get("_analysis")
+
+        if analysis is None:
+            return None
+
+        sub_goal_signal = self.__context.reasoner.analyze_subgoal_completion(
+            analysis=analysis,
+            sub_goal_description=current_sub_goal.description,
+            screen_description=step_result.step.action.target or "",
+        )
+
+        # Three-signal policy: llm_signaled + rationale_verified + action_executed.
+        # Validation checks advance with 2-of-3, action steps require all 3.
+        is_validation_step = any(
+            keyword in current_sub_goal.description.lower()
+            for keyword in ["validate", "verify", "confirm", "check if", "check that"]
+        )
+        required_threshold = 2 if is_validation_step else 3
+        signal_count = sub_goal_signal.count_signals()
+        current_idx, total = agent_state.get_sub_goal_progress()
+
+        logger.info(
+            f"[NODE: RECORD] Sub-goal completion check: '{current_sub_goal.description[:50]}...' | "
+            f"signals={signal_count}/{required_threshold} | "
+            f"llm={sub_goal_signal.llm_signaled} | "
+            f"rationale={sub_goal_signal.rationale_verified} | "
+            f"action={sub_goal_signal.action_executed} | "
+            f"evidence: {sub_goal_signal.evidence}"
+        )
+
+        if not sub_goal_signal.meets_threshold(required_signals=required_threshold):
+            logger.warning(
+                f"[NODE: RECORD] Sub-goal {current_sub_goal.index} NOT completing yet: "
+                f"{signal_count}/{required_threshold} signals | "
+                f"Progress: [{current_idx + 1}/{total}] | "
+                f"Type: {'validation' if is_validation_step else 'action'}"
+            )
+            return None
+
+        has_more = agent_state.mark_current_sub_goal_complete(
+            completion_signal=sub_goal_signal
+        )
+
+        if has_more:
+            next_sub_goal = agent_state.get_current_sub_goal()
+            logger.info(
+                f"[NODE: RECORD] ✓ Sub-goal {current_sub_goal.index} COMPLETE. "
+                f"Advancing to sub-goal {next_sub_goal.index if next_sub_goal else '(none)'}: "
+                f"'{next_sub_goal.description if next_sub_goal else ''}'"
+            )
+            return cast(
+                "IntentGraphState",
+                {
+                    IntentStateKey.STEP_RESULTS: accumulated_step_results,
+                    IntentStateKey.SHOULD_RETRY: True,
+                },
+            )
+        else:
+            logger.info(
+                f"[NODE: RECORD] All sub-goals complete. Final sub-goal had "
+                f"{sub_goal_signal.count_signals()}/{required_threshold} signals."
+            )
+            agent_state.mark_complete(reason="All sub-goals completed sequentially")
+            return cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: "All sub-goals completed sequentially",
+                    IntentStateKey.STEP_RESULTS: accumulated_step_results,
+                },
+            )
 
     async def verify(self, state: IntentGraphState) -> IntentGraphState:
         """
