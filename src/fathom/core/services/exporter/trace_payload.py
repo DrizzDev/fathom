@@ -4,9 +4,11 @@ from typing import Any, Dict, Sequence, Union
 
 from fathom.core.services.exporter.step_record import (
     get_action_type,
+    get_activity,
     get_conditional_type,
     get_event_type,
     is_explicit_conditional,
+    is_launcher_activity,
 )
 from fathom.schemas.steps import StepResult
 
@@ -22,7 +24,13 @@ def build_export_payload(
     step_results: Sequence[Union[StepResult, Dict[str, Any]]],
 ) -> list[Dict[str, Any]]:
     payload: list[Dict[str, Any]] = []
-    for index, step in enumerate(step_results, start=1):
+    step_index = 0
+    for step in step_results:
+        # Skip steps executed on launcher — navigational overhead, not part of the intent.
+        if is_launcher_activity(activity=get_activity(step)):
+            continue
+        step_index += 1
+        index = step_index
         action_type_val = get_action_type(step=step)
         event_type = get_event_type(step=step)
         is_conditional = is_explicit_conditional(step=step)

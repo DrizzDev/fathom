@@ -323,7 +323,11 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                 if selected_block_index in emitted_block_indices:
                     continue
                 block = self.conditional_blocks[selected_block_index]
-                lines.append(f"IF {block.condition.strip()}")
+                condition_text = block.condition.strip()
+                # Strip leading "if" to avoid "IF if ..." duplication
+                if condition_text.lower().startswith("if "):
+                    condition_text = condition_text[3:].strip()
+                lines.append(f"IF {condition_text}")
                 lines.append("{")
                 for block_action_id in block.action_ids:
                     block_action_id = block_action_id.strip()

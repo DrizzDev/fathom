@@ -71,6 +71,7 @@ class HistoryService:
         intent: str = "",
         package_name: Optional[str] = None,
         absolute_center: Optional[List[int]] = None,
+        execution_activity: Optional[str] = None,
         on_complete: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> None:
         """
@@ -83,6 +84,7 @@ class HistoryService:
                 intent=intent,
                 package_name=package_name,
                 absolute_center=absolute_center,
+                execution_activity=execution_activity,
             )
 
             if on_complete and script_data:
@@ -147,6 +149,7 @@ class HistoryService:
         intent: str = "",
         package_name: Optional[str] = None,
         absolute_center: Optional[List[int]] = None,
+        execution_activity: Optional[str] = None,
     ) -> str:
         """
         Saves a single step result and updates associated artifact files.
@@ -163,6 +166,10 @@ class HistoryService:
 
         record["timestamp"] = int(time.time() * 1000)
         record["screen_changed"] = result.screen_changed
+
+        # Tag with pre-action activity so the exporter can filter launcher steps.
+        if execution_activity:
+            record["execution_activity"] = execution_activity
 
         history["history"].append(record)
 

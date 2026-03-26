@@ -104,7 +104,11 @@ def build_action_catalog_from_steps(
         is_first_step_derived_action = (
             bool(package_name) and len(lines) == 1 and lines[0].lower().startswith("open_app ")
         )
-        if is_first_step_derived_action and action_type_val == "tap" and is_app_launcher_signal:
+        if (
+            is_first_step_derived_action
+            and action_type_val == "tap"
+            and (is_app_launcher_signal or is_launcher_activity(activity=get_activity(step)))
+        ):
             logger.debug(
                 "[EXPORTER] Collapsing launcher tap into OPEN_APP: target='%s' package=%s",
                 export_target,

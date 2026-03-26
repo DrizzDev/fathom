@@ -271,6 +271,7 @@ class IntentNodeProvider:
         *,
         step_result: StepResult,
         current_activity: Optional[str],
+        execution_activity: Optional[str] = None,
     ) -> None:
         """
         Queue ordered history persistence for the completed step.
@@ -286,6 +287,7 @@ class IntentNodeProvider:
             result=step_result,
             intent=self.__context.intent,
             package_name=current_activity,
+            execution_activity=execution_activity,
             on_complete=__publish,
         )
 
@@ -969,6 +971,7 @@ class IntentNodeProvider:
                 self.__enqueue_history_persistence(
                     step_result=step_result,
                     current_activity=current_activity,
+                    execution_activity=execution_activity,
                 )
                 logger.debug(
                     f"[NODE: RECORD] Recording step to history. Observed={current_activity}"

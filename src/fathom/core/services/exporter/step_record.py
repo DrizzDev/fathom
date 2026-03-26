@@ -42,7 +42,9 @@ def swipe_direction_label(action_type: str) -> str:
 
 def get_activity(step: Union[StepResult, Dict[str, Any]]) -> str:
     if isinstance(step, dict):
-        return str(object=step.get("activity") or "")
+        # Prefer execution_activity (pre-action screen) for launcher detection;
+        # fall back to activity (post-action screen) for general use.
+        return str(object=step.get("execution_activity") or step.get("activity") or "")
 
     # StepResult: activity is only available if passed via metadata.
     if isinstance(step, StepResult):
