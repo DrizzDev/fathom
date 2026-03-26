@@ -450,3 +450,13 @@ class ActionExecutor:
             task.add_done_callback(self.__background_tasks.discard)
         except Exception as exception:
             logger.exception(f"Failed to schedule tracing: {exception}", stack_info=True)
+
+    async def drain_background_tasks(self) -> None:
+        """
+        Await all pending background trace/upload tasks.
+        """
+
+        pending = [task for task in self.__background_tasks if not task.done()]
+        if pending:
+            logger.info(f"[ActionExecutor] draining {len(pending)} background tasks")
+            await asyncio.gather(*pending, return_exceptions=True)

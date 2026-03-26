@@ -6,6 +6,7 @@ from typing import Any, Deque, Dict, Optional
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from fathom.runtime.temporal.state import SignalStateRegistry, WorkflowSignalState
 from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,13 @@ class FathomBaseWorkflow:
         except RuntimeError:
             logger.log(level, message)
 
+    def __signal_state(self) -> WorkflowSignalState:
+        """
+        Resolve the shared signal state mirror for this workflow.
+        """
+
+        return SignalStateRegistry.shared().get(workflow_id=workflow.info().workflow_id)
+
     @workflow.signal  # type: ignore[untyped-decorator]
     async def pause(self) -> None:
         """
@@ -39,7 +47,9 @@ class FathomBaseWorkflow:
         """
 
         self.__log(message="Received pause signal")
+
         self.__paused = True
+        self.__signal_state().mark_paused()
 
     @workflow.signal  # type: ignore[untyped-decorator]
     async def resume(self) -> None:
@@ -48,7 +58,9 @@ class FathomBaseWorkflow:
         """
 
         self.__log(message="Received resume signal")
+
         self.__paused = False
+        self.__signal_state().mark_resumed()
 
     @workflow.signal  # type: ignore[untyped-decorator]
     async def inject(self, context: str) -> None:
@@ -57,7 +69,9 @@ class FathomBaseWorkflow:
         """
 
         self.__log(message=f"Received inject signal with context: {context}")
+
         self.__injected_contexts.append(context)
+        self.__signal_state().enqueue_context(context=context)
 
     @workflow.signal  # type: ignore[untyped-decorator]
     async def consume_context(self) -> None:
@@ -76,14 +90,22 @@ class FathomBaseWorkflow:
         """
 
         self.__log(message="Received cancel signal")
+
         self.__paused = False
         self.__cancelled = True
+        self.__signal_state().mark_cancelled()
 
     @workflow.query  # type: ignore[untyped-decorator]
     def get_state(self) -> Dict[str, Any]:
         """
         Query current workflow state.
         """
+
+        self.__log(
+            message=f"get_state queried: paused={self.__paused} "
+            f"cancelled={self.__cancelled} pending_contexts={len(self.__injected_contexts)}",
+            level=logging.DEBUG,
+        )
 
         return {
             "paused": self.__paused,
@@ -109,6 +131,11 @@ class FathomBaseWorkflow:
         DEPRECATED: Use peek_next_context + consume_context signal.
         Kept for backward compatibility during transition.
         """
+
+        self.__log(
+            message="DEPRECATED get_injected_context query called — migrate to in-process state",
+            level=logging.WARNING,
+        )
 
         if not self.__injected_contexts:
             return None
@@ -183,8 +210,8 @@ class FathomExplorationWorkflow(FathomBaseWorkflow):
             result = await workflow.execute_activity(
                 activity="EXECUTE_EXPLORATION",
                 args=[workflow.info().workflow_id, validated_request.model_dump(mode="json")],
-                start_to_close_timeout=timedelta(minutes=30),
                 heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(minutes=30),
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
 

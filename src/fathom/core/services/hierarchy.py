@@ -50,6 +50,16 @@ class HierarchyService:
         except Exception as exception:
             logger.warning(f"Failed to create background task: {exception}", stack_info=True)
 
+    async def drain_background_tasks(self) -> None:
+        """
+        Await all pending background upload tasks.
+        """
+
+        pending = [task for task in self.__background_tasks if not task.done()]
+        if pending:
+            logger.info(f"[HierarchyService] draining {len(pending)} background tasks")
+            await asyncio.gather(*pending, return_exceptions=True)
+
     def extract_elements(
         self,
         *,

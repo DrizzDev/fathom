@@ -97,6 +97,13 @@ class ExplorationStrategy:
             logger.exception(f"Exploration failed: {exception}")
             duration = int((time.time() - start_time) * 1000)
             return ExecutionResult(success=False, duration=duration, error=str(exception))
+        finally:
+            try:
+                await self.__graph_context.shutdown()
+            except Exception as shutdown_error:
+                logger.warning(
+                    f"[exploration-strategy] graph context shutdown failed: {shutdown_error}"
+                )
 
     @property
     def graph(self) -> ExplorationGraph:

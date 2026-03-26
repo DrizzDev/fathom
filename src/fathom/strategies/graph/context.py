@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 from fathom.base.paths import SharedPathManager
@@ -32,6 +33,8 @@ from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.run import RealignmentPolicy
+
+logger = logging.getLogger(__name__)
 
 
 class GraphContext:
@@ -431,3 +434,17 @@ class GraphContext:
         """
 
         return self.__resolution
+
+    async def shutdown(self) -> None:
+        """
+        Drain background tasks from all owned services before teardown.
+        """
+
+        for service in (self.__action_executor, self.__hierarchy, self.__history):
+            if hasattr(service, "drain_background_tasks"):
+                try:
+                    await service.drain_background_tasks()
+                except Exception as exception:
+                    logger.warning(
+                        f"[graph-context] drain failed for {type(service).__name__}: {exception}"
+                    )

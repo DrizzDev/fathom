@@ -318,14 +318,24 @@ class ContextManager:
 
     async def shutdown(self) -> None:
         """
-        Gracefully shuts down the persistence worker.
+        Gracefully shuts down all background tasks and the persistence worker.
         """
 
+        # 1. Wait for in-flight summarization tasks to finish
+        pending = [task for task in self.__background_tasks if not task.done()]
+        if pending:
+            logger.info(
+                f"[context-manager] awaiting {len(pending)} background tasks before shutdown"
+            )
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        # 2. Drain the persistence queue
         if self.__persistence_task:
-            # Wait for queue to drain
             if not self.__persist_queue.empty():
                 await self.__persist_queue.join()
 
             self.__persistence_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self.__persistence_task
+
+        logger.info(f"[context-manager] workflow={self.__workflow_id} shutdown complete")

@@ -214,6 +214,11 @@ class IntentStrategy:
                 error=str(exception),
                 is_cancelled=is_cancelled,
             )
+        finally:
+            try:
+                await self.__graph_context.shutdown()
+            except Exception as shutdown_error:
+                logger.warning(f"[intent-strategy] graph context shutdown failed: {shutdown_error}")
 
     def __is_successful_completion(
         self,

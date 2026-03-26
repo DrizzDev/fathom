@@ -30,6 +30,9 @@ DEFAULT_STABILITY_WAIT = 500  # Wait after action for screen to stabilize
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
 
+# Signal adapter heartbeat interval (seconds)
+SIGNAL_HEARTBEAT_INTERVAL = 5.0
+
 
 class SignalType(StrEnum):
     """

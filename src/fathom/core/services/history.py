@@ -139,6 +139,13 @@ class HistoryService:
                 category="history.persistence_queue",
             )
 
+    async def drain_background_tasks(self) -> None:
+        """
+        Await all pending background tasks. Delegates to flush_pending_operations.
+        """
+
+        await self.flush_pending_operations()
+
     @time_it(operation="history.save_step")
     async def save_step(
         self,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from temporalio import activity
 
@@ -18,6 +18,7 @@ from fathom.runtime.factories import (
     StorageFactory,
     TelemetryFactory,
 )
+from fathom.runtime.temporal.state import SignalStateRegistry
 from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest, RunRequest
 from fathom.settings.env import FathomSettings
 
@@ -32,7 +33,7 @@ class FathomActivities:
     Temporal activities implementation for Fathom agent workflows.
     """
 
-    def __init__(self, settings: FathomSettings | None = None) -> None:
+    def __init__(self, settings: Optional[FathomSettings] = None) -> None:
         """
         Initialize activities with runtime settings.
         """
@@ -60,20 +61,17 @@ class FathomActivities:
         """
 
         if not request.runtime.interactive:
+            logger.info(
+                f"[activity] workflow={workflow_id} event=signal_adapter adapter=NoopSignal mode=autonomous"
+            )
             return NoopSignal()
 
-        temporal_host = self.__settings.temporal_host
-        if not temporal_host:
-            raise ValueError("temporal_host is required for interactive mode but is not configured")
-
-        return TemporalSignalAdapter(
-            workflow_id=workflow_id,
-            target_host=str(temporal_host),
-            api_key=self.__settings.temporal_api_key,
-            namespace=activity.info().workflow_namespace,
+        logger.info(
+            f"[activity] workflow={workflow_id} event=signal_adapter adapter=TemporalSignalAdapter mode=interactive"
         )
+        return TemporalSignalAdapter(workflow_id=workflow_id)
 
-    def __build_runner(self, *, workflow_id: str, request: RunRequest) -> FathomRunner:
+    def __build_runner(self, *, workflow_id: str, request: RunRequest) -> "FathomRunner":
         """
         Build the Fathom runner for the validated run request.
         """
@@ -94,9 +92,9 @@ class FathomActivities:
 
         device_adapter = DeviceFactory().create(configuration=device_configuration)
         perception_adapter = PerceptionFactory().create(
-            configuration=device_configuration,
             device=device_adapter,
             use_xml=request.objective.use_xml,
+            configuration=device_configuration,
         )
 
         llm_adapter = LLMFactory().create(configuration=planner_configuration)
@@ -127,8 +125,19 @@ class FathomActivities:
         Execute an intent run.
         """
 
-        activity.logger.info("Starting Fathom intent execution for workflow %s", workflow_id)
+        activity.logger.info(
+            f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=starting"
+        )
+
         validated_request = self.__validate_intent_request(request=request)
+
+        activity.logger.info(
+            f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT "
+            f'intent="{validated_request.objective.intent}" '
+            f"max_steps={validated_request.objective.max_steps} "
+            f"interactive={validated_request.runtime.interactive}"
+        )
+
         runner = self.__build_runner(workflow_id=workflow_id, request=validated_request)
 
         try:
@@ -137,6 +146,10 @@ class FathomActivities:
             package_name = (
                 validated_request.objective.package_name
                 or await runner.device.get_current_package()
+            )
+
+            activity.logger.info(
+                f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=executing package={package_name}"
             )
 
             result = await runner.run_intent(
@@ -149,6 +162,12 @@ class FathomActivities:
                 realignment=validated_request.interaction.realignment,
                 conversation_id=validated_request.memory.conversation_id,
             )
+
+            activity.logger.info(
+                f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=completed "
+                f"success={result.success} steps={result.steps_taken} duration_ms={result.duration}"
+            )
+
             activity.heartbeat(f"Completed: {result.steps_taken} steps")
             return {
                 "error": result.error,
@@ -158,7 +177,9 @@ class FathomActivities:
                 "metrics": result.metrics if result.metrics else None,
             }
         except Exception as exception:
-            activity.logger.exception("Fathom execution failed: %s", exception)
+            activity.logger.exception(
+                f'[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=failed error="{exception}"'
+            )
             return {
                 "steps": 0,
                 "duration": 0,
@@ -167,7 +188,11 @@ class FathomActivities:
                 "error": str(exception),
             }
         finally:
+            activity.logger.info(
+                f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=cleanup"
+            )
             await runner.cleanup()
+            SignalStateRegistry.shared().release(workflow_id=workflow_id)
 
     @activity.defn(name="EXECUTE_EXPLORATION")  # type: ignore[untyped-decorator]
     async def execute_exploration(
@@ -177,21 +202,43 @@ class FathomActivities:
         Execute an exploration run.
         """
 
-        activity.logger.info("Starting Fathom exploration for workflow %s", workflow_id)
+        activity.logger.info(
+            f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=starting"
+        )
+
         validated_request = self.__validate_exploration_request(request=request)
+
+        activity.logger.info(
+            f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION "
+            f"max_steps={validated_request.objective.max_steps} "
+            f"interactive={validated_request.runtime.interactive}"
+        )
+
         runner = self.__build_runner(workflow_id=workflow_id, request=validated_request)
 
         try:
             activity.heartbeat("Starting exploration")
+
             package_name = (
                 validated_request.objective.package_name
                 or await runner.device.get_current_package()
             )
+
+            activity.logger.info(
+                f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=executing package={package_name}"
+            )
+
             result = await runner.run_exploration(
                 request_id=workflow_id,
                 package_name=package_name,
                 max_steps=validated_request.objective.max_steps,
             )
+
+            activity.logger.info(
+                f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=completed "
+                f"success={result.success} steps={result.steps_executed} duration_ms={result.duration}"
+            )
+
             activity.heartbeat(f"Completed: {result.steps_executed} steps")
             return {
                 "metrics": None,
@@ -201,7 +248,9 @@ class FathomActivities:
                 "steps": result.steps_executed,
             }
         except Exception as exception:
-            activity.logger.exception("Exploration failed: %s", exception)
+            activity.logger.exception(
+                f'[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=failed error="{exception}"'
+            )
             return {
                 "steps": 0,
                 "duration": 0,
@@ -210,4 +259,8 @@ class FathomActivities:
                 "error": str(exception),
             }
         finally:
+            activity.logger.info(
+                f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=cleanup"
+            )
             await runner.cleanup()
+            SignalStateRegistry.shared().release(workflow_id=workflow_id)

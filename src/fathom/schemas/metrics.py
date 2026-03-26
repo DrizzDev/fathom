@@ -5,6 +5,31 @@ from typing import Any, Dict
 from pydantic import BaseModel, Field
 
 
+class WorkflowOperationMetrics(BaseModel):
+    """
+    Per-workflow operation counters for Temporal billing observability.
+    """
+
+    signals_received: int = Field(
+        default=0, description="Total Temporal signals delivered to this workflow"
+    )
+    signal_checks: int = Field(
+        default=0, description="Adapter-side check_signal calls (free, in-process)"
+    )
+    pause_waits: int = Field(default=0, description="Times the adapter entered wait_for_pause")
+    resume_waits: int = Field(default=0, description="Times the adapter entered wait_for_resume")
+
+    context_injections: int = Field(
+        default=0, description="User contexts enqueued via inject signal"
+    )
+    context_consumptions: int = Field(
+        default=0, description="User contexts dequeued by the adapter"
+    )
+
+    wait_cycles: int = Field(default=0, description="Condition wait iterations (timeout-bounded)")
+    heartbeats_sent: int = Field(default=0, description="Activity heartbeats emitted during waits")
+
+
 class OperationMetric(BaseModel):
     """
     Performance metrics for a specific system operation.
