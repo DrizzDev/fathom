@@ -6,352 +6,180 @@ from typing import Any, Dict, List
 class ToolRegistry:
     """
     Registry for tool definitions used by the Vision Language Model.
+
+    Exploration-only registry — provides explore_ui and describe_screen tools.
     """
 
     @classmethod
-    def get_all_definitions(cls) -> Dict[str, List[Dict[str, Any]]]:
+    def get_exploration_tools(cls) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Returns all tool definitions in a format compatible with Gemini API.
+        Returns tool definitions for the exploration VLM call.
         """
 
         return {
             "function_declarations": [
-                cls.__execute_ui(),
-                cls.__complete_goal(),
-                cls.__validate_state(),
-                cls.__verify_goal(),
-                cls.__store_memory(),
-                cls.__recall_memory(),
+                cls.__explore_ui(),
             ]
         }
 
     @staticmethod
-    def __execute_ui() -> Dict[str, Any]:
+    def __explore_ui() -> Dict[str, Any]:
         """
-        Definition for execute_ui tool.
+        Definition for explore_ui tool.
 
-        Handles UI interactions and explicit validate events (tap, type, scroll, swipe, validate, etc.).
-        Goal completion is signaled separately via complete_goal.
+        Dedicated exploration tool — identifies and taps the next untried
+        interactive element on the current screen.  Stripped of all
+        validation, delta, memory, and script-export fields that are
+        irrelevant to the exploration workflow.
         """
 
         return {
-            "name": "execute_ui",
-            "description": "Execute a physical UI action on the device.",
+            "name": "explore_ui",
+            "description": (
+                "Identify and tap the next untried interactive element on the current screen "
+                "to discover new app screens. "
+                "Use when there are untried interactive elements visible. "
+                "Do NOT use when all visible interactive elements appear in the ALREADY TRIED list — "
+                "set content_exhausted=true instead. "
+                "SIDE EFFECTS: Taps a UI element on the device, which may navigate to a new screen."
+            ),
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
                     "assistant_message": {
                         "type": "STRING",
-                        "description": "Reasoning behind this action.",
+                        "description": (
+                            "Brief reasoning for choosing this element. "
+                            "State what it is, why it has not been tried, and what you expect will happen. "
+                            "Example: 'Tapping Settings icon — untried P4 secondary action, "
+                            "likely leads to a new settings screen.'"
+                        ),
                     },
                     "action": {
                         "type": "OBJECT",
-                        "description": "The action to execute.",
+                        "description": "The exploration action to execute on the device.",
                         "properties": {
                             "action_type": {
                                 "type": "STRING",
-                                "description": "Action type.",
+                                "description": "Physical action to perform on the element.",
                                 "enum": [
                                     "tap",
-                                    "type",
                                     "scroll",
-                                    "swipe_left",
-                                    "swipe_right",
                                     "swipe_up",
                                     "swipe_down",
-                                    "wait",
-                                    "validate",
-                                    "home",
                                     "back",
                                     "long_press",
                                 ],
                             },
                             "rationale": {
                                 "type": "STRING",
-                                "description": "Why this action.",
+                                "description": (
+                                    "Why this element was chosen over other untried elements. "
+                                    "Reference priority level (P1-P5). "
+                                    "Example: 'P1 navigation tab — higher priority than "
+                                    "P3 list items below.'"
+                                ),
                             },
                             "target_name": {
                                 "type": "STRING",
-                                "description": "Generic element name (e.g., 'search bar').",
+                                "description": (
+                                    "Human-readable label exactly as it appears on screen. "
+                                    "Use the visible text or icon description. "
+                                    "Examples: 'Home tab', 'Search icon', 'Add to Cart button', "
+                                    "'3rd restaurant card', 'Hamburger menu icon'."
+                                ),
                             },
                             "bbox": {
                                 "type": "OBJECT",
-                                "description": "Bounding box. See COORDINATES in system prompt.",
+                                "description": (
+                                    "Bounding box of the element in normalized 0-1000 coordinates. "
+                                    "x,y = top-left corner. width and height extend rightward and downward."
+                                ),
                                 "properties": {
                                     "x": {
                                         "type": "INTEGER",
-                                        "description": "Top-left X.",
+                                        "description": "Top-left X (0-1000).",
                                     },
                                     "y": {
                                         "type": "INTEGER",
-                                        "description": "Top-left Y.",
+                                        "description": "Top-left Y (0-1000).",
                                     },
                                     "width": {
                                         "type": "INTEGER",
-                                        "description": "Width from x.",
+                                        "description": "Width from x (0-1000).",
                                     },
                                     "height": {
                                         "type": "INTEGER",
-                                        "description": "Height from y.",
+                                        "description": "Height from y (0-1000).",
                                     },
                                 },
                             },
-                            "text_to_type": {
+                            "element_category": {
                                 "type": "STRING",
-                                "description": "Text to type (for 'type' action only).",
+                                "description": (
+                                    "What kind of UI element this is. "
+                                    "Matches the priority system: navigation=P1, primary_action=P2, "
+                                    "list_item=P3, secondary_action=P4, in_page_control=P5, "
+                                    "overlay_dismiss=special."
+                                ),
+                                "enum": [
+                                    "navigation",
+                                    "primary_action",
+                                    "list_item",
+                                    "secondary_action",
+                                    "in_page_control",
+                                    "overlay_dismiss",
+                                ],
                             },
-                            "confidence": {
-                                "type": "NUMBER",
-                                "description": "Confidence (0.0-1.0).",
-                            },
-                            "is_valid": {
-                                "type": "BOOLEAN",
-                                "description": "Is this action valid for the current screen?",
-                            },
-                            "validation_reason": {
+                            "expected_outcome": {
                                 "type": "STRING",
-                                "description": "Validity reasoning.",
-                            },
-                            "condition": {
-                                "type": "STRING",
-                                "description": "Condition for optional/overlay actions (e.g., 'Promotional overlay is visible').",
+                                "description": (
+                                    "What you expect will happen after tapping this element. "
+                                    "Example: tapping a tab expects 'new_screen', "
+                                    "tapping a toggle expects 'in_screen_change'."
+                                ),
+                                "enum": [
+                                    "new_screen",
+                                    "in_screen_change",
+                                    "dialog_or_popup",
+                                    "scroll_content",
+                                    "dismiss_overlay",
+                                    "go_back",
+                                ],
                             },
                             "overlay_detected": {
                                 "type": "BOOLEAN",
-                                "description": "True when this action is dismissing an overlay/popup.",
+                                "description": "Set true ONLY when this action dismisses an overlay, popup, or modal.",
                             },
-                            "target_type": {
-                                "type": "STRING",
-                                "description": "Script reference type. See TOOL ROUTING.",
-                                "enum": ["stable", "positional", "dynamic"],
-                            },
-                            "script_target": {
-                                "type": "STRING",
-                                "description": "Ordinal or generic phrase for script export.",
+                            "confidence": {
+                                "type": "NUMBER",
+                                "description": (
+                                    "How confident you are that this element is interactive and untried (0.0-1.0). "
+                                    "0.9+ = clearly visible interactive element. "
+                                    "Below 0.7 = uncertain whether the element is tappable."
+                                ),
                             },
                         },
-                        "required": ["action_type", "rationale", "is_valid"],
+                        "required": ["action_type", "rationale", "target_name"],
                     },
                     "screen_description": {
                         "type": "STRING",
-                        "description": "Goal-relevant screen state in ≤15 words.",
+                        "description": (
+                            "1-2 sentence summary identifying the screen's purpose and app section. "
+                            "Example: 'Home feed showing recommended restaurants with search bar "
+                            "and bottom navigation for Home, Search, Orders, and Profile.'"
+                        ),
                     },
                     "content_exhausted": {
                         "type": "BOOLEAN",
-                        "description": "True if scrollable content fully exhausted.",
-                    },
-                    "memory_updates": {
-                        "type": "OBJECT",
-                        "description": "Key-value pairs for persistent memory updates.",
-                    },
-                    "previous_screen_summary": {
-                        "type": "STRING",
-                        "description": "Optional semantic summary of the previous screen.",
-                    },
-                    "current_screen_summary": {
-                        "type": "STRING",
-                        "description": "Optional semantic summary of the current screen.",
-                    },
-                    "delta_observed": {
-                        "type": "BOOLEAN",
-                        "description": "Optional: whether a meaningful screen change was observed.",
-                    },
-                    "delta_reasoning": {
-                        "type": "STRING",
-                        "description": "Optional reasoning for delta_observed.",
-                    },
-                    "delta_confidence": {
-                        "type": "NUMBER",
-                        "description": "Optional confidence for delta_observed (0.0-1.0).",
-                    },
-                    "visible_anchors": {
-                        "type": "ARRAY",
-                        "description": "Optional list of visible anchor labels on current screen.",
-                        "items": {"type": "STRING"},
-                    },
-                    "top_anchor": {
-                        "type": "STRING",
-                        "description": "Optional top-most visible anchor label.",
-                    },
-                    "bottom_anchor": {
-                        "type": "STRING",
-                        "description": "Optional bottom-most visible anchor label.",
+                        "description": (
+                            "Set true ONLY when every visible interactive element appears in the "
+                            "ALREADY TRIED list AND scrolling has been attempted or is not applicable. "
+                            "Defaults to false. NEVER set true while untried elements are visible."
+                        ),
                     },
                 },
-                "required": ["assistant_message", "action"],
-            },
-        }
-
-    @staticmethod
-    def __complete_goal() -> Dict[str, Any]:
-        """
-        Definition for complete_goal tool.
-
-        Dedicated signal for goal completion — separated from execute_ui
-        to reduce cognitive load and prevent premature completion.
-        """
-
-        return {
-            "name": "complete_goal",
-            "description": "Signal goal fully achieved. Requires visual evidence on current screen.",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "assistant_message": {
-                        "type": "STRING",
-                        "description": "Why the goal is complete.",
-                    },
-                    "evidence": {
-                        "type": "STRING",
-                        "description": "Visual evidence from current screen.",
-                    },
-                },
-                "required": ["assistant_message", "evidence"],
-            },
-        }
-
-    @staticmethod
-    def __validate_state() -> Dict[str, Any]:
-        """
-        Definition for validate_state tool.
-        """
-
-        return {
-            "name": "validate_state",
-            "description": "Check if screen state matches specific criteria without acting.",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "assistant_message": {
-                        "type": "STRING",
-                        "description": "Verification result explanation.",
-                    },
-                    "condition_to_verify": {
-                        "type": "STRING",
-                        "description": "Condition being checked.",
-                    },
-                    "condition_met": {
-                        "type": "BOOLEAN",
-                        "description": "True if condition is met.",
-                    },
-                    "evidence": {
-                        "type": "STRING",
-                        "description": "Visual evidence.",
-                    },
-                    "goal_completed": {
-                        "type": "BOOLEAN",
-                        "description": "True if high-level goal fully achieved.",
-                    },
-                },
-                "required": [
-                    "assistant_message",
-                    "condition_to_verify",
-                    "condition_met",
-                    "evidence",
-                    "goal_completed",
-                ],
-            },
-        }
-
-    @staticmethod
-    def __verify_goal() -> Dict[str, Any]:
-        """
-        Definition for verify_goal tool.
-        """
-
-        return {
-            "name": "verify_goal",
-            "description": "Detailed check if overall goal is fully completed.",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "assistant_message": {
-                        "type": "STRING",
-                        "description": "Goal completion status.",
-                    },
-                    "goal_completed": {
-                        "type": "BOOLEAN",
-                        "description": "True if goal FULLY completed.",
-                    },
-                    "current_screen": {
-                        "type": "STRING",
-                        "description": "Current screen displayed.",
-                    },
-                    "evidence": {
-                        "type": "STRING",
-                        "description": "Visual evidence of completion.",
-                    },
-                },
-                "required": [
-                    "assistant_message",
-                    "goal_completed",
-                    "current_screen",
-                    "evidence",
-                ],
-            },
-        }
-
-    @staticmethod
-    def __store_memory() -> Dict[str, Any]:
-        """
-        Definition for store_memory tool.
-        """
-
-        return {
-            "name": "store_memory",
-            "description": "Store facts needed across steps. Only for cross-step persistence.",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "category": {
-                        "type": "STRING",
-                        "description": "visited | progress | state | data.",
-                        "enum": ["visited", "progress", "state", "data"],
-                    },
-                    "item": {
-                        "type": "STRING",
-                        "description": "snake_case identifier (use same key to recall).",
-                    },
-                    "value": {
-                        "type": "STRING",
-                        "description": "Information to store.",
-                    },
-                    "assistant_message": {
-                        "type": "STRING",
-                        "description": "What is being saved.",
-                    },
-                },
-                "required": ["category", "item", "value", "assistant_message"],
-            },
-        }
-
-    @staticmethod
-    def __recall_memory() -> Dict[str, Any]:
-        """
-        Definition for recall_memory tool.
-        """
-
-        return {
-            "name": "recall_memory",
-            "description": "Retrieve previously stored memory. Use exact same category+item keys.",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "category": {
-                        "type": "STRING",
-                        "description": "Must match store_memory category.",
-                        "enum": ["visited", "progress", "state", "data"],
-                    },
-                    "item": {
-                        "type": "STRING",
-                        "description": "Must match store_memory item (snake_case).",
-                    },
-                    "assistant_message": {
-                        "type": "STRING",
-                        "description": "Why recalling.",
-                    },
-                },
-                "required": ["category", "item", "assistant_message"],
+                "required": ["assistant_message", "action", "screen_description"],
             },
         }
 

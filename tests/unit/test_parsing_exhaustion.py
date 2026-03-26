@@ -28,12 +28,16 @@ class MockResponse:
 def test_parse_content_exhausted_flag():
     parser = ToolResponseParser()
 
-    # Mock tool call with content_exhausted=True
     function_call = MagicMock()
-    function_call.name = "execute_ui"
+    function_call.name = "explore_ui"
     function_call.args = {
-        "action": {"action_type": "swipe_left", "rationale": "next item", "is_valid": True},
-        "assistant_message": "Swiping left",
+        "action": {
+            "action_type": "swipe_up",
+            "rationale": "scroll for more",
+            "target_name": "content area",
+        },
+        "assistant_message": "Swiping up to check for more elements",
+        "screen_description": "Home feed with posts",
         "content_exhausted": True,
     }
 
@@ -49,12 +53,16 @@ def test_parse_content_exhausted_flag():
 def test_parse_content_exhausted_default_false():
     parser = ToolResponseParser()
 
-    # Mock tool call without flag
     function_call = MagicMock()
-    function_call.name = "execute_ui"
+    function_call.name = "explore_ui"
     function_call.args = {
-        "action": {"action_type": "swipe_left", "rationale": "next item", "is_valid": True},
-        "assistant_message": "Swiping left",
+        "action": {
+            "action_type": "tap",
+            "rationale": "P1 navigation tab",
+            "target_name": "Home tab",
+        },
+        "assistant_message": "Tapping Home tab — untried P1 navigation",
+        "screen_description": "App home screen",
     }
 
     mock_response = MockResponse(
@@ -66,86 +74,17 @@ def test_parse_content_exhausted_default_false():
     assert result.content_exhausted is False
 
 
-def test_parse_validate_state_sets_validation_event_type():
+def test_parse_explore_ui_overlay_detected():
     parser = ToolResponseParser()
 
     function_call = MagicMock()
-    function_call.name = "validate_state"
-    function_call.args = {
-        "assistant_message": "Validated price is shown",
-        "evidence": "Price label visible on checkout screen",
-        "goal_completed": False,
-    }
-
-    mock_response = MockResponse(
-        [MockCandidate(MockContent([MockPart(function_call=function_call)]))]
-    )
-
-    result = parser.parse(mock_response)
-
-    assert result.metadata.get("event_type") == "validation"
-    assert result.metadata.get("tool_name") == "validate_state"
-
-
-def test_parse_verify_goal_sets_validation_event_type():
-    parser = ToolResponseParser()
-
-    function_call = MagicMock()
-    function_call.name = "verify_goal"
-    function_call.args = {
-        "assistant_message": "Goal looks complete",
-        "goal_completed": True,
-        "current_screen": "Checkout summary",
-        "evidence": "All requested items are visible",
-    }
-
-    mock_response = MockResponse(
-        [MockCandidate(MockContent([MockPart(function_call=function_call)]))]
-    )
-
-    result = parser.parse(mock_response)
-
-    assert result.metadata.get("event_type") == "validation"
-    assert result.metadata.get("tool_name") == "verify_goal"
-
-
-def test_parse_execute_ui_validate_sets_validation_event_type():
-    parser = ToolResponseParser()
-
-    function_call = MagicMock()
-    function_call.name = "execute_ui"
-    function_call.args = {
-        "assistant_message": "Validated the confirmation banner is visible",
-        "action": {
-            "action_type": "validate",
-            "rationale": "Explicit user-requested validation",
-            "is_valid": True,
-            "target_name": "Order confirmation banner",
-        },
-    }
-
-    mock_response = MockResponse(
-        [MockCandidate(MockContent([MockPart(function_call=function_call)]))]
-    )
-
-    result = parser.parse(mock_response)
-
-    assert result.action.action_type.value == "validate"
-    assert result.metadata.get("event_type") == "validation"
-    assert result.metadata.get("tool_name") == "execute_ui"
-
-
-def test_parse_execute_ui_overlay_sets_condition_for_conditional_export():
-    parser = ToolResponseParser()
-
-    function_call = MagicMock()
-    function_call.name = "execute_ui"
+    function_call.name = "explore_ui"
     function_call.args = {
         "assistant_message": "Dismissing promo overlay",
+        "screen_description": "Home screen with promo popup",
         "action": {
             "action_type": "tap",
-            "rationale": "Close overlay before continuing",
-            "is_valid": True,
+            "rationale": "Close overlay before exploring",
             "target_name": "Got It! button",
             "overlay_detected": True,
         },
@@ -159,83 +98,75 @@ def test_parse_execute_ui_overlay_sets_condition_for_conditional_export():
 
     assert result.action.action_type.value == "tap"
     assert result.action.overlay_detected is True
-    assert result.action.condition == "Overlay is visible"
+    assert result.metadata.get("tool_name") == "explore_ui"
 
 
-def test_parse_multiple_primary_execute_ui_prefers_valid_action():
-    parser = ToolResponseParser()
-
-    invalid_call = MagicMock()
-    invalid_call.name = "execute_ui"
-    invalid_call.args = {
-        "assistant_message": "Try tapping missing app icon",
-        "action": {
-            "action_type": "tap",
-            "rationale": "Open app",
-            "is_valid": False,
-            "validation_reason": "Instacart app is not visible on the current screen.",
-            "target_name": "Instacart icon",
-        },
-    }
-
-    valid_call = MagicMock()
-    valid_call.name = "execute_ui"
-    valid_call.args = {
-        "assistant_message": "Tap visible search bar",
-        "action": {
-            "action_type": "tap",
-            "rationale": "Begin search flow",
-            "is_valid": True,
-            "target_name": "search bar",
-        },
-    }
-
-    mock_response = MockResponse(
-        [
-            MockCandidate(
-                MockContent(
-                    [MockPart(function_call=invalid_call), MockPart(function_call=valid_call)]
-                )
-            )
-        ]
-    )
-
-    result = parser.parse(mock_response)
-
-    assert result.metadata.get("tool_name") == "execute_ui"
-    assert result.action.target == "search bar"
-    assert result.action.is_valid is True
-
-
-def test_parse_execute_ui_hybrid_delta_fields():
+def test_parse_explore_ui_element_category_and_expected_outcome():
     parser = ToolResponseParser()
 
     function_call = MagicMock()
-    function_call.name = "execute_ui"
+    function_call.name = "explore_ui"
     function_call.args = {
-        "assistant_message": "No meaningful change after scroll",
+        "assistant_message": "Tapping Settings icon — P4 secondary action",
+        "screen_description": "Home feed with bottom navigation",
         "action": {
-            "action_type": "scroll",
-            "rationale": "Try to reveal more items",
-            "is_valid": True,
-            "target_name": "results list",
+            "action_type": "tap",
+            "rationale": "P4 secondary action, not yet tried",
+            "target_name": "Settings icon",
+            "element_category": "secondary_action",
+            "expected_outcome": "new_screen",
+            "confidence": 0.95,
         },
-        "delta_observed": False,
-        "delta_reasoning": "Top and bottom anchors unchanged after swipe",
-        "delta_confidence": 0.91,
-        "previous_screen_summary": "Search results with cards",
-        "current_screen_summary": "Same search results cards",
-        "visible_anchors": ["Milk", "Eggs", "Bread"],
-        "top_anchor": "Milk",
-        "bottom_anchor": "Bread",
     }
 
     mock_response = MockResponse(
         [MockCandidate(MockContent([MockPart(function_call=function_call)]))]
     )
+
     result = parser.parse(mock_response)
 
-    assert result.gemini_delta is not None
-    assert result.gemini_delta.delta_observed is False
-    assert result.gemini_delta.delta_reasoning is not None
-    assert result.gemini_delta.top_anchor == "Milk"
+    assert result.metadata.get("element_category") == "secondary_action"
+    assert result.metadata.get("expected_outcome") == "new_screen"
+    assert result.action.target == "Settings icon"
+    assert result.action.confidence == 0.95
+
+
+def test_parse_unknown_tool_call_returns_fallback():
+    parser = ToolResponseParser()
+
+    function_call = MagicMock()
+    function_call.name = "unknown_tool"
+    function_call.args = {"assistant_message": "something"}
+
+    mock_response = MockResponse(
+        [MockCandidate(MockContent([MockPart(function_call=function_call)]))]
+    )
+
+    result = parser.parse(mock_response)
+
+    assert result.action.action_type.value == "wait"
+    assert result.action.confidence == 0.0
+
+
+def test_parse_no_function_call_returns_fallback():
+    parser = ToolResponseParser()
+
+    mock_response = MockResponse(
+        [MockCandidate(MockContent([MockPart(text="I cannot see any elements")]))]
+    )
+
+    result = parser.parse(mock_response)
+
+    assert result.action.action_type.value == "wait"
+
+
+def test_parse_blocked_response_returns_fallback():
+    parser = ToolResponseParser()
+
+    mock_response = MockResponse([MockCandidate(MockContent([MockPart(text="blocked")]))])
+    mock_response.candidates[0].finish_reason = "SAFETY"
+
+    result = parser.parse(mock_response)
+
+    assert result.action.action_type.value == "wait"
+    assert "Content filtered" in result.reasoning

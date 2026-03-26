@@ -104,7 +104,7 @@ class GeminiVisionTool(VisionTool):
         retrieval = time.time() - start
 
         # 2. PROMPT & TOOL SCOPING
-        resolved_mode = mode if mode is not None else self.__detect_mode(intent=intent)
+        resolved_mode = mode if mode is not None else PromptMode.EXPLORATION
         hints = {
             "use_xml": use_xml,
             "is_stuck": is_stuck,
@@ -406,44 +406,14 @@ class GeminiVisionTool(VisionTool):
 
     def __scope_tools(self, mode: PromptMode) -> Dict[str, Any]:
         """
-        Dynamically selects tools based on the intent context.
+        Returns the tool definitions for the given mode.
         """
 
-        # Base tools always available
-        allowed = {"execute_ui", "complete_goal", "store_memory"}
+        if mode == PromptMode.EXPLORATION:
+            return ToolRegistry.get_exploration_tools()
 
-        if mode == PromptMode.DEFAULT:
-            allowed.update({"recall_memory", "verify_goal"})
+        if mode == PromptMode.SCREEN_TRANSLATION:
+            return ToolRegistry.get_screen_translation_tools()
 
-        elif mode == PromptMode.INTERACTION:
-            allowed.update({"recall_memory"})
-
-        elif mode == PromptMode.VERIFICATION:
-            allowed.update({"verify_goal", "recall_memory"})
-
-        elif mode == PromptMode.EXPLORATION:
-            # Exploration only needs execute_ui; no goal completion signaling
-            allowed = {"execute_ui"}
-
-        # Discovery Mode gets minimal tools (just execute_ui + store)
-
-        definitions = ToolRegistry.get_all_definitions()
-
-        return {
-            "function_declarations": [
-                definition
-                for definition in definitions["function_declarations"]
-                if definition["name"] in allowed
-            ]
-        }
-
-    def __detect_mode(self, intent: str) -> PromptMode:
-        """
-        Heuristic to detect the mode from the intent.
-        """
-        intent_lower = intent.lower()
-        if any(word in intent_lower for word in ("find", "search", "locate", "where")):
-            return PromptMode.DISCOVERY
-        if any(word in intent_lower for word in ("verify", "check", "confirm", "validate")):
-            return PromptMode.VERIFICATION
-        return PromptMode.DEFAULT
+        # Fallback to exploration tools
+        return ToolRegistry.get_exploration_tools()

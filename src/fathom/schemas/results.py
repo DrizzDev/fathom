@@ -78,26 +78,6 @@ class WorkflowResult(BaseModel):
     error: Optional[str] = Field(default=None)
 
 
-class IntentResult(WorkflowResult):
-    """
-    Result of intent workflow.
-    """
-
-    intent: str = Field(default="", description="The intent executed")
-    steps_taken: int = Field(ge=0, description="Number of steps executed")
-    final_screen: Optional[Any] = Field(default=None, description="Final state")
-    metrics: Dict[str, Dict[str, float]] = Field(
-        default_factory=dict, description="Execution metrics"
-    )
-    memory_summary: Dict[str, Any] = Field(
-        default_factory=dict, description="Summary of Knowledge Graph"
-    )
-    knowledge_graph: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Accumulated knowledge graph snapshot (nodes, edges, stats)",
-    )
-
-
 class ExplorationResult(WorkflowResult):
     """
     Result of app exploration.

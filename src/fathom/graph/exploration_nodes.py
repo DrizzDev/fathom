@@ -256,6 +256,7 @@ def build_exploration_nodes(
             current_hash=fingerprint,
             depth=len(ctx.current_path),
             parent_description=parent_description,
+            fully_scanned_count=len(ctx.fully_scanned),
         )
 
         # Ask VLM for next untried element

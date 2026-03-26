@@ -401,6 +401,7 @@ class KnowledgeGraph:
         *,
         depth: Optional[int] = None,
         parent_description: Optional[str] = None,
+        fully_scanned_count: Optional[int] = None,
     ) -> str:
         """
         Formats the current knowledge graph state as LLM-readable context
@@ -416,7 +417,14 @@ class KnowledgeGraph:
 
         lines: List[str] = []
 
-        lines.append(f"EXPLORED SO FAR: {self.node_count} screens, {self.edge_count} transitions")
+        # Progress header
+        scanned_part = ""
+        if fully_scanned_count is not None:
+            scanned_part = f", {fully_scanned_count} fully explored"
+        lines.append(
+            f"EXPLORATION PROGRESS: {self.node_count} screens discovered"
+            f"{scanned_part}, {self.edge_count} transitions"
+        )
 
         if depth is not None:
             lines.append(f"DEPTH: {depth}")
@@ -443,8 +451,20 @@ class KnowledgeGraph:
                     lines.append(entry)
                 if excess > 0:
                     lines.append(f"... and {excess} more tried")
+                lines.append(f"ACTIONS TRIED: {len(tried)}")
             else:
                 lines.append("ALREADY TRIED FROM THIS SCREEN: (none -- this is a fresh screen)")
+
+        # Recent discoveries — last 5 screens by first_seen (descending)
+        nodes_with_ts = [
+            (h, n) for h, n in self.__nodes.items() if n.first_seen is not None and n.description
+        ]
+        if nodes_with_ts:
+            nodes_with_ts.sort(key=lambda x: x[1].first_seen or 0, reverse=True)
+            recent = nodes_with_ts[:5]
+            lines.append("RECENT DISCOVERIES:")
+            for _h, n in recent:
+                lines.append(f"- {n.description}")
 
         return "\n".join(lines)
 

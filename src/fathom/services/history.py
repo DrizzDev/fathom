@@ -56,10 +56,6 @@ class HistoryService:
         self.__save_json(data=history_data)
         self.__save_yaml(history=history_data["history"])
 
-        # Use ScriptExporter for high-quality, reproducible text output
-        # Re-export entire history to enable smart validation context
-        self.__save_commands_text(history=history_data["history"])
-
     def __load_history(self) -> Dict[str, Any]:
         """
         Loads existing history from disk.
@@ -113,25 +109,6 @@ class HistoryService:
                 )
         else:
             self.__write_manual_yaml(path=path, steps=steps)
-
-    def __save_commands_text(self, history: List[Dict[str, Any]]) -> None:
-        """
-        Writes high-quality readable script to workflow-specific text file.
-        Uses ScriptExporter to include validation and reproducible targets.
-        """
-        from fathom.services.exporter import ScriptExporter
-
-        path = self.__base_directory / f"{self.__workflow_id}.txt"
-        content = ScriptExporter.export(
-            step_results=history,
-            goal_state=self.goal_state,
-            package_name=self.__package_name,
-            intent=self.__intent,
-        )
-
-        # Overwrite file with full, improved script
-        with path.open(mode="w") as handle:
-            handle.write(content)
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """
