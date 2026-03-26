@@ -135,9 +135,30 @@ class GeminiPromptBuilder(PromptBuilder):
 
         # 3. Execution Trace (Tier 3 Context - The Hot Suffix)
         trace = context.get("trace", [])
+        current_screen_hash: Optional[str] = kwargs.get("current_screen_hash")
 
-        if interaction_context := self.__format_trace(trace=trace):
+        if interaction_context := self.__format_trace(
+            trace=trace, current_screen_hash=current_screen_hash
+        ):
             parts.append(f"<CURRENT_TRACE>\n{interaction_context}\n</CURRENT_TRACE>")
+
+        # 3a. Screen Change Notice — belt-and-suspenders signal when the current
+        # screen no longer matches the most recent trace observation.  This helps
+        # the LLM break out of stale-context loops (e.g. "Verify Identity" screen
+        # persisting in the trace after the user has already dismissed it).
+        if current_screen_hash and trace:
+            last_obs = trace[-1].get("observation", "")
+            if last_obs.startswith("Screen: "):
+                last_hash = last_obs.split(" ")[1][:8] if len(last_obs.split(" ")) > 1 else ""
+                if last_hash and last_hash != current_screen_hash:
+                    parts.append(
+                        "<SCREEN_CHANGE_NOTICE>\n"
+                        "The screen has CHANGED since the last recorded action. "
+                        "Previous screen observations in the trace are now OUTDATED. "
+                        f"Current screen hash: {current_screen_hash}. "
+                        "Analyze the NEW screenshot provided, not past observations.\n"
+                        "</SCREEN_CHANGE_NOTICE>"
+                    )
 
         # 4. Priority Guidance (HITL) - The "System Override"
         if guidance := context.get("guidance", []):
@@ -265,9 +286,15 @@ class GeminiPromptBuilder(PromptBuilder):
 
         return f"[{', '.join(items)}]"
 
-    def __format_trace(self, trace: List[Dict[str, Any]]) -> str:
+    def __format_trace(
+        self, trace: List[Dict[str, Any]], current_screen_hash: Optional[str] = None
+    ) -> str:
         """
         Formats the GCC trace into a readable interaction history.
+
+        When ``current_screen_hash`` is provided each observation is annotated
+        with ``[CURRENT]`` or ``[PAST]`` so the LLM can distinguish stale
+        screen descriptions from the live screen state.
         """
 
         if not trace:
@@ -280,6 +307,16 @@ class GeminiPromptBuilder(PromptBuilder):
         for index, entry in enumerate(recent, 1):
             action = entry.get("action", {})
             observation = entry.get("observation", "Unknown screen")
+
+            # Annotate staleness so the LLM knows which observations are outdated
+            staleness = ""
+            if current_screen_hash and observation.startswith("Screen: "):
+                parts = observation.split(" ")
+                entry_hash = parts[1][:8] if len(parts) > 1 else ""
+                if entry_hash and entry_hash != current_screen_hash:
+                    staleness = " [PAST]"
+                else:
+                    staleness = " [CURRENT]"
 
             # Action might be dict or object
             if isinstance(action, dict):
@@ -296,7 +333,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 else str(type_)
             )
 
-            lines.append(f"{index}. {observation} -> {type_str.upper()}:{desc}")
+            lines.append(f"{index}. {observation}{staleness} -> {type_str.upper()}:{desc}")
             if desc != "unknown":
                 avoided.append(desc)
 

@@ -181,6 +181,8 @@ class VisionService:
                 "screen_height": screen_height,
             },
             sub_goal_info=sub_goal_info,
+            # Thread current screen hash so the trace can annotate stale observations
+            current_screen_hash=fingerprint[:8],
         )
 
         if is_stuck:
