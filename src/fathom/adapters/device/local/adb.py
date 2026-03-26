@@ -5,15 +5,20 @@ import re
 from logging import getLogger
 from typing import List, Optional, Tuple
 
-from rich.console import Console
-
 from fathom.constants.interaction import SwipeSpeed
+from fathom.constants.platform import DevicePlatform
 from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
-from fathom.schemas.configuration import ADBConfiguration
+from fathom.schemas.configuration import (
+    ADBConfiguration,
+    DeviceRuntimeConfiguration,
+    InteractionPolicyConfiguration,
+    InteractionRuntimeConfiguration,
+    ScrollInteractionPolicy,
+    SwipeInteractionPolicy,
+)
 from fathom.schemas.results import ActionResult
 
-console = Console()
 logger = getLogger(__name__)
 
 
@@ -40,31 +45,46 @@ class ADBDevice(DevicePort):
                 ADBConfiguration(serial_number=serial) if serial else ADBConfiguration()
             )
 
+        self.__runtime_configuration = DeviceRuntimeConfiguration(
+            platform=DevicePlatform.ANDROID,
+            identifier=self.__configuration.serial_number,
+            command_timeout=self.__configuration.command_timeout,
+            interaction=InteractionRuntimeConfiguration(
+                policy=InteractionPolicyConfiguration(
+                    swipe=SwipeInteractionPolicy(
+                        duration_milliseconds=(
+                            self.__configuration.interaction.policy.swipe.duration_milliseconds
+                        ),
+                        distance_ratio=self.__configuration.interaction.policy.swipe.distance_ratio,
+                    ),
+                    scroll=ScrollInteractionPolicy(
+                        distance_ratio=self.__configuration.interaction.policy.scroll.distance_ratio
+                    ),
+                )
+            ),
+            metadata={"executable_path": self.__configuration.executable_path},
+        )
         self.__cached_size: Optional[Tuple[int, int]] = None
 
     @property
-    def configuration(self) -> ADBConfiguration:
+    def configuration(self) -> DeviceRuntimeConfiguration:
         """
         Returns the tool configuration.
         """
 
-        return self.__configuration
+        return self.__runtime_configuration
 
     async def tap(self, *, x: int, y: int) -> ActionResult:
         """
         Execute tap at coordinates.
         """
 
-        console.print(f"[bold cyan]🖱️  TAP[/bold cyan] at ([bold yellow]{x}, {y}[/bold yellow])")
         return await self.__shell(command=f"input tap {x} {y}")
 
     async def type(self, *, text: str) -> ActionResult:
         """
         Type text on device.
         """
-
-        display_text = text[:30] + "..." if len(text) > 30 else text
-        console.print(f"[bold cyan]⌨️  TYPE[/bold cyan] '[bold yellow]{display_text}[/bold yellow]'")
 
         escaped_text = self.__escape(text=text)
         return await self.__shell(command=f'input text "{escaped_text}"')
@@ -83,14 +103,13 @@ class ADBDevice(DevicePort):
         Execute swipe gesture.
         """
 
-        _ = speed
-        duration = duration or (
-            self.__configuration.swipe_duration if self.__configuration else 300
-        )
+        if speed is not None:
+            logger.debug("Ignoring swipe speed for ADB adapter: %s", speed)
 
-        console.print(
-            f"[bold cyan]↔️  SWIPE[/bold cyan] from ([bold yellow]{x1}, {y1}[/bold yellow]) "
-            f"to ([bold yellow]{x2}, {y2}[/bold yellow]) in {duration}ms"
+        duration = duration or (
+            self.__configuration.interaction.policy.swipe.duration_milliseconds
+            if self.__configuration
+            else 300
         )
 
         return await self.__shell(command=f"input swipe {x1} {y1} {x2} {y2} {duration}")
@@ -100,7 +119,6 @@ class ADBDevice(DevicePort):
         Press back button.
         """
 
-        console.print("[bold cyan]⬅️  BACK[/bold cyan] button")
         return await self.__keyevent(keycode=4)
 
     async def home(self) -> ActionResult:
@@ -108,12 +126,12 @@ class ADBDevice(DevicePort):
         Press home button.
         """
 
-        console.print("[bold cyan]🏠  HOME[/bold cyan] button")
         return await self.__keyevent(keycode=3)
 
     async def __run_safe_subprocess(
         self,
         arguments: List[str],
+        *,
         timeout: float,
         capture_stdout: bool = True,
         capture_stderr: bool = True,
@@ -250,12 +268,14 @@ class ADBDevice(DevicePort):
         arguments = self.__build_arguments(parts=["wait-for-device"])
 
         try:
-            returncode, _, _ = await self.__run_safe_subprocess(
+            returncode, stdout_bytes, stderr_bytes = await self.__run_safe_subprocess(
                 arguments=arguments,
                 timeout=timeout,
                 capture_stdout=False,
                 capture_stderr=False,
             )
+            if stdout_bytes or stderr_bytes:
+                logger.debug("wait-for-device produced subprocess output unexpectedly")
             return returncode == 0
         except Exception:
             return False
@@ -360,14 +380,6 @@ class ADBDevice(DevicePort):
             )
 
             duration = int((asyncio.get_event_loop().time() - start_time) * 1000)
-
-            # Rich formatting for command logs
-            color_theme = "green" if returncode == 0 else "red"
-            console.print(
-                f"[bold blue]⚡ ADB[/bold blue] [white]❯[/white] "
-                f"[{color_theme}]{command[:100]}{'...' if len(command) > 100 else ''}[/{color_theme}] "
-                f"[bold yellow]{duration}ms[/bold yellow]"
-            )
 
             if returncode != 0:
                 error_message = stderr.decode().strip() if stderr else "Failed"

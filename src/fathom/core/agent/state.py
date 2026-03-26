@@ -77,6 +77,11 @@ class AgentState:
         self.__last_delta_score: Optional[float] = None
         self.__low_delta_streak: int = 0
 
+        # Multi-turn rejection history for cross-iteration feedback loops.
+        # Stores (original_payload, rejected_response, rejection_reason) so the
+        # next vision.analyze() call can pass it as conversation_history.
+        self.__rejection_history: Optional[List[Any]] = None
+
         # HITL Tracking
         self.__realignment_count = 0
 
@@ -586,6 +591,62 @@ class AgentState:
         """
 
         return self.__action_history.has_repeated_failure(action=action)
+
+    @property
+    def rejection_history(self) -> Optional[List[Any]]:
+        """
+        Returns stored multi-turn rejection history for cross-iteration feedback.
+        """
+
+        return self.__rejection_history
+
+    def set_rejection_history(self, history: List[Any]) -> None:
+        """
+        Store multi-turn rejection history so the next vision.analyze() cycle
+        can pass it as conversation_history to the LLM.
+        """
+
+        self.__rejection_history = history
+
+    def clear_rejection_history(self) -> None:
+        """
+        Clear rejection history after a successful action execution.
+        """
+
+        self.__rejection_history = None
+
+    def record_repeated_action_failure(self, action: Action) -> None:
+        """
+        Mark a repeated action as a failure so it appears in the LLM's failure context.
+        This prevents the model from proposing the same ineffective action on retry.
+        """
+
+        activity = self.__current_screen.activity if self.__current_screen else "unknown"
+        self.__action_history.record_action(action=action, success=False, activity=activity)
+        self.set_last_error(
+            f"Action '{action.to_description()[:80]}' was repeated 3+ times on the same screen "
+            "without progress. Try a different approach to achieve the same goal."
+        )
+
+    def is_action_repeating_on_screen(self, action: Action) -> bool:
+        """
+        Check if a tap/type action has been executed 3+ times on the current screen.
+        Triggers replanning to break out of ineffective action loops.
+
+        Args:
+            action: Proposed action.
+
+        Returns:
+            True if the same action has been repeated 3+ times on the current screen.
+        """
+
+        if not self.__current_screen:
+            return False
+
+        return self.__loop_detector.has_repeated_action_on_same_screen(
+            action_description=action.to_description(),
+            screen_hash=self.__current_screen.visual_hash,
+        )
 
     def to_checkpoint(self) -> Dict[str, object]:
         """

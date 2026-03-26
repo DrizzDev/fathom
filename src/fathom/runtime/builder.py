@@ -6,6 +6,7 @@ from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
 from fathom.adapters.memory.sqlite import SQLiteMemory
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.adapters.storage.local import LocalStorage
+from fathom.adapters.summarization.llm import LLMSummarizer
 from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.core.exceptions import ConfigurationError
@@ -17,7 +18,7 @@ from fathom.schemas.configuration import (
     FathomConfiguration,
     IntentConfiguration,
 )
-from fathom.schemas.orchestration import RealignmentPolicy
+from fathom.schemas.run import RealignmentPolicy
 from fathom.settings.env import FathomSettings
 
 if TYPE_CHECKING:
@@ -25,8 +26,10 @@ if TYPE_CHECKING:
     from fathom.interfaces.knowledge import KnowledgePort
     from fathom.interfaces.llm import LLMPort
     from fathom.interfaces.memory import MemoryPort
+    from fathom.interfaces.perception import PerceptionPort
     from fathom.interfaces.signal import SignalPort
     from fathom.interfaces.storage import StoragePort
+    from fathom.interfaces.summarization import SummarizationPort
     from fathom.interfaces.telemetry import TelemetryPort
     from fathom.runtime.runner import FathomRunner
 
@@ -47,6 +50,7 @@ class FathomBuilder:
         """
 
         self.__device: Optional[DevicePort] = None
+        self.__perception: Optional[PerceptionPort] = None
 
         self.__llm: Optional[LLMPort] = None
         self.__memory: Optional[MemoryPort] = None
@@ -55,6 +59,7 @@ class FathomBuilder:
         self.__signal: Optional[SignalPort] = None
         self.__storage: Optional[StoragePort] = None
         self.__telemetry: Optional[TelemetryPort] = None
+        self.__summarizer: Optional[SummarizationPort] = None
         self.__realignment: Optional[RealignmentPolicy] = None
 
         self.__path_manager = path_manager
@@ -86,6 +91,20 @@ class FathomBuilder:
         """
 
         self.__llm = port
+        return self
+
+    def with_perception(self, port: PerceptionPort) -> FathomBuilder:
+        """
+        Configure perception port.
+
+        Args:
+            port: Perception port implementation
+
+        Returns:
+            Builder instance for chaining
+        """
+
+        self.__perception = port
         return self
 
     def with_memory(self, port: MemoryPort) -> FathomBuilder:
@@ -156,6 +175,20 @@ class FathomBuilder:
         """
 
         self.__telemetry = port
+        return self
+
+    def with_summarizer(self, port: SummarizationPort) -> FathomBuilder:
+        """
+        Configure summarization port.
+
+        Args:
+            port: Summarization port implementation
+
+        Returns:
+            Builder instance for chaining
+        """
+
+        self.__summarizer = port
         return self
 
     def with_config(self, configuration: FathomConfiguration) -> FathomBuilder:
@@ -252,6 +285,11 @@ class FathomBuilder:
         if not self.__llm:
             raise ConfigurationError("LLM port is required. Call .with_llm() before .build()")
 
+        if not self.__perception:
+            raise ConfigurationError(
+                "Perception port is required. Call .with_perception() before .build()"
+            )
+
         if not self.__memory:
             ledger = Ledger(database_path=self.__path_manager.get_ledger_db_path())
             provider = SQLiteMemoryProvider(
@@ -271,18 +309,23 @@ class FathomBuilder:
         if not self.__telemetry:
             self.__telemetry = StructlogAdapter()
 
+        if not self.__summarizer:
+            self.__summarizer = LLMSummarizer(llm=self.__llm)
+
         if not self.__realignment:
             self.__realignment = RealignmentPolicy()
 
         return FathomRunner(
             llm=self.__llm,
             device=self.__device,
+            perception=self.__perception,
             config=self.__config,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
             knowledge=self.__knowledge,
             telemetry=self.__telemetry,
+            summarizer=self.__summarizer,
             realignment=self.__realignment,
             path_manager=self.__path_manager,
         )

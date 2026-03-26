@@ -4,20 +4,20 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 
 from fathom.constants.interaction import SwipeSpeed
-from fathom.schemas.configuration import ADBConfiguration
+from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult
 
 
 class DevicePort(ABC):
     """
-    Abstract interface for mobile device interactions.
+    Abstract interface for environment action execution.
     """
 
     @property
     @abstractmethod
-    def configuration(self) -> Optional[ADBConfiguration]:
+    def configuration(self) -> Optional[DeviceRuntimeConfiguration]:
         """
-        Device configuration.
+        Platform-neutral device runtime configuration.
         """
 
         raise NotImplementedError
@@ -72,9 +72,9 @@ class DevicePort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_dimensions(self) -> Tuple[int, int]:
+    async def get_current_package(self) -> str:
         """
-        Get screen dimensions (width, height).
+        Get the current foreground application identifier.
         """
 
         raise NotImplementedError
@@ -82,7 +82,7 @@ class DevicePort(ABC):
     @abstractmethod
     async def capture_screen(self) -> bytes:
         """
-        Capture screenshot as PNG bytes.
+        Capture the current screenshot payload.
         """
 
         raise NotImplementedError
@@ -90,7 +90,7 @@ class DevicePort(ABC):
     @abstractmethod
     async def dump_hierarchy(self) -> Optional[str]:
         """
-        Dump UI hierarchy to XML string.
+        Capture the current hierarchy payload.
         """
 
         raise NotImplementedError
@@ -98,16 +98,15 @@ class DevicePort(ABC):
     @abstractmethod
     async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """
-        Capture atomic snapshot (Screenshot + XML).
-        Returns: (screenshot_bytes, xml_string)
+        Capture the current screenshot and optional hierarchy payload.
         """
 
         raise NotImplementedError
 
     @abstractmethod
-    async def get_current_package(self) -> str:
+    async def get_dimensions(self) -> Tuple[int, int]:
         """
-        Get current foreground package name.
+        Get screen dimensions (width, height).
         """
 
         raise NotImplementedError

@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 from fathom.constants import ActionType
 from fathom.processing.geometry import GeometryUtils
 from fathom.processing.parsers.base import PlatformParser
+from fathom.schemas.hierarchy import NormalizedHierarchyNodeSignature
 from fathom.schemas.ui import LabeledElement, UIBounds
 
 logger = getLogger(__name__)
@@ -101,6 +102,13 @@ class AndroidParser(PlatformParser):
         "androidx.appcompat.app.ActionBar",
         "androidx.appcompat.widget.Toolbar",
         "com.google.android.material.tabs.TabLayout",
+    }
+    __SIGNATURE_IGNORE_IDENTIFIER_TOKENS = {
+        "nav_bar",
+        "systemui",
+        "statusbar",
+        "status_bar",
+        "navigationbar",
     }
 
     @classmethod
@@ -207,6 +215,37 @@ class AndroidParser(PlatformParser):
             or kind in self.__SWIPEABLE_CLASSES | self.__DRAGGABLE_CLASSES
         )
 
+    def build_signature_metadata(self, *, node: ET.Element) -> NormalizedHierarchyNodeSignature:
+        """
+        Normalize one Android node into structural-signature metadata.
+        """
+
+        return NormalizedHierarchyNodeSignature(
+            raw_value="",
+            include_value_in_signature=False,
+            bounds=str(node.get("bounds", "")),
+            text=str(node.get("text", "")).strip(),
+            source_type=str(node.get("class", node.tag)),
+            class_name=str(node.get("class", node.tag)).split(".")[-1],
+            identifier=str(node.get("resource-id", "")).split("/")[-1],
+            content_description=str(node.get("content-desc", "")).strip(),
+            is_focused=str(node.get("focused", "false")).lower() == "true",
+            is_checked=str(node.get("checked", "false")).lower() == "true",
+            is_selected=str(node.get("selected", "false")).lower() == "true",
+            is_scrollable=str(node.get("scrollable", "false")).lower() == "true",
+        )
+
+    def should_ignore_signature_node(self, *, metadata: NormalizedHierarchyNodeSignature) -> bool:
+        """
+        Return whether an Android node should be excluded from the signature.
+        """
+
+        lowered_identifier = metadata.identifier.lower()
+
+        return any(
+            token in lowered_identifier for token in self.__SIGNATURE_IGNORE_IDENTIFIER_TOKENS
+        )
+
     def find_all_elements(self, root: ET.Element, **extra: Any) -> List[LabeledElement]:
         """
         Finds all visible and interactive elements.
@@ -297,12 +336,15 @@ class AndroidParser(PlatformParser):
     def filter_and_deduplicate(
         self,
         elements: List[LabeledElement],
-        iou_threshold: float = 0.4,
+        *,
         action: Any = None,
+        iou_threshold: float = 0.4,
     ) -> List[LabeledElement]:
         """
         Orchestrates the filtering pipeline.
         """
+
+        _ = action
 
         pruned = self.__prune_containers(elements=elements)
         suppressed = self.__suppress_overlaps(elements=pruned, threshold=iou_threshold)

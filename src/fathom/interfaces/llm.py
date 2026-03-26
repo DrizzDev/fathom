@@ -31,6 +31,7 @@ class LLMPort(ABC):
         prompt: Sequence[PromptPart],
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
+        conversation_history: Optional[Sequence[Any]] = None,
     ) -> GenerateResult:
         """
         Generate response from LLM.
@@ -39,6 +40,9 @@ class LLMPort(ABC):
             prompt: List of text parts and image bytes
             system_instruction: Optional system prompt
             tools: Optional tool definitions
+            conversation_history: Optional prior turns for multi-turn feedback loops.
+                Each entry is a provider-native content object (e.g. google.genai.types.Content).
+                When provided, prompt is appended as the final user turn.
 
         Returns:
             GenerateResult with content and tool calls

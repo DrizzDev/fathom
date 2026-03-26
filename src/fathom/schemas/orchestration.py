@@ -7,7 +7,17 @@ from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.schemas.results import WorkflowResult
+from fathom.schemas.run import RealignmentPolicy
 from fathom.schemas.steps import StepResult
+
+__all__ = [
+    "ExecutionContext",
+    "ExecutionRoadmap",
+    "RealignmentPolicy",
+    "RunnerConfig",
+    "RunnerResult",
+    "StepContext",
+]
 
 
 class StepContext(BaseModel):
@@ -265,39 +275,3 @@ class RunnerResult(BaseModel):
 
     checkpoints_saved: int = Field(default=0, description="Number of saved checkpoints")
     total_duration: float = Field(default=0.0, description="Total run time in seconds")
-
-
-class RealignmentPolicy(BaseModel):
-    """
-    Defines the agent's behavior when course-correction is required.
-    """
-
-    budget: int = Field(
-        default=3, description="Maximum allowed consecutive re-plans to prevent exhaustion"
-    )
-    immediate: bool = Field(
-        default=True, description="If True, clears pending plans to re-evaluate state immediately"
-    )
-
-
-class WorkflowRequest(BaseModel):
-    """
-    Request entity for starting a workflow.
-    """
-
-    intent: str = Field(..., description="User goal")
-    device_serial: Optional[str] = Field(default=None, description="Device serial number")
-    package_name: Optional[str] = Field(default=None, description="Target application package")
-    session_id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex[:8], description="Unique session ID"
-    )
-
-    max_steps: int = Field(default=100, description="Step limit")
-    use_xml: bool = Field(default=False, description="Enable XML grounding")
-
-    interactive: bool = Field(default=False, description="Enable HITL mode")
-    signal_type: str = Field(
-        default="interactive", description="Type of signal adapter (interactive/socket)"
-    )
-
-    realignment: RealignmentPolicy = Field(default_factory=RealignmentPolicy)

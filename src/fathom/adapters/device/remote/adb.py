@@ -21,14 +21,20 @@ from tenacity import (
 from fathom.constants.interaction import InteractionAction, SwipeSpeed
 from fathom.core.exceptions import DeviceError, PortError
 from fathom.interfaces.device import DevicePort
-from fathom.schemas.configuration import ADBConfiguration, DeviceConfiguration
+from fathom.schemas.configuration import (
+    DeviceConfiguration,
+    DeviceRuntimeConfiguration,
+    InteractionPolicyConfiguration,
+    InteractionRuntimeConfiguration,
+    SwipeInteractionPolicy,
+)
 from fathom.schemas.remote import RemoteInteractionRequest
 from fathom.schemas.results import ActionResult
 
 logger = getLogger(__name__)
 
 
-class RemoteDeviceAdapter(DevicePort):
+class ADBRemoteDeviceAdapter(DevicePort):
     """
     Adapter for controlling devices hosted on remote providers (e.g., Enricher).
     Implements the standard Fathom Remote Device Protocol.
@@ -39,15 +45,26 @@ class RemoteDeviceAdapter(DevicePort):
         Initialize remote device adapter.
         """
 
-        if not configuration.provider_url or not configuration.session_id:
-            raise PortError("Remote device requires provider_url and session_id")
+        remote = configuration.remote
 
-        self.__session = configuration.session_id
-        self.__execution_id = configuration.execution_id
-        self.__token = configuration.authentication_token
-        self.__url = configuration.provider_url.rstrip("/") + "/"
+        if not remote.provider_url or not remote.session_id:
+            raise PortError("Remote device requires remote.provider_url and remote.session_id")
 
-        self.__adb_config = ADBConfiguration(serial_number=self.__session)
+        self.__session = remote.session_id
+        self.__execution_id = remote.execution_id
+
+        self.__token = remote.authentication_token
+        self.__url = remote.provider_url.rstrip("/") + "/"
+
+        self.__runtime_configuration = DeviceRuntimeConfiguration(
+            identifier=self.__session,
+            platform=configuration.platform,
+            interaction=InteractionRuntimeConfiguration(
+                policy=InteractionPolicyConfiguration(
+                    swipe=SwipeInteractionPolicy(),
+                )
+            ),
+        )
         base_url = urljoin(self.__url, f"sessions/{self.__session}/interaction/")
 
         self.__client = httpx.AsyncClient(
@@ -77,12 +94,12 @@ class RemoteDeviceAdapter(DevicePort):
         return response
 
     @property
-    def configuration(self) -> ADBConfiguration:
+    def configuration(self) -> DeviceRuntimeConfiguration:
         """
-        Returns compatible ADB configuration.
+        Returns platform-neutral runtime configuration.
         """
 
-        return self.__adb_config
+        return self.__runtime_configuration
 
     async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """
@@ -169,11 +186,15 @@ class RemoteDeviceAdapter(DevicePort):
         Execute remote swipe.
         """
 
-        duration = duration or (self.configuration.swipe_duration if self.configuration else 300)
+        runtime_configuration = self.configuration
+        resolved_duration = duration or 300
+
+        if duration is None and runtime_configuration:
+            resolved_duration = runtime_configuration.interaction.policy.swipe.duration_milliseconds
 
         request = RemoteInteractionRequest(
             speed=speed,
-            duration=duration,
+            duration=resolved_duration,
             points=[x1, y1, x2, y2],
             action=InteractionAction.SWIPE,
             execution_id=self.__execution_id,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: TC003 — used at runtime for Task types
 import contextlib
 import hashlib
 import json
@@ -8,17 +8,18 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional, TypedDict
 
+from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
-from fathom.core.exceptions import VisionError
+from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.audit import AuditService
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
-from fathom.interfaces.storage import StoragePort
-from fathom.schemas.results import AnalysisResult
+from fathom.interfaces.telemetry import TelemetryPort
+from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
 
@@ -26,7 +27,9 @@ logger = getLogger(__name__)
 
 
 class SubGoalContext(TypedDict):
-    """Minimal sub-goal context for vision prompts (no AgentState dependency)."""
+    """
+    Minimal sub-goal context for vision prompts (no AgentState dependency).
+    """
 
     index: int
     total: int
@@ -42,12 +45,10 @@ class VisionService:
         self,
         llm: LLMPort,
         memory: MemoryPort,
-        storage: StoragePort,
+        telemetry: TelemetryPort,
         *,
         use_cache: bool,
-        version: str = "pro",
-        session_id: str = "not_set",
-        package_name: str = "unknown",
+        session_id: str = "",
         auditor: Optional[AuditService] = None,
     ) -> None:
         """
@@ -56,13 +57,11 @@ class VisionService:
 
         self.__llm = llm
         self.__memory = memory
-        self.__storage = storage
+        self.__telemetry = telemetry
+        self.__auditor = auditor or AuditService()
 
-        self.__version = version
         self.__use_cache = use_cache
         self.__session_id = session_id
-        self.__package_name = package_name
-        self.__auditor = auditor or AuditService()
         self.__parser = ToolResponseParser()
         self.__background_tasks: set[asyncio.Task[Any]] = set()
 
@@ -74,17 +73,19 @@ class VisionService:
         intent: str,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        *,
+        visual_hash: str,
         screen_width: int,
         screen_height: int,
-        *,
         use_xml: bool = False,
+        is_stuck: bool = False,
+        last_action: Optional[str] = None,
         tracking_note: Optional[str] = None,
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
-        is_stuck: bool = False,
-        last_action: Optional[str] = None,
-        delta_context: Optional[Dict[str, object]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
+        delta_context: Optional[Dict[str, object]] = None,
+        prior_rejection_history: Optional[List[Any]] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
@@ -92,13 +93,12 @@ class VisionService:
 
         analyze_start = time.time()
 
-        # Background persistence (tracked to avoid silent exception loss)
-        task = asyncio.create_task(self.__persist(data=capture.image, activity=capture.activity))
-        self.__background_tasks.add(task)
-        task.add_done_callback(self.__background_tasks.discard)
+        # Note: Screenshot persistence is now handled upstream by PerceptionService.
+        # No background persistence needed here.
 
         # 1. BRAIN RETRIEVAL
-        fingerprint = hashlib.sha256(capture.image).hexdigest()[:16]
+        fingerprint = self.__resolve_capture_fingerprint(capture=capture, visual_hash=visual_hash)
+        prompt_image = self.__resolve_prompt_image(capture=capture)
 
         start = time.time()
         knowledge = await self.__memory.retrieve_knowledge(visual_hash=fingerprint)
@@ -145,11 +145,31 @@ class VisionService:
         full_context = context_manager.get_full_context()
         guidance = full_context.get("guidance")
 
+        await self.__telemetry.debug(
+            "Compiled execution context",
+            type=FathomEvent.CONTEXT_CAPTURED,
+            session_id=self.__session_id,
+            trace_count=len(full_context.get("trace", [])),
+            milestone_count=len(full_context.get("milestones", [])),
+            guidance_count=len(context_manager.get_user_guidance()),
+        )
+
         logger.debug(
             f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
         )
 
         instruction = self.__builder.build()
+
+        # Inject failure constraints into system instruction for strongest LLM adherence.
+        # Gemini treats system instruction as highest priority — stronger than user-turn text.
+        if failures:
+            failed_actions = "; ".join(failures)
+            instruction += (
+                "\n\nCRITICAL CONSTRAINT: The following actions have been attempted and "
+                "FAILED or proven INEFFECTIVE on the current screen. You MUST NOT repeat them. "
+                "Choose a DIFFERENT action or approach to achieve the same goal.\n"
+                f"Blocked actions: {failed_actions}"
+            )
 
         # Sub-goal context (if provided by caller) - SINGLE FOCUS MODE
         # Only current sub-goal is passed to Gemini to prevent skip-ahead behavior.
@@ -178,6 +198,16 @@ class VisionService:
                 "\n\n<SYSTEM_ALERT>\n"
                 "Loop risk detected; avoid repeating the same ineffective action."
                 "\n</SYSTEM_ALERT>"
+            )
+
+        if failures:
+            failed_actions = "; ".join(failures)
+            dynamic_context += (
+                "\n\n<SYSTEM_ALERT>\n"
+                "CRITICAL: The following actions have FAILED or been repeated without progress "
+                "on this screen. You MUST choose a DIFFERENT action or approach to achieve "
+                f"the same goal.\nFailed: {failed_actions}\n"
+                "</SYSTEM_ALERT>"
             )
 
         if last_action:
@@ -213,7 +243,7 @@ class VisionService:
             manifest=manifest,
             failures=failures,
             knowledge=knowledge,
-            screen=capture.image,
+            screen=prompt_image,
             context=dynamic_context,
         )
         payload_duration = time.time() - payload_start
@@ -223,15 +253,40 @@ class VisionService:
             f"[VISION] Assembly | Manifest: {manifest_duration:.3f}s | Payload: {payload_duration:.3f}s"
         )
 
-        # Log prompt context for visibility
+        await self.__telemetry.debug(
+            "Built vision prompt",
+            type=FathomEvent.PROMPT_BUILT,
+            session_id=self.__session_id,
+            instruction=instruction,
+            payload=self.__sanitize_recursive(data=payload),
+        )
+
+        # Log prompt context for console visibility
         self.__auditor.log_prompt(payload=payload, instruction=instruction)
 
-        # 4. EXECUTION WITH VALIDATION-AWARE RETRY
+        # 4. EXECUTION WITH MULTI-TURN FEEDBACK LOOP
+        #
+        # Instead of appending error text to a flat prompt (stateless retry), we use
+        # Gemini's native multi-turn conversation: on rejection, the model sees its own
+        # rejected tool call as a prior model turn, followed by a user turn explaining
+        # exactly why it was rejected. This creates a genuine feedback loop where the
+        # model can reason about its mistake and correct course.
         max_validation_retries = 1
         analysis: Optional[AnalysisResult] = None
         response = None
         duration = 0.0
         parse_duration = 0.0
+
+        # Build a set of blocked action descriptions for post-parse enforcement.
+        blocked_actions: set[str] = set()
+        if failures:
+            blocked_actions = {f.strip().lower() for f in failures if f.strip()}
+
+        # Conversation history accumulates across retry attempts for multi-turn feedback.
+        # Seed with prior rejection history from previous graph iterations (outer loop).
+        conversation_history: List[Any] = list(prior_rejection_history or [])
+        # Preserve original payload so multi-turn history always references the full prompt.
+        original_payload = list(payload)
 
         for attempt in range(max_validation_retries + 1):
             commence = time.time()
@@ -240,6 +295,7 @@ class VisionService:
                 prompt=payload,
                 use_cache=self.__use_cache,
                 system_instruction=instruction,
+                conversation_history=conversation_history if conversation_history else None,
             )
             duration = time.time() - commence
 
@@ -254,16 +310,35 @@ class VisionService:
             parse_start = time.time()
             try:
                 analysis = self.__parser.parse(response)
+
+                # Post-parse enforcement: reject actions that match blocked failures.
+                # Structurally blocks the action even if the LLM ignores prompt text.
+                if blocked_actions and analysis.action:
+                    proposed = analysis.action.to_description().strip().lower()
+                    if proposed in blocked_actions:
+                        logger.warning(
+                            "[VISION] Post-parse rejection: LLM proposed blocked action '%s'",
+                            proposed[:60],
+                        )
+                        raise ToolValidationError(
+                            feedback=ToolErrorFeedback(
+                                tool_name="execute_ui",
+                                error_kind="validation",
+                                message=(
+                                    f"REJECTED: The action '{analysis.action.to_description()}' "
+                                    "has already been attempted and failed/proven ineffective on "
+                                    "this screen. You MUST choose a completely DIFFERENT action "
+                                    "or approach to achieve the same goal. Do not repeat this action."
+                                ),
+                            )
+                        )
+
                 parse_duration = time.time() - parse_start
                 break
-            except Exception as exc:
-                from fathom.core.exceptions import (
-                    ToolValidationError,  # local import to avoid cycles
-                )
-
-                if isinstance(exc, ToolValidationError) and attempt < max_validation_retries:
-                    feedback = getattr(exc, "feedback", None)
-                    message = getattr(feedback, "message", str(exc))
+            except Exception as exception:
+                if isinstance(exception, ToolValidationError) and attempt < max_validation_retries:
+                    feedback = getattr(exception, "feedback", None)
+                    message = getattr(feedback, "message", str(exception))
                     logger.warning(
                         "[VISION] Tool validation failed (attempt %s/%s): %s",
                         attempt + 1,
@@ -271,25 +346,21 @@ class VisionService:
                         message,
                     )
 
-                    # Inject concise, model-ready feedback so Gemini can correct the tool call.
-                    error_block = (
-                        "\n\n[TOOL_ERROR_FEEDBACK]\n"
-                        "The previous tool call had validation errors:\n"
-                        f"{message}\n"
-                        "Please call the tool again with corrected, schema-compliant arguments.\n"
-                        "[/TOOL_ERROR_FEEDBACK]"
+                    # Build multi-turn feedback: the model sees its own rejected output
+                    # as a prior turn, then a correction turn explaining why it was wrong.
+                    # This is structurally stronger than appending text to a flat prompt.
+                    conversation_history = self.__build_rejection_history(
+                        original_payload=original_payload,
+                        rejected_response=response,
                     )
-                    dynamic_context = (dynamic_context or "") + error_block
 
-                    # Rebuild payload with augmented context for the next attempt.
-                    payload = self.__build_payload(
-                        intent=intent,
-                        manifest=manifest,
-                        failures=failures,
-                        knowledge=knowledge,
-                        screen=capture.image,
-                        context=dynamic_context,
-                    )
+                    # On retry with conversation history, payload becomes just the
+                    # correction instruction (the history already contains the original prompt).
+                    payload = [
+                        f"Your previous tool call was rejected: {message}\n"
+                        "You MUST call the tool again with a DIFFERENT action. "
+                        "Choose an alternative approach to achieve the same goal."
+                    ]
                     continue
 
                 # Non-validation errors or exhausted retries propagate as before.
@@ -328,20 +399,168 @@ class VisionService:
                 activity_hash=hashlib.md5(  # nosec
                     capture.activity.encode(), usedforsecurity=False
                 ).hexdigest()[:VISUAL_HASH_LENGTH],
-                structural_hash="0" * VISUAL_HASH_LENGTH,
             ),
             description=analysis.screen_description,
         )
 
         return analysis
 
+    def build_rejection_history_from_analysis(
+        self,
+        *,
+        analysis: AnalysisResult,
+        rejection_reason: str,
+    ) -> List[Any]:
+        """
+        Build multi-turn rejection history from an AnalysisResult for cross-iteration
+        feedback. The planner calls this when rejecting a repeated action so the next
+        vision.analyze() cycle can pass it as conversation_history.
+
+        Returns provider-native Content objects representing the model's rejected
+        tool call and the rejection reason.
+        """
+
+        try:
+            from google.genai import types
+
+            # Model turn: reconstruct the rejected tool call
+            model_parts = []
+            if analysis.action:
+                model_parts.append(
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            name="execute_ui",
+                            args=analysis.metadata.get("tool_args", {}),
+                        )
+                    )
+                )
+            if not model_parts:
+                model_parts.append(types.Part.from_text(text=analysis.reasoning or "(empty)"))
+
+            model_turn = types.Content(role="model", parts=model_parts)
+
+            # User turn: rejection feedback
+            user_turn = types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=rejection_reason)],
+            )
+
+            return [model_turn, user_turn]
+        except Exception as exception:
+            logger.warning("Failed to build cross-iteration rejection history: %s", exception)
+            return []
+
+    @staticmethod
+    def __build_rejection_history(
+        *,
+        original_payload: List[Any],
+        rejected_response: GenerateResult,
+    ) -> List[Any]:
+        """
+        Build a multi-turn conversation history from a rejected LLM response.
+
+        Returns a list of Content objects representing:
+          1. Original user turn (prompt + image)
+          2. Model's rejected response (its own tool call)
+          3. (The next user turn with correction will be sent as the current prompt)
+
+        This gives Gemini full visibility into what it proposed and why it was wrong,
+        enabling genuine self-correction rather than stateless retry.
+        """
+
+        try:
+            from google.genai import types
+
+            # Turn 1: Original user prompt
+            user_parts = []
+            for item in original_payload:
+                if isinstance(item, bytes):
+                    mime = "image/png"
+                    if item[:3] == b"\xff\xd8\xff":
+                        mime = "image/jpeg"
+                    user_parts.append(types.Part.from_bytes(data=item, mime_type=mime))
+                elif isinstance(item, str):
+                    user_parts.append(types.Part.from_text(text=item))
+
+            user_turn = types.Content(role="user", parts=user_parts)
+
+            # Turn 2: Model's rejected response (reconstruct from GenerateResult)
+            model_parts = []
+            if rejected_response.content:
+                model_parts.append(types.Part.from_text(text=rejected_response.content))
+            if rejected_response.tool_calls:
+                for tc in rejected_response.tool_calls:
+                    model_parts.append(
+                        types.Part(
+                            function_call=types.FunctionCall(
+                                name=getattr(tc, "name", "execute_ui"),
+                                args=dict(getattr(tc, "args", {})),
+                            )
+                        )
+                    )
+
+            if not model_parts:
+                model_parts.append(types.Part.from_text(text="(empty response)"))
+
+            model_turn = types.Content(role="model", parts=model_parts)
+
+            return [user_turn, model_turn]
+
+        except Exception as exception:
+            logger.warning(
+                "Failed to build multi-turn rejection history, falling back to stateless retry: %s",
+                exception,
+            )
+            return []
+
+    def __resolve_capture_fingerprint(self, *, visual_hash: str, capture: ScreenCapture) -> str:
+        """
+        Resolve the stable visual fingerprint used for memory lookup.
+        """
+
+        if visual_hash:
+            return visual_hash[:VISUAL_HASH_LENGTH]
+
+        if capture.state is not None and capture.state.visual_hash:
+            return capture.state.visual_hash[:VISUAL_HASH_LENGTH]
+
+        raise ValueError("Vision analysis requires a prepared visual_hash")
+
+    def __resolve_prompt_image(self, *, capture: ScreenCapture) -> bytes:
+        """
+        Resolve the image payload to send to the vision model.
+        """
+
+        if capture.annotated_image:
+            return capture.annotated_image
+
+        return capture.image
+
+    def __sanitize_recursive(self, data: Any) -> Any:
+        """
+        Replace binary prompt content with stable descriptors.
+        """
+
+        if isinstance(data, bytes):
+            return f"<binary:{len(data)}>"
+
+        if isinstance(data, dict):
+            return {key: self.__sanitize_recursive(data=value) for key, value in data.items()}
+
+        if isinstance(data, (list, tuple)):
+            return [self.__sanitize_recursive(item) for item in data]
+
+        return data
+
     async def check_completion(
         self,
         intent: str,
+        visual_hash: str,
         screen_width: int,
         screen_height: int,
         capture: ScreenCapture,
         context_manager: ContextManager,
+        *,
         tracking_note: Optional[str] = None,
     ) -> bool:
         """
@@ -351,6 +570,7 @@ class VisionService:
         result = await self.analyze(
             intent=intent,
             capture=capture,
+            visual_hash=visual_hash,
             screen_width=screen_width,
             screen_height=screen_height,
             tracking_note=tracking_note,
@@ -466,21 +686,3 @@ class VisionService:
                 if definition["name"] in allowed
             ]
         }
-
-    async def __persist(self, data: bytes, activity: str) -> None:
-        """
-        Background persistence.
-        """
-
-        package = activity if activity and activity != "unknown" else self.__package_name
-
-        with contextlib.suppress(Exception):
-            await self.__storage.save(
-                data=data,
-                metadata={
-                    "type": "screenshots",
-                    "package_name": package,
-                    "activity_name": activity,
-                    "session_id": self.__session_id,
-                },
-            )

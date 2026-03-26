@@ -5,7 +5,6 @@ import uuid
 from logging import getLogger
 from typing import Any, Dict, Optional, cast
 
-from fathom.adapters.summarization.llm import LLMSummarizer
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ContextScope, FathomEvent
 from fathom.constants.state import CompletionReason
@@ -15,13 +14,15 @@ from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
+from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
-from fathom.schemas.orchestration import RealignmentPolicy
 from fathom.schemas.results import ExplorationResult, IntentResult
+from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
 
@@ -47,11 +48,13 @@ class FathomRunner:
         *,
         llm: LLMPort,
         device: DevicePort,
+        perception: PerceptionPort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
         knowledge: KnowledgePort,
         telemetry: TelemetryPort,
+        summarizer: SummarizationPort,
         path_manager: SharedPathManager,
         config: Optional[FathomConfiguration] = None,
         realignment: Optional[RealignmentPolicy] = None,
@@ -62,6 +65,7 @@ class FathomRunner:
 
         self.__llm = llm
         self.__device = device
+        self.__perception = perception
 
         self.__memory = memory
         self.__knowledge = knowledge
@@ -69,6 +73,7 @@ class FathomRunner:
         self.__signal = signal
         self.__storage = storage
         self.__telemetry = telemetry
+        self.__summarizer = summarizer
         self.__path_manager = path_manager
         self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
@@ -77,6 +82,7 @@ class FathomRunner:
         self.__engine = ExecutionEngine(
             llm=llm,
             device=device,
+            perception=perception,
             memory=memory,
             signal=signal,
             storage=storage,
@@ -103,6 +109,14 @@ class FathomRunner:
         """
 
         return self.__device
+
+    @property
+    def perception(self) -> PerceptionPort:
+        """
+        Get the perception port.
+        """
+
+        return self.__perception
 
     @property
     def context(self) -> Optional[ContextManager]:
@@ -141,7 +155,7 @@ class FathomRunner:
             package_name = await self.__device.get_current_package()
 
         if self.__device.configuration:
-            device_serial = self.__device.configuration.serial_number
+            device_serial = self.__device.configuration.identifier
         else:
             device_serial = None
 
@@ -171,6 +185,7 @@ class FathomRunner:
             intent=intent,
             llm=self.__llm,
             device=self.__device,
+            perception=self.__perception,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
@@ -179,7 +194,7 @@ class FathomRunner:
             telemetry=self.__telemetry,
             configuration=self.__config,
             path_manager=self.__path_manager,
-            summarizer=LLMSummarizer(llm=self.__llm),
+            summarizer=self.__summarizer,
             realignment=realignment or self.__realignment,
             max_steps=max_steps or self.__config.intent.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
@@ -218,13 +233,16 @@ class FathomRunner:
                 success = execution_result.success
                 error = execution_result.error
                 status = "completed" if execution_result.success else "failed"
-                completion_reason = str(progress.get("completion_reason") or "").strip()
-                if not completion_reason:
-                    completion_reason = (
+                completion_reason = (
+                    strategy.completion_reason
+                    or str(progress.get("completion_reason") or "").strip()
+                    or execution_result.error
+                    or (
                         CompletionReason.SUCCESS.value
                         if execution_result.success
-                        else (execution_result.error or CompletionReason.FAILED.value)
+                        else CompletionReason.FAILED.value
                     )
+                )
 
             result = IntentResult(
                 error=error,
@@ -281,7 +299,7 @@ class FathomRunner:
             package_name = await self.__device.get_current_package()
 
         if self.__device.configuration:
-            device_serial = self.__device.configuration.serial_number
+            device_serial = self.__device.configuration.identifier
         else:
             device_serial = None
 
@@ -300,6 +318,7 @@ class FathomRunner:
         strategy = ExplorationStrategy(
             llm=self.__llm,
             device=self.__device,
+            perception=self.__perception,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,

@@ -5,6 +5,7 @@ import re
 from logging import getLogger
 from typing import Any, Dict, Optional, Pattern
 
+from fathom.constants import SPATIAL_ACTION_TYPES
 from fathom.interfaces.memory import MemoryPort
 from fathom.schemas.actions import Action, Bounds
 
@@ -68,7 +69,13 @@ class ReferenceResolutionService:
     ) -> Action:
         """
         Overwrites action bounds with ground-truth pixel coordinates if label_id matches.
+
+        Snapping is skipped for non-spatial action types (wait, validate, complete, etc.)
+        that carry no meaningful target element coordinates.
         """
+
+        if action.action_type not in SPATIAL_ACTION_TYPES:
+            return action
 
         if not action.label_id or not elements:
             return action

@@ -7,6 +7,14 @@ from typing import Any, Deque, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from fathom.constants.screen import (
+    DEFAULT_SAME_SCREEN_THRESHOLD,
+    LOOP_ACTION_VELOCITY_INTERVAL_THRESHOLD_SECONDS,
+    LOOP_OSCILLATION_AB_WINDOW,
+    LOOP_OSCILLATION_ABC_WINDOW,
+    LOOP_SCROLL_STALL_DISTANCE_THRESHOLD,
+    LOOP_SCROLL_STALL_MIN_STREAK,
+)
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
 
@@ -128,32 +136,96 @@ class LoopDetector(BaseModel):
 
         return False
 
+    def has_repeated_action_on_same_screen(
+        self,
+        action_description: str,
+        screen_hash: str,
+        *,
+        repeat_threshold: int = 3,
+    ) -> bool:
+        """
+        Check if the same tap/type action has been executed N+ times on the same screen.
+        Excludes swipe/scroll actions which legitimately repeat on the same screen.
+
+        Args:
+            action_description: The action being proposed.
+            screen_hash: Visual hash of the current screen.
+            repeat_threshold: Number of repeats before triggering (default 3).
+
+        Returns:
+            True if the action has been repeated on this screen at or above threshold.
+        """
+
+        action_lower = action_description.lower()
+
+        # Only track tap/type actions — swipes and scrolls legitimately repeat
+        if any(token in action_lower for token in ("swipe", "scroll", "flick")):
+            return False
+
+        count = 0
+        for i in range(len(self.__recent_actions)):
+            if i >= len(self.__recent_hashes):
+                break
+            if (
+                self.__recent_actions[i] == action_description
+                and self.__recent_hashes[i] == screen_hash
+            ):
+                count += 1
+
+        if count >= repeat_threshold:
+            logger.warning(
+                "LoopDetector: Same action '%s' repeated %dx on screen %s",
+                action_description,
+                count,
+                screen_hash[:8],
+            )
+            return True
+
+        return False
+
     def __detect_oscillation(self) -> bool:
         """
         Detect bouncing between 2 or 3 screens.
         """
 
-        if len(self.__recent_hashes) < 4:
+        if len(self.__recent_screens) < LOOP_OSCILLATION_AB_WINDOW:
             return False
 
-        hashes = list(self.__recent_hashes)
+        screens = list(self.__recent_screens)
 
         # Pattern: A-B-A-B
-        if len(hashes) >= 4 and hashes[-1] == hashes[-3] and hashes[-2] == hashes[-4]:
+        if (
+            len(screens) >= LOOP_OSCILLATION_AB_WINDOW
+            and self.__is_visually_same(left=screens[-1], right=screens[-3])
+            and self.__is_visually_same(left=screens[-2], right=screens[-4])
+        ):
             logger.warning("LoopDetector: Oscillation detected (A-B-A-B)")
             return True
 
-        # Pattern: A-B-C-A
+        # Pattern: A-B-C-A-B-C
         if (
-            len(hashes) >= 6
-            and hashes[-1] == hashes[-4]
-            and hashes[-2] == hashes[-5]
-            and hashes[-3] == hashes[-6]
+            len(screens) >= LOOP_OSCILLATION_ABC_WINDOW
+            and self.__is_visually_same(left=screens[-1], right=screens[-4])
+            and self.__is_visually_same(left=screens[-2], right=screens[-5])
+            and self.__is_visually_same(left=screens[-3], right=screens[-6])
         ):
             logger.warning("LoopDetector: Oscillation detected (A-B-C-A-B-C)")
             return True
 
         return False
+
+    def __is_visually_same(self, *, left: ScreenState, right: ScreenState) -> bool:
+        """
+        Return whether two screens are visually equivalent within tolerance.
+        """
+
+        return (
+            ScreenState.hamming_distance(
+                left_hash=left.visual_hash,
+                right_hash=right.visual_hash,
+            )
+            <= DEFAULT_SAME_SCREEN_THRESHOLD
+        )
 
     def __detect_scroll_stall(self) -> bool:
         """
@@ -164,24 +236,27 @@ class LoopDetector(BaseModel):
 
         # Require a longer uninterrupted scroll streak before considering stall.
         trailing_scroll_streak = 0
+
         for action_type in reversed(recent_types):
             if any(token in action_type for token in ("scroll", "swipe", "flick")):
                 trailing_scroll_streak += 1
             else:
                 break
-        if trailing_scroll_streak < 7:
+        if trailing_scroll_streak < LOOP_SCROLL_STALL_MIN_STREAK:
             return False
 
         # Evaluate over the trailing streak to avoid first/last hash aliasing.
         streak_start = len(recent_types) - trailing_scroll_streak
+
         first_hash = self.__recent_hashes[streak_start]
         last_hash = self.__recent_hashes[-1]
+
         streak_hashes = list(self.__recent_hashes)[streak_start:]
         unique_hash_count = len(set(streak_hashes))
 
-        distance = ScreenState.hamming_distance(first_hash, last_hash)
+        distance = ScreenState.hamming_distance(left_hash=first_hash, right_hash=last_hash)
         # Stall must show both low net movement and low diversity across streak.
-        if distance < 4 and unique_hash_count <= 2:
+        if distance < LOOP_SCROLL_STALL_DISTANCE_THRESHOLD and unique_hash_count <= 2:
             logger.warning(
                 "LoopDetector: Scroll stall detected "
                 f"(dist={distance}, streak={trailing_scroll_streak}, unique={unique_hash_count})"
@@ -204,7 +279,7 @@ class LoopDetector(BaseModel):
         avg_interval = sum(intervals) / len(intervals)
 
         # If firing faster than 1.5s per action
-        if avg_interval < 1.5:
+        if avg_interval < LOOP_ACTION_VELOCITY_INTERVAL_THRESHOLD_SECONDS:
             # Check if state is actually changing
             recent_hashes = list(self.__recent_hashes)[-3:]
             if len(set(recent_hashes)) == 1:

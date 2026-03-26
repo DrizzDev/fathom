@@ -104,6 +104,9 @@ class GeminiLLM(LLMPort):
 
             self.__cache = CacheService(client=self.__client, model_name=self.__configuration.model)
         except Exception as exception:
+            if not self.__configuration.api_key and not self.__configuration.credentials:
+                raise VisionError("Init failed: Missing Gemini authentication") from exception
+
             raise VisionError(f"Init failed: {exception}") from exception
 
     def __get_generation_configuration(
@@ -174,6 +177,7 @@ class GeminiLLM(LLMPort):
         prompt: Sequence[Union[str, bytes, Dict[str, str]]],
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
+        conversation_history: Optional[Sequence[Any]] = None,
     ) -> GenerateResult:
         """
         Main handler for LLM interaction.
@@ -221,10 +225,18 @@ class GeminiLLM(LLMPort):
                 system_instruction=system_instruction,
             )
             try:
+                # Build contents: multi-turn history + current user turn
+                if conversation_history:
+                    contents = list(conversation_history) + [
+                        types.Content(role="user", parts=parts)
+                    ]
+                else:
+                    contents = [types.Content(role="user", parts=parts)]
+
                 response = await self.__client.aio.models.generate_content(
                     config=config,
                     model=self.__configuration.model,
-                    contents=[types.Content(role="user", parts=parts)],
+                    contents=contents,
                 )
 
                 # Extract content

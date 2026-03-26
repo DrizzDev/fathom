@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 from fathom.schemas.actions import Bounds
-from fathom.schemas.configuration import ADBConfiguration
+from fathom.schemas.configuration import DeviceRuntimeConfiguration
 
 
 class CoordinateConverter:
@@ -15,7 +15,7 @@ class CoordinateConverter:
         self,
         screen_width: int,
         screen_height: int,
-        configuration: ADBConfiguration = ADBConfiguration(),
+        configuration: Optional[DeviceRuntimeConfiguration] = None,
     ) -> None:
         """
         Initialize converter.
@@ -23,7 +23,7 @@ class CoordinateConverter:
 
         self.__width = screen_width
         self.__height = screen_height
-        self.__configuration = configuration
+        self.__configuration = configuration or DeviceRuntimeConfiguration()
 
     def to_pixels(self, bounds: Bounds) -> Tuple[int, int, int, int]:
         """
@@ -69,8 +69,11 @@ class CoordinateConverter:
         x, y, width, height = self.to_pixels(bounds=bounds)
         center_x, center_y = x + width // 2, y + height // 2
 
-        distance_x = int(width * self.__configuration.swipe_distance)
-        distance_y = int(height * self.__configuration.scroll_distance)
+        swipe_policy = self.__configuration.interaction.policy.swipe
+        scroll_policy = self.__configuration.interaction.policy.scroll
+
+        distance_x = int(width * swipe_policy.distance_ratio)
+        distance_y = int(height * scroll_policy.distance_ratio)
 
         if direction == "up":
             return center_x, center_y + distance_y // 2, center_x, center_y - distance_y // 2

@@ -16,6 +16,13 @@ class NoopSignal(SignalPort):
     def is_interactive(self) -> bool:
         return False
 
+    def supports_interruption(self) -> bool:
+        """
+        Return interruption support for this adapter.
+        """
+
+        return False
+
     async def check_signal(self) -> Optional[str]:
         """
         Check for control signal - always returns None for autonomous mode.
@@ -37,7 +44,7 @@ class NoopSignal(SignalPort):
         Block until RESUME signal - no-op for autonomous mode.
         """
 
-        pass
+        return None
 
     async def ask(self, *, prompt: str) -> str:
         """
@@ -65,7 +72,7 @@ class NoopSignal(SignalPort):
         Consume the next context - no-op.
         """
 
-        pass
+        return None
 
     async def has_injected_context(self) -> bool:
         """

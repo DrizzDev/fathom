@@ -42,6 +42,9 @@ class CacheService:
         self.__max_entries = max(1, max_entries)
 
         self.__cache_entries: Dict[str, Any] = {}
+        # Hashes that are known to be below the provider's minimum token threshold.
+        # Tracked to avoid redundant API calls for content that will never cache successfully.
+        self.__undersized_hashes: set[str] = set()
 
         self.stats = CacheStats()
 
@@ -61,6 +64,11 @@ class CacheService:
         """
 
         current_hash = self.__compute_hash(instruction=system_instruction, tools=tools)
+
+        # Short-circuit: content is known to be below the provider minimum token count.
+        if current_hash in self.__undersized_hashes:
+            return None
+
         cached_entry = self.__cache_entries.get(current_hash)
 
         # Cache hit: matching entry exists
@@ -107,7 +115,8 @@ class CacheService:
 
         except Exception as exception:
             if "minimum token count" in str(exception):
-                logger.debug(f"Skipping cache: {exception}")
+                self.__undersized_hashes.add(current_hash)
+                logger.debug(f"Skipping cache (content below minimum token threshold): {exception}")
             else:
                 logger.warning(f"Failed to create cache: {exception}")
 

@@ -16,6 +16,14 @@ class SignalPort(ABC):
         return True
 
     @abstractmethod
+    def supports_interruption(self) -> bool:
+        """
+        Return whether this signal adapter supports interactive interruptions.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
     async def check_signal(self) -> Optional[str]:
         """
         Non-blocking check for an active signal.

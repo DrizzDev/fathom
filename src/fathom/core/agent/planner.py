@@ -130,16 +130,21 @@ class StepPlanner:
             capture=capture,
             elements=elements,
             intent=state.intent,
+            is_stuck=state.is_stuck,
             screen_width=screen_width,
             screen_height=screen_height,
-            context_manager=context_manager,
-            tracking_note=current_tracking_note,
-            is_stuck=state.is_stuck,
-            last_action=state.last_action_type,
-            delta_context=state.get_delta_context(),
-            failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
             sub_goal_info=sub_goal_info,
+            context_manager=context_manager,
+            last_action=state.last_action_type,
+            tracking_note=current_tracking_note,
+            delta_context=state.get_delta_context(),
+            visual_hash=self.__compute_simple_hash(capture=capture),
+            failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
+            prior_rejection_history=state.rejection_history,
         )
+        # Clear rejection history after successful analysis — prevents stale
+        # multi-turn context from leaking into unrelated future steps.
+        state.clear_rejection_history()
         state.update_delta_context(analysis.gemini_delta)
 
         if analysis.content_exhausted:
@@ -227,9 +232,9 @@ class StepPlanner:
                         step=None,  # No physical actions after goal completion
                         is_complete=True,
                         metrics=analysis.metrics,
-                        reason="All sub-goals completed sequentially",
                         metadata=analysis.metadata,
                         memories=analysis.memories,
+                        reason="All sub-goals completed sequentially",
                     )
             else:
                 # Completion gates not met - log detailed reason
@@ -273,6 +278,56 @@ class StepPlanner:
                 metadata=analysis.metadata,
                 memories=analysis.memories,
                 reason=CompletionReason.FAILED.value,
+            )
+
+        # Check if same tap/type action repeated 3+ times on the same screen.
+        # Swipes/scrolls are excluded since they legitimately repeat.
+        if state.is_action_repeating_on_screen(action=action):
+            repeated_desc = action.to_description()
+            logger.warning(
+                "[Planner] Action '%s' repeated 3+ times on same screen — forcing replan.",
+                repeated_desc[:60],
+            )
+            # Record as failure so it appears in relevant_failures context for the LLM,
+            # preventing the model from proposing the same ineffective action again.
+            state.record_repeated_action_failure(action=action)
+
+            # Store the rejected analysis metadata so vision.analyze() can build
+            # a multi-turn conversation history on the next GROUND→ANALYZE cycle.
+            # The LLM will see its own rejected tool call as a prior model turn.
+            state.set_rejection_history(
+                self.__vision.build_rejection_history_from_analysis(
+                    analysis=analysis,
+                    rejection_reason=(
+                        f"REJECTED: '{repeated_desc}' was repeated 3+ times on the same screen "
+                        "without progress. You MUST choose a completely different action."
+                    ),
+                )
+            )
+
+            # Inject priority guidance into the context manager so the next
+            # GROUND→ANALYZE cycle's vision.analyze() call sees this as a
+            # <SYSTEM_OVERRIDE> — the highest priority user-turn content that
+            # persists across graph iterations.
+            await context_manager.inject_user_guidance(
+                guidance=(
+                    f"ACTION BLOCKED: '{repeated_desc}' has been repeated 3+ times on this "
+                    "screen without progress and is now BLOCKED. You MUST use a completely "
+                    "different action or interaction path to achieve the same goal. "
+                    "Consider alternative UI elements, different navigation paths, or "
+                    "scrolling to reveal new elements."
+                ),
+                step=state.step_count,
+            )
+
+            return PlanResult(
+                step=None,
+                is_complete=False,
+                should_retry=True,
+                metrics=analysis.metrics,
+                metadata=analysis.metadata,
+                memories=analysis.memories,
+                reason="Action repeated on same screen",
             )
 
         # Record action for sub-goal trace verification
@@ -362,7 +417,7 @@ class StepPlanner:
 
         screen_hash: str = self.__compute_simple_hash(capture=capture)
 
-        validated_event_type: Literal["action", "validation"] | None = None
+        validated_event_type: Optional[Literal["action", "validation"]] = None
 
         if event_type == "action":
             validated_event_type = "action"
@@ -379,10 +434,17 @@ class StepPlanner:
             condition="recovery" if is_recovery else None,
         )
 
-    def __compute_simple_hash(self, capture: ScreenCapture) -> str:
+    def __compute_simple_hash(self, *, capture: ScreenCapture) -> str:
         """
-        Compute a simple hash of the screen capture
+        Return a stable screen identity for the current capture.
         """
 
-        data: bytes = f"{capture.activity}:{len(capture.image)}".encode()
-        return hashlib.md5(string=data, usedforsecurity=False).hexdigest()[:16]
+        if capture.state is not None and capture.state.visual_hash:
+            return capture.state.visual_hash[:16]
+
+        logger.warning("Screen capture state missing visual_hash; falling back to activity hash")
+
+        return hashlib.md5(
+            capture.activity.encode("utf-8"),
+            usedforsecurity=False,
+        ).hexdigest()[:16]

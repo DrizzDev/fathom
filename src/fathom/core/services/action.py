@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Awaitable, Callable, Optional, Set, Tuple
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import (
@@ -21,7 +21,7 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.processing.annotator import ImageAnnotator
 from fathom.schemas.actions import Action
-from fathom.schemas.configuration import ADBConfiguration
+from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult, ExecutionResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
@@ -49,7 +49,7 @@ class ActionExecutor:
 
         self.__storage = storage
         self.__path_manager = path_manager
-        self.__background_tasks: set[asyncio.Task[None]] = set()
+        self.__background_tasks: Set[asyncio.Task[None]] = set()
         self.__cached_dimensions: Optional[Tuple[int, int]] = None
 
     async def act(
@@ -121,72 +121,22 @@ class ActionExecutor:
             self.__cached_dimensions = await self.__device.get_dimensions()
         width, height = self.__cached_dimensions
 
-        configuration = self.__device.configuration or ADBConfiguration()
+        configuration = self.__device.configuration or DeviceRuntimeConfiguration()
         converter = CoordinateConverter(
             screen_width=width, screen_height=height, configuration=configuration
         )
 
-        # Handle non-interactive actions immediately
-        if action.action_type in (
-            ActionType.WAIT,
-            ActionType.VALIDATE,
-            ActionType.SAVE_MEMORY,
-            ActionType.RETRIEVE_MEMORY,
-        ):
-            max_wait_s = MAX_ACTION_WAIT_MS / 1000.0
-            requested_wait = float(action.wait_duration or 1.0)
-            applied_wait = max(0.0, min(requested_wait, max_wait_s))
-            if requested_wait > max_wait_s:
-                logger.warning(
-                    "[WAIT] Capping wait_duration from %.1fs to %.1fs (MAX_ACTION_WAIT_MS=%d).",
-                    requested_wait,
-                    max_wait_s,
-                    MAX_ACTION_WAIT_MS,
-                )
-            logger.debug(
-                "[WAIT] source=model_wait_duration requested=%.3fs applied=%.3fs",
-                requested_wait,
-                applied_wait,
-            )
-            await asyncio.sleep(delay=applied_wait)
-            return (
-                ExecutionResult(success=True, duration=int((time.time() - start_time) * 1000)),
-                None,
-            )
-
-        if action.action_type == ActionType.COMPLETE:
-            return (
-                ExecutionResult(success=True, duration=int((time.time() - start_time) * 1000)),
-                None,
-            )
+        if self.__is_non_interactive_action(action=action):
+            return await self.__execute_non_interactive_action(action=action, start_time=start_time)
 
         try:
-            coords = None
-            device_result = None
-
-            if action.action_type == ActionType.TAP:
-                device_result, coords = await self.__execute_tap(action, converter, width, height)
-
-            elif action.action_type == ActionType.TYPE:
-                device_result, coords = await self.__execute_type(action, converter, width, height)
-
-            elif action.action_type.value.startswith(ActionType.SWIPE.value):
-                device_result, coords = await self.__execute_swipe(action, converter, width, height)
-
-            elif action.action_type == ActionType.SCROLL:
-                device_result, coords = await self.__execute_scroll(width, height)
-
-            elif action.action_type == ActionType.LONG_PRESS:
-                device_result, coords = await self.__execute_long_press(
-                    action, converter, width, height
-                )
-
-            elif action.action_type == ActionType.BACK:
-                device_result = await self.__device.back()
-
-            elif action.action_type == ActionType.HOME:
-                device_result = await self.__device.home()
-            else:
+            device_result, coords = await self.__execute_interactive_action(
+                action=action,
+                converter=converter,
+                width=width,
+                height=height,
+            )
+            if device_result is None:
                 return (
                     ExecutionResult(
                         duration=0,
@@ -236,6 +186,105 @@ class ActionExecutor:
             y = max(0, y - max(2, int(height_px * 0.20)))
 
         return x, y
+
+    def __is_non_interactive_action(self, *, action: Action) -> bool:
+        """
+        Check whether action can be completed without device interaction.
+        """
+
+        return action.action_type in {
+            ActionType.WAIT,
+            ActionType.COMPLETE,
+            ActionType.VALIDATE,
+            ActionType.SAVE_MEMORY,
+            ActionType.RETRIEVE_MEMORY,
+        }
+
+    async def __execute_non_interactive_action(
+        self, *, action: Action, start_time: float
+    ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
+        """
+        Execute non-interactive action and return success result.
+        Applies wait duration capping via MAX_ACTION_WAIT_MS to prevent
+        excessively long waits requested by the model.
+        """
+
+        if action.action_type in {
+            ActionType.WAIT,
+            ActionType.VALIDATE,
+            ActionType.SAVE_MEMORY,
+            ActionType.RETRIEVE_MEMORY,
+        }:
+            max_wait_s = MAX_ACTION_WAIT_MS / 1000.0
+            requested_wait = float(action.wait_duration or 1.0)
+            applied_wait = max(0.0, min(requested_wait, max_wait_s))
+            if requested_wait > max_wait_s:
+                logger.warning(
+                    "[WAIT] Capping wait_duration from %.1fs to %.1fs (MAX_ACTION_WAIT_MS=%d).",
+                    requested_wait,
+                    max_wait_s,
+                    MAX_ACTION_WAIT_MS,
+                )
+            logger.debug(
+                "[WAIT] source=model_wait_duration requested=%.3fs applied=%.3fs",
+                requested_wait,
+                applied_wait,
+            )
+            await asyncio.sleep(delay=applied_wait)
+
+        return (
+            ExecutionResult(success=True, duration=int((time.time() - start_time) * 1000)),
+            None,
+        )
+
+    async def __execute_interactive_action(
+        self,
+        *,
+        action: Action,
+        converter: CoordinateConverter,
+        width: int,
+        height: int,
+    ) -> Tuple[Optional[ActionResult], Optional[Tuple[int, ...]]]:
+        """
+        Execute interactive action through registered handlers.
+        """
+
+        if action.action_type.value.startswith(ActionType.SWIPE.lower()):
+            return await self.__execute_swipe(action, converter, width, height)
+
+        action_handlers: dict[
+            ActionType,
+            Callable[[], Awaitable[Tuple[ActionResult, Optional[Tuple[int, ...]]]]],
+        ] = {
+            ActionType.TAP: lambda: self.__execute_tap(action, converter, width, height),
+            ActionType.TYPE: lambda: self.__execute_type(action, converter, width, height),
+            ActionType.SCROLL: lambda: self.__execute_scroll(width, height),
+            ActionType.LONG_PRESS: lambda: self.__execute_long_press(
+                action, converter, width, height
+            ),
+            ActionType.BACK: self.__execute_back,
+            ActionType.HOME: self.__execute_home,
+        }
+
+        handler = action_handlers.get(action.action_type)
+        if handler is None:
+            return None, None
+
+        return await handler()
+
+    async def __execute_back(self) -> Tuple[ActionResult, Optional[Tuple[int, ...]]]:
+        """
+        Execute back action.
+        """
+
+        return await self.__device.back(), None
+
+    async def __execute_home(self) -> Tuple[ActionResult, Optional[Tuple[int, ...]]]:
+        """
+        Execute home action.
+        """
+
+        return await self.__device.home(), None
 
     async def __execute_tap(
         self, action: Action, converter: CoordinateConverter, width: int, height: int

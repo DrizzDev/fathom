@@ -10,6 +10,7 @@ from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.audit import AuditService
+from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.exporter import ScriptExporter
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
@@ -17,20 +18,21 @@ from fathom.core.services.hitl import HITLService
 from fathom.core.services.perception import PerceptionService
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.trace import TraceService
-from fathom.core.services.ux import UXService
 from fathom.core.services.vision import VisionService
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
-from fathom.schemas.orchestration import RealignmentPolicy
+from fathom.schemas.run import RealignmentPolicy
 
 
 class GraphContext:
@@ -49,6 +51,7 @@ class GraphContext:
         signal: SignalPort,
         storage: StoragePort,
         telemetry: TelemetryPort,
+        perception: PerceptionPort,
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
         *,
@@ -56,28 +59,29 @@ class GraphContext:
         max_steps: int,
         workflow_id: str,
         package_name: str,
-        ux: Optional[UXService] = None,
         reasoner: Optional[Reasoner] = None,
         trace: Optional[TraceService] = None,
         planner: Optional[StepPlanner] = None,
         vision: Optional[VisionService] = None,
-        auditor: Optional[AuditService] = None,
         agent_state: Optional[AgentState] = None,
         history: Optional[HistoryService] = None,
         knowledge: Optional[KnowledgePort] = None,
         metrics: Optional[ExecutionMetrics] = None,
         cancel_event: Optional[asyncio.Event] = None,
         hierarchy: Optional[HierarchyService] = None,
-        perception: Optional[PerceptionService] = None,
+        comparator: Optional[ScreenComparator] = None,
         summarizer: Optional[SummarizationPort] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_manager: Optional[ContextManager] = None,
         action_executor: Optional[ActionExecutor] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
+        perception_service: Optional[PerceptionService] = None,
+        auditor: Optional[AuditService] = None,
         resolution: Optional[ReferenceResolutionService] = None,
     ) -> None:
         self.__intent = intent
         self.__device = device
+        self.__perception_port = perception
 
         self.__llm = llm
         self.__memory = memory
@@ -99,9 +103,7 @@ class GraphContext:
         self.__realignment = realignment or RealignmentPolicy()
 
         # Injected services with defaults for backward compatibility
-        self.__ux = ux or UXService()
         self.__metrics = metrics or ExecutionMetrics()
-        self.__auditor = auditor or AuditService()
 
         self.__reasoner = reasoner or Reasoner(intent=intent)
         self.__agent_state = agent_state or AgentState(
@@ -113,8 +115,11 @@ class GraphContext:
         self.__signal = signal
         self.__hitl = HITLService(signal=signal, telemetry=telemetry)
 
-        self.__perception = perception or PerceptionService(
-            device=device, storage=storage, telemetry=telemetry, session_id=workflow_id
+        self.__perception = perception_service or PerceptionService(
+            storage=storage,
+            perception=perception,
+            session_id=workflow_id,
+            hierarchy_signature_builder=HierarchySignatureBuilder(),
         )
 
         # GCC Context Manager with optional summarizer
@@ -122,13 +127,14 @@ class GraphContext:
             memory=memory, workflow_id=workflow_id, summarizer=summarizer
         )
 
+        self.__auditor = auditor or AuditService()
+
         self.__vision = vision or VisionService(
             llm=llm,
             memory=memory,
-            storage=storage,
-            auditor=self.__auditor,
+            telemetry=telemetry,
             session_id=workflow_id,
-            package_name=package_name,
+            auditor=self.__auditor,
             use_cache=configuration.llm.use_cache,
         )
 
@@ -139,7 +145,8 @@ class GraphContext:
             path_manager=path_manager,
         )
 
-        self.__hierarchy = hierarchy or HierarchyService(device=device, storage=storage)
+        self.__comparator = comparator or ScreenComparator()
+        self.__hierarchy = hierarchy or HierarchyService(storage=storage)
         self.__planner = planner or StepPlanner(vision_tool=self.__vision)
 
         self.__history = history or HistoryService(
@@ -167,6 +174,14 @@ class GraphContext:
         """
 
         return self.__device
+
+    @property
+    def perception_port(self) -> PerceptionPort:
+        """
+        Returns the PerceptionPort instance.
+        """
+
+        return self.__perception_port
 
     @property
     def llm(self) -> LLMPort:
@@ -207,6 +222,14 @@ class GraphContext:
         """
 
         return self.__telemetry
+
+    @property
+    def comparator(self) -> ScreenComparator:
+        """
+        Returns the screen comparator service.
+        """
+
+        return self.__comparator
 
     @property
     def signal(self) -> SignalPort:
@@ -306,6 +329,7 @@ class GraphContext:
         Note: ExplorationGraph is designed to be mutated.
         If immutability is needed, implement copy() method on ExplorationGraph.
         """
+
         return self.__exploration_graph
 
     @property
@@ -314,15 +338,14 @@ class GraphContext:
         Returns the AgentState instance.
         Note: AgentState is intentionally mutable as it tracks execution progress.
         """
+
         return self.__agent_state
 
     def set_agent_state(self, state: AgentState) -> None:
         """
         Set/replace the AgentState instance (used for checkpoint restore).
-
-        Args:
-            state: New AgentState instance to use
         """
+
         self.__agent_state = state
 
     @property
@@ -330,6 +353,7 @@ class GraphContext:
         """
         Returns the ContextManager instance.
         """
+
         return self.__context_manager
 
     @property
@@ -345,6 +369,7 @@ class GraphContext:
         """
         Returns the Reasoner instance.
         """
+
         return self.__reasoner
 
     @property
@@ -353,6 +378,7 @@ class GraphContext:
         Returns the ExecutionMetrics instance.
         Note: Metrics are intentionally mutable for recording execution data.
         """
+
         return self.__metrics
 
     @property
@@ -396,27 +422,20 @@ class GraphContext:
         return self.__trace
 
     @property
-    def auditor(self) -> AuditService:
-        """
-        Returns the AuditService instance.
-        """
-
-        return self.__auditor
-
-    @property
-    def ux(self) -> UXService:
-        """
-        Returns the UXService instance.
-        """
-        return self.__ux
-
-    @property
     def perception(self) -> PerceptionService:
         """
         Returns the PerceptionService instance.
         """
 
         return self.__perception
+
+    @property
+    def auditor(self) -> AuditService:
+        """
+        Returns the AuditService instance for console logging.
+        """
+
+        return self.__auditor
 
     @property
     def resolution(self) -> ReferenceResolutionService:
