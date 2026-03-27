@@ -1231,12 +1231,20 @@ class IntentNodeProvider:
             return None
 
         # Extract the analysis from the plan metadata (set by planner).
-        analysis = None
+        # After LangGraph checkpoint serialization the AnalysisResult may
+        # be deserialized as a plain dict — reconstruct it when needed.
+        raw_analysis = None
         if isinstance(plan, PlanResult) and plan.metadata:
-            analysis = plan.metadata.get("_analysis")
+            raw_analysis = plan.metadata.get("_analysis")
 
-        if analysis is None:
+        if raw_analysis is None:
             return None
+
+        analysis = (
+            raw_analysis
+            if isinstance(raw_analysis, AnalysisResult)
+            else AnalysisResult.model_validate(raw_analysis)
+        )
 
         # Validation-type steps don't require a screen change — observing
         # the screen IS the goal.  Detected from the step's event_type
