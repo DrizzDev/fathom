@@ -51,6 +51,21 @@ class LLMPort(ABC):
 
         raise NotImplementedError
 
+    async def prewarm(
+        self,
+        *,
+        system_instruction: Optional[str],
+        tools: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Prewarm provider-side prompt cache when supported.
+
+        Default is a no-op. Providers that support cached content (e.g. Gemini)
+        override this to pre-create the cache entry before the first generate call.
+        """
+
+        return  # noqa: PLE0101
+
     @abstractmethod
     async def cleanup(self) -> None:
         """

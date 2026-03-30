@@ -215,8 +215,10 @@ class AgentState:
         if is_new_screen:
             self.__seen_screens.append(screen)
             logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
-            # If we reached a truly new screen (never seen in session), we have made progress.
-            self.__loop_detector.reset()
+            # New screen = visual progress. Clear screen-based detection but
+            # preserve action history so action-repeat detection survives across
+            # visually-different screens (e.g. tapping a counter button).
+            self.__loop_detector.advance()
         elif previous_screen and previous_screen.activity_hash != screen.activity_hash:
             # Keep loop history when revisiting known screens across activities.
             # This preserves oscillation/stall evidence instead of masking it.
