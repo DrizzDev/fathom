@@ -27,6 +27,7 @@ class ADBCaptureTool(CaptureTool):
         Initialize ADB capture tool.
         """
         self.__config = config or ADBCaptureConfig()
+        self.__last_activity: Optional[str] = None
 
         if self.__config.use_hybrid_hash:
             self.__hasher: Union[HybridHasher, FastHasher] = HybridHasher()
@@ -137,28 +138,55 @@ class ADBCaptureTool(CaptureTool):
 
     async def __get_current_activity(self) -> str:
         """
-        Get activity using standard shell command.
+        Get current foreground activity.
+
+        Tries multiple strategies to handle different Android versions,
+        caching the last successful result so we never return ``"unknown"``.
+
+        1. ``mResumedActivity`` from ``dumpsys activity`` (Android 10+).
+        2. ``mCurrentFocus`` from ``dumpsys window`` (most versions).
+        3. ``mFocusedApp`` from ``dumpsys window`` (older devices).
+        4. Last known activity (fallback — never returns unknown).
         """
 
-        command = "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"
-        arguments = self.__build_adb_args(args=["shell", command])
+        import re
 
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *arguments, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
-            )
-            stdout, _ = await asyncio.wait_for(
-                fut=process.communicate(), timeout=self.__config.timeout
-            )
-            if stdout:
-                import re
+        strategies = [
+            "dumpsys activity activities | grep mResumedActivity",
+            "dumpsys window displays | grep mCurrentFocus",
+            "dumpsys window windows | grep mFocusedApp",
+        ]
 
-                match = re.search(pattern=r"(\S+/\S+)", string=stdout.decode())
-                if match:
-                    return match.group(1).strip().rstrip("}")
-            return "unknown"
-        except Exception:
-            return "unknown"
+        for command in strategies:
+            try:
+                arguments = self.__build_adb_args(args=["shell", command])
+                process = await asyncio.create_subprocess_exec(
+                    *arguments,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await asyncio.wait_for(
+                    fut=process.communicate(), timeout=self.__config.timeout
+                )
+                if stdout:
+                    # Match full activity: "com.example.app/com.example.app.SomeActivity"
+                    match = re.search(
+                        r"([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+/\S+)",
+                        stdout.decode(),
+                    )
+                    if match:
+                        activity = match.group(1).strip().rstrip("}")
+                        self.__last_activity = activity
+                        return activity
+            except Exception:  # nosec B112
+                continue
+
+        # All strategies failed — use last known activity
+        if self.__last_activity:
+            logger.debug("Activity detection failed — using last known: %s", self.__last_activity)
+            return self.__last_activity
+
+        return "unknown"
 
     async def __fallback_capture(self) -> ScreenCapture:
         """

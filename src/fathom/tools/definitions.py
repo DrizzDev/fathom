@@ -19,6 +19,7 @@ class ToolRegistry:
         return {
             "function_declarations": [
                 cls.__explore_ui(),
+                cls.__describe_screen(),
             ]
         }
 
@@ -83,34 +84,33 @@ class ToolRegistry:
                             "target_name": {
                                 "type": "STRING",
                                 "description": (
-                                    "Human-readable label exactly as it appears on screen. "
-                                    "Use the visible text or icon description. "
-                                    "Examples: 'Home tab', 'Search icon', 'Add to Cart button', "
-                                    "'3rd restaurant card', 'Hamburger menu icon'."
+                                    "Stable element identifier in this EXACT format:\n"
+                                    "  {element_type}_{region}_{index}\n\n"
+                                    "- element_type: button, tab, card, icon, input, chip, toggle, link, image\n"
+                                    "- region: top_bar, content, bottom_nav, modal, fab, footer\n"
+                                    "- index: 1-based position within that region (left-to-right, top-to-bottom)\n\n"
+                                    "Examples: tab_bottom_nav_1, card_content_3, icon_top_bar_2, "
+                                    "input_content_1, chip_content_4, button_modal_1\n\n"
+                                    "NEVER use runtime text, product names, prices, or placeholder content. "
+                                    "The same element must get the SAME target_name every time this screen is seen."
                                 ),
                             },
-                            "bbox": {
+                            "tap_target": {
                                 "type": "OBJECT",
                                 "description": (
-                                    "Bounding box of the element in normalized 0-1000 coordinates. "
-                                    "x,y = top-left corner. width and height extend rightward and downward."
+                                    "CENTER point of the element to tap, in normalized 0-1000 coordinates. "
+                                    "x = horizontal center of the element (0 = left edge, 1000 = right edge). "
+                                    "y = vertical center of the element (0 = top edge, 1000 = bottom edge). "
+                                    "Place the point at the visual CENTER of the element, not a corner."
                                 ),
                                 "properties": {
                                     "x": {
                                         "type": "INTEGER",
-                                        "description": "Top-left X (0-1000).",
+                                        "description": "Horizontal center of the element (0-1000).",
                                     },
                                     "y": {
                                         "type": "INTEGER",
-                                        "description": "Top-left Y (0-1000).",
-                                    },
-                                    "width": {
-                                        "type": "INTEGER",
-                                        "description": "Width from x (0-1000).",
-                                    },
-                                    "height": {
-                                        "type": "INTEGER",
-                                        "description": "Height from y (0-1000).",
+                                        "description": "Vertical center of the element (0-1000).",
                                     },
                                 },
                             },
@@ -118,16 +118,20 @@ class ToolRegistry:
                                 "type": "STRING",
                                 "description": (
                                     "What kind of UI element this is. "
-                                    "Matches the priority system: navigation=P1, primary_action=P2, "
-                                    "list_item=P3, secondary_action=P4, in_page_control=P5, "
-                                    "overlay_dismiss=special."
+                                    "Must match the priority system: "
+                                    "global_navigation=P1 (bottom nav, sidebar, top-level tab bar), "
+                                    "primary_action=P2 (Add/Create/Search/Buy buttons, FABs, search bars), "
+                                    "content_item=P3 (cards, list items, product tiles with detail arrows), "
+                                    "filter_or_category=P4 (category chips, filter pills, sort, horizontal carousels), "
+                                    "secondary_control=P5 (overflow menus, toggles, share, settings, profile icons), "
+                                    "overlay_dismiss=special (popups, modals, banners)."
                                 ),
                                 "enum": [
-                                    "navigation",
+                                    "global_navigation",
                                     "primary_action",
-                                    "list_item",
-                                    "secondary_action",
-                                    "in_page_control",
+                                    "content_item",
+                                    "filter_or_category",
+                                    "secondary_control",
                                     "overlay_dismiss",
                                 ],
                             },
@@ -160,7 +164,7 @@ class ToolRegistry:
                                 ),
                             },
                         },
-                        "required": ["action_type", "rationale", "target_name"],
+                        "required": ["action_type", "rationale", "target_name", "tap_target"],
                     },
                     "screen_description": {
                         "type": "STRING",
@@ -200,48 +204,89 @@ class ToolRegistry:
         """
         Definition for describe_screen tool.
 
-        Provides a thorough rich-text translation of all visible UI
-        designs, features, and content on a mobile app screen.
+        Design-blueprint description of a unique activity screen.  The output
+        must be detailed enough for another LLM to recreate the screen
+        image purely from the text — exact colors, sizes, positions, and
+        element inventory.
         """
 
         return {
             "name": "describe_screen",
-            "description": "Provide a thorough translation of all visible UI designs and features on the screen.",
+            "description": (
+                "Produce a design-blueprint description of the current activity screen. "
+                "The description must be detailed enough for an LLM to recreate the "
+                "screen image purely from this text. Focus on DESIGN, not data."
+            ),
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
-                    "layout_and_structure": {
+                    "activity_name": {
                         "type": "STRING",
-                        "description": "Detailed description of page layout, regions, spacing, visual hierarchy, header/body/footer arrangement.",
+                        "description": (
+                            "The Android activity name this screen belongs to, "
+                            "exactly as shown in the context (e.g. "
+                            "'in.swiggy.android/in.swiggy.android.imPdp.views.IMPdpActivity'). "
+                            "One description per unique activity."
+                        ),
                     },
-                    "navigation": {
+                    "screen_purpose": {
                         "type": "STRING",
-                        "description": "Navigation elements: top/bottom bars, tabs, menus, breadcrumbs, back buttons, sidebars and their labels.",
+                        "description": (
+                            "1-2 sentences: what this activity screen is for, "
+                            "which app section it belongs to, and the primary user task."
+                        ),
                     },
-                    "content": {
+                    "layout_blueprint": {
                         "type": "STRING",
-                        "description": "All visible text content, headings, images, media, cards, lists, badges, tags, and data displayed.",
+                        "description": (
+                            "Top-to-bottom spatial blueprint of the screen. For each region describe: "
+                            "position (top/middle/bottom, left/right/center/full-width), "
+                            "approximate height as percentage of screen, "
+                            "background color (hex or name), "
+                            "and what it contains. "
+                            "Example: 'Top 8%: status bar (dark, system icons). "
+                            'Next 6%: white app bar with back arrow (left), title "Menu" (center bold 18sp), '
+                            "cart icon with red badge (right). "
+                            "Next 30%: hero image carousel (full-width, 16:9 aspect). "
+                            "Remaining: scrollable content on #F5F5F5 background.'"
+                        ),
                     },
-                    "interactive_elements": {
+                    "component_inventory": {
                         "type": "STRING",
-                        "description": "All interactive controls: buttons with labels, inputs, toggles, switches, checkboxes, dropdowns, sliders, links, and their states.",
+                        "description": (
+                            "One component per line using this format:\n"
+                            "  [Region] type | generic-label | position | size | colors | shape | state\n\n"
+                            "RULES:\n"
+                            "- generic-label: Use the GENERIC element name, NEVER runtime data.\n"
+                            "  GOOD: Search bar, Product card, Category chip, Add to cart button, "
+                            "Restaurant card, Price label, Rating badge\n"
+                            "  BAD: Search for Cake, 99 Slice by Olio Pizza, 5 items | ₹717, Tim Hortons\n"
+                            "- If an element shows dynamic text (placeholder, price, name), "
+                            "describe the element TYPE only: 'Search bar with placeholder' not 'Search for Sweets'.\n"
+                            "- Group lines by region (Top bar, Content area, Bottom nav, etc).\n"
+                            "- One line per component. No prose sentences.\n"
+                            "- Be exhaustive — every icon, divider, badge, and label."
+                        ),
                     },
-                    "visual_design": {
+                    "design_tokens": {
                         "type": "STRING",
-                        "description": "Colors, typography, iconography, branding, shadows, borders, rounded corners, and overall design language.",
-                    },
-                    "summary": {
-                        "type": "STRING",
-                        "description": "2-4 sentence prose summary of the screen's purpose, primary user task, and overall user experience.",
+                        "description": (
+                            "Visual design system tokens observed: "
+                            "primary color, accent color, background colors, "
+                            "text colors (heading/body/caption/link), "
+                            "font sizes (heading/subheading/body/caption approximate sp), "
+                            "corner radii, elevation/shadow patterns, "
+                            "spacing rhythm (padding/margin patterns), "
+                            "icon style (outlined/filled/rounded, approximate size)."
+                        ),
                     },
                 },
                 "required": [
-                    "layout_and_structure",
-                    "navigation",
-                    "content",
-                    "interactive_elements",
-                    "visual_design",
-                    "summary",
+                    "activity_name",
+                    "screen_purpose",
+                    "layout_blueprint",
+                    "component_inventory",
+                    "design_tokens",
                 ],
             },
         }

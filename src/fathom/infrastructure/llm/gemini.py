@@ -27,6 +27,19 @@ class GeminiLLMClient(IVisionProvider):
     Implements IVisionProvider for plug-and-play usage.
     """
 
+    # Transient error substrings that warrant a longer retry pause
+    # (same treatment as 429 quota errors).
+    _TRANSIENT_MARKERS = frozenset(
+        {
+            "disconnected",
+            "connection reset",
+            "connection closed",
+            "deadline exceeded",
+            "503",
+            "service unavailable",
+        }
+    )
+
     def __init__(self, configuration: GeminiConfig) -> None:
         self.__configuration = configuration
         self.__client: Optional[Any] = None
@@ -35,6 +48,10 @@ class GeminiLLMClient(IVisionProvider):
         self.__cache: Optional[CacheService] = None
 
         self.__parser = ToolResponseParser()
+
+        # Serialise LLM calls so background describe_screen tasks
+        # cannot compete with the critical-path analyze() call.
+        self.__semaphore = asyncio.Semaphore(1)
 
         self.__initialize()
 
@@ -157,51 +174,58 @@ class GeminiLLMClient(IVisionProvider):
         config = types.GenerateContentConfig(**config_args)
 
         max_retries = self.__configuration.max_retries
-        for attempt in range(max_retries + 1):
-            try:
-                response = await self.__client.aio.models.generate_content(
-                    config=config,
-                    model=self.__configuration.model,
-                    contents=[types.Content(role="user", parts=parts)],
-                )
-                result = self.__parser.parse(response)
-
-                # Extract token usage from response
-                usage = getattr(response, "usage_metadata", None)
-                if usage:
-                    prompt_t = getattr(usage, "prompt_token_count", 0) or 0
-                    completion_t = getattr(usage, "candidates_token_count", 0) or 0
-                    cached_t = getattr(usage, "cached_content_token_count", 0) or 0
-
-                    result.metrics["prompt_tokens"] = prompt_t
-                    result.metrics["completion_tokens"] = completion_t
-                    result.metrics["cached_tokens"] = cached_t
-
-                    logger.debug(
-                        f"Token usage: prompt={prompt_t}, completion={completion_t}, cached={cached_t}"
+        async with self.__semaphore:
+            for attempt in range(max_retries + 1):
+                try:
+                    response = await self.__client.aio.models.generate_content(
+                        config=config,
+                        model=self.__configuration.model,
+                        contents=[types.Content(role="user", parts=parts)],
                     )
-                else:
-                    logger.warning("Response missing usage_metadata")
+                    result = self.__parser.parse(response)
 
-                return result
-            except Exception as exception:
-                error_msg = str(exception)
-                is_quota_error = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
+                    # Extract token usage from response
+                    usage = getattr(response, "usage_metadata", None)
+                    if usage:
+                        prompt_t = getattr(usage, "prompt_token_count", 0) or 0
+                        completion_t = getattr(usage, "candidates_token_count", 0) or 0
+                        cached_t = getattr(usage, "cached_content_token_count", 0) or 0
 
-                if attempt == max_retries:
-                    raise VisionError(f"LLM fail: {exception}") from exception
+                        result.metrics["prompt_tokens"] = prompt_t
+                        result.metrics["completion_tokens"] = completion_t
+                        result.metrics["cached_tokens"] = cached_t
 
-                if is_quota_error:
-                    logger.warning(
-                        f"Quota exceeded (429). Pausing for 30s before retry {attempt + 1}/{max_retries}..."
-                    )
-                    jitter = random.random() * 5.0  # nosec
-                    delay = 30.0 + jitter
-                else:
-                    jitter = random.random() * 0.5  # nosec
-                    delay = (self.__configuration.retry_delay * (2**attempt)) + jitter
+                        logger.debug(
+                            f"Token usage: prompt={prompt_t}, completion={completion_t}, cached={cached_t}"
+                        )
+                    else:
+                        logger.warning("Response missing usage_metadata")
 
-                await asyncio.sleep(delay)
+                    return result
+                except Exception as exception:
+                    error_msg = str(exception).lower()
+                    is_transient = any(m in error_msg for m in self._TRANSIENT_MARKERS)
+                    is_quota_error = "429" in error_msg or "resource_exhausted" in error_msg
+
+                    if attempt == max_retries:
+                        raise VisionError(f"LLM fail: {exception}") from exception
+
+                    if is_quota_error or is_transient:
+                        reason = "quota" if is_quota_error else "transient"
+                        logger.warning(
+                            "LLM %s error. Pausing 30s before retry %d/%d: %s",
+                            reason,
+                            attempt + 1,
+                            max_retries,
+                            exception,
+                        )
+                        jitter = random.random() * 5.0  # nosec
+                        delay = 30.0 + jitter
+                    else:
+                        jitter = random.random() * 0.5  # nosec
+                        delay = (self.__configuration.retry_delay * (2**attempt)) + jitter
+
+                    await asyncio.sleep(delay)
 
         raise VisionError("Unreachable")
 
@@ -222,6 +246,14 @@ class GeminiLLMClient(IVisionProvider):
         if not self.__client:
             raise VisionError("Client not ready")
 
+        # Use context caching for the stable system instruction + tools
+        cache_name = None
+        if self.__cache:
+            cache_name = await self.__cache.get_cached_content(
+                system_instruction=system_instruction,
+                tools=tools.get("function_declarations") if tools else None,
+            )
+
         parts = []
         for item in user_content:
             if isinstance(item, bytes):
@@ -239,12 +271,15 @@ class GeminiLLMClient(IVisionProvider):
             "temperature": self.__configuration.temperature,
             "max_output_tokens": self.__configuration.max_output_tokens,
             "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
-            "system_instruction": [{"text": system_instruction}],
         }
 
-        if tools:
-            config_args["tools"] = [tools]
+        if not cache_name:
+            config_args["system_instruction"] = [{"text": system_instruction}]
+            if tools:
+                config_args["tools"] = [tools]
             config_args["tool_config"] = {"function_calling_config": {"mode": "ANY"}}
+        else:
+            config_args["cached_content"] = cache_name
 
         config = types.GenerateContentConfig(**config_args)
 

@@ -252,21 +252,94 @@ def build_exploration_nodes(
         parent_node = ctx.knowledge_graph.nodes.get(parent_hash) if parent_hash else None
         parent_description = parent_node.description if parent_node else None
 
+        # Assemble recent step feedback from agent state so the LLM can
+        # course-correct based on the trajectory of recent actions.
+        recent_steps: Optional[List[Dict[str, Any]]] = None
+        agent_ctx = ctx.agent_state.build_context()
+        raw_actions = agent_ctx.get("recent_actions")
+        if isinstance(raw_actions, list) and raw_actions:
+            recent_steps = raw_actions[-5:]
+
         kg_context = ctx.knowledge_graph.build_exploration_context(
             current_hash=fingerprint,
             depth=len(ctx.current_path),
             parent_description=parent_description,
             fully_scanned_count=len(ctx.fully_scanned),
+            recent_steps=recent_steps,
         )
 
         # Ask VLM for next untried element
         start = time.time()
+        dedup_failures: Optional[List[str]] = None
         analysis: AnalysisResult = await ctx.vision.analyze(
             intent=ctx.agent_state.intent,
             capture=capture,
             context=kg_context,
             mode=PromptMode.EXPLORATION,
+            resolved_fingerprint=fingerprint,
         )
+
+        # ── Dedup guard: reject actions already tried on this screen ──
+        # Build a set of (action_type, target_name) already recorded as
+        # KG edges from this screen.  If the LLM picks one of them, re-
+        # analyze with an explicit failure hint.  After MAX_DEDUP_RETRIES
+        # the action is treated as content_exhausted to prevent loops.
+        tried_set = {
+            (atype.lower(), atarget.lower())
+            for atype, atarget, _ in ctx.knowledge_graph.get_tried_actions(fingerprint)
+        }
+
+        _MAX_DEDUP_RETRIES = 2
+        for _retry in range(_MAX_DEDUP_RETRIES):
+            if not analysis.action or analysis.content_exhausted:
+                break
+            # Back actions are always allowed — never dedup them
+            if analysis.action.action_type == ActionType.BACK:
+                break
+            action_key = (
+                analysis.action.action_type.value.lower(),
+                (analysis.action.natural_language_target or analysis.action.target or "").lower(),
+            )
+            if action_key not in tried_set:
+                break  # Novel action — proceed
+
+            logger.warning(
+                "Dedup guard: LLM repeated tried action %s on screen %s (retry %d/%d)",
+                action_key,
+                fingerprint[:8],
+                _retry + 1,
+                _MAX_DEDUP_RETRIES,
+            )
+            dedup_failures = [
+                f'You already tried {action_key[0]} "{action_key[1]}" — pick a DIFFERENT untried element.'
+            ]
+            analysis = await ctx.vision.analyze(
+                intent=ctx.agent_state.intent,
+                capture=capture,
+                context=kg_context,
+                mode=PromptMode.EXPLORATION,
+                resolved_fingerprint=fingerprint,
+                failures=dedup_failures,
+            )
+        else:
+            # Check if the final retry still picked a tried action
+            if (
+                analysis.action
+                and not analysis.content_exhausted
+                and (
+                    analysis.action.action_type.value.lower(),
+                    (
+                        analysis.action.natural_language_target or analysis.action.target or ""
+                    ).lower(),
+                )
+                in tried_set
+            ):
+                logger.warning(
+                    "Dedup guard exhausted retries on screen %s — forcing content_exhausted",
+                    fingerprint[:8],
+                )
+                analysis.content_exhausted = True
+
         analysis_duration = time.time() - start
         ctx.metrics.record(operation="analysis", duration=analysis_duration)
 
@@ -285,19 +358,19 @@ def build_exploration_nodes(
             state=screen_state, description=analysis.screen_description
         )
 
-        # Rich screen translation (deduplicated: only on first visit)
-        node = ctx.knowledge_graph.get_screen(fingerprint)
-        if node and node.rich_description is None:
-            try:
-                rich_text = await ctx.vision.describe_screen(capture=capture)
-                await ctx.knowledge_graph.update_rich_description(fingerprint, rich_text)
-                logger.debug("Rich description generated for screen %s", fingerprint[:8])
-            except Exception:
-                logger.warning(
-                    "Rich description failed for %s",
-                    fingerprint[:8],
-                    exc_info=True,
-                )
+        # Rich screen translation: the LLM sees the existing description in
+        # context and only outputs NEW observations.  Append if non-empty.
+        rich_text = analysis.metadata.get("rich_description", "")
+        if rich_text and rich_text.strip():
+            await ctx.knowledge_graph.append_activity_description(
+                activity=screen_state.activity,
+                observation=rich_text,
+            )
+            logger.debug(
+                "Appended observation for activity %s (screen %s)",
+                screen_state.activity,
+                fingerprint[:8],
+            )
 
         # VLM signals all elements exhausted
         if analysis.content_exhausted:
@@ -529,6 +602,7 @@ def build_exploration_nodes(
         return {
             **state,
             "action": action,
+            "analysis": None,  # Clear stale scan analysis so record_node doesn't display it
             "step_result": step_result,
             "execution_duration": execution_duration,
         }
@@ -844,6 +918,7 @@ def build_exploration_nodes(
                 execution_duration=execution_dur,
                 grounding_duration=grounding_dur,
                 analysis=analysis,
+                executed_action=action,
                 phase=ctx.phase.value,
                 depth=len(ctx.current_path),
             )

@@ -81,6 +81,7 @@ class GeminiVisionTool(VisionTool):
         delta_context: Optional[Dict[str, Any]] = None,
         elements: Optional[Dict[str, Any]] = None,
         mode: Optional[PromptMode] = None,
+        resolved_fingerprint: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow using Native Tool Calling.
@@ -93,7 +94,11 @@ class GeminiVisionTool(VisionTool):
         asyncio.create_task(coro=self.__persist(data=capture.image, activity=capture.activity))
 
         # 1. BRAIN RETRIEVAL
-        fingerprint = (
+        # Use the caller-provided canonical hash when available so that
+        # memory lookups match the canonical hashes used when storing
+        # experiences in record_node.  Falls back to the raw capture hash
+        # for callers that have not resolved it.
+        fingerprint = resolved_fingerprint or (
             capture.state.visual_hash
             if capture.state
             else hashlib.md5(capture.image, usedforsecurity=False).hexdigest()[:16]
@@ -234,19 +239,21 @@ class GeminiVisionTool(VisionTool):
     @staticmethod
     def __format_translation(data: Dict[str, Any]) -> str:
         """
-        Formats the structured describe_screen tool call args into markdown.
+        Formats the structured describe_screen tool call args into a
+        design-blueprint markdown document.
         """
 
+        activity = data.get("activity_name", "")
         sections = [
-            ("Layout & Structure", data.get("layout_and_structure", "")),
-            ("Navigation", data.get("navigation", "")),
-            ("Content", data.get("content", "")),
-            ("Interactive Elements", data.get("interactive_elements", "")),
-            ("Visual Design", data.get("visual_design", "")),
-            ("Summary", data.get("summary", "")),
+            ("Purpose", data.get("screen_purpose", "")),
+            ("Layout Blueprint", data.get("layout_blueprint", "")),
+            ("Component Inventory", data.get("component_inventory", "")),
+            ("Design Tokens", data.get("design_tokens", "")),
         ]
 
         parts = []
+        if activity:
+            parts.append(f"**Activity:** `{activity}`")
         for heading, body in sections:
             if body:
                 parts.append(f"## {heading}\n{body}")
@@ -319,8 +326,13 @@ class GeminiVisionTool(VisionTool):
         if knowledge.get("description"):
             payload.append(f"SCREEN: {knowledge['description']}")
 
-        if history := knowledge.get("previous_actions", []):
-            payload.append(f"TRIED: {json.dumps(obj=history)}")
+        # NOTE: Tried actions are provided by build_exploration_context()
+        # via the "ALREADY TRIED FROM THIS SCREEN:" section in the context
+        # parameter.  The KG edge list is the single source of truth —
+        # canonical-hash-resolved, comprehensive, and includes destination
+        # descriptions.  The SQLite experience table (previous_actions) is
+        # intentionally omitted here to avoid a redundant, potentially
+        # inconsistent second tried-action list that dilutes the signal.
 
         if transitions := knowledge.get("transitions", []):
             nav_lines = []

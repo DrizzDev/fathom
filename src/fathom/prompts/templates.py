@@ -3,8 +3,9 @@ from __future__ import annotations
 # Coordinate system guidance (shared by exploration prompt)
 COORD_RULES = (
     "COORDINATES: Use NORMALIZED coords (0-1000 grid). "
-    "bbox.x and bbox.y MUST be the TOP-LEFT corner of the element bounding box. "
-    "width and height extend rightward and downward from that corner."
+    "tap_target.x and tap_target.y MUST be the visual CENTER of the element. "
+    "0 = left/top edge of screen, 1000 = right/bottom edge of screen. "
+    "Place the point where a human finger would tap — the middle of the element."
 )
 
 # ── Exploration mode constants ────────────────────────────────────────
@@ -24,17 +25,19 @@ EXPLORATION_MENTAL_MODEL = (
 )
 
 EXPLORATION_SCAN_STRATEGY = (
-    "SCAN ORDER: Read the screen systematically.\n"
-    "1. Navigation chrome: top bar, hamburger menu, tabs, bottom navigation bar.\n"
-    "2. Primary content area: cards, list items, buttons, links.\n"
-    "3. Secondary actions: FABs, overflow menus (\u22ee), settings/gear icons.\n"
-    "4. Footer elements: links, version info, legal text.\n"
+    "SCAN ORDER: Read the screen systematically to find untried elements.\n"
+    "1. Bottom navigation bar — persistent tabs at screen bottom (P1).\n"
+    "2. Top bar / hamburger menu / sidebar — global nav controls (P1).\n"
+    "3. Primary action buttons and search bars in the content area (P2).\n"
+    "4. Content cards, list items, product tiles (P3 — tap ONE per type).\n"
+    "5. Category chips, filter pills, horizontal carousels (P4).\n"
+    "6. Overflow menus, settings, toggles, share icons (P5).\n"
     "Scan each region left-to-right, top-to-bottom."
 )
 
 EXPLORATION_ELEMENT_CATEGORIES = (
     "INTERACTIVE (tap these):\n"
-    "Buttons, tabs, links, menu items, toggles, switches, input fields, search bars, "
+    "Buttons, links, menu items, toggles, switches, input fields, search bars, "
     "cards with chevrons (>), list items with detail arrows, FABs, navigation items, "
     "dropdown triggers, profile avatars, notification bells, settings icons.\n\n"
     "DECORATIVE (skip these):\n"
@@ -44,12 +47,33 @@ EXPLORATION_ELEMENT_CATEGORIES = (
 )
 
 EXPLORATION_PRIORITY = (
-    "PRIORITY (pick higher-priority untried elements first):\n"
-    "P1: Navigation (tabs, menu items, bottom nav) — these lead to entirely new screens.\n"
-    'P2: Primary actions ("Add", "Create", "Search", "New") — these reveal key features.\n'
-    "P3: List items and cards — these often lead to detail screens.\n"
-    "P4: Secondary actions (overflow \u22ee, settings \u2699, profile, share) — less-discoverable features.\n"
-    "P5: In-page controls (toggles, filters, sort, sliders) — these cause in-screen changes, explore last."
+    "PRIORITY (pick the highest available untried tier first):\n\n"
+    "P1 — GLOBAL NAVIGATION (leads to entirely different app sections):\n"
+    "  Bottom navigation bar items (Home, Search, Cart, Orders, Profile tabs).\n"
+    "  Hamburger/sidebar menu items. Top-level tab bars that switch major views.\n"
+    "  ONLY elements that are persistent across screens and switch the entire view.\n"
+    "  ⚠ Category chips, filter pills, and horizontal scroll carousels are NOT P1 — they are P4.\n\n"
+    "P2 — PRIMARY ACTIONS (reveals key features or new flows):\n"
+    '  Buttons labelled "Add", "Create", "Search", "New", "Order", "Book", "Buy".\n'
+    "  Search bars and input fields. FABs (floating action buttons).\n"
+    "  These trigger new workflows or entry points.\n\n"
+    "P3 — CONTENT ITEMS (leads to detail screens):\n"
+    "  Cards, list items, and tiles that show individual entities (products, restaurants, users).\n"
+    "  Items with chevrons (>), thumbnails, or detail arrows.\n"
+    "  Tap ONE representative item per content type — do not tap every item in a list.\n\n"
+    "P4 — FILTERS & CATEGORIES (in-section navigation, same screen family):\n"
+    "  Category chips/pills (e.g. 'Pizza', 'Burgers', 'Sandwiches').\n"
+    "  Horizontal scroll carousels. Filter buttons. Sort controls.\n"
+    "  Tab bars that switch content WITHIN the same screen (not across sections).\n"
+    "  These stay on the same screen or show similar content — explore AFTER P1-P3.\n\n"
+    "P5 — SECONDARY ACTIONS & IN-PAGE CONTROLS:\n"
+    "  Overflow menus (⋮), settings (⚙), share, like/favorite icons.\n"
+    "  Toggles, switches, sliders, checkboxes.\n"
+    "  Profile/avatar icons (unless they are in the bottom nav bar → then P1).\n"
+    "  These cause minor in-screen changes — explore last.\n\n"
+    "DECISION RULE: Exhaust all visible untried P1 elements before moving to P2, "
+    "all P2 before P3, etc. If no untried elements remain in ANY tier, "
+    "attempt a scroll to reveal more, then signal content_exhausted."
 )
 
 EXPLORATION_SCREEN_DESCRIPTION_GUIDE = (
@@ -81,7 +105,13 @@ EXPLORATION_EXHAUSTION_RULES = (
 )
 
 EXPLORATION_RESPONSE_DIRECTIVE = (
-    "RESPONSE: Return exactly ONE explore_ui tool call.\n"
-    "Either tap an untried interactive element, or set content_exhausted=true.\n"
-    "NEVER output plain text, markdown, or explanations outside the tool call."
+    "RESPONSE: Return BOTH tool calls in EVERY response:\n"
+    "1. explore_ui — pick the next untried element (or set content_exhausted=true).\n"
+    "2. describe_screen — describe the current screen's design as seen in THIS screenshot.\n"
+    "   If an EXISTING DESCRIPTION is shown in the context, do NOT repeat anything already\n"
+    "   captured there. Only output components, layout regions, or design details that are\n"
+    "   NEW — e.g. revealed by scrolling, a different state, or a section not yet described.\n"
+    "   If the screenshot shows nothing new beyond what is already described, return empty\n"
+    "   strings for all describe_screen fields except activity_name.\n"
+    "NEVER output plain text, markdown, or explanations outside the tool calls."
 )

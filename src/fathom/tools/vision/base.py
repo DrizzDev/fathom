@@ -47,11 +47,18 @@ class VisionTool(Tool[AnalysisResult], ABC):
         delta_context: Optional[Dict[str, Any]] = None,
         elements: Optional[Dict[str, Any]] = None,
         mode: Optional[PromptMode] = None,
+        resolved_fingerprint: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Analyze screen and recommend action.
 
         When ``mode`` is provided, it overrides automatic mode detection.
+
+        When ``resolved_fingerprint`` is provided, it is used as the canonical
+        screen hash for memory retrieval and storage instead of the raw
+        ``capture.state.visual_hash``.  Callers that have already resolved the
+        hash via the knowledge graph should pass it here to ensure tried-action
+        lookups match stored experiences.
         """
 
         raise NotImplementedError

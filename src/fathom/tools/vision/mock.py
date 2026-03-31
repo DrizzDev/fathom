@@ -32,6 +32,7 @@ class MockGeminiVisionTool(VisionTool):
         delta_context: Optional[Dict[str, Any]] = None,
         elements: Optional[Dict[str, Any]] = None,
         mode: Optional[PromptMode] = None,
+        resolved_fingerprint: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Return mock analysis result.

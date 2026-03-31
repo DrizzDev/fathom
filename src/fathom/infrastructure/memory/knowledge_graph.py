@@ -22,6 +22,23 @@ MAX_TRIED_IN_CONTEXT = 25
 HAMMING_THRESHOLD = 12
 
 
+def normalize_activity(activity: str) -> str:
+    """
+    Normalize an Android activity string to a canonical form.
+
+    ADB sometimes returns ``"pkg/pkg.Activity"`` and sometimes just
+    ``"pkg.Activity"``.  Strip the ``"package/"`` prefix so comparisons
+    are consistent.  E.g.::
+
+        "in.swiggy.android/in.swiggy.android.activities.HomeActivity"
+        → "in.swiggy.android.activities.HomeActivity"
+    """
+
+    if "/" in activity:
+        return activity.split("/", 1)[1]
+    return activity
+
+
 @dataclass
 class GraphNode:
     """Lightweight in-memory representation of a screen node."""
@@ -252,6 +269,87 @@ class KnowledgeGraph:
             rich_description=rich_description,
         )
 
+    async def append_activity_description(
+        self,
+        activity: str,
+        observation: str,
+    ) -> None:
+        """
+        Appends a new observation to the activity's rich description.
+
+        The LLM is responsible for deduplication — it receives the existing
+        description in context and is instructed to only output NEW details.
+        This method simply appends whatever the LLM returns.
+        """
+
+        # Find the canonical node that owns the description for this activity
+        target_node: Optional[GraphNode] = None
+        for node in self.__nodes.values():
+            if (
+                normalize_activity(node.activity) == normalize_activity(activity)
+                and node.rich_description is not None
+            ):
+                target_node = node
+                break
+
+        if target_node is None:
+            # First observation for this activity — find any node with this activity
+            for node in self.__nodes.values():
+                if normalize_activity(node.activity) == normalize_activity(activity):
+                    target_node = node
+                    break
+
+        if target_node is None:
+            logger.warning("No node found for activity %s — dropping observation", activity)
+            return
+
+        if target_node.rich_description:
+            target_node.rich_description += f"\n\n---\n\n### Additional Observation\n{observation}"
+        else:
+            target_node.rich_description = observation
+
+        await self.__provider.update_rich_description(
+            visual_hash=target_node.visual_hash,
+            rich_description=target_node.rich_description,
+        )
+
+    def _get_tried_actions_for_activity(
+        self, activity: str
+    ) -> List[Tuple[str, str, Optional[str]]]:
+        """
+        Aggregates tried actions across ALL screen nodes that share the
+        given activity.  Deduplicates by (action_type, action_target).
+        """
+
+        seen: Set[Tuple[str, str]] = set()
+        result: List[Tuple[str, str, Optional[str]]] = []
+
+        for node_hash, node in self.__nodes.items():
+            if node.activity != activity:
+                continue
+            canonical = self._resolve_canonical(node_hash)
+            for edge in self.__edges.get(canonical, []):
+                if edge.action_type == "back":
+                    continue
+                key = (edge.action_type, edge.action_target)
+                if key not in seen:
+                    seen.add(key)
+                    dest_node = self.__nodes.get(edge.destination_hash)
+                    dest_desc = dest_node.description if dest_node else None
+                    result.append((edge.action_type, edge.action_target, dest_desc))
+
+        return result
+
+    def _get_activity_description(self, activity: str) -> Optional[str]:
+        """Returns the existing rich description for an activity, or None."""
+        for node in self.__nodes.values():
+            if (
+                normalize_activity(node.activity) == normalize_activity(activity)
+                and node.rich_description
+            ):
+                return node.rich_description
+        return None
+
     async def record_transition(
         self,
         source_hash: str,
@@ -348,6 +446,17 @@ class KnowledgeGraph:
 
         return self._resolve_canonical(visual_hash) in self.__nodes
 
+    def has_activity_description(self, activity: str) -> bool:
+        """
+        Returns True if ANY node with the given activity already has a
+        rich description.  Used to deduplicate descriptions per-activity
+        rather than per-visual-hash.
+        """
+
+        return any(
+            n.activity == activity and n.rich_description is not None for n in self.__nodes.values()
+        )
+
     def resolve_hash(self, visual_hash: str) -> str:
         """
         Public API: resolve a raw visual hash to its canonical form.
@@ -390,6 +499,8 @@ class KnowledgeGraph:
         edges = self.__edges.get(self._resolve_canonical(visual_hash), [])
         result: List[Tuple[str, str, Optional[str]]] = []
         for edge in edges:
+            if edge.action_type == "back":
+                continue
             dest_node = self.__nodes.get(edge.destination_hash)
             dest_desc = dest_node.description if dest_node else None
             result.append((edge.action_type, edge.action_target, dest_desc))
@@ -402,6 +513,7 @@ class KnowledgeGraph:
         depth: Optional[int] = None,
         parent_description: Optional[str] = None,
         fully_scanned_count: Optional[int] = None,
+        recent_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         Formats the current knowledge graph state as LLM-readable context
@@ -411,11 +523,43 @@ class KnowledgeGraph:
         which actions have already been tried on the current screen and can
         pick an untried element (or signal ``content_exhausted``).
 
-        For DFS: pass depth (path length from root) and parent_description
-        (description of the screen we navigated from) when available.
+        Parameters
+        ----------
+        current_hash:
+            Canonical visual hash of the screen being scanned.
+        depth:
+            Path length from root (for DFS depth display).
+        parent_description:
+            Description of the screen we navigated from.
+        fully_scanned_count:
+            Number of screens already marked fully explored.
+        recent_steps:
+            Optional list of recent action dicts (up to 5).  Each dict has
+            keys: ``type`` (str), ``target`` (str), ``success`` (bool),
+            ``screen_changed`` (bool).  Injected as reactive feedback so
+            the LLM can course-correct based on recent trajectory.
         """
 
         lines: List[str] = []
+
+        # ── Recent-step reactive feedback (anchored at the top) ──────
+        if recent_steps:
+            step_lines = []
+            for step in recent_steps:
+                action = step.get("type", "")
+                target = step.get("target", "")
+                success = step.get("success", True)
+                changed = step.get("screen_changed", True)
+
+                if success and changed:
+                    indicator = "ok, new screen"
+                elif success and not changed:
+                    indicator = "ok, NO screen change"
+                else:
+                    indicator = "FAILED"
+                step_lines.append(f'- {action} "{target}" -> {indicator}')
+
+            lines.append("RECENT ACTIONS (oldest to newest):\n" + "\n".join(step_lines))
 
         # Progress header
         scanned_part = ""
@@ -438,9 +582,27 @@ class KnowledgeGraph:
             if node and node.description:
                 lines.append(f"CURRENT SCREEN: {node.description}")
 
-            tried = self.get_tried_actions(current_hash)
+            # Inject existing activity description so the LLM knows what
+            # has already been captured and only outputs NEW observations.
+            if node:
+                existing_desc = self._get_activity_description(node.activity)
+                if existing_desc:
+                    lines.append(
+                        "EXISTING DESCRIPTION FOR THIS ACTIVITY (do NOT repeat — only describe what is NEW):\n"
+                        + existing_desc
+                    )
+
+            # Aggregate tried actions across ALL screens sharing the same
+            # activity, so revisiting an activity on a different visual hash
+            # still shows the full history of what was tried.
+            activity = node.activity if node else None
+            tried = self._get_tried_actions_for_activity(activity) if activity else []
+            if not tried:
+                # Fallback to per-screen tried actions
+                tried = self.get_tried_actions(current_hash)
+
             if tried:
-                lines.append("ALREADY TRIED FROM THIS SCREEN:")
+                lines.append("ALREADY TRIED IN THIS ACTIVITY:")
                 excess = len(tried) - MAX_TRIED_IN_CONTEXT
                 for action_type, action_target, dest_desc in tried[:MAX_TRIED_IN_CONTEXT]:
                     entry = f"- {action_type}"
@@ -452,8 +614,16 @@ class KnowledgeGraph:
                 if excess > 0:
                     lines.append(f"... and {excess} more tried")
                 lines.append(f"ACTIONS TRIED: {len(tried)}")
+
+                # Hard-constraint forbidden list (exact target names)
+                forbidden = sorted({t for _, t, _ in tried if t})
+                if forbidden:
+                    lines.append(
+                        "FORBIDDEN TARGETS (do NOT select any of these): "
+                        + ", ".join(f'"{t}"' for t in forbidden)
+                    )
             else:
-                lines.append("ALREADY TRIED FROM THIS SCREEN: (none -- this is a fresh screen)")
+                lines.append("ALREADY TRIED IN THIS ACTIVITY: (none -- this is a fresh activity)")
 
         # Recent discoveries — last 5 screens by first_seen (descending)
         nodes_with_ts = [

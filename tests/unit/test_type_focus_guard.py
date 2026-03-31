@@ -41,6 +41,7 @@ async def test_type_taps_before_typing_when_bounds_present() -> None:
 
     assert result.success
     assert result.error is None
+    # Legacy bbox: cx = 100+300/2=250 (top-left branch), cy = 200+80/4=220 (w/4 fallback)
     assert device.tap_calls == [(250, 220)]
     assert device.type_calls == ["hello"]
     assert device.type_replace_calls == [True]

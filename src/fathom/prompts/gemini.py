@@ -170,29 +170,28 @@ class GeminiPromptBuilder(PromptBuilder):
 
     def __build_screen_translation_prompt(self) -> str:
         """
-        Screen Translation Mode: thorough rich-text description of all
-        visible designs, features, and content on a mobile app screen.
+        Screen Translation Mode: design-blueprint description of an activity
+        screen, detailed enough for an LLM to recreate the screen image.
 
         Uses the ``describe_screen`` tool to return structured sections.
         """
         return (
-            "You are a meticulous UI design analyst. Given a screenshot of a mobile app screen, "
-            "produce a thorough textual translation of EVERYTHING visible.\n\n"
-            "You MUST call the describe_screen tool with detailed content for each section:\n\n"
-            "- layout_and_structure: Describe the overall page layout — regions, columns, cards, "
-            "spacing, visual hierarchy, header/body/footer arrangement, and how content is organized.\n"
-            "- navigation: Describe all navigation elements — top/bottom bars, tabs, menus, "
-            "breadcrumbs, back buttons, hamburger icons, sidebars, and their labels.\n"
-            "- content: Describe ALL visible text, headings, subheadings, body text, labels, "
-            "images, icons, media, cards, lists, badges, tags, and data displayed.\n"
-            "- interactive_elements: Describe every interactive control — buttons (with labels), "
-            "text inputs, search bars, toggles, switches, checkboxes, radio buttons, dropdowns, "
-            "sliders, links, FABs, and their current states (enabled/disabled/selected).\n"
-            "- visual_design: Describe colors (background, text, accents), typography (font sizes, "
-            "weights, styles), iconography, branding elements, shadows, borders, rounded corners, "
-            "and overall design language/theme.\n"
-            "- summary: A 2-4 sentence flowing prose paragraph summarizing the screen's purpose, "
-            "the primary user task it supports, and the overall user experience.\n\n"
-            "Be comprehensive — capture every visible element, label, icon, and design detail. "
-            "Do not omit anything visible on screen."
+            "You are a mobile UI design analyst producing a design blueprint. "
+            "Given a screenshot, describe it in enough detail that another LLM "
+            "could recreate the screen image purely from your text.\n\n"
+            "CRITICAL: Focus on DESIGN, never runtime DATA.\n"
+            "- Use GENERIC element names: 'Search bar', 'Product card', 'Price label'\n"
+            "- NEVER use runtime content: 'Search for Cake', '99 Slice Pizza', '₹717'\n"
+            "- If an element shows dynamic text, describe the element TYPE only.\n\n"
+            "You MUST call the describe_screen tool with:\n\n"
+            "- activity_name: The Android activity this screen belongs to.\n"
+            "- screen_purpose: 1-2 sentences on what this screen is for.\n"
+            "- layout_blueprint: Top-to-bottom spatial map — for each region: "
+            "position, approximate height %, background color (hex), contents.\n"
+            "- component_inventory: One component per line, format:\n"
+            "  [Region] type | generic-label | position | size | colors | shape | state\n"
+            "  NO prose. NO data content. One line per component.\n"
+            "- design_tokens: Color palette, font sizes, corner radii, "
+            "elevation/shadow patterns, spacing rhythm, icon style.\n\n"
+            "Be exhaustive on components — every icon, divider, badge, and label."
         )

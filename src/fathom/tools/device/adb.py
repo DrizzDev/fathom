@@ -23,6 +23,7 @@ class ADBDeviceTool(DeviceTool):
     def __init__(self, configuration: Optional[ADBConfig] = None) -> None:
         self.__configuration = configuration or ADBConfig()
         self.__cached_size: Optional[Tuple[int, int]] = None
+        self.__last_package: Optional[str] = None
 
     async def tap(self, x: int, y: int) -> ActionResult:
         """
@@ -128,6 +129,7 @@ class ADBDeviceTool(DeviceTool):
             capture_output=True,
         )
         if pkg := self.__extract_package(output=result.output if result.success else None):
+            self.__last_package = pkg
             return pkg
 
         # Strategy 2: mCurrentFocus (window manager — works across most versions)
@@ -136,6 +138,7 @@ class ADBDeviceTool(DeviceTool):
             capture_output=True,
         )
         if pkg := self.__extract_package(output=result.output if result.success else None):
+            self.__last_package = pkg
             return pkg
 
         # Strategy 3: mFocusedApp (older devices)
@@ -144,7 +147,13 @@ class ADBDeviceTool(DeviceTool):
             capture_output=True,
         )
         if pkg := self.__extract_package(output=result.output if result.success else None):
+            self.__last_package = pkg
             return pkg
+
+        # All strategies failed — use last known package
+        if self.__last_package:
+            logger.debug("Package detection failed — using last known: %s", self.__last_package)
+            return self.__last_package
 
         return "unknown_app"
 

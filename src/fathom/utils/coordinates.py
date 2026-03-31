@@ -29,14 +29,13 @@ class CoordinateConverter:
         """
         Get center point in pixel coordinates.
 
-        Gemini VLMs inconsistently report (x, y) as either the top-left
-        corner or the center of the bounding box.  We use boundary checks
-        on the normalized values to disambiguate:
+        When bounds have ``width == 0 and height == 0`` (center-point format
+        from ``tap_target``), (x, y) IS the center — scale directly with
+        no heuristic.
 
-        - If top-left interpretation overflows (x+w > 1000) → must be center.
-        - If center interpretation underflows (x-w/2 < 0) → must be top-left.
-        - If both interpretations are geometrically valid → use x + w/4
-          (a quarter-offset compromise that always lands within the element).
+        For legacy bbox format (width/height > 0), falls back to a w/4
+        heuristic to handle Gemini's inconsistent top-left vs center
+        coordinate output.
         """
 
         if not bounds.is_normalized:
@@ -45,6 +44,13 @@ class CoordinateConverter:
 
         x, y, w, h = bounds.x, bounds.y, bounds.width, bounds.height
 
+        # Center-point format (tap_target): x, y IS the center already.
+        if w == 0 and h == 0:
+            cx = max(0, min(int(x * self.__width / 1000), self.__width))
+            cy = max(0, min(int(y * self.__height / 1000), self.__height))
+            return cx, cy
+
+        # Legacy bbox format: apply disambiguation heuristic
         cx_norm: float
         if x + w > 1000:
             cx_norm = x

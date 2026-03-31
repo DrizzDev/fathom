@@ -6,6 +6,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from fathom.schemas.actions import Action
 from fathom.schemas.results import ActionResult, AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
 
@@ -144,6 +145,7 @@ class AuditService:
         execution_duration: float,
         grounding_duration: float,
         analysis: Optional[AnalysisResult] = None,
+        executed_action: Optional[Action] = None,
         phase: str = "scan",
         depth: int = 0,
     ) -> None:
@@ -226,19 +228,21 @@ class AuditService:
             )
         )
 
-        # Print reasoning and action details
-        if analysis:
-            reasoning = analysis.reasoning
-            action = analysis.action
+        # Print reasoning and action details — always use the actually
+        # executed action so the panel never diverges from what happened.
+        display_action = executed_action or (analysis.action if analysis else None)
+        if display_action:
             action_panel = Table.grid(padding=(0, 2))
             action_panel.add_column(style="bold yellow")
             action_panel.add_column()
 
-            action_panel.add_row("Action:", action.action_type.value)
-            action_panel.add_row("Target:", action.target or "N/A")
-            action_panel.add_row("Rationale:", reasoning)
+            action_panel.add_row("Action:", display_action.action_type.value)
+            action_panel.add_row(
+                "Target:", display_action.natural_language_target or display_action.target or "N/A"
+            )
+            action_panel.add_row("Rationale:", display_action.rationale)
 
-            if analysis.screen_description:
+            if analysis and analysis.screen_description:
                 action_panel.add_row("Screen:", analysis.screen_description[:120])
 
             self.__console.print(

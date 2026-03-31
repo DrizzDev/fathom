@@ -19,10 +19,12 @@ class ToolResponseParser(IResponseParser):
     """
     Parses raw LLM tool call responses into domain objects.
 
-    Exploration-only parser — handles explore_ui tool calls.
+    Exploration-only parser — handles explore_ui and optional
+    describe_screen tool calls from a single LLM response.
     """
 
     __PRIMARY_TOOLS = {"explore_ui"}
+    __SECONDARY_TOOLS = {"describe_screen"}
 
     def parse(self, response: Any) -> AnalysisResult:
         """
@@ -71,12 +73,14 @@ class ToolResponseParser(IResponseParser):
                 logger.warning(f"No function call received. Text: {text_response}")
                 return self.__create_fallback_result(message=text_response)
 
-            # Find the first recognized tool call
+            # Find the primary (explore_ui) and optional secondary (describe_screen) calls
             primary_call = None
+            describe_call = None
             for fc in function_calls:
                 if fc.name in self.__PRIMARY_TOOLS:
                     primary_call = fc
-                    break
+                elif fc.name in self.__SECONDARY_TOOLS:
+                    describe_call = fc
                 else:
                     logger.warning(f"Unknown tool call ignored: {fc.name}")
 
@@ -91,6 +95,15 @@ class ToolResponseParser(IResponseParser):
             result = self.__parse_exploration(arguments=primary_call.args)
             result.metadata["tool_name"] = primary_call.name
             result.metadata["tool_args"] = dict(primary_call.args or {})
+
+            # Extract inline rich description if the LLM also called describe_screen
+            if describe_call:
+                try:
+                    result.metadata["rich_description"] = self.__format_translation(
+                        dict(describe_call.args or {})
+                    )
+                except Exception:
+                    logger.warning("Failed to parse describe_screen args", exc_info=True)
 
             return result
 
@@ -119,16 +132,32 @@ class ToolResponseParser(IResponseParser):
         if not data:
             return self.__create_fallback_result(message=request.assistant_message)
 
-        # Parse bounds
+        # Parse tap target (center point) or legacy bbox
         bounds = None
+        tap_target = data.get("tap_target")
         bbox = data.get("bbox")
-        if bbox:
+        if tap_target:
+            # Center-point format: create a zero-size Bounds at the center.
+            # center_to_pixels will detect width=0 and use (x, y) directly.
+            bounds = Bounds(
+                x=int(tap_target.get("x", 0)),
+                y=int(tap_target.get("y", 0)),
+                width=0,
+                height=0,
+                coord_system="normalized",
+            )
+        elif bbox:
+            # Legacy bbox fallback
             bounds = Bounds(
                 x=int(bbox.get("x", 0)),
                 y=int(bbox.get("y", 0)),
                 width=int(bbox.get("width", 0)),
                 height=int(bbox.get("height", 0)),
                 coord_system="normalized",
+            )
+        else:
+            logger.warning(
+                "No tap_target or bbox in explore_ui action — taps will fall back to screen center"
             )
 
         # Parse action type
@@ -172,6 +201,24 @@ class ToolResponseParser(IResponseParser):
             return float(value)
         except (ValueError, TypeError):
             return default
+
+    @staticmethod
+    def __format_translation(data: Dict[str, Any]) -> str:
+        """Format describe_screen tool args into a design-blueprint markdown document."""
+        activity = data.get("activity_name", "")
+        sections = [
+            ("Purpose", data.get("screen_purpose", "")),
+            ("Layout Blueprint", data.get("layout_blueprint", "")),
+            ("Component Inventory", data.get("component_inventory", "")),
+            ("Design Tokens", data.get("design_tokens", "")),
+        ]
+        parts = []
+        if activity:
+            parts.append(f"**Activity:** `{activity}`")
+        for heading, body in sections:
+            if body:
+                parts.append(f"## {heading}\n{body}")
+        return "\n\n".join(parts)
 
     def __create_fallback_result(self, message: str, completed: bool = False) -> AnalysisResult:
         """

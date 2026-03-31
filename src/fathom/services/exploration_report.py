@@ -67,11 +67,15 @@ class ExplorationReportGenerator:
         # Find all paths to target/exit screens
         paths_to_targets = self._find_all_paths_to_targets()
 
-        # Collect screen translations keyed by visual_hash for KG cross-reference
+        # Collect screen translations keyed by normalized activity (one per unique activity)
+        from fathom.infrastructure.memory.knowledge_graph import normalize_activity
+
         screen_translations: Dict[str, Dict[str, Any]] = {}
         for node in self.kg.nodes.values():
-            if node.rich_description:
-                screen_translations[node.visual_hash] = {
+            norm = normalize_activity(node.activity)
+            if node.rich_description and norm not in screen_translations:
+                screen_translations[norm] = {
+                    "activity": norm,
                     "description": node.description,
                     "rich_description": node.rich_description,
                 }
@@ -328,12 +332,15 @@ class ExplorationReportGenerator:
 
     def _analyze_activities(self) -> Dict[str, Any]:
         """Analyze activity distribution."""
+        from fathom.infrastructure.memory.knowledge_graph import normalize_activity
+
         activity_map: Dict[str, List[str]] = {}
 
         for screen in self.kg.nodes.values():
-            if screen.activity not in activity_map:
-                activity_map[screen.activity] = []
-            activity_map[screen.activity].append(screen.description or screen.visual_hash[:16])
+            norm = normalize_activity(screen.activity)
+            if norm not in activity_map:
+                activity_map[norm] = []
+            activity_map[norm].append(screen.description or screen.visual_hash[:16])
 
         return {
             activity: {
@@ -502,25 +509,203 @@ class ExplorationReportGenerator:
         filename = f"screen_translations_{workflow_id}_{timestamp}.md"
         filepath = app_dir / filename
 
-        lines = [f"# Screen Translations: {workflow_id}\n"]
+        lines = [f"# Activity Design Blueprints: {workflow_id}\n"]
         meta = report.get("metadata", {})
         lines.append(f"**Generated:** {meta.get('generated_at', 'unknown')}")
         lines.append(f"**Package:** `{meta.get('target_package', 'unknown')}`")
-        lines.append(f"**Screens translated:** {len(translations)}\n")
+        lines.append(f"**Activities described:** {len(translations)}\n")
         lines.append("---\n")
 
-        for visual_hash, entry in translations.items():
-            desc = entry["description"] or "Unnamed screen"
-            lines.append(f"### {desc}")
-            lines.append(f"`{visual_hash}`\n")
-            lines.append(entry["rich_description"])
-            lines.append("\n---\n")
+        for activity, entry in translations.items():
+            desc = entry.get("description") or "Unnamed screen"
+            rich = entry.get("rich_description", "")
+
+            # Activity section heading
+            lines.append(f"## {activity}\n")
+            lines.append(f"*{desc}*\n")
+
+            # Split the rich description into the initial observation and
+            # additional observations (separated by "---" + "### Additional Observation").
+            parts = rich.split("\n\n---\n\n### Additional Observation\n")
+
+            # First observation
+            lines.append("### Initial Observation\n")
+            lines.append(parts[0].strip())
+            lines.append("")
+
+            # Additional observations
+            for i, part in enumerate(parts[1:], start=2):
+                lines.append(f"### Observation {i}\n")
+                lines.append(part.strip())
+                lines.append("")
+
+            lines.append("---\n")
 
         with filepath.open("w") as f:
             f.write("\n".join(lines))
 
         logger.info("Screen translations saved to %s", filepath)
+
+        # Also render a PDF alongside the markdown
+        self.save_translations_pdf(
+            report=report,
+            workflow_id=workflow_id,
+            timestamp=timestamp,
+        )
+
         return filepath
+
+    def save_translations_pdf(
+        self,
+        report: Dict[str, Any],
+        workflow_id: str,
+        timestamp: str,
+    ) -> Optional[Path]:
+        """
+        Render screen translations as a styled PDF using reportlab.
+
+        Returns the file path, or None if rendering fails.
+        """
+
+        translations = report.get("screen_translations", {})
+        if not translations:
+            return None
+
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+            from reportlab.lib.units import mm
+            from reportlab.platypus import (
+                Paragraph,
+                SimpleDocTemplate,
+                Spacer,
+            )
+        except ImportError:
+            logger.warning("reportlab not installed — skipping PDF generation")
+            return None
+
+        package: str = report["metadata"].get("target_package", "unknown")
+        app_dir = Path("assets/memory") / package
+        app_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"screen_translations_{workflow_id}_{timestamp}.pdf"
+        filepath = app_dir / filename
+
+        try:
+            doc = SimpleDocTemplate(
+                str(filepath),
+                pagesize=A4,
+                leftMargin=20 * mm,
+                rightMargin=20 * mm,
+                topMargin=15 * mm,
+                bottomMargin=15 * mm,
+            )
+
+            styles = getSampleStyleSheet()
+
+            # Custom styles
+            title_style = ParagraphStyle(
+                "BlueprintTitle",
+                parent=styles["Title"],
+                fontSize=18,
+                spaceAfter=6,
+            )
+            meta_style = ParagraphStyle(
+                "Meta",
+                parent=styles["Normal"],
+                fontSize=9,
+                textColor="#666666",
+                spaceAfter=2,
+            )
+            activity_style = ParagraphStyle(
+                "ActivityHeading",
+                parent=styles["Heading2"],
+                fontSize=13,
+                spaceBefore=14,
+                spaceAfter=4,
+                textColor="#1a1a1a",
+            )
+            obs_style = ParagraphStyle(
+                "ObservationHeading",
+                parent=styles["Heading3"],
+                fontSize=11,
+                spaceBefore=8,
+                spaceAfter=3,
+                textColor="#444444",
+            )
+            body_style = ParagraphStyle(
+                "Body",
+                parent=styles["Normal"],
+                fontSize=9,
+                leading=13,
+                spaceAfter=4,
+            )
+            section_style = ParagraphStyle(
+                "SectionLabel",
+                parent=styles["Normal"],
+                fontSize=9,
+                leading=13,
+                spaceAfter=2,
+                textColor="#0066cc",
+            )
+
+            story: List[Any] = []
+
+            # Title
+            meta = report.get("metadata", {})
+            story.append(Paragraph(f"Activity Design Blueprints: {workflow_id}", title_style))
+            story.append(
+                Paragraph(
+                    f"Package: {meta.get('target_package', 'unknown')} &nbsp;|&nbsp; "
+                    f"Generated: {meta.get('generated_at', 'unknown')} &nbsp;|&nbsp; "
+                    f"Activities: {len(translations)}",
+                    meta_style,
+                )
+            )
+            story.append(Spacer(1, 8 * mm))
+
+            for activity, entry in translations.items():
+                desc = entry.get("description") or "Unnamed screen"
+                rich = entry.get("rich_description", "")
+
+                # Activity heading
+                story.append(Paragraph(activity, activity_style))
+                story.append(Paragraph(f"<i>{desc}</i>", body_style))
+
+                # Split observations
+                parts = rich.split("\n\n---\n\n### Additional Observation\n")
+
+                for idx, part in enumerate(parts):
+                    label = "Initial Observation" if idx == 0 else f"Observation {idx + 1}"
+                    story.append(Paragraph(label, obs_style))
+
+                    # Render each line, highlighting section headers
+                    for line in part.strip().splitlines():
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        if stripped.startswith("## "):
+                            story.append(Paragraph(stripped[3:], section_style))
+                        elif stripped.startswith("**Activity:**"):
+                            continue  # Skip redundant activity line
+                        else:
+                            # Escape XML-sensitive chars for reportlab
+                            safe = (
+                                stripped.replace("&", "&amp;")
+                                .replace("<", "&lt;")
+                                .replace(">", "&gt;")
+                            )
+                            story.append(Paragraph(safe, body_style))
+
+                story.append(Spacer(1, 6 * mm))
+
+            doc.build(story)
+            logger.info("Screen translations PDF saved to %s", filepath)
+            return filepath
+
+        except Exception:
+            logger.warning("PDF generation failed", exc_info=True)
+            return None
 
     def export_report_markdown(self, report: Dict[str, Any]) -> str:
         """Export report as comprehensive human-readable markdown."""
