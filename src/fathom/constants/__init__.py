@@ -34,6 +34,7 @@ EXECUTABLE_ACTION_PREFIXES = (
     "wait ",
     "press ",
     "long press ",
+    "validate ",
 )
 
 VALIDATE_PREFIX = "validate"

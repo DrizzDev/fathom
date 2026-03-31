@@ -129,7 +129,7 @@ class FathomRunner:
     async def run_intent(
         self,
         intent: str,
-        max_steps: int = 50,
+        max_steps: int = 100,
         use_xml: bool = False,
         request_id: Optional[str] = None,
         package_name: Optional[str] = None,

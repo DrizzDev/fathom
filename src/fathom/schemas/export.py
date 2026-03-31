@@ -206,12 +206,18 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                         "Conditional block action_ids must follow the canonical step order."
                     )
 
-        if payload.required_action_ids and Counter(ordered_action_ids) != Counter(
-            payload.required_action_ids
-        ):
-            raise ValueError(
-                "Executable action IDs must match step data exactly (no missing, extra, or duplicated IDs)."
-            )
+        if payload.required_action_ids:
+            required_set = set(payload.required_action_ids)
+            ordered_set = set(ordered_action_ids)
+            missing = required_set - ordered_set
+            extra = ordered_set - required_set
+            # Extra IDs are allowed if they exist in the catalog (e.g. optional validate actions).
+            unexpected = extra - set(payload.action_catalog.keys())
+            if missing or unexpected:
+                raise ValueError(
+                    "Executable action IDs must match step data exactly (no missing or unknown IDs). "
+                    f"missing={missing or 'none'}, unexpected={unexpected or 'none'}"
+                )
 
         for action_id in ordered_action_ids:
             if action_id not in payload.action_catalog:
@@ -246,19 +252,23 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                             "Degenerate duplicate conditional blocks detected for the same condition."
                         )
 
-        # Log when validation distribution is sparse but do not reject — the LLM
-        # may legitimately cover multiple subjects in a single validation statement.
-        if payload.expected_validation_count > 1:
-            total_validations = len(payload.action_validations) + 1  # +1 for final_validation
-            if total_validations < 2:
-                logger.warning(
-                    "Intent has %d validation subjects but only %d validation statement(s) "
-                    "were provided (%d intermediate + 1 final). The final_validation may "
-                    "cover multiple subjects.",
-                    payload.expected_validation_count,
-                    total_validations,
-                    len(payload.action_validations),
-                )
+        # Count all validation lines: catalog validate actions + action_validations + final_validation.
+        validate_action_count = sum(
+            1
+            for aid in ordered_action_ids
+            if payload.action_catalog.get(aid, "").strip().lower().startswith("validate ")
+        )
+        total_validations = validate_action_count + len(payload.action_validations) + 1
+
+        if payload.expected_validation_count > 1 and total_validations < payload.expected_validation_count:
+            logger.warning(
+                "Intent has %d validation subjects but only %d validation line(s) "
+                "were provided (%d catalog + %d intermediate + 1 final).",
+                payload.expected_validation_count,
+                total_validations,
+                validate_action_count,
+                len(payload.action_validations),
+            )
 
         return payload
 
@@ -287,14 +297,18 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
             action_id.strip() for action_id in self.remaining_action_ids if action_id.strip()
         )
 
-        if self.required_action_ids:
-            canonical_order = [
-                action_id.strip() for action_id in self.required_action_ids if action_id.strip()
-            ]
-        else:
-            canonical_order = list(self.action_catalog.keys())
+        # Canonical order uses the full catalog (includes validate actions)
+        # so validate entries get placed at their original trace position.
+        canonical_order = list(self.action_catalog.keys())
 
         rank = {action_id: index for index, action_id in enumerate(canonical_order)}
+
+        # Auto-inject validate catalog entries at their canonical position.
+        # These are not selected by the LLM but must appear in the script.
+        for action_id, entry_desc in self.action_catalog.items():
+            if entry_desc.strip().lower().startswith("validate "):
+                selected_ids.append(action_id)
+
         ordered_selected_ids = sorted(
             dict.fromkeys(selected_ids),
             key=lambda action_id: rank.get(action_id, len(rank)),
@@ -351,7 +365,11 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                 __append_action_validation(action_id)
                 emitted_non_block_action_ids.add(action_id)
 
-        lines.append(self.final_validation.strip())
+        # Only append final_validation if the last line isn't already a validate line
+        # (auto-injected catalog validates may already cover the final check).
+        last_line = lines[-1].strip().lower() if lines else ""
+        if not last_line.startswith("validate "):
+            lines.append(self.final_validation.strip())
         return "\n".join(lines).strip() + "\n"
 
 

@@ -36,20 +36,29 @@ class CoordinateConverter:
         """
         Get center point in pixel coordinates.
 
-        For normalized coordinates, this preserves the gold-standard ambiguity
-        handling when VLM outputs (x, y) as either top-left or center.
+        When bounds have ``width == 0 and height == 0`` (center-point format),
+        (x, y) IS the center — scale directly with no heuristic.
+
+        For bbox format (width/height > 0, e.g. label-snapped pixel bounds),
+        computes the geometric center of the bounding box.
         """
 
         if bounds.system == "pixel" or not bounds.is_normalized:
-            x, y, width, height = bounds.to_pixels(
-                screen_width=self.__width, screen_height=self.__height
-            )
-            return x + width // 2, y + height // 2
+            x_px, y_px, w_px, h_px = self.to_pixels(bounds=bounds)
+            return x_px + w_px // 2, y_px + h_px // 2
 
+        x, y, w, h = bounds.x, bounds.y, bounds.width, bounds.height
+
+        # Center-point format: x, y IS the center already.
+        if w == 0 and h == 0:
+            cx = max(0, min(int(x * self.__width / 1000), self.__width - 1))
+            cy = max(0, min(int(y * self.__height / 1000), self.__height - 1))
+            return cx, cy
+
+        # Bounding box format (label-snapped): compute center from bbox
         x_px, y_px, width_px, height_px = bounds.to_pixels(
             screen_width=self.__width, screen_height=self.__height
         )
-        # Clamp to the last on-screen pixel (0..width-1 / 0..height-1).
         max_x = max(0, self.__width - 1)
         max_y = max(0, self.__height - 1)
         center_x = max(0, min(x_px + width_px // 2, max_x))
@@ -67,13 +76,13 @@ class CoordinateConverter:
         """
 
         x, y, width, height = self.to_pixels(bounds=bounds)
-        center_x, center_y = x + width // 2, y + height // 2
+        center_x, center_y = self.center_to_pixels(bounds=bounds)
 
         swipe_policy = self.__configuration.interaction.policy.swipe
         scroll_policy = self.__configuration.interaction.policy.scroll
 
-        distance_x = int(width * swipe_policy.distance_ratio)
-        distance_y = int(height * scroll_policy.distance_ratio)
+        distance_x = max(450, int(width * swipe_policy.distance_ratio))
+        distance_y = max(450, int(height * scroll_policy.distance_ratio))
 
         if direction == "up":
             return center_x, center_y + distance_y // 2, center_x, center_y - distance_y // 2

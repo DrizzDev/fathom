@@ -7,7 +7,10 @@ from fathom.core.exceptions import ScriptExportError
 from fathom.core.prompts.export import ExportPromptBuilder
 from fathom.core.prompts.factory import PromptFactory
 from fathom.core.prompts.tools import ToolRegistry
-from fathom.core.services.exporter.action_catalog import build_action_catalog_from_steps
+from fathom.core.services.exporter.action_catalog import (
+    CatalogEntry,
+    build_action_catalog_from_steps,
+)
 from fathom.core.services.exporter.script_text import normalize_script_output
 from fathom.core.services.exporter.structured_export import contains_goal_validation
 from fathom.core.services.exporter.trace_payload import build_export_payload
@@ -23,6 +26,71 @@ from fathom.schemas.gemini_tools import EmitScriptArgs
 from fathom.schemas.steps import StepResult
 
 logger = getLogger(__name__)
+
+
+async def _collapse_consecutive_validates(
+    llm: LLMPort,
+    action_catalog: Dict[str, CatalogEntry],
+) -> Dict[str, CatalogEntry]:
+    """
+    Collapse consecutive validate entries in the catalog by asking the LLM
+    to summarize their subjects into a single validation line.
+    """
+
+    ordered_ids = list(action_catalog.keys())
+    if not ordered_ids:
+        return action_catalog
+
+    # Identify runs of consecutive validate entries.
+    runs: list[list[str]] = []
+    current_run: list[str] = []
+    for aid in ordered_ids:
+        if action_catalog[aid].action_kind == "validate":
+            current_run.append(aid)
+        else:
+            if len(current_run) > 1:
+                runs.append(current_run)
+            current_run = []
+    if len(current_run) > 1:
+        runs.append(current_run)
+
+    if not runs:
+        return action_catalog
+
+    # For each run, ask the LLM to summarize the subjects into one line.
+    result = dict(action_catalog)
+    for run in runs:
+        subjects = [
+            action_catalog[aid].description.removeprefix("Validate ").strip()
+            for aid in run
+        ]
+        prompt = (
+            "Combine these validation checks into ONE short comma-separated noun phrase. "
+            "Strip filler words like 'I can see', 'the presence of', 'at the bottom'. "
+            "Keep only the element names and their state. Max 12 words total. "
+            "Return ONLY the phrase (no 'Validate' prefix, no sentences).\n\n"
+            "Example input:\n"
+            "- the presence of categories in the top row\n"
+            "- home icon is visible at the bottom nav\n"
+            "- profile icon in the top right corner\n"
+            "Example output: categories, home icon, and profile icon visible\n\n"
+            "Input:\n"
+            + "\n".join(f"- {s}" for s in subjects)
+        )
+        try:
+            response = await llm.generate(use_cache=False, prompt=[prompt])
+            summary = (response.text or "").strip()
+            if summary:
+                # Keep the first ID with merged description, remove the rest.
+                result[run[0]] = CatalogEntry(
+                    description=f"Validate {summary}", action_kind="validate"
+                )
+                for aid in run[1:]:
+                    del result[aid]
+        except Exception as exc:
+            logger.warning("Failed to collapse validate entries: %s", exc)
+
+    return result
 
 
 class ScriptExporter:
@@ -73,8 +141,16 @@ class ScriptExporter:
             package_name=package_name,
             intent=(intent or goal_state),
         )
+
+        # Collapse consecutive validate entries via LLM summarization.
+        action_catalog = await _collapse_consecutive_validates(
+            llm=self.__llm, action_catalog=action_catalog
+        )
+
         action_catalog_lines = [
-            f"{action_id}: {entry.description}" for action_id, entry in action_catalog.items()
+            f"{action_id}: {entry.description}"
+            for action_id, entry in action_catalog.items()
+            if entry.action_kind != "validate"
         ]
         require_if_block = False
 

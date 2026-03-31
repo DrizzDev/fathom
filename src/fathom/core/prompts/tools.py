@@ -98,16 +98,19 @@ class ToolRegistry:
                                 },
                                 "bbox": {
                                     "type": "OBJECT",
-                                    "description": "Bounding box for the action target. x,y are TOP-LEFT and width,height extend right/down. Use normalized values (0-1000) by default; use pixel values only with coord_system='pixel'.",
+                                    "description": (
+                                        "Target coordinates. x,y are the CENTER of the target element. "
+                                        "REQUIRED for tap, type, swipe_*, and long_press actions. "
+                                        "Use normalized values (0-1000) by default; "
+                                        "use pixel values only with coord_system='pixel'."
+                                    ),
                                     "properties": {
                                         "x": {"type": "INTEGER"},
                                         "y": {"type": "INTEGER"},
-                                        "width": {"type": "INTEGER"},
-                                        "height": {"type": "INTEGER"},
                                         "coord_system": {
                                             "type": "STRING",
                                             "enum": ["normalized", "pixel"],
-                                            "description": "Coordinate system for bbox values. Default is 'normalized' (0-1000). Set 'pixel' only when using raw pixel coordinates.",
+                                            "description": "Coordinate system. Default is 'normalized' (0-1000).",
                                         },
                                     },
                                 },
@@ -222,7 +225,13 @@ class ToolRegistry:
                                 },
                                 "validation_subject": {
                                     "type": "STRING",
-                                    "description": "For validate actions: what specifically is being validated (e.g., 'login status', 'banner visibility', 'item alignment'). Be specific about the validation target.",
+                                    "description": (
+                                        "REQUIRED for validate actions. A short noun phrase (max 8 words) naming "
+                                        "the element or state being checked. NO full sentences, NO 'I can see', "
+                                        "NO 'the presence of', NO locations like 'at the bottom'. "
+                                        "GOOD: 'categories visible', 'home button selected', 'footer text visible'. "
+                                        "BAD: 'I can clearly see the footer at the bottom of the screen'."
+                                    ),
                                 },
                                 "target_is_generic": {
                                     "type": "BOOLEAN",
@@ -262,7 +271,7 @@ class ToolRegistry:
                                     ),
                                 },
                             },
-                            "required": ["action_type", "rationale", "is_valid"],
+                            "required": ["action_type", "bbox", "rationale", "is_valid"],
                         },
                     },
                     "goal_completed": {

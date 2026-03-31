@@ -415,13 +415,18 @@ class ToolResponseParser:
         bounds = None
         if data.bbox:
             try:
-                bounds = Bounds(
-                    x=data.bbox.x,
-                    y=data.bbox.y,
-                    width=data.bbox.width,
-                    height=data.bbox.height,
-                    coord_system=data.bbox.coord_system,
-                )
+                # Treat all-zero bbox as "no bounds" (non-interactive actions
+                # send {x:0, y:0} as a placeholder when bbox is required).
+                if data.bbox.x == 0 and data.bbox.y == 0:
+                    bounds = None
+                else:
+                    bounds = Bounds(
+                        x=data.bbox.x,
+                        y=data.bbox.y,
+                        width=data.bbox.width,
+                        height=data.bbox.height,
+                        coord_system=data.bbox.coord_system,
+                    )
             except Exception:
                 logger.warning("Ignoring malformed bbox payload from GeminiBBox: %s", data.bbox)
 

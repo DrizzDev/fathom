@@ -192,7 +192,7 @@ class GeminiPromptBuilder(PromptBuilder):
             "COORDINATE MODE: NORMALIZED by default.\n"
             "Use normalized coordinates (0-1000) in 'bbox' unless you explicitly set "
             "coord_system='pixel'.\n"
-            "When using bbox, x/y are TOP-LEFT and width/height extend right/down."
+            "When using bbox, x/y are the CENTER of the target element."
         )
 
     def __build_runtime_brief(self, intent: str, hints: Dict[str, Any]) -> str:

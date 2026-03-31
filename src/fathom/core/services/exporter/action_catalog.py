@@ -187,6 +187,15 @@ def build_action_catalog_from_steps(
             )
             continue
 
+        # For validate actions, ensure we have a meaningful subject.
+        if action_type_val == "validate" and not validation_subject:
+            validation_subject = (
+                _get_field(step, "condition")
+                or _get_field(step, "validation_reason")
+                or _get_field(step, "rationale")
+                or export_target
+            )
+
         description = Normalizer.action(
             action_type=action_type_val,
             target=export_target,
@@ -195,8 +204,8 @@ def build_action_catalog_from_steps(
             validation_subject=validation_subject,
         )
 
-        lowered = description.lower()
-        if lowered.startswith(VALIDATE_PREFIX):
+        # Skip "complete" actions — they are goal signals, not executable steps.
+        if action_type_val == "complete":
             i += 1
             continue
 
@@ -218,7 +227,10 @@ def build_action_catalog_from_steps(
     for index, entry in enumerate(executable_entries, start=1):
         action_id = f"A{index}"
         action_catalog[action_id] = entry
-        required_action_ids.append(action_id)
+        # Validate actions are available in the catalog but not required —
+        # the LLM may cover them via action_validations or final_validation.
+        if entry.action_kind != "validate":
+            required_action_ids.append(action_id)
         if required_open_app_id is None and entry.action_kind == "open_app":
             required_open_app_id = action_id
 

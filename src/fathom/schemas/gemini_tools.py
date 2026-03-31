@@ -126,25 +126,27 @@ class EmitScriptArgs(BaseModel):
         return cleaned
 
     @model_validator(mode="after")
-    def _reject_duplicates_and_empty_blocks(self) -> "EmitScriptArgs":
-        # Reject duplicate action IDs in remaining_action_ids.
+    def _deduplicate_and_clean_blocks(self) -> "EmitScriptArgs":
+        # Deduplicate remaining_action_ids (preserve order).
         seen: set[str] = set()
+        deduped: list[str] = []
         for aid in self.remaining_action_ids:
-            if aid in seen:
-                raise ValueError(f"Duplicate action ID '{aid}' in remaining_action_ids.")
-            seen.add(aid)
+            if aid not in seen:
+                seen.add(aid)
+                deduped.append(aid)
+        self.remaining_action_ids = deduped
 
-        # Reject empty conditional blocks and duplicate IDs within blocks.
+        # Deduplicate within conditional blocks; reject empty blocks.
         for i, block in enumerate(self.conditional_blocks):
             if not block.action_ids:
                 raise ValueError(f"conditional_blocks[{i}] has no action_ids; remove empty blocks.")
             block_seen: set[str] = set()
+            block_deduped: list[str] = []
             for aid in block.action_ids:
-                if aid in block_seen:
-                    raise ValueError(
-                        f"Duplicate action ID '{aid}' in conditional_blocks[{i}].action_ids."
-                    )
-                block_seen.add(aid)
+                if aid not in block_seen:
+                    block_seen.add(aid)
+                    block_deduped.append(aid)
+            block.action_ids = block_deduped
 
         return self
 
@@ -156,10 +158,10 @@ class GeminiBBox(BaseModel):
     Downstream we map this into the core Bounds model in actions.py.
     """
 
-    x: int = Field(0, description="Top-left X coordinate")
-    y: int = Field(0, description="Top-left Y coordinate")
-    width: int = Field(..., gt=0, description="Bounding box width")
-    height: int = Field(..., gt=0, description="Bounding box height")
+    x: int = Field(0, description="Center X coordinate")
+    y: int = Field(0, description="Center Y coordinate")
+    width: int = Field(0, ge=0, description="Width (0 for center-point predictions)")
+    height: int = Field(0, ge=0, description="Height (0 for center-point predictions)")
     coord_system: CoordSystem = Field(
         "normalized",
         description="Coordinate system for bbox (normalized or pixel)",
@@ -375,6 +377,13 @@ class ExecuteAction(BaseModel):
             raise ValueError(
                 "wait_subject is required for action_type='wait'. "
                 "Describe what we're waiting for (e.g., 'app to load', 'search results to appear')."
+            )
+
+        # validation_subject is required for validate actions.
+        if at == "validate" and not (self.validation_subject or "").strip():
+            raise ValueError(
+                "validation_subject is required for action_type='validate'. "
+                "Describe what is being validated (e.g., 'login status', 'cart is empty')."
             )
 
         return self

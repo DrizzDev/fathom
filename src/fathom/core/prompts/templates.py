@@ -6,8 +6,8 @@ from types import MappingProxyType
 COORD_RULES = (
     "COORDINATE SYSTEM (CRITICAL):\n"
     "- GROUNDING: IF the target exists in the Element Manifest, you MUST include its 'label_id' (e.g., label_id='4').\n"
-    "- BBOX SHAPE: x,y are TOP-LEFT; width,height extend right/down.\n"
-    "- DEFAULT: Use normalized coordinates (0-1000) for bbox.\n"
+    "- COORDINATES: x,y are the CENTER of the target element.\n"
+    "- DEFAULT: Use normalized coordinates (0-1000). 0 = left/top edge, 1000 = right/bottom edge.\n"
     "- PIXEL MODE: Use raw pixels ONLY when you explicitly set coord_system='pixel'.\n"
     "- COORD_SYSTEM CONSISTENCY: coord_system must match the numbers you provide."
 )
@@ -16,10 +16,10 @@ CONFIDENCE_RULES = "CONFIDENCE: 0.9+ clear match, 0.7-0.89 certain. Below 0.7 in
 
 # Bbox precision rules (Immutable)
 _PRECISION_RULES_RAW = {
-    "text": "TEXT: Bbox wraps ONLY visible text pixels. Exclude padding/margins/icons.",
-    "icon": "ICONS/BUTTONS: Snap bbox TIGHTLY to visible edges. Exclude whitespace/containers.",
-    "input": "INPUTS: Wrap editable area only (borders/background). Exclude labels/icons.",
-    "list": "LIST ITEMS: Wrap ONLY the specific item's text (not entire list or row).",
+    "text": "TEXT: Target the CENTER of the visible text region. Exclude padding/margins/icons.",
+    "icon": "ICONS/BUTTONS: Target the CENTER of the visible icon/button. Exclude whitespace/containers.",
+    "input": "INPUTS: Target the CENTER of the editable area. Exclude labels/icons.",
+    "list": "LIST ITEMS: Target the CENTER of the specific item's text (not entire list or row).",
 }
 PRECISION_RULES = MappingProxyType(_PRECISION_RULES_RAW)
 
@@ -27,7 +27,7 @@ PRECISION_RULES = MappingProxyType(_PRECISION_RULES_RAW)
 _ACTION_RULES_RAW = {
     "scroll": (
         "SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
-        "Bbox wraps scrollable region only (exclude fixed headers/footers). "
+        "Target the center of the scrollable region (exclude fixed headers/footers). "
         "Do NOT use 'scroll' as an action_type; always use the appropriate swipe_* variant."
     ),
     "wait": (
@@ -46,7 +46,7 @@ _ACTION_RULES_RAW = {
     "type": (
         "CRITICAL - TAP BEFORE TYPE: Always tap input first to gain focus. "
         "Then generate 'type' with text_to_type. "
-        "Both target SAME bbox. text_to_type is a literal value (no prefixes)."
+        "Both target SAME coordinates. text_to_type is a literal value (no prefixes)."
     ),
 }
 ACTION_RULES = MappingProxyType(_ACTION_RULES_RAW)
@@ -84,7 +84,7 @@ COMMON_RULES = f"""
 {UI_RULES["overlay"]}
 {UI_RULES["goal_lock"]}
 
-BBOX PRECISION:
+TARGET PRECISION:
 - {PRECISION_RULES["text"]}
 - {PRECISION_RULES["icon"]}
 - {PRECISION_RULES["input"]}
