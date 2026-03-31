@@ -260,7 +260,10 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
         )
         total_validations = validate_action_count + len(payload.action_validations) + 1
 
-        if payload.expected_validation_count > 1 and total_validations < payload.expected_validation_count:
+        if (
+            payload.expected_validation_count > 1
+            and total_validations < payload.expected_validation_count
+        ):
             logger.warning(
                 "Intent has %d validation subjects but only %d validation line(s) "
                 "were provided (%d catalog + %d intermediate + 1 final).",

@@ -61,8 +61,7 @@ async def _collapse_consecutive_validates(
     result = dict(action_catalog)
     for run in runs:
         subjects = [
-            action_catalog[aid].description.removeprefix("Validate ").strip()
-            for aid in run
+            action_catalog[aid].description.removeprefix("Validate ").strip() for aid in run
         ]
         prompt = (
             "Combine these validation checks into ONE short comma-separated noun phrase. "
@@ -74,12 +73,11 @@ async def _collapse_consecutive_validates(
             "- home icon is visible at the bottom nav\n"
             "- profile icon in the top right corner\n"
             "Example output: categories, home icon, and profile icon visible\n\n"
-            "Input:\n"
-            + "\n".join(f"- {s}" for s in subjects)
+            "Input:\n" + "\n".join(f"- {s}" for s in subjects)
         )
         try:
             response = await llm.generate(use_cache=False, prompt=[prompt])
-            summary = (response.text or "").strip()
+            summary = (response.content or "").strip()
             if summary:
                 # Keep the first ID with merged description, remove the rest.
                 result[run[0]] = CatalogEntry(

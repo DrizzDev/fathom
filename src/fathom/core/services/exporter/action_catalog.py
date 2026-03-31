@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional, Sequence, Union
 from fathom.core.services.exporter.constants import (
     EXECUTABLE_ACTION_PREFIXES,
     SWIPE_ACTIONS,
-    VALIDATE_PREFIX,
 )
 from fathom.core.services.exporter.step_record import (
     get_action_type,
