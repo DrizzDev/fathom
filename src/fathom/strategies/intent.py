@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import inspect
 import time
@@ -115,6 +116,7 @@ class IntentStrategy:
         from fathom.runtime.executor import GraphExecutor
 
         start_time = time.time()
+        prewarm_task: Optional["asyncio.Task[None]"] = None
 
         try:
             async with AsyncExitStack() as stack:
@@ -125,6 +127,9 @@ class IntentStrategy:
                     checkpointer=checkpointer,
                     interrupt_before=self.__interrupt_nodes,
                 )
+
+                # Prewarm prompt cache concurrently with decomposition to reduce first-call latency.
+                prewarm_task = asyncio.create_task(self.__graph_context.vision.prewarm())
 
                 logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
                 decomposer = IntentDecomposer.with_configuration(
@@ -217,10 +222,41 @@ class IntentStrategy:
                 is_cancelled=is_cancelled,
             )
         finally:
+            await self.__cleanup_background_task(task=prewarm_task, task_name="planner prewarm")
+
             try:
                 await self.__graph_context.shutdown()
             except Exception as shutdown_error:
                 logger.warning(f"[intent-strategy] graph context shutdown failed: {shutdown_error}")
+
+    async def __cleanup_background_task(
+        self,
+        *,
+        task_name: str,
+        task: Optional["asyncio.Task[Any]"],
+    ) -> None:
+        """
+        Finish or cancel a background task used by the intent strategy.
+        """
+
+        if task is None:
+            return
+
+        if task.done():
+            try:
+                await task
+            except Exception as exception:
+                logger.warning("Background %s task finished with error: %s", task_name, exception)
+            return
+
+        task.cancel()
+
+        try:
+            await task
+        except asyncio.CancelledError:
+            logger.warning("Background %s task cancelled", task_name)
+        except Exception as exception:
+            logger.warning("Background %s task failed during cleanup: %s", task_name, exception)
 
     def __is_successful_completion(
         self,

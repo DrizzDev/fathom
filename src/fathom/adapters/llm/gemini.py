@@ -316,6 +316,29 @@ class GeminiLLM(LLMPort):
 
         raise VisionError("Unreachable")
 
+    async def prewarm(
+        self,
+        *,
+        system_instruction: Optional[str],
+        tools: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Prewarm provider-side prompt cache before the first LLM call.
+        """
+
+        if not system_instruction or not self.__cache:
+            return
+
+        if not self.__configuration.use_cache:
+            return
+
+        declarations = tools.get("function_declarations") if tools is not None else None
+
+        await self.__cache.get_cached_content(
+            tools=declarations,
+            system_instruction=system_instruction,
+        )
+
     async def cleanup(self) -> None:
         """
         Cleanup resources.

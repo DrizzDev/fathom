@@ -83,11 +83,21 @@ class ADBDevice(DevicePort):
 
     async def type(self, *, text: str) -> ActionResult:
         """
-        Type text on device.
+        Type text on device character-by-character to prevent ADB input drops.
         """
 
-        escaped_text = self.__escape(text=text)
-        return await self.__shell(command=f'input text "{escaped_text}"')
+        last_result = ActionResult(success=True, duration=0)
+
+        for character in text:
+            escaped = self.__escape(text=character)
+
+            if (result := await self.__shell(command=f'input text "{escaped}"')).success is False:
+                return result
+
+            last_result = result
+            await asyncio.sleep(0.01)
+
+        return last_result
 
     async def swipe(
         self,
