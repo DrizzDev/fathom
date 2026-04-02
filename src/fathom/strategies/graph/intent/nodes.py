@@ -19,6 +19,8 @@ from fathom.constants.prompts import (
     VERIFICATION_SYSTEM,
     VERIFICATION_USER_TEMPLATE,
 )
+from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
+from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.exceptions import FathomError
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
