@@ -33,6 +33,7 @@ class LLMPort(ABC):
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
         conversation_history: Optional[Sequence[ConversationTurn]] = None,
+        thinking_level: Optional[str] = None,
     ) -> GenerateResult:
         """
         Generate response from LLM.
@@ -44,6 +45,9 @@ class LLMPort(ABC):
             conversation_history: Optional prior turns for multi-turn feedback loops.
                 Each entry is a provider-neutral ConversationTurn.
                 When provided, prompt is appended as the final user turn.
+            thinking_level: Optional override for model thinking depth
+                (e.g. "minimal", "low", "medium", "high"). When None, uses
+                the configured default.
 
         Returns:
             GenerateResult with content and tool calls

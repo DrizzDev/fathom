@@ -422,7 +422,9 @@ class ExecuteAction(BaseModel):
         if self.overlay_detected and not conditional_type:
             conditional_type = "blocker"
 
-        # For all other conditional actions, require explicit condition text.
+        # Condition text is mandatory when is_conditional=True.
+        # The validation error feeds back to the LLM via multi-turn
+        # retry so it can correct its output.
         if is_conditional and not condition:
             raise ValueError(
                 "condition is required when is_conditional=True. "
