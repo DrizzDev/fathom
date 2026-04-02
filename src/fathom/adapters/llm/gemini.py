@@ -4,17 +4,33 @@ import asyncio
 import random
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union, cast
+from typing import Any, Dict, Mapping, Optional, Sequence, Union, cast
 
 from google.genai import Client, types
 from google.oauth2 import service_account
 
 from fathom.adapters.llm.cache import CacheService
+from fathom.constants.llm import (
+    GEMINI_CANCELLED_ERROR_MARKERS,
+    GEMINI_CANCELLED_STATUS_CODE,
+    GEMINI_GENERIC_RETRY_JITTER_SECONDS,
+    GEMINI_MAX_TRANSIENT_RETRY_DELAY_SECONDS,
+    GEMINI_PROVIDER_OVERLOAD_ERROR_MARKERS,
+    GEMINI_PROVIDER_OVERLOADED_STATUS_CODE,
+    GEMINI_RATE_LIMIT_ERROR_MARKERS,
+    GEMINI_RATE_LIMIT_STATUS_CODE,
+    GEMINI_RETRY_AFTER_JITTER_SECONDS,
+    GEMINI_STALE_CACHE_NAME_MARKERS,
+    GEMINI_STALE_CACHE_STATE_MARKERS,
+    GEMINI_STALE_CACHE_STATUS_CODE,
+    GEMINI_TRANSIENT_RETRY_JITTER_SECONDS,
+)
 from fathom.core.exceptions import VisionError
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.conversation import ConversationTurn
+from fathom.schemas.llm import GeminiExceptionKind, GeminiExceptionMetadata
 from fathom.schemas.results import GenerateResult
 
 logger = getLogger(__name__)
@@ -275,46 +291,76 @@ class GeminiLLM(LLMPort):
                 return GenerateResult(content=content, tool_calls=tool_calls, metrics=metrics)
 
             except Exception as exception:
-                error_msg = str(exception)
-                is_quota_error = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
-                lower_error = error_msg.lower()
-                stale_cached_content = (
-                    active_cache_name is not None
-                    and (
-                        "cached content" in lower_error
-                        or "cached_content" in lower_error
-                        or "cachedcontent" in lower_error
-                    )
-                    and ("not found" in lower_error or "invalid" in lower_error)
+                metadata = self.__build_exception_metadata(
+                    exception=exception,
+                    cache_name=active_cache_name,
+                )
+                self.__log_generation_exception(
+                    attempt=attempt,
+                    metadata=metadata,
+                    max_retries=max_retries,
+                    cache_name=active_cache_name,
                 )
 
-                if stale_cached_content:
-                    logger.warning(
-                        "Stale cached content detected (%s); retrying without cache.",
-                        active_cache_name,
-                    )
-                    if self.__cache and active_cache_name is not None:
-                        await self.__cache.invalidate_cache_name(cache_name=active_cache_name)
-                    active_cache_name = None
+                if metadata.kind == GeminiExceptionKind.STALE_CACHED_CONTENT:
+                    active_cache_name = await self.__reset_stale_cache(cache_name=active_cache_name)
                     continue
+
+                if metadata.kind == GeminiExceptionKind.CANCELLED:
+                    raise VisionError(f"LLM cancelled: {exception}") from exception
 
                 if attempt == max_retries:
                     raise VisionError(f"LLM fail: {exception}") from exception
 
-                if is_quota_error:
+                delay = self.__retry_delay(attempt=attempt, metadata=metadata)
+                if delay is not None:
                     logger.warning(
-                        f"Quota exceeded (429). Pausing before retry {attempt + 1}/{max_retries}..."
+                        "Gemini transient failure (kind=%s, status=%s). Retrying in %.2fs (%d/%d).",
+                        metadata.kind,
+                        metadata.status_code,
+                        delay,
+                        attempt + 1,
+                        max_retries,
                     )
-                    jitter = random.random() * 2.0  # nosec
-                    # Use configured backoff for rate limits
-                    delay = (self.__configuration.rate_limit_backoff * (attempt + 1)) + jitter
                 else:
-                    jitter = random.random() * 0.5  # nosec
+                    jitter = random.random() * GEMINI_GENERIC_RETRY_JITTER_SECONDS  # nosec
                     delay = (self.__configuration.retry_delay * (2**attempt)) + jitter
 
                 await asyncio.sleep(delay=delay)
 
         raise VisionError("Unreachable")
+
+    async def __reset_stale_cache(self, *, cache_name: Optional[str]) -> Optional[str]:
+        """
+        Invalidate the active cached content and continue uncached.
+        """
+
+        logger.warning(
+            "Stale cached content detected (%s); retrying without cache.",
+            cache_name,
+        )
+
+        if self.__cache and cache_name is not None:
+            await self.__cache.invalidate_cache_name(cache_name=cache_name)
+
+        return None
+
+    def __retry_delay(self, *, attempt: int, metadata: GeminiExceptionMetadata) -> Optional[float]:
+        """
+        Resolve the retry delay for transient provider failures.
+        """
+
+        if metadata.kind not in {
+            GeminiExceptionKind.RATE_LIMITED,
+            GeminiExceptionKind.PROVIDER_OVERLOADED,
+        }:
+            return None
+
+        return self.__compute_transient_retry_delay(
+            attempt=attempt,
+            retry_after_seconds=metadata.retry_after_seconds,
+            rate_limited=metadata.kind == GeminiExceptionKind.RATE_LIMITED,
+        )
 
     async def prewarm(
         self,
@@ -346,6 +392,218 @@ class GeminiLLM(LLMPort):
 
         if self.__cache:
             await self.__cache.delete_cache()
+
+    def __build_exception_metadata(
+        self, *, exception: Exception, cache_name: Optional[str]
+    ) -> GeminiExceptionMetadata:
+        """
+        Normalize a Gemini exception into retry and cache-recovery metadata.
+        """
+
+        message = str(exception)
+        status_code = self.__extract_status_code(exception=exception)
+        retry_after_seconds = self.__extract_retry_after_seconds(exception=exception)
+
+        text = message.casefold()
+        kind = GeminiExceptionKind.GENERIC
+
+        if self.__is_stale_cached_content_error(
+            text=text,
+            cache_name=cache_name,
+            status_code=status_code,
+        ):
+            kind = GeminiExceptionKind.STALE_CACHED_CONTENT
+        elif self.__is_cancelled_error(status_code=status_code, text=text):
+            kind = GeminiExceptionKind.CANCELLED
+
+        elif self.__is_rate_limit_error(status_code=status_code, text=text):
+            kind = GeminiExceptionKind.RATE_LIMITED
+
+        elif self.__is_provider_overloaded_error(status_code=status_code, text=text):
+            kind = GeminiExceptionKind.PROVIDER_OVERLOADED
+
+        return GeminiExceptionMetadata(
+            kind=kind,
+            message=message,
+            status_code=status_code,
+            exception_type=type(exception).__name__,
+            retry_after_seconds=retry_after_seconds,
+        )
+
+    def __log_generation_exception(
+        self,
+        *,
+        attempt: int,
+        max_retries: int,
+        cache_name: Optional[str],
+        metadata: GeminiExceptionMetadata,
+    ) -> None:
+        """
+        Log the full provider exception with normalized metadata for later diagnosis.
+        """
+
+        logger.warning(
+            (
+                "Gemini request failed: type=%s kind=%s status=%s retry_after=%s "
+                "attempt=%d/%d cache_name=%s message=%s"
+            ),
+            metadata.exception_type,
+            metadata.kind,
+            metadata.status_code,
+            metadata.retry_after_seconds,
+            attempt + 1,
+            max_retries + 1,
+            cache_name,
+            metadata.message,
+            exc_info=True,
+        )
+
+    @staticmethod
+    def __extract_status_code(*, exception: Exception) -> Optional[int]:
+        """
+        Extract an HTTP-style status code from a Gemini SDK exception when available.
+        """
+
+        status_code = getattr(exception, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code
+
+        code = getattr(exception, "code", None)
+        if isinstance(code, int):
+            return code
+
+        response = getattr(exception, "response", None)
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int):
+            return response_status
+
+        return None
+
+    @staticmethod
+    def __extract_retry_after_seconds(*, exception: Exception) -> Optional[float]:
+        """
+        Extract a Retry-After delay from the provider response when present.
+        """
+
+        response = getattr(exception, "response", None)
+        headers = getattr(response, "headers", None)
+
+        if not isinstance(headers, Mapping):
+            return None
+
+        if (retry_after := headers.get("retry-after")) is None:
+            return None
+
+        try:
+            return max(float(retry_after), 0.0)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def __contains_error_marker(*, text: str, markers: Sequence[str]) -> bool:
+        """
+        Determine whether a normalized provider message contains any known marker.
+        """
+
+        return any(marker in text for marker in markers)
+
+    @staticmethod
+    def __is_rate_limit_error(*, status_code: Optional[int], text: str) -> bool:
+        """
+        Determine whether the provider rejected the request due to rate limiting.
+        """
+
+        if status_code is not None:
+            return status_code == GEMINI_RATE_LIMIT_STATUS_CODE
+
+        return GeminiLLM.__contains_error_marker(
+            text=text,
+            markers=GEMINI_RATE_LIMIT_ERROR_MARKERS,
+        )
+
+    @staticmethod
+    def __is_provider_overloaded_error(
+        *,
+        status_code: Optional[int],
+        text: str,
+    ) -> bool:
+        """
+        Determine whether the provider is temporarily overloaded.
+        """
+
+        if status_code is not None:
+            return status_code == GEMINI_PROVIDER_OVERLOADED_STATUS_CODE
+
+        return GeminiLLM.__contains_error_marker(
+            text=text,
+            markers=GEMINI_PROVIDER_OVERLOAD_ERROR_MARKERS,
+        )
+
+    @staticmethod
+    def __is_cancelled_error(*, status_code: Optional[int], text: str) -> bool:
+        """
+        Determine whether the provider request was cancelled upstream.
+        """
+
+        if status_code is not None:
+            return status_code == GEMINI_CANCELLED_STATUS_CODE
+
+        return GeminiLLM.__contains_error_marker(
+            text=text,
+            markers=GEMINI_CANCELLED_ERROR_MARKERS,
+        )
+
+    def __compute_transient_retry_delay(
+        self,
+        *,
+        attempt: int,
+        rate_limited: bool,
+        retry_after_seconds: Optional[float],
+    ) -> float:
+        """
+        Compute a backoff delay for provider throttling or overload conditions.
+        """
+
+        if retry_after_seconds is not None:
+            jitter = random.random() * GEMINI_RETRY_AFTER_JITTER_SECONDS  # nosec
+            return float(retry_after_seconds + jitter)
+
+        backoff_base = (
+            float(self.__configuration.rate_limit_backoff)
+            if rate_limited
+            else max(float(self.__configuration.rate_limit_backoff) / 2.0, 1.0)
+        )
+        jitter = random.random() * GEMINI_TRANSIENT_RETRY_JITTER_SECONDS  # nosec
+
+        return float(
+            min(
+                backoff_base * (2**attempt),
+                GEMINI_MAX_TRANSIENT_RETRY_DELAY_SECONDS,
+            )
+            + jitter
+        )
+
+    @staticmethod
+    def __is_stale_cached_content_error(
+        *, text: str, cache_name: Optional[str], status_code: Optional[int]
+    ) -> bool:
+        """
+        Determine whether the provider rejected the currently attached cached content.
+        """
+
+        if cache_name is None:
+            return False
+
+        if status_code is not None and status_code != GEMINI_STALE_CACHE_STATUS_CODE:
+            return False
+
+        return GeminiLLM.__contains_error_marker(
+            text=text,
+            markers=GEMINI_STALE_CACHE_NAME_MARKERS,
+        ) and GeminiLLM.__contains_error_marker(
+            text=text,
+            markers=GEMINI_STALE_CACHE_STATE_MARKERS,
+        )
 
     @staticmethod
     def __to_gemini_content(turn: ConversationTurn) -> types.Content:

@@ -69,7 +69,14 @@ class TestRunRequest(unittest.TestCase):
                 realignment=RealignmentPolicy(budget=10),
                 exploration_configuration={"max_steps": 25},
                 intent_configuration={"max_steps": 25, "use_xml_grounding": True},
-                execution_configuration={"max_retries": 3, "stability_wait": 0.5},
+                execution_configuration={
+                    "max_retries": 3,
+                    "stability_wait": 0.5,
+                    "workflow": {
+                        "intent": {"heartbeat_seconds": 240, "timeout_floor": 45},
+                        "exploration": {"heartbeat_seconds": 90, "timeout_floor": 35},
+                    },
+                },
             ),
             metadata=RunMetadata(provider_name="LOCAL_CLIENT", device_name="iPhone 16"),
         )
@@ -88,6 +95,12 @@ class TestRunRequest(unittest.TestCase):
 
         self.assertEqual(payload["objective"]["mode"], ExecutionMode.INTENT)
         self.assertEqual(payload["interaction"]["realignment"]["budget"], 10)
+        self.assertEqual(
+            payload["interaction"]["execution_configuration"]["workflow"]["intent"][
+                "heartbeat_seconds"
+            ],
+            240,
+        )
         self.assertEqual(payload["resources"]["targets"][0]["kind"], TargetKind.DEVICE)
         self.assertEqual(payload["runtime"]["signal_type"], SignalAdapterType.INTERACTIVE)
 
@@ -129,3 +142,7 @@ class TestRunRequest(unittest.TestCase):
         self.assertFalse(request.objective.use_xml)
         self.assertEqual(request.objective.mode, ExecutionMode.EXPLORATION)
         self.assertEqual(request.objective.intent, "Explore application structure")
+        self.assertEqual(
+            request.interaction.execution_configuration.workflow.exploration.timeout_floor,
+            120,
+        )

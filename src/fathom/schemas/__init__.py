@@ -8,13 +8,18 @@ from fathom.schemas.configuration import (
     DeviceRuntimeConfiguration,
     ExecutionConfiguration,
     ExplorationConfiguration,
+    ExplorationWorkflowHostPolicyConfiguration,
     FathomConfiguration,
     IntentConfiguration,
+    IntentWorkflowHostPolicyConfiguration,
     IOSConfiguration,
     LLMConfiguration,
+    WorkflowHostConfiguration,
+    WorkflowHostPolicyConfiguration,
 )
 from fathom.schemas.decomposition import DecompositionSchema
 from fathom.schemas.exploration import ActionGenerator, ExplorationGraph, ScreenNode
+from fathom.schemas.llm import GeminiExceptionKind, GeminiExceptionMetadata
 from fathom.schemas.orchestration import (
     ExecutionContext,
     RunnerConfig,
@@ -65,13 +70,17 @@ __all__ = [
     "ExecutionResult",
     "ExplorationObjectiveConfiguration",
     "ExplorationConfiguration",
+    "ExplorationWorkflowHostPolicyConfiguration",
     "ExplorationRunRequest",
     "ExplorationGraph",
     "ExplorationResult",
     "ExploreCommandInput",
     "FathomConfiguration",
+    "GeminiExceptionKind",
+    "GeminiExceptionMetadata",
     "IntentObjectiveConfiguration",
     "IntentConfiguration",
+    "IntentWorkflowHostPolicyConfiguration",
     "IntentRunRequest",
     "IntentResult",
     "InteractionConfiguration",
@@ -102,5 +111,7 @@ __all__ = [
     "TargetConfiguration",
     "TelemetryRequestConfiguration",
     "UIBounds",
+    "WorkflowHostConfiguration",
+    "WorkflowHostPolicyConfiguration",
     "WorkflowResult",
 ]

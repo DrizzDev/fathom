@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Coroutine, Dict, Optional, Set
 
 from langgraph.graph.state import CompiledStateGraph
 
@@ -46,6 +46,8 @@ class GraphExecutor:
         self.__replan_count = 0
         self.__config: RunnableConfig = {"configurable": {"thread_id": self.__thread_id}}
 
+        self.__active_tasks: Set[asyncio.Task[None]] = set()
+
     async def run(self) -> None:
         """
         Executes the graph workflow with HITL support.
@@ -73,24 +75,29 @@ class GraphExecutor:
                 raise
             return
 
-        # Interactive mode with interrupts - use loop for pause/resume
+        try:
+            await self.__run_interactive()
+        finally:
+            await self.__cancel_active_tasks()
+
+    async def __run_interactive(self) -> None:
+        """
+        Run the interactive pause/resume execution loop until completion.
+        """
+
         current_input: Optional[Dict[str, Any]] = {}
 
         while True:
             # Check cancellation before starting any graph execution
-            if self.__context.is_cancelled:
-                logger.warning(f"Executor: Workflow {self.__thread_id} cancelled before execution")
-
-                await self.__context.telemetry.info(
-                    "Workflow execution cancelled",
-                    type=FathomEvent.WORKFLOW_CANCELLED,
-                )
-                break
+            if await self.__stop_for_cancellation(phase="before execution"):
+                return
 
             # Race Condition: Run Graph vs Wait for Pause
-            # We wrap the graph stream in a task to allow cancellation
-            stream_task = asyncio.create_task(self.__stream_graph(current_input))
-            pause_task = asyncio.create_task(self.__context.hitl.wait_for_pause())
+            # We wrap the graph stream in a task to allow cancellation.
+            stream_task = self.__create_task(
+                operation=self.__stream_graph(input_value=current_input)
+            )
+            pause_task = self.__create_task(operation=self.__context.hitl.wait_for_pause())
 
             done, pending = await asyncio.wait(
                 [stream_task, pause_task], return_when=asyncio.FIRST_COMPLETED
@@ -98,78 +105,40 @@ class GraphExecutor:
 
             # Case A: Pause Requested
             if pause_task in done:
-                logger.info("Executor: Pause signal received during execution")
+                if not (should_continue := await self.__handle_pause(stream_task=stream_task)):
+                    return
 
-                # Do not cancel in-flight graph execution. Let current stream cycle
-                # finish and handle pause at a safe graph boundary.
-                if stream_task not in done:
-                    try:
-                        await stream_task
-                    except Exception as exception:
-                        logger.error(f"Executor: Graph stream failed: {exception}")
-                        raise
-
-                # Snapshot may already be terminal after stream completion.
-                snapshot = await self.__graph.aget_state(self.__config)
-                if not snapshot.next:
-                    break
-
-                await self.__handle_interrupt(source="manual_pause")
-                # Resume loop (with current_input=None to continue from last checkpoint)
-                current_input = None
-                continue
+                if should_continue:
+                    current_input = None
+                    continue
 
             # Case B: Graph finished first, stop listening for pause for this cycle.
-            for task in pending:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            await self.__cancel_pending_tasks(tasks=pending)
+            await self.__await_stream_task(stream_task=stream_task)
 
-            # Case B: Graph Execution Finished (Step or Workflow)
-            try:
-                await stream_task
-            except Exception as exception:
-                logger.error(f"Executor: Graph stream failed: {exception}")
-                raise
-
-            # Check cancellation after graph execution
-            if self.__context.is_cancelled:
-                logger.warning(f"Executor: Workflow {self.__thread_id} cancelled after execution")
-                await self.__context.telemetry.info(
-                    "Workflow execution cancelled",
-                    type=FathomEvent.WORKFLOW_CANCELLED,
-                )
-                break
+            if await self.__stop_for_cancellation(phase="after execution"):
+                return
 
             # Check Graph State
-            snapshot = await self.__graph.aget_state(self.__config)
-
-            # If execution finished (no next node), exit loop
-            if not snapshot.next:
-                break
+            if not (await self.__graph.aget_state(self.__config)).next:
+                return
 
             # Handle Interrupt (Breakpoint reached naturally)
-            # Check for HITL signals one last time
+            # Check for HITL signals one last time.
             await self.__handle_interrupt(source="breakpoint")
 
-            # Check cancellation after interrupt handling
-            if self.__context.is_cancelled:
-                logger.warning(f"Executor: Workflow {self.__thread_id} cancelled")
-                await self.__context.telemetry.info(
-                    "Workflow execution cancelled",
-                    type=FathomEvent.WORKFLOW_CANCELLED,
-                )
-                break
+            if await self.__stop_for_cancellation(phase="after interrupt handling"):
+                return
 
             # Resume Execution
             current_input = None
 
-    async def __stream_graph(self, input_val: Optional[Dict[str, Any]]) -> None:
+    async def __stream_graph(self, *, input_value: Optional[Dict[str, Any]]) -> None:
         """
         Wrapper to stream graph events.
         """
 
-        async for event in self.__graph.astream(input_val, config=self.__config):
+        async for event in self.__graph.astream(input_value, config=self.__config):
             if self.__context.is_cancelled:
                 logger.warning("Executor: Workflow cancelled during stream")
                 break
@@ -178,6 +147,93 @@ class GraphExecutor:
             if isinstance(event, dict):
                 for node, _output in event.items():
                     logger.debug(f"Executor: Node '{node}' completed")
+
+    def __create_task(self, *, operation: Coroutine[object, object, None]) -> asyncio.Task[None]:
+        """
+        Create a task that is tracked until completion.
+        """
+
+        task: asyncio.Task[None] = asyncio.create_task(operation)
+
+        self.__active_tasks.add(task)
+        task.add_done_callback(self.__active_tasks.discard)
+
+        return task
+
+    async def __cancel_pending_tasks(self, *, tasks: Set[asyncio.Task[None]]) -> None:
+        """
+        Cancel and await a set of pending executor-owned tasks.
+        """
+
+        for task in tasks:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def __await_stream_task(self, *, stream_task: asyncio.Task[None]) -> None:
+        """
+        Await the graph stream task and surface failures consistently.
+        """
+
+        try:
+            await stream_task
+        except Exception as exception:
+            logger.error(f"Executor: Graph stream failed: {exception}")
+            raise
+
+    async def __handle_pause(
+        self,
+        *,
+        stream_task: asyncio.Task[None],
+    ) -> bool:
+        """
+        Complete the current stream cycle and process a manual pause.
+        """
+
+        logger.info("Executor: Pause signal received during execution")
+
+        # Do not cancel in-flight graph execution. Let current stream cycle
+        # finish and handle pause at a safe graph boundary.
+        if not stream_task.done():
+            await self.__await_stream_task(stream_task=stream_task)
+
+        # Snapshot may already be terminal after stream completion.
+        if not (await self.__graph.aget_state(self.__config)).next:
+            return False
+
+        await self.__handle_interrupt(source="manual_pause")
+        return True
+
+    async def __stop_for_cancellation(self, *, phase: str) -> bool:
+        """
+        Emit cancellation telemetry and signal the caller to stop when cancelled.
+        """
+
+        if not self.__context.is_cancelled:
+            return False
+
+        logger.warning(f"Executor: Workflow {self.__thread_id} cancelled {phase}")
+        await self.__context.telemetry.info(
+            "Workflow execution cancelled", type=FathomEvent.WORKFLOW_CANCELLED
+        )
+
+        return True
+
+    async def __cancel_active_tasks(self) -> None:
+        """
+        Cancel and await any executor-owned tasks that are still running.
+        """
+
+        active_tasks = tuple(self.__active_tasks)
+
+        for task in active_tasks:
+            if not task.done():
+                task.cancel()
+
+        if active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+
+        self.__active_tasks.clear()
 
     async def __handle_interrupt(self, source: str) -> None:
         """
@@ -194,16 +250,15 @@ class GraphExecutor:
         if signal_type == SignalType.CANCELLED.value:
             logger.info(f"Executor: Cancellation signal received ({source})")
             self.__context.cancel()
+
             await self.__context.telemetry.info(
-                "Workflow execution cancelled",
-                type=FathomEvent.WORKFLOW_CANCELLED,
+                "Workflow execution cancelled", type=FathomEvent.WORKFLOW_CANCELLED
             )
             return
 
         logger.info(f"Executor: Pausing execution ({source})")
         await self.__context.telemetry.info(
-            "Workflow execution paused",
-            type=FathomEvent.WORKFLOW_PAUSED,
+            "Workflow execution paused", type=FathomEvent.WORKFLOW_PAUSED
         )
 
         try:
@@ -214,8 +269,7 @@ class GraphExecutor:
             return
 
         await self.__context.telemetry.info(
-            "Workflow execution resumed",
-            type=FathomEvent.WORKFLOW_RESUMED,
+            "Workflow execution resumed", type=FathomEvent.WORKFLOW_RESUMED
         )
 
         # Process ALL pending contexts in order
