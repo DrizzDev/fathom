@@ -129,6 +129,7 @@ class GeminiLLM(LLMPort):
         cache_name: Optional[str] = None,
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
+        thinking_level: Optional[str] = None,
     ) -> types.GenerateContentConfig:
         """
         Constructs the GenerateContentConfig using current configuration.
@@ -147,11 +148,14 @@ class GeminiLLM(LLMPort):
             "medium": types.ThinkingLevel.MEDIUM,
             "high": types.ThinkingLevel.HIGH,
         }
-        configured_thinking = getattr(self.__configuration, "thinking_level", "low")
-        if isinstance(configured_thinking, str):
-            configured_thinking = configured_thinking.lower()
+        if thinking_level:
+            configured_thinking = thinking_level.lower()
         else:
-            configured_thinking = "low"
+            configured_thinking = getattr(self.__configuration, "thinking_level", "low")
+            if isinstance(configured_thinking, str):
+                configured_thinking = configured_thinking.lower()
+            else:
+                configured_thinking = "low"
 
         config_args: Dict[str, Any] = {
             "candidate_count": 1,
@@ -193,6 +197,7 @@ class GeminiLLM(LLMPort):
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
         conversation_history: Optional[Sequence[ConversationTurn]] = None,
+        thinking_level: Optional[str] = None,
     ) -> GenerateResult:
         """
         Main handler for LLM interaction.
@@ -238,6 +243,7 @@ class GeminiLLM(LLMPort):
                 tools=tools,
                 cache_name=active_cache_name,
                 system_instruction=system_instruction,
+                thinking_level=thinking_level,
             )
             try:
                 # Build contents: convert provider-neutral turns to Gemini SDK types,

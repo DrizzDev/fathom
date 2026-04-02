@@ -304,7 +304,7 @@ class VisionService:
         # rejected tool call as a prior model turn, followed by a user turn explaining
         # exactly why it was rejected. This creates a genuine feedback loop where the
         # model can reason about its mistake and correct course.
-        max_validation_retries = 1
+        max_validation_retries = 2
         analysis: Optional[AnalysisResult] = None
         response = None
         duration = 0.0
@@ -316,14 +316,22 @@ class VisionService:
         # Preserve original payload so multi-turn history always references the full prompt.
         original_payload = list(payload)
 
+        # Escalate thinking progressively on each validation retry so the
+        # model reasons more carefully about the schema constraints it violated.
+        thinking_levels = ["low", "medium", "high"]
+
         for attempt in range(max_validation_retries + 1):
             commence = time.time()
+            retry_thinking = (
+                thinking_levels[attempt] if attempt < len(thinking_levels) else thinking_levels[-1]
+            )
             response = await self.__llm.generate(
                 tools=tools,
                 prompt=payload,
                 use_cache=self.__use_cache,
                 system_instruction=instruction,
                 conversation_history=conversation_history if conversation_history else None,
+                thinking_level=retry_thinking,
             )
             duration = time.time() - commence
 
