@@ -4,16 +4,14 @@ from difflib import SequenceMatcher
 from logging import getLogger
 from typing import List, Optional, Set
 
-from fathom.constants import ACTION_EXECUTED_TYPES, NEXT_PHASE_ACTION_TYPES, ActionType
+from fathom.constants import ACTION_EXECUTED_TYPES, NEXT_PHASE_ACTION_TYPES
 from fathom.constants.reasoning import (
     ACTION_MIN_CONFIDENCE,
     ACTION_NEXT_PHASE_CONFIDENCE,
-    COMPLETION_KEYWORDS,
     NEXT_PHASE_KEYWORDS,
     OPENER_GOAL_WORDS,
     RATIONALE_CONTEXT_RELEVANCE_THRESHOLD,
     RATIONALE_KEYWORD_MATCH_THRESHOLD,
-    RATIONALE_MIN_SIMILARITY_FLOOR,
 )
 from fathom.schemas.actions import Action
 from fathom.schemas.reasoning import CompletionSignal, SubGoalCompletionSignal
@@ -67,11 +65,7 @@ class Reasoner:
         if analysis.is_goal_complete:
             evidence_list.append(f"LLM explicitly flagged {goal_type} completion")
 
-        # 2. Secondary Signal: Action Type (Zero Cost)
-        if analysis.action.action_type == ActionType.COMPLETE:
-            evidence_list.append(f"Agent recommended COMPLETE action for {goal_type}")
-
-        # 3. Tertiary Signal: Fast Fuzzy Match
+        # 2. Tertiary Signal: Fast Fuzzy Match
         # We check if the reasoning text semantically overlaps with the target goal
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
 
@@ -82,7 +76,6 @@ class Reasoner:
             evidence_list.append(f"Context alignment score: {similarity:.2f}")
 
         keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
-        action_indicates_complete = analysis.action.action_type == ActionType.COMPLETE
 
         # 4. Additional Signal for Sub-Goals: Action Execution on Non-Opening Tasks
         # If we're checking a sub-goal like "Open X" and the LLM is DOING something
@@ -105,20 +98,13 @@ class Reasoner:
                 )
                 action_suggests_next_phase = True
 
-        # For sub-goals, allow strong semantic alignment or next-phase actions to count as completion
-        is_complete = (
-            analysis.is_goal_complete
-            or action_indicates_complete
-            or keyword_match
-            or action_suggests_next_phase
-        )
+        # Completion requires the LLM's explicit flag, strong semantic alignment,
+        # or next-phase action detection for opener sub-goals.
+        is_complete = analysis.is_goal_complete or keyword_match or action_suggests_next_phase
 
         llm_confidence = 0.0
 
         if analysis.is_goal_complete:
-            llm_confidence = max(llm_confidence, analysis.action.confidence)
-
-        if action_indicates_complete:
             llm_confidence = max(llm_confidence, analysis.action.confidence)
 
         if keyword_match:
@@ -177,52 +163,27 @@ class Reasoner:
             f"action_type={analysis.action.action_type}"
         )
 
-        # Signal 1: LLM Explicit Signal (from tool output)
-        llm_signaled = (
-            analysis.is_sub_goal_complete
-            or analysis.is_goal_complete
-            or analysis.action.action_type == ActionType.COMPLETE
-        )
+        # Signal 1: LLM Explicit Signal (from tool output flags only).
+        # action_type=COMPLETE is NOT treated as an independent completion
+        # signal — it must be paired with an explicit sub_goal_completed=true
+        # or goal_completed=true flag to count.
+        llm_signaled = analysis.is_sub_goal_complete or analysis.is_goal_complete
         if llm_signaled:
             evidence_list.append("LLM signaled sub-goal completion via tool output")
 
-        # Signal 2: Rationale verification — leverages Gemini's own completion reason.
+        # Signal 2: Rationale verification — disabled.
         #
-        # When the LLM explicitly signals sub-goal completion, it also provides a
-        # `subgoal_completion_reason` explaining WHY it's complete. This is Gemini's
-        # own semantic understanding — far more reliable than SequenceMatcher.
-        #
-        # Priority:
-        #   1. LLM provided an explicit completion reason → trust it (Gemini intelligence)
-        #   2. Fallback: keyword-based heuristic for cases where the LLM didn't explicitly
-        #      signal but reasoning text implies completion.
-        has_explicit_reason = bool(
-            llm_signaled and (analysis.subgoal_completion_reason or analysis.goal_completion_reason)
-        )
+        # The LLM-backed rationale check added ~1-2s latency per step without
+        # visual grounding (text-only comparison).  The VERIFY node with its
+        # screenshot-based check is the sole completion gate for the overall
+        # intent.  Sub-goal advancement now relies on llm_signaled +
+        # effective_action (2 signals).
+        rationale_verified = False
 
-        # Fallback heuristic: keyword + similarity check
+        # Lightweight similarity for confidence scoring only (not gating).
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
         similarity = SequenceMatcher(None, target_goal, context).ratio()
         keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
-
-        reasoning_lower = analysis.reasoning.lower()
-        keywords_found = any(kw in reasoning_lower for kw in COMPLETION_KEYWORDS)
-
-        heuristic_match = keyword_match or (
-            similarity >= RATIONALE_MIN_SIMILARITY_FLOOR and keywords_found
-        )
-
-        rationale_verified = has_explicit_reason or heuristic_match
-        if rationale_verified:
-            if has_explicit_reason:
-                reason_text = analysis.subgoal_completion_reason or analysis.goal_completion_reason
-                evidence_list.append(
-                    f"Rationale verified via LLM completion reason: '{reason_text}'"
-                )
-            else:
-                evidence_list.append(
-                    f"Rationale verified via heuristic (similarity={similarity:.2f}, keywords={'found' if keywords_found else 'none'})"
-                )
 
         # Signal 3: Action Execution (did we execute an action?)
         action_executed = analysis.action.action_type in ACTION_EXECUTED_TYPES

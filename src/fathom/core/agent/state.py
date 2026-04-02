@@ -4,7 +4,6 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
-from fathom.constants.state import CompletionReason
 from fathom.schemas.actions import Action
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.delta import GeminiDeltaSignal
@@ -279,8 +278,10 @@ class AgentState:
         self.__last_action_type = result.step.action.action_type.value
         self.__last_action_description = result.step.action.to_description()
 
-        if result.step.action.action_type == ActionType.COMPLETE and result.success:
-            self.mark_complete(reason=CompletionReason.SUCCESS.value)
+        # COMPLETE action type no longer triggers immediate goal completion.
+        # Goal completion is exclusively set by the verify_goal tool in the
+        # VERIFY node.  COMPLETE actions still count as llm_signaled for
+        # sub-goal advancement via the reasoner's analyze_subgoal_completion.
 
     def mark_complete(self, reason: str) -> None:
         """

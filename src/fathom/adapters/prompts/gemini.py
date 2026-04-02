@@ -3,13 +3,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, cast
 
-from fathom.core.prompts.base import PromptBuilder
-from fathom.core.prompts.templates import (
+from fathom.constants.prompts import (
     COMMON_RULES,
     CONFIDENCE_RULES,
     COORD_RULES,
     TOOL_GUIDANCE,
 )
+from fathom.interfaces.prompt import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +38,8 @@ class GeminiPromptBuilder(PromptBuilder):
                 "'script_target' with a natural-language phrase (e.g., 'the first search result'). "
                 "NEVER use generic placeholders like 'UI Element', 'element', 'button', 'label', "
                 "'icon', 'field', or 'text' as the only description of a target.\n"
-                "- REQUIRED: Every primary tool call MUST include BOTH boolean flags: "
-                "'goal_completed' and 'sub_goal_completed'.\n"
-                "- REQUIRED: If action_type is 'complete', set BOTH flags to true.\n"
+                "- REQUIRED: Every primary tool call MUST include 'sub_goal_completed'.\n"
+                "- Do NOT set 'goal_completed' — overall goal completion is handled by verify_goal only.\n"
                 "- Return tool call(s) only, with schema-valid fields.\n"
                 "\nExecute next best step via tool using current user-provided goal and context."
             ),
@@ -90,10 +89,11 @@ class GeminiPromptBuilder(PromptBuilder):
                     f"CRITICAL INSTRUCTIONS:\n"
                     f"1. Focus EXCLUSIVELY on completing this task\n"
                     f"2. Do NOT attempt to complete future steps\n"
-                    f"3. When this task is FULLY COMPLETED, signal completion by:\n"
-                    f"   - Setting 'is_goal_complete: true' in your response, OR\n"
-                    f"   - Returning a COMPLETE action\n"
+                    f"3. When this task is FULLY COMPLETED, signal completion by "
+                    f"setting 'sub_goal_completed: true' in your tool call\n"
                     f"4. The system will automatically advance to the next step\n"
+                    f"5. For validation tasks: after confirming all conditions are met, "
+                    f"you MUST set 'sub_goal_completed: true' to advance\n"
                     f"</CURRENT_STEP>"
                 )
                 logger.debug(

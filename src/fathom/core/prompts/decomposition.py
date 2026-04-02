@@ -1,25 +1,5 @@
-from __future__ import annotations
+"""Backward-compatible re-export. Canonical location: fathom.interfaces.prompt."""
 
-from abc import ABC, abstractmethod
+from fathom.interfaces.prompt import DecompositionPromptBuilder
 
-
-class DecompositionPromptBuilder(ABC):
-    """
-    Abstract builder for intent decomposition prompting.
-    """
-
-    @abstractmethod
-    def build_system_instruction(self) -> str:
-        """
-        Build stable system instruction for decomposition generation.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    def build_user_prompt(self, *, intent: str) -> str:
-        """
-        Build dynamic user prompt for decomposing an intent.
-        """
-
-        raise NotImplementedError
+__all__ = ["DecompositionPromptBuilder"]

@@ -13,9 +13,14 @@ from fathom.constants.execution import (
     VISUAL_HASH_LENGTH,
 )
 from fathom.constants.graph import NodeName
+from fathom.constants.prompts import (
+    SUBGOAL_VERIFICATION_SYSTEM,
+    SUBGOAL_VERIFICATION_USER_TEMPLATE,
+    VERIFICATION_SYSTEM,
+    VERIFICATION_USER_TEMPLATE,
+)
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
-from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
 from fathom.schemas.hierarchy import HierarchyProcessingResult
@@ -1263,47 +1268,10 @@ class IntentNodeProvider:
             post_screen_hash=step_result.post_hash,
         )
 
-        # For validation steps where the LLM explicitly signals completion,
-        # short-circuit — the screen is not expected to change so the normal
-        # multi-signal gate would be overly strict.
-        if is_validation_step and sub_goal_signal.llm_signaled:
-            logger.info(
-                f"[NODE: RECORD] Validation step with LLM completion signal — "
-                f"completing sub-goal '{current_sub_goal.description[:50]}...'"
-            )
-            has_more = agent_state.mark_current_sub_goal_complete(completion_signal=sub_goal_signal)
-
-            if has_more:
-                next_sub_goal = agent_state.get_current_sub_goal()
-                logger.info(
-                    f"[NODE: RECORD] ✓ Sub-goal {current_sub_goal.index} COMPLETE (validation). "
-                    f"Advancing to sub-goal {next_sub_goal.index if next_sub_goal else '(none)'}: "
-                    f"'{next_sub_goal.description if next_sub_goal else ''}'"
-                )
-                return cast(
-                    "IntentGraphState",
-                    {
-                        IntentStateKey.STEP_RESULTS: accumulated_step_results,
-                        IntentStateKey.SHOULD_RETRY: True,
-                    },
-                )
-            else:
-                logger.info("[NODE: RECORD] All sub-goals complete (final was validation).")
-                agent_state.mark_complete(reason="All sub-goals completed sequentially")
-                return cast(
-                    "IntentGraphState",
-                    {
-                        CommonStateKey.IS_COMPLETE: True,
-                        CommonStateKey.COMPLETION_REASON: "All sub-goals completed sequentially",
-                        IntentStateKey.STEP_RESULTS: accumulated_step_results,
-                    },
-                )
-
-        # Three-signal policy: llm_signaled + rationale_verified + action_executed.
-        # ``action_executed`` is now gated by ``screen_verified`` — the action must
-        # actually change the screen to count (validation steps are exempt above).
-        # Validation checks advance with 2-of-3, action steps require all 3.
-        required_threshold = 2 if is_validation_step else 3
+        # Two-signal policy: llm_signaled + effective_action (action_executed
+        # AND screen_verified).  Rationale verification is disabled — the
+        # VERIFY node with its screenshot check is the final completion gate.
+        required_threshold = 2
         signal_count = sub_goal_signal.count_signals()
         current_idx, total = agent_state.get_sub_goal_progress()
 
@@ -1326,36 +1294,27 @@ class IntentNodeProvider:
             )
             return None
 
-        has_more = agent_state.mark_current_sub_goal_complete(completion_signal=sub_goal_signal)
-
-        if has_more:
-            next_sub_goal = agent_state.get_current_sub_goal()
-            logger.info(
-                f"[NODE: RECORD] ✓ Sub-goal {current_sub_goal.index} COMPLETE. "
-                f"Advancing to sub-goal {next_sub_goal.index if next_sub_goal else '(none)'}: "
-                f"'{next_sub_goal.description if next_sub_goal else ''}'"
-            )
-            return cast(
-                "IntentGraphState",
-                {
-                    IntentStateKey.STEP_RESULTS: accumulated_step_results,
-                    IntentStateKey.SHOULD_RETRY: True,
-                },
-            )
-        else:
-            logger.info(
-                f"[NODE: RECORD] All sub-goals complete. Final sub-goal had "
-                f"{sub_goal_signal.count_signals()}/{required_threshold} signals."
-            )
-            agent_state.mark_complete(reason="All sub-goals completed sequentially")
-            return cast(
-                "IntentGraphState",
-                {
-                    CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: "All sub-goals completed sequentially",
-                    IntentStateKey.STEP_RESULTS: accumulated_step_results,
-                },
-            )
+        # Route to VERIFY for per-sub-goal screenshot verification.
+        # Sub-goal advancement is deferred — VERIFY will capture a screenshot
+        # and confirm the sub-goal is actually done before advancing.
+        logger.info(
+            f"[NODE: RECORD] Sub-goal {current_sub_goal.index} signals passed "
+            f"({signal_count}/{required_threshold}). Routing to VERIFY for "
+            f"screenshot confirmation before advancing."
+        )
+        agent_state.mark_complete(
+            reason=f"Sub-goal '{current_sub_goal.description[:50]}' pending verification"
+        )
+        return cast(
+            "IntentGraphState",
+            {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: (
+                    f"Sub-goal '{current_sub_goal.description[:50]}' pending verification"
+                ),
+                IntentStateKey.STEP_RESULTS: accumulated_step_results,
+            },
+        )
 
     async def verify(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -1378,15 +1337,6 @@ class IntentNodeProvider:
             )
             self.__persist_agent_state_to_graph(result=result)
             return result
-
-        # When all sub-goals are definitively complete, force closure after
-        # the first validation pass.  The VERIFY LLM still runs (so we log
-        # its assessment), but its verdict cannot reject completion — the
-        # sub-goal chain is the source of truth.
-        all_sub_goals_done = (
-            self.__context.agent_state.has_sub_goals()
-            and self.__context.agent_state.all_sub_goals_complete()
-        )
 
         start_time = time.time()
 
@@ -1417,9 +1367,34 @@ class IntentNodeProvider:
                 },
             )
 
-        # 2. Construct binary validation prompt
-        intent = self.__context.intent
-        system_prompt = VERIFICATION_SYSTEM
+        # 2. Construct binary validation prompt.
+        # When sub-goals are active and the current sub-goal is pending
+        # verification, verify the sub-goal — not the full intent.
+        agent_state = self.__context.agent_state
+        current_sub_goal = agent_state.get_current_sub_goal()
+        is_subgoal_verify = (
+            current_sub_goal is not None
+            and agent_state.has_sub_goals()
+            and not agent_state.all_sub_goals_complete()
+        )
+
+        if is_subgoal_verify and current_sub_goal is not None:
+            verify_target = current_sub_goal.description
+            logger.info(
+                f"[NODE: VERIFY] Verifying sub-goal {current_sub_goal.index}: "
+                f"'{verify_target[:60]}...'"
+            )
+        else:
+            verify_target = self.__context.intent
+
+        # Use lighter sub-goal verification prompt for sub-goal checks,
+        # full QA verification for overall intent.
+        if is_subgoal_verify:
+            system_prompt = SUBGOAL_VERIFICATION_SYSTEM
+            user_template = SUBGOAL_VERIFICATION_USER_TEMPLATE
+        else:
+            system_prompt = VERIFICATION_SYSTEM
+            user_template = VERIFICATION_USER_TEMPLATE
 
         guidance_section = ""
         user_guidance = self.__context.context_manager.get_user_guidance()
@@ -1427,9 +1402,33 @@ class IntentNodeProvider:
             guidance_text = "\n".join([f"- {guidance.content}" for guidance in user_guidance])
             guidance_section = f"\nUser Guidance:\n{guidance_text}\n"
 
-        user_prompt = VERIFICATION_USER_TEMPLATE.format(
-            intent=intent, guidance_section=guidance_section
-        )
+        # For sub-goal verification, include the recent execution trace so
+        # the LLM knows which actions were already performed.
+        if is_subgoal_verify:
+            gcc_context = self.__context.context_manager.get_full_context()
+            trace = gcc_context.get("trace", [])
+            if trace:
+                recent = trace[-10:]
+                action_lines = []
+                for entry in recent:
+                    action = entry.get("action", {})
+                    if isinstance(action, dict):
+                        desc = action.get("target", "unknown")
+                        atype = action.get("action_type", "unknown")
+                    else:
+                        desc = getattr(action, "target", "unknown")
+                        atype = getattr(action, "action_type", "unknown")
+                    atype_str = (
+                        atype.value
+                        if hasattr(atype, "value") and not isinstance(atype, str)
+                        else str(atype)
+                    )
+                    action_lines.append(f"- {atype_str}: {desc}")
+                guidance_section += (
+                    "\nActions already performed for this step:\n" + "\n".join(action_lines) + "\n"
+                )
+
+        user_prompt = user_template.format(intent=verify_target, guidance_section=guidance_section)
 
         # 3. Ask the LLM
         try:
@@ -1443,44 +1442,107 @@ class IntentNodeProvider:
             data = json.loads(text)
             is_truly_complete = bool(data.get("is_complete", False))
             reason = str(data.get("reason", "Verification failed without specific reason."))
+            next_action = str(data.get("next_action", "")).strip()
 
         except Exception as exception:
             logger.error(f"[NODE: VERIFY] LLM verification failed: {exception}")
             is_truly_complete = False
             reason = f"Verification failed due to error: {exception}"
+            next_action = ""
 
         duration = time.time() - start_time
         logger.info(
-            f"[NODE: VERIFY] Verification finished in {duration:.2f}s: is_complete={is_truly_complete}, reason={reason}"
+            f"[NODE: VERIFY] Verification finished in {duration:.2f}s: "
+            f"is_complete={is_truly_complete}, reason={reason}"
+            f"{f', next_action={next_action}' if next_action else ''}"
         )
 
-        if is_truly_complete or all_sub_goals_done:
-            # When all sub-goals are done, the first validation pass forces
-            # closure regardless of the LLM's verdict.
-            if all_sub_goals_done and not is_truly_complete:
-                logger.warning(
-                    f"[NODE: VERIFY] LLM rejected completion but all sub-goals are done — "
-                    f"forcing closure. LLM reason: {reason}"
-                )
-                reason = f"All sub-goals completed (LLM disagreed: {reason})"
+        if is_truly_complete:
+            if is_subgoal_verify and current_sub_goal is not None:
+                # Sub-goal verified — advance to next sub-goal.
+                from fathom.schemas.reasoning import SubGoalCompletionSignal
 
-            self.__context.agent_state.mark_complete(reason=reason)
-            result = cast(
-                "IntentGraphState",
-                {
-                    CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: reason,
-                },
-            )
-            self.__persist_agent_state_to_graph(result=result)
-            return result
+                has_more = agent_state.mark_current_sub_goal_complete(
+                    completion_signal=SubGoalCompletionSignal(
+                        evidence=f"Verified by screenshot: {reason}",
+                        llm_signaled=True,
+                        rationale_verified=False,
+                        action_executed=True,
+                        screen_verified=True,
+                    ),
+                )
+                agent_state.reset_completion()
+
+                # Clear stale verification feedback from previous sub-goals
+                # so it doesn't pollute the next sub-goal's context.
+                self.__context.context_manager.clear_user_guidance()
+
+                if has_more:
+                    next_sg = agent_state.get_current_sub_goal()
+                    logger.info(
+                        f"[NODE: VERIFY] ✓ Sub-goal {current_sub_goal.index} VERIFIED. "
+                        f"Advancing to sub-goal {next_sg.index if next_sg else '(none)'}: "
+                        f"'{next_sg.description if next_sg else ''}'"
+                    )
+                    result = cast(
+                        "IntentGraphState",
+                        {
+                            CommonStateKey.IS_COMPLETE: False,
+                            IntentStateKey.SHOULD_RETRY: True,
+                        },
+                    )
+                    self.__persist_agent_state_to_graph(result=result)
+                    return result
+                else:
+                    # Last sub-goal verified — now verify the full intent.
+                    logger.info(
+                        "[NODE: VERIFY] All sub-goals verified. "
+                        "Re-running verification for full intent."
+                    )
+                    agent_state.mark_complete(
+                        reason="All sub-goals completed and verified sequentially"
+                    )
+                    result = cast(
+                        "IntentGraphState",
+                        {
+                            CommonStateKey.IS_COMPLETE: True,
+                            CommonStateKey.COMPLETION_REASON: (
+                                "All sub-goals completed and verified sequentially"
+                            ),
+                        },
+                    )
+                    self.__persist_agent_state_to_graph(result=result)
+                    return result
+            else:
+                # Full intent verified — exit.
+                agent_state.mark_complete(reason=reason)
+                result = cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: reason,
+                    },
+                )
+                self.__persist_agent_state_to_graph(result=result)
+                return result
         else:
-            # Inject negative feedback to force the agent to continue
-            feedback = f"Verification failed: {reason}"
+            # Inject negative feedback with a suggested next action so the
+            # agent knows exactly what to do instead of looping.
+            feedback_parts = [f"Verification FAILED: {reason}."]
+            if next_action:
+                feedback_parts.append(f"SUGGESTED NEXT ACTION: {next_action}")
+            else:
+                feedback_parts.append("Take a concrete UI action to make progress toward the goal.")
+            feedback = " ".join(feedback_parts)
             logger.warning(f"[NODE: VERIFY] {feedback}")
 
             # Reset the is_complete flag
             self.__context.agent_state.reset_completion()
+
+            # Clear stale guidance before injecting new feedback so only
+            # the latest rejection is visible — prevents accumulation of
+            # old failure messages from prior sub-goals or retries.
+            self.__context.context_manager.clear_user_guidance()
 
             # Inject into ContextManager so the LLM sees it next iteration
             await self.__context.context_manager.inject_user_guidance(

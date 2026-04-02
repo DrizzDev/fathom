@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Sequence
 
-from fathom.core.prompts.export import ExportPromptBuilder
+from fathom.interfaces.prompt import ExportPromptBuilder
 
 
 class GeminiExportPromptBuilder(ExportPromptBuilder):

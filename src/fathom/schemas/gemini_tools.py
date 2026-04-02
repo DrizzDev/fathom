@@ -233,8 +233,8 @@ class GeminiCompletionFlags(BaseModel):
     """
 
     goal_completed: bool = Field(
-        ...,
-        description="Whether the overall user goal is complete.",
+        default=False,
+        description="Whether the overall user goal is complete. Only set by verify_goal.",
     )
     sub_goal_completed: bool = Field(
         ...,

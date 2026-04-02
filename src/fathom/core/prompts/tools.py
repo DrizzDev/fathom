@@ -52,7 +52,7 @@ class ToolRegistry:
                 "or the final goal. Use this to interact with the app, including explicit "
                 "validation checks via action_type='validate'. "
                 "IMPORTANT: When launching a target app (when a package_name is known), prefer "
-                "signaling app completion via 'goal_completed: true' or 'sub_goal_completed: true' "
+                "signaling sub-goal completion via 'sub_goal_completed: true' "
                 "rather than emitting an explicit 'tap' action on the app icon. The system will "
                 "normalize app launch intents automatically. "
                 "CRITICAL: For every UI action you MUST provide a concrete, user-facing target "
@@ -286,14 +286,6 @@ class ToolRegistry:
                             ],
                         },
                     },
-                    "goal_completed": {
-                        "type": "BOOLEAN",
-                        "description": "True if the user's high-level goal is fully achieved after these actions.",
-                    },
-                    "goal_completion_reason": {
-                        "type": "STRING",
-                        "description": "Explicit reason why the goal is complete (e.g., 'Order placed successfully', 'Feature verified on screen'). Required when goal_completed=true.",
-                    },
                     "sub_goal_completed": {
                         "type": "BOOLEAN",
                         "description": "True if the current sub-goal is completed after these actions. CONSTRAINT: You CANNOT skip sub-goals. All sub-goals must be executed in order. If you cannot complete the current sub-goal, ask the user for help or explain the blockage. Do NOT emit any signal that means 'skip this sub-goal'.",
@@ -352,7 +344,6 @@ class ToolRegistry:
                 "required": [
                     "assistant_message",
                     "actions",
-                    "goal_completed",
                     "sub_goal_completed",
                 ],
             },
@@ -395,10 +386,6 @@ class ToolRegistry:
                             "'Error text not visible anywhere on screen')."
                         ),
                     },
-                    "goal_completed": {
-                        "type": "BOOLEAN",
-                        "description": "True only if the overall goal is complete.",
-                    },
                     "sub_goal_completed": {
                         "type": "BOOLEAN",
                         "description": "True if the current sub-goal is complete.",
@@ -409,7 +396,6 @@ class ToolRegistry:
                     "condition_to_verify",
                     "condition_met",
                     "evidence",
-                    "goal_completed",
                     "sub_goal_completed",
                 ],
             },
@@ -532,16 +518,12 @@ class ToolRegistry:
                         "type": "STRING",
                         "description": "Context explaining what you were trying to do and why you need help.",
                     },
-                    "goal_completed": {
-                        "type": "BOOLEAN",
-                        "description": "Must be false unless the overall goal is complete.",
-                    },
                     "sub_goal_completed": {
                         "type": "BOOLEAN",
                         "description": "Must be false unless the current sub-goal is complete.",
                     },
                 },
-                "required": ["question", "goal_completed", "sub_goal_completed"],
+                "required": ["question", "sub_goal_completed"],
             },
         }
 

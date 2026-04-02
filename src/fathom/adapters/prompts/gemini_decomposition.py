@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fathom.core.prompts.decomposition import DecompositionPromptBuilder
+from fathom.interfaces.prompt import DecompositionPromptBuilder
 
 
 class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
