@@ -305,6 +305,70 @@ class IntentConfiguration(BaseModel):
     )
 
 
+class WorkflowHostPolicyConfiguration(BaseModel):
+    """
+    Workflow-host activity policy for one workflow type.
+    """
+
+    heartbeat_seconds: int = Field(
+        default=60,
+        description="Heartbeat timeout in seconds for the workflow host activity",
+    )
+    timeout_floor: int = Field(
+        default=60,
+        description="Minimum start-to-close timeout in minutes",
+    )
+    timeout_per_step: int = Field(
+        default=2,
+        description="Additional timeout budget in minutes per requested step",
+    )
+    timeout_overhead: int = Field(
+        default=5,
+        description="Fixed timeout overhead in minutes added to every run",
+    )
+
+
+class IntentWorkflowHostPolicyConfiguration(WorkflowHostPolicyConfiguration):
+    """
+    Workflow-host activity policy defaults for intent workflows.
+    """
+
+    heartbeat_seconds: int = Field(
+        default=300,
+        description="Heartbeat timeout in seconds for intent workflows",
+    )
+    timeout_floor: int = Field(
+        default=60,
+        description="Minimum start-to-close timeout in minutes for intent workflows",
+    )
+
+
+class ExplorationWorkflowHostPolicyConfiguration(WorkflowHostPolicyConfiguration):
+    """
+    Workflow-host activity policy defaults for exploration workflows.
+    """
+
+    timeout_floor: int = Field(
+        default=120,
+        description="Minimum start-to-close timeout in minutes for exploration workflows",
+    )
+
+
+class WorkflowHostConfiguration(BaseModel):
+    """
+    Workflow-host activity policies grouped by workflow type.
+    """
+
+    intent: IntentWorkflowHostPolicyConfiguration = Field(
+        default_factory=IntentWorkflowHostPolicyConfiguration,
+        description="Workflow-host activity policy for intent workflows",
+    )
+    exploration: ExplorationWorkflowHostPolicyConfiguration = Field(
+        default_factory=ExplorationWorkflowHostPolicyConfiguration,
+        description="Workflow-host activity policy for exploration workflows",
+    )
+
+
 class ExecutionConfiguration(BaseModel):
     """
     Configuration for the core execution engine.
@@ -312,10 +376,14 @@ class ExecutionConfiguration(BaseModel):
 
     max_retries: int = Field(default=3, description="Maximum retries for physical actions")
     stability_wait: float = Field(
-        default=0.5,
         ge=0.0,
         le=1.5,
+        default=0.5,
         description="Wait time after action for screen settlement (max 1.5s)",
+    )
+    workflow: WorkflowHostConfiguration = Field(
+        default_factory=WorkflowHostConfiguration,
+        description="Workflow-host execution policy",
     )
 
 

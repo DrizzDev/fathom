@@ -21,6 +21,13 @@ from fathom.constants.prompts import (
 )
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.prompts import (
+    SUBGOAL_VERIFICATION_SYSTEM,
+    SUBGOAL_VERIFICATION_USER_TEMPLATE,
+    VERIFICATION_SYSTEM,
+    VERIFICATION_USER_TEMPLATE,
+)
+from fathom.core.exceptions import FathomError
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
 from fathom.schemas.hierarchy import HierarchyProcessingResult
@@ -47,6 +54,9 @@ class IntentNodeProvider:
     Provides LangGraph nodes for intent execution.
     Encapsulates dependencies and shared private logic.
     """
+
+    __GROUNDING_FAILURE_MESSAGE = "Failed to capture the current app screen. Please retry."
+    __RECORDING_FAILURE_MESSAGE = "Failed to save execution details for the current step."
 
     def __init__(
         self,
@@ -528,8 +538,13 @@ class IntentNodeProvider:
             return result
 
         except Exception as exception:
-            await self.__context.telemetry.error(f"Grounding failed: {exception}")
             logger.exception(f"[NODE: GROUND] Grounding failed: {exception}")
+            display_error = (
+                exception.display(fallback=self.__GROUNDING_FAILURE_MESSAGE)
+                if isinstance(exception, FathomError)
+                else self.__GROUNDING_FAILURE_MESSAGE
+            )
+            await self.__context.telemetry.error(display_error)
             self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
 
             result = cast(
@@ -1205,8 +1220,13 @@ class IntentNodeProvider:
 
         except Exception as exception:
             logger.exception(f"[NODE: RECORD] Recording failed: {exception}")
+            display_error = (
+                exception.display(fallback=self.__RECORDING_FAILURE_MESSAGE)
+                if isinstance(exception, FathomError)
+                else self.__RECORDING_FAILURE_MESSAGE
+            )
             await self.__context.telemetry.error(
-                f"Recording failed: {exception}",
+                display_error,
                 step=self.__context.agent_state.step_count,
             )
             existing_step_results = cast(

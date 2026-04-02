@@ -23,23 +23,24 @@ class FathomError(Exception):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(message={self.message!r}, retryable={self.retryable})"
 
+    def display(self, *, fallback: str) -> str:
+        """
+        Return a safe display message using the provided fallback by default.
+        """
+
+        return fallback
+
 
 class StrategyError(FathomError):
     """
     Exception raised by strategy execution.
     """
 
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message, retryable=retryable)
-
 
 class ExecutionError(FathomError):
     """
     Exception raised during execution.
     """
-
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message, retryable=retryable)
 
 
 class ConfigurationError(FathomError):
@@ -55,9 +56,6 @@ class PortError(FathomError):
     """
     Exception raised by port operations.
     """
-
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message, retryable=retryable)
 
 
 class ToolError(FathomError):
@@ -88,6 +86,25 @@ class DeviceError(FathomError):
         if isinstance(exception, FathomError):
             return exception.retryable
         return isinstance(exception, (ConnectionError, TimeoutError))
+
+
+class DeviceConnectionClosedError(DeviceError):
+    """
+    Device connection is no longer available.
+    """
+
+    __CLIENT_MESSAGE = "Lost the device connection. Please retry the run."
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, retryable=False)
+
+    def display(self, *, fallback: str) -> str:
+        """
+        Return a stable display message for closed device connections.
+        """
+
+        _ = fallback
+        return self.__CLIENT_MESSAGE
 
 
 class VisionError(ToolError):
@@ -162,9 +179,6 @@ class AgentError(FathomError):
     Base for agent-related errors.
     """
 
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message, retryable=retryable)
-
 
 class PlanningError(AgentError):
     """
@@ -202,9 +216,6 @@ class WorkflowError(FathomError):
     Base for workflow-related errors.
     """
 
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message, retryable=retryable)
-
 
 class WorkflowCancelledError(WorkflowError):
     """
@@ -234,6 +245,3 @@ class ScriptExportError(FathomError):
     """
     Script export failed.
     """
-
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message, retryable=retryable)

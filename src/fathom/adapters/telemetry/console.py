@@ -58,6 +58,20 @@ class ConsoleTelemetryAdapter(TelemetryPort):
         await self.__inner.error(message, **context)
         self.__render(level="error", message=message, context=context)
 
+    async def exception(
+        self,
+        message: str,
+        *,
+        exception: Optional[BaseException] = None,
+        **context: Any,
+    ) -> None:
+        """
+        Publish an exception telemetry event and render CLI errors.
+        """
+
+        await self.__inner.exception(message, exception=exception, **context)
+        self.__render(level="error", message=message, context=context)
+
     def update_identity(self, *, identity: str) -> None:
         """
         Update the wrapped telemetry routing identity when supported.

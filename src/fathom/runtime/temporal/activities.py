@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from temporalio import activity
 
 from fathom.base.paths import SharedPathManager
+from fathom.constants import FathomEvent
 from fathom.infrastructure.temporal.state import SignalStateRegistry
 from fathom.interfaces.signal import SignalPort
+from fathom.interfaces.telemetry import TelemetryLevel
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
 from fathom.runtime.factories import (
@@ -121,6 +124,28 @@ class FathomActivities:
             .build()
         )
 
+    async def __cleanup_runner(self, *, runner: "FathomRunner") -> None:
+        """
+        Cleanup runner resources.
+        """
+
+        await runner.cleanup()
+
+    async def __cancel_runner(
+        self,
+        *,
+        message: str,
+        level: TelemetryLevel,
+        runner: "FathomRunner",
+        event_type: FathomEvent,
+    ) -> None:
+        """
+        Cancel the runner and emit a client-facing message.
+        """
+
+        await runner.notify(level=level, message=message, event_type=event_type)
+        runner.cancel()
+
     @activity.defn(name="EXECUTE_INTENT")  # type: ignore[untyped-decorator]
     async def execute_intent(self, workflow_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -178,10 +203,25 @@ class FathomActivities:
                 "duration": result.duration,
                 "metrics": result.metrics if result.metrics else None,
             }
+        except asyncio.CancelledError:
+            activity.logger.warning(
+                f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=cancelled"
+            )
+            await self.__cancel_runner(
+                runner=runner,
+                level="warning",
+                message=(
+                    "Workflow execution was cancelled. Cleaning up resources and closing "
+                    "active connections."
+                ),
+                event_type=FathomEvent.WORKFLOW_CANCELLED,
+            )
+            raise
         except Exception as exception:
             activity.logger.exception(
                 f'[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=failed error="{exception}"'
             )
+            runner.cancel()
             return {
                 "steps": 0,
                 "duration": 0,
@@ -193,7 +233,7 @@ class FathomActivities:
             activity.logger.info(
                 f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=cleanup"
             )
-            await runner.cleanup()
+            await self.__cleanup_runner(runner=runner)
             SignalStateRegistry.shared().release(workflow_id=workflow_id)
 
     @activity.defn(name="EXECUTE_EXPLORATION")  # type: ignore[untyped-decorator]
@@ -249,10 +289,25 @@ class FathomActivities:
                 "duration": result.duration,
                 "steps": result.steps_executed,
             }
+        except asyncio.CancelledError:
+            activity.logger.warning(
+                f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=cancelled"
+            )
+            await self.__cancel_runner(
+                runner=runner,
+                level="warning",
+                message=(
+                    "Workflow execution was cancelled. Cleaning up resources and closing "
+                    "active connections."
+                ),
+                event_type=FathomEvent.WORKFLOW_CANCELLED,
+            )
+            raise
         except Exception as exception:
             activity.logger.exception(
                 f'[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=failed error="{exception}"'
             )
+            runner.cancel()
             return {
                 "steps": 0,
                 "duration": 0,
@@ -264,5 +319,5 @@ class FathomActivities:
             activity.logger.info(
                 f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=cleanup"
             )
-            await runner.cleanup()
+            await self.__cleanup_runner(runner=runner)
             SignalStateRegistry.shared().release(workflow_id=workflow_id)

@@ -7,6 +7,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from fathom.infrastructure.temporal.state import SignalStateRegistry, WorkflowSignalState
+from fathom.schemas.configuration import WorkflowHostPolicyConfiguration
 from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,24 @@ class FathomBaseWorkflow:
         """
 
         return SignalStateRegistry.shared().get(workflow_id=workflow.info().workflow_id)
+
+    def timeout(self, *, max_steps: int, policy: WorkflowHostPolicyConfiguration) -> timedelta:
+        """
+        Compute the activity timeout budget from the requested step count.
+        """
+
+        timeout = max(
+            policy.timeout_floor,
+            (max_steps * policy.timeout_per_step) + policy.timeout_overhead,
+        )
+        return timedelta(minutes=timeout)
+
+    def heartbeat(self, *, policy: WorkflowHostPolicyConfiguration) -> timedelta:
+        """
+        Compute the activity heartbeat timeout from the workflow policy.
+        """
+
+        return timedelta(seconds=policy.heartbeat_seconds)
 
     @workflow.signal  # type: ignore[untyped-decorator]
     async def pause(self) -> None:
@@ -163,11 +182,20 @@ class FathomWorkflow(FathomBaseWorkflow):
                 f"with intent: {validated_request.objective.intent}"
             )
 
+            activity_policy = validated_request.interaction.execution_configuration.workflow.intent
+
+            timeout = self.timeout(
+                policy=activity_policy,
+                max_steps=validated_request.objective.max_steps,
+            )
+            heartbeat = self.heartbeat(policy=activity_policy)
+            arguments = [workflow.info().workflow_id, validated_request.model_dump(mode="json")]
+
             result = await workflow.execute_activity(
                 activity="EXECUTE_INTENT",
-                args=[workflow.info().workflow_id, validated_request.model_dump(mode="json")],
-                heartbeat_timeout=timedelta(seconds=300),
-                start_to_close_timeout=timedelta(minutes=30),
+                args=arguments,
+                heartbeat_timeout=heartbeat,
+                start_to_close_timeout=timeout,
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
 
@@ -207,11 +235,21 @@ class FathomExplorationWorkflow(FathomBaseWorkflow):
                 f"Starting Fathom exploration for session {validated_request.runtime.session_id}"
             )
 
+            activity_policy = (
+                validated_request.interaction.execution_configuration.workflow.exploration
+            )
+            timeout = self.timeout(
+                policy=activity_policy,
+                max_steps=validated_request.objective.max_steps,
+            )
+            heartbeat = self.heartbeat(policy=activity_policy)
+            arguments = [workflow.info().workflow_id, validated_request.model_dump(mode="json")]
+
             result = await workflow.execute_activity(
                 activity="EXECUTE_EXPLORATION",
-                args=[workflow.info().workflow_id, validated_request.model_dump(mode="json")],
-                heartbeat_timeout=timedelta(seconds=60),
-                start_to_close_timeout=timedelta(minutes=30),
+                args=arguments,
+                heartbeat_timeout=heartbeat,
+                start_to_close_timeout=timeout,
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
 
