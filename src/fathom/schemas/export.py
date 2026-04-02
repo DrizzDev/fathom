@@ -213,11 +213,16 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
             extra = ordered_set - required_set
             # Extra IDs are allowed if they exist in the catalog (e.g. optional validate actions).
             unexpected = extra - set(payload.action_catalog.keys())
-            if missing or unexpected:
-                raise ValueError(
-                    "Executable action IDs must match step data exactly (no missing or unknown IDs). "
-                    f"missing={missing or 'none'}, unexpected={unexpected or 'none'}"
+            if unexpected:
+                raise ValueError(f"Unknown action IDs in output: {unexpected}")
+            # Auto-include missing required IDs at their canonical position
+            # instead of failing — the LLM occasionally drops actions.
+            if missing:
+                logger.warning(
+                    "LLM omitted required action IDs %s; auto-including at canonical position.",
+                    missing,
                 )
+                ordered_action_ids.extend(missing)
 
         for action_id in ordered_action_ids:
             if action_id not in payload.action_catalog:

@@ -141,9 +141,15 @@ def build_action_catalog_from_steps(
             continue
         action_type_val = get_action_type(step=step)
 
-        # Use authoritative export_target from VLM; fall back to natural_language_target.
+        # For positional/dynamic targets, prefer script_target (e.g. "the 1st product")
+        # over export_target (e.g. "R for Rabbit Pant Diaper") to keep scripts reusable.
+        target_type = _get_field(step, "target_type")
+        script_target = _get_field(step, "script_target")
         export_target = _get_field(step, "export_target")
-        if not export_target:
+
+        if target_type in ("positional", "dynamic") and script_target:
+            export_target = script_target
+        elif not export_target:
             export_target = _get_field(step, "natural_language_target") or "element"
 
         text = _get_field(step, "text")

@@ -3,11 +3,20 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from fathom.core.prompts.templates import SUMMARIZATION_SYSTEM
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.summarization import SummarizationPort
 
 logger = logging.getLogger(__name__)
+
+SUMMARIZATION_SYSTEM = """You are an expert at analyzing mobile UI automation execution traces.
+
+Your task is to create a structured milestone summary that helps an AI agent understand:
+1. What was accomplished in this segment
+2. Key actions that led to success
+3. Any challenges or failures encountered
+
+Focus on STATE CHANGES and OUTCOMES, not routine navigation.
+Be concise but informative - the agent needs to quickly understand progress."""
 
 
 class LLMSummarizer(SummarizationPort):

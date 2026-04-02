@@ -259,9 +259,6 @@ class GeminiPromptBuilder(PromptBuilder):
             notes.append("- SEARCH FLOW: If suggestions are visible, type then tap suggestion.")
 
         notes.append("- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly.")
-        # notes.append(
-        #     "- DISABLED ELEMENTS: Do NOT interact with elements marked as '[DISABLED]' in the manifest."
-        # )
 
         return "NOTES:\n" + "\n".join(notes)
 
@@ -342,3 +339,16 @@ class GeminiPromptBuilder(PromptBuilder):
             block += f"\nAvoid repeats when possible: {', '.join(avoided[:20])}"
 
         return block
+
+    @staticmethod
+    def resolve_version(model_name: str, use_xml: bool) -> str:
+        """
+        Determines the optimal prompt version based on Gemini model capabilities.
+        """
+
+        is_flash = "flash" in model_name.lower()
+
+        tier = "flash" if is_flash else "pro"
+        strategy = "xml" if use_xml else "vision"
+
+        return f"{tier}_{strategy}"

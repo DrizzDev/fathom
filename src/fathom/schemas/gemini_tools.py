@@ -158,10 +158,24 @@ class GeminiBBox(BaseModel):
     Downstream we map this into the core Bounds model in actions.py.
     """
 
-    x: int = Field(0, description="Center X coordinate")
-    y: int = Field(0, description="Center Y coordinate")
-    width: int = Field(0, ge=0, description="Width (0 for center-point predictions)")
-    height: int = Field(0, ge=0, description="Height (0 for center-point predictions)")
+    x: int = Field(
+        0,
+        description="X coordinate (center for VLM predictions, top-left for label-snapped bounds)",
+    )
+    y: int = Field(
+        0,
+        description="Y coordinate (center for VLM predictions, top-left for label-snapped bounds)",
+    )
+    width: int = Field(
+        0,
+        ge=0,
+        description="Width (0 for VLM center-point predictions, >0 for label-snapped bounds)",
+    )
+    height: int = Field(
+        0,
+        ge=0,
+        description="Height (0 for VLM center-point predictions, >0 for label-snapped bounds)",
+    )
     coord_system: CoordSystem = Field(
         "normalized",
         description="Coordinate system for bbox (normalized or pixel)",
@@ -380,11 +394,19 @@ class ExecuteAction(BaseModel):
             )
 
         # validation_subject is required for validate actions.
-        if at == "validate" and not (self.validation_subject or "").strip():
-            raise ValueError(
-                "validation_subject is required for action_type='validate'. "
-                "Describe what is being validated (e.g., 'login status', 'cart is empty')."
-            )
+        if at == "validate":
+            subject = (self.validation_subject or "").strip()
+            if not subject:
+                raise ValueError(
+                    "validation_subject is required for action_type='validate'. "
+                    "Describe what is being validated (e.g., 'login status', 'cart is empty')."
+                )
+            lower = subject.lower()
+            if any(lower.startswith(p) for p in ("i am ", "i can ", "i will ", "i do ")):
+                raise ValueError(
+                    f"validation_subject must not use first-person language: '{subject}'. "
+                    "Use a third-person noun phrase (e.g., 'Instamart tab selected')."
+                )
 
         return self
 

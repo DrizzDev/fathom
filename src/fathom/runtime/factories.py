@@ -14,6 +14,11 @@ from fathom.adapters.perception.ios import (
     IOSNativePerceptionAdapter,
 )
 from fathom.adapters.perception.remote import RemotePerceptionAdapter
+from fathom.adapters.prompts import (
+    GeminiDecompositionPromptBuilder,
+    GeminiExportPromptBuilder,
+    GeminiPromptBuilder,
+)
 from fathom.adapters.signal.interactive import InteractiveSignal
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.adapters.signal.socket import SocketSignal
@@ -26,6 +31,7 @@ from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform, IOSAutomationBackend
 from fathom.constants.run import SignalAdapterType
+from fathom.core.prompts.factory import PromptFactory
 from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.factory import (
@@ -48,6 +54,13 @@ from fathom.schemas.configuration import (
 )
 
 logger = getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Register prompt builders (composition root wiring)
+# ---------------------------------------------------------------------------
+PromptFactory.register_builder("gemini", GeminiPromptBuilder)
+PromptFactory.register_export_builder("gemini", GeminiExportPromptBuilder)
+PromptFactory.register_decomposition_builder("gemini", GeminiDecompositionPromptBuilder)
 
 
 class DeviceFactory(DeviceFactoryPort):

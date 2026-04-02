@@ -182,11 +182,16 @@ class ToolRegistry:
                                     "type": "STRING",
                                     "description": (
                                         "The canonical phrase for this action in exported test scripts. "
-                                        "Must be specific and human-readable (e.g., 'Search box', "
-                                        "'the first search result', 'Add to cart button'). "
+                                        "Must be specific and human-readable. "
                                         "REQUIRED for tap, type, long_press, scroll, swipe, and wait actions. "
                                         "NEVER use generic placeholders like 'element', 'UI Element', "
-                                        "'button', 'label', 'icon', 'field', or 'text' alone."
+                                        "'button', 'label', 'icon', 'field', or 'text' alone.\n"
+                                        "DYNAMIC TARGETS (CRITICAL): When tapping items in a list, grid, "
+                                        "carousel, or product catalog, NEVER use the specific product/item "
+                                        "name (e.g., 'R for Rabbit Pant Diaper'). Instead use POSITIONAL "
+                                        "references: 'the 1st product', 'the 3rd item', 'Add button for "
+                                        "the 1st item'. Product names change between runs — positional "
+                                        "references are reusable. Also set target_type='positional'."
                                     ),
                                 },
                                 "target_type": {
@@ -271,7 +276,14 @@ class ToolRegistry:
                                     ),
                                 },
                             },
-                            "required": ["action_type", "bbox", "rationale", "is_valid"],
+                            "required": [
+                                "action_type",
+                                "bbox",
+                                "rationale",
+                                "is_valid",
+                                "export_target",
+                                "target_type",
+                            ],
                         },
                     },
                     "goal_completed": {

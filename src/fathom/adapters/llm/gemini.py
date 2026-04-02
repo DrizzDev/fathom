@@ -11,7 +11,6 @@ from google.oauth2 import service_account
 
 from fathom.adapters.llm.cache import CacheService
 from fathom.core.exceptions import VisionError
-from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.conversation import ConversationTurn
@@ -44,7 +43,6 @@ class GeminiLLM(LLMPort):
         self.__client: Optional[Any] = None
         self.__credentials: Optional[Any] = None
 
-        self.__parser = ToolResponseParser()
         self.__cache: Optional[CacheService] = None
 
         self.__initialize()

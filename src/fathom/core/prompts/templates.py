@@ -5,9 +5,14 @@ from types import MappingProxyType
 # Coordinate system and confidence guidance
 COORD_RULES = (
     "COORDINATE SYSTEM (CRITICAL):\n"
-    "- GROUNDING: IF the target exists in the Element Manifest, you MUST include its 'label_id' (e.g., label_id='4').\n"
-    "- COORDINATES: x,y are the CENTER of the target element.\n"
+    "- GROUNDING FIRST: ALWAYS prefer label_id over coordinates. If the target exists in the "
+    "Element Manifest, you MUST include its 'label_id' — label-snapped coordinates are exact, "
+    "while predicted coordinates are approximate.\n"
+    "- COORDINATES: x,y are the CENTER of the target element. Place the point where a human "
+    "finger would naturally tap — the geometric middle of the tappable area.\n"
     "- DEFAULT: Use normalized coordinates (0-1000). 0 = left/top edge, 1000 = right/bottom edge.\n"
+    "- SMALL ELEMENTS: For small icons/buttons, be extra precise — an error of 20+ units will "
+    "miss the target. Double-check your x,y against the element's visual position.\n"
     "- PIXEL MODE: Use raw pixels ONLY when you explicitly set coord_system='pixel'.\n"
     "- COORD_SYSTEM CONSISTENCY: coord_system must match the numbers you provide."
 )
@@ -40,7 +45,16 @@ _ACTION_RULES_RAW = {
     "validate": (
         "VALIDATE: Use when the next best step is an explicit check rather than a touch action. "
         "Visual cues: confirm toggle is on/off (green vs gray), banner/toast text is visible, "
-        "expected page title or section header is displayed, error message is present or absent."
+        "expected page title or section header is displayed, error message is present or absent.\n"
+        "VALIDATION_SUBJECT FORMAT (CRITICAL): validation_subject must be a SHORT noun phrase "
+        "(max 8 words). State ONLY the element and its expected state. "
+        "NEVER include reasoning, evidence, descriptions, locations, or full sentences. "
+        "NEVER use first-person language ('I am', 'I can see', 'I will', 'I do not'). "
+        "NEVER start with 'Validating', 'Checking', 'Confirming'. "
+        "Write as a third-person assertion, not a narration. "
+        "Put reasoning in 'rationale', NOT in validation_subject.\n"
+        "GOOD: 'Instamart tab selected', 'item added to cart'\n"
+        "BAD: 'I am on the Instamart section as indicated by the active tab indicator'"
     ),
     "zoom": "ZOOM: 'zoom_in' to enlarge, 'zoom_out' to shrink. Target the relevant region.",
     "type": (
@@ -128,17 +142,6 @@ MEMORY STRATEGY:
 """
 
 STUCK_PROMPT = "SYSTEM ALERT: You are stuck in a repetitive loop (same action/target multiple times with no progress). DO NOT try the same action again. You MUST use the 'ask_user' tool to ask the human for help immediately. This is a mandatory requirement."
-
-# Summarization system instruction (for GCC milestone creation)
-SUMMARIZATION_SYSTEM = """You are an expert at analyzing mobile UI automation execution traces.
-
-Your task is to create a structured milestone summary that helps an AI agent understand:
-1. What was accomplished in this segment
-2. Key actions that led to success
-3. Any challenges or failures encountered
-
-Focus on STATE CHANGES and OUTCOMES, not routine navigation.
-Be concise but informative - the agent needs to quickly understand progress."""
 
 # Verification prompt templates
 VERIFICATION_SYSTEM = """You are an elite QA Automation Engineer specializing in visual mobile application state verification.
