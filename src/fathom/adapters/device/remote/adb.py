@@ -18,8 +18,14 @@ from tenacity import (
     wait_exponential,
 )
 
+from fathom.constants.execution import REMOTE_DEVICE_REQUEST_TIMEOUT_SECONDS
 from fathom.constants.interaction import InteractionAction, SwipeSpeed
-from fathom.core.exceptions import DeviceError, PortError
+from fathom.core.exceptions import (
+    DeviceConnectionClosedError,
+    DeviceError,
+    FathomError,
+    PortError,
+)
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.configuration import (
     DeviceConfiguration,
@@ -39,6 +45,8 @@ class ADBRemoteDeviceAdapter(DevicePort):
     Adapter for controlling devices hosted on remote providers (e.g., Enricher).
     Implements the standard Fathom Remote Device Protocol.
     """
+
+    __ACTION_FAILURE_MESSAGE = "Failed to execute the action on the remote device. Please retry."
 
     def __init__(self, configuration: DeviceConfiguration) -> None:
         """
@@ -69,8 +77,8 @@ class ADBRemoteDeviceAdapter(DevicePort):
 
         self.__client = httpx.AsyncClient(
             http2=True,
-            timeout=120.0,
             base_url=base_url,
+            timeout=REMOTE_DEVICE_REQUEST_TIMEOUT_SECONDS,
             headers={"Authorization": f"Bearer {self.__token}"} if self.__token else {},
         )
 
@@ -88,7 +96,26 @@ class ADBRemoteDeviceAdapter(DevicePort):
         Executes an HTTP request with automatic retries for transient errors (5xx, timeouts). Immediately raises on 4xx errors.
         """
 
-        response = await self.__client.request(method, path, **kwargs)
+        if self.__client.is_closed:
+            logger.warning(
+                "Remote device request skipped because the HTTP client is already closed."
+            )
+            raise DeviceConnectionClosedError(
+                "Remote device request attempted after the HTTP client was already closed.",
+            )
+
+        try:
+            response = await self.__client.request(method, path, **kwargs)
+        except RuntimeError as exception:
+            if self.__is_closed_client_error(exception=exception):
+                logger.exception(
+                    "Remote device request failed because the HTTP client was closed during request execution."
+                )
+                raise DeviceConnectionClosedError(
+                    "Remote device request failed because the HTTP client closed during request execution."
+                ) from exception
+            raise
+
         response.raise_for_status()
 
         return response
@@ -100,6 +127,13 @@ class ADBRemoteDeviceAdapter(DevicePort):
         """
 
         return self.__runtime_configuration
+
+    def __is_closed_client_error(self, *, exception: RuntimeError) -> bool:
+        """
+        Determine whether a request failed because the underlying client was closed.
+        """
+
+        return self.__client.is_closed or "client has been closed" in str(exception).lower()
 
     async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """
@@ -136,21 +170,23 @@ class ADBRemoteDeviceAdapter(DevicePort):
         except httpx.HTTPStatusError as exception:
             # Re-wrap without losing original trace. HTTPStatusError is a subclass of HTTPError
             status = exception.response.status_code
-            logger.error(f"Remote snapshot failed with HTTP {status}: {exception}")
-            raise DeviceError(
-                f"Remote snapshot failed with HTTP {status}: {exception}"
-            ) from exception
+            logger.exception("Remote snapshot request failed with HTTP %s.", status)
+            raise DeviceError(f"Remote snapshot request failed with HTTP {status}.") from exception
 
         except httpx.HTTPError as exception:
-            logger.error(f"Remote snapshot connection failed: {exception}")
-            raise DeviceError(f"Remote snapshot failed: {exception}") from exception
+            logger.exception("Remote snapshot request failed due to a transport error.")
+            raise DeviceError(
+                f"Remote snapshot request failed due to a transport error: {exception}"
+            ) from exception
 
         except DeviceError:
             raise
 
         except Exception as exception:
-            logger.error(f"Snapshot parsing error: {exception}")
-            raise DeviceError(f"Snapshot parsing error: {exception}") from exception
+            logger.exception("Remote snapshot response could not be parsed.")
+            raise DeviceError(
+                f"Remote snapshot response could not be parsed: {exception}"
+            ) from exception
 
     async def tap(self, *, x: int, y: int) -> ActionResult:
         """
@@ -250,16 +286,16 @@ class ADBRemoteDeviceAdapter(DevicePort):
             raise DeviceError("Get dimensions: Response missing width or height fields")
 
         except httpx.HTTPError as exception:
-            raise DeviceError(
-                f"Get dimensions: Failed to fetch from remote: {exception}"
-            ) from exception
+            logger.exception("Remote dimensions request failed.")
+            raise DeviceError(f"Remote dimensions request failed: {exception}") from exception
 
         except DeviceError:
             raise
 
         except Exception as exception:
+            logger.exception("Remote dimensions response could not be parsed.")
             raise DeviceError(
-                f"Get dimensions: Failed to parse response: {exception}"
+                f"Remote dimensions response could not be parsed: {exception}"
             ) from exception
 
     async def capture_screen(self) -> bytes:
@@ -284,16 +320,16 @@ class ADBRemoteDeviceAdapter(DevicePort):
             raise DeviceError("Capture screen: No base64 data in screenshot response")
 
         except httpx.HTTPError as exception:
-            raise DeviceError(
-                f"Capture screen: Remote screenshot failed: {exception}"
-            ) from exception
+            logger.exception("Remote screenshot request failed.")
+            raise DeviceError(f"Remote screenshot request failed: {exception}") from exception
 
         except DeviceError:
             raise
 
         except Exception as exception:
+            logger.exception("Remote screenshot response could not be decoded.")
             raise DeviceError(
-                f"Capture screen: Failed to decode screenshot: {exception}"
+                f"Remote screenshot response could not be decoded: {exception}"
             ) from exception
 
     async def dump_hierarchy(self) -> Optional[str]:
@@ -316,14 +352,16 @@ class ADBRemoteDeviceAdapter(DevicePort):
             return str(xml_content) if xml_content is not None else None
 
         except httpx.HTTPError as exception:
-            raise DeviceError(f"Dump hierarchy: Remote XML dump failed: {exception}") from exception
+            logger.exception("Remote hierarchy request failed.")
+            raise DeviceError(f"Remote hierarchy request failed: {exception}") from exception
 
         except DeviceError:
             raise
 
         except Exception as exception:
+            logger.exception("Remote hierarchy response could not be parsed.")
             raise DeviceError(
-                f"Dump hierarchy: Failed to parse XML response: {exception}"
+                f"Remote hierarchy response could not be parsed: {exception}"
             ) from exception
 
     async def get_current_package(self) -> str:
@@ -349,16 +387,18 @@ class ADBRemoteDeviceAdapter(DevicePort):
             return package
 
         except httpx.HTTPError as exception:
+            logger.exception("Remote foreground-package request failed.")
             raise DeviceError(
-                f"Get current package: Remote package check failed: {exception}"
+                f"Remote foreground-package request failed: {exception}"
             ) from exception
 
         except DeviceError:
             raise
 
         except Exception as exception:
+            logger.exception("Remote foreground-package response could not be parsed.")
             raise DeviceError(
-                f"Get current package: Failed to parse package response: {exception}"
+                f"Remote foreground-package response could not be parsed: {exception}"
             ) from exception
 
     async def wait_for_device(self, *, timeout: float) -> bool:
@@ -414,10 +454,15 @@ class ADBRemoteDeviceAdapter(DevicePort):
                 duration=int((time.time() - start) * 1000),
             )
         except Exception as exception:
-            logger.error(f"Remote command failed: {exception}")
+            logger.exception("Remote command failed.", stack_info=True)
+            message = (
+                exception.display(fallback=self.__ACTION_FAILURE_MESSAGE)
+                if isinstance(exception, FathomError) and hasattr(exception, "display")
+                else self.__ACTION_FAILURE_MESSAGE
+            )
             return ActionResult(
                 success=False,
-                error=str(exception),
+                error=message,
                 duration=int((time.time() - start) * 1000),
             )
 

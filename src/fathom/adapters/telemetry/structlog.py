@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any
+from typing import Any, Optional
 
 from fathom.interfaces.telemetry import TelemetryPort
 
@@ -46,3 +46,24 @@ class StructlogAdapter(TelemetryPort):
         """
 
         self.__logger.error(message, extra=context)
+
+    async def exception(
+        self,
+        message: str,
+        *,
+        exception: Optional[BaseException] = None,
+        **context: Any,
+    ) -> None:
+        """
+        Log error message together with exception context.
+        """
+
+        if exception is None:
+            self.__logger.exception(message, extra=context)
+            return
+
+        self.__logger.error(
+            message,
+            extra=context,
+            exc_info=(type(exception), exception, exception.__traceback__),
+        )

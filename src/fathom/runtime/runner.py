@@ -18,7 +18,7 @@ from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
-from fathom.interfaces.telemetry import TelemetryPort
+from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.results import ExplorationResult, IntentResult
@@ -403,6 +403,34 @@ class FathomRunner:
                 strategy_with_cancel.cancel()
             else:
                 logger.warning("Strategy does not support cancellation")
+
+    async def notify(
+        self,
+        *,
+        message: str,
+        level: TelemetryLevel,
+        event_type: Optional[FathomEvent] = None,
+    ) -> None:
+        """
+        Emit a client-facing telemetry message with an optional event type.
+        """
+
+        context: Dict[str, FathomEvent] = {}
+
+        if event_type is not None:
+            context["type"] = event_type
+
+        if level == "debug":
+            await self.__telemetry.debug(message, **context)
+
+        elif level == "info":
+            await self.__telemetry.info(message, **context)
+
+        elif level == "warning":
+            await self.__telemetry.warning(message, **context)
+
+        else:
+            await self.__telemetry.error(message, **context)
 
     async def cleanup(self) -> None:
         """

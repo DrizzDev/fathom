@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from logging import getLogger
-from typing import Any
+from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
 
@@ -74,6 +74,22 @@ class RedisTelemetryAdapter(TelemetryPort):
         except Exception:
             self.__logger.warning("Failed to publish telemetry to Redis", exc_info=True)
 
+    @staticmethod
+    def __error_context(
+        *, context: Dict[str, Any], exception: Optional[BaseException]
+    ) -> Dict[str, Any]:
+        """
+        Build structured telemetry context for an error event.
+        """
+
+        if exception is None:
+            return context
+
+        return {
+            **context,
+            "exception_type": type(exception).__name__,
+        }
+
     async def debug(self, message: str, **context: Any) -> None:
         """
         Publishes DEBUG Logs
@@ -105,6 +121,30 @@ class RedisTelemetryAdapter(TelemetryPort):
 
         self.__logger.error(message, extra=context)
         await self.__publish("error", message, "red", **context)
+
+    async def exception(
+        self,
+        message: str,
+        *,
+        exception: Optional[BaseException] = None,
+        **context: Any,
+    ) -> None:
+        """
+        Publishes ERROR logs together with exception details.
+        """
+
+        payload = self.__error_context(exception=exception, context=context)
+
+        if exception is None:
+            self.__logger.exception(message, extra=payload)
+        else:
+            self.__logger.error(
+                message,
+                extra=payload,
+                exc_info=(type(exception), exception, exception.__traceback__),
+            )
+
+        await self.__publish("error", message, "red", **payload)
 
     async def close(self) -> None:
         """
