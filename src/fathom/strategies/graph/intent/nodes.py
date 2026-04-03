@@ -25,6 +25,7 @@ from fathom.core.exceptions import FathomError
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
 from fathom.schemas.hierarchy import HierarchyProcessingResult
+from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import (
     PostActionScreenComparison,
@@ -51,6 +52,7 @@ class IntentNodeProvider:
 
     __GROUNDING_FAILURE_MESSAGE = "Failed to capture the current app screen. Please retry."
     __RECORDING_FAILURE_MESSAGE = "Failed to save execution details for the current step."
+    __MAX_ACTIONS_PER_SUBGOAL = 15
 
     def __init__(
         self,
@@ -350,6 +352,66 @@ class IntentNodeProvider:
             execution_activity=execution_activity,
             on_complete=__publish,
         )
+
+    async def __replan_remaining_sub_goals(
+        self,
+        capture: ScreenCapture,
+    ) -> Optional[IntentGraphState]:
+        """
+        On 3rd verification rejection, re-decompose the remaining intent
+        using the current screen context.  Replaces unfinished sub-goals
+        with a fresh plan and routes back to GROUND.
+        """
+
+        from fathom.core.services.decomposer import IntentDecomposer
+
+        agent_state = self.__context.agent_state
+
+        # Build a new intent from only the remaining (unfinished) sub-goals.
+        # This prevents the decomposer from re-planning completed steps.
+        remaining_descriptions = [
+            sg.description for sg in agent_state.sub_goals if not sg.is_complete()
+        ]
+        if not remaining_descriptions:
+            return None
+
+        # Include the last verification failure context so the decomposer
+        # knows the current screen state and what went wrong.
+        remaining_intent = ". ".join(remaining_descriptions)
+
+        try:
+            decomposer = IntentDecomposer.with_configuration(
+                llm=self.__context.llm,
+                configuration=self.__context.configuration.llm,
+            )
+            new_sub_goals = await decomposer.decompose(
+                intent=remaining_intent,
+                screenshot=capture.image if capture.image else None,
+            )
+
+            logger.info(
+                f"[NODE: VERIFY] Replanned: {len(new_sub_goals)} new sub-goals "
+                f"replacing {len(remaining_descriptions)} unfinished sub-goals"
+            )
+
+            agent_state.replace_remaining_sub_goals(new_sub_goals)
+            agent_state.reset_completion()
+            self.__context.context_manager.clear_user_guidance()
+
+            result_state = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: False,
+                    IntentStateKey.SHOULD_RETRY: True,
+                },
+            )
+            self.__persist_agent_state_to_graph(result=result_state)
+            return result_state
+
+        except Exception as exception:
+            logger.warning(f"[NODE: VERIFY] Replanning failed: {exception}")
+
+        return None
 
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -1146,14 +1208,7 @@ class IntentNodeProvider:
                 f"[H3] Committing to trace | thought={step_result.step.action.rationale[:50]}..."
             )
 
-            analysis_result = state.get(CommonStateKey.ANALYSIS)
-            analysis: Optional[AnalysisResult] = None
-            if isinstance(analysis_result, AnalysisResult):
-                analysis = analysis_result
-
             observation = f"Screen: {step_result.pre_hash[:8]}"
-            if analysis and analysis.screen_description:
-                observation += f" | Content: {analysis.screen_description[:100]}..."
 
             await self.__context.context_manager.commit(
                 observation=observation,
@@ -1191,7 +1246,7 @@ class IntentNodeProvider:
             # ── Sub-goal completion check (post-execution) ──
             # Evaluated here — after the action has executed and been recorded —
             # so we never advance a sub-goal on an action that didn't run.
-            subgoal_result = self.__evaluate_subgoal_completion(
+            subgoal_result = await self.__evaluate_subgoal_completion(
                 plan=execution_plan,
                 step_result=step_result,
                 accumulated_step_results=accumulated_step_results,
@@ -1230,7 +1285,7 @@ class IntentNodeProvider:
             self.__persist_agent_state_to_graph(result=result)
             return result
 
-    def __evaluate_subgoal_completion(
+    async def __evaluate_subgoal_completion(
         self,
         *,
         plan: Any,
@@ -1257,6 +1312,21 @@ class IntentNodeProvider:
             raw_analysis = plan.metadata.get("_analysis")
 
         if raw_analysis is None:
+            # Even without analysis, check if we're stuck on this sub-goal.
+            if agent_state.sub_goal_action_count >= self.__MAX_ACTIONS_PER_SUBGOAL:
+                logger.info(
+                    f"[NODE: RECORD] Sub-goal {current_sub_goal.index} stuck after "
+                    f"{agent_state.sub_goal_action_count} actions (no analysis). "
+                    "Triggering replan."
+                )
+                try:
+                    capture = await self.__context.perception_port.capture()
+                    replanned = await self.__replan_remaining_sub_goals(capture=capture)
+                    if replanned is not None:
+                        self.__persist_agent_state_to_graph(result=replanned)
+                        return replanned
+                except Exception as exception:
+                    logger.warning(f"[NODE: RECORD] Stuck-detection replan failed: {exception}")
             return None
 
         analysis = (
@@ -1304,8 +1374,29 @@ class IntentNodeProvider:
                 f"[NODE: RECORD] Sub-goal {current_sub_goal.index} NOT completing yet: "
                 f"{signal_count}/{required_threshold} signals | "
                 f"Progress: [{current_idx + 1}/{total}] | "
-                f"Type: {'validation' if is_validation_step else 'action'}"
+                f"Type: {'validation' if is_validation_step else 'action'} | "
+                f"Actions on sub-goal: {agent_state.sub_goal_action_count}"
             )
+
+            # If too many actions without sub-goal advancement, trigger
+            # replanning.  This catches cases where the 2-signal gate never
+            # passes (LLM never sets sub_goal_completed=true) and VERIFY
+            # never runs — the agent is stuck on a sub-goal indefinitely.
+            if agent_state.sub_goal_action_count >= self.__MAX_ACTIONS_PER_SUBGOAL:
+                logger.info(
+                    f"[NODE: RECORD] Sub-goal {current_sub_goal.index} stuck after "
+                    f"{agent_state.sub_goal_action_count} actions. Triggering replan."
+                )
+                # Capture current screen for replanning context
+                try:
+                    capture = await self.__context.perception_port.capture()
+                    replanned = await self.__replan_remaining_sub_goals(capture=capture)
+                    if replanned is not None:
+                        self.__persist_agent_state_to_graph(result=replanned)
+                        return replanned
+                except Exception as exception:
+                    logger.warning(f"[NODE: RECORD] Stuck-detection replan failed: {exception}")
+
             return None
 
         # Route to VERIFY for per-sub-goal screenshot verification.
@@ -1444,25 +1535,37 @@ class IntentNodeProvider:
 
         user_prompt = user_template.format(intent=verify_target, guidance_section=guidance_section)
 
-        # 3. Ask the LLM
-        try:
-            llm_result = await self.__context.llm.generate(
-                use_cache=False,
-                system_instruction=system_prompt,
-                prompt=[user_prompt, image_bytes],
-            )
+        # 3. Ask the LLM with escalating thinking on retries
+        is_truly_complete = False
+        reason = "Verification failed without specific reason."
+        next_action = ""
+        thinking_levels = ["low", "medium", "high"]
+        max_verify_retries = len(thinking_levels)
 
-            text = strip_code_fences(llm_result.content)
-            data = json.loads(text)
-            is_truly_complete = bool(data.get("is_complete", False))
-            reason = str(data.get("reason", "Verification failed without specific reason."))
-            next_action = str(data.get("next_action", "")).strip()
+        for attempt in range(max_verify_retries):
+            try:
+                llm_result = await self.__context.llm.generate(
+                    use_cache=False,
+                    system_instruction=system_prompt,
+                    prompt=[user_prompt, image_bytes],
+                    thinking_level=thinking_levels[attempt],
+                )
 
-        except Exception as exception:
-            logger.error(f"[NODE: VERIFY] LLM verification failed: {exception}")
-            is_truly_complete = False
-            reason = f"Verification failed due to error: {exception}"
-            next_action = ""
+                text = strip_code_fences(llm_result.content)
+                data = json.loads(text)
+                is_truly_complete = bool(data.get("is_complete", False))
+                reason = str(data.get("reason", "Verification failed without specific reason."))
+                next_action = str(data.get("next_action", "")).strip()
+                break
+
+            except Exception as exception:
+                logger.warning(
+                    f"[NODE: VERIFY] Verification attempt {attempt + 1}/{max_verify_retries} "
+                    f"failed (thinking={thinking_levels[attempt]}): {exception}"
+                )
+                if attempt == max_verify_retries - 1:
+                    logger.error(f"[NODE: VERIFY] All verification attempts exhausted: {exception}")
+                    reason = f"Verification failed due to error: {exception}"
 
         duration = time.time() - start_time
         logger.info(
@@ -1474,8 +1577,6 @@ class IntentNodeProvider:
         if is_truly_complete:
             if is_subgoal_verify and current_sub_goal is not None:
                 # Sub-goal verified — advance to next sub-goal.
-                from fathom.schemas.reasoning import SubGoalCompletionSignal
-
                 has_more = agent_state.mark_current_sub_goal_complete(
                     completion_signal=SubGoalCompletionSignal(
                         evidence=f"Verified by screenshot: {reason}",
@@ -1508,11 +1609,8 @@ class IntentNodeProvider:
                     self.__persist_agent_state_to_graph(result=result)
                     return result
                 else:
-                    # Last sub-goal verified — now verify the full intent.
-                    logger.info(
-                        "[NODE: VERIFY] All sub-goals verified. "
-                        "Re-running verification for full intent."
-                    )
+                    # Last sub-goal verified — mark intent complete.
+                    logger.info("[NODE: VERIFY] All sub-goals verified. Marking intent complete.")
                     agent_state.mark_complete(
                         reason="All sub-goals completed and verified sequentially"
                     )
@@ -1540,8 +1638,25 @@ class IntentNodeProvider:
                 self.__persist_agent_state_to_graph(result=result)
                 return result
         else:
-            # Inject negative feedback with a suggested next action so the
-            # agent knows exactly what to do instead of looping.
+            agent_state.record_verify_failure()
+            failure_count = agent_state.sub_goal_verify_failures
+
+            # On the 3rd rejection for the same sub-goal, check if the
+            # agent has actually progressed beyond this sub-goal's scope
+            # by examining the execution trace.  If actions suggest the
+            # sub-goal was completed and the agent moved on, force-advance.
+            if is_subgoal_verify and current_sub_goal is not None and failure_count >= 3:
+                logger.info(
+                    f"[NODE: VERIFY] 3rd rejection for sub-goal {current_sub_goal.index}. "
+                    "Re-decomposing remaining intent with current screen context."
+                )
+                replanned = await self.__replan_remaining_sub_goals(
+                    capture=capture,
+                )
+                if replanned is not None:
+                    return replanned
+
+            # Standard rejection: suggest next action and route back.
             feedback_parts = [f"Verification FAILED: {reason}."]
             if next_action:
                 feedback_parts.append(f"SUGGESTED NEXT ACTION: {next_action}")

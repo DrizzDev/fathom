@@ -309,7 +309,7 @@ class ToolRegistry:
                     },
                     "current_screen_summary": {
                         "type": "STRING",
-                        "description": "Optional short summary of the current screen for semantic delta analysis.",
+                        "description": "Describe ONLY what is visible on screen (e.g., 'Swiggy home page with search bar, Instamart tab, food categories'). Do NOT describe actions being performed or navigation intent. State the screen name and key visible elements.",
                     },
                     "delta_observed": {
                         "type": "BOOLEAN",

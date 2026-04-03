@@ -94,7 +94,7 @@ class RunCommandInput(LocalCommandInput):
     intent: str = Field(..., min_length=1)
     use_xml: bool = Field(default=False)
     signal: Literal["interactive", "socket"] = Field(default="interactive")
-    max_steps: int = Field(default=50, ge=1)
+    max_steps: int = Field(default=100, ge=1)
     interactive: bool = Field(default=False)
     realignment_budget: int = Field(default=3, ge=0)
     immediate_realignment: bool = Field(default=True)
@@ -121,5 +121,5 @@ class ExploreCommandInput(LocalCommandInput):
     """
 
     command: Literal["explore"] = Field(default="explore")
-    max_steps: int = Field(default=50, ge=1)
+    max_steps: int = Field(default=100, ge=1)
     verbose: bool = Field(default=False)

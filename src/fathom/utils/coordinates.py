@@ -75,7 +75,7 @@ class CoordinateConverter:
         Calculate swipe start and end coordinates.
         """
 
-        x, y, width, height = self.to_pixels(bounds=bounds)
+        _, _, width, height = self.to_pixels(bounds=bounds)
         center_x, center_y = self.center_to_pixels(bounds=bounds)
 
         swipe_policy = self.__configuration.interaction.policy.swipe

@@ -192,7 +192,7 @@ class CommandApplication:
         explore_parser.add_argument(
             "--max-steps",
             type=int,
-            default=50,
+            default=100,
             help="Maximum steps allowed",
         )
         explore_parser.add_argument(
