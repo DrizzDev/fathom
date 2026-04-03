@@ -90,6 +90,7 @@ class AgentState:
         self.__current_sub_goal_index: int = 0
         self.__sub_goal_start_screen: Optional[str] = None  # Track screen hash when sub-goal starts
         self.__sub_goal_action_count: int = 0  # Track actions executed for current sub-goal
+        self.__sub_goal_verify_failures: int = 0  # Verification rejections for current sub-goal
 
     @property
     def intent(self) -> str:
@@ -322,6 +323,11 @@ class AgentState:
                 f"Starting with: {self.__sub_goals[0].description}"
             )
 
+    @property
+    def sub_goals(self) -> List[SubGoal]:
+        """All sub-goals (read-only snapshot)."""
+        return list(self.__sub_goals)
+
     def get_current_sub_goal(self) -> Optional[SubGoal]:
         """
         Get the currently active sub-goal.
@@ -332,6 +338,42 @@ class AgentState:
         if not self.__sub_goals or self.__current_sub_goal_index >= len(self.__sub_goals):
             return None
         return self.__sub_goals[self.__current_sub_goal_index]
+
+    @property
+    def sub_goal_verify_failures(self) -> int:
+        """Verification rejection count for the current sub-goal."""
+        return self.__sub_goal_verify_failures
+
+    def record_verify_failure(self) -> None:
+        """Record a verification rejection for the current sub-goal."""
+        self.__sub_goal_verify_failures += 1
+
+    def replace_remaining_sub_goals(self, new_sub_goals: List[SubGoal]) -> None:
+        """
+        Replace unfinished sub-goals with a fresh decomposition.
+
+        Preserves already-completed sub-goals and replaces everything from
+        the current index onward with ``new_sub_goals``.
+        """
+
+        completed = [sg for sg in self.__sub_goals if sg.is_complete()]
+        reindexed = [
+            sg.model_copy(update={"index": len(completed) + i})
+            for i, sg in enumerate(new_sub_goals)
+        ]
+        self.__sub_goals = completed + reindexed
+        self.__current_sub_goal_index = len(completed)
+        self.__sub_goal_action_count = 0
+        self.__sub_goal_verify_failures = 0
+
+        if self.__current_sub_goal_index < len(self.__sub_goals):
+            self.__sub_goals[self.__current_sub_goal_index].mark_in_progress()
+
+        logger.info(
+            f"[AgentState] Replanned: kept {len(completed)} completed, "
+            f"replaced with {len(reindexed)} new sub-goals. "
+            f"Current: {self.__sub_goals[self.__current_sub_goal_index].description if self.__current_sub_goal_index < len(self.__sub_goals) else '(none)'}"
+        )
 
     def set_current_sub_goal_index(self, index: int) -> None:
         """
@@ -418,6 +460,7 @@ class AgentState:
             if self.__current_screen:
                 self.__sub_goal_start_screen = self.__current_screen.visual_hash
             self.__sub_goal_action_count = 0
+            self.__sub_goal_verify_failures = 0
             logger.info(
                 f"[AgentState] Advanced to sub-goal {next_goal.index}: {next_goal.description}"
             )
@@ -432,6 +475,11 @@ class AgentState:
         Call this from planner after executing each action.
         """
         self.__sub_goal_action_count += 1
+
+    @property
+    def sub_goal_action_count(self) -> int:
+        """Actions executed for the current sub-goal."""
+        return self.__sub_goal_action_count
 
     def all_sub_goals_complete(self) -> bool:
         """
@@ -675,6 +723,8 @@ class AgentState:
             "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
             "sub_goals": [goal.model_dump(mode="json") for goal in self.__sub_goals],
             "current_sub_goal_index": self.__current_sub_goal_index,
+            "sub_goal_verify_failures": self.__sub_goal_verify_failures,
+            "sub_goal_action_count": self.__sub_goal_action_count,
         }
 
     def __restore_from_data(
@@ -689,6 +739,8 @@ class AgentState:
         low_delta_streak: int = 0,
         sub_goals: Optional[List[Dict[str, Any]]] = None,
         current_sub_goal_index: int = 0,
+        sub_goal_verify_failures: int = 0,
+        sub_goal_action_count: int = 0,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -700,6 +752,8 @@ class AgentState:
         self.__realignment_count = realignment_count
         self.__last_delta_score = last_delta_score
         self.__low_delta_streak = max(0, low_delta_streak)
+        self.__sub_goal_verify_failures = sub_goal_verify_failures
+        self.__sub_goal_action_count = sub_goal_action_count
 
         for data in seen_screens:
             self.__seen_screens.append(ScreenState(**data))
@@ -784,6 +838,20 @@ class AgentState:
             else 0
         )
 
+        sub_goal_verify_failures_raw = data.get("sub_goal_verify_failures", 0)
+        sub_goal_verify_failures = (
+            int(cast("int", sub_goal_verify_failures_raw))
+            if isinstance(sub_goal_verify_failures_raw, (int, float))
+            else 0
+        )
+
+        sub_goal_action_count_raw = data.get("sub_goal_action_count", 0)
+        sub_goal_action_count = (
+            int(cast("int", sub_goal_action_count_raw))
+            if isinstance(sub_goal_action_count_raw, (int, float))
+            else 0
+        )
+
         state.__restore_from_data(
             step_count=step_count,
             is_complete=is_complete,
@@ -794,6 +862,8 @@ class AgentState:
             low_delta_streak=low_delta_streak,
             sub_goals=sub_goals,
             current_sub_goal_index=current_sub_goal_index,
+            sub_goal_verify_failures=sub_goal_verify_failures,
+            sub_goal_action_count=sub_goal_action_count,
         )
 
         return state

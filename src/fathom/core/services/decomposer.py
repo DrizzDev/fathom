@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import List
+from typing import Dict, List, Optional, Union
 
 from pydantic import ValidationError
 
@@ -51,12 +51,20 @@ class IntentDecomposer:
         decomposer.__llm_configuration = configuration
         return decomposer
 
-    async def decompose(self, intent: str) -> List[SubGoal]:
+    async def decompose(
+        self,
+        intent: str,
+        *,
+        screenshot: Optional[bytes] = None,
+    ) -> List[SubGoal]:
         """
         Decompose intent into sequential sub-goals.
 
         Args:
             intent: High-level intent to decompose
+            screenshot: Optional screenshot of the current screen. When
+                provided (e.g. during replanning), the LLM can see where
+                the agent currently is and plan accordingly.
 
         Returns:
             List of SubGoal objects in sequential order
@@ -69,14 +77,27 @@ class IntentDecomposer:
 
         logger.info(f"[Decomposer] Starting decomposition: {intent[:100]}...")
 
-        prompt = self.__prompt_builder.build_user_prompt(intent=intent)
+        prompt_text = self.__prompt_builder.build_user_prompt(intent=intent)
+
+        system_instruction = self.__prompt_builder.build_system_instruction()
+        if screenshot:
+            system_instruction += (
+                "\n\nA screenshot of the current screen is attached. "
+                "Plan sub-goals starting from this screen. Do NOT include "
+                "steps to reach this screen — the agent is already here."
+            )
+
+        # Build prompt parts: text + optional screenshot
+        prompt_parts: List[Union[str, bytes, Dict[str, str]]] = [prompt_text]
+        if screenshot:
+            prompt_parts.append(screenshot)
 
         # Call LLM to decompose
         try:
             result = await self.__llm.generate(
                 use_cache=False,
-                prompt=[prompt],
-                system_instruction=self.__prompt_builder.build_system_instruction(),
+                prompt=prompt_parts,
+                system_instruction=system_instruction,
             )
             response = result.content
         except Exception as exception:

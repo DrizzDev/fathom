@@ -45,7 +45,10 @@ class GeminiExportPromptBuilder(ExportPromptBuilder):
             "17) CRITICAL: If the execution trace has intermediate points where user validations should occur (between actions), anchor each validation to the nearest preceding action ID in action_validations.\n"
             "18) conditional_blocks must handle sequential logic atomically. When a condition guards a multi-step interaction (e.g., dismissing a dropdown, then scrolling and selecting within it), group ALL consecutive actions belonging to that interaction inside the block's action_ids.\n"
             "19) final_validation must not restate imperative steps already covered by catalog actions—avoid click/tap/type/select/navigate/search-for phrasing and chained 'and then' procedures in that line.\n"
-            "20) Use action_validations for state checks tied to specific earlier actions (e.g. list visible after search); use final_validation only for the terminal UI state after the last catalog action."
+            "20) Use action_validations for state checks tied to specific earlier actions (e.g. list visible after search); use final_validation only for the terminal UI state after the last catalog action.\n"
+            "21) final_validation and action_validations MUST be short factual assertions ONLY. Do NOT append explanations, justifications, or phrases like 'fulfilling the requirement to...', 'as requested by...', 'which confirms that...'. State WHAT is visible, nothing more.\n"
+            "    GOOD: 'Validate that the Recommended options in Fine Dining section is visible'\n"
+            "    BAD: 'Validate that the Recommended options in Fine Dining section is visible, fulfilling the requirement to scroll until it is found'"
         )
 
     def build_user_prompt(

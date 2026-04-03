@@ -416,8 +416,13 @@ class ToolResponseParser:
         if data.bbox:
             try:
                 # Treat all-zero bbox as "no bounds" (non-interactive actions
-                # send {x:0, y:0} as a placeholder when bbox is required).
-                if data.bbox.x == 0 and data.bbox.y == 0:
+                # send {x:0, y:0, width:0, height:0} as a placeholder when bbox is required).
+                if (
+                    data.bbox.x == 0
+                    and data.bbox.y == 0
+                    and data.bbox.width == 0
+                    and data.bbox.height == 0
+                ):
                     bounds = None
                 else:
                     bounds = Bounds(

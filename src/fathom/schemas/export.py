@@ -222,7 +222,18 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                     "LLM omitted required action IDs %s; auto-including at canonical position.",
                     missing,
                 )
-                ordered_action_ids.extend(missing)
+                canonical_rank = {aid: idx for idx, aid in enumerate(payload.required_action_ids)}
+                for mid in sorted(
+                    missing, key=lambda a: canonical_rank.get(a, len(canonical_rank))
+                ):
+                    target = canonical_rank.get(mid, len(ordered_action_ids))
+                    # Find the insertion point: right after the last existing ID
+                    # whose canonical rank is less than the missing ID's rank.
+                    insert_at = 0
+                    for i, existing in enumerate(ordered_action_ids):
+                        if canonical_rank.get(existing, -1) < target:
+                            insert_at = i + 1
+                    ordered_action_ids.insert(insert_at, mid)
 
         for action_id in ordered_action_ids:
             if action_id not in payload.action_catalog:

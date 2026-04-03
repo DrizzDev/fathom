@@ -248,8 +248,9 @@ Examples:
 1. Identify the LAST action or state in the step description — that is what you verify.
 2. Ignore intermediate actions (scroll, navigate, tap) — they are means to an end.
 3. The actions list confirms what was already done. Trust it.
-4. Be LENIENT: if the screen plausibly shows the end state, mark complete. Only reject if the screen clearly contradicts the expected outcome.
-5. Loading screens, spinners, or transitional states → incomplete.
+4. NAVIGATION/SELECTION RULE (CRITICAL): When the step says "select", "tap on", "open", or "click" an item (e.g., a search result, a product, a restaurant), the expected outcome is the DESTINATION page — NOT the list page where the item was. If the screen shows a detail/content page that corresponds to the selected item, the step IS complete.
+5. Be LENIENT: if the screen plausibly shows the end state, mark complete. Only reject if the screen clearly contradicts the expected outcome.
+6. Loading screens, spinners, or transitional states → incomplete.
 
 **OUTPUT:**
 Return ONLY valid JSON:

@@ -37,7 +37,7 @@ class IntentStrategyTest(unittest.IsolatedAsyncioTestCase):
                 allowed_modules = getattr(
                     checkpointer.serde,
                     "_allowed_json_modules",
-                    checkpointer.serde._allowed_modules,
+                    getattr(checkpointer.serde, "_allowed_modules", None),
                 )
                 self.assertEqual(allowed_modules, set(CHECKPOINT_ALLOWED_JSON_MODULES))
                 if hasattr(checkpointer.serde, "_allowed_msgpack_modules"):
