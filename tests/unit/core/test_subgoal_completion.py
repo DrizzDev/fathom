@@ -7,7 +7,7 @@ from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult
-from fathom.schemas.subgoal import SubGoal, SubGoalStatus
+from fathom.schemas.subgoal import SubGoal
 
 
 def _make_sub_goals(descriptions: list[str]) -> list[SubGoal]:

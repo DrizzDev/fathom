@@ -13,9 +13,7 @@ def _make_sub_goals(descriptions: list[str]) -> list[SubGoal]:
 class TestReplaceRemainingSubGoals:
     def test_preserves_completed_sub_goals(self) -> None:
         state = AgentState(intent="do everything", max_steps=50)
-        state.set_sub_goals(
-            _make_sub_goals(["open app", "search for X", "add to cart"])
-        )
+        state.set_sub_goals(_make_sub_goals(["open app", "search for X", "add to cart"]))
 
         # Complete first two
         from fathom.schemas.reasoning import SubGoalCompletionSignal
