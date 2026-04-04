@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, Optional, Sequence, Union
-from unittest.mock import AsyncMock
 
 import pytest
 
