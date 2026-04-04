@@ -48,7 +48,7 @@ class LLMConfiguration(BaseModel):
     # Common hyper-parameters
     max_retries: int = Field(default=3, description="Maximum retry attempts")
     temperature: float = Field(default=1.0, description="Sampling temperature")
-    timeout: float = Field(default=60.0, description="Request timeout in seconds")
+    timeout: float = Field(default=120.0, description="Request timeout in seconds")
     retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
     rate_limit_backoff: float = Field(default=5.0, description="Base backoff for rate limit errors")
     use_cache: bool = Field(default=True, description="Whether to use context caching for the LLM")
