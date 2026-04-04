@@ -4,13 +4,10 @@ from difflib import SequenceMatcher
 from logging import getLogger
 from typing import List, Optional, Set
 
-from fathom.constants import ACTION_EXECUTED_TYPES, NEXT_PHASE_ACTION_TYPES
+from fathom.constants import ACTION_EXECUTED_TYPES
 from fathom.constants.reasoning import (
     ACTION_MIN_CONFIDENCE,
     ACTION_NEXT_PHASE_CONFIDENCE,
-    NEXT_PHASE_KEYWORDS,
-    OPENER_GOAL_WORDS,
-    RATIONALE_CONTEXT_RELEVANCE_THRESHOLD,
     RATIONALE_KEYWORD_MATCH_THRESHOLD,
 )
 from fathom.schemas.actions import Action
@@ -65,52 +62,18 @@ class Reasoner:
         if analysis.is_goal_complete:
             evidence_list.append(f"LLM explicitly flagged {goal_type} completion")
 
-        # 2. Tertiary Signal: Fast Fuzzy Match
-        # We check if the reasoning text semantically overlaps with the target goal
-        context = f"{analysis.reasoning} {screen_description or ''}".lower()
-
-        # Quick ratio check - O(N) but very fast for short strings
-        similarity = SequenceMatcher(None, target_goal, context).ratio()
-
-        if similarity > RATIONALE_CONTEXT_RELEVANCE_THRESHOLD:
-            evidence_list.append(f"Context alignment score: {similarity:.2f}")
-
-        keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
-
-        # 4. Additional Signal for Sub-Goals: Action Execution on Non-Opening Tasks
-        # If we're checking a sub-goal like "Open X" and the LLM is DOING something
-        # (not just planning), it means "Open X" is likely ALREADY complete
-        action_suggests_next_phase = False
-        if (
-            current_sub_goal
-            and analysis.action.action_type in NEXT_PHASE_ACTION_TYPES
-            and any(word in target_goal for word in OPENER_GOAL_WORDS)
-        ):
-            # LLM is actively performing actions. If the current sub-goal is an opener
-            # (contains "open", "launch", "navigate to", "go to"), then performing
-            # a tap/type suggests we're past the opening phase.
-            # Check if reasoning suggests we're at a next phase
-            reasoning_lower = analysis.reasoning.lower()
-            # More flexible keyword matching - check for partial matches
-            if any(keyword in reasoning_lower for keyword in NEXT_PHASE_KEYWORDS):
-                evidence_list.append(
-                    f"LLM performing next-phase action ({analysis.action.action_type.value})"
-                )
-                action_suggests_next_phase = True
-
-        # Completion requires the LLM's explicit flag, strong semantic alignment,
-        # or next-phase action detection for opener sub-goals.
-        is_complete = analysis.is_goal_complete or keyword_match or action_suggests_next_phase
+        # Completion is determined solely by the LLM's explicit flag.
+        # SequenceMatcher heuristics removed — they caused false positives
+        # by matching string similarity rather than semantic completion.
+        # The VERIFY node with its screenshot check is the sole completion
+        # gate for the overall intent.
+        is_complete = analysis.is_goal_complete
+        keyword_match = False
 
         llm_confidence = 0.0
 
         if analysis.is_goal_complete:
             llm_confidence = max(llm_confidence, analysis.action.confidence)
-
-        if keyword_match:
-            llm_confidence = max(llm_confidence, similarity)
-
-        if action_suggests_next_phase:
             llm_confidence = max(llm_confidence, ACTION_NEXT_PHASE_CONFIDENCE)
 
         logger.debug(

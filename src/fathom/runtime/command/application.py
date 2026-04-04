@@ -139,7 +139,7 @@ class CommandApplication:
             help="Path to adb executable for Android local adapter",
         )
         run_parser.add_argument("--api-key", "-k", type=str, help="Gemini API Key")
-        run_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
+        run_parser.add_argument("--max-steps", type=int, default=100, help="Maximum steps allowed")
         run_parser.add_argument(
             "--verbose",
             "-v",
