@@ -89,7 +89,6 @@ class ToolRegistry:
                                         "validate",
                                         "home",
                                         "back",
-                                        "enter",
                                     ],
                                 },
                                 "label_id": {
