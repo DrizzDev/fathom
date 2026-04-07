@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from logging import getLogger
 from typing import TYPE_CHECKING, List
 
-from fathom.core.prompts.templates import (
+from fathom.core.prompts.verification import (
     VALIDATION_SUBJECT_EXTRACTION_SYSTEM,
     VALIDATION_SUBJECT_EXTRACTION_USER,
 )

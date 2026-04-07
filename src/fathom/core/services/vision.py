@@ -18,6 +18,7 @@ from fathom.core.services.audit import AuditService
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.prompt import PromptUserContext, SubGoalFocus
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.conversation import ConversationTurn, TurnPart
 from fathom.schemas.results import AnalysisResult, GenerateResult
@@ -210,21 +211,30 @@ class VisionService:
                 f"Task: {sub_goal_info['description'][:60]}"
             )
 
-        # Pass ALL persistent memory (not just screen-specific)
-        dynamic_context = self.__builder.build_user_context(
-            memory=all_memory,  # Cross-screen persistent memory
-            history=full_context,
-            tracking_note=tracking_note,
+        # Build the typed contract consumed by PromptBuilder.build_user_context.
+        sub_goal_focus: Optional[SubGoalFocus] = None
+        if sub_goal_info:
+            sub_goal_focus = SubGoalFocus(
+                index=int(sub_goal_info["index"]),
+                total=int(sub_goal_info["total"]),
+                description=str(sub_goal_info["description"]),
+            )
+
+        prompt_context = PromptUserContext(
             intent=intent,
-            hints={
-                "use_xml": use_xml,
-                "screen_width": screen_width,
-                "screen_height": screen_height,
-            },
-            sub_goal_info=sub_goal_info,
-            # Thread current screen hash so the trace can annotate stale observations
+            memory=all_memory,
+            trace=tuple(full_context.get("trace", [])),
+            milestones=tuple(full_context.get("milestones", [])),
+            guidance=tuple(full_context.get("guidance", []) or ()),
+            sub_goal_info=sub_goal_focus,
+            screen_width=screen_width,
+            screen_height=screen_height,
+            use_xml=use_xml,
             current_screen_hash=fingerprint[:8],
+            tracking_note=tracking_note,
         )
+
+        dynamic_context = self.__builder.build_user_context(prompt_context)
 
         if is_stuck:
             dynamic_context += (
