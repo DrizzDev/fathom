@@ -12,6 +12,7 @@ from rich.markup import escape
 from fathom.base.logger import BaseLogger
 from fathom.constants.run import SignalAdapterType, TargetKind
 from fathom.core.exceptions import FathomError
+from fathom.runtime.bootstrap import register_default_prompt_builders
 from fathom.runtime.command.executor import CommandExecutor
 from fathom.runtime.command.resolver import (
     LocalDeviceConfigurationResolver,
@@ -51,7 +52,13 @@ class CommandApplication:
     ) -> None:
         """
         Initialize command application parser.
+
+        Also wires the provider registries that core services depend on
+        (prompt builders, etc.) so that instantiating a service inside a
+        CLI command does not rely on module import side effects.
         """
+
+        register_default_prompt_builders()
 
         self.__local_device_resolver = local_device_resolver or LocalDeviceConfigurationResolver()
         self.__parser = self.__build_parser()
