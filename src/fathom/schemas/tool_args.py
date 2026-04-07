@@ -301,6 +301,21 @@ _PHYSICAL_BBOX_TYPES = frozenset(
         "swipe_right",
     }
 )
+# Action types that MUST carry an export_target so the exporter can render a
+# human-readable line for the action. Excludes back/home (device buttons with
+# no target) and validate (uses validation_subject instead).
+_EXPORT_TARGET_REQUIRED_TYPES = frozenset(
+    {
+        "tap",
+        "type",
+        "long_press",
+        "swipe_up",
+        "swipe_down",
+        "swipe_left",
+        "swipe_right",
+        "wait",
+    }
+)
 _GENERIC_EXPORT_TARGETS = frozenset(
     {
         "element",
@@ -431,6 +446,17 @@ class ExecuteAction(BaseModel):
             raise ValueError(
                 "validation_subject is required for action_type='validate'. "
                 "Describe what is being validated (e.g., 'login status', 'cart is empty')."
+            )
+
+        # export_target is required for actions that render to an exported
+        # script line (tap, type, long_press, swipe_*, wait). Not required for
+        # back/home (device buttons, no target) or validate (uses
+        # validation_subject instead).
+        if at in _EXPORT_TARGET_REQUIRED_TYPES and not (self.export_target or "").strip():
+            raise ValueError(
+                f"export_target is required for action_type='{at}'. "
+                "Provide the canonical phrase for the exported test script "
+                "(e.g., 'Search box', 'the first search result')."
             )
 
         return self
