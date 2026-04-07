@@ -290,6 +290,17 @@ _SWIPE_SCROLL_TYPES = frozenset(
         "scroll",
     }
 )
+_PHYSICAL_BBOX_TYPES = frozenset(
+    {
+        "tap",
+        "type",
+        "long_press",
+        "swipe_up",
+        "swipe_down",
+        "swipe_left",
+        "swipe_right",
+    }
+)
 _GENERIC_EXPORT_TARGETS = frozenset(
     {
         "element",
@@ -374,6 +385,24 @@ class ExecuteAction(BaseModel):
                 "Use the actual element name visible on screen."
             )
         return text
+
+    @model_validator(mode="after")
+    def _enforce_bbox_for_physical_actions(self) -> "ExecuteAction":
+        at = (self.action_type or "").strip().lower()
+        if at not in _PHYSICAL_BBOX_TYPES:
+            return self
+
+        bbox = self.bbox
+        bbox_missing = bbox is None or (
+            bbox.x == 0 and bbox.y == 0 and bbox.width == 0 and bbox.height == 0
+        )
+        if bbox_missing:
+            raise ValueError(
+                f"bbox with non-zero coordinates is required for action_type='{at}'. "
+                "Provide x,y at the CENTER of the target element using normalized "
+                "values (0-1000) by default. Do not emit a placeholder bbox of zeros."
+            )
+        return self
 
     @model_validator(mode="after")
     def _enforce_structured_signals(self) -> "ExecuteAction":
