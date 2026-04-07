@@ -12,6 +12,7 @@ from fathom.infrastructure.temporal.state import SignalStateRegistry
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryLevel
 from fathom.runtime.assembly import RunAssemblyBuilder
+from fathom.runtime.bootstrap import register_default_prompt_builders
 from fathom.runtime.builder import Fathom
 from fathom.runtime.factories import (
     DeviceFactory,
@@ -38,7 +39,14 @@ class FathomActivities:
     def __init__(self, settings: Optional[FathomSettings] = None) -> None:
         """
         Initialize activities with runtime settings.
+
+        Also wires the provider registries that core services depend on
+        (prompt builders, etc.) so that the Temporal worker — which is a
+        separate composition root from the CLI — does not rely on module
+        import side effects.
         """
+
+        register_default_prompt_builders()
 
         self.__settings = settings or FathomSettings()
         self.__assembly = RunAssemblyBuilder(settings=self.__settings)

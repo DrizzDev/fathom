@@ -9,8 +9,21 @@ import pytest
 
 from fathom.core.services.decomposer import IntentDecomposer
 from fathom.interfaces.llm import LLMPort
+from fathom.runtime.bootstrap import register_default_prompt_builders
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.results import GenerateResult
+
+
+@pytest.fixture(autouse=True)
+def _register_prompt_builders() -> None:
+    """Ensure the PromptFactory has its default builders registered.
+
+    The production composition roots (CLI, Temporal worker) call
+    ``register_default_prompt_builders`` during startup. Tests that
+    instantiate services directly must do the same.
+    """
+
+    register_default_prompt_builders()
 
 
 class MockLLM(LLMPort):
