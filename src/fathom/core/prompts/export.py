@@ -103,7 +103,7 @@ def build_export_user_prompt(
     catalog_formatted = "\n".join(f"- {line}" for line in list(action_catalog_lines)) or "- (none)"
 
     return (
-        f"User intent: {intent or goal_state or 'N/A'}\n"
+        f"User intent: {intent or goal_state or 'N/A'}\n"  # nosec B608
         f"Goal state: {goal_state or intent or 'N/A'}\n"
         f"Package: {package_name or 'N/A'}\n\n"
         "Opening-line constraint:\n"

@@ -115,9 +115,7 @@ APP_LAUNCH_TEMPLATE = (
 )
 
 
-MEMORY_LEDGER_BODY_TEMPLATE = (
-    "Persistent memory (use store_memory/recall_memory tools):\n{ledger}"
-)
+MEMORY_LEDGER_BODY_TEMPLATE = "Persistent memory (use store_memory/recall_memory tools):\n{ledger}"
 
 
 SCREEN_CHANGE_NOTICE_TEMPLATE = (
@@ -247,17 +245,11 @@ class PromptPolicy:
         if formatted_trace:
             sections.append(NamedSection(name="CURRENT_TRACE", body=formatted_trace))
 
-        if (
-            current_screen_hash
-            and last_trace_hash
-            and last_trace_hash != current_screen_hash
-        ):
+        if current_screen_hash and last_trace_hash and last_trace_hash != current_screen_hash:
             sections.append(
                 NamedSection(
                     name="SCREEN_CHANGE_NOTICE",
-                    body=SCREEN_CHANGE_NOTICE_TEMPLATE.format(
-                        current_hash=current_screen_hash
-                    ),
+                    body=SCREEN_CHANGE_NOTICE_TEMPLATE.format(current_hash=current_screen_hash),
                 )
             )
 
@@ -323,8 +315,7 @@ class PromptPolicy:
 
         if any(token in intent_lower for token in _TYPE_INTENT_TOKENS):
             rules.append(
-                "- CRITICAL SEQ: Use 'tap' to gain focus on the input field, "
-                "followed by 'type'."
+                "- CRITICAL SEQ: Use 'tap' to gain focus on the input field, followed by 'type'."
             )
 
         return "RULES:\n" + "\n".join(rules) if rules else ""
@@ -339,13 +330,9 @@ class PromptPolicy:
             notes.append(f"- TYPING INTENT: Use literal text_to_type='{typing_text}'.")
 
         if "search" in intent_lower and any(token in intent_lower for token in _SEARCH_FLOW_TOKENS):
-            notes.append(
-                "- SEARCH FLOW: If suggestions are visible, type then tap suggestion."
-            )
+            notes.append("- SEARCH FLOW: If suggestions are visible, type then tap suggestion.")
 
-        notes.append(
-            "- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly."
-        )
+        notes.append("- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly.")
 
         return "NOTES:\n" + "\n".join(notes)
 
