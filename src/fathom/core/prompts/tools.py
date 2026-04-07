@@ -55,11 +55,12 @@ class ToolRegistry:
                 "signaling sub-goal completion via 'sub_goal_completed: true' "
                 "rather than emitting an explicit 'tap' action on the app icon. The system will "
                 "normalize app launch intents automatically. "
-                "CRITICAL: For every UI action you MUST provide a concrete, user-facing target "
-                "phrase via 'target_name' or 'script_target' (e.g., 'Search box', "
-                "'Add to cart button', 'the first search result'). NEVER use placeholders like "
-                "'UI Element', 'element', 'button', 'label', 'icon', 'field', or 'text' as the "
-                "only target description."
+                "CRITICAL: For every UI action you MUST fill 'target_name' with a concrete, "
+                "user-facing element label (e.g., 'Search box', 'Add to cart button'). "
+                "Additionally, set 'script_target' ONLY when 'target_type' is 'positional' or "
+                "'dynamic' to provide an abstracted phrase (e.g., 'the first search result'). "
+                "NEVER use placeholders like 'UI Element', 'element', 'button', 'label', 'icon', "
+                "'field', or 'text' as the only target description."
             ),
             "parameters": {
                 "type": "OBJECT",
@@ -116,12 +117,14 @@ class ToolRegistry:
                                 "target_name": {
                                     "type": "STRING",
                                     "description": (
-                                        "Descriptive, user-facing name of the element "
-                                        "(e.g., 'Search box', 'Add to cart button', "
-                                        "'Settings tab'). MUST NOT be a generic placeholder "
-                                        "like 'element', 'UI Element', 'button', 'label', "
-                                        "or 'icon'. Always choose the text a human tester "
-                                        "would naturally say when referring to this element."
+                                        "REQUIRED for every UI action. The single canonical, "
+                                        "user-facing name of the element (e.g., 'Search box', "
+                                        "'Add to cart button', 'Settings tab'). This is the "
+                                        "only target field you need to fill for stable targets. "
+                                        "MUST NOT be a generic placeholder like 'element', "
+                                        "'UI Element', 'button', 'label', or 'icon'. Choose the "
+                                        "text a human tester would naturally say when referring "
+                                        "to this element."
                                     ),
                                 },
                                 "text_to_type": {
@@ -177,22 +180,6 @@ class ToolRegistry:
                                         "This action must dismiss it."
                                     ),
                                 },
-                                "export_target": {
-                                    "type": "STRING",
-                                    "description": (
-                                        "The canonical phrase for this action in exported test scripts. "
-                                        "Must be specific and human-readable. "
-                                        "REQUIRED for tap, type, long_press, scroll, swipe, and wait actions. "
-                                        "NEVER use generic placeholders like 'element', 'UI Element', "
-                                        "'button', 'label', 'icon', 'field', or 'text' alone.\n"
-                                        "DYNAMIC TARGETS (CRITICAL): When tapping items in a list, grid, "
-                                        "carousel, or product catalog, NEVER use the specific product/item "
-                                        "name (e.g., 'R for Rabbit Pant Diaper'). Instead use POSITIONAL "
-                                        "references: 'the 1st product', 'the 3rd item', 'Add button for "
-                                        "the 1st item'. Product names change between runs — positional "
-                                        "references are reusable. Also set target_type='positional'."
-                                    ),
-                                },
                                 "target_type": {
                                     "type": "STRING",
                                     "enum": ["stable", "positional", "dynamic"],
@@ -201,13 +188,18 @@ class ToolRegistry:
                                 "script_target": {
                                     "type": "STRING",
                                     "description": (
-                                        "When target_type is 'positional' or 'dynamic', the "
-                                        "exact natural-language phrase that should appear in "
-                                        "exported scripts (e.g. 'the first search result', "
-                                        "'the promotional banner', 'the selected cart item'). "
-                                        "Treat this field as REQUIRED whenever target_type is "
-                                        "'positional' or 'dynamic'. The phrase MUST be specific "
-                                        "and user-facing, not a generic placeholder."
+                                        "OPTIONAL — set ONLY when target_type is 'positional' "
+                                        "or 'dynamic'. The abstracted natural-language phrase "
+                                        "for the exported test script (e.g. 'the first search "
+                                        "result', 'the promotional banner', 'the selected cart "
+                                        "item'). For 'stable' targets, omit this field — "
+                                        "target_name alone is sufficient. The phrase MUST be "
+                                        "specific and user-facing, not a generic placeholder.\n"
+                                        "POSITIONAL TARGETS (CRITICAL): When tapping items in a "
+                                        "list, grid, carousel, or product catalog, NEVER use the "
+                                        "specific product name. Use positional references: "
+                                        "'the 1st product', 'the 3rd item', 'Add button for the "
+                                        "1st item'. Product names change between runs."
                                     ),
                                 },
                                 "scroll_target": {

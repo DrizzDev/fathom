@@ -6,7 +6,28 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fathom.constants import ActionType
 
-_VALIDATION_SUBJECT_BAD_PREFIXES: tuple[str, ...] = (
+# Single source of truth for "this string is a placeholder, not a real
+# target". Used by ExecuteAction normalization, the trace exporter, and
+# the per-step Normalizer to reject prose like "element"/"button"/"icon".
+GENERIC_TARGET_PLACEHOLDERS: frozenset[str] = frozenset(
+    {
+        "element",
+        "ui element",
+        "none",
+        "label",
+        "unknown",
+        "a visible item",
+        "button",
+        "icon",
+        "field",
+        "text",
+    }
+)
+
+# Prefixes the validate-action validator strips before deciding whether
+# the resulting subject is empty. Public so adapter/parser code that
+# constructs validate Actions can sanitize free-form input the same way.
+VALIDATION_SUBJECT_BAD_PREFIXES: tuple[str, ...] = (
     "i am ",
     "i can ",
     "i will ",
@@ -19,6 +40,38 @@ _VALIDATION_SUBJECT_BAD_PREFIXES: tuple[str, ...] = (
     "confirming ",
     "the presence of ",
 )
+
+
+def clean_validation_subject(candidate: Optional[str], *, fallback: str) -> str:
+    """Coerce free-form prose into a clean third-person noun phrase.
+
+    Strips the first-person/narrative prefixes the Action validator
+    forbids, keeps only the first sentence, and caps to ~8 words.
+    Returns ``fallback`` when nothing usable remains.
+    """
+
+    text = (candidate or "").strip()
+    if not text:
+        return fallback
+
+    previous = ""
+    while text and text != previous:
+        previous = text
+        lower = text.lower()
+        for prefix in VALIDATION_SUBJECT_BAD_PREFIXES:
+            if lower.startswith(prefix):
+                text = text[len(prefix) :].strip()
+                break
+
+    for terminator in (".", "!", "?", ";", "\n"):
+        if terminator in text:
+            text = text.split(terminator, 1)[0].strip()
+
+    words = text.split()
+    if len(words) > 8:
+        text = " ".join(words[:8])
+
+    return text or fallback
 
 
 class Bounds(BaseModel):
@@ -217,7 +270,7 @@ class Action(BaseModel):
             )
 
         lower = subject.lower()
-        if any(lower.startswith(prefix) for prefix in _VALIDATION_SUBJECT_BAD_PREFIXES):
+        if any(lower.startswith(prefix) for prefix in VALIDATION_SUBJECT_BAD_PREFIXES):
             raise ValueError(
                 f"validation_subject must not use first-person or narrative "
                 f"prose: '{subject}'. Use a short third-person noun phrase "

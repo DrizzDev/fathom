@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from fathom.schemas.actions import GENERIC_TARGET_PLACEHOLDERS
+
 
 class Normalizer:
     """
@@ -10,7 +12,7 @@ class Normalizer:
     """
 
     __MULTISPACE_RE = re.compile(pattern=r"\s+")
-    __GENERIC_TARGET_NAMES = frozenset({"element", "ui element", "none", "label", "unknown"})
+    __GENERIC_TARGET_NAMES = GENERIC_TARGET_PLACEHOLDERS
 
     @staticmethod
     def clean(text: Optional[str]) -> str:
