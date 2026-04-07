@@ -2,9 +2,23 @@ from __future__ import annotations
 
 from typing import Dict, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fathom.constants import ActionType
+
+_VALIDATION_SUBJECT_BAD_PREFIXES: tuple[str, ...] = (
+    "i am ",
+    "i can ",
+    "i will ",
+    "i do ",
+    "i have ",
+    "i need ",
+    "i want ",
+    "validating ",
+    "checking ",
+    "confirming ",
+    "the presence of ",
+)
 
 
 class Bounds(BaseModel):
@@ -177,6 +191,40 @@ class Action(BaseModel):
     )
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
+
+    @model_validator(mode="after")
+    def _enforce_validation_subject(self) -> "Action":
+        """Validate actions MUST carry a short, third-person validation_subject.
+
+        Without this guarantee, exporters are forced to fall back to
+        free-form ``rationale`` prose (e.g. "I am validating the presence
+        of the Categories tab...") which produces noisy script lines like
+        "Validate I am validating the presence of...". Enforcing the
+        subject at the core model boundary means every code path that
+        constructs an Action — LLM tool boundary, replay, checkpoint
+        restore, tests — is caught uniformly.
+        """
+
+        if self.action_type != ActionType.VALIDATE:
+            return self
+
+        subject = (self.validation_subject or "").strip()
+        if not subject:
+            raise ValueError(
+                "validation_subject is required for action_type='validate'. "
+                "Provide a short third-person noun phrase describing what is "
+                "being checked (e.g., 'Instamart tab selected', 'cart is empty')."
+            )
+
+        lower = subject.lower()
+        if any(lower.startswith(prefix) for prefix in _VALIDATION_SUBJECT_BAD_PREFIXES):
+            raise ValueError(
+                f"validation_subject must not use first-person or narrative "
+                f"prose: '{subject}'. Use a short third-person noun phrase "
+                "(e.g., 'Instamart tab selected', 'cart is empty')."
+            )
+
+        return self
 
     def to_description(self) -> str:
         """

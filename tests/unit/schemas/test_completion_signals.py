@@ -32,6 +32,7 @@ class TestGoalCompletedDefault:
                     "bbox": {"x": 500, "y": 500},
                     "rationale": "tap the button",
                     "is_valid": True,
+                    "export_target": "Submit button",
                 }
             ],
         )

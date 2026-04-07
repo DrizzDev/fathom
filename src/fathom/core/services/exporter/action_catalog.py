@@ -192,14 +192,14 @@ def build_action_catalog_from_steps(
             )
             continue
 
-        # For validate actions, ensure we have a meaningful subject.
-        if action_type_val == "validate" and not validation_subject:
-            validation_subject = (
-                _get_field(step, "condition")
-                or _get_field(step, "validation_reason")
-                or _get_field(step, "rationale")
-                or export_target
-            )
+        # No fallback chain for validate actions. The core Action model
+        # enforces validation_subject at construction time (see
+        # fathom.schemas.actions.Action._enforce_validation_subject), so
+        # a validate step reaching this catalog builder without a subject
+        # is a programming error in an upstream layer. Previously we fell
+        # back to `rationale`, which is free-form narrative and poisoned
+        # the exported script with lines like
+        # "Validate I am validating the presence of...".
 
         description = Normalizer.action(
             action_type=action_type_val,
