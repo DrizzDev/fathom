@@ -1,9 +1,11 @@
-from fathom.adapters.prompts.gemini import GeminiPromptBuilder
-from fathom.adapters.prompts.gemini_decomposition import GeminiDecompositionPromptBuilder
-from fathom.adapters.prompts.gemini_export import GeminiExportPromptBuilder
+from fathom.adapters.prompts.gemini import (
+    GeminiDecompositionPromptBuilder,
+    GeminiExportPromptBuilder,
+    GeminiPromptBuilder,
+)
 
 __all__ = [
-    "GeminiPromptBuilder",
     "GeminiDecompositionPromptBuilder",
     "GeminiExportPromptBuilder",
+    "GeminiPromptBuilder",
 ]

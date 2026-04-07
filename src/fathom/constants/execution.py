@@ -40,6 +40,16 @@ MAX_ACTION_WAIT_MS = 10_000
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
 
+# Sub-goal action budget
+# Maximum number of actions the agent may emit against a single sub-goal
+# before the replanning path is triggered. Chosen empirically to catch
+# loops without cutting short legitimate multi-step sub-goals.
+MAX_ACTIONS_PER_SUBGOAL = 15
+
+# User-facing failure messages for intent graph nodes
+GROUNDING_FAILURE_MESSAGE = "Failed to capture the current app screen. Please retry."
+RECORDING_FAILURE_MESSAGE = "Failed to save execution details for the current step."
+
 # Signal adapter heartbeat interval (seconds)
 SIGNAL_HEARTBEAT_INTERVAL = 5.0
 RECOMMENDED_WORKFLOW_TASK_TIMEOUT_SECONDS = 60

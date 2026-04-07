@@ -3,7 +3,72 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Dict, Mapping, Optional, Sequence
+
+
+@dataclass(frozen=True)
+class SubGoalFocus:
+    """Focus descriptor for the currently-active sub-goal.
+
+    Passed to the prompt builder when sequential intent execution is
+    active so that the adapter can render a single-sub-goal-focus section
+    in its provider-specific format.
+    """
+
+    index: int
+    total: int
+    description: str
+
+
+@dataclass(frozen=True)
+class PromptUserContext:
+    """Typed contract for the dynamic per-step prompt context.
+
+    This is the explicit contract between the core vision service (which
+    assembles the context) and the provider adapter (which renders it).
+    It replaces the previous loose ``history=Any`` / ``memory=Dict`` /
+    ``**kwargs`` signature on ``PromptBuilder.build_user_context``.
+
+    Attributes:
+        intent: The current user intent string.
+        memory: Persistent cross-screen key/value memory. System keys
+            (``context:``/``ctx_*``) should already be filtered out by
+            the caller.
+        trace: Ordered interaction history (most recent last). Each entry
+            is a loose dict with at least ``action`` and ``observation``
+            fields — adapters render this in a provider-specific way.
+        milestones: High-level milestones achieved so far.
+        guidance: Priority HITL guidance lines that must be respected by
+            the agent. Rendered as a system override section.
+        sub_goal_info: Current sub-goal focus descriptor when sequential
+            execution is active. ``None`` when no sub-goal is in focus.
+        screen_width: Live device viewport width in pixels, if known.
+        screen_height: Live device viewport height in pixels, if known.
+        use_xml: Whether XML grounding is enabled for this step.
+        package_name: Target app package name when known (used for
+            app-launch semantics).
+        typing_text: Literal text the model should emit in a ``type``
+            action, when the intent explicitly dictates it.
+        current_screen_hash: Short hash of the live screen, used by the
+            adapter to annotate stale trace observations.
+        tracking_note: Loop-detection or cadence message that must be
+            surfaced with maximum recency bias.
+    """
+
+    intent: str
+    memory: Mapping[str, str] = field(default_factory=dict)
+    trace: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
+    milestones: Sequence[str] = field(default_factory=tuple)
+    guidance: Sequence[str] = field(default_factory=tuple)
+    sub_goal_info: Optional[SubGoalFocus] = None
+    screen_width: Optional[int] = None
+    screen_height: Optional[int] = None
+    use_xml: bool = False
+    package_name: Optional[str] = None
+    typing_text: Optional[str] = None
+    current_screen_hash: Optional[str] = None
+    tracking_note: Optional[str] = None
 
 
 class PromptBuilder(ABC):
@@ -20,14 +85,11 @@ class PromptBuilder(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def build_user_context(
-        self,
-        history: Optional[Any] = None,
-        memory: Optional[Dict[str, str]] = None,
-        **kwargs: Any,
-    ) -> str:
-        """
-        Constructs the dynamic user context string.
+    def build_user_context(self, context: PromptUserContext) -> str:
+        """Constructs the dynamic user context string.
+
+        Implementations must treat ``context`` as read-only and MUST NOT
+        mutate any of its fields.
         """
 
         raise NotImplementedError

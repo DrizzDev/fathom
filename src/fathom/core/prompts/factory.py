@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Dict, Type
 
-from fathom.core.prompts.base import PromptBuilder
 from fathom.core.prompts.decomposition import DecompositionPromptBuilder
 from fathom.core.prompts.export import ExportPromptBuilder
+from fathom.interfaces.prompt import PromptBuilder
 
 
 class PromptFactory:

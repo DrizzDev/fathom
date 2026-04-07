@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Union
 from pydantic import ValidationError
 
 from fathom.core.exceptions import ConfigurationError
+from fathom.core.prompts.decomposition import DECOMPOSITION_REPLAN_SCREENSHOT_NOTE
 from fathom.core.prompts.factory import PromptFactory
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import LLMConfiguration
@@ -81,11 +82,7 @@ class IntentDecomposer:
 
         system_instruction = self.__prompt_builder.build_system_instruction()
         if screenshot:
-            system_instruction += (
-                "\n\nA screenshot of the current screen is attached. "
-                "Plan sub-goals starting from this screen. Do NOT include "
-                "steps to reach this screen — the agent is already here."
-            )
+            system_instruction += DECOMPOSITION_REPLAN_SCREENSHOT_NOTE
 
         # Build prompt parts: text + optional screenshot
         prompt_parts: List[Union[str, bytes, Dict[str, str]]] = [prompt_text]

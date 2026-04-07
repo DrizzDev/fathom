@@ -9,19 +9,22 @@ from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from fathom.constants import ActionType, FathomEvent
 from fathom.constants.execution import (
+    GROUNDING_FAILURE_MESSAGE,
     LAUNCHER_PACKAGES,
+    MAX_ACTIONS_PER_SUBGOAL,
+    RECORDING_FAILURE_MESSAGE,
     VISUAL_HASH_LENGTH,
 )
 from fathom.constants.graph import NodeName
-from fathom.constants.prompts import (
+from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
+from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.core.exceptions import FathomError
+from fathom.core.prompts.verification import (
     SUBGOAL_VERIFICATION_SYSTEM,
     SUBGOAL_VERIFICATION_USER_TEMPLATE,
     VERIFICATION_SYSTEM,
     VERIFICATION_USER_TEMPLATE,
 )
-from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
-from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
-from fathom.core.exceptions import FathomError
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
 from fathom.schemas.hierarchy import HierarchyProcessingResult
@@ -49,10 +52,6 @@ class IntentNodeProvider:
     Provides LangGraph nodes for intent execution.
     Encapsulates dependencies and shared private logic.
     """
-
-    __GROUNDING_FAILURE_MESSAGE = "Failed to capture the current app screen. Please retry."
-    __RECORDING_FAILURE_MESSAGE = "Failed to save execution details for the current step."
-    __MAX_ACTIONS_PER_SUBGOAL = 15
 
     def __init__(
         self,
@@ -596,9 +595,9 @@ class IntentNodeProvider:
         except Exception as exception:
             logger.exception(f"[NODE: GROUND] Grounding failed: {exception}")
             display_error = (
-                exception.display(fallback=self.__GROUNDING_FAILURE_MESSAGE)
+                exception.display(fallback=GROUNDING_FAILURE_MESSAGE)
                 if isinstance(exception, FathomError)
-                else self.__GROUNDING_FAILURE_MESSAGE
+                else GROUNDING_FAILURE_MESSAGE
             )
             await self.__context.telemetry.error(display_error)
             self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
@@ -1270,9 +1269,9 @@ class IntentNodeProvider:
         except Exception as exception:
             logger.exception(f"[NODE: RECORD] Recording failed: {exception}")
             display_error = (
-                exception.display(fallback=self.__RECORDING_FAILURE_MESSAGE)
+                exception.display(fallback=RECORDING_FAILURE_MESSAGE)
                 if isinstance(exception, FathomError)
-                else self.__RECORDING_FAILURE_MESSAGE
+                else RECORDING_FAILURE_MESSAGE
             )
             await self.__context.telemetry.error(
                 display_error,
@@ -1313,7 +1312,7 @@ class IntentNodeProvider:
 
         if raw_analysis is None:
             # Even without analysis, check if we're stuck on this sub-goal.
-            if agent_state.sub_goal_action_count >= self.__MAX_ACTIONS_PER_SUBGOAL:
+            if agent_state.sub_goal_action_count >= MAX_ACTIONS_PER_SUBGOAL:
                 logger.info(
                     f"[NODE: RECORD] Sub-goal {current_sub_goal.index} stuck after "
                     f"{agent_state.sub_goal_action_count} actions (no analysis). "
@@ -1382,7 +1381,7 @@ class IntentNodeProvider:
             # replanning.  This catches cases where the 2-signal gate never
             # passes (LLM never sets sub_goal_completed=true) and VERIFY
             # never runs — the agent is stuck on a sub-goal indefinitely.
-            if agent_state.sub_goal_action_count >= self.__MAX_ACTIONS_PER_SUBGOAL:
+            if agent_state.sub_goal_action_count >= MAX_ACTIONS_PER_SUBGOAL:
                 logger.info(
                     f"[NODE: RECORD] Sub-goal {current_sub_goal.index} stuck after "
                     f"{agent_state.sub_goal_action_count} actions. Triggering replan."

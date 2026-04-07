@@ -3,20 +3,16 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
+from fathom.core.prompts.summarization import (
+    SUMMARIZATION_SYSTEM,
+    SUMMARIZATION_TOOL_DEFINITION,
+    build_summarization_user_prompt,
+    format_milestone,
+)
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.summarization import SummarizationPort
 
 logger = logging.getLogger(__name__)
-
-SUMMARIZATION_SYSTEM = """You are an expert at analyzing mobile UI automation execution traces.
-
-Your task is to create a structured milestone summary that helps an AI agent understand:
-1. What was accomplished in this segment
-2. Key actions that led to success
-3. Any challenges or failures encountered
-
-Focus on STATE CHANGES and OUTCOMES, not routine navigation.
-Be concise but informative - the agent needs to quickly understand progress."""
 
 
 class LLMSummarizer(SummarizationPort):
@@ -92,64 +88,22 @@ class LLMSummarizer(SummarizationPort):
                 )
                 screens_visited.add(screen_hash[:8])
 
-        # Use tool calling for structured summarization
-        tool_definition = {
-            "function_declarations": [
-                {
-                    "name": "create_milestone",
-                    "description": "Create a structured milestone summary of the execution segment",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "accomplishment": {
-                                "type": "string",
-                                "description": "Main outcome or state change achieved (e.g., 'Successfully configured custom schedule', 'Navigated to payment screen')",
-                            },
-                            "key_actions": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "2-3 most important actions that led to the accomplishment (e.g., 'Selected Monday, Tuesday, Friday', 'Entered date range')",
-                            },
-                            "challenges": {
-                                "type": "string",
-                                "description": "Any failures or retries encountered, or 'None' if smooth execution",
-                            },
-                        },
-                        "required": ["accomplishment", "key_actions", "challenges"],
-                    },
-                }
-            ]
-        }
-
         # Build compact trace representation
         failures_list = failures if failures else ["None"]
         sample_actions_list = actions_taken[:50] + (["..."] if len(actions_taken) > 50 else [])
 
-        trace_summary = {
-            "total_steps": len(trace),
-            "failures": failures_list,
-            "sample_actions": sample_actions_list,
-            "unique_screens": len(screens_visited),
-            "action_types": list({action.split(":")[0] for action in actions_taken}),
-        }
-
-        actions_str = ", ".join(str(action) for action in sample_actions_list)
-        failures_str = ", ".join(str(failure) for failure in failures_list)
-
-        prompt = [
-            "Analyze this execution segment and create a milestone summary:\n",
-            f"Steps: {trace_summary['total_steps']}",
-            f"Screens visited: {trace_summary['unique_screens']}",
-            f"Actions: {actions_str}",
-            f"Failures: {failures_str}",
-            "\nCreate a milestone that captures what was accomplished, how, and any challenges.",
-        ]
+        prompt = build_summarization_user_prompt(
+            total_steps=len(trace),
+            unique_screens=len(screens_visited),
+            sample_actions=sample_actions_list,
+            failures=failures_list,
+        )
 
         try:
             result = await self.__llm.generate(
                 prompt=prompt,
                 use_cache=False,
-                tools=tool_definition,
+                tools=SUMMARIZATION_TOOL_DEFINITION,
                 system_instruction=SUMMARIZATION_SYSTEM,
             )
 
@@ -162,20 +116,11 @@ class LLMSummarizer(SummarizationPort):
                 else:
                     args = getattr(tool_call, "args", {})
 
-                key_actions = args.get("key_actions", [])
-                challenges = args.get("challenges", "None")
-                accomplishment = args.get("accomplishment", "")
-
-                # Format as structured milestone
-                milestone_parts = [accomplishment]
-
-                if key_actions:
-                    milestone_parts.append(f"via {', '.join(key_actions)}")
-
-                if challenges and challenges.lower() != "none":
-                    milestone_parts.append(f"(faced: {challenges})")
-
-                return ". ".join(milestone_parts)
+                return format_milestone(
+                    accomplishment=args.get("accomplishment", ""),
+                    key_actions=args.get("key_actions", []),
+                    challenges=args.get("challenges", "None"),
+                )
 
             # Fallback to content if no tool call
             if result.content:
