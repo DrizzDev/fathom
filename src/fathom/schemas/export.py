@@ -186,10 +186,12 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                     if action_id != payload.required_open_app_id
                 ]
 
-        # Enforce that action IDs inside each conditional block respect the canonical
-        # execution order when we have required_action_ids available. This keeps
-        # conditionals structurally aligned with the underlying trace while leaving
-        # Gemini free to choose which subset to include.
+        # Conditional blocks must respect the canonical execution order so the
+        # rendered IF body is consistent with the underlying trace. Gemini
+        # occasionally reorders the IDs inside a block; instead of hard-failing
+        # we re-sort by canonical rank and emit a warning, matching the gentle
+        # recovery used elsewhere in this method (missing OPEN_APP, missing
+        # required action IDs).
         if payload.required_action_ids:
             rank = {
                 action_id.strip(): index
@@ -197,14 +199,24 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                 if action_id.strip()
             }
             for block in payload.conditional_blocks:
-                indices = [rank.get(aid.strip(), -1) for aid in block.action_ids if aid.strip()]
-                filtered = [index for index in indices if index >= 0]
-                if not filtered:
+                stripped_ids = [aid.strip() for aid in block.action_ids if aid.strip()]
+                ranked_ids = [aid for aid in stripped_ids if aid in rank]
+                if len(ranked_ids) < 2:
                     continue
-                if any(b < a for a, b in zip(filtered, filtered[1:], strict=False)):
-                    raise ValueError(
-                        "Conditional block action_ids must follow the canonical step order."
+                canonical_order = sorted(ranked_ids, key=lambda aid: rank[aid])
+                if canonical_order != ranked_ids:
+                    logger.warning(
+                        "LLM emitted conditional block action_ids out of canonical "
+                        "order (%s); reordering to %s.",
+                        ranked_ids,
+                        canonical_order,
                     )
+                    # Preserve any unranked IDs (e.g. optional validates) in
+                    # their original relative position by walking the list once.
+                    canonical_iter = iter(canonical_order)
+                    block.action_ids = [
+                        next(canonical_iter) if aid in rank else aid for aid in stripped_ids
+                    ]
 
         if payload.required_action_ids:
             required_set = set(payload.required_action_ids)

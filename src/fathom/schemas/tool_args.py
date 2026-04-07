@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fathom.constants import ActionType
+from fathom.schemas.actions import GENERIC_TARGET_PLACEHOLDERS
 from fathom.schemas.validators import enforce_validate_prefix
 
 CoordSystem = Literal["normalized", "pixel"]
@@ -281,51 +283,39 @@ class ValidateStateArgs(GeminiCompletionFlags):
     condition_met: Optional[bool] = None
 
 
-_SWIPE_SCROLL_TYPES = frozenset(
+_SWIPE_SCROLL_TYPES: frozenset[str] = frozenset(
     {
-        "swipe_up",
-        "swipe_down",
-        "swipe_left",
-        "swipe_right",
-        "scroll",
+        ActionType.SWIPE_UP,
+        ActionType.SWIPE_DOWN,
+        ActionType.SWIPE_LEFT,
+        ActionType.SWIPE_RIGHT,
+        ActionType.SCROLL,
     }
 )
-_PHYSICAL_BBOX_TYPES = frozenset(
+_PHYSICAL_BBOX_TYPES: frozenset[str] = frozenset(
     {
-        "tap",
-        "type",
-        "long_press",
-        "swipe_up",
-        "swipe_down",
-        "swipe_left",
-        "swipe_right",
+        ActionType.TAP,
+        ActionType.TYPE,
+        ActionType.LONG_PRESS,
+        ActionType.SWIPE_UP,
+        ActionType.SWIPE_DOWN,
+        ActionType.SWIPE_LEFT,
+        ActionType.SWIPE_RIGHT,
     }
 )
-# Action types that MUST carry an export_target so the exporter can render a
-# human-readable line for the action. Excludes back/home (device buttons with
-# no target) and validate (uses validation_subject instead).
-_EXPORT_TARGET_REQUIRED_TYPES = frozenset(
+# back/home need no target; validate uses validation_subject; swipe_* uses
+# scroll_target; wait uses wait_subject — only direct-touch actions need a
+# user-facing target name.
+_EXPORT_TARGET_REQUIRED_TYPES: frozenset[str] = frozenset(
     {
-        "tap",
-        "type",
-        "long_press",
-        "swipe_up",
-        "swipe_down",
-        "swipe_left",
-        "swipe_right",
-        "wait",
+        ActionType.TAP,
+        ActionType.TYPE,
+        ActionType.LONG_PRESS,
     }
 )
-_GENERIC_EXPORT_TARGETS = frozenset(
-    {
-        "element",
-        "ui element",
-        "none",
-        "label",
-        "unknown",
-        "a visible item",
-    }
-)
+# Single source of truth lives in fathom.schemas.actions; alias here for the
+# field validator that runs before the model validator.
+_GENERIC_EXPORT_TARGETS = GENERIC_TARGET_PLACEHOLDERS
 
 
 class ExecuteAction(BaseModel):
@@ -400,6 +390,57 @@ class ExecuteAction(BaseModel):
                 "Use the actual element name visible on screen."
             )
         return text
+
+    @model_validator(mode="after")
+    def _normalize_target_fields(self) -> "ExecuteAction":
+        """Resolve canonical target_name and derive export_target.
+
+        Accepts ``element_name`` and explicit ``export_target`` as
+        deprecated aliases. ``export_target`` is derived from
+        ``script_target`` when ``target_type`` is positional/dynamic, else
+        from ``target_name``. Generic placeholders are skipped.
+        """
+
+        def first_clean(*candidates: Optional[str]) -> Optional[str]:
+            for candidate in candidates:
+                if candidate is None:
+                    continue
+                text = str(candidate).strip()
+                if not text:
+                    continue
+                if text.lower() in _GENERIC_EXPORT_TARGETS:
+                    continue
+                return text
+            return None
+
+        # 1) Resolve the canonical on-screen element name.
+        canonical_target_name = first_clean(
+            self.target_name,
+            self.element_name,
+            self.script_target,
+        )
+        if canonical_target_name and canonical_target_name != self.target_name:
+            object.__setattr__(self, "target_name", canonical_target_name)
+
+        # 2) Derive export_target. For positional/dynamic targets the
+        #    abstracted script_target wins; otherwise fall back to the
+        #    canonical target_name. An explicit export_target from the
+        #    caller still takes priority for back-compat.
+        if not (self.export_target or "").strip():
+            if self.target_type in ("positional", "dynamic"):
+                derived_export = first_clean(
+                    self.script_target,
+                    canonical_target_name,
+                )
+            else:
+                derived_export = first_clean(
+                    canonical_target_name,
+                    self.script_target,
+                )
+            if derived_export:
+                object.__setattr__(self, "export_target", derived_export)
+
+        return self
 
     @model_validator(mode="after")
     def _enforce_bbox_for_physical_actions(self) -> "ExecuteAction":

@@ -7,8 +7,11 @@ from pydantic import ValidationError
 
 from fathom.constants import ActionType, ToolName
 from fathom.core.exceptions import ToolValidationError, VisionError
-from fathom.core.services.normalizer import Normalizer
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import (
+    Action,
+    Bounds,
+    clean_validation_subject,
+)
 from fathom.schemas.delta import GeminiDeltaSignal
 from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
 from fathom.schemas.tool_args import (
@@ -304,12 +307,17 @@ class ToolResponseParser:
         sub_completed = bool(raw_sub_goal_completed)
         screen = args.current_screen
 
+        validation_subject = (
+            None if completed else clean_validation_subject(screen, fallback="goal state")
+        )
+
         result = AnalysisResult(
             action=Action(
                 confidence=1.0,
                 rationale=reason,
                 target=screen,
                 action_type=ActionType.COMPLETE if completed else ActionType.VALIDATE,
+                validation_subject=validation_subject,
             ),
             alternatives=[],
             reasoning=reason,
@@ -366,6 +374,7 @@ class ToolResponseParser:
                 target=condition,
                 action_type=ActionType.VALIDATE,
                 rationale=f"{reason} | Evidence: {evidence}",
+                validation_subject=clean_validation_subject(condition, fallback="screen state"),
             ),
             alternatives=[],
             reasoning=reason,
@@ -452,26 +461,12 @@ class ToolResponseParser:
 
         validation_reason = data.validation_reason
 
-        # Prefer model-provided structured targets when the primary name is generic.
-        raw_target_name = data.target_name or data.element_name
+        # ExecuteAction._normalize_target_fields has already collapsed
+        # element_name / script_target into the canonical target_name and
+        # derived export_target. Read target_name directly here; only fall
+        # back to "element" if every candidate field was empty or generic.
         script_target = data.script_target
-
-        resolved_target_name: Optional[str] = raw_target_name
-        if Normalizer.is_generic_target_name(resolved_target_name):
-            structured_fallback = None
-            if script_target and not Normalizer.is_generic_target_name(script_target):
-                structured_fallback = script_target
-
-            if structured_fallback:
-                logger.info(
-                    "Repaired generic Gemini target '%s' using structured field '%s'",
-                    raw_target_name,
-                    structured_fallback,
-                )
-                resolved_target_name = structured_fallback
-            else:
-                # Do not synthesize label- or bounds-based tags; keep a simple fallback.
-                resolved_target_name = raw_target_name or "element"
+        resolved_target_name: Optional[str] = data.target_name or "element"
 
         condition = data.condition
         is_conditional = data.is_conditional
@@ -519,7 +514,7 @@ class ToolResponseParser:
                 alt_at = ActionType(alt_at_str) if alt_at_str else ActionType.WAIT
             except ValueError:
                 alt_at = ActionType.WAIT
-            alt_target = alt_data.target_name or alt_data.element_name or "element"
+            alt_target = alt_data.target_name or "element"
             alternatives.append(
                 Action(
                     action_type=alt_at,

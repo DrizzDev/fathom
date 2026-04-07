@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, Dict, Optional, Sequence, Union
 
+from fathom.constants import ActionType
 from fathom.core.services.exporter.constants import (
     EXECUTABLE_ACTION_PREFIXES,
     SWIPE_ACTIONS,
@@ -15,6 +16,7 @@ from fathom.core.services.exporter.step_record import (
     swipe_direction_label,
 )
 from fathom.core.services.normalizer import Normalizer
+from fathom.schemas.actions import Bounds
 from fathom.schemas.steps import StepResult
 
 logger = getLogger(__name__)
@@ -25,6 +27,50 @@ def _get_field(step: Union[StepResult, Dict[str, Any]], field: str, default: Any
     if isinstance(step, StepResult):
         return getattr(step.step.action, field, default)
     return step.get(field, default)
+
+
+# Coarse grid bucket size for bbox-based dedup. 25 normalized units = 2.5%
+# of the screen, which is wide enough to absorb VLM coordinate jitter on
+# retries but narrow enough that two genuinely different controls in the
+# same row don't collide.
+_BBOX_BUCKET = 25
+
+
+_DEDUPABLE_ACTION_KINDS: frozenset[str] = frozenset(
+    {ActionType.TAP, ActionType.TYPE, ActionType.LONG_PRESS}
+)
+
+
+def _target_dedup_key(step: Union[StepResult, Dict[str, Any]], action_kind: str) -> Optional[str]:
+    """Stable per-element key for tap/type/long_press dedup.
+
+    Prefers ``label_id`` (exact manifest match); falls back to a coarse
+    bbox bucket using round-to-nearest so retries drifting by a few
+    normalized units stay in the same bucket.
+    """
+
+    if action_kind not in _DEDUPABLE_ACTION_KINDS:
+        return None
+
+    label_id = _get_field(step, "label_id")
+    if label_id:
+        return f"{action_kind}|label:{label_id}"
+
+    def bucket(value: float) -> int:
+        return int(round(float(value) / _BBOX_BUCKET))
+
+    bounds_obj = _get_field(step, "bounds")
+    if isinstance(bounds_obj, Bounds):
+        return f"{action_kind}|bbox:{bucket(bounds_obj.center_x)},{bucket(bounds_obj.center_y)}"
+
+    bbox_dict = _get_field(step, "bbox")
+    if isinstance(bbox_dict, dict):
+        x = bbox_dict.get("x")
+        y = bbox_dict.get("y")
+        if x is not None and y is not None:
+            return f"{action_kind}|bbox:{bucket(x)},{bucket(y)}"
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +170,10 @@ def build_action_catalog_from_steps(
 
     entries: list[CatalogEntry] = []
 
+    # First-description-wins registry so retries on the same element keep
+    # a consistent line, regardless of how Gemini's prose drifts.
+    target_registry: Dict[str, str] = {}
+
     # Phase 1: Resolve app launch (isolated from the action loop).
     app_launch = resolve_app_launch(step_results=step_results, package_name=package_name)
     steps_to_skip = 0
@@ -209,6 +259,21 @@ def build_action_catalog_from_steps(
             validation_subject=validation_subject,
         )
 
+        dedup_key = _target_dedup_key(step=step, action_kind=action_type_val)
+        if dedup_key:
+            canonical = target_registry.get(dedup_key)
+            if canonical is None:
+                target_registry[dedup_key] = description
+            elif canonical != description:
+                logger.debug(
+                    "Canonicalizing %s description: %r -> %r (key=%s)",
+                    action_type_val,
+                    description,
+                    canonical,
+                    dedup_key,
+                )
+                description = canonical
+
         # Skip "complete" actions — they are goal signals, not executable steps.
         if action_type_val == "complete":
             i += 1
@@ -224,6 +289,26 @@ def build_action_catalog_from_steps(
         if entry.description.strip()
         and entry.description.strip().lower().startswith(EXECUTABLE_ACTION_PREFIXES)
     ]
+
+    # Phase 3a: collapse adjacent identical executable entries (retries).
+    # Validate runs are skipped so _collapse_consecutive_validates can
+    # merge them via LLM summarization downstream.
+    deduped_entries: list[CatalogEntry] = []
+    for entry in executable_entries:
+        if (
+            deduped_entries
+            and entry.action_kind != ActionType.VALIDATE
+            and entry.action_kind == deduped_entries[-1].action_kind
+            and entry.description.strip() == deduped_entries[-1].description.strip()
+        ):
+            logger.debug(
+                "Collapsed duplicate consecutive %s entry: %s",
+                entry.action_kind,
+                entry.description,
+            )
+            continue
+        deduped_entries.append(entry)
+    executable_entries = deduped_entries
 
     action_catalog: Dict[str, CatalogEntry] = {}
     required_action_ids: list[str] = []
