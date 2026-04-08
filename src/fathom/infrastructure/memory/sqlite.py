@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 import aiosqlite
 
 from fathom.interfaces import IMemoryProvider
-from fathom.schemas.actions import Action
+from fathom.schemas.actions import Action, resolve_action_target
 from fathom.schemas.screens import ScreenState
 
 
@@ -107,11 +107,27 @@ class SQLiteMemoryProvider(IMemoryProvider):
                 async for row in cursor:
                     try:
                         data = json.loads(row[0])
+                        # Use the canonical target resolver so persisted
+                        # validate/wait/swipe steps surface their canonical
+                        # subject (validation_subject / wait_subject /
+                        # scroll_target) instead of leaking the historic
+                        # "element" filler back into the agent's own
+                        # previous-actions context on the next turn.
+                        resolved_target = resolve_action_target(
+                            action_type=data.get("action_type"),
+                            target_name=data.get("target_name") or data.get("target"),
+                            export_target=data.get("export_target"),
+                            natural_language_target=data.get("natural_language_target"),
+                            validation_subject=data.get("validation_subject"),
+                            wait_subject=data.get("wait_subject"),
+                            scroll_target=data.get("scroll_target"),
+                            label_id=data.get("label_id"),
+                        )
                         knowledge["previous_actions"].append(
                             {
                                 "success": bool(row[1]),
                                 "action": data.get("action_type"),
-                                "target": data.get("target") or "element",
+                                "target": resolved_target,
                             }
                         )
                     except (json.JSONDecodeError, AttributeError):

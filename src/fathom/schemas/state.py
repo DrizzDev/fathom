@@ -15,7 +15,7 @@ from fathom.constants.screen import (
     LOOP_SCROLL_STALL_DISTANCE_THRESHOLD,
     LOOP_SCROLL_STALL_MIN_STREAK,
 )
-from fathom.schemas.actions import Action
+from fathom.schemas.actions import Action, resolve_action_target
 from fathom.schemas.screens import ScreenState
 
 logger = getLogger(__name__)
@@ -433,13 +433,34 @@ class ActionHistory(BaseModel):
         Record an action with its outcome and associated activity.
         """
 
+        # Route the history entry through the canonical target
+        # resolver so validate/wait/swipe steps surface their
+        # canonical subject (validation_subject / wait_subject /
+        # scroll_target) instead of leaking a placeholder like
+        # "element" back into the agent's own context on the next
+        # turn. resolve_action_target returns "unknown" as a
+        # last-resort fallback; we then coerce that to "UI" to
+        # preserve the historic display string.
+        resolved_target = resolve_action_target(
+            action_type=action.action_type,
+            target_name=action.target,
+            export_target=action.export_target,
+            natural_language_target=action.natural_language_target,
+            validation_subject=action.validation_subject,
+            wait_subject=action.wait_subject,
+            scroll_target=action.scroll_target,
+            label_id=action.label_id,
+        )
+        if resolved_target == "unknown":
+            resolved_target = "UI"
+
         self.__actions.append(
             {
                 "success": success,
                 "activity": activity,
                 "type": action.action_type.value.upper(),
                 "full_description": action.to_description(),
-                "target": action.natural_language_target or action.label_id or "UI",
+                "target": resolved_target,
             }
         )
         if not success:

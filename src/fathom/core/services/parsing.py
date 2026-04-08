@@ -11,6 +11,7 @@ from fathom.schemas.actions import (
     Action,
     Bounds,
     clean_validation_subject,
+    resolve_action_target,
 )
 from fathom.schemas.delta import GeminiDeltaSignal
 from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
@@ -492,21 +493,23 @@ class ToolResponseParser:
 
         # ExecuteAction._normalize_target_fields has already collapsed
         # element_name / script_target into the canonical target_name and
-        # derived export_target. Read target_name directly here.
-        #
-        # Fallback priority when target_name is missing:
-        #   1. If label_id is set, the perception adapter's manifest
-        #      snapper will stamp the element's display text at bind
-        #      time, so we use a namespaced placeholder here instead of
-        #      a generic "element" that would bleed into the exporter.
-        #   2. Otherwise, fall back to the generic "element" (legacy).
+        # derived export_target. Route through resolve_action_target so
+        # every action kind reaches its canonical subject (validate →
+        # validation_subject, wait → wait_subject, swipe/scroll →
+        # scroll_target) instead of the historic "element" fallback.
+        # ``resolve_action_target`` returns "unknown" when nothing
+        # resolves; downstream consumers treat that as a placeholder
+        # via ``is_resolved_target``.
         script_target = data.script_target
-        if data.target_name:
-            resolved_target_name: Optional[str] = data.target_name
-        elif (data.label_id or "").strip():
-            resolved_target_name = f"label:{data.label_id}"
-        else:
-            resolved_target_name = "element"
+        resolved_target_name = resolve_action_target(
+            action_type=action_type,
+            target_name=data.target_name,
+            export_target=data.export_target,
+            validation_subject=data.validation_subject,
+            wait_subject=data.wait_subject,
+            scroll_target=data.scroll_target,
+            label_id=data.label_id,
+        )
 
         condition = data.condition
         is_conditional = data.is_conditional
@@ -517,7 +520,7 @@ class ToolResponseParser:
 
         action = Action(
             bounds=bounds,
-            target=resolved_target_name or "element",
+            target=resolved_target_name,
             condition=condition,
             is_conditional=is_conditional,
             conditional_type=conditional_type,
@@ -527,7 +530,7 @@ class ToolResponseParser:
             script_target=script_target,
             wait_duration=wait_duration,
             text=str(text) if text else None,
-            natural_language_target=resolved_target_name or "element",
+            natural_language_target=resolved_target_name,
             rationale=str(data.rationale or ""),
             is_valid=bool(data.is_valid),
             confidence=float(data.confidence),
@@ -553,8 +556,14 @@ class ToolResponseParser:
                 alt_at = ActionType(alt_at_str) if alt_at_str else ActionType.WAIT
             except ValueError:
                 alt_at = ActionType.WAIT
-            alt_target = alt_data.target_name or (
-                f"label:{alt_data.label_id}" if (alt_data.label_id or "").strip() else "element"
+            alt_target = resolve_action_target(
+                action_type=alt_at,
+                target_name=alt_data.target_name,
+                export_target=alt_data.export_target,
+                validation_subject=alt_data.validation_subject,
+                wait_subject=alt_data.wait_subject,
+                scroll_target=alt_data.scroll_target,
+                label_id=alt_data.label_id,
             )
             alternatives.append(
                 Action(

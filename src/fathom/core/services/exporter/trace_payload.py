@@ -10,7 +10,7 @@ from fathom.core.services.exporter.step_record import (
     is_explicit_conditional,
     is_launcher_activity,
 )
-from fathom.schemas.actions import GENERIC_TARGET_PLACEHOLDERS
+from fathom.schemas.actions import resolve_action_target
 from fathom.schemas.steps import StepResult
 
 
@@ -21,58 +21,43 @@ def _get_field(step: Union[StepResult, Dict[str, Any]], field: str, default: Any
     return step.get(field, default)
 
 
-def _is_resolved(value: Any) -> bool:
-    """True when *value* names a concrete UI subject (not a placeholder)."""
-
-    if not value:
-        return False
-    return str(value).strip().lower() not in GENERIC_TARGET_PLACEHOLDERS
-
-
 def _resolve_target(step: Union[StepResult, Dict[str, Any]], action_type_val: str) -> str:
     """Pick the authoritative human-readable target for the trace payload.
 
-    The export LLM sees this as the ``target`` field and uses it to build
-    script lines. Different action kinds store their target in different
-    fields, so we route accordingly instead of falling through to the
-    generic ``"element"`` placeholder:
+    Thin adapter over :func:`fathom.schemas.actions.resolve_action_target`
+    — pulls every candidate field off the ``StepResult`` or dict and
+    hands the resolution decision to the single canonical router. The
+    router handles per-kind routing (validate → ``validation_subject``,
+    wait → ``wait_subject``, swipe/scroll → ``scroll_target``), the
+    general chain (``target_name`` → ``export_target`` →
+    ``natural_language_target``), the ``label:{id}`` fallback, and
+    placeholder rejection in one place.
 
-    * ``validate`` → ``validation_subject`` (never ``"element"`` because
-      the Action model enforces a non-empty subject at construction).
-    * ``wait``     → ``wait_subject`` (enforced non-empty by the
-      ExecuteAction validator).
-    * ``swipe_*``  → ``scroll_target`` (enforced non-empty by the
-      ExecuteAction validator).
-    * everything else → ``export_target`` → ``natural_language_target``.
-
-    The final ``"element"`` fallback remains only as defense-in-depth
-    for legacy persisted traces where the authoritative field may be
-    missing.
+    The historic ``"element"`` fallback is gone; the router returns
+    ``"unknown"`` as a last resort, which downstream consumers treat
+    as unresolved via ``is_resolved_target``.
     """
 
-    kind = (action_type_val or "").lower()
+    # StepResult wraps an Action, which exposes ``target`` (not
+    # ``target_name``). Dict-shaped steps from legacy persistence may
+    # carry either key, so try ``target_name`` first and fall back to
+    # ``target``. Either way, the value flows into the resolver's
+    # ``target_name`` slot — it is the primary candidate in the
+    # general chain regardless of the source field's name.
+    primary_target = _get_field(step, "target_name")
+    if primary_target is None:
+        primary_target = _get_field(step, "target")
 
-    if kind == "validate":
-        subject = _get_field(step, "validation_subject")
-        if _is_resolved(subject):
-            return str(subject)
-    elif kind == "wait":
-        subject = _get_field(step, "wait_subject")
-        if _is_resolved(subject):
-            return str(subject)
-    elif "swipe" in kind or kind == "scroll":
-        subject = _get_field(step, "scroll_target")
-        if _is_resolved(subject):
-            return str(subject)
-
-    for candidate in (
-        _get_field(step, "export_target"),
-        _get_field(step, "natural_language_target"),
-    ):
-        if _is_resolved(candidate):
-            return str(candidate)
-
-    return "element"
+    return resolve_action_target(
+        action_type=action_type_val,
+        target_name=primary_target,
+        export_target=_get_field(step, "export_target"),
+        natural_language_target=_get_field(step, "natural_language_target"),
+        validation_subject=_get_field(step, "validation_subject"),
+        wait_subject=_get_field(step, "wait_subject"),
+        scroll_target=_get_field(step, "scroll_target"),
+        label_id=_get_field(step, "label_id"),
+    )
 
 
 def build_export_payload(
