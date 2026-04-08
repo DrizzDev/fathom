@@ -204,10 +204,14 @@ class ToolRegistry:
                                 "scroll_target": {
                                     "type": "STRING",
                                     "description": (
-                                        "REQUIRED for all scroll/swipe actions. The element or section being "
-                                        "scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and "
-                                        "packages'). Use the exact phrase from the UI when possible. "
-                                        "Must not be empty for swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
+                                        "REQUIRED for all scroll/swipe actions. The DESTINATION element you "
+                                        "are trying to bring into view — the specific item, label, or "
+                                        "section header you want to tap or read after the scroll completes "
+                                        "(e.g., 'Washington state', 'Vitamins and supplements', 'Lab tests "
+                                        "and packages'). NEVER name the scrollable container ('State list "
+                                        "container', 'Settings page') — that is not the target. Use the "
+                                        "exact label text from the UI when possible. Must not be empty for "
+                                        "swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
                                     ),
                                 },
                                 "wait_subject": {

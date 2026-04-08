@@ -225,19 +225,26 @@ def build_action_catalog_from_steps(
                 j += 1
             i = j
 
-            # Use authoritative scroll_target; fall back to next step's target.
-            if scroll_target:
-                visible_target = scroll_target
-            elif i < n:
-                next_export = _get_field(step_results[i], "export_target")
-                visible_target = (
-                    next_export
+            # Prefer the next step's target — that's what the agent actually
+            # scrolled to reach. Fall back to the LLM-emitted scroll_target
+            # only when there's no usable follow-up interaction; Gemini
+            # frequently puts the scroll *container* there ("State list
+            # container") instead of the destination element ("Washington").
+            visible_target: Optional[str] = None
+            if i < n and get_action_type(step=step_results[i]) in (
+                "tap",
+                "type",
+                "long_press",
+            ):
+                next_target = (
+                    _get_field(step_results[i], "target_name")
+                    or _get_field(step_results[i], "export_target")
                     or _get_field(step_results[i], "natural_language_target")
-                    or intent
-                    or "the target"
                 )
-            else:
-                visible_target = intent or "the target"
+                if next_target:
+                    visible_target = next_target
+            if not visible_target:
+                visible_target = scroll_target or intent or "the target"
 
             label = swipe_direction_label(action_type=swipe_direction)
             entries.append(
