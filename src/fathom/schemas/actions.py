@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import re
 from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fathom.constants import ActionType
+
+# Matches the filler word "element" as a standalone token (not inside
+# "elements" or "elementary"). The validate-action guard uses this to
+# reject prose like "HealthTap homepage content, element visible" that
+# leaks from the prompt's own vocabulary.
+_FORBIDDEN_VALIDATION_SUBJECT_TOKEN = re.compile(r"\belement\b", re.IGNORECASE)
 
 # Single source of truth for "this string is a placeholder, not a real
 # target". Used by ExecuteAction normalization, the trace exporter, and
@@ -275,6 +282,14 @@ class Action(BaseModel):
                 f"validation_subject must not use first-person or narrative "
                 f"prose: '{subject}'. Use a short third-person noun phrase "
                 "(e.g., 'Instamart tab selected', 'cart is empty')."
+            )
+
+        if _FORBIDDEN_VALIDATION_SUBJECT_TOKEN.search(subject):
+            raise ValueError(
+                f"validation_subject must not contain the filler word "
+                f"'element': '{subject}'. Name the actual thing being "
+                "checked (e.g., 'Submit button enabled', "
+                "'Cart total visible', 'Home tab selected')."
             )
 
         return self

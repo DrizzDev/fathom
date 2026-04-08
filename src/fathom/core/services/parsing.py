@@ -463,10 +463,21 @@ class ToolResponseParser:
 
         # ExecuteAction._normalize_target_fields has already collapsed
         # element_name / script_target into the canonical target_name and
-        # derived export_target. Read target_name directly here; only fall
-        # back to "element" if every candidate field was empty or generic.
+        # derived export_target. Read target_name directly here.
+        #
+        # Fallback priority when target_name is missing:
+        #   1. If label_id is set, the perception adapter's manifest
+        #      snapper will stamp the element's display text at bind
+        #      time, so we use a namespaced placeholder here instead of
+        #      a generic "element" that would bleed into the exporter.
+        #   2. Otherwise, fall back to the generic "element" (legacy).
         script_target = data.script_target
-        resolved_target_name: Optional[str] = data.target_name or "element"
+        if data.target_name:
+            resolved_target_name: Optional[str] = data.target_name
+        elif (data.label_id or "").strip():
+            resolved_target_name = f"label:{data.label_id}"
+        else:
+            resolved_target_name = "element"
 
         condition = data.condition
         is_conditional = data.is_conditional
@@ -514,7 +525,9 @@ class ToolResponseParser:
                 alt_at = ActionType(alt_at_str) if alt_at_str else ActionType.WAIT
             except ValueError:
                 alt_at = ActionType.WAIT
-            alt_target = alt_data.target_name or "element"
+            alt_target = alt_data.target_name or (
+                f"label:{alt_data.label_id}" if (alt_data.label_id or "").strip() else "element"
+            )
             alternatives.append(
                 Action(
                     action_type=alt_at,

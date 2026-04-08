@@ -222,11 +222,21 @@ class ToolRegistry:
                                 "validation_subject": {
                                     "type": "STRING",
                                     "description": (
-                                        "REQUIRED for validate actions. A short noun phrase (max 8 words) naming "
-                                        "the element or state being checked. NO full sentences, NO 'I can see', "
-                                        "NO 'the presence of', NO locations like 'at the bottom'. "
-                                        "GOOD: 'categories visible', 'home button selected', 'footer text visible'. "
-                                        "BAD: 'I can clearly see the footer at the bottom of the screen'."
+                                        "REQUIRED for validate actions. A short noun phrase (max 8 words) "
+                                        "that names the SPECIFIC visible thing being checked — the button, "
+                                        "label, icon, field, card, page, section, toast, or banner you "
+                                        "can point to in the screenshot. "
+                                        "NEVER use the filler word 'element' — it is meaningless in a "
+                                        "script line. Name the actual thing: 'Submit button enabled', "
+                                        "'Cart total visible', 'Home tab selected', NOT 'Submit element' "
+                                        "or 'Home element visible'. "
+                                        "NO full sentences, NO 'I can see', NO 'the presence of', NO "
+                                        "locations like 'at the bottom'. "
+                                        "GOOD: 'categories visible', 'home button selected', "
+                                        "'footer text visible', 'HealthTap homepage content loaded'. "
+                                        "BAD: 'HealthTap homepage content, element visible' "
+                                        "(the word 'element' is forbidden); "
+                                        "'I can clearly see the footer at the bottom of the screen'."
                                     ),
                                 },
                                 "target_is_generic": {

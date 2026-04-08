@@ -12,8 +12,8 @@ from fathom.constants.execution import (
     GCC_BRANCHING_THRESHOLD,
     GROUNDING_FAILURE_MESSAGE,
     LAUNCHER_PACKAGES,
-    MAX_ACTIONS_PER_SUBGOAL,
     RECORDING_FAILURE_MESSAGE,
+    REDECOMPOSE_VERIFY_FAILURE_THRESHOLD,
     VISUAL_HASH_LENGTH,
 )
 from fathom.constants.graph import NodeName
@@ -356,28 +356,63 @@ class IntentNodeProvider:
     async def __replan_remaining_sub_goals(
         self,
         capture: ScreenCapture,
+        *,
+        failure_reason: Optional[str] = None,
+        suggested_next_action: Optional[str] = None,
     ) -> Optional[IntentGraphState]:
-        """
-        On 3rd verification rejection, re-decompose the remaining intent
-        using the current screen context.  Replaces unfinished sub-goals
-        with a fresh plan and routes back to GROUND.
+        """Re-decompose the remaining intent with context from the failure.
+
+        Called once per failure burst, from the VERIFY node after
+        ``REDECOMPOSE_VERIFY_FAILURE_THRESHOLD`` rejections on the same
+        sub-goal. Receives the verifier's rejection reason and suggested
+        next action so the decomposer can propose a different approach.
+
+        The decomposer receives:
+          1. The remaining (unfinished) sub-goals joined as the new intent.
+          2. The stuck sub-goal's description separately.
+          3. The failure reason + verifier-suggested action when available.
+          4. A short tail of recent action lines so the planner can see
+             which approaches have already been tried.
+          5. The current screenshot for visual grounding.
         """
 
+        from fathom.core.prompts.trace import format_trace_action_line
         from fathom.core.services.decomposer import IntentDecomposer
 
         agent_state = self.__context.agent_state
+        stuck_sub_goal = agent_state.get_current_sub_goal()
+        stuck_description = stuck_sub_goal.description if stuck_sub_goal else None
 
-        # Build a new intent from only the remaining (unfinished) sub-goals.
-        # This prevents the decomposer from re-planning completed steps.
+        # Build a new intent from only the remaining (unfinished) sub-goals
+        # so the decomposer never re-plans completed steps.
         remaining_descriptions = [
             sg.description for sg in agent_state.sub_goals if not sg.is_complete()
         ]
         if not remaining_descriptions:
             return None
-
-        # Include the last verification failure context so the decomposer
-        # knows the current screen state and what went wrong.
         remaining_intent = ". ".join(remaining_descriptions)
+
+        # Collect a short tail of recent actions so the replan can steer
+        # away from whatever the agent just tried.
+        recent_actions: tuple[str, ...] = ()
+        try:
+            full_context = self.__context.context_manager.get_full_context()
+            trace = full_context.get("trace", [])
+            if trace:
+                recent_actions = tuple(
+                    format_trace_action_line(entry) for entry in list(trace)[-10:]
+                )
+        except Exception as exc:  # defensive — trace access must not break replan
+            logger.debug("[REPLAN] Failed to collect recent_actions: %s", exc)
+
+        # When the caller did not supply a reason, synthesize one from the
+        # sub-goal action counter so the decomposer still sees *why*.
+        resolved_failure_reason = failure_reason
+        if not resolved_failure_reason:
+            resolved_failure_reason = (
+                f"Agent executed {agent_state.sub_goal_action_count} actions on "
+                f"this sub-goal without advancing (loop detected)."
+            )
 
         try:
             decomposer = IntentDecomposer.with_configuration(
@@ -387,6 +422,10 @@ class IntentNodeProvider:
             new_sub_goals = await decomposer.decompose(
                 intent=remaining_intent,
                 screenshot=capture.image if capture.image else None,
+                stuck_sub_goal=stuck_description,
+                failure_reason=resolved_failure_reason,
+                suggested_next_action=suggested_next_action,
+                recent_actions=recent_actions,
             )
 
             logger.info(
@@ -1311,21 +1350,10 @@ class IntentNodeProvider:
             raw_analysis = plan.metadata.get("_analysis")
 
         if raw_analysis is None:
-            # Even without analysis, check if we're stuck on this sub-goal.
-            if agent_state.sub_goal_action_count >= MAX_ACTIONS_PER_SUBGOAL:
-                logger.info(
-                    f"[NODE: RECORD] Sub-goal {current_sub_goal.index} stuck after "
-                    f"{agent_state.sub_goal_action_count} actions (no analysis). "
-                    "Triggering replan."
-                )
-                try:
-                    capture = await self.__context.perception_port.capture()
-                    replanned = await self.__replan_remaining_sub_goals(capture=capture)
-                    if replanned is not None:
-                        self.__persist_agent_state_to_graph(result=replanned)
-                        return replanned
-                except Exception as exception:
-                    logger.warning(f"[NODE: RECORD] Stuck-detection replan failed: {exception}")
+            # Cheap "action-loop" recovery is handled by the planner via
+            # is_action_repeating_on_screen + rejection history. The
+            # expensive redecompose path is driven exclusively by the
+            # verification-failure counter (see VERIFY node below).
             return None
 
         analysis = (
@@ -1377,25 +1405,9 @@ class IntentNodeProvider:
                 f"Actions on sub-goal: {agent_state.sub_goal_action_count}"
             )
 
-            # If too many actions without sub-goal advancement, trigger
-            # replanning.  This catches cases where the 2-signal gate never
-            # passes (LLM never sets sub_goal_completed=true) and VERIFY
-            # never runs — the agent is stuck on a sub-goal indefinitely.
-            if agent_state.sub_goal_action_count >= MAX_ACTIONS_PER_SUBGOAL:
-                logger.info(
-                    f"[NODE: RECORD] Sub-goal {current_sub_goal.index} stuck after "
-                    f"{agent_state.sub_goal_action_count} actions. Triggering replan."
-                )
-                # Capture current screen for replanning context
-                try:
-                    capture = await self.__context.perception_port.capture()
-                    replanned = await self.__replan_remaining_sub_goals(capture=capture)
-                    if replanned is not None:
-                        self.__persist_agent_state_to_graph(result=replanned)
-                        return replanned
-                except Exception as exception:
-                    logger.warning(f"[NODE: RECORD] Stuck-detection replan failed: {exception}")
-
+            # Cheap "action-loop" recovery is the planner's 3-repeated-
+            # action detector; expensive redecompose is driven by verify
+            # failures in the VERIFY node. Neither fires from here.
             return None
 
         # Route to VERIFY for per-sub-goal screenshot verification.
@@ -1620,13 +1632,20 @@ class IntentNodeProvider:
             # agent has actually progressed beyond this sub-goal's scope
             # by examining the execution trace.  If actions suggest the
             # sub-goal was completed and the agent moved on, force-advance.
-            if is_subgoal_verify and current_sub_goal is not None and failure_count >= 3:
+            if (
+                is_subgoal_verify
+                and current_sub_goal is not None
+                and failure_count >= REDECOMPOSE_VERIFY_FAILURE_THRESHOLD
+            ):
                 logger.info(
-                    f"[NODE: VERIFY] 3rd rejection for sub-goal {current_sub_goal.index}. "
-                    "Re-decomposing remaining intent with current screen context."
+                    f"[NODE: VERIFY] {failure_count} rejections for sub-goal "
+                    f"{current_sub_goal.index}. Redecomposing remaining intent with "
+                    "current screen context."
                 )
                 replanned = await self.__replan_remaining_sub_goals(
                     capture=capture,
+                    failure_reason=reason,
+                    suggested_next_action=next_action or None,
                 )
                 if replanned is not None:
                     return replanned

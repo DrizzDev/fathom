@@ -448,15 +448,23 @@ class ExecuteAction(BaseModel):
         if at not in _PHYSICAL_BBOX_TYPES:
             return self
 
+        # GROUNDING FIRST: when label_id is set, the manifest snapper will
+        # provide exact label-aligned bounds downstream and the LLM-emitted
+        # bbox is just an approximation. Demanding a bbox here would
+        # contradict the prompt's "ALWAYS prefer label_id" instruction.
+        if (self.label_id or "").strip():
+            return self
+
         bbox = self.bbox
         bbox_missing = bbox is None or (
             bbox.x == 0 and bbox.y == 0 and bbox.width == 0 and bbox.height == 0
         )
         if bbox_missing:
             raise ValueError(
-                f"bbox with non-zero coordinates is required for action_type='{at}'. "
-                "Provide x,y at the CENTER of the target element using normalized "
-                "values (0-1000) by default. Do not emit a placeholder bbox of zeros."
+                f"bbox with non-zero coordinates is required for action_type='{at}' "
+                "when label_id is not provided. Either supply label_id from the "
+                "Element Manifest, or provide x,y at the CENTER of the target "
+                "element using normalized values (0-1000)."
             )
         return self
 
@@ -490,14 +498,24 @@ class ExecuteAction(BaseModel):
             )
 
         # export_target is required for actions that render to an exported
-        # script line (tap, type, long_press, swipe_*, wait). Not required for
-        # back/home (device buttons, no target) or validate (uses
-        # validation_subject instead).
-        if at in _EXPORT_TARGET_REQUIRED_TYPES and not (self.export_target or "").strip():
+        # script line (tap, type, long_press). Not required for back/home
+        # (device buttons, no target), validate (uses validation_subject),
+        # swipe_* (uses scroll_target), or wait (uses wait_subject).
+        # GROUNDING FIRST: if label_id is set, the manifest provides the
+        # canonical element name at bind time — the target_name field
+        # is not the authoritative source in that case, so we skip the
+        # check to match the prompt's "prefer label_id" instruction.
+        if (
+            at in _EXPORT_TARGET_REQUIRED_TYPES
+            and not (self.export_target or "").strip()
+            and not (self.label_id or "").strip()
+        ):
             raise ValueError(
-                f"export_target is required for action_type='{at}'. "
-                "Provide the canonical phrase for the exported test script "
-                "(e.g., 'Search box', 'the first search result')."
+                f"export_target is required for action_type='{at}' "
+                "when label_id is not provided. Either supply label_id from "
+                "the Element Manifest, or provide a canonical phrase for the "
+                "exported test script (e.g., 'Search box', 'the first search "
+                "result')."
             )
 
         return self
@@ -530,6 +548,58 @@ class ExecuteAction(BaseModel):
         return self
 
 
+_TARGET_INHERIT_FIELDS: tuple[str, ...] = (
+    "target_name",
+    "element_name",
+    "script_target",
+    "export_target",
+    "target_type",
+    "target_element_type",
+    "target_is_generic",
+)
+
+
+def _inherit_target_from_prior_action(action: Dict[str, Any], prior: Dict[str, Any]) -> None:
+    """Copy target fields from a prior action when the current one elides them.
+
+    Mutates ``action`` in place. Used when Gemini emits the common
+    tap-then-type pattern: the tap fully describes the target field, the
+    type re-uses the same coordinates and label but skips repeating the
+    target name. Without this, the second action fails the per-action
+    target_name requirement even though it is unambiguously bound to the
+    prior action's target.
+    """
+
+    has_target = any(
+        (action.get(key) or "")
+        for key in ("target_name", "element_name", "script_target", "export_target")
+    )
+    if has_target:
+        return
+
+    same_label = (
+        action.get("label_id")
+        and prior.get("label_id")
+        and str(action["label_id"]) == str(prior["label_id"])
+    )
+
+    same_bbox = False
+    a_bbox = action.get("bbox") if isinstance(action.get("bbox"), dict) else None
+    p_bbox = prior.get("bbox") if isinstance(prior.get("bbox"), dict) else None
+    if a_bbox and p_bbox:
+        ax, ay = a_bbox.get("x"), a_bbox.get("y")
+        px, py = p_bbox.get("x"), p_bbox.get("y")
+        if all(v is not None for v in (ax, ay, px, py)):
+            same_bbox = abs(int(ax) - int(px)) <= 5 and abs(int(ay) - int(py)) <= 5
+
+    if not (same_label or same_bbox):
+        return
+
+    for key in _TARGET_INHERIT_FIELDS:
+        if not action.get(key) and prior.get(key) is not None:
+            action[key] = prior[key]
+
+
 class ExecuteUIArgs(GeminiCompletionFlags, GeminiDeltaTelemetry):
     """
     Schema for the execute_ui tool.
@@ -544,6 +614,33 @@ class ExecuteUIArgs(GeminiCompletionFlags, GeminiDeltaTelemetry):
         description="List of candidate low-level UI actions; first is executed.",
     )
     memory_updates: Optional[Dict[str, str]] = None
+
+    @field_validator("actions", mode="before")
+    @classmethod
+    def _propagate_targets(cls, value: Any) -> Any:
+        """Inherit target fields between consecutive actions on the same element.
+
+        Runs BEFORE per-action validation so a type-after-tap action that
+        omits target_name still has it filled in from the prior tap when
+        they share label_id (or a near-identical bbox center).
+        """
+
+        if not isinstance(value, list):
+            return value
+
+        normalized: list[Any] = []
+        prior_dict: Optional[Dict[str, Any]] = None
+        for entry in value:
+            if isinstance(entry, dict):
+                _inherit_target_from_prior_action(entry, prior_dict or {})
+                prior_dict = entry
+            else:
+                # Already-constructed ExecuteAction or unknown type:
+                # nothing to mutate. Skip but still update prior so the
+                # next dict can read its target fields if needed.
+                prior_dict = None
+            normalized.append(entry)
+        return normalized
 
 
 class StoreMemoryArgs(BaseModel):

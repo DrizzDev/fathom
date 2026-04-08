@@ -154,9 +154,21 @@ class DecompositionPromptBuilder(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def build_user_prompt(self, *, intent: str) -> str:
-        """
-        Build dynamic user prompt for decomposing an intent.
+    def build_user_prompt(
+        self,
+        *,
+        intent: str,
+        stuck_sub_goal: Optional[str] = None,
+        failure_reason: Optional[str] = None,
+        suggested_next_action: Optional[str] = None,
+        recent_actions: Sequence[str] = (),
+    ) -> str:
+        """Build the user prompt for decomposing an intent.
+
+        When the caller is the replan path, ``stuck_sub_goal`` /
+        ``failure_reason`` / ``suggested_next_action`` / ``recent_actions``
+        carry the context that made the previous plan fail. Initial
+        decomposition passes only ``intent``.
         """
 
         raise NotImplementedError

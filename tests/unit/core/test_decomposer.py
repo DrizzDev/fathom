@@ -84,3 +84,50 @@ async def test_decompose_with_screenshot() -> None:
     assert "screenshot" in (llm.last_system_instruction or "").lower()
     assert "already here" in (llm.last_system_instruction or "").lower()
     assert any(isinstance(p, bytes) for p in llm.last_prompt)
+
+
+@pytest.mark.asyncio
+async def test_decompose_with_replan_context_is_embedded_in_prompt() -> None:
+    """Replan context (stuck sub-goal, failure reason, suggested action,
+    recent action tail) must appear in the rendered user prompt so the
+    decomposer can steer away from the dead-end path."""
+
+    llm = MockLLM({"sub_goals": ["tap search input", "type query"], "confidence": 0.9})
+    decomposer = IntentDecomposer(llm=llm)
+
+    result = await decomposer.decompose(
+        "Select Washington state",
+        stuck_sub_goal="Scroll to find Washington state",
+        failure_reason="scrolled past the list 5 times, Washington never appeared",
+        suggested_next_action="tap the state search input and type Washington",
+        recent_actions=(
+            "swipe_up: State list",
+            "swipe_up: State list",
+            "swipe_up: State list",
+            "tap: Generic item",
+        ),
+    )
+
+    assert len(result) == 2
+    prompt_text = "".join(p for p in llm.last_prompt if isinstance(p, str))
+    assert "REPLAN CONTEXT" in prompt_text
+    assert "STUCK ON: Scroll to find Washington state" in prompt_text
+    assert "WHY IT FAILED: scrolled past the list 5 times" in prompt_text
+    assert "VERIFIER SUGGESTED: tap the state search input" in prompt_text
+    assert "RECENTLY TRIED" in prompt_text
+    assert "- swipe_up: State list" in prompt_text
+
+
+@pytest.mark.asyncio
+async def test_initial_decompose_has_no_replan_section() -> None:
+    """The REPLAN CONTEXT block must NOT appear when no context is passed."""
+
+    llm = MockLLM({"sub_goals": ["step"], "confidence": 0.9})
+    decomposer = IntentDecomposer(llm=llm)
+
+    await decomposer.decompose("do a thing")
+
+    prompt_text = "".join(p for p in llm.last_prompt if isinstance(p, str))
+    assert "REPLAN CONTEXT" not in prompt_text
+    assert "STUCK ON" not in prompt_text
+    assert "RECENTLY TRIED" not in prompt_text
