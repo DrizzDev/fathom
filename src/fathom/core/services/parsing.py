@@ -181,6 +181,13 @@ class ToolResponseParser:
         - Normalizes is_goal_complete / is_sub_goal_complete when action_type is COMPLETE.
         """
 
+        # Coerce ToolName enum → plain string so the checkpointed metadata
+        # contains only primitives. Without this, LangGraph's msgpack
+        # serializer sees fathom.constants.ToolName in the state graph
+        # and warns "Blocked deserialization of fathom.constants.ToolName
+        # - not in allowed_msgpack_modules" on every checkpoint load.
+        source_tool = str(source_tool)
+
         # Preserve raw model emissions for debugging and analytics.
         raw_flags = {
             "goal_completed": raw_goal_completed,
