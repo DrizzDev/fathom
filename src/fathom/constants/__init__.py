@@ -111,6 +111,23 @@ ACTION_EXECUTED_TYPES: frozenset[ActionType] = frozenset(
 )
 
 
+class ToolName(StrEnum):
+    """
+    Canonical names for the LLM tools the agent exposes.
+
+    Single source of truth for tool name string literals — parser
+    dispatch, vision permission sets, and prewarm payloads should all
+    reference these enum members instead of hardcoding strings.
+    """
+
+    EXECUTE_UI = "execute_ui"
+    VERIFY_GOAL = "verify_goal"
+    VALIDATE_STATE = "validate_state"
+    ASK_USER = "ask_user"
+    STORE_MEMORY = "store_memory"
+    RECALL_MEMORY = "recall_memory"
+
+
 class FlowType(StrEnum):
     """
     Type of execution flow.

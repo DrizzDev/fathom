@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from fathom.constants import ActionType, FathomEvent
 from fathom.constants.execution import (
+    GCC_BRANCHING_THRESHOLD,
     GROUNDING_FAILURE_MESSAGE,
     LAUNCHER_PACKAGES,
     MAX_ACTIONS_PER_SUBGOAL,
@@ -21,9 +22,9 @@ from fathom.constants.state import CommonStateKey, CompletionReason, IntentState
 from fathom.core.exceptions import FathomError
 from fathom.core.prompts.verification import (
     SUBGOAL_VERIFICATION_SYSTEM,
-    SUBGOAL_VERIFICATION_USER_TEMPLATE,
     VERIFICATION_SYSTEM,
-    VERIFICATION_USER_TEMPLATE,
+    build_intent_verification_user_prompt,
+    build_subgoal_verification_user_prompt,
 )
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
@@ -1218,8 +1219,7 @@ class IntentNodeProvider:
             full_context = self.__context.context_manager.get_full_context()
             active_count = full_context.get("active_count", 0)
 
-            BRANCHING_THRESHOLD = 15
-            if active_count >= BRANCHING_THRESHOLD:
+            if active_count >= GCC_BRANCHING_THRESHOLD:
                 logger.info(f"[NODE: RECORD] Triggering GCC branch: active_count={active_count}")
                 await self.__context.context_manager.branch()
 
@@ -1491,48 +1491,24 @@ class IntentNodeProvider:
         else:
             verify_target = self.__context.intent
 
-        # Use lighter sub-goal verification prompt for sub-goal checks,
-        # full QA verification for overall intent.
+        user_guidance_lines = [
+            guidance.content for guidance in self.__context.context_manager.get_user_guidance()
+        ]
+
         if is_subgoal_verify:
             system_prompt = SUBGOAL_VERIFICATION_SYSTEM
-            user_template = SUBGOAL_VERIFICATION_USER_TEMPLATE
+            recent_trace = self.__context.context_manager.get_full_context().get("trace", [])
+            user_prompt = build_subgoal_verification_user_prompt(
+                intent=verify_target,
+                user_guidance=user_guidance_lines,
+                recent_trace=recent_trace,
+            )
         else:
             system_prompt = VERIFICATION_SYSTEM
-            user_template = VERIFICATION_USER_TEMPLATE
-
-        guidance_section = ""
-        user_guidance = self.__context.context_manager.get_user_guidance()
-        if user_guidance:
-            guidance_text = "\n".join([f"- {guidance.content}" for guidance in user_guidance])
-            guidance_section = f"\nUser Guidance:\n{guidance_text}\n"
-
-        # For sub-goal verification, include the recent execution trace so
-        # the LLM knows which actions were already performed.
-        if is_subgoal_verify:
-            gcc_context = self.__context.context_manager.get_full_context()
-            trace = gcc_context.get("trace", [])
-            if trace:
-                recent = trace[-10:]
-                action_lines = []
-                for entry in recent:
-                    action = entry.get("action", {})
-                    if isinstance(action, dict):
-                        desc = action.get("target", "unknown")
-                        atype = action.get("action_type", "unknown")
-                    else:
-                        desc = getattr(action, "target", "unknown")
-                        atype = getattr(action, "action_type", "unknown")
-                    atype_str = (
-                        atype.value
-                        if hasattr(atype, "value") and not isinstance(atype, str)
-                        else str(atype)
-                    )
-                    action_lines.append(f"- {atype_str}: {desc}")
-                guidance_section += (
-                    "\nActions already performed for this step:\n" + "\n".join(action_lines) + "\n"
-                )
-
-        user_prompt = user_template.format(intent=verify_target, guidance_section=guidance_section)
+            user_prompt = build_intent_verification_user_prompt(
+                intent=verify_target,
+                user_guidance=user_guidance_lines,
+            )
 
         # 3. Ask the LLM with escalating thinking on retries
         is_truly_complete = False

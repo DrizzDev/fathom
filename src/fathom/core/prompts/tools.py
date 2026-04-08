@@ -55,11 +55,12 @@ class ToolRegistry:
                 "signaling sub-goal completion via 'sub_goal_completed: true' "
                 "rather than emitting an explicit 'tap' action on the app icon. The system will "
                 "normalize app launch intents automatically. "
-                "CRITICAL: For every UI action you MUST provide a concrete, user-facing target "
-                "phrase via 'target_name' or 'script_target' (e.g., 'Search box', "
-                "'Add to cart button', 'the first search result'). NEVER use placeholders like "
-                "'UI Element', 'element', 'button', 'label', 'icon', 'field', or 'text' as the "
-                "only target description."
+                "CRITICAL: For every UI action you MUST fill 'target_name' with a concrete, "
+                "user-facing element label (e.g., 'Search box', 'Add to cart button'). "
+                "Additionally, set 'script_target' ONLY when 'target_type' is 'positional' or "
+                "'dynamic' to provide an abstracted phrase (e.g., 'the first search result'). "
+                "NEVER use placeholders like 'UI Element', 'element', 'button', 'label', 'icon', "
+                "'field', or 'text' as the only target description."
             ),
             "parameters": {
                 "type": "OBJECT",
@@ -89,7 +90,6 @@ class ToolRegistry:
                                         "validate",
                                         "home",
                                         "back",
-                                        "enter",
                                     ],
                                 },
                                 "label_id": {
@@ -117,12 +117,14 @@ class ToolRegistry:
                                 "target_name": {
                                     "type": "STRING",
                                     "description": (
-                                        "Descriptive, user-facing name of the element "
-                                        "(e.g., 'Search box', 'Add to cart button', "
-                                        "'Settings tab'). MUST NOT be a generic placeholder "
-                                        "like 'element', 'UI Element', 'button', 'label', "
-                                        "or 'icon'. Always choose the text a human tester "
-                                        "would naturally say when referring to this element."
+                                        "REQUIRED for every UI action. The single canonical, "
+                                        "user-facing name of the element (e.g., 'Search box', "
+                                        "'Add to cart button', 'Settings tab'). This is the "
+                                        "only target field you need to fill for stable targets. "
+                                        "MUST NOT be a generic placeholder like 'element', "
+                                        "'UI Element', 'button', 'label', or 'icon'. Choose the "
+                                        "text a human tester would naturally say when referring "
+                                        "to this element."
                                     ),
                                 },
                                 "text_to_type": {
@@ -153,45 +155,28 @@ class ToolRegistry:
                                 },
                                 "condition": {
                                     "type": "STRING",
-                                    "description": "Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
+                                    "description": (
+                                        "Optional human-readable guard text (e.g. 'Cookie banner visible', "
+                                        "'Loading spinner active'). When omitted, conditional_type is used "
+                                        "to derive a default."
+                                    ),
                                 },
                                 "is_conditional": {
                                     "type": "BOOLEAN",
-                                    "description": "Set true when this action should be executed only under a visible guard condition.",
+                                    "description": (
+                                        "Set true when this action should run only under a visible guard. "
+                                        "Implied automatically if conditional_type or condition is set."
+                                    ),
                                 },
                                 "conditional_type": {
                                     "type": "STRING",
                                     "enum": ["blocker", "transient", "error", "optional"],
                                     "description": (
-                                        "Condition class when is_conditional=true: "
+                                        "Conditional class. Setting this implies is_conditional=true. "
                                         "blocker (overlay/popup/permission dialog blocking the UI), "
-                                        "transient (spinner, skeleton shimmer, or splash screen that will auto-resolve), "
-                                        "error (red/orange error banner, toast, or validation message), "
+                                        "transient (spinner, skeleton shimmer, splash screen), "
+                                        "error (red/orange error banner, toast, validation message), "
                                         "optional (non-blocking informational element)."
-                                    ),
-                                },
-                                "overlay_detected": {
-                                    "type": "BOOLEAN",
-                                    "description": (
-                                        "Set true when the screenshot shows an overlay blocking the main UI "
-                                        "(dimmed scrim, modal dialog, bottom sheet, permission prompt, or banner). "
-                                        "This action must dismiss it."
-                                    ),
-                                },
-                                "export_target": {
-                                    "type": "STRING",
-                                    "description": (
-                                        "The canonical phrase for this action in exported test scripts. "
-                                        "Must be specific and human-readable. "
-                                        "REQUIRED for tap, type, long_press, scroll, swipe, and wait actions. "
-                                        "NEVER use generic placeholders like 'element', 'UI Element', "
-                                        "'button', 'label', 'icon', 'field', or 'text' alone.\n"
-                                        "DYNAMIC TARGETS (CRITICAL): When tapping items in a list, grid, "
-                                        "carousel, or product catalog, NEVER use the specific product/item "
-                                        "name (e.g., 'R for Rabbit Pant Diaper'). Instead use POSITIONAL "
-                                        "references: 'the 1st product', 'the 3rd item', 'Add button for "
-                                        "the 1st item'. Product names change between runs — positional "
-                                        "references are reusable. Also set target_type='positional'."
                                     ),
                                 },
                                 "target_type": {
@@ -202,22 +187,31 @@ class ToolRegistry:
                                 "script_target": {
                                     "type": "STRING",
                                     "description": (
-                                        "When target_type is 'positional' or 'dynamic', the "
-                                        "exact natural-language phrase that should appear in "
-                                        "exported scripts (e.g. 'the first search result', "
-                                        "'the promotional banner', 'the selected cart item'). "
-                                        "Treat this field as REQUIRED whenever target_type is "
-                                        "'positional' or 'dynamic'. The phrase MUST be specific "
-                                        "and user-facing, not a generic placeholder."
+                                        "OPTIONAL — set ONLY when target_type is 'positional' "
+                                        "or 'dynamic'. The abstracted natural-language phrase "
+                                        "for the exported test script (e.g. 'the first search "
+                                        "result', 'the promotional banner', 'the selected cart "
+                                        "item'). For 'stable' targets, omit this field — "
+                                        "target_name alone is sufficient. The phrase MUST be "
+                                        "specific and user-facing, not a generic placeholder.\n"
+                                        "POSITIONAL TARGETS (CRITICAL): When tapping items in a "
+                                        "list, grid, carousel, or product catalog, NEVER use the "
+                                        "specific product name. Use positional references: "
+                                        "'the 1st product', 'the 3rd item', 'Add button for the "
+                                        "1st item'. Product names change between runs."
                                     ),
                                 },
                                 "scroll_target": {
                                     "type": "STRING",
                                     "description": (
-                                        "REQUIRED for all scroll/swipe actions. The element or section being "
-                                        "scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and "
-                                        "packages'). Use the exact phrase from the UI when possible. "
-                                        "Must not be empty for swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
+                                        "REQUIRED for all scroll/swipe actions. The DESTINATION element you "
+                                        "are trying to bring into view — the specific item, label, or "
+                                        "section header you want to tap or read after the scroll completes "
+                                        "(e.g., 'Washington state', 'Vitamins and supplements', 'Lab tests "
+                                        "and packages'). NEVER name the scrollable container ('State list "
+                                        "container', 'Settings page') — that is not the target. Use the "
+                                        "exact label text from the UI when possible. Must not be empty for "
+                                        "swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
                                     ),
                                 },
                                 "wait_subject": {
@@ -276,13 +270,18 @@ class ToolRegistry:
                                     ),
                                 },
                             },
+                            # Universally-required fields only. Conditionally-required
+                            # fields (bbox, export_target, scroll_target, wait_subject,
+                            # validation_subject) are enforced by the Pydantic validators
+                            # on ExecuteAction in fathom.schemas.tool_args, keyed off
+                            # action_type. Keeping them out of the schema-level 'required'
+                            # list prevents Gemini from inventing placeholder values
+                            # (e.g. all-zero bbox, 'none' export_target) for actions that
+                            # genuinely do not need them, such as back/home/wait/validate.
                             "required": [
                                 "action_type",
-                                "bbox",
                                 "rationale",
                                 "is_valid",
-                                "export_target",
-                                "target_type",
                             ],
                         },
                     },

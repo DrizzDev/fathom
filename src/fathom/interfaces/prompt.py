@@ -54,6 +54,17 @@ class PromptUserContext:
             adapter to annotate stale trace observations.
         tracking_note: Loop-detection or cadence message that must be
             surfaced with maximum recency bias.
+        loop_risk: True when the orchestrator has detected the agent is
+            stuck in a repetitive loop. Adapters render a high-priority
+            alert section telling the model to break out.
+        failed_actions: Recently-failed action descriptions on the
+            current screen. Adapters render a critical alert section
+            telling the model NOT to retry these actions.
+        last_action: Short description of the most recently-emitted
+            action, surfaced to the model as recency context.
+        delta_context: Optional structured screen-delta information
+            (e.g. visible-anchor diffs since the previous step). Adapters
+            decide how to serialize it.
     """
 
     intent: str
@@ -69,6 +80,10 @@ class PromptUserContext:
     typing_text: Optional[str] = None
     current_screen_hash: Optional[str] = None
     tracking_note: Optional[str] = None
+    loop_risk: bool = False
+    failed_actions: Sequence[str] = field(default_factory=tuple)
+    last_action: Optional[str] = None
+    delta_context: Optional[Mapping[str, Any]] = None
 
 
 class PromptBuilder(ABC):

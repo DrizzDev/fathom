@@ -393,20 +393,16 @@ class ExecuteAction(BaseModel):
                 "Describe what we're waiting for (e.g., 'app to load', 'search results to appear')."
             )
 
-        # validation_subject is required for validate actions.
-        if at == "validate":
-            subject = (self.validation_subject or "").strip()
-            if not subject:
-                raise ValueError(
-                    "validation_subject is required for action_type='validate'. "
-                    "Describe what is being validated (e.g., 'login status', 'cart is empty')."
-                )
-            lower = subject.lower()
-            if any(lower.startswith(p) for p in ("i am ", "i can ", "i will ", "i do ")):
-                raise ValueError(
-                    f"validation_subject must not use first-person language: '{subject}'. "
-                    "Use a third-person noun phrase (e.g., 'Instamart tab selected')."
-                )
+        # validation_subject is required for validate actions. The
+        # downstream Action._enforce_validation_subject validator (in
+        # fathom.schemas.actions) catches first-person/narrative prose
+        # using the canonical VALIDATION_SUBJECT_BAD_PREFIXES list — do
+        # not duplicate that check here.
+        if at == "validate" and not (self.validation_subject or "").strip():
+            raise ValueError(
+                "validation_subject is required for action_type='validate'. "
+                "Describe what is being validated (e.g., 'login status', 'cart is empty')."
+            )
 
         return self
 

@@ -22,8 +22,8 @@ from fathom.schemas.export import (
     ScriptExportStructuredPayload,
     ScriptExportStructuredPayloadShape,
 )
-from fathom.schemas.gemini_tools import EmitScriptArgs
 from fathom.schemas.steps import StepResult
+from fathom.schemas.tool_args import EmitScriptArgs
 
 logger = getLogger(__name__)
 

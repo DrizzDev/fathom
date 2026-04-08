@@ -46,6 +46,14 @@ DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
 # loops without cutting short legitimate multi-step sub-goals.
 MAX_ACTIONS_PER_SUBGOAL = 15
 
+# Active-thread count threshold above which the GCC context manager
+# branches a new conversation. Chosen to keep prompt context bounded.
+GCC_BRANCHING_THRESHOLD = 15
+
+# Decomposition results below this confidence are discarded in favor
+# of the heuristic fallback.
+MINIMUM_DECOMPOSITION_CONFIDENCE = 0.6
+
 # User-facing failure messages for intent graph nodes
 GROUNDING_FAILURE_MESSAGE = "Failed to capture the current app screen. Please retry."
 RECORDING_FAILURE_MESSAGE = "Failed to save execution details for the current step."

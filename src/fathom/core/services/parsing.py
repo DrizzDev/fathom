@@ -5,12 +5,13 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import ValidationError
 
-from fathom.constants import ActionType
+from fathom.constants import ActionType, ToolName
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.delta import GeminiDeltaSignal
-from fathom.schemas.gemini_tools import (
+from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
+from fathom.schemas.tool_args import (
     AskUserArgs,
     ExecuteAction,
     ExecuteUIArgs,
@@ -19,7 +20,6 @@ from fathom.schemas.gemini_tools import (
     ValidateStateArgs,
     VerifyGoalArgs,
 )
-from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
 
 logger = getLogger(__name__)
 
@@ -30,8 +30,15 @@ class ToolResponseParser:
     """
 
     # Primary tools produce the AnalysisResult; side-effect tools merge into it.
-    __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
-    __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state", "ask_user"}
+    __SIDE_EFFECT_TOOLS: frozenset[str] = frozenset({ToolName.STORE_MEMORY, ToolName.RECALL_MEMORY})
+    __PRIMARY_TOOLS: frozenset[str] = frozenset(
+        {
+            ToolName.EXECUTE_UI,
+            ToolName.VERIFY_GOAL,
+            ToolName.VALIDATE_STATE,
+            ToolName.ASK_USER,
+        }
+    )
 
     @staticmethod
     def __require_bool(
@@ -136,30 +143,25 @@ class ToolResponseParser:
             raise VisionError(f"Response parsing failed: {exception}") from exception
 
     def __dispatch_parse(self, name: str, arguments: Any) -> AnalysisResult:
-        """
-        Routes a tool call to the appropriate parser.
-        """
+        """Route a tool call to the appropriate parser via ToolName lookup."""
 
-        if name == "verify_goal":
-            return self.__parse_goal_verification(arguments=arguments)
+        try:
+            tool = ToolName(name)
+        except ValueError as exc:
+            raise VisionError(f"Unknown function call: {name}") from exc
 
-        elif name == "execute_ui":
-            return self.__parse_execution(arguments=arguments)
-
-        elif name == "validate_state":
-            return self.__parse_state_validation(arguments=arguments)
-
-        elif name == "store_memory":
-            return self.__parse_memory_storage(arguments=arguments)
-
-        elif name == "recall_memory":
-            return self.__parse_memory_retrieval(arguments=arguments)
-
-        elif name == "ask_user":
-            return self.__parse_ask_user(arguments=arguments)
-
-        else:
+        parsers = {
+            ToolName.VERIFY_GOAL: self.__parse_goal_verification,
+            ToolName.EXECUTE_UI: self.__parse_execution,
+            ToolName.VALIDATE_STATE: self.__parse_state_validation,
+            ToolName.STORE_MEMORY: self.__parse_memory_storage,
+            ToolName.RECALL_MEMORY: self.__parse_memory_retrieval,
+            ToolName.ASK_USER: self.__parse_ask_user,
+        }
+        parser = parsers.get(tool)
+        if parser is None:
             raise VisionError(f"Unknown function call: {name}")
+        return parser(arguments=arguments)
 
     def __normalize_completion_flags(
         self,
@@ -208,8 +210,8 @@ class ToolResponseParser:
                     raw_flags,
                 )
 
-            object.__setattr__(result, "is_sub_goal_complete", True)
-            object.__setattr__(result, "is_goal_complete", normalized["is_goal_complete"])
+            result.is_sub_goal_complete = True
+            result.is_goal_complete = bool(normalized["is_goal_complete"])
             result.metadata.setdefault("normalized_completion_flags", normalized)
 
         return result
@@ -288,7 +290,7 @@ class ToolResponseParser:
         except ValidationError as error:
             logger.exception("verify_goal schema validation failed: %s", error)
             feedback = ToolErrorFeedback(
-                tool_name="verify_goal",
+                tool_name=ToolName.VERIFY_GOAL,
                 tool_call_id=None,
                 error_kind="validation",
                 message=f"verify_goal arguments validation failed: {error}",
@@ -324,7 +326,7 @@ class ToolResponseParser:
         # Normalize completion flags for terminal COMPLETE actions while preserving raw signals.
         return self.__normalize_completion_flags(
             result=result,
-            source_tool="verify_goal",
+            source_tool=ToolName.VERIFY_GOAL,
             raw_goal_completed=raw_goal_completed,
             raw_sub_goal_completed=raw_sub_goal_completed,
         )
@@ -339,7 +341,7 @@ class ToolResponseParser:
         except ValidationError as error:
             logger.exception("validate_state schema validation failed: %s", error)
             feedback = ToolErrorFeedback(
-                tool_name="validate_state",
+                tool_name=ToolName.VALIDATE_STATE,
                 tool_call_id=None,
                 error_kind="validation",
                 message=f"validate_state arguments validation failed: {error}",
@@ -379,7 +381,7 @@ class ToolResponseParser:
 
         return self.__normalize_completion_flags(
             result=result,
-            source_tool="validate_state",
+            source_tool=ToolName.VALIDATE_STATE,
             raw_goal_completed=raw_goal_completed,
             raw_sub_goal_completed=raw_sub_goal_completed,
         )
@@ -394,7 +396,7 @@ class ToolResponseParser:
         except ValidationError as error:
             logger.exception("execute_ui schema validation failed: %s", error)
             feedback = ToolErrorFeedback(
-                tool_name="execute_ui",
+                tool_name=ToolName.EXECUTE_UI,
                 tool_call_id=None,
                 error_kind="validation",
                 message=f"execute_ui arguments validation failed: {error}",
@@ -554,7 +556,7 @@ class ToolResponseParser:
         # Normalize completion flags for terminal COMPLETE actions while preserving raw signals.
         return self.__normalize_completion_flags(
             result=result,
-            source_tool="execute_ui",
+            source_tool=ToolName.EXECUTE_UI,
             raw_goal_completed=raw_goal_completed,
             raw_sub_goal_completed=raw_sub_goal_completed,
         )
@@ -576,7 +578,7 @@ class ToolResponseParser:
         except ValidationError as error:
             logger.exception("store_memory schema validation failed: %s", error)
             feedback = ToolErrorFeedback(
-                tool_name="store_memory",
+                tool_name=ToolName.STORE_MEMORY,
                 tool_call_id=None,
                 error_kind="validation",
                 message=f"store_memory arguments validation failed: {error}",
@@ -611,7 +613,7 @@ class ToolResponseParser:
         except ValidationError as error:
             logger.exception("recall_memory schema validation failed: %s", error)
             feedback = ToolErrorFeedback(
-                tool_name="recall_memory",
+                tool_name=ToolName.RECALL_MEMORY,
                 tool_call_id=None,
                 error_kind="validation",
                 message=f"recall_memory arguments validation failed: {error}",
@@ -644,7 +646,7 @@ class ToolResponseParser:
         except ValidationError as error:
             logger.exception("ask_user schema validation failed: %s", error)
             feedback = ToolErrorFeedback(
-                tool_name="ask_user",
+                tool_name=ToolName.ASK_USER,
                 tool_call_id=None,
                 error_kind="validation",
                 message=f"ask_user arguments validation failed: {error}",
