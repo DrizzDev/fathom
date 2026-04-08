@@ -19,18 +19,18 @@ def _make_analysis(
     is_goal_complete: bool = False,
     is_sub_goal_complete: bool = False,
     action_type: str = "tap",
-    reasoning: str = "test reasoning",
+    rationale: str = "test rationale",
     subgoal_completion_reason: str = "",
 ) -> AnalysisResult:
     return AnalysisResult(
         action=Action(
             confidence=0.9,
-            rationale=reasoning,
+            rationale=rationale,
             action_type=action_type,
             target="test_target",
         ),
         alternatives=[],
-        reasoning=reasoning,
+        rationale=rationale,
         is_goal_complete=is_goal_complete,
         is_sub_goal_complete=is_sub_goal_complete,
         subgoal_completion_reason=subgoal_completion_reason or None,

@@ -261,6 +261,10 @@ class VerifyGoalArgs(GeminiCompletionFlags):
         "Goal State",
         description="Current screen description or identifier.",
     )
+    evidence: str = Field(
+        "",
+        description="Visual evidence supporting the goal-completion judgment.",
+    )
 
 
 class ValidateStateArgs(GeminiCompletionFlags):
@@ -276,9 +280,14 @@ class ValidateStateArgs(GeminiCompletionFlags):
         "",
         description="Evidence from the UI or state for the validation.",
     )
-    condition_to_verify: str = Field(
+    validation_subject: str = Field(
         "State Validation",
-        description="Condition being validated.",
+        description=(
+            "Short noun phrase naming what is being validated "
+            "(e.g., 'cart is empty', 'Settings screen open'). Same "
+            "vocabulary as ExecuteAction.validation_subject for "
+            "cross-tool consistency."
+        ),
     )
     condition_met: Optional[bool] = None
 
@@ -344,7 +353,6 @@ class ExecuteAction(BaseModel):
     text: Optional[str] = None
     text_to_type: Optional[str] = None
     wait_duration: Optional[float] = None
-    validation_reason: Optional[str] = None
 
     condition: Optional[str] = None
     is_conditional: bool = False
@@ -379,6 +387,22 @@ class ExecuteAction(BaseModel):
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    @model_validator(mode="after")
+    def _normalize_text_field(self) -> "ExecuteAction":
+        """Canonicalize ``text_to_type`` from the legacy ``text`` alias.
+
+        ``text_to_type`` is the only field the execute_ui JSON schema
+        exposes to Gemini. ``text`` remains on the Pydantic model as a
+        back-compat alias for direct programmatic construction (tests,
+        replay, internal callers). When a caller populates only the
+        legacy field, copy it into ``text_to_type`` so every downstream
+        consumer can read a single source of truth.
+        """
+
+        if not (self.text_to_type or "").strip() and (self.text or "").strip():
+            object.__setattr__(self, "text_to_type", self.text)
+        return self
 
     @field_validator("label_id", mode="before")
     @classmethod

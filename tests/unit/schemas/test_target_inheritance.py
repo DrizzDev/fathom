@@ -264,6 +264,73 @@ class TestLabelIdGrounding:
             )
 
 
+class TestTextFieldNormalization:
+    """``text_to_type`` is the canonical field on ExecuteAction; ``text``
+    remains as a back-compat alias for direct programmatic construction
+    (tests, replay, internal callers). The ``_normalize_text_field``
+    validator copies the legacy field into the canonical one."""
+
+    def test_text_to_type_alone_passes_through(self) -> None:
+        from fathom.schemas.tool_args import ExecuteAction, GeminiBBox
+
+        action = ExecuteAction(
+            action_type="type",
+            rationale="r",
+            is_valid=True,
+            bbox=GeminiBBox(x=500, y=300),
+            target_name="Search box",
+            text_to_type="hello",
+        )
+        assert action.text_to_type == "hello"
+        assert action.text is None
+
+    def test_legacy_text_alias_is_promoted_to_text_to_type(self) -> None:
+        from fathom.schemas.tool_args import ExecuteAction, GeminiBBox
+
+        action = ExecuteAction(
+            action_type="type",
+            rationale="r",
+            is_valid=True,
+            bbox=GeminiBBox(x=500, y=300),
+            target_name="Search box",
+            text="hello",
+        )
+        assert action.text_to_type == "hello"
+        assert action.text == "hello"  # original value preserved on the alias
+
+    def test_text_to_type_wins_when_both_are_set(self) -> None:
+        """Canonical field is authoritative; legacy alias does not override it."""
+
+        from fathom.schemas.tool_args import ExecuteAction, GeminiBBox
+
+        action = ExecuteAction(
+            action_type="type",
+            rationale="r",
+            is_valid=True,
+            bbox=GeminiBBox(x=500, y=300),
+            target_name="Search box",
+            text="legacy value",
+            text_to_type="canonical value",
+        )
+        assert action.text_to_type == "canonical value"
+
+    def test_empty_text_alias_does_not_clobber(self) -> None:
+        """A whitespace-only ``text`` must not overwrite a valid ``text_to_type``."""
+
+        from fathom.schemas.tool_args import ExecuteAction, GeminiBBox
+
+        action = ExecuteAction(
+            action_type="type",
+            rationale="r",
+            is_valid=True,
+            bbox=GeminiBBox(x=500, y=300),
+            target_name="Search box",
+            text="   ",
+            text_to_type="hello",
+        )
+        assert action.text_to_type == "hello"
+
+
 class TestValidationSubjectFillerRejection:
     """The validate-action guard rejects the filler word ``element`` as a
     standalone token, catching prompt leaks like 'Validate X, element

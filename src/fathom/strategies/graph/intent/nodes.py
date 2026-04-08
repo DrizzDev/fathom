@@ -754,10 +754,10 @@ class IntentNodeProvider:
 
                 # Emit structured telemetry for streaming UI
                 await self.__context.telemetry.info(
-                    plan.reason or "No reasoning",
+                    plan.rationale or "No reasoning",
                     type=FathomEvent.REASONING,
                     step=current_step + 1,
-                    reasoning=plan.reason,
+                    reasoning=plan.rationale,
                     rationale=plan.step.action.rationale if plan.step else None,
                 )
                 await self.__context.telemetry.info(
@@ -768,7 +768,7 @@ class IntentNodeProvider:
             else:
                 logger.warning(
                     f"[NODE: ANALYZE] No step planned: is_complete={plan.is_complete}, "
-                    f"should_retry={plan.should_retry}, reason={plan.reason}"
+                    f"should_retry={plan.should_retry}, rationale={plan.rationale}"
                 )
 
             # Handle ACTION_BLOCKED signal from planner: inject guidance into
@@ -776,7 +776,7 @@ class IntentNodeProvider:
             # a <SYSTEM_OVERRIDE>. This keeps guidance mutation in the graph node
             # rather than the planner (SRP).
             blocked_action = (plan.metadata or {}).get("blocked_action")
-            if plan.reason == CompletionReason.ACTION_BLOCKED.value and blocked_action:
+            if plan.rationale == CompletionReason.ACTION_BLOCKED.value and blocked_action:
                 await self.__context.context_manager.inject_user_guidance(
                     guidance=(
                         f"ACTION BLOCKED: '{blocked_action}' has been repeated 3+ times on this "
@@ -795,7 +795,7 @@ class IntentNodeProvider:
             )
 
             completion_reason = (
-                plan.reason if plan.is_complete else state.get(CommonStateKey.COMPLETION_REASON)
+                plan.rationale if plan.is_complete else state.get(CommonStateKey.COMPLETION_REASON)
             )
             result = cast(
                 "IntentGraphState",
@@ -1267,14 +1267,14 @@ class IntentNodeProvider:
             if isinstance(execution_plan, PlanResult) and execution_plan.is_complete:
                 logger.info("[NODE: RECORD] Plan indicates completion. This is the final step.")
                 self.__context.agent_state.mark_complete(
-                    reason=execution_plan.reason or "Completed"
+                    reason=execution_plan.rationale or "Completed"
                 )
 
                 result = cast(
                     "IntentGraphState",
                     {
                         CommonStateKey.IS_COMPLETE: True,
-                        CommonStateKey.COMPLETION_REASON: execution_plan.reason,
+                        CommonStateKey.COMPLETION_REASON: execution_plan.rationale,
                         IntentStateKey.STEP_RESULTS: accumulated_step_results,
                     },
                 )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
@@ -19,7 +19,7 @@ class AnalysisResult(BaseModel):
     alternatives: List[Action] = Field(
         default_factory=list, description="Alternative actions considered"
     )
-    reasoning: str = Field(description="Reasoning process")
+    rationale: str = Field(description="The LLM's reasoning for this analysis")
     screen_description: str = Field(description="Description of screen content")
     is_goal_complete: bool = Field(
         default=False, description="Whether the user intent has been fully achieved"
@@ -55,6 +55,21 @@ class AnalysisResult(BaseModel):
     gemini_delta: Optional[GeminiDeltaSignal] = Field(
         default=None, description="Optional model-provided semantic delta hints"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_reasoning_field(cls, values: Any) -> Any:
+        """Back-compat shim for checkpoints written before the rename.
+
+        Old persisted AnalysisResult instances have ``reasoning`` where
+        the model now expects ``rationale``. Silently rename on load so
+        existing runs can resume without manual migration.
+        """
+
+        if isinstance(values, dict) and "reasoning" in values and "rationale" not in values:
+            values = {**values, "rationale": values["reasoning"]}
+            values.pop("reasoning", None)
+        return values
 
 
 class ToolErrorFeedback(BaseModel):
@@ -198,7 +213,7 @@ class PlanResult(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    reason: str = Field(..., description="Explanation for the plan")
+    rationale: str = Field(..., description="Explanation for the plan")
     is_complete: bool = Field(..., description="Whether the intent is achieved")
     step: Optional[Step] = Field(default=None, description="The planned step, if any")
 
@@ -209,9 +224,21 @@ class PlanResult(BaseModel):
     metrics: Dict[str, float] = Field(default_factory=dict, description="Performance metrics")
 
     is_valid_action: bool = Field(default=True, description="Whether the planned action is valid")
-    validation_reasoning: Optional[str] = Field(
-        default=None, description="Reason if action is invalid"
-    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_reason_field(cls, values: Any) -> Any:
+        """Back-compat shim for checkpoints written before the rename.
+
+        Old persisted PlanResult instances have ``reason`` where the
+        model now expects ``rationale``. Silently rename on load so
+        existing runs can resume without manual migration.
+        """
+
+        if isinstance(values, dict) and "reason" in values and "rationale" not in values:
+            values = {**values, "rationale": values["reason"]}
+            values.pop("reason", None)
+        return values
 
 
 class GenerateResult(BaseModel):

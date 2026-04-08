@@ -144,7 +144,7 @@ class Reasoner:
         rationale_verified = False
 
         # Lightweight similarity for confidence scoring only (not gating).
-        context = f"{analysis.reasoning} {screen_description or ''}".lower()
+        context = f"{analysis.rationale} {screen_description or ''}".lower()
         similarity = SequenceMatcher(None, target_goal, context).ratio()
         keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
 

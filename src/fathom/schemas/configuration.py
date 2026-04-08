@@ -20,7 +20,7 @@ class LLMConfiguration(BaseModel):
     provider: Literal["gemini", "openai", "anthropic", "vertex_ai"] = Field(
         default="gemini", description="LLM provider name"
     )
-    model: str = Field(default="gemini-3.1-flash-lite-preview", description="Model identifier")
+    model: str = Field(default="gemini-3-flash-preview", description="Model identifier")
     api_key: Optional[str] = Field(default=None, description="API access key")
 
     # Provider-specific settings (GCP/Azure/OpenAI specific)

@@ -301,26 +301,36 @@ class ToolResponseParser:
             raise ToolValidationError(feedback) from error
 
         reason = args.assistant_message
+        evidence = getattr(args, "evidence", "") or ""
         raw_goal_completed = getattr(args, "goal_completed", None)
         raw_sub_goal_completed = getattr(args, "sub_goal_completed", None)
         completed = bool(raw_goal_completed)
         sub_completed = bool(raw_sub_goal_completed)
         screen = args.current_screen
 
+        # Normalize to the same validate-action shape as __parse_state_validation:
+        # sanitized validation_subject + merged rationale/evidence. COMPLETE
+        # actions keep screen as target since the screen IS the goal state.
         validation_subject = (
             None if completed else clean_validation_subject(screen, fallback="goal state")
         )
+        if evidence and reason:
+            merged_rationale = f"{reason} | Evidence: {evidence}"
+        elif evidence:
+            merged_rationale = f"Evidence: {evidence}"
+        else:
+            merged_rationale = reason
 
         result = AnalysisResult(
             action=Action(
                 confidence=1.0,
-                rationale=reason,
-                target=screen,
+                rationale=merged_rationale,
+                target=screen if completed else (validation_subject or "goal state"),
                 action_type=ActionType.COMPLETE if completed else ActionType.VALIDATE,
                 validation_subject=validation_subject,
             ),
             alternatives=[],
-            reasoning=reason,
+            rationale=reason,
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
@@ -358,7 +368,7 @@ class ToolResponseParser:
 
         evidence = args.evidence
         reason = args.assistant_message
-        condition = args.condition_to_verify
+        raw_subject = args.validation_subject
         raw_goal_completed = getattr(args, "goal_completed", None)
         raw_sub_goal_completed = getattr(args, "sub_goal_completed", None)
         completed = bool(raw_goal_completed)
@@ -368,16 +378,28 @@ class ToolResponseParser:
         if args.condition_met is not None:
             metadata["condition_met"] = args.condition_met
 
+        sanitized_subject = clean_validation_subject(raw_subject, fallback="screen state")
+
+        # Merge reason + evidence into the single canonical rationale
+        # field. The legacy validation_reason field on ExecuteAction has
+        # been removed — rationale is the one place reasoning lives.
+        if evidence and reason:
+            merged_rationale = f"{reason} | Evidence: {evidence}"
+        elif evidence:
+            merged_rationale = f"Evidence: {evidence}"
+        else:
+            merged_rationale = reason
+
         result = AnalysisResult(
             action=Action(
                 confidence=1.0,
-                target=condition,
+                target=sanitized_subject,
                 action_type=ActionType.VALIDATE,
-                rationale=f"{reason} | Evidence: {evidence}",
-                validation_subject=clean_validation_subject(condition, fallback="screen state"),
+                rationale=merged_rationale,
+                validation_subject=sanitized_subject,
             ),
             alternatives=[],
-            reasoning=reason,
+            rationale=reason,
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
@@ -455,11 +477,11 @@ class ToolResponseParser:
             )
             action_type = ActionType.WAIT
 
-        # Support variations from different prompt/model versions
-        text = data.text or data.text_to_type
+        # ExecuteAction._normalize_text_field has already collapsed the
+        # legacy `text` alias into `text_to_type`, so downstream reads
+        # only need the canonical field.
+        text = data.text_to_type
         wait_duration: Optional[float] = data.wait_duration
-
-        validation_reason = data.validation_reason
 
         # ExecuteAction._normalize_target_fields has already collapsed
         # element_name / script_target into the canonical target_name and
@@ -498,7 +520,6 @@ class ToolResponseParser:
             script_target=script_target,
             wait_duration=wait_duration,
             text=str(text) if text else None,
-            validation_reason=validation_reason,
             natural_language_target=resolved_target_name or "element",
             rationale=str(data.rationale or ""),
             is_valid=bool(data.is_valid),
@@ -549,7 +570,7 @@ class ToolResponseParser:
         result = AnalysisResult(
             action=action,
             alternatives=alternatives,
-            reasoning=message,
+            rationale=message,
             metadata=metadata_dict,
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
@@ -606,7 +627,7 @@ class ToolResponseParser:
                 target=f"Memory Store: {key}={value}",
             ),
             alternatives=[],
-            reasoning=reason,
+            rationale=reason,
             is_goal_complete=False,
             screen_description="Memory storage step",
         )
@@ -639,7 +660,7 @@ class ToolResponseParser:
                 target=f"Memory Recall: {key}",
             ),
             alternatives=[],
-            reasoning=reason,
+            rationale=reason,
             is_goal_complete=False,
             screen_description="Memory retrieval step",
         )
@@ -677,7 +698,7 @@ class ToolResponseParser:
                 text=question or rationale,
             ),
             alternatives=[],
-            reasoning=rationale,
+            rationale=rationale,
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
@@ -700,7 +721,7 @@ class ToolResponseParser:
                 target="User Guidance Requested",
             ),
             alternatives=[],
-            reasoning=message,
+            rationale=message,
             is_goal_complete=completed,
             screen_description=message or "Fallback state",
         )

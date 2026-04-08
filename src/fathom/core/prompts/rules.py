@@ -194,7 +194,7 @@ TOOL SELECTION & VALIDATION:
   * For any guard-based step, set conditional_type (blocker/transient/error/optional). is_conditional is implied automatically.
   * Provide condition text when visible (e.g. 'Cookie consent banner visible', 'Loading spinner active'). If omitted, the system derives a default from conditional_type.
   * For overlay/popup dismissal, set conditional_type='blocker'. The condition text and is_conditional flag are filled in for you.
-  * Evaluate is_valid and validation_reason for EVERY action.
+  * Evaluate is_valid for EVERY action; put the reasoning in "rationale".
   * If action is risky/ambiguous, set is_valid=False and explain.
   * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
     DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
