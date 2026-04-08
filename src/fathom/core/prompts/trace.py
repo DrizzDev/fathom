@@ -11,15 +11,9 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Tuple
 
-from fathom.schemas.actions import GENERIC_TARGET_PLACEHOLDERS
+from fathom.schemas.actions import resolve_action_target
 
 __all__ = ["extract_action_fields", "format_trace_action_line"]
-
-
-def _is_resolved(value: Any) -> bool:
-    if not value:
-        return False
-    return str(value).strip().lower() not in GENERIC_TARGET_PLACEHOLDERS
 
 
 def _read(action: Any, field: str, default: Any = None) -> Any:
@@ -31,24 +25,22 @@ def _read(action: Any, field: str, default: Any = None) -> Any:
 
 
 def extract_action_fields(entry: Mapping[str, Any]) -> Tuple[str, str]:
-    """Return (action_type, target) from a trace entry.
+    """Return ``(action_type, target)`` from a trace entry.
 
-    Handles dict-shaped action payloads (``entry["action"] = {...}``) and
-    object-shaped ones (``entry["action"]`` is an ``Action`` instance).
-    Enum-typed action_type values are unwrapped to their string value.
+    Handles dict-shaped action payloads (``entry["action"] = {...}``)
+    and object-shaped ones (``entry["action"]`` is an ``Action``
+    instance). Enum-typed ``action_type`` values are unwrapped to
+    their string value.
 
-    Routes the rendered target per action kind so the LLM-facing trace
-    history shows the canonical subject instead of the generic
-    ``"element"`` placeholder:
-
-    * ``validate`` → ``validation_subject``
-    * ``wait``     → ``wait_subject``
-    * ``scroll`` / ``swipe_*`` → ``scroll_target``
-    * everything else → ``target`` → ``export_target`` → ``natural_language_target``
-
-    Placeholder strings ("element", "button", ...) are treated as
-    unresolved so parsing-time fallbacks don't leak into the prompt.
-    Missing fields fall back to ``"unknown"``.
+    The actual target-routing decision is delegated to
+    :func:`fathom.schemas.actions.resolve_action_target` so this
+    helper, ``trace_payload._resolve_target``, and
+    ``Action.to_description`` all share one canonical chain: the
+    per-kind subject (validate → ``validation_subject``, wait →
+    ``wait_subject``, swipe/scroll → ``scroll_target``), then
+    ``target_name``/``target`` → ``export_target`` →
+    ``natural_language_target`` → ``label:{id}``, then the
+    ``"unknown"`` fallback.
     """
 
     action = entry.get("action", {})
@@ -59,31 +51,25 @@ def extract_action_fields(entry: Mapping[str, Any]) -> Tuple[str, str]:
     else:
         action_type_str = str(action_type)
 
-    kind = action_type_str.lower()
+    # Dict-shaped actions from legacy persistence may carry either
+    # ``target_name`` (ExecuteAction shape) or ``target`` (Action
+    # shape). Try the canonical one first, then fall back.
+    primary_target = _read(action, "target_name")
+    if primary_target is None:
+        primary_target = _read(action, "target")
 
-    candidates: list[Any] = []
-    if kind == "validate":
-        candidates.append(_read(action, "validation_subject"))
-    elif kind == "wait":
-        candidates.append(_read(action, "wait_subject"))
-    elif "swipe" in kind or kind == "scroll":
-        candidates.append(_read(action, "scroll_target"))
-
-    candidates.extend(
-        [
-            _read(action, "target"),
-            _read(action, "export_target"),
-            _read(action, "natural_language_target"),
-        ]
+    resolved = resolve_action_target(
+        action_type=action_type_str,
+        target_name=primary_target,
+        export_target=_read(action, "export_target"),
+        natural_language_target=_read(action, "natural_language_target"),
+        validation_subject=_read(action, "validation_subject"),
+        wait_subject=_read(action, "wait_subject"),
+        scroll_target=_read(action, "scroll_target"),
+        label_id=_read(action, "label_id"),
     )
 
-    for candidate in candidates:
-        if _is_resolved(candidate):
-            return action_type_str, str(candidate)
-
-    # Nothing resolved — emit the raw target so the caller can see why.
-    raw_target = _read(action, "target", "unknown")
-    return action_type_str, str(raw_target) if raw_target is not None else "unknown"
+    return action_type_str, resolved
 
 
 def format_trace_action_line(entry: Mapping[str, Any], *, prefix: str = "- ") -> str:

@@ -207,7 +207,12 @@ class ToolRegistry:
                                         "and packages'). NEVER name the scrollable container ('State list "
                                         "container', 'Settings page') — that is not the target. Use the "
                                         "exact label text from the UI when possible. Must not be empty for "
-                                        "swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
+                                        "swipe_up, swipe_down, swipe_left, swipe_right, or scroll. "
+                                        "REASON: the exporter emits 'Scroll until you see <scroll_target>' "
+                                        "verbatim, so naming the scrollable container instead of the "
+                                        "destination produces a script that never terminates. The "
+                                        "distinction between container and destination is the whole "
+                                        "point of this field."
                                     ),
                                 },
                                 "wait_subject": {
@@ -215,7 +220,11 @@ class ToolRegistry:
                                     "description": (
                                         "REQUIRED for all wait actions. What we're waiting for (e.g., 'app to "
                                         "load', 'search results to appear', 'Home page content'). Describe the "
-                                        "expected state or element. Must not be empty for wait actions."
+                                        "expected state or element. Must not be empty for wait actions. "
+                                        "REASON: the runtime uses wait_subject to decide retry budget and "
+                                        "to write trace/history lines like 'Wait for <wait_subject>'. A "
+                                        "vague subject (e.g., 'loading') gives the LLM no signal on the "
+                                        "next turn about whether the wait succeeded."
                                     ),
                                 },
                                 "validation_subject": {
@@ -235,7 +244,12 @@ class ToolRegistry:
                                         "'footer text visible', 'HealthTap homepage content loaded'. "
                                         "BAD: 'HealthTap homepage content, element visible' "
                                         "(the word 'element' is forbidden); "
-                                        "'I can clearly see the footer at the bottom of the screen'."
+                                        "'I can clearly see the footer at the bottom of the screen'. "
+                                        "REASON: exported test scripts read validation_subject verbatim "
+                                        "into 'Validate that <subject> is visible' lines, and the trace "
+                                        "history uses the same field to describe the step on the next "
+                                        "turn. Vague subjects produce assertions nobody can debug and "
+                                        "context lines nobody can act on."
                                     ),
                                 },
                                 "target_is_generic": {

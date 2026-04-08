@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -55,6 +55,23 @@ def clean_validation_subject(candidate: Optional[str], *, fallback: str) -> str:
     Strips the first-person/narrative prefixes the Action validator
     forbids, keeps only the first sentence, and caps to ~8 words.
     Returns ``fallback`` when nothing usable remains.
+
+    Rejection rules applied before returning:
+
+    1. Empty / whitespace-only input → ``fallback``.
+    2. After normalization, if the result lands on a member of
+       :data:`GENERIC_TARGET_PLACEHOLDERS` (``"element"``, ``"button"``,
+       ``"icon"``, ``"unknown"``, …) → ``fallback``. The
+       ``Action._enforce_validation_subject`` validator enforces the
+       same rule at construction time, but several call sites feed
+       ``clean_validation_subject`` into dict-shaped payloads and
+       non-Action consumers that bypass the model boundary, so the
+       sanitizer has to catch the filler itself.
+    3. If the normalized result still contains the standalone
+       ``"element"`` token (e.g. ``"search box element"`` or
+       ``"home screen, element visible"``) → ``fallback``. This is
+       the same :data:`_FORBIDDEN_VALIDATION_SUBJECT_TOKEN` regex the
+       Action validator uses, applied earlier in the pipeline.
     """
 
     text = (candidate or "").strip()
@@ -78,7 +95,130 @@ def clean_validation_subject(candidate: Optional[str], *, fallback: str) -> str:
     if len(words) > 8:
         text = " ".join(words[:8])
 
-    return text or fallback
+    if not text:
+        return fallback
+
+    if text.lower() in GENERIC_TARGET_PLACEHOLDERS:
+        return fallback
+
+    if _FORBIDDEN_VALIDATION_SUBJECT_TOKEN.search(text):
+        return fallback
+
+    return text
+
+
+def is_resolved_target(value: Any) -> bool:
+    """True when *value* names a concrete UI subject (not a placeholder).
+
+    Canonical check used by every target-resolution site in the
+    codebase. A value is "resolved" when it is a non-empty string whose
+    lowercased form is NOT in :data:`GENERIC_TARGET_PLACEHOLDERS`. The
+    frozenset includes both "element" (the historic filler word the
+    export pipeline keeps trying to eradicate) and "unknown" (the
+    canonical fallback returned by :func:`resolve_action_target` when
+    no candidate field carries real content), so this helper rejects
+    both in one pass.
+    """
+
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    return text.lower() not in GENERIC_TARGET_PLACEHOLDERS
+
+
+def _normalize_action_type(action_type: Any) -> str:
+    """Coerce an ActionType enum or raw string to a lowercase string.
+
+    Both ``Action`` (which uses the :class:`ActionType` enum) and
+    ``ExecuteAction`` (which uses a raw string) feed into
+    :func:`resolve_action_target`, so the router needs to tolerate
+    both shapes without importing ``ActionType`` at the call site.
+    """
+
+    if action_type is None:
+        return ""
+    value = getattr(action_type, "value", action_type)
+    return str(value).strip().lower()
+
+
+def resolve_action_target(
+    *,
+    action_type: Any = None,
+    target_name: Optional[str] = None,
+    export_target: Optional[str] = None,
+    natural_language_target: Optional[str] = None,
+    validation_subject: Optional[str] = None,
+    wait_subject: Optional[str] = None,
+    scroll_target: Optional[str] = None,
+    label_id: Optional[str] = None,
+    fallback: str = "unknown",
+) -> str:
+    """Single source of truth for "what does this action point at?".
+
+    Different action kinds store their authoritative subject in
+    different fields, and before this helper existed the codebase had
+    three independent routing implementations with subtly different
+    fallback orders (``trace_payload._resolve_target``,
+    ``prompts.trace.extract_action_fields``, and
+    ``Action.to_description``). This function is the canonical
+    resolver that all of them now delegate to.
+
+    Routing rules:
+
+    * ``validate`` → ``validation_subject``
+    * ``wait``     → ``wait_subject``
+    * ``scroll`` or any ``swipe_*`` → ``scroll_target``
+    * everything else → skip straight to the general chain
+
+    General chain (tried in order for every action kind after the
+    kind-specific field above fails to resolve):
+
+    1. ``target_name`` — the canonical field on ``ExecuteAction``.
+    2. ``export_target`` — the exporter's preferred display name.
+    3. ``natural_language_target`` — the legacy human-readable field
+       still populated by the resolver and a few older code paths.
+    4. ``f"label:{label_id}"`` — namespaced placeholder when the LLM
+       only supplied a manifest label ID without a human-readable name.
+    5. ``fallback`` — defaults to ``"unknown"``, which is itself in
+       :data:`GENERIC_TARGET_PLACEHOLDERS` so downstream consumers
+       that call :func:`is_resolved_target` on the result will
+       correctly skip it rather than writing the filler into a
+       script line or history entry.
+
+    Every candidate is filtered through :func:`is_resolved_target`,
+    so placeholder strings like ``"element"`` or ``"button"`` are
+    treated as if the field were blank and the chain continues.
+    """
+
+    kind = _normalize_action_type(action_type)
+
+    candidates: list[Optional[str]] = []
+    if kind == "validate":
+        candidates.append(validation_subject)
+    elif kind == "wait":
+        candidates.append(wait_subject)
+    elif "swipe" in kind or kind == "scroll":
+        candidates.append(scroll_target)
+
+    candidates.extend(
+        (
+            target_name,
+            export_target,
+            natural_language_target,
+        )
+    )
+
+    for candidate in candidates:
+        if is_resolved_target(candidate):
+            return str(candidate).strip()
+
+    label = (label_id or "").strip()
+    if label:
+        return f"label:{label}"
+
+    return fallback
 
 
 class Bounds(BaseModel):
@@ -155,7 +295,7 @@ class Action(BaseModel):
     action_type: ActionType = Field(description="The type of interaction to perform")
 
     rationale: str = Field(description="The reasoning behind choosing this action")
-    target: str = Field(default="element", description="Grounding label ID or technical target")
+    target: str = Field(default="unknown", description="Grounding label ID or technical target")
     natural_language_target: Optional[str] = Field(
         default=None, description="Human-friendly name of the target element."
     )
@@ -296,24 +436,37 @@ class Action(BaseModel):
         Generates a human-readable description of the action.
         """
 
-        # Resolve best target description.
-        # For validate actions, prefer validation_subject over generic targets.
-        if self.action_type == ActionType.VALIDATE and self.validation_subject:
-            return f"Validate {self.validation_subject}"
+        # Route every subject through the canonical resolver so this
+        # helper, trace_payload._resolve_target, and
+        # prompts.trace.extract_action_fields all share one chain.
+        # The resolver handles per-kind routing, placeholder
+        # skipping, and the label:{id} fallback.
+        resolved = resolve_action_target(
+            action_type=self.action_type,
+            target_name=self.target,
+            export_target=self.export_target,
+            natural_language_target=self.natural_language_target,
+            validation_subject=self.validation_subject,
+            wait_subject=self.wait_subject,
+            scroll_target=self.scroll_target,
+            label_id=self.label_id,
+        )
 
-        name = self.natural_language_target
-
-        lowered = (name or "").strip().lower()
-        if not name or lowered in ("element", "ui element", "none", "label", "unknown"):
-            # Fallback to label ID or bounds if natural language target is generic/missing
-            if self.label_id:
-                name = f"Element (Label {self.label_id})"
-
-            elif self.bounds:
-                name = f"Element at [{self.bounds.x}, {self.bounds.y}]"
-
-            else:
-                name = self.target or "element"
+        if resolved.startswith("label:") and self.bounds:
+            # We only know a manifest label ID and have pixel bounds
+            # on hand — "Element at [x, y]" is historically more
+            # readable than "label:7" in log output.
+            name = f"Element at [{self.bounds.x}, {self.bounds.y}]"
+        elif resolved.startswith("label:"):
+            label_suffix = resolved.split(":", 1)[1]
+            name = f"Element (Label {label_suffix})"
+        elif resolved == "unknown":
+            # Last-resort fallback — keep the historic "element"
+            # literal here since it's purely a display string baked
+            # into log/telemetry lines, never a field value.
+            name = "element"
+        else:
+            name = resolved
 
         if self.action_type == ActionType.VALIDATE:
             return f"Validate {name}"

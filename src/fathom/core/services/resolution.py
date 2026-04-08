@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Pattern
 
 from fathom.constants import SPATIAL_ACTION_TYPES
 from fathom.interfaces.memory import MemoryPort
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, is_resolved_target
 
 logger = getLogger(__name__)
 
@@ -140,18 +140,32 @@ class ReferenceResolutionService:
             # name (or a generic / namespaced placeholder), stamp the
             # element's display text from the manifest here so downstream
             # logs, traces, and exporter lines get the real name.
+            #
+            # "Generic placeholder" means any member of
+            # ``GENERIC_TARGET_PLACEHOLDERS`` (via ``is_resolved_target``)
+            # — that set covers ``"element"`` (the historic filler),
+            # ``"unknown"`` (the new default returned by
+            # ``resolve_action_target`` when nothing resolves), plus
+            # ``"button"``, ``"icon"``, ``"field"``, ``"label"``,
+            # ``"text"``, ``"none"``, ``"ui element"``, and
+            # ``"a visible item"``. We also treat the namespaced
+            # ``"label:{id}"`` placeholder as unresolved since it's the
+            # parser's "I only have an ID" breadcrumb.
             display_name = _display_name_from_element(info)
             if display_name:
                 label_placeholder = f"label:{action.label_id}"
-                current_target = (action.target or "").strip()
-                if (
-                    not current_target
-                    or current_target == "element"
-                    or current_target == label_placeholder
-                ):
+
+                def _should_replace(value: Optional[str]) -> bool:
+                    text = (value or "").strip()
+                    if not text:
+                        return True
+                    if text == label_placeholder:
+                        return True
+                    return not is_resolved_target(text)
+
+                if _should_replace(action.target):
                     updates["target"] = display_name
-                current_nlt = (action.natural_language_target or "").strip()
-                if not current_nlt or current_nlt == "element" or current_nlt == label_placeholder:
+                if _should_replace(action.natural_language_target):
                     updates["natural_language_target"] = display_name
                 # Also seed export_target when it was left empty —
                 # it drives the exporter's "Tap on <target>" line.

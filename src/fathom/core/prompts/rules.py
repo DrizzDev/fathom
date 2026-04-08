@@ -196,8 +196,9 @@ TOOL SELECTION & VALIDATION:
   * For overlay/popup dismissal, set conditional_type='blocker'. The condition text and is_conditional flag are filled in for you.
   * Evaluate is_valid for EVERY action; put the reasoning in "rationale".
   * If action is risky/ambiguous, set is_valid=False and explain.
-  * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
-    DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
+  * COMMAND NAMING: In 'target_name' (and 'script_target' for positional/dynamic targets), use SPECIFIC, HUMAN-READABLE descriptions the way a tester would speak them (e.g., 'edit CVV box', 'Submit button', 'the 1st search result').
+    DO NOT use developer IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
+    NEVER use bare placeholders like 'element', 'button', 'icon', 'field', 'label', or 'text' on their own — those are meaningless in an exported script. REASON: the exporter reads target_name verbatim into script lines, so vague names produce assertions nobody can debug.
   * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.
     Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}
     ALWAYS use this to "tick off" requirements from the user's goal as you complete them.
