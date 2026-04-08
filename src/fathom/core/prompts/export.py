@@ -86,7 +86,16 @@ EXPORT_SYSTEM_INSTRUCTION = (
     "'as requested by...', 'which confirms that...'. State WHAT is visible, nothing more.\n"
     "    GOOD: 'Validate that the Recommended options in Fine Dining section is visible'\n"
     "    BAD: 'Validate that the Recommended options in Fine Dining section is visible, "
-    "fulfilling the requirement to scroll until it is found'"
+    "fulfilling the requirement to scroll until it is found'\n"
+    "22) NEVER use the filler word 'element' in any validation line, final_validation, or "
+    "action_validations entry. 'element' is meaningless in a script — always name the actual "
+    "visible thing (a button, label, card, page, section, toast, banner, result, icon, field, "
+    "etc.). If the trace payload for a validate step gives you a ``validation_subject`` or a "
+    "non-generic ``target``, use THAT text literally. If both are missing or generic, use the "
+    "preceding action's target (e.g. 'Validate that the Wow! Momo restaurant card is visible') "
+    "— but do NOT fall back to the word 'element'.\n"
+    "    GOOD: 'Validate that Popular Chains section is visible'\n"
+    "    BAD: 'Validate element' or 'Validate that the element is visible'"
 )
 
 
