@@ -628,7 +628,6 @@ class AgentState:
             "relevant_failures": self.__action_history.get_activity_failures(
                 current_activity=current_activity
             ),
-            "delta_context": self.get_delta_context(),
         }
 
     def should_avoid_action(self, action: Action) -> bool:

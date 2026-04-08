@@ -8,6 +8,10 @@ intent. They are pure product policy and are reused across providers.
 
 from __future__ import annotations
 
+from typing import Any, Mapping, Sequence
+
+from fathom.core.prompts.trace import format_trace_action_line
+
 # Verification prompt templates
 VERIFICATION_SYSTEM = """You are an elite QA Automation Engineer specializing in visual mobile application state verification.
 Your sole responsibility is to evaluate a mobile screenshot and definitively determine if a user's intent has been successfully accomplished.
@@ -99,3 +103,76 @@ VALIDATION_SUBJECT_EXTRACTION_USER = (
     "Return ONLY valid JSON list of strings, no other text.\n\n"
     "Intent: {intent}"
 )
+
+
+# ---------------------------------------------------------------------------
+# Verification user-prompt builders
+# ---------------------------------------------------------------------------
+
+
+def _format_action_lines(trace: "Sequence[Mapping[str, Any]]") -> list[str]:
+    """Render the most recent trace entries as ``"- kind: target"`` lines."""
+
+    return [format_trace_action_line(entry) for entry in trace]
+
+
+def build_verification_guidance_section(
+    *,
+    user_guidance: "Sequence[str]" = (),
+    actions_performed: "Sequence[str]" = (),
+) -> str:
+    """Render the optional `{guidance_section}` block for verification prompts.
+
+    Returns an empty string when neither user_guidance nor
+    actions_performed is provided. Lives in core (not in the strategies
+    layer) so the user-facing labels stay next to the templates they
+    feed.
+    """
+
+    parts: list[str] = []
+    if user_guidance:
+        parts.append("\nUser Guidance:\n" + "\n".join(f"- {g}" for g in user_guidance))
+    if actions_performed:
+        parts.append("\nActions already performed for this step:\n" + "\n".join(actions_performed))
+    if not parts:
+        return ""
+    return "".join(parts) + "\n"
+
+
+def build_intent_verification_user_prompt(
+    *,
+    intent: str,
+    user_guidance: "Sequence[str]" = (),
+) -> str:
+    """Render the user prompt for full intent verification."""
+
+    return VERIFICATION_USER_TEMPLATE.format(
+        intent=intent,
+        guidance_section=build_verification_guidance_section(user_guidance=user_guidance),
+    )
+
+
+def build_subgoal_verification_user_prompt(
+    *,
+    intent: str,
+    user_guidance: "Sequence[str]" = (),
+    recent_trace: "Sequence[Mapping[str, Any]]" = (),
+    max_actions: int = 10,
+) -> str:
+    """Render the user prompt for sub-goal verification.
+
+    ``recent_trace`` is the agent's interaction history; the most recent
+    ``max_actions`` entries are formatted as 'kind: target' lines and
+    threaded into the prompt's `{guidance_section}` placeholder.
+    """
+
+    actions_performed: tuple[str, ...] = ()
+    if recent_trace:
+        actions_performed = tuple(_format_action_lines(list(recent_trace)[-max_actions:]))
+    return SUBGOAL_VERIFICATION_USER_TEMPLATE.format(
+        intent=intent,
+        guidance_section=build_verification_guidance_section(
+            user_guidance=user_guidance,
+            actions_performed=actions_performed,
+        ),
+    )

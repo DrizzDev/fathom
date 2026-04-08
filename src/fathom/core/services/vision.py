@@ -8,11 +8,13 @@ import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional, TypedDict
 
+from fathom.constants import ToolName
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.prompts.factory import PromptFactory
+from fathom.core.prompts.policy import build_retry_correction_prompt
 from fathom.core.prompts.tools import ToolRegistry
 from fathom.core.services.audit import AuditService
 from fathom.core.services.parsing import ToolResponseParser
@@ -104,8 +106,13 @@ class VisionService:
             by_name = {definition["name"]: definition for definition in definitions}
 
             return [
-                {"function_declarations": [by_name["execute_ui"]]},
-                {"function_declarations": [by_name["execute_ui"], by_name["verify_goal"]]},
+                {"function_declarations": [by_name[ToolName.EXECUTE_UI]]},
+                {
+                    "function_declarations": [
+                        by_name[ToolName.EXECUTE_UI],
+                        by_name[ToolName.VERIFY_GOAL],
+                    ]
+                },
             ]
         except KeyError as exception:
             logger.warning("[VisionService] Tool definition missing for prewarm: %s", exception)
@@ -232,36 +239,13 @@ class VisionService:
             use_xml=use_xml,
             current_screen_hash=fingerprint[:8],
             tracking_note=tracking_note,
+            loop_risk=is_stuck,
+            failed_actions=tuple(failures) if failures else (),
+            last_action=last_action,
+            delta_context=delta_context,
         )
 
         dynamic_context = self.__builder.build_user_context(prompt_context)
-
-        if is_stuck:
-            dynamic_context += (
-                "\n\n<SYSTEM_ALERT>\n"
-                "Loop risk detected; avoid repeating the same ineffective action."
-                "\n</SYSTEM_ALERT>"
-            )
-
-        if failures:
-            failed_actions = "; ".join(failures)
-            dynamic_context += (
-                "\n\n<SYSTEM_ALERT>\n"
-                "CRITICAL: The following actions have FAILED or been repeated without progress "
-                "on this screen. You MUST choose a DIFFERENT action or approach to achieve "
-                f"the same goal.\nFailed: {failed_actions}\n"
-                "</SYSTEM_ALERT>"
-            )
-
-        if last_action:
-            dynamic_context += (
-                f"\n\n<LAST_ACTION>\nMost recent action: {last_action}\n</LAST_ACTION>"
-            )
-
-        if delta_context:
-            dynamic_context += (
-                f"\n\n<DELTA_CONTEXT>\n{json.dumps(delta_context, default=str)}\n</DELTA_CONTEXT>"
-            )
 
         logger.debug(
             f"[H3] Dynamic Context Built | "
@@ -383,11 +367,7 @@ class VisionService:
 
                     # On retry with conversation history, payload becomes just the
                     # correction instruction (the history already contains the original prompt).
-                    payload = [
-                        f"Your previous tool call was rejected: {message}\n"
-                        "You MUST call the tool again with a DIFFERENT action. "
-                        "Choose an alternative approach to achieve the same goal."
-                    ]
+                    payload = [build_retry_correction_prompt(message=message)]
                     continue
 
                 # Non-validation errors or exhausted retries propagate as before.
@@ -454,7 +434,7 @@ class VisionService:
         if analysis.action:
             model_parts.append(
                 TurnPart.from_function_call(
-                    name="execute_ui",
+                    name=ToolName.EXECUTE_UI,
                     args=analysis.metadata.get("tool_args", {}),
                 )
             )
@@ -510,7 +490,7 @@ class VisionService:
             for tc in rejected_response.tool_calls:
                 model_parts.append(
                     TurnPart.from_function_call(
-                        name=getattr(tc, "name", "execute_ui"),
+                        name=getattr(tc, "name", ToolName.EXECUTE_UI),
                         args=dict(getattr(tc, "args", {})),
                     )
                 )
@@ -683,9 +663,9 @@ class VisionService:
         Dynamically selects tools (strictly mirrored).
         """
 
-        allowed = {"execute_ui", "store_memory", "recall_memory"}
+        allowed = {ToolName.EXECUTE_UI, ToolName.STORE_MEMORY, ToolName.RECALL_MEMORY}
         if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):
-            allowed.update({"validate_state", "verify_goal"})
+            allowed.update({ToolName.VALIDATE_STATE, ToolName.VERIFY_GOAL})
 
         definitions = ToolRegistry.get_all_definitions()
         return {

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import ValidationError
 
-from fathom.schemas.gemini_tools import ExecuteUIArgs, GeminiCompletionFlags
+from fathom.schemas.tool_args import ExecuteUIArgs, GeminiCompletionFlags
 
 
 class TestGoalCompletedDefault:

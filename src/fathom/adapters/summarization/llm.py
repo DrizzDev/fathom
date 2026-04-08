@@ -9,6 +9,7 @@ from fathom.core.prompts.summarization import (
     build_summarization_user_prompt,
     format_milestone,
 )
+from fathom.core.prompts.trace import extract_action_fields
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.summarization import SummarizationPort
 
@@ -57,29 +58,21 @@ class LLMSummarizer(SummarizationPort):
             thought = entry.get("thought", "")
             observation = entry.get("observation", "")
 
-            # Extract action details
+            # Pull canonical (action_type, target) via the shared helper
+            # so this matches every other place that walks the trace.
+            action_type_str, target = extract_action_fields(entry)
+
+            # Success flag is summarization-specific (only this caller
+            # cares); read it directly without rerunning the shape check.
             if isinstance(action, dict):
                 success = action.get("success", True)
-                target = action.get("target", "unknown")
-                action_type = action.get("action_type", "unknown")
             else:
-                success = True
-                target = getattr(action, "target", "unknown")
-                action_type = getattr(action, "action_type", "unknown")
+                success = bool(getattr(action, "success", True))
 
-            # Convert enum to string if needed
-            action_type_str = (
-                action_type.value
-                if hasattr(action_type, "value") and not isinstance(action_type, str)
-                else str(action_type)
-            )
+            actions_taken.append(f"{action_type_str}:{target}")
 
-            # Build action description
-            actions_taken.append(f"{action_type_str}:{str(target)}")
-
-            # Track failures
             if not success or "fail" in thought.lower():
-                failures.append(f"{str(action_type)} on {str(target)}")
+                failures.append(f"{action_type_str} on {target}")
 
             # Track screens
             if observation:

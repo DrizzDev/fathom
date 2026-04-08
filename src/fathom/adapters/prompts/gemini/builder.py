@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from fathom.core.prompts.policy import NamedSection, PromptPolicy
+from fathom.core.prompts.trace import extract_action_fields
 from fathom.interfaces.prompt import PromptBuilder, PromptUserContext
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,10 @@ class GeminiPromptBuilder(PromptBuilder):
                 "description": context.sub_goal_info.description,
             }
 
+        delta_context_json: Optional[str] = None
+        if context.delta_context:
+            delta_context_json = json.dumps(dict(context.delta_context), default=str)
+
         sections = PromptPolicy.user_context_sections(
             intent=context.intent,
             hints=hints,
@@ -68,6 +74,10 @@ class GeminiPromptBuilder(PromptBuilder):
             tracking_note=context.tracking_note,
             current_screen_hash=context.current_screen_hash,
             last_trace_hash=last_trace_hash,
+            loop_risk=context.loop_risk,
+            failed_actions=context.failed_actions,
+            last_action=context.last_action,
+            delta_context_json=delta_context_json,
         )
 
         for section in sections:
@@ -151,7 +161,6 @@ class GeminiPromptBuilder(PromptBuilder):
         recent = list(trace)[-50:]
 
         for index, entry in enumerate(recent, 1):
-            action = entry.get("action", {})
             observation = entry.get("observation", "Unknown screen")
 
             staleness = ""
@@ -163,19 +172,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 else:
                     staleness = " [CURRENT]"
 
-            if isinstance(action, dict):
-                desc = action.get("target", "unknown")
-                type_ = action.get("action_type", "tap")
-            else:
-                desc = getattr(action, "target", "unknown")
-                type_ = getattr(action, "action_type", "tap")
-
-            type_str = (
-                type_.value
-                if hasattr(type_, "value") and not isinstance(type_, str)
-                else str(type_)
-            )
-
+            type_str, desc = extract_action_fields(entry)
             lines.append(f"{index}. {observation}{staleness} -> {type_str.upper()}:{desc}")
             if desc != "unknown":
                 avoided.append(desc)

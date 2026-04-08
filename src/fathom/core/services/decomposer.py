@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Union
 
 from pydantic import ValidationError
 
+from fathom.constants.execution import MINIMUM_DECOMPOSITION_CONFIDENCE
 from fathom.core.exceptions import ConfigurationError
 from fathom.core.prompts.decomposition import DECOMPOSITION_REPLAN_SCREENSHOT_NOTE
 from fathom.core.prompts.factory import PromptFactory
@@ -15,7 +16,6 @@ from fathom.schemas.decomposition import DecompositionSchema
 from fathom.schemas.subgoal import SubGoal, SubGoalStatus
 
 logger = logging.getLogger(__name__)
-MINIMUM_DECOMPOSITION_CONFIDENCE = 0.6
 
 
 class IntentDecomposer:

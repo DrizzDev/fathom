@@ -12,7 +12,7 @@ core, formatting concerns live in adapters.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from fathom.core.prompts.rules import (
     COMMON_RULES,
@@ -143,6 +143,32 @@ SYSTEM_OVERRIDE_TEMPLATE = (
 SYSTEM_ALERT_TEMPLATE = "CRITICAL: {note}"
 
 
+LOOP_RISK_ALERT_BODY = "Loop risk detected; avoid repeating the same ineffective action."
+
+
+FAILURE_ALERT_TEMPLATE = (
+    "CRITICAL: The following actions have FAILED or been repeated without progress "
+    "on this screen. You MUST choose a DIFFERENT action or approach to achieve the "
+    "same goal.\nFailed: {failed_actions}"
+)
+
+
+LAST_ACTION_TEMPLATE = "Most recent action: {last_action}"
+
+
+RETRY_CORRECTION_TEMPLATE = (
+    "Your previous tool call was rejected: {message}\n"
+    "You MUST call the tool again with a DIFFERENT action. "
+    "Choose an alternative approach to achieve the same goal."
+)
+
+
+def build_retry_correction_prompt(message: str) -> str:
+    """Render the user-side correction prompt sent on a tool-validation retry."""
+
+    return RETRY_CORRECTION_TEMPLATE.format(message=message)
+
+
 # Intent vocabulary used to derive contextual rules. Provider-neutral.
 _LOOP_INTENT_TOKENS = ("every", "all")
 _TYPE_INTENT_TOKENS = ("type", "enter", "input")
@@ -195,6 +221,10 @@ class PromptPolicy:
         tracking_note: Optional[str],
         current_screen_hash: Optional[str],
         last_trace_hash: Optional[str],
+        loop_risk: bool = False,
+        failed_actions: Optional[Sequence[str]] = None,
+        last_action: Optional[str] = None,
+        delta_context_json: Optional[str] = None,
     ) -> List[NamedSection]:
         """Return the dynamic per-step context sections.
 
@@ -271,6 +301,29 @@ class PromptPolicy:
                     body=SYSTEM_ALERT_TEMPLATE.format(note=tracking_note),
                 )
             )
+
+        if loop_risk:
+            sections.append(NamedSection(name="SYSTEM_ALERT", body=LOOP_RISK_ALERT_BODY))
+
+        if failed_actions:
+            failed_text = "; ".join(failed_actions)
+            sections.append(
+                NamedSection(
+                    name="SYSTEM_ALERT",
+                    body=FAILURE_ALERT_TEMPLATE.format(failed_actions=failed_text),
+                )
+            )
+
+        if last_action:
+            sections.append(
+                NamedSection(
+                    name="LAST_ACTION",
+                    body=LAST_ACTION_TEMPLATE.format(last_action=last_action),
+                )
+            )
+
+        if delta_context_json:
+            sections.append(NamedSection(name="DELTA_CONTEXT", body=delta_context_json))
 
         return sections
 
