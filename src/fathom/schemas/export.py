@@ -276,15 +276,18 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
         for action_id in ordered_action_ids:
             if action_id not in payload.action_catalog:
                 raise ValueError(f"Unknown action ID referenced: {action_id}")
-            # Catalog entries are rendered verbatim into the script — if a
-            # wait/scroll/tap/validate catalog line ever bled the 'element'
-            # filler from an upstream target-resolution miss, refuse the
-            # payload so the exporter retries instead of writing a
-            # meaningless "Wait for element" or "Tap on element" line.
-            _reject_element_filler(
-                payload.action_catalog[action_id],
-                f"action_catalog[{action_id}]",
-            )
+
+        # Catalog entries are rendered verbatim into the script. Guard
+        # the ENTIRE catalog (not just ordered_action_ids) because
+        # to_script() auto-injects every validate-prefixed catalog entry
+        # at its canonical position regardless of whether the LLM
+        # referenced it. If any rendered line contains the 'element'
+        # filler — whether from a wait/scroll/tap/validate with a
+        # missing target or a post-hoc _collapse_consecutive_validates
+        # summary — refuse the payload so the exporter retries instead
+        # of writing "Validate element" or "Tap on element".
+        for action_id, catalog_line in payload.action_catalog.items():
+            _reject_element_filler(catalog_line, f"action_catalog[{action_id}]")
 
         for action_id in payload.action_validations:
             if action_id not in payload.action_catalog:

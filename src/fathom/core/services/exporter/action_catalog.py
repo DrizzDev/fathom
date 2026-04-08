@@ -16,7 +16,7 @@ from fathom.core.services.exporter.step_record import (
     swipe_direction_label,
 )
 from fathom.core.services.normalizer import Normalizer
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import GENERIC_TARGET_PLACEHOLDERS, Bounds
 from fathom.schemas.steps import StepResult
 
 logger = getLogger(__name__)
@@ -27,6 +27,19 @@ def _get_field(step: Union[StepResult, Dict[str, Any]], field: str, default: Any
     if isinstance(step, StepResult):
         return getattr(step.step.action, field, default)
     return step.get(field, default)
+
+
+def _is_resolved_target(value: Any) -> bool:
+    """Return True only when *value* names a concrete UI subject.
+
+    Treats empty strings and generic placeholders ("element", "button",
+    etc.) as unresolved so the caller can fall back to a richer field
+    instead of leaking the filler into the exported script.
+    """
+
+    if not value:
+        return False
+    return str(value).strip().lower() not in GENERIC_TARGET_PLACEHOLDERS
 
 
 # Coarse grid bucket size for bbox-based dedup. 25 normalized units = 2.5%
@@ -203,20 +216,46 @@ def build_action_catalog_from_steps(
         script_target = _get_field(step, "script_target")
         export_target = _get_field(step, "export_target")
 
-        if target_type in ("positional", "dynamic") and script_target:
-            export_target = script_target
-        elif not export_target:
-            export_target = _get_field(step, "natural_language_target") or "element"
-
         text = _get_field(step, "text")
         wait_duration = _get_field(step, "wait_duration")
         wait_subject = _get_field(step, "wait_subject")
         scroll_target = _get_field(step, "scroll_target")
         validation_subject = _get_field(step, "validation_subject")
 
-        # For wait actions, use authoritative wait_subject as the target.
-        if action_type_val == "wait" and wait_subject:
+        # Route the rendered target per action kind BEFORE falling back to
+        # the generic "element" placeholder. Each action stores its
+        # human-readable subject in a different field; the previous
+        # unconditional fallback leaked "Validate element" / "Wait for
+        # element" into exported scripts whenever the authoritative field
+        # was missing. Generic placeholders ("element", "button", etc.)
+        # are treated as unresolved so parsing-time fallbacks don't bleed.
+        if target_type in ("positional", "dynamic") and _is_resolved_target(script_target):
+            export_target = script_target
+        elif action_type_val == "validate" and _is_resolved_target(validation_subject):
+            export_target = validation_subject
+        elif action_type_val == "wait" and _is_resolved_target(wait_subject):
             export_target = wait_subject
+        elif (
+            action_type_val in SWIPE_ACTIONS or action_type_val == "scroll"
+        ) and _is_resolved_target(scroll_target):
+            export_target = scroll_target
+        elif not _is_resolved_target(export_target):
+            natural = _get_field(step, "natural_language_target")
+            export_target = natural if _is_resolved_target(natural) else None
+
+        # Drop entries that still have no resolvable target. Emitting
+        # "Validate element" or "Tap on element" poisons the script —
+        # better to omit the line and let the export LLM fill any gap
+        # via action_validations/final_validation.
+        if not _is_resolved_target(export_target):
+            logger.warning(
+                "Skipping %s step %d: no resolvable target "
+                "(validation_subject/wait_subject/scroll_target/export_target all empty or generic).",
+                action_type_val,
+                i,
+            )
+            i += 1
+            continue
 
         if action_type_val in SWIPE_ACTIONS:
             swipe_direction = action_type_val
@@ -236,15 +275,21 @@ def build_action_catalog_from_steps(
                 "type",
                 "long_press",
             ):
-                next_target = (
-                    _get_field(step_results[i], "target_name")
-                    or _get_field(step_results[i], "export_target")
-                    or _get_field(step_results[i], "natural_language_target")
-                )
-                if next_target:
-                    visible_target = next_target
-            if not visible_target:
-                visible_target = scroll_target or intent or "the target"
+                for candidate in (
+                    _get_field(step_results[i], "target_name"),
+                    _get_field(step_results[i], "export_target"),
+                    _get_field(step_results[i], "natural_language_target"),
+                ):
+                    if _is_resolved_target(candidate):
+                        visible_target = candidate
+                        break
+            if not _is_resolved_target(visible_target):
+                if _is_resolved_target(scroll_target):
+                    visible_target = scroll_target
+                elif intent:
+                    visible_target = intent
+                else:
+                    visible_target = "the target"
 
             label = swipe_direction_label(action_type=swipe_direction)
             entries.append(
@@ -254,15 +299,6 @@ def build_action_catalog_from_steps(
                 )
             )
             continue
-
-        # No fallback chain for validate actions. The core Action model
-        # enforces validation_subject at construction time (see
-        # fathom.schemas.actions.Action._enforce_validation_subject), so
-        # a validate step reaching this catalog builder without a subject
-        # is a programming error in an upstream layer. Previously we fell
-        # back to `rationale`, which is free-form narrative and poisoned
-        # the exported script with lines like
-        # "Validate I am validating the presence of...".
 
         description = Normalizer.action(
             action_type=action_type_val,
