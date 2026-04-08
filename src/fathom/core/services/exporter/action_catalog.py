@@ -82,14 +82,20 @@ def _target_dedup_key(step: Union[StepResult, Dict[str, Any]], action_kind: str)
 @dataclass(frozen=True)
 class CatalogEntry:
     """
-    A single entry in the action catalog, preserving both the rendered
-    description and the structured action kind from the source StepResult.
+    A single entry in the action catalog, preserving the rendered
+    description, structured action kind, and conditional metadata from
+    the source StepResult.
 
-    This avoids re-parsing action types from rendered text downstream.
+    Conditional fields surface up to the export prompt so the LLM can
+    wrap the right actions in IF blocks without having to cross-reference
+    the trace payload by index.
     """
 
     description: str  # Rendered action line (e.g. "TAP on 'Add to cart' button")
     action_kind: str  # Structured action type (e.g. "tap", "type", "scroll", "open_app")
+    is_conditional: bool = False
+    conditional_type: Optional[str] = None
+    condition: Optional[str] = None
 
     def __str__(self) -> str:
         return self.description
@@ -279,7 +285,15 @@ def build_action_catalog_from_steps(
             i += 1
             continue
 
-        entries.append(CatalogEntry(description=description, action_kind=action_type_val))
+        entries.append(
+            CatalogEntry(
+                description=description,
+                action_kind=action_type_val,
+                is_conditional=bool(_get_field(step, "is_conditional", False)),
+                conditional_type=_get_field(step, "conditional_type"),
+                condition=_get_field(step, "condition"),
+            )
+        )
         i += 1
 
     # Phase 3: Build the indexed catalog.
