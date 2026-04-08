@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 from logging import getLogger
 from typing import Dict, List, Literal, Optional
@@ -10,6 +11,29 @@ from fathom.constants import EXECUTABLE_ACTION_PREFIXES, VALIDATE_PREFIX
 from fathom.schemas.validators import enforce_validate_prefix
 
 logger = getLogger(__name__)
+
+# Standalone 'element' token — matches "Validate element" and
+# "Validate X, element visible" but NOT "elements" (plural) or
+# "elementary" (substring). Used by the export-time check that
+# refuses LLM-emitted validation lines built from the filler word.
+_ELEMENT_FILLER_RE = re.compile(r"\belement\b", re.IGNORECASE)
+
+
+def _reject_element_filler(line: str, field_label: str) -> None:
+    """Raise ``ValueError`` if *line* contains the 'element' filler word.
+
+    Guards exported script lines against the "Validate element" leak —
+    if an upstream trace payload ever drops the validate action's
+    ``validation_subject`` and the export LLM latches onto the generic
+    token, the exporter refuses the payload and forces a retry rather
+    than writing a meaningless line.
+    """
+
+    if _ELEMENT_FILLER_RE.search(line):
+        raise ValueError(
+            f"{field_label} must not contain the filler word 'element': "
+            f"'{line}'. Name the actual thing being validated."
+        )
 
 
 class ConditionalBlockPayload(BaseModel):
@@ -130,6 +154,7 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
         )
 
         enforce_validate_prefix(payload.final_validation, "final_validation")
+        _reject_element_filler(payload.final_validation, "final_validation")
 
         cleaned_action_validations: Dict[str, str] = {}
         for action_id, validation_line in payload.action_validations.items():
@@ -138,6 +163,7 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
             if not aid or not line:
                 continue
             enforce_validate_prefix(line, f"action_validations[{aid}]")
+            _reject_element_filler(line, f"action_validations[{aid}]")
             cleaned_action_validations[aid] = line
         payload.action_validations = cleaned_action_validations
 
@@ -250,6 +276,15 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
         for action_id in ordered_action_ids:
             if action_id not in payload.action_catalog:
                 raise ValueError(f"Unknown action ID referenced: {action_id}")
+            # Catalog entries are rendered verbatim into the script — if a
+            # wait/scroll/tap/validate catalog line ever bled the 'element'
+            # filler from an upstream target-resolution miss, refuse the
+            # payload so the exporter retries instead of writing a
+            # meaningless "Wait for element" or "Tap on element" line.
+            _reject_element_filler(
+                payload.action_catalog[action_id],
+                f"action_catalog[{action_id}]",
+            )
 
         for action_id in payload.action_validations:
             if action_id not in payload.action_catalog:
