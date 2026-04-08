@@ -103,6 +103,12 @@ class StepResult(BaseModel):
             scroll_target=act.scroll_target,
             wait_subject=act.wait_subject,
             wait_pattern=act.wait_pattern,
+            # Validate-step subject — persisted so the exporter can build
+            # "Validate <subject>" lines instead of falling back to the
+            # generic "element" placeholder. Previously dropped here,
+            # which was the root cause of "Validate element" in scripts.
+            validation_subject=act.validation_subject,
+            validation_pattern=act.validation_pattern,
             is_app_launcher=act.is_app_launcher,
             target_is_generic=act.target_is_generic,
             target_element_type=act.target_element_type,
@@ -174,6 +180,18 @@ class StepRecord(BaseModel):
     wait_subject: Optional[str] = Field(default=None, description="What is being waited for")
     wait_pattern: Optional[str] = Field(
         default=None, description="Wait category: ad, splash, load, search, generic"
+    )
+    validation_subject: Optional[str] = Field(
+        default=None,
+        description=(
+            "Canonical subject for validate actions — a short noun phrase naming what "
+            "is being checked (e.g. 'Popular Chains section visible'). Persisted so "
+            "the exporter can emit 'Validate <subject>' instead of 'Validate element'."
+        ),
+    )
+    validation_pattern: Optional[str] = Field(
+        default=None,
+        description="Validation category tag for downstream classification.",
     )
     is_app_launcher: bool = Field(default=False, description="Whether this tap launches an app")
     target_is_generic: Optional[bool] = Field(

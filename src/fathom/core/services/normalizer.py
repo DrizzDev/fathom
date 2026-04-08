@@ -69,14 +69,24 @@ class Normalizer:
 
         kind = Normalizer.clean(text=action_type).lower()
         cleaned_target = Normalizer.clean(text=target)
-        if not cleaned_target:
-            cleaned_target = "element"
 
         # For validate actions, prefer the dedicated validation_subject field.
         if kind == "validate" and validation_subject:
             cleaned_subject = Normalizer.clean(text=validation_subject)
             if cleaned_subject:
                 cleaned_target = cleaned_subject
+
+        if not cleaned_target:
+            # Callers in the exporter filter out entries with no resolvable
+            # target BEFORE calling this helper, so reaching here means a
+            # programming error upstream. Raising preserves the invariant
+            # that rendered action lines always name a concrete subject
+            # and prevents the "Validate element" filler from ever being
+            # produced at the source.
+            raise ValueError(
+                f"Normalizer.action: empty target for action_type={action_type!r}; "
+                "callers must resolve a concrete subject before rendering."
+            )
 
         if kind == "tap":
             return f"Tap on {cleaned_target}"

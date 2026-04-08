@@ -10,6 +10,7 @@ from fathom.core.services.exporter.step_record import (
     is_explicit_conditional,
     is_launcher_activity,
 )
+from fathom.schemas.actions import GENERIC_TARGET_PLACEHOLDERS
 from fathom.schemas.steps import StepResult
 
 
@@ -18,6 +19,14 @@ def _get_field(step: Union[StepResult, Dict[str, Any]], field: str, default: Any
     if isinstance(step, StepResult):
         return getattr(step.step.action, field, default)
     return step.get(field, default)
+
+
+def _is_resolved(value: Any) -> bool:
+    """True when *value* names a concrete UI subject (not a placeholder)."""
+
+    if not value:
+        return False
+    return str(value).strip().lower() not in GENERIC_TARGET_PLACEHOLDERS
 
 
 def _resolve_target(step: Union[StepResult, Dict[str, Any]], action_type_val: str) -> str:
@@ -45,22 +54,25 @@ def _resolve_target(step: Union[StepResult, Dict[str, Any]], action_type_val: st
 
     if kind == "validate":
         subject = _get_field(step, "validation_subject")
-        if subject:
+        if _is_resolved(subject):
             return str(subject)
     elif kind == "wait":
         subject = _get_field(step, "wait_subject")
-        if subject:
+        if _is_resolved(subject):
             return str(subject)
     elif "swipe" in kind or kind == "scroll":
         subject = _get_field(step, "scroll_target")
-        if subject:
+        if _is_resolved(subject):
             return str(subject)
 
-    return (
-        _get_field(step, "export_target")
-        or _get_field(step, "natural_language_target")
-        or "element"
-    )
+    for candidate in (
+        _get_field(step, "export_target"),
+        _get_field(step, "natural_language_target"),
+    ):
+        if _is_resolved(candidate):
+            return str(candidate)
+
+    return "element"
 
 
 def build_export_payload(

@@ -11,7 +11,23 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Tuple
 
+from fathom.schemas.actions import GENERIC_TARGET_PLACEHOLDERS
+
 __all__ = ["extract_action_fields", "format_trace_action_line"]
+
+
+def _is_resolved(value: Any) -> bool:
+    if not value:
+        return False
+    return str(value).strip().lower() not in GENERIC_TARGET_PLACEHOLDERS
+
+
+def _read(action: Any, field: str, default: Any = None) -> Any:
+    """Uniformly read a field from dict- or object-shaped actions."""
+
+    if isinstance(action, dict):
+        return action.get(field, default)
+    return getattr(action, field, default)
 
 
 def extract_action_fields(entry: Mapping[str, Any]) -> Tuple[str, str]:
@@ -20,24 +36,54 @@ def extract_action_fields(entry: Mapping[str, Any]) -> Tuple[str, str]:
     Handles dict-shaped action payloads (``entry["action"] = {...}``) and
     object-shaped ones (``entry["action"]`` is an ``Action`` instance).
     Enum-typed action_type values are unwrapped to their string value.
-    Missing fields fall back to ``"unknown"`` so callers never have to
-    guard against ``None``.
+
+    Routes the rendered target per action kind so the LLM-facing trace
+    history shows the canonical subject instead of the generic
+    ``"element"`` placeholder:
+
+    * ``validate`` → ``validation_subject``
+    * ``wait``     → ``wait_subject``
+    * ``scroll`` / ``swipe_*`` → ``scroll_target``
+    * everything else → ``target`` → ``export_target`` → ``natural_language_target``
+
+    Placeholder strings ("element", "button", ...) are treated as
+    unresolved so parsing-time fallbacks don't leak into the prompt.
+    Missing fields fall back to ``"unknown"``.
     """
 
     action = entry.get("action", {})
-    if isinstance(action, dict):
-        target = action.get("target", "unknown")
-        action_type = action.get("action_type", "unknown")
-    else:
-        target = getattr(action, "target", "unknown")
-        action_type = getattr(action, "action_type", "unknown")
 
+    action_type = _read(action, "action_type", "unknown")
     if hasattr(action_type, "value") and not isinstance(action_type, str):
         action_type_str = action_type.value
     else:
         action_type_str = str(action_type)
 
-    return action_type_str, str(target)
+    kind = action_type_str.lower()
+
+    candidates: list[Any] = []
+    if kind == "validate":
+        candidates.append(_read(action, "validation_subject"))
+    elif kind == "wait":
+        candidates.append(_read(action, "wait_subject"))
+    elif "swipe" in kind or kind == "scroll":
+        candidates.append(_read(action, "scroll_target"))
+
+    candidates.extend(
+        [
+            _read(action, "target"),
+            _read(action, "export_target"),
+            _read(action, "natural_language_target"),
+        ]
+    )
+
+    for candidate in candidates:
+        if _is_resolved(candidate):
+            return action_type_str, str(candidate)
+
+    # Nothing resolved — emit the raw target so the caller can see why.
+    raw_target = _read(action, "target", "unknown")
+    return action_type_str, str(raw_target) if raw_target is not None else "unknown"
 
 
 def format_trace_action_line(entry: Mapping[str, Any], *, prefix: str = "- ") -> str:
