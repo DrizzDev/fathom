@@ -145,11 +145,22 @@ class ScriptExporter:
             llm=self.__llm, action_catalog=action_catalog
         )
 
-        action_catalog_lines = [
-            f"{action_id}: {entry.description}"
-            for action_id, entry in action_catalog.items()
-            if entry.action_kind != "validate"
-        ]
+        action_catalog_lines: list[str] = []
+        for action_id, entry in action_catalog.items():
+            if entry.action_kind == "validate":
+                continue
+            line = f"{action_id}: {entry.description}"
+            if entry.is_conditional:
+                tag_parts: list[str] = []
+                if entry.conditional_type:
+                    tag_parts.append(entry.conditional_type)
+                if entry.condition:
+                    tag_parts.append(entry.condition)
+                if tag_parts:
+                    line += f"  [IF {' | '.join(tag_parts)}]"
+                else:
+                    line += "  [IF]"
+            action_catalog_lines.append(line)
         require_if_block = False
 
         system_instruction = self.__prompt_builder.build_system_instruction()

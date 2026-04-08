@@ -326,6 +326,17 @@ _EXPORT_TARGET_REQUIRED_TYPES: frozenset[str] = frozenset(
 # field validator that runs before the model validator.
 _GENERIC_EXPORT_TARGETS = GENERIC_TARGET_PLACEHOLDERS
 
+# Default guard text per conditional class. Used when the LLM sets
+# is_conditional=True (or implies it via conditional_type / overlay_detected)
+# without providing explicit condition text. Mirrors the prompt's contract:
+# "if condition is omitted, conditional_type is used for default guard text".
+_DEFAULT_CONDITION_TEXT: Dict[str, str] = {
+    "blocker": "Blocking overlay is visible",
+    "transient": "Loading state is active",
+    "error": "Error message is visible",
+    "optional": "Optional element is visible",
+}
+
 
 class ExecuteAction(BaseModel):
     """
@@ -546,24 +557,42 @@ class ExecuteAction(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_conditionals(self) -> "ExecuteAction":
+        """Resolve the conditional cluster from any LLM-provided signal.
+
+        ``is_conditional`` is implied by ANY conditional signal
+        (``overlay_detected``, a non-empty ``condition``, or a set
+        ``conditional_type``). When the LLM sets the flag without
+        condition text, the text is derived from ``conditional_type``
+        (defaulting to ``blocker`` for ``overlay_detected``). Only fail
+        when the action is conditional but carries no signal we can
+        derive a guard string from.
+        """
+
         condition = (self.condition or "").strip() or None
         conditional_type = self.conditional_type
-        is_conditional = self.is_conditional or bool(self.overlay_detected)
 
-        # overlay_detected is a system signal — provide sensible defaults.
-        if self.overlay_detected and not condition:
-            condition = "Overlay is visible"
+        # overlay_detected implies blocker class.
         if self.overlay_detected and not conditional_type:
             conditional_type = "blocker"
 
-        # Condition text is mandatory when is_conditional=True.
-        # The validation error feeds back to the LLM via multi-turn
-        # retry so it can correct its output.
+        # Any of these signals means the action is conditional.
+        is_conditional = (
+            self.is_conditional
+            or bool(self.overlay_detected)
+            or conditional_type is not None
+            or condition is not None
+        )
+
+        # Derive default condition text from conditional_type when missing.
+        # Matches the prompt's "conditional_type is used for default guard text".
+        if is_conditional and not condition and conditional_type:
+            condition = _DEFAULT_CONDITION_TEXT.get(conditional_type)
+
+        # Only fail when we genuinely have nothing to render as a guard.
         if is_conditional and not condition:
             raise ValueError(
-                "condition is required when is_conditional=True. "
-                "Provide the guard condition text (e.g., 'Popup is visible', "
-                "'Permission dialog is displayed', 'Loading spinner is active')."
+                "is_conditional=True requires either condition text or "
+                "conditional_type so a default guard string can be derived."
             )
 
         object.__setattr__(self, "condition", condition)

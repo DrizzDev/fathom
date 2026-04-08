@@ -151,29 +151,28 @@ class ToolRegistry:
                                 },
                                 "condition": {
                                     "type": "STRING",
-                                    "description": "Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
+                                    "description": (
+                                        "Optional human-readable guard text (e.g. 'Cookie banner visible', "
+                                        "'Loading spinner active'). When omitted, conditional_type is used "
+                                        "to derive a default."
+                                    ),
                                 },
                                 "is_conditional": {
                                     "type": "BOOLEAN",
-                                    "description": "Set true when this action should be executed only under a visible guard condition.",
+                                    "description": (
+                                        "Set true when this action should run only under a visible guard. "
+                                        "Implied automatically if conditional_type or condition is set."
+                                    ),
                                 },
                                 "conditional_type": {
                                     "type": "STRING",
                                     "enum": ["blocker", "transient", "error", "optional"],
                                     "description": (
-                                        "Condition class when is_conditional=true: "
+                                        "Conditional class. Setting this implies is_conditional=true. "
                                         "blocker (overlay/popup/permission dialog blocking the UI), "
-                                        "transient (spinner, skeleton shimmer, or splash screen that will auto-resolve), "
-                                        "error (red/orange error banner, toast, or validation message), "
+                                        "transient (spinner, skeleton shimmer, splash screen), "
+                                        "error (red/orange error banner, toast, validation message), "
                                         "optional (non-blocking informational element)."
-                                    ),
-                                },
-                                "overlay_detected": {
-                                    "type": "BOOLEAN",
-                                    "description": (
-                                        "Set true when the screenshot shows an overlay blocking the main UI "
-                                        "(dimmed scrim, modal dialog, bottom sheet, permission prompt, or banner). "
-                                        "This action must dismiss it."
                                     ),
                                 },
                                 "target_type": {
