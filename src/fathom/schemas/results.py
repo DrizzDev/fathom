@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
@@ -94,6 +94,24 @@ class ToolErrorFeedback(BaseModel):
             "(e.g. missing fields, wrong types, or device/runtime failure)."
         )
     )
+
+    @field_validator("tool_name", mode="before")
+    @classmethod
+    def __coerce_tool_name(cls, value: Any) -> Any:
+        """Coerce ToolName enum → plain string.
+
+        Callers pass ``ToolName.VERIFY_GOAL`` (a StrEnum member). Pydantic
+        would otherwise keep the enum instance on the model; once the
+        model is dumped into LangGraph state for checkpointing, msgpack
+        sees the class reference ``fathom.constants.ToolName`` and
+        refuses to round-trip it (it's not on the allowed_msgpack_modules
+        list). Flattening to ``str`` at construction keeps the checkpoint
+        payload free of internal enum types.
+        """
+
+        if value is None:
+            return value
+        return str(value)
 
 
 class StrategyResult(BaseModel):
