@@ -439,7 +439,7 @@ class VisionService:
                 )
             )
         if not model_parts:
-            model_parts.append(TurnPart.from_text(text=analysis.reasoning or "(empty)"))
+            model_parts.append(TurnPart.from_text(text=analysis.rationale or "(empty)"))
 
         model_turn = ConversationTurn(role="model", parts=model_parts)
 

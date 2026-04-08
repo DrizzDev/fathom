@@ -191,10 +191,10 @@ TOOL SELECTION & VALIDATION:
 - execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).
   * Delta telemetry is MANDATORY on every execute_ui call: always include both delta_observed (boolean) and delta_confidence (0.0-1.0).
   * For explicit checks/validation, prefer execute_ui with action_type='validate'.
-  * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).
-  * Always provide condition text when visible; if omitted, conditional_type is used for default guard text.
-  * For overlay/popup dismissal: if the screenshot shows a scrim, dialog, sheet, or banner over the main UI, set overlay_detected=true and condition to describe the overlay (e.g., 'Cookie consent banner visible').
-  * Evaluate is_valid and validation_reason for EVERY action.
+  * For any guard-based step, set conditional_type (blocker/transient/error/optional). is_conditional is implied automatically.
+  * Provide condition text when visible (e.g. 'Cookie consent banner visible', 'Loading spinner active'). If omitted, the system derives a default from conditional_type.
+  * For overlay/popup dismissal, set conditional_type='blocker'. The condition text and is_conditional flag are filled in for you.
+  * Evaluate is_valid for EVERY action; put the reasoning in "rationale".
   * If action is risky/ambiguous, set is_valid=False and explain.
   * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
     DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.

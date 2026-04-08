@@ -149,10 +149,6 @@ class ToolRegistry:
                                     "type": "STRING",
                                     "description": "Why this specific action is being taken.",
                                 },
-                                "validation_reason": {
-                                    "type": "STRING",
-                                    "description": "Reasoning for the validity judgment.",
-                                },
                                 "condition": {
                                     "type": "STRING",
                                     "description": "Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
@@ -376,9 +372,15 @@ class ToolRegistry:
                         "type": "STRING",
                         "description": "Explanation of the verification result.",
                     },
-                    "condition_to_verify": {
+                    "validation_subject": {
                         "type": "STRING",
-                        "description": "The condition being verified (e.g., 'Settings screen is open').",
+                        "description": (
+                            "Short noun phrase naming what is being validated "
+                            "(e.g., 'Settings screen open', 'cart is empty'). "
+                            "Same field name as ExecuteAction.validation_subject "
+                            "so the same vocabulary works across both tools. "
+                            "NEVER use the filler word 'element'."
+                        ),
                     },
                     "condition_met": {
                         "type": "BOOLEAN",
@@ -399,7 +401,7 @@ class ToolRegistry:
                 },
                 "required": [
                     "assistant_message",
-                    "condition_to_verify",
+                    "validation_subject",
                     "condition_met",
                     "evidence",
                     "sub_goal_completed",

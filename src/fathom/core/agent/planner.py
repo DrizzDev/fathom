@@ -61,7 +61,7 @@ class StepPlanner:
         if not state.can_continue:
             if state.is_complete:
                 return PlanResult(
-                    step=None, is_complete=True, reason=CompletionReason.SUCCESS.value
+                    step=None, is_complete=True, rationale=CompletionReason.SUCCESS.value
                 )
 
             # TERMINAL FAIL: If we reach here, it means max_steps or budgets are hit.
@@ -69,7 +69,7 @@ class StepPlanner:
             return PlanResult(
                 step=None,
                 is_complete=True,
-                reason=CompletionReason.STUCK.value
+                rationale=CompletionReason.STUCK.value
                 if state.is_stuck
                 else CompletionReason.FAILED.value,
             )
@@ -100,7 +100,7 @@ class StepPlanner:
                             step_number=state.step_count,
                         ),
                         is_complete=False,
-                        reason=CompletionReason.INTERVENTION_REQUIRED.value,
+                        rationale=CompletionReason.INTERVENTION_REQUIRED.value,
                     )
 
             # Autonomous Recovery (ONLY for non-interactive mode)
@@ -173,7 +173,7 @@ class StepPlanner:
                 metrics=analysis.metrics,
                 metadata=analysis.metadata,
                 memories=analysis.memories,
-                reason=f"Action confidence {action.confidence:.2f} below threshold {self.__min_confidence}",
+                rationale=f"Action confidence {action.confidence:.2f} below threshold {self.__min_confidence}",
             )
 
         # Check if this EXACT action just failed on this screen hash
@@ -185,7 +185,7 @@ class StepPlanner:
                 metrics=analysis.metrics,
                 metadata=analysis.metadata,
                 memories=analysis.memories,
-                reason=CompletionReason.FAILED.value,
+                rationale=CompletionReason.FAILED.value,
             )
 
         # Check if same tap/type action repeated 3+ times on the same screen.
@@ -221,7 +221,7 @@ class StepPlanner:
                 should_retry=True,
                 metrics=analysis.metrics,
                 memories=analysis.memories,
-                reason=CompletionReason.ACTION_BLOCKED.value,
+                rationale=CompletionReason.ACTION_BLOCKED.value,
                 metadata={
                     **(analysis.metadata or {}),
                     "blocked_action": repeated_desc,
@@ -248,7 +248,7 @@ class StepPlanner:
                     step=None,
                     is_complete=True,
                     metrics=analysis.metrics,
-                    reason=analysis.reasoning,
+                    rationale=analysis.rationale,
                     metadata=analysis.metadata,
                     memories=analysis.memories,
                 )
@@ -324,8 +324,7 @@ class StepPlanner:
             metrics=metrics or {},
             metadata=metadata or {},
             is_valid_action=action.is_valid,
-            validation_reasoning=action.validation_reason,
-            reason=action.rationale or ("Step planned" if not is_recovery else "Recovery step"),
+            rationale=action.rationale or ("Step planned" if not is_recovery else "Recovery step"),
         )
 
     def __build_step(

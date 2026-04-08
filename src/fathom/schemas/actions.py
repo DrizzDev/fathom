@@ -172,9 +172,6 @@ class Action(BaseModel):
 
     # Inline Validation
     is_valid: bool = Field(default=True, description="Self-validation of the action")
-    validation_reason: Optional[str] = Field(
-        default=None, description="Reason if action is invalid"
-    )
 
     # Conditional Execution
     condition: Optional[str] = Field(
