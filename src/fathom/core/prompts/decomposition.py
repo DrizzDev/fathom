@@ -9,6 +9,8 @@ delegate here.
 
 from __future__ import annotations
 
+from typing import Optional, Sequence
+
 from fathom.interfaces.prompt import DecompositionPromptBuilder
 
 __all__ = [
@@ -17,6 +19,7 @@ __all__ = [
     "DECOMPOSITION_USER_PROMPT_TEMPLATE",
     "DECOMPOSITION_REPLAN_SCREENSHOT_NOTE",
     "build_decomposition_user_prompt",
+    "build_replan_context_section",
 ]
 
 
@@ -28,7 +31,8 @@ DECOMPOSITION_SYSTEM_INSTRUCTION = (
 
 DECOMPOSITION_USER_PROMPT_TEMPLATE = (
     "You are an expert at breaking down user intents into executable micro-tasks.\n\n"
-    "INTENT: {intent}\n\n"
+    "INTENT: {intent}\n"
+    "{replan_context}"
     "INSTRUCTIONS:\n"
     "1. Break down the intent into sequential, non-skippable steps\n"
     "2. Each step must be atomic and testable\n"
@@ -71,7 +75,72 @@ DECOMPOSITION_REPLAN_SCREENSHOT_NOTE = (
 )
 
 
-def build_decomposition_user_prompt(*, intent: str) -> str:
-    """Render the provider-neutral decomposition user prompt for an intent."""
+def build_replan_context_section(
+    *,
+    stuck_sub_goal: Optional[str] = None,
+    failure_reason: Optional[str] = None,
+    suggested_next_action: Optional[str] = None,
+    recent_actions: Sequence[str] = (),
+) -> str:
+    """Render the optional ``{replan_context}`` block for replanning.
 
-    return DECOMPOSITION_USER_PROMPT_TEMPLATE.format(intent=intent)
+    This block sits between the INTENT line and the INSTRUCTIONS in the
+    decomposition template. It is empty by default for initial
+    decomposition; populated only when the planner invokes replanning
+    after the agent gets stuck, so the decomposer can steer the new plan
+    AWAY from the failed approach instead of re-emitting the same steps.
+
+    Returns an empty string when all inputs are empty — the surrounding
+    template then collapses the placeholder to nothing.
+    """
+
+    parts: list[str] = []
+    if stuck_sub_goal:
+        parts.append(f"STUCK ON: {stuck_sub_goal}")
+    if failure_reason:
+        parts.append(f"WHY IT FAILED: {failure_reason}")
+    if suggested_next_action:
+        parts.append(f"VERIFIER SUGGESTED: {suggested_next_action}")
+    if recent_actions:
+        lines = "\n".join(f"- {line}" for line in recent_actions)
+        parts.append(f"RECENTLY TRIED (do NOT repeat these):\n{lines}")
+
+    if not parts:
+        return ""
+
+    body = "\n".join(parts)
+    return (
+        "\nREPLAN CONTEXT — the agent already tried to execute this intent and "
+        "got stuck. Use the information below to propose a DIFFERENT approach; "
+        "do not re-emit steps that were already tried without success.\n"
+        f"{body}\n\n"
+    )
+
+
+def build_decomposition_user_prompt(
+    *,
+    intent: str,
+    stuck_sub_goal: Optional[str] = None,
+    failure_reason: Optional[str] = None,
+    suggested_next_action: Optional[str] = None,
+    recent_actions: Sequence[str] = (),
+) -> str:
+    """Render the provider-neutral decomposition user prompt for an intent.
+
+    All replan-context parameters are optional; callers doing the initial
+    decomposition pass nothing and the template renders exactly as before.
+    Replanning callers pass the stuck sub-goal, failure reason, verifier
+    suggestion, and recent action lines so the decomposer can avoid the
+    dead-end path that triggered the replan.
+    """
+
+    replan_context = build_replan_context_section(
+        stuck_sub_goal=stuck_sub_goal,
+        failure_reason=failure_reason,
+        suggested_next_action=suggested_next_action,
+        recent_actions=recent_actions,
+    )
+    return DECOMPOSITION_USER_PROMPT_TEMPLATE.format(
+        intent=intent,
+        replan_context=replan_context,
+    )

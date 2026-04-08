@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Sequence, Union
 
 from pydantic import ValidationError
 
@@ -57,28 +57,55 @@ class IntentDecomposer:
         intent: str,
         *,
         screenshot: Optional[bytes] = None,
+        stuck_sub_goal: Optional[str] = None,
+        failure_reason: Optional[str] = None,
+        suggested_next_action: Optional[str] = None,
+        recent_actions: Sequence[str] = (),
     ) -> List[SubGoal]:
         """
         Decompose intent into sequential sub-goals.
 
         Args:
-            intent: High-level intent to decompose
-            screenshot: Optional screenshot of the current screen. When
-                provided (e.g. during replanning), the LLM can see where
-                the agent currently is and plan accordingly.
+            intent: High-level intent to decompose.
+            screenshot: Optional current-screen screenshot. When provided
+                (e.g. during replanning), the LLM can see where the agent
+                currently is and plan from that state.
+            stuck_sub_goal: (Replan only) description of the sub-goal the
+                agent failed to complete before triggering replanning.
+            failure_reason: (Replan only) the verifier's rejection reason
+                or the stuck-detection trigger message.
+            suggested_next_action: (Replan only) the concrete action the
+                verifier suggested the model should try next, if any.
+            recent_actions: (Replan only) recently-emitted action lines
+                in "{kind}: {target}" form so the decomposer can avoid
+                re-proposing the same dead-end path.
 
         Returns:
-            List of SubGoal objects in sequential order
+            List of SubGoal objects in sequential order.
 
         Raises:
-            ValueError: If decomposition fails or produces invalid schema
+            ValueError: If decomposition fails or produces invalid schema.
         """
         if not intent or not intent.strip():
             raise ConfigurationError("Intent cannot be empty")
 
-        logger.info(f"[Decomposer] Starting decomposition: {intent[:100]}...")
+        is_replan = bool(
+            stuck_sub_goal or failure_reason or suggested_next_action or recent_actions
+        )
+        mode_label = "replan" if is_replan else "initial"
+        logger.info(
+            "[Decomposer] Starting %s decomposition: %s...",
+            mode_label,
+            intent[:100],
+        )
 
-        prompt_text = self.__prompt_builder.build_user_prompt(intent=intent)
+        prompt_text = self.__prompt_builder.build_user_prompt(
+            intent=intent,
+            stuck_sub_goal=stuck_sub_goal,
+            failure_reason=failure_reason,
+            suggested_next_action=suggested_next_action,
+            recent_actions=recent_actions,
+        )
 
         system_instruction = self.__prompt_builder.build_system_instruction()
         if screenshot:

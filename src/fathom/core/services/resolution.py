@@ -11,6 +11,33 @@ from fathom.schemas.actions import Action, Bounds
 
 logger = getLogger(__name__)
 
+# Priority order for deriving a human-readable display name from a
+# LabeledElement's XML attributes. Android surfaces most information via
+# ``text`` / ``content-desc``; iOS surfaces it via ``name`` / ``label`` /
+# ``value``. ``resource-id`` is a last-resort developer identifier that
+# at least beats a "label:{id}" placeholder in exported scripts.
+_ELEMENT_NAME_ATTRIBUTE_PRIORITY: tuple[str, ...] = (
+    "text",
+    "content-desc",
+    "name",
+    "label",
+    "value",
+    "resource-id",
+)
+
+
+def _display_name_from_element(info: Dict[str, Any]) -> Optional[str]:
+    """Return the first non-empty human-readable name from an element dict."""
+
+    for key in _ELEMENT_NAME_ATTRIBUTE_PRIORITY:
+        raw = info.get(key)
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if text:
+            return text
+    return None
+
 
 class ReferenceResolutionService:
     """
@@ -99,22 +126,45 @@ class ReferenceResolutionService:
             width = x2 - x1
             height = y2 - y1
 
+            updates: Dict[str, Any] = {
+                "bounds": Bounds(
+                    x=x1,
+                    y=y1,
+                    width=width,
+                    height=height,
+                    coord_system="pixel",
+                )
+            }
+
+            # If the LLM emitted a label_id but no human-readable target
+            # name (or a generic / namespaced placeholder), stamp the
+            # element's display text from the manifest here so downstream
+            # logs, traces, and exporter lines get the real name.
+            display_name = _display_name_from_element(info)
+            if display_name:
+                label_placeholder = f"label:{action.label_id}"
+                current_target = (action.target or "").strip()
+                if (
+                    not current_target
+                    or current_target == "element"
+                    or current_target == label_placeholder
+                ):
+                    updates["target"] = display_name
+                current_nlt = (action.natural_language_target or "").strip()
+                if not current_nlt or current_nlt == "element" or current_nlt == label_placeholder:
+                    updates["natural_language_target"] = display_name
+                # Also seed export_target when it was left empty —
+                # it drives the exporter's "Tap on <target>" line.
+                if not (action.export_target or "").strip():
+                    updates["export_target"] = display_name
+
             logger.info(
                 f"Snapped Action to Label [{action.label_id}] "
                 f"-> Pixel Bounds: {x1},{y1} {width}x{height}"
+                + (f" -> Display: {display_name!r}" if display_name else "")
             )
 
-            return action.model_copy(
-                update={
-                    "bounds": Bounds(
-                        x=x1,
-                        y=y1,
-                        width=width,
-                        height=height,
-                        coord_system="pixel",
-                    )
-                }
-            )
+            return action.model_copy(update=updates)
 
         except Exception as exception:
             logger.warning(f"Failed to snap to label {action.label_id}: {exception}")

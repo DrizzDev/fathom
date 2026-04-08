@@ -40,11 +40,17 @@ MAX_ACTION_WAIT_MS = 10_000
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
 
-# Sub-goal action budget
-# Maximum number of actions the agent may emit against a single sub-goal
-# before the replanning path is triggered. Chosen empirically to catch
-# loops without cutting short legitimate multi-step sub-goals.
-MAX_ACTIONS_PER_SUBGOAL = 15
+# Number of verification rejections on the SAME sub-goal after which
+# the agent calls the decomposer LLM to rebuild the remaining plan.
+# Set high enough that transient verifier noise doesn't force an
+# expensive redecomposition, but low enough that genuinely-wrong plans
+# are replaced before the action budget runs out.
+#
+# Cheap "action-loop" recovery is handled separately: the planner fires
+# a rejection-history retry when `is_action_repeating_on_screen` detects
+# the same tap/type emitted 3+ times on the same screen
+# (see fathom.core.agent.planner.Planner.plan).
+REDECOMPOSE_VERIFY_FAILURE_THRESHOLD = 5
 
 # Active-thread count threshold above which the GCC context manager
 # branches a new conversation. Chosen to keep prompt context bounded.
