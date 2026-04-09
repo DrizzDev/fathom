@@ -2,10 +2,33 @@ from __future__ import annotations
 
 import io
 from logging import getLogger
+from typing import Tuple
 
 from PIL import Image
 
 logger = getLogger(__name__)
+
+
+def parse_png_dimensions(image: bytes) -> Tuple[int, int]:
+    """Extract width and height from a PNG image's IHDR chunk.
+
+    Lightweight alternative to decoding the full image with PIL.
+    Raises ``ValueError`` when *image* is not a valid PNG or is
+    truncated before the IHDR data.
+    """
+
+    if len(image) < 24:
+        raise ValueError("Invalid PNG: payload too small to contain IHDR")
+
+    if image[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("Invalid PNG: missing PNG signature")
+
+    if image[12:16] != b"IHDR":
+        raise ValueError("Invalid PNG: IHDR chunk not found at expected offset")
+
+    width = int.from_bytes(image[16:20], byteorder="big")
+    height = int.from_bytes(image[20:24], byteorder="big")
+    return width, height
 
 
 class ImageProcessor:

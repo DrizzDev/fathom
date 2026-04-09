@@ -219,6 +219,11 @@ class ADBDevice(DevicePort):
         Capture device screenshot.
         """
 
+        # Invalidate cached dimensions so that any subsequent
+        # get_dimensions() call re-queries the OS.  This prevents
+        # stale portrait dimensions from persisting after a rotation.
+        self.__cached_size = None
+
         arguments = self.__build_arguments(parts=["exec-out", "screencap", "-p"])
 
         try:

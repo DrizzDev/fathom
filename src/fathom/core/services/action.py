@@ -51,7 +51,6 @@ class ActionExecutor:
         self.__storage = storage
         self.__path_manager = path_manager
         self.__background_tasks: Set[asyncio.Task[None]] = set()
-        self.__cached_dimensions: Optional[Tuple[int, int]] = None
 
     async def act(
         self,
@@ -67,7 +66,7 @@ class ActionExecutor:
         last_error: Optional[str] = None
         for attempt in range(self.__max_retries + 1):
             try:
-                result, coords = await self.__execute_primitive(step=step)
+                result, coords = await self.__execute_primitive(step=step, pre_capture=pre_capture)
 
                 if result.success and coords:
                     self.__schedule_trace(
@@ -109,7 +108,7 @@ class ActionExecutor:
         )
 
     async def __execute_primitive(
-        self, step: Step
+        self, step: Step, pre_capture: ScreenCapture
     ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
         """
         Execute specific device primitive.
@@ -118,9 +117,9 @@ class ActionExecutor:
         action = step.action
         start_time = time.time()
 
-        if self.__cached_dimensions is None:
-            self.__cached_dimensions = await self.__device.get_dimensions()
-        width, height = self.__cached_dimensions
+        # Use dimensions from the pre-capture screenshot (PNG-derived)
+        # so coordinates stay correct even after orientation changes.
+        width, height = pre_capture.width, pre_capture.height
 
         configuration = self.__device.configuration or DeviceRuntimeConfiguration()
         converter = CoordinateConverter(
