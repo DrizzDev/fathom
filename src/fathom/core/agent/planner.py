@@ -199,6 +199,11 @@ class StepPlanner:
             # Record as failure so it appears in relevant_failures context for the LLM,
             # preventing the model from proposing the same ineffective action again.
             state.record_repeated_action_failure(action=action)
+            # Feed the replanning escalation counter: the ANALYZE node checks
+            # sub_goal_planner_retries against PLANNER_RETRY_ESCALATION_THRESHOLD
+            # after this call and invokes __replan_remaining_sub_goals once the
+            # cheap rejection-history retry budget is exhausted.
+            state.record_planner_retry()
 
             # Store the rejected analysis metadata so vision.analyze() can build
             # a multi-turn conversation history on the next GROUND→ANALYZE cycle.
