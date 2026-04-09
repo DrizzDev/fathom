@@ -91,6 +91,9 @@ class AgentState:
         self.__sub_goal_start_screen: Optional[str] = None  # Track screen hash when sub-goal starts
         self.__sub_goal_action_count: int = 0  # Track actions executed for current sub-goal
         self.__sub_goal_verify_failures: int = 0  # Verification rejections for current sub-goal
+        self.__sub_goal_planner_retries: int = (
+            0  # Cheap rejection-history retries for current sub-goal
+        )
 
     @property
     def intent(self) -> str:
@@ -348,6 +351,23 @@ class AgentState:
         """Record a verification rejection for the current sub-goal."""
         self.__sub_goal_verify_failures += 1
 
+    @property
+    def sub_goal_planner_retries(self) -> int:
+        """Cheap rejection-history retry count for the current sub-goal."""
+        return self.__sub_goal_planner_retries
+
+    def record_planner_retry(self) -> None:
+        """Record a cheap rejection-history retry for the current sub-goal.
+
+        Called from ``StepPlanner.plan_step`` whenever
+        ``is_action_repeating_on_screen`` fires and the planner
+        returns ``should_retry=True`` with rationale ``ACTION_BLOCKED``.
+        Feeds the ANALYZE-side escalation check that calls
+        ``__replan_remaining_sub_goals`` once the counter hits
+        ``PLANNER_RETRY_ESCALATION_THRESHOLD``.
+        """
+        self.__sub_goal_planner_retries += 1
+
     def replace_remaining_sub_goals(self, new_sub_goals: List[SubGoal]) -> None:
         """
         Replace unfinished sub-goals with a fresh decomposition.
@@ -365,6 +385,7 @@ class AgentState:
         self.__current_sub_goal_index = len(completed)
         self.__sub_goal_action_count = 0
         self.__sub_goal_verify_failures = 0
+        self.__sub_goal_planner_retries = 0
 
         if self.__current_sub_goal_index < len(self.__sub_goals):
             self.__sub_goals[self.__current_sub_goal_index].mark_in_progress()
@@ -461,6 +482,7 @@ class AgentState:
                 self.__sub_goal_start_screen = self.__current_screen.visual_hash
             self.__sub_goal_action_count = 0
             self.__sub_goal_verify_failures = 0
+            self.__sub_goal_planner_retries = 0
             logger.info(
                 f"[AgentState] Advanced to sub-goal {next_goal.index}: {next_goal.description}"
             )
@@ -724,6 +746,7 @@ class AgentState:
             "current_sub_goal_index": self.__current_sub_goal_index,
             "sub_goal_verify_failures": self.__sub_goal_verify_failures,
             "sub_goal_action_count": self.__sub_goal_action_count,
+            "sub_goal_planner_retries": self.__sub_goal_planner_retries,
         }
 
     def __restore_from_data(
@@ -740,6 +763,7 @@ class AgentState:
         current_sub_goal_index: int = 0,
         sub_goal_verify_failures: int = 0,
         sub_goal_action_count: int = 0,
+        sub_goal_planner_retries: int = 0,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -753,6 +777,7 @@ class AgentState:
         self.__low_delta_streak = max(0, low_delta_streak)
         self.__sub_goal_verify_failures = sub_goal_verify_failures
         self.__sub_goal_action_count = sub_goal_action_count
+        self.__sub_goal_planner_retries = sub_goal_planner_retries
 
         for data in seen_screens:
             self.__seen_screens.append(ScreenState(**data))
@@ -851,6 +876,13 @@ class AgentState:
             else 0
         )
 
+        sub_goal_planner_retries_raw = data.get("sub_goal_planner_retries", 0)
+        sub_goal_planner_retries = (
+            int(cast("int", sub_goal_planner_retries_raw))
+            if isinstance(sub_goal_planner_retries_raw, (int, float))
+            else 0
+        )
+
         state.__restore_from_data(
             step_count=step_count,
             is_complete=is_complete,
@@ -863,6 +895,7 @@ class AgentState:
             current_sub_goal_index=current_sub_goal_index,
             sub_goal_verify_failures=sub_goal_verify_failures,
             sub_goal_action_count=sub_goal_action_count,
+            sub_goal_planner_retries=sub_goal_planner_retries,
         )
 
         return state

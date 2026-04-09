@@ -12,6 +12,7 @@ from fathom.constants.execution import (
     GCC_BRANCHING_THRESHOLD,
     GROUNDING_FAILURE_MESSAGE,
     LAUNCHER_PACKAGES,
+    PLANNER_RETRY_ESCALATION_THRESHOLD,
     RECORDING_FAILURE_MESSAGE,
     REDECOMPOSE_VERIFY_FAILURE_THRESHOLD,
     VISUAL_HASH_LENGTH,
@@ -452,6 +453,49 @@ class IntentNodeProvider:
 
         return None
 
+    async def __maybe_escalate_on_planner_retries(
+        self,
+        *,
+        plan: PlanResult,
+        capture: ScreenCapture,
+    ) -> Optional[IntentGraphState]:
+        """Escalate to the decomposer replan when the stuck-retry counter
+        hits its threshold.
+
+        Called from the ANALYZE node after ``StepPlanner.plan_step``
+        returns. Fires only when the planner signaled
+        ``ACTION_BLOCKED`` AND ``sub_goal_planner_retries`` has reached
+        ``PLANNER_RETRY_ESCALATION_THRESHOLD``. Otherwise returns
+        ``None`` so the caller falls through to normal retry routing.
+
+        Parallels the VERIFY-side escalation at
+        ``REDECOMPOSE_VERIFY_FAILURE_THRESHOLD`` but triggers on the
+        no-progress failure mode (screen never changes) rather than
+        the wrong-progress failure mode.
+        """
+
+        if plan.rationale != CompletionReason.ACTION_BLOCKED.value:
+            return None
+
+        retries = self.__context.agent_state.sub_goal_planner_retries
+        if retries < PLANNER_RETRY_ESCALATION_THRESHOLD:
+            return None
+
+        logger.info(
+            "[NODE: ANALYZE] Planner retries hit escalation threshold "
+            "(%d >= %d); invoking decomposer replan.",
+            retries,
+            PLANNER_RETRY_ESCALATION_THRESHOLD,
+        )
+        return await self.__replan_remaining_sub_goals(
+            capture=capture,
+            failure_reason=(
+                f"Planner rejection-history retry fired {retries} times "
+                f"on this sub-goal without unsticking the action loop. "
+                f"The cheap local retry exhausted its budget."
+            ),
+        )
+
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
         """
         Capture the screen and update state.
@@ -787,6 +831,22 @@ class IntentNodeProvider:
                     ),
                     step=current_step,
                 )
+
+            # Replanning escalation: if the cheap rejection-history retry has
+            # fired PLANNER_RETRY_ESCALATION_THRESHOLD times on this sub-goal
+            # without breaking the action loop, the local retry budget is
+            # exhausted. Escalate to the expensive decomposer replan so the
+            # remaining sub-goal tail gets rewritten from the stuck screen.
+            # Mirror of the VERIFY-side REDECOMPOSE_VERIFY_FAILURE_THRESHOLD
+            # escalation, but triggered on no-progress instead of wrong-progress.
+            replanned = await self.__maybe_escalate_on_planner_retries(
+                plan=plan,
+                capture=capture,
+            )
+            if replanned is not None:
+                return replanned
+            # Replan returned None (no escalation or decomposer failure). Fall
+            # through to normal retry routing so the graph keeps running.
 
             logger.info(
                 f"[NODE: ANALYZE] Analysis completed in {duration:.2f}s: "

@@ -52,6 +52,26 @@ DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
 # (see fathom.core.agent.planner.Planner.plan).
 REDECOMPOSE_VERIFY_FAILURE_THRESHOLD = 5
 
+# Number of cheap planner rejection-history retries on the SAME
+# sub-goal after which the agent escalates to the expensive
+# decomposer replan. The cheap retry fires on every detection of
+# is_action_repeating_on_screen; this threshold bounds how many
+# fresh LLM-picked actions the planner gets to try before we give
+# up on local recovery and ask the decomposer for a new plan shape.
+#
+# Threshold 3 means: retry fires twice (counter 1, 2) and on the
+# third detection (counter=3) the ANALYZE node escalates instead
+# of injecting guidance again. At 3 the vision LLM has already
+# seen two previous rejected actions in its rejection history, so
+# if a third distinct action ALSO loops, the plan shape is likely
+# wrong.
+#
+# This path is independent of REDECOMPOSE_VERIFY_FAILURE_THRESHOLD
+# above: the two counters fire on different signals
+# (is_action_repeating_on_screen vs. record_verify_failure) and
+# track mutually-exclusive failure modes.
+PLANNER_RETRY_ESCALATION_THRESHOLD = 3
+
 # Active-thread count threshold above which the GCC context manager
 # branches a new conversation. Chosen to keep prompt context bounded.
 GCC_BRANCHING_THRESHOLD = 15
