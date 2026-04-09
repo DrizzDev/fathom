@@ -43,6 +43,9 @@ class FathomSettings(BaseSettings):
 
     # Workflow default limits
     max_steps: int = Field(default=100, alias="MAX_STEPS")
+    allow_atomic_intent_single_subgoal: bool = Field(
+        default=True, alias="FATHOM_ALLOW_ATOMIC_SINGLE_SUBGOAL"
+    )
 
     # Temporal settings (used by TemporalSignalAdapter in interactive mode)
     temporal_host: Optional[str] = Field(
