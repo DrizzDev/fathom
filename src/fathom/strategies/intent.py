@@ -17,6 +17,7 @@ from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CompletionReason, IntentStateKey
 from fathom.core.services.decomposer import IntentDecomposer
+from fathom.core.services.intent_classifier import IntentClassifier
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -30,6 +31,8 @@ from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.schemas.steps import StepResult
+from fathom.schemas.subgoal import SubGoal, SubGoalStatus
+from fathom.settings.env import FathomSettings
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 
@@ -131,16 +134,10 @@ class IntentStrategy:
                 # Prewarm prompt cache concurrently with decomposition to reduce first-call latency.
                 prewarm_task = asyncio.create_task(self.__graph_context.vision.prewarm())
 
-                logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
-                decomposer = IntentDecomposer.with_configuration(
-                    llm=self.__llm,
-                    configuration=self.__graph_context.configuration.llm,
-                )
-                sub_goals = await decomposer.decompose(intent=self.__intent)
-
+                sub_goals = await self.__resolve_initial_sub_goals()
                 self.__graph_context.agent_state.set_sub_goals(sub_goals)
                 logger.info(
-                    f"[IntentStrategy] Intent decomposed into {len(sub_goals)} sub-goals. "
+                    f"[IntentStrategy] Intent resolved to {len(sub_goals)} sub-goals. "
                     "Starting execution..."
                 )
 
@@ -257,6 +254,48 @@ class IntentStrategy:
             logger.warning("Background %s task cancelled", task_name)
         except Exception as exception:
             logger.warning("Background %s task failed during cleanup: %s", task_name, exception)
+
+    async def __resolve_initial_sub_goals(self) -> List[SubGoal]:
+        """Classify the intent, then either wrap it as a single sub-goal
+        or delegate to ``IntentDecomposer`` to break it into steps.
+
+        Gated by ``FathomSettings.allow_atomic_intent_single_subgoal``.
+        When the flag is off, always decomposes. When on, first calls
+        ``IntentClassifier.should_decompose`` — a tool-call-based LLM
+        check — and wraps the intent as a single
+        ``SubGoal`` if the classifier says it's simple enough for the
+        planner to execute end-to-end. Fails safe via the classifier's
+        own fail-safe semantics (any classifier failure returns True,
+        so we fall through to the decomposer).
+        """
+
+        settings = FathomSettings()
+        if settings.allow_atomic_intent_single_subgoal:
+            logger.info(f"[IntentStrategy] Classifying intent: {self.__intent}")
+            classifier = IntentClassifier(llm=self.__llm)
+            should_decompose = await classifier.should_decompose(intent=self.__intent)
+        else:
+            should_decompose = True
+
+        if not should_decompose:
+            logger.info(
+                "[IntentStrategy] Classifier marked intent as simple; skipping decomposition."
+            )
+            return [
+                SubGoal(
+                    index=0,
+                    description=self.__intent,
+                    status=SubGoalStatus.PENDING,
+                    confidence=0.9,
+                )
+            ]
+
+        logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
+        decomposer = IntentDecomposer.with_configuration(
+            llm=self.__llm,
+            configuration=self.__graph_context.configuration.llm,
+        )
+        return await decomposer.decompose(intent=self.__intent)
 
     def __is_successful_completion(
         self,
