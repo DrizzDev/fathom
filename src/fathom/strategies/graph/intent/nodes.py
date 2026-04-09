@@ -754,8 +754,10 @@ class IntentNodeProvider:
             if isinstance(raw_elements, dict):
                 elements = raw_elements
 
-            # Get Device Dimensions for Accurate Normalization (Strict)
-            width, height = await self.__context.device.get_dimensions()
+            # Use dimensions from the screenshot itself (PNG IHDR) so
+            # coordinates stay consistent with what the LLM sees, even
+            # after the device rotates mid-session.
+            width, height = capture.width, capture.height
 
             # Determine interactive mode & config for planner
             is_interactive = self.__context.signal.supports_interruption()

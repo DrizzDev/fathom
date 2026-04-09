@@ -140,6 +140,8 @@ class ADBRemoteDeviceAdapter(DevicePort):
         Retrieve atomic snapshot (Screenshot + XML) from remote provider.
         """
 
+        self.__cached_dimensions = None
+
         try:
             params = {"execution_id": self.__execution_id} if self.__execution_id else {}
             response = await self.__execute_request("POST", "snapshot", params=params)
@@ -302,6 +304,8 @@ class ADBRemoteDeviceAdapter(DevicePort):
         """
         Capture device screenshot.
         """
+
+        self.__cached_dimensions = None
 
         request = RemoteInteractionRequest(
             action=InteractionAction.GET_SCREENSHOT, execution_id=self.__execution_id

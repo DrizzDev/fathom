@@ -7,6 +7,7 @@ from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.configuration import DeviceConfiguration, DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult
+from fathom.utils.image import parse_png_dimensions
 
 from .adb import ADBRemoteDeviceAdapter
 
@@ -191,23 +192,7 @@ class IOSRemoteDeviceAdapter(DevicePort):
         if self.__cached_screenshot_dimensions or not image:
             return
 
-        self.__cached_screenshot_dimensions = self.__parse_png_dimensions(image=image)
-
-    @staticmethod
-    def __parse_png_dimensions(*, image: bytes) -> Tuple[int, int]:
-        """
-        Parse screenshot width and height from PNG IHDR bytes.
-        """
-
-        if len(image) < 24:
-            raise DeviceError("Invalid PNG payload: too small to contain IHDR")
-
-        if image[:8] != b"\x89PNG\r\n\x1a\n":
-            raise DeviceError("Invalid PNG payload: missing PNG signature")
-
-        if image[12:16] != b"IHDR":
-            raise DeviceError("Invalid PNG payload: IHDR chunk not found")
-
-        width = int.from_bytes(image[16:20], byteorder="big")
-        height = int.from_bytes(image[20:24], byteorder="big")
-        return width, height
+        try:
+            self.__cached_screenshot_dimensions = parse_png_dimensions(image)
+        except ValueError as exc:
+            raise DeviceError(str(exc)) from exc

@@ -9,6 +9,7 @@ from fathom.interfaces.device import DevicePort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.screens import ScreenCapture
+from fathom.utils.image import parse_png_dimensions
 
 logger = getLogger(__name__)
 
@@ -50,7 +51,7 @@ class RemotePerceptionAdapter(PerceptionPort):
         if not screenshot_bytes:
             raise DeviceError("Remote perception captured an empty screenshot.")
 
-        width, height = await self.__device.get_dimensions()
+        width, height = await self.__resolve_dimensions(screenshot_bytes)
         application_identifier = await self.__device.get_current_package()
 
         return ScreenCapture(
@@ -69,6 +70,22 @@ class RemotePerceptionAdapter(PerceptionPort):
                 ),
             },
         )
+
+    async def __resolve_dimensions(self, screenshot_bytes: bytes) -> tuple[int, int]:
+        """Derive authoritative screen dimensions from the screenshot PNG.
+
+        Falls back to ``device.get_dimensions()`` only when the
+        screenshot bytes cannot be parsed as PNG.
+        """
+
+        try:
+            return parse_png_dimensions(screenshot_bytes)
+        except ValueError:
+            logger.warning(
+                "Could not parse PNG dimensions from remote screenshot; "
+                "falling back to device.get_dimensions()"
+            )
+            return await self.__device.get_dimensions()
 
     async def __capture(self) -> Tuple[bytes, Optional[str]]:
         """

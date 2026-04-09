@@ -23,6 +23,7 @@ from fathom.schemas.configuration import (
     SwipeInteractionPolicy,
 )
 from fathom.schemas.results import ActionResult
+from fathom.utils.image import parse_png_dimensions
 
 logger = getLogger(__name__)
 
@@ -264,7 +265,10 @@ class IOSDevice(DevicePort):
             return self.__cached_dimensions
 
         screenshot = await self.capture_screen()
-        width, height = self.__parse_png_dimensions(image=screenshot)
+        try:
+            width, height = parse_png_dimensions(screenshot)
+        except ValueError as exc:
+            raise DeviceError(str(exc)) from exc
 
         if width <= 0 or height <= 0:
             raise DeviceError("Get dimensions: invalid PNG dimensions returned by simulator")
@@ -351,7 +355,10 @@ class IOSDevice(DevicePort):
         if self.__cached_dimensions:
             return
 
-        width, height = self.__parse_png_dimensions(image=image)
+        try:
+            width, height = parse_png_dimensions(image)
+        except ValueError:
+            return
         if width > 0 and height > 0:
             self.__cached_dimensions = (width, height)
 
@@ -719,28 +726,6 @@ class IOSDevice(DevicePort):
         formatted = f"{seconds:.3f}"
 
         return formatted.rstrip("0").rstrip(".") or "0"
-
-    @staticmethod
-    def __parse_png_dimensions(*, image: bytes) -> Tuple[int, int]:
-        """
-        Parse width and height from PNG IHDR bytes.
-        """
-
-        if len(image) < 24:
-            raise DeviceError("Invalid PNG payload: too small to contain IHDR")
-
-        signature = image[:8]
-        if signature != b"\x89PNG\r\n\x1a\n":
-            raise DeviceError("Invalid PNG payload: missing PNG signature")
-
-        chunk_type = image[12:16]
-        if chunk_type != b"IHDR":
-            raise DeviceError("Invalid PNG payload: IHDR chunk not found")
-
-        width = int.from_bytes(image[16:20], byteorder="big")
-        height = int.from_bytes(image[20:24], byteorder="big")
-
-        return width, height
 
     def __extract_foreground_bundle_identifier(self, *, launchctl_output: str) -> Optional[str]:
         """
