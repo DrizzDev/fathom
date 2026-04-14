@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 from typing import Optional, Tuple
+
+from PIL import Image
 
 from fathom.constants.interaction import SwipeSpeed
 from fathom.core.exceptions import DeviceError
@@ -185,13 +188,16 @@ class IOSRemoteDeviceAdapter(DevicePort):
 
     def __cache_screenshot_dimensions(self, *, image: bytes) -> None:
         """
-        Cache screenshot-space dimensions from PNG bytes.
+        Cache screenshot-space dimensions from image bytes.
         """
 
         if self.__cached_screenshot_dimensions or not image:
             return
 
-        self.__cached_screenshot_dimensions = self.__parse_png_dimensions(image=image)
+        try:
+            self.__cached_screenshot_dimensions = self.__parse_png_dimensions(image=image)
+        except DeviceError:
+            self.__cached_screenshot_dimensions = self.__parse_image_dimensions(image=image)
 
     @staticmethod
     def __parse_png_dimensions(*, image: bytes) -> Tuple[int, int]:
@@ -211,3 +217,16 @@ class IOSRemoteDeviceAdapter(DevicePort):
         width = int.from_bytes(image[16:20], byteorder="big")
         height = int.from_bytes(image[20:24], byteorder="big")
         return width, height
+
+    @staticmethod
+    def __parse_image_dimensions(*, image: bytes) -> Tuple[int, int]:
+        """
+        Parse screenshot width and height using PIL. Handles any image format.
+        """
+
+        try:
+            with Image.open(io.BytesIO(image)) as img:
+                width, height = img.size
+                return width, height
+        except Exception as exception:
+            raise DeviceError(f"Unable to determine image dimensions: {exception}") from exception

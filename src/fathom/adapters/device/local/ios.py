@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import re
 import time
 import xml.etree.ElementTree as ElementTree  # nosec
 from logging import getLogger
 from typing import Dict, List, Optional, Tuple
+
+from PIL import Image
 
 from fathom.adapters.ios.gateway import IOSAutomationGateway
 from fathom.constants.interaction import SwipeSpeed
@@ -264,10 +267,14 @@ class IOSDevice(DevicePort):
             return self.__cached_dimensions
 
         screenshot = await self.capture_screen()
-        width, height = self.__parse_png_dimensions(image=screenshot)
+
+        try:
+            width, height = self.__parse_png_dimensions(image=screenshot)
+        except DeviceError:
+            width, height = self.__parse_image_dimensions(image=screenshot)
 
         if width <= 0 or height <= 0:
-            raise DeviceError("Get dimensions: invalid PNG dimensions returned by simulator")
+            raise DeviceError("Get dimensions: invalid dimensions returned by simulator")
 
         self.__cached_dimensions = (width, height)
         return self.__cached_dimensions
@@ -351,7 +358,11 @@ class IOSDevice(DevicePort):
         if self.__cached_dimensions:
             return
 
-        width, height = self.__parse_png_dimensions(image=image)
+        try:
+            width, height = self.__parse_png_dimensions(image=image)
+        except DeviceError:
+            width, height = self.__parse_image_dimensions(image=image)
+
         if width > 0 and height > 0:
             self.__cached_dimensions = (width, height)
 
@@ -741,6 +752,19 @@ class IOSDevice(DevicePort):
         height = int.from_bytes(image[20:24], byteorder="big")
 
         return width, height
+
+    @staticmethod
+    def __parse_image_dimensions(*, image: bytes) -> Tuple[int, int]:
+        """
+        Parse screenshot width and height using PIL. Handles any image format.
+        """
+
+        try:
+            with Image.open(io.BytesIO(image)) as img:
+                width, height = img.size
+                return width, height
+        except Exception as exception:
+            raise DeviceError(f"Unable to determine image dimensions: {exception}") from exception
 
     def __extract_foreground_bundle_identifier(self, *, launchctl_output: str) -> Optional[str]:
         """
