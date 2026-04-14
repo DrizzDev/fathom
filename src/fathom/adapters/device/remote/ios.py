@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 from typing import Optional, Tuple
+
+from PIL import Image
 
 from fathom.constants.interaction import SwipeSpeed
 from fathom.core.exceptions import DeviceError
@@ -186,13 +189,45 @@ class IOSRemoteDeviceAdapter(DevicePort):
 
     def __cache_screenshot_dimensions(self, *, image: bytes) -> None:
         """
-        Cache screenshot-space dimensions from PNG bytes.
+        Cache screenshot-space dimensions from image bytes.
         """
 
         if self.__cached_screenshot_dimensions or not image:
             return
 
         try:
-            self.__cached_screenshot_dimensions = parse_png_dimensions(image)
-        except ValueError as exc:
-            raise DeviceError(str(exc)) from exc
+            self.__cached_screenshot_dimensions = self.__parse_png_dimensions(image=image)
+        except DeviceError:
+            self.__cached_screenshot_dimensions = self.__parse_image_dimensions(image=image)
+
+    @staticmethod
+    def __parse_png_dimensions(*, image: bytes) -> Tuple[int, int]:
+        """
+        Parse screenshot width and height from PNG IHDR bytes.
+        """
+
+        if len(image) < 24:
+            raise DeviceError("Invalid PNG payload: too small to contain IHDR")
+
+        if image[:8] != b"\x89PNG\r\n\x1a\n":
+            raise DeviceError("Invalid PNG payload: missing PNG signature")
+
+        if image[12:16] != b"IHDR":
+            raise DeviceError("Invalid PNG payload: IHDR chunk not found")
+
+        width = int.from_bytes(image[16:20], byteorder="big")
+        height = int.from_bytes(image[20:24], byteorder="big")
+        return width, height
+
+    @staticmethod
+    def __parse_image_dimensions(*, image: bytes) -> Tuple[int, int]:
+        """
+        Parse screenshot width and height using PIL. Handles any image format.
+        """
+
+        try:
+            with Image.open(io.BytesIO(image)) as img:
+                width, height = img.size
+                return width, height
+        except Exception as exception:
+            raise DeviceError(f"Unable to determine image dimensions: {exception}") from exception

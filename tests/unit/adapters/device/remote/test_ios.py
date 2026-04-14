@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import unittest
 from typing import List, Optional, Tuple, cast
+
+from PIL import Image
 
 from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
 from fathom.adapters.device.remote.ios import IOSRemoteDeviceAdapter
@@ -171,3 +174,35 @@ class IOSRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
         await adapter.tap(x=999, y=666)
 
         self.assertEqual(delegate.tap_calls, [(333, 222)])
+
+    async def test_jpeg_screenshot_dimensions_parsed_correctly(self) -> None:
+        """
+        Verify JPEG screenshots (from BrowserStack iOS) are handled.
+        Sentry trace header: ffd8ffe000104a46494600010100004800480000
+        """
+
+        # Build a minimal JPEG with known dimensions matching the Sentry trace header
+        jpeg_buffer = io.BytesIO()
+        Image.new("RGB", (1170, 2532)).save(jpeg_buffer, format="JPEG", quality=1)
+        jpeg_bytes = jpeg_buffer.getvalue()
+
+        # Verify the JPEG starts with the expected magic bytes
+        self.assertTrue(jpeg_bytes[:2] == b"\xff\xd8")
+
+        delegate = FakeADBRemoteDeviceAdapter(
+            automation_dimensions=(390, 844),
+            screenshot_dimensions=(1170, 2532),
+        )
+        delegate.screenshot = jpeg_bytes
+
+        adapter = IOSRemoteDeviceAdapter(
+            configuration=DeviceConfiguration(
+                type=DeviceConnectionType.REMOTE,
+                platform=DevicePlatform.IOS,
+            ),
+            delegate=cast("ADBRemoteDeviceAdapter", delegate),
+        )
+
+        await adapter.tap(x=585, y=1266)
+
+        self.assertEqual(delegate.tap_calls, [(195, 422)])

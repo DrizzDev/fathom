@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import re
 import time
 import xml.etree.ElementTree as ElementTree  # nosec
 from logging import getLogger
 from typing import Dict, List, Optional, Tuple
+
+from PIL import Image
 
 from fathom.adapters.ios.gateway import IOSAutomationGateway
 from fathom.constants.interaction import SwipeSpeed
@@ -265,13 +268,14 @@ class IOSDevice(DevicePort):
             return self.__cached_dimensions
 
         screenshot = await self.capture_screen()
+
         try:
-            width, height = parse_png_dimensions(screenshot)
-        except ValueError as exc:
-            raise DeviceError(str(exc)) from exc
+            width, height = self.__parse_png_dimensions(image=screenshot)
+        except DeviceError:
+            width, height = self.__parse_image_dimensions(image=screenshot)
 
         if width <= 0 or height <= 0:
-            raise DeviceError("Get dimensions: invalid PNG dimensions returned by simulator")
+            raise DeviceError("Get dimensions: invalid dimensions returned by simulator")
 
         self.__cached_dimensions = (width, height)
         return self.__cached_dimensions
@@ -356,9 +360,10 @@ class IOSDevice(DevicePort):
             return
 
         try:
-            width, height = parse_png_dimensions(image)
-        except ValueError:
-            return
+            width, height = self.__parse_png_dimensions(image=image)
+        except DeviceError:
+            width, height = self.__parse_image_dimensions(image=image)
+
         if width > 0 and height > 0:
             self.__cached_dimensions = (width, height)
 
