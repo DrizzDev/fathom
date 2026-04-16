@@ -10,7 +10,6 @@ from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.configuration import DeviceConfiguration, DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult
-from fathom.utils.image import parse_png_dimensions
 
 from .adb import ADBRemoteDeviceAdapter
 
@@ -190,6 +189,12 @@ class IOSRemoteDeviceAdapter(DevicePort):
     def __cache_screenshot_dimensions(self, *, image: bytes) -> None:
         """
         Cache screenshot-space dimensions from image bytes.
+
+        Best-effort: tries the fast PNG IHDR parser first, falls back
+        to PIL for non-PNG formats, and silently leaves the cache
+        unset if both parsers reject the bytes. Raising from here
+        would take down the tap/swipe flow over a best-effort
+        optimization.
         """
 
         if self.__cached_screenshot_dimensions or not image:
@@ -198,7 +203,10 @@ class IOSRemoteDeviceAdapter(DevicePort):
         try:
             self.__cached_screenshot_dimensions = self.__parse_png_dimensions(image=image)
         except DeviceError:
-            self.__cached_screenshot_dimensions = self.__parse_image_dimensions(image=image)
+            try:
+                self.__cached_screenshot_dimensions = self.__parse_image_dimensions(image=image)
+            except DeviceError:
+                return
 
     @staticmethod
     def __parse_png_dimensions(*, image: bytes) -> Tuple[int, int]:

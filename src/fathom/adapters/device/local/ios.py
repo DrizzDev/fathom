@@ -26,7 +26,6 @@ from fathom.schemas.configuration import (
     SwipeInteractionPolicy,
 )
 from fathom.schemas.results import ActionResult
-from fathom.utils.image import parse_png_dimensions
 
 logger = getLogger(__name__)
 
@@ -353,7 +352,14 @@ class IOSDevice(DevicePort):
 
     def __cache_dimensions_from_image(self, *, image: bytes) -> None:
         """
-        Cache screenshot pixel dimensions from PNG bytes when available.
+        Cache screenshot pixel dimensions from image bytes when available.
+
+        Best-effort: tries the fast PNG IHDR parser first, falls back
+        to PIL for non-PNG formats, and silently leaves the cache
+        unset if both parsers reject the bytes. This helper is called
+        from ``capture_screen`` after every screenshot — raising from
+        here would take down the whole capture flow over a best-effort
+        optimization.
         """
 
         if self.__cached_dimensions:
@@ -362,10 +368,53 @@ class IOSDevice(DevicePort):
         try:
             width, height = self.__parse_png_dimensions(image=image)
         except DeviceError:
-            width, height = self.__parse_image_dimensions(image=image)
+            try:
+                width, height = self.__parse_image_dimensions(image=image)
+            except DeviceError:
+                return
 
         if width > 0 and height > 0:
             self.__cached_dimensions = (width, height)
+
+    @staticmethod
+    def __parse_png_dimensions(*, image: bytes) -> Tuple[int, int]:
+        """
+        Parse screenshot width and height from PNG IHDR bytes.
+
+        Lightweight alternative to decoding the full image with PIL.
+        Raises ``DeviceError`` when ``image`` is not a valid PNG or is
+        truncated before the IHDR data.
+        """
+
+        if len(image) < 24:
+            raise DeviceError("Invalid PNG payload: too small to contain IHDR")
+
+        if image[:8] != b"\x89PNG\r\n\x1a\n":
+            raise DeviceError("Invalid PNG payload: missing PNG signature")
+
+        if image[12:16] != b"IHDR":
+            raise DeviceError("Invalid PNG payload: IHDR chunk not found")
+
+        width = int.from_bytes(image[16:20], byteorder="big")
+        height = int.from_bytes(image[20:24], byteorder="big")
+        return width, height
+
+    @staticmethod
+    def __parse_image_dimensions(*, image: bytes) -> Tuple[int, int]:
+        """
+        Parse screenshot width and height using PIL.
+
+        Fallback for non-PNG screenshots (e.g. JPEG from some
+        simulators / capture paths). Handles any format PIL can
+        decode.
+        """
+
+        try:
+            with Image.open(io.BytesIO(image)) as img:
+                width, height = img.size
+                return width, height
+        except Exception as exception:
+            raise DeviceError(f"Unable to determine image dimensions: {exception}") from exception
 
     async def __resolve_launchctl_bundle_identifier(
         self,
