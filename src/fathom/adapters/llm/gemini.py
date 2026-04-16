@@ -9,7 +9,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Union, cast
 from google.genai import Client, types
 from google.oauth2 import service_account
 
-from fathom.adapters.llm.cache import CacheService
+from fathom.adapters.llm.cache import DEFAULT_BUCKET, CacheService
 from fathom.constants.llm import (
     GEMINI_CANCELLED_ERROR_MARKERS,
     GEMINI_CANCELLED_STATUS_CODE,
@@ -33,6 +33,14 @@ from fathom.schemas.llm import GeminiExceptionKind, GeminiExceptionMetadata
 from fathom.schemas.results import GenerateResult
 
 logger = getLogger(__name__)
+
+# Per-caller slot budgets. Buckets not listed fall back to CacheService's
+# default_max_entries. Keep this conservative: remote caches are bounded
+# by TTL and a per-bucket evictor, so over-provisioning costs memory not
+# dollars.
+_CACHE_BUCKET_MAX_ENTRIES: Dict[str, int] = {
+    "vision_planner": 4,  # 2 prewarm variants + analyze + replan headroom
+}
 
 
 class GeminiLLM(LLMPort):
@@ -117,7 +125,11 @@ class GeminiLLM(LLMPort):
                     credentials=self.__credentials,
                 )
 
-            self.__cache = CacheService(client=self.__client, model_name=self.__configuration.model)
+            self.__cache = CacheService(
+                client=self.__client,
+                model_name=self.__configuration.model,
+                bucket_max_entries=_CACHE_BUCKET_MAX_ENTRIES,
+            )
         except Exception as exception:
             if not self.__configuration.api_key and not self.__configuration.credentials:
                 raise VisionError("Init failed: Missing Gemini authentication") from exception
@@ -198,6 +210,7 @@ class GeminiLLM(LLMPort):
         system_instruction: Optional[str] = None,
         conversation_history: Optional[Sequence[ConversationTurn]] = None,
         thinking_level: Optional[str] = None,
+        cache_bucket: str = DEFAULT_BUCKET,
     ) -> GenerateResult:
         """
         Main handler for LLM interaction.
@@ -211,6 +224,7 @@ class GeminiLLM(LLMPort):
             cache_name = await self.__cache.get_cached_content(
                 system_instruction=system_instruction,
                 tools=tools.get("function_declarations") if tools else None,
+                bucket=cache_bucket,
             )
 
         # Wrap content parts correctly for SDK
@@ -371,6 +385,7 @@ class GeminiLLM(LLMPort):
         *,
         system_instruction: Optional[str],
         tools: Optional[Dict[str, Any]] = None,
+        cache_bucket: str = DEFAULT_BUCKET,
     ) -> None:
         """
         Prewarm provider-side prompt cache before the first LLM call.
@@ -387,6 +402,7 @@ class GeminiLLM(LLMPort):
         await self.__cache.get_cached_content(
             tools=declarations,
             system_instruction=system_instruction,
+            bucket=cache_bucket,
         )
 
     async def cleanup(self) -> None:
@@ -395,7 +411,35 @@ class GeminiLLM(LLMPort):
         """
 
         if self.__cache:
+            self.__log_cache_summary()
             await self.__cache.delete_cache()
+
+    def __log_cache_summary(self) -> None:
+        """
+        Emit per-bucket cache statistics at shutdown.
+
+        Surfaces hit rate / evictions / creates so we can tell whether
+        bucket budgets are sized correctly without instrumenting any
+        request path.
+        """
+
+        if not self.__cache:
+            return
+
+        bucket_stats = self.__cache.all_bucket_stats()
+        if not bucket_stats:
+            return
+
+        for bucket, stats in bucket_stats.items():
+            logger.info(
+                "[cache:%s] hits=%d misses=%d creates=%d evictions=%d hit_rate=%.3f",
+                bucket,
+                stats.hits,
+                stats.misses,
+                stats.creates,
+                stats.evictions,
+                stats.hit_rate,
+            )
 
     def __build_exception_metadata(
         self, *, exception: Exception, cache_name: Optional[str]

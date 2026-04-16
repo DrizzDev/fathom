@@ -85,7 +85,11 @@ class VisionService:
 
         start = time.time()
         for tools in self.__planner_tool_variants():
-            await self.__llm.prewarm(tools=tools, system_instruction=instruction)
+            await self.__llm.prewarm(
+                tools=tools,
+                system_instruction=instruction,
+                cache_bucket="vision_planner",
+            )
 
         duration = time.time() - start
 
@@ -326,6 +330,7 @@ class VisionService:
                 system_instruction=instruction,
                 conversation_history=conversation_history if conversation_history else None,
                 thinking_level=retry_thinking,
+                cache_bucket="vision_planner",
             )
             duration = time.time() - commence
 
@@ -334,6 +339,18 @@ class VisionService:
             logger.info(
                 f"[VISION] LLM Response | Duration: {duration:.3f}s | "
                 f"Model: {self.__llm.model_name} | Raw: {raw_text}..."
+            )
+
+            # Surface per-call token counts + latency to every telemetry
+            # adapter (console, demo TUI, structlog) so dashboards can
+            # aggregate usage without sifting through AuditService's
+            # direct-print panels.
+            await self.__telemetry.info(
+                "LLM call complete",
+                type=FathomEvent.LLM_CALL_COMPLETED,
+                metrics=dict(response.metrics or {}),
+                duration=duration,
+                model=self.__llm.model_name,
             )
 
             # 5. PARSE & ENRICH
