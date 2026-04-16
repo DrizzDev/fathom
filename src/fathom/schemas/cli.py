@@ -115,11 +115,27 @@ class RunCommandInput(LocalCommandInput):
         return normalized or None
 
 
-class ExploreCommandInput(LocalCommandInput):
+class DemoCommandInput(RunCommandInput):
     """
-    Validated command payload for `fathom explore`.
+    Validated command payload for `fathom demo`.
+
+    Demo is the interactive HITL variant of ``run``:
+
+    - Argparse defaults make it interactive with the console HITL
+      signal adapter wired in (see ``__configure_demo_parser``).
+    - Executor swaps in ``LiveDemoTelemetryAdapter`` when
+      ``command_name == "demo"``, replacing the scrolling panels
+      with a pinned live footer.
+    - Everything else (``use_xml``, ``max_steps``, realignment
+      budget) inherits from ``RunCommandInput`` so the agent
+      pipeline behaves the same.
+
+    The autonomous (non-HITL) path is ``fathom run``.
     """
 
-    command: Literal["explore"] = Field(default="explore")
-    max_steps: int = Field(default=100, ge=1)
-    verbose: bool = Field(default=False)
+    # Narrowing a ``Literal`` field across subclasses is a known
+    # Pydantic pattern that mypy rejects as an invariant-field
+    # assignment. The ``command`` field is metadata only — dispatch
+    # reads ``argparse`` output, not this model — so the narrowing
+    # is safe at runtime.
+    command: Literal["demo"] = Field(default="demo")  # type: ignore[assignment]

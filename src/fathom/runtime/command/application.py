@@ -18,11 +18,14 @@ from fathom.runtime.command.resolver import (
     LocalDeviceConfigurationResolver,
     LocalDeviceConfigurationResolverPort,
 )
-from fathom.schemas.cli import ExploreCommandInput, LocalCommandInput, RunCommandInput
+from fathom.runtime.command.wizard import InteractiveWizard, wizard_argv
+from fathom.schemas.cli import (
+    DemoCommandInput,
+    LocalCommandInput,
+    RunCommandInput,
+)
 from fathom.schemas.configuration import DeviceConfiguration
 from fathom.schemas.run import (
-    ExplorationObjectiveConfiguration,
-    ExplorationRunRequest,
     IntentObjectiveConfiguration,
     IntentRunRequest,
     InteractionConfiguration,
@@ -74,7 +77,7 @@ class CommandApplication:
         )
         subparsers = parser.add_subparsers(dest="command", help="Command to execute")
         self.__configure_run_parser(subparsers=subparsers)
-        self.__configure_explore_parser(subparsers=subparsers)
+        self.__configure_demo_parser(subparsers=subparsers)
         return parser
 
     def __configure_run_parser(
@@ -186,84 +189,115 @@ class CommandApplication:
         )
         run_parser.set_defaults(immediate_realignment=True)
 
-    def __configure_explore_parser(
+    def __configure_demo_parser(
         self,
         *,
         subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
     ) -> None:
         """
-        Configure explore command arguments.
+        Configure demo command arguments.
+
+        The ``demo`` command is a styled variant of ``run`` that swaps
+        in the live footer telemetry adapter for Claude-Code-style
+        presentation. All flags mirror ``run``; defaults are tuned for
+        showcases (XML grounding on, verbose off).
         """
 
-        explore_parser = subparsers.add_parser("explore", help="Run app exploration")
-        explore_parser.add_argument(
-            "--max-steps",
-            type=int,
-            default=100,
-            help="Maximum steps allowed",
+        demo_parser = subparsers.add_parser(
+            "demo",
+            help="Run an intent workflow with a demo-styled live footer",
         )
-        explore_parser.add_argument(
+        demo_parser.add_argument("intent", type=str, help="The goal description")
+        demo_parser.add_argument(
             "--platform",
             type=str,
             default=None,
             choices=["android", "ios"],
             help="Local device platform",
         )
-        explore_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
-        explore_parser.add_argument(
+        demo_parser.add_argument("--serial", "-s", type=str, help="Device serial number")
+        demo_parser.add_argument(
             "--ios-device-identifier",
             type=str,
             dest="ios_device_identifier",
             help="iOS simulator device identifier",
         )
-        explore_parser.add_argument(
+        demo_parser.add_argument(
             "--ios-bundle-identifier",
             "--bundle-id",
             type=str,
             dest="ios_bundle_identifier",
             help="Default iOS bundle identifier context",
         )
-        explore_parser.add_argument(
+        demo_parser.add_argument(
             "--ios-executable-path",
             type=str,
             help="Path to xcrun executable for iOS local adapter",
         )
-        explore_parser.add_argument(
+        demo_parser.add_argument(
             "--ios-automation-backend",
             type=str,
             default=None,
             choices=["xcrun_simctl", "xcuitest", "webdriver_agent"],
-            help="iOS perception strategy: native xcrun or enhanced hierarchy via XCUITest/WebDriverAgent",
+            help="iOS perception strategy",
         )
-        explore_parser.add_argument(
+        demo_parser.add_argument(
             "--ios-web-driver-agent-url",
             type=str,
             default=None,
             help="WebDriverAgent URL for iOS hierarchy extraction",
         )
-        explore_parser.add_argument(
+        demo_parser.add_argument(
             "--ios-web-driver-agent-bundle-identifier",
             type=str,
             default=None,
             help="Bundle identifier used while creating WebDriverAgent sessions",
         )
-        explore_parser.add_argument(
+        demo_parser.add_argument(
             "--ios-web-driver-agent-request-timeout-seconds",
             type=float,
             default=None,
             help="WebDriverAgent request timeout in seconds",
         )
-        explore_parser.add_argument(
+        demo_parser.add_argument(
             "--adb-path",
             type=str,
             default=None,
             help="Path to adb executable for Android local adapter",
         )
-        explore_parser.add_argument(
+        demo_parser.add_argument("--api-key", "-k", type=str, help="Gemini API Key")
+        demo_parser.add_argument("--max-steps", type=int, default=100, help="Maximum steps allowed")
+        demo_parser.add_argument(
             "--verbose",
             "-v",
             action="store_true",
             help="Enable verbose output",
+        )
+        demo_parser.add_argument(
+            "--realignment-budget",
+            type=int,
+            default=3,
+            help="Maximum allowed consecutive re-plans",
+        )
+        demo_parser.add_argument(
+            "--no-realignment",
+            action="store_false",
+            dest="immediate_realignment",
+            help="Disable immediate re-planning on context injection",
+        )
+        # Demo is the interactive HITL variant of run:
+        # - ``interactive=True`` by default so the signal adapter is
+        #   wired and the agent escalates to a human prompt on
+        #   uncertainty.
+        # - ``signal="interactive"`` picks the interactive HITL adapter
+        #   (console prompts + stdin).
+        # - ``use_xml`` intentionally omitted so it defaults to False
+        #   (matching ``run``).
+        # The non-HITL autonomous path is ``fathom run``.
+        demo_parser.set_defaults(
+            immediate_realignment=True,
+            interactive=True,
+            signal="interactive",
         )
 
     def __build_device_configuration(
@@ -325,65 +359,32 @@ class CommandApplication:
             metadata=RunMetadata(),
         )
 
-    def __build_explore_request(
-        self,
-        *,
-        settings: FathomSettings,
-        command_input: ExploreCommandInput,
-    ) -> ExplorationRunRequest:
-        """
-        Build canonical run request for the explore command.
-        """
-
-        device_configuration = self.__build_device_configuration(
-            settings=settings,
-            command_input=command_input,
-        )
-
-        return ExplorationRunRequest(
-            objective=ExplorationObjectiveConfiguration(
-                max_steps=command_input.max_steps,
-            ),
-            runtime=RuntimeConfiguration(
-                interactive=False,
-                signal_type=SignalAdapterType.INTERACTIVE,
-            ),
-            memory=MemoryConfiguration(),
-            resources=ResourceConfiguration(
-                targets=[
-                    TargetConfiguration(
-                        kind=TargetKind.DEVICE,
-                        device_configuration=device_configuration,
-                    )
-                ],
-                language_model_configuration=ModelSelectionConfiguration(),
-            ),
-            metadata=RunMetadata(),
-        )
-
     def __resolve_command_inputs(
         self,
         *,
         settings: FathomSettings,
         arguments: Dict[str, object],
-    ) -> Tuple[str, Optional[RunCommandInput], Optional[ExploreCommandInput]]:
+    ) -> Tuple[str, Optional[RunCommandInput]]:
         """
         Validate and resolve command-specific inputs.
         """
 
         command_name = str(arguments.get("command") or "")
         run_command_input: Optional[RunCommandInput] = None
-        explore_command_input: Optional[ExploreCommandInput] = None
 
         if command_name == "run":
             run_command_input = RunCommandInput.model_validate(arguments)
             self.__apply_run_overrides(settings=settings, command_input=run_command_input)
 
-        elif command_name == "explore":
-            explore_command_input = ExploreCommandInput.model_validate(arguments)
-            self.__apply_explore_overrides(settings=settings, command_input=explore_command_input)
+        elif command_name == "demo":
+            # DemoCommandInput extends RunCommandInput; routing the
+            # parsed demo args through it lets the downstream flow
+            # (build_run_request, executor) treat demo as a styled
+            # variant of run.
+            run_command_input = DemoCommandInput.model_validate(arguments)
+            self.__apply_run_overrides(settings=settings, command_input=run_command_input)
 
-        return command_name, run_command_input, explore_command_input
+        return command_name, run_command_input
 
     def __apply_run_overrides(
         self,
@@ -392,7 +393,14 @@ class CommandApplication:
         command_input: RunCommandInput,
     ) -> None:
         """
-        Apply validated settings overrides for run command.
+        Apply validated settings overrides for run / demo commands.
+
+        Both commands default to WARNING log level so per-step INFO
+        and DEBUG lines don't bury the rendered panels / live footer.
+        ``--verbose`` opts back into DEBUG for full operator detail.
+        Rich panels (``AuditService``, banner, summary tables, demo
+        footer) are ``console.print`` / ``rich.live`` renderables and
+        are not affected by log level — only structlog text output is.
         """
 
         if command_input.api_key:
@@ -400,22 +408,8 @@ class CommandApplication:
 
         if command_input.verbose:
             settings.log_level = "DEBUG"
-
-        if command_input.adb_executable_path:
-            settings.adb_path = command_input.adb_executable_path
-
-    def __apply_explore_overrides(
-        self,
-        *,
-        settings: FathomSettings,
-        command_input: ExploreCommandInput,
-    ) -> None:
-        """
-        Apply validated settings overrides for explore command.
-        """
-
-        if command_input.verbose:
-            settings.log_level = "DEBUG"
+        else:
+            settings.log_level = "WARNING"
 
         if command_input.adb_executable_path:
             settings.adb_path = command_input.adb_executable_path
@@ -438,17 +432,16 @@ class CommandApplication:
         command_name: str,
         settings: FathomSettings,
         run_command_input: Optional[RunCommandInput],
-        explore_command_input: Optional[ExploreCommandInput],
     ) -> int:
         """
         Dispatch validated command to runtime executor.
         """
 
-        executor = CommandExecutor(settings=settings)
+        executor = CommandExecutor(settings=settings, demo_mode=(command_name == "demo"))
 
-        if command_name == "run":
+        if command_name in {"run", "demo"}:
             if run_command_input is None:
-                console.print("[bold red]Invalid run command input.[/bold red]")
+                console.print(f"[bold red]Invalid {command_name} command input.[/bold red]")
                 return 1
 
             run_request = self.__build_run_request(
@@ -457,30 +450,54 @@ class CommandApplication:
             )
             return asyncio.run(executor.run(request=run_request))
 
-        if command_name == "explore":
-            if explore_command_input is None:
-                console.print("[bold red]Invalid explore command input.[/bold red]")
-                return 1
-
-            exploration_request = self.__build_explore_request(
-                settings=settings,
-                command_input=explore_command_input,
-            )
-            return asyncio.run(executor.explore(request=exploration_request))
-
         self.__parser.print_help()
         return 0
 
     def run(self) -> int:
         """
         Execute command application lifecycle.
+
+        When invoked without a subcommand (typical for ``Drizz`` /
+        ``fathom`` bare), the interactive wizard collects inputs and
+        we re-enter this flow with a synthesized argv so argparse +
+        Pydantic validation stay the single source of truth.
         """
 
-        arguments = vars(self.__parser.parse_args())
+        parsed_args = self.__parser.parse_args()
+        arguments = vars(parsed_args)
+
+        if not arguments.get("command"):
+            return self.__run_wizard_flow()
+
+        return self.__run_with_arguments(arguments=arguments)
+
+    def __run_wizard_flow(self) -> int:
+        """
+        Launch the interactive wizard and re-dispatch its result.
+        """
+
+        try:
+            wizard_result = InteractiveWizard(console=console).run()
+        except KeyboardInterrupt:
+            return 1
+
+        if wizard_result is None:
+            console.print("[yellow]Aborted.[/yellow]")
+            return 0
+
+        argv = wizard_argv(args=wizard_result)
+        arguments = vars(self.__parser.parse_args(argv))
+        return self.__run_with_arguments(arguments=arguments)
+
+    def __run_with_arguments(self, *, arguments: Dict[str, object]) -> int:
+        """
+        Resolve inputs and dispatch to the appropriate command.
+        """
+
         settings = FathomSettings()
 
         try:
-            command_name, run_command_input, explore_command_input = self.__resolve_command_inputs(
+            command_name, run_command_input = self.__resolve_command_inputs(
                 arguments=arguments,
                 settings=settings,
             )
@@ -495,7 +512,6 @@ class CommandApplication:
                 command_name=command_name,
                 settings=settings,
                 run_command_input=run_command_input,
-                explore_command_input=explore_command_input,
             )
         except FathomError as exception:
             console.print(f"[bold red]Configuration Error:[/bold red] {escape(str(exception))}")

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import signal
-import time
 from logging import getLogger
 from typing import Optional
 
@@ -11,6 +10,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
+from fathom.adapters.signal.tui import TuiSignalAdapter
 from fathom.adapters.telemetry.console import ConsoleTelemetryAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.core.exceptions import FathomError
@@ -22,8 +22,10 @@ from fathom.interfaces.factory import (
     TelemetryFactoryPort,
 )
 from fathom.interfaces.signal import SignalPort
+from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
+from fathom.runtime.command.demo_tui import DemoApp, TuiTelemetryAdapter
 from fathom.runtime.command.resolver import (
     RuntimeDeviceDefaultsResolver,
     RuntimeDeviceDefaultsResolverPort,
@@ -38,7 +40,7 @@ from fathom.runtime.factories import (
 from fathom.runtime.runner import FathomRunner
 from fathom.schemas.configuration import DeviceConfiguration
 from fathom.schemas.results import IntentResult
-from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest, RunRequest
+from fathom.schemas.run import IntentRunRequest, RunRequest
 from fathom.settings.env import FathomSettings
 
 console = Console()
@@ -60,6 +62,7 @@ class CommandExecutor:
         telemetry_factory: Optional[TelemetryFactoryPort] = None,
         perception_factory: Optional[PerceptionFactoryPort] = None,
         device_defaults_resolver: Optional[RuntimeDeviceDefaultsResolverPort] = None,
+        demo_mode: bool = False,
     ) -> None:
         """
         Initialize executor with settings.
@@ -67,6 +70,7 @@ class CommandExecutor:
 
         self.__cancelled = False
         self.__settings = settings
+        self.__demo_mode = demo_mode
 
         self.__runner: Optional[FathomRunner] = None
         self.__llm_factory = llm_factory or LLMFactory()
@@ -129,9 +133,19 @@ class CommandExecutor:
 
         return signal_adapter
 
-    def __create_runner(self, *, request: RunRequest, signal_adapter: SignalPort) -> FathomRunner:
+    def __create_runner(
+        self,
+        *,
+        request: RunRequest,
+        signal_adapter: SignalPort,
+        telemetry_override: Optional[TelemetryPort] = None,
+    ) -> FathomRunner:
         """
         Build configured runtime runner for command execution.
+
+        ``telemetry_override`` lets the demo TUI swap in its
+        ``TuiTelemetryAdapter`` while the standard console pipeline
+        stays the default.
         """
 
         path_manager = SharedPathManager(settings=self.__settings)
@@ -151,10 +165,13 @@ class CommandExecutor:
 
         llm_adapter = self.__llm_factory.create(configuration=llm_configuration)
 
-        telemetry_adapter = ConsoleTelemetryAdapter(
-            console=console,
-            inner=self.__telemetry_factory.create(configuration=telemetry_configuration),
-        )
+        if telemetry_override is not None:
+            telemetry_adapter: TelemetryPort = telemetry_override
+        else:
+            telemetry_adapter = ConsoleTelemetryAdapter(
+                console=console,
+                inner=self.__telemetry_factory.create(configuration=telemetry_configuration),
+            )
 
         return (
             Fathom.builder(path_manager=path_manager)
@@ -166,9 +183,21 @@ class CommandExecutor:
             .build()
         )
 
+    def __build_telemetry_for_inner(self, *, request: RunRequest) -> TelemetryPort:
+        """
+        Build the inner (structlog) telemetry the demo adapter wraps.
+        """
+
+        assembly_builder = RunAssemblyBuilder(settings=self.__settings)
+        telemetry_configuration = assembly_builder.build_telemetry_configuration(request=request)
+        return self.__telemetry_factory.create(configuration=telemetry_configuration)
+
     async def __run_intent_workflow(self, *, request: IntentRunRequest) -> IntentResult:
         """
         Execute intent workflow with spinner in non-interactive mode.
+
+        Interactive mode (including ``fathom demo``) skips the spinner
+        so ``console.status`` does not fight with the HITL prompts.
         """
 
         if self.__runner is None:
@@ -299,6 +328,9 @@ class CommandExecutor:
 
         self.__setup_signals()
 
+        if self.__demo_mode:
+            return await self.__run_demo_tui(request=request)
+
         console.print(
             Panel.fit(
                 f"[bold blue]Fathom Agent[/bold blue]\n[cyan]Intent:[/cyan] {request.objective.intent}",
@@ -327,53 +359,85 @@ class CommandExecutor:
         finally:
             await self.__cleanup_runner()
 
-    async def explore(self, *, request: ExplorationRunRequest) -> int:
+    async def __run_demo_tui(self, *, request: IntentRunRequest) -> int:
         """
-        Execute exploration command flow.
+        Launch the Textual demo TUI and run the workflow inside it.
+
+        The runner, signal adapter, and telemetry adapter are all
+        built lazily inside ``workflow`` so they can bind to the
+        already-constructed ``DemoApp`` instance before the agent
+        starts emitting events.
+
+        Signal adapter: ``TuiSignalAdapter`` routes the agent's HITL
+        ``ask()`` calls through a Textual ``ModalScreen`` so we don't
+        contend with Textual for stdin. It reports
+        ``supports_interruption() == False`` — LangGraph between-step
+        interrupts would require a pause channel we don't provide,
+        so they stay off. Direct agent-initiated HITL asks still work
+        via the modal.
         """
 
-        self.__setup_signals()
+        # Forward reference resolved after DemoApp construction; the
+        # closure below runs only once the app is mounted.
+        app: Optional[DemoApp] = None
 
-        console.print(
-            Panel.fit(
-                "[bold blue]Fathom Explorer[/bold blue]\n[cyan]Goal:[/cyan] Map application structure",
-                border_style="blue",
+        async def workflow() -> bool:
+            if app is None:
+                # Closure invariant: DemoApp must be constructed before
+                # the workflow fires. Swap asserts for an explicit
+                # raise so `python -O` can't strip the check.
+                raise FathomError("Demo workflow fired before app assignment")
+
+            # Give the user an immediate visual cue that the agent is
+            # starting. Without this the TUI looks frozen while the
+            # Gemini client authenticates in the background.
+            app.show_panel(
+                Panel.fit(
+                    "[bold #a88fd8]🚀 Starting agent…[/bold #a88fd8]\n"
+                    "[dim]Authenticating LLM, building device adapter.\n"
+                    "HITL asks route to a modal (Enter submits, Esc cancels).[/dim]",
+                    border_style="#a88fd8",
+                )
             )
-        )
 
-        start_time = time.time()
-
-        try:
-            signal_adapter = self.__signal_factory.create(
-                interactive=False,
-                signal_type=request.runtime.signal_type.value,
+            tui_telemetry = TuiTelemetryAdapter(
+                app=app,
+                inner=self.__build_telemetry_for_inner(request=request),
             )
-            self.__runner = self.__create_runner(request=request, signal_adapter=signal_adapter)
+            signal_adapter = TuiSignalAdapter(app=app)
 
-            with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
-                result = await self.__runner.run_exploration(
+            # The DemoApp runs this workflow on its own worker thread
+            # (see ``DemoApp.__run_workflow_in_thread``), so synchronous
+            # blocking calls in ``__create_runner`` (Gemini auth,
+            # subprocess) no longer freeze Textual's main loop. We can
+            # call the sync factory directly.
+            self.__runner = self.__create_runner(
+                request=request,
+                signal_adapter=signal_adapter,
+                telemetry_override=tui_telemetry,
+            )
+
+            try:
+                result = await self.__runner.run_intent(
+                    intent=request.objective.intent,
+                    use_xml=request.objective.use_xml,
                     max_steps=request.objective.max_steps,
                     request_id=request.runtime.session_id,
+                    realignment=request.interaction.realignment,
                 )
+                return bool(result.success)
+            finally:
+                await self.__cleanup_runner()
 
-            table = Table(title="Exploration Results", border_style="green")
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="magenta")
-            table.add_row("Unique Screens", str(result.unique_screens))
-            table.add_row("Total Actions", str(result.total_actions))
-            table.add_row("Total Transitions", str(result.total_transitions))
-            table.add_row("Coverage", f"{result.coverage_percentage:.1f}%")
-            table.add_row("Duration", f"{(time.time() - start_time):.2f}s")
-            console.print(table)
+        app = DemoApp(intent=request.objective.intent, workflow=workflow)
 
-            return 0
-
+        try:
+            await app.run_async()
         except (asyncio.CancelledError, KeyboardInterrupt):
-            console.print("\n[bold red]Exploration cancelled by user.[/bold red]")
             return 1
         except Exception as exception:
-            logger.exception("Unexpected exploration error")
-            console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")
+            logger.exception("Demo TUI crashed")
+            console.print(f"[bold red]Demo error:[/bold red] {escape(str(exception))}")
             return 1
-        finally:
-            await self.__cleanup_runner()
+
+        return app.exit_code

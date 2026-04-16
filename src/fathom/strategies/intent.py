@@ -141,6 +141,19 @@ class IntentStrategy:
                     "Starting execution..."
                 )
 
+                # Cue: first sub-goal becomes active. Subsequent
+                # transitions fire from the VERIFY node when a sub-goal
+                # is marked complete.
+                if sub_goals:
+                    first_goal = sub_goals[0]
+                    await self.__graph_context.telemetry.info(
+                        "Sub-goal started",
+                        type=FathomEvent.SUB_GOAL_STARTED,
+                        index=first_goal.index,
+                        total=len(sub_goals),
+                        description=first_goal.description,
+                    )
+
                 executor = GraphExecutor(
                     graph=self.__graph,
                     context=self.__graph_context,
@@ -277,11 +290,20 @@ class IntentStrategy:
         else:
             should_decompose = True
 
+        # Cue: surface the classifier decision regardless of log level
+        # so the demo audience sees what the agent just decided.
+        await self.__graph_context.telemetry.info(
+            "Classifier decision",
+            type=FathomEvent.INTENT_CLASSIFIED,
+            should_decompose=should_decompose,
+            intent=self.__intent,
+        )
+
         if not should_decompose:
             logger.info(
                 "[IntentStrategy] Classifier marked intent as simple; skipping decomposition."
             )
-            return [
+            sub_goals = [
                 SubGoal(
                     index=0,
                     description=self.__intent,
@@ -289,13 +311,27 @@ class IntentStrategy:
                     confidence=0.9,
                 )
             ]
+            await self.__graph_context.telemetry.info(
+                "Plan ready",
+                type=FathomEvent.DECOMPOSITION_COMPLETE,
+                sub_goals=[goal.description for goal in sub_goals],
+                decomposed=False,
+            )
+            return sub_goals
 
         logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
         decomposer = IntentDecomposer.with_configuration(
             llm=self.__llm,
             configuration=self.__graph_context.configuration.llm,
         )
-        return await decomposer.decompose(intent=self.__intent)
+        sub_goals = await decomposer.decompose(intent=self.__intent)
+        await self.__graph_context.telemetry.info(
+            "Plan ready",
+            type=FathomEvent.DECOMPOSITION_COMPLETE,
+            sub_goals=[goal.description for goal in sub_goals],
+            decomposed=True,
+        )
+        return sub_goals
 
     def __is_successful_completion(
         self,

@@ -57,11 +57,14 @@ dependencies = [
     "types-PyYAML>=6.0.12.20250915",
     "rustworkx>=0.15.0",
     "langgraph>=0.0.10",
-    "langgraph-checkpoint-sqlite>=3.0.3"
+    "langgraph-checkpoint-sqlite>=3.0.3",
+    "questionary>=2.0.0",
+    "textual>=0.70.0"
 ]
 
 [project.scripts]
 fathom = "fathom.cli:main"
+Drizz = "fathom.cli:main"
 
 [project.optional-dependencies]
 gemini = [

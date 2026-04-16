@@ -1641,6 +1641,17 @@ class IntentNodeProvider:
                 # so it doesn't pollute the next sub-goal's context.
                 self.__context.context_manager.clear_user_guidance()
 
+                total_sub_goals = len(agent_state.sub_goal_list)
+
+                # Cue: the just-finished sub-goal.
+                await self.__context.telemetry.info(
+                    "Sub-goal completed",
+                    type=FathomEvent.SUB_GOAL_COMPLETED,
+                    index=current_sub_goal.index,
+                    total=total_sub_goals,
+                    description=current_sub_goal.description,
+                )
+
                 if has_more:
                     next_sg = agent_state.get_current_sub_goal()
                     logger.info(
@@ -1648,6 +1659,16 @@ class IntentNodeProvider:
                         f"Advancing to sub-goal {next_sg.index if next_sg else '(none)'}: "
                         f"'{next_sg.description if next_sg else ''}'"
                     )
+
+                    # Cue: the newly-active sub-goal.
+                    if next_sg is not None:
+                        await self.__context.telemetry.info(
+                            "Sub-goal started",
+                            type=FathomEvent.SUB_GOAL_STARTED,
+                            index=next_sg.index,
+                            total=total_sub_goals,
+                            description=next_sg.description,
+                        )
                     result = cast(
                         "IntentGraphState",
                         {
