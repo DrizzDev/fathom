@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fathom.schemas.actions import Action, Bounds
-from fathom.schemas.cli import ExploreCommandInput, LocalCommandInput, RunCommandInput
+from fathom.schemas.cli import LocalCommandInput, RunCommandInput
 from fathom.schemas.configuration import (
     ADBConfiguration,
     DeviceConfiguration,
@@ -74,7 +74,6 @@ __all__ = [
     "ExplorationRunRequest",
     "ExplorationGraph",
     "ExplorationResult",
-    "ExploreCommandInput",
     "FathomConfiguration",
     "GeminiExceptionKind",
     "GeminiExceptionMetadata",
