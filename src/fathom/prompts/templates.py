@@ -19,9 +19,10 @@ EXPLORATION_PERSONA = (
 EXPLORATION_MENTAL_MODEL = (
     "ALGORITHM: You are one step in a depth-first exploration loop.\n"
     "Each call, you see a screenshot and a list of already-tried actions.\n"
-    "Your job: identify ONE untried interactive element and tap it.\n"
-    "The orchestrator handles backtracking and navigation — you only pick the next element.\n"
-    "If every interactive element has been tried, signal content_exhausted=true."
+    "Your job: identify ONE untried interactive element and interact with it "
+    "via the RIGHT action type (tap, scroll, swipe, type, long_press).\n"
+    "The orchestrator handles backtracking and navigation — you only pick the next move.\n"
+    "If every interactive element has been exercised, signal content_exhausted=true."
 )
 
 EXPLORATION_SCAN_STRATEGY = (
@@ -93,15 +94,83 @@ EXPLORATION_OVERLAY_RULES = (
     "Overlay dismissal does NOT count as exploring a new element."
 )
 
+EXPLORATION_LIST_SAMPLING = (
+    "LIST SAMPLING — treat long lists as ONE element, not N:\n"
+    "When the screen shows a long or infinite feed of similar items (search results, "
+    "product grid, restaurant cards, social posts, article list, chat history, "
+    "email inbox, video thumbnails):\n"
+    "- DO NOT tap every result. Detail pages repeat the same template with different data — "
+    "tapping the 5th restaurant after the 4th is nearly pure waste.\n"
+    "- Sample at most 2–3 representatives TOTAL per list. Pick VARIED examples "
+    "(first item, a middle item, something visually different — not 3 adjacent cards).\n"
+    "- Once you have sampled ~3 items from a list and the resulting detail pages share "
+    "the same template, treat the remaining items as effectively tried. Move on to a "
+    "DIFFERENT navigation element — P1 tab, P2 primary action, or BACK.\n"
+    "- Exhaustion for this kind of screen means: (a) non-content-item elements have been "
+    "exercised, AND (b) you have sampled a few content items. It does NOT require tapping "
+    "every visible card.\n"
+    "EXAMPLES of lists to SAMPLE (not enumerate):\n"
+    "- Restaurant listings, product grids, search result pages.\n"
+    "- Social feeds, news feeds, comment threads, notification lists.\n"
+    "- Email inbox, message list, video gallery, playlist."
+)
+
+EXPLORATION_FOCUS_DIRECTIVE = (
+    "FOCUSED EXPLORATION — read GOAL carefully:\n"
+    "When GOAL names a specific section, flow, or feature of the app "
+    "(e.g. 'Focus on the checkout flow', 'Focus on the profile settings'):\n"
+    "- If the CURRENT SCREEN is part of that section → explore thoroughly; "
+    "every visible interactive element is in-scope.\n"
+    "- If NOT in the section → prioritize P1 global_navigation that heads toward it. "
+    "Skip P3 content_items and P4 filters in unrelated sections; they waste steps.\n"
+    "- Use BACK to escape a branch that doesn't lead toward the target.\n"
+    "- Signal content_exhausted=true for an activity once the target section is fully "
+    "mapped OR confirmed unreachable from here.\n"
+    "When GOAL is generic ('Explore this app...') or absent, treat every activity as "
+    "in-scope and use the normal P1→P5 priority."
+)
+
+EXPLORATION_ACTION_PALETTE = (
+    "ACTIONS — not every element is a tap. Pick the right gesture:\n"
+    "- tap: discrete clickable element (button, tab, card, icon, chip).\n"
+    "- scroll / swipe_up / swipe_down: scrollable feeds, lists, content areas. "
+    "Use LIBERALLY to reveal content below the fold BEFORE deciding the screen is exhausted.\n"
+    "- swipe_left / swipe_right: horizontal carousels, image galleries, swipeable tab strips, "
+    "onboarding pager screens. Swipe to expose more items of the same type — do not just tap "
+    "visible ones.\n"
+    "- type: search bars and input fields. Set `text` to a short generic query "
+    "('pizza' for a food app, 'news' for a reader, 'a' as a cheap wildcard). "
+    "Typing unlocks the search/result flow — tapping an empty search bar usually reveals nothing.\n"
+    "- long_press: reveal context menus on cards, list items, chat messages.\n"
+    "- back: escape dead ends or climb out of a revisited activity.\n"
+    "DECISION: a search bar is better TYPED than tapped. A carousel is better SWIPED than pointed at. "
+    "A long feed is not exhausted until you have SCROLLED it."
+)
+
+EXPLORATION_REGION_GUIDE = (
+    "REGION: Tag each action with WHERE on the screen the element sits.\n"
+    "- top_bar: status bar, app bar, hamburger, back/title/bell/cart icons at the top.\n"
+    "- bottom_nav: persistent tab bar pinned to the bottom of the screen.\n"
+    "- content: everything in the main scrollable area between top_bar and bottom_nav.\n"
+    "- modal: inside a modal, dialog, sheet, or drawer.\n"
+    "- overlay: permission prompt, cookie banner, tooltip, tutorial coachmark.\n"
+    "- fab: floating action button (circular, usually bottom-right).\n"
+    "- footer: persistent non-nav bar at the bottom (Apply, Continue, sticky CTA).\n"
+    "Pick exactly one. When in doubt between modal and overlay, prefer overlay "
+    "for system/consent prompts and modal for in-app dialogs."
+)
+
 EXPLORATION_EXHAUSTION_RULES = (
     "EXHAUSTION RULES:\n"
-    "Set content_exhausted=true ONLY when ALL of these are true:\n"
-    "1. Every visible interactive element appears in the ALREADY TRIED list.\n"
-    "2. You have considered whether scrolling might reveal more elements below the fold.\n"
-    "If you see ANY untried interactive element, you MUST tap it instead.\n"
-    "NEVER set content_exhausted=true while untried elements are visible.\n"
+    "Set content_exhausted=true when BOTH of these are true:\n"
+    "1. Every UNIQUE navigation element (P1-P2, P4 filters, P5 controls) has been exercised.\n"
+    "2. You have either scrolled the content area or confirmed nothing lies below the fold.\n"
+    "For long/infinite result lists (P3 content items), you DO NOT need to tap every item — "
+    "sampling 2–3 varied examples is enough (see LIST SAMPLING). Once sampled, treat the "
+    "rest of the list as effectively tried.\n"
+    "If you see an untried NAVIGATION element (P1/P2/P4/P5), you MUST interact with it instead.\n"
     "NEVER invent elements that are not visible on screen.\n"
-    "NEVER repeat an element that appears in the ALREADY TRIED list."
+    "NEVER repeat an element that appears in the ALREADY TRIED list (except BACK, SCROLL, and SWIPE)."
 )
 
 EXPLORATION_RESPONSE_DIRECTIVE = (

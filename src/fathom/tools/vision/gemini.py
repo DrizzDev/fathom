@@ -120,7 +120,7 @@ class GeminiVisionTool(VisionTool):
 
         instruction = self.__builder.build(
             mode=resolved_mode.value,
-            intent="",
+            intent=intent,
             hints=hints,
         )
 
@@ -317,11 +317,12 @@ class GeminiVisionTool(VisionTool):
         delta_context: Optional[Dict[str, Any]] = None,
     ) -> List[Any]:
         """
-        Assembles request with token-locality.
-        Stable intent at top, dynamic image/history at bottom for KV-cache.
+        Assembles the dynamic user payload.
+        GOAL/intent is in the cached system instruction; only per-step
+        hints, context, knowledge, and image go here.
         """
 
-        payload: List[Any] = [instructions]
+        payload: List[Any] = [instructions] if instructions.strip() else []
 
         if knowledge.get("description"):
             payload.append(f"SCREEN: {knowledge['description']}")

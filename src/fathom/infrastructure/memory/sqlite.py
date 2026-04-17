@@ -138,6 +138,23 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute("ALTER TABLE screens ADD COLUMN rich_description TEXT")
             migrations_applied = True
 
+        async with (
+            db.execute("PRAGMA table_info(transitions)") as cursor,
+        ):
+            transition_columns = {row[1] async for row in cursor}
+
+        if "coord_bucket" not in transition_columns:
+            await db.execute("ALTER TABLE transitions ADD COLUMN coord_bucket TEXT")
+            migrations_applied = True
+
+        if "coord_region" not in transition_columns:
+            await db.execute("ALTER TABLE transitions ADD COLUMN coord_region TEXT")
+            migrations_applied = True
+
+        if "element_category" not in transition_columns:
+            await db.execute("ALTER TABLE transitions ADD COLUMN element_category TEXT")
+            migrations_applied = True
+
         if migrations_applied:
             await db.commit()
             logger.info("Applied schema migrations to knowledge database")
@@ -292,14 +309,20 @@ class SQLiteMemoryProvider(IMemoryProvider):
             else str(action.action_type)
         )
         action_target = action.natural_language_target or action.target or ""
+        coord_bucket = action.bounds.coord_bucket() if action.bounds else None
+        coord_region = action.region
+        element_category = action.element_category
 
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
                 "INSERT INTO transitions "
-                "(source_hash, destination_hash, action_type, action_target, action_json, count, first_seen, last_seen) "
-                "VALUES (?, ?, ?, ?, ?, 1, ?, ?) "
+                "(source_hash, destination_hash, action_type, action_target, coord_bucket, coord_region, element_category, action_json, count, first_seen, last_seen) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) "
                 "ON CONFLICT(source_hash, action_type, action_target) DO UPDATE SET "
                 "destination_hash = excluded.destination_hash, "
+                "coord_bucket = COALESCE(excluded.coord_bucket, transitions.coord_bucket), "
+                "coord_region = COALESCE(excluded.coord_region, transitions.coord_region), "
+                "element_category = COALESCE(excluded.element_category, transitions.element_category), "
                 "action_json = excluded.action_json, "
                 "count = transitions.count + 1, "
                 "last_seen = excluded.last_seen",
@@ -308,6 +331,9 @@ class SQLiteMemoryProvider(IMemoryProvider):
                     destination_hash,
                     action_type,
                     action_target,
+                    coord_bucket,
+                    coord_region,
+                    element_category,
                     action.model_dump_json(),
                     now,
                     now,
@@ -385,7 +411,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
         async with (
             aiosqlite.connect(self.__path) as db,
             db.execute(
-                "SELECT source_hash, destination_hash, action_type, action_target, count, first_seen, last_seen "
+                "SELECT source_hash, destination_hash, action_type, action_target, coord_bucket, coord_region, element_category, count, first_seen, last_seen "
                 "FROM transitions ORDER BY count DESC"
             ) as cursor,
         ):
@@ -396,9 +422,12 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         "destination_hash": row[1],
                         "action_type": row[2],
                         "action_target": row[3],
-                        "count": row[4],
-                        "first_seen": row[5],
-                        "last_seen": row[6],
+                        "coord_bucket": row[4],
+                        "coord_region": row[5],
+                        "element_category": row[6],
+                        "count": row[7],
+                        "first_seen": row[8],
+                        "last_seen": row[9],
                     }
                 )
 

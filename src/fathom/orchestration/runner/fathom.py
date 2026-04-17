@@ -67,6 +67,7 @@ class FathomRunner:
         request_id: Optional[str] = None,
         device_serial: Optional[str] = None,
         package_name: Optional[str] = None,
+        focus: Optional[str] = None,
     ) -> ExplorationResult:
         """
         Run an application exploration workflow.
@@ -133,6 +134,7 @@ class FathomRunner:
             configuration=WorkflowConfig(max_steps=max_steps, package_name=package_name),
             knowledge_graph=self.__knowledge_graph,
             target_package=package_name,
+            focus=focus,
         )
         self.__current_workflow = workflow
 

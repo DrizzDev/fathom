@@ -6,12 +6,16 @@ from fathom.prompts.base import PromptBuilder
 from fathom.prompts.modes import PromptMode
 from fathom.prompts.templates import (
     COORD_RULES,
+    EXPLORATION_ACTION_PALETTE,
     EXPLORATION_ELEMENT_CATEGORIES,
     EXPLORATION_EXHAUSTION_RULES,
+    EXPLORATION_FOCUS_DIRECTIVE,
+    EXPLORATION_LIST_SAMPLING,
     EXPLORATION_MENTAL_MODEL,
     EXPLORATION_OVERLAY_RULES,
     EXPLORATION_PERSONA,
     EXPLORATION_PRIORITY,
+    EXPLORATION_REGION_GUIDE,
     EXPLORATION_RESPONSE_DIRECTIVE,
     EXPLORATION_SCAN_STRATEGY,
     EXPLORATION_SCREEN_DESCRIPTION_GUIDE,
@@ -35,13 +39,13 @@ class GeminiPromptBuilder(PromptBuilder):
         """
 
         if mode == PromptMode.EXPLORATION.value:
-            return self.__build_exploration_prompt()
+            return self.__build_exploration_prompt(intent=intent)
 
         if mode == PromptMode.SCREEN_TRANSLATION.value:
             return self.__build_screen_translation_prompt()
 
         # Fallback to exploration prompt for unknown modes
-        return self.__build_exploration_prompt()
+        return self.__build_exploration_prompt(intent=intent)
 
     def build_task_instructions(
         self,
@@ -50,10 +54,11 @@ class GeminiPromptBuilder(PromptBuilder):
     ) -> str:
         """
         Build dynamic task instructions for the User Message.
-        For exploration, returns the goal + stuck-detection hints.
+        Only includes per-step dynamic hints (stuck detection, delta signals).
+        The stable GOAL is now part of the cached system instruction.
         """
 
-        parts = [f"GOAL: {intent}"]
+        parts: List[str] = []
 
         # Stuck detection hints (used by exploration orchestrator)
         if hints and hints.get("is_stuck"):
@@ -134,13 +139,13 @@ class GeminiPromptBuilder(PromptBuilder):
 
         for index, item in enumerate(recent, 1):
             action = str(item.get("action_type", "tap"))
-            target = str(item.get("element_text") or item.get("target") or "unknown")
+            target = str(item.get("target") or "unknown")
             success = bool(item.get("success", True))
             lines.append(f"{index}. {target} ({action}) -> {'ok' if success else 'fail'}")
 
         return "ACTIONS:\n" + "\n".join(lines)
 
-    def __build_exploration_prompt(self) -> str:
+    def __build_exploration_prompt(self, intent: str = "") -> str:
         """
         Exploration Mode: systematic app mapping (depth-first).
 
@@ -153,19 +158,33 @@ class GeminiPromptBuilder(PromptBuilder):
         - Constraints (PRIORITY, OVERLAY, EXHAUSTION rules + COORD_RULES)
 
         Section order uses anchoring: critical rules at beginning and end.
+        The GOAL is embedded here so it becomes part of the cached system
+        instruction — it is constant for the entire exploration session.
         """
         parts = [
             EXPLORATION_PERSONA,
-            EXPLORATION_MENTAL_MODEL,
-            EXPLORATION_SCAN_STRATEGY,
-            EXPLORATION_ELEMENT_CATEGORIES,
-            EXPLORATION_PRIORITY,
-            EXPLORATION_SCREEN_DESCRIPTION_GUIDE,
-            EXPLORATION_OVERLAY_RULES,
-            EXPLORATION_EXHAUSTION_RULES,
-            COORD_RULES,
-            EXPLORATION_RESPONSE_DIRECTIVE,
         ]
+
+        if intent:
+            parts.append(f"GOAL: {intent}")
+
+        parts.extend(
+            [
+                EXPLORATION_MENTAL_MODEL,
+                EXPLORATION_SCAN_STRATEGY,
+                EXPLORATION_ELEMENT_CATEGORIES,
+                EXPLORATION_PRIORITY,
+                EXPLORATION_FOCUS_DIRECTIVE,
+                EXPLORATION_ACTION_PALETTE,
+                EXPLORATION_LIST_SAMPLING,
+                EXPLORATION_REGION_GUIDE,
+                EXPLORATION_SCREEN_DESCRIPTION_GUIDE,
+                EXPLORATION_OVERLAY_RULES,
+                EXPLORATION_EXHAUSTION_RULES,
+                COORD_RULES,
+                EXPLORATION_RESPONSE_DIRECTIVE,
+            ]
+        )
         return "\n\n".join(parts)
 
     def __build_screen_translation_prompt(self) -> str:

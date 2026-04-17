@@ -19,7 +19,7 @@ class ExploreUIRequest(BaseModel):
     """
 
     action: Dict[str, Any] = Field(
-        description="Action object with action_type, rationale, target_name, bbox."
+        description="Action object with action_type, rationale, target_name, tap_target."
     )
     assistant_message: str = Field(description="Reasoning for choosing this element")
     screen_description: str = Field(

@@ -63,6 +63,9 @@ class GraphEdge:
     count: int = 1
     first_seen: Optional[int] = None
     last_seen: Optional[int] = None
+    coord_bucket: Optional[str] = None
+    coord_region: Optional[str] = None
+    element_category: Optional[str] = None
 
 
 class KnowledgeGraph:
@@ -178,16 +181,43 @@ class KnowledgeGraph:
             dst = self._resolve_canonical(t["destination_hash"])
             action_type = t["action_type"]
             action_target = t["action_target"] or ""
+            coord_bucket = t.get("coord_bucket")
+            coord_region = t.get("coord_region")
+            element_category = t.get("element_category")
 
             edges = self.__edges.setdefault(src, [])
             merged = False
-            for edge in edges:
-                if edge.action_type == action_type and edge.action_target == action_target:
-                    edge.destination_hash = dst
-                    edge.count += t["count"] or 1
-                    edge.last_seen = max(edge.last_seen or 0, t["last_seen"] or 0)
-                    merged = True
-                    break
+
+            # Prefer coord_bucket match — collapses drifted labels for the
+            # same element into a single edge under the first-seen label.
+            if coord_bucket:
+                for edge in edges:
+                    if edge.action_type == action_type and edge.coord_bucket == coord_bucket:
+                        edge.destination_hash = dst
+                        edge.count += t["count"] or 1
+                        edge.last_seen = max(edge.last_seen or 0, t["last_seen"] or 0)
+                        if not edge.coord_region and coord_region:
+                            edge.coord_region = coord_region
+                        if not edge.element_category and element_category:
+                            edge.element_category = element_category
+                        merged = True
+                        break
+
+            if not merged:
+                for edge in edges:
+                    if edge.action_type == action_type and edge.action_target == action_target:
+                        edge.destination_hash = dst
+                        edge.count += t["count"] or 1
+                        edge.last_seen = max(edge.last_seen or 0, t["last_seen"] or 0)
+                        if not edge.coord_bucket and coord_bucket:
+                            edge.coord_bucket = coord_bucket
+                        if not edge.coord_region and coord_region:
+                            edge.coord_region = coord_region
+                        if not edge.element_category and element_category:
+                            edge.element_category = element_category
+                        merged = True
+                        break
+
             if not merged:
                 edges.append(
                     GraphEdge(
@@ -195,6 +225,9 @@ class KnowledgeGraph:
                         destination_hash=dst,
                         action_type=action_type,
                         action_target=action_target,
+                        coord_bucket=coord_bucket,
+                        coord_region=coord_region,
+                        element_category=element_category,
                         count=t["count"] or 1,
                         first_seen=t["first_seen"],
                         last_seen=t["last_seen"],
@@ -315,14 +348,16 @@ class KnowledgeGraph:
 
     def _get_tried_actions_for_activity(
         self, activity: str
-    ) -> List[Tuple[str, str, Optional[str]]]:
+    ) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
         """
         Aggregates tried actions across ALL screen nodes that share the
         given activity.  Deduplicates by (action_type, action_target).
+
+        Each entry is ``(action_type, action_target, coord_bucket, dest_desc)``.
         """
 
         seen: Set[Tuple[str, str]] = set()
-        result: List[Tuple[str, str, Optional[str]]] = []
+        result: List[Tuple[str, str, Optional[str], Optional[str]]] = []
 
         for node_hash, node in self.__nodes.items():
             if node.activity != activity:
@@ -336,7 +371,9 @@ class KnowledgeGraph:
                     seen.add(key)
                     dest_node = self.__nodes.get(edge.destination_hash)
                     dest_desc = dest_node.description if dest_node else None
-                    result.append((edge.action_type, edge.action_target, dest_desc))
+                    result.append(
+                        (edge.action_type, edge.action_target, edge.coord_bucket, dest_desc)
+                    )
 
         return result
 
@@ -365,28 +402,51 @@ class KnowledgeGraph:
         canonical_src = self._resolve_canonical(source_hash)
         canonical_dst = self._resolve_canonical(destination_hash)
 
-        # Persist to SQLite (uses canonical hashes for cleaner storage)
-        await self.__provider.store_transition(
-            source_hash=canonical_src,
-            action=action,
-            destination_hash=canonical_dst,
-        )
-
-        # Update in-memory cache
         action_type = (
             action.action_type.value
             if hasattr(action.action_type, "value")
             else str(action.action_type)
         )
         action_target = action.natural_language_target or action.target or ""
+        coord_bucket = action.bounds.coord_bucket() if action.bounds else None
+        coord_region = action.region
+        element_category = action.element_category
         now = int(time.time())
 
         edges = self.__edges.setdefault(canonical_src, [])
+
+        # First-seen canonicalization: if an edge already exists at the same
+        # (action_type, coord_bucket), adopt its label instead of the LLM's
+        # possibly-drifted one — same element, stable name in prompts/reports.
+        canonical_target = action_target
+        if coord_bucket:
+            for edge in edges:
+                if edge.action_type == action_type and edge.coord_bucket == coord_bucket:
+                    canonical_target = edge.action_target
+                    break
+
+        persisted_action = (
+            action
+            if canonical_target == action_target
+            else action.model_copy(update={"natural_language_target": canonical_target})
+        )
+        await self.__provider.store_transition(
+            source_hash=canonical_src,
+            action=persisted_action,
+            destination_hash=canonical_dst,
+        )
+
         for edge in edges:
-            if edge.action_type == action_type and edge.action_target == action_target:
+            if edge.action_type == action_type and edge.action_target == canonical_target:
                 edge.destination_hash = canonical_dst
                 edge.count += 1
                 edge.last_seen = now
+                if not edge.coord_bucket and coord_bucket:
+                    edge.coord_bucket = coord_bucket
+                if not edge.coord_region and coord_region:
+                    edge.coord_region = coord_region
+                if not edge.element_category and element_category:
+                    edge.element_category = element_category
                 return
 
         edges.append(
@@ -394,7 +454,10 @@ class KnowledgeGraph:
                 source_hash=canonical_src,
                 destination_hash=canonical_dst,
                 action_type=action_type,
-                action_target=action_target,
+                action_target=canonical_target,
+                coord_bucket=coord_bucket,
+                coord_region=coord_region,
+                element_category=element_category,
                 count=1,
                 first_seen=now,
                 last_seen=now,
@@ -487,23 +550,69 @@ class KnowledgeGraph:
             "unexplored": unexplored,
         }
 
-    def get_tried_actions(self, visual_hash: str) -> List[Tuple[str, str, Optional[str]]]:
+    def count_category_taps(self, visual_hash: str, category: str) -> int:
+        """
+        Returns how many ``tap``-like edges on the current activity are
+        recorded with the given ``element_category``.  Used by the sampling
+        guard to cap runaway tapping on long lists of P3 content items where
+        freeform ``target_name`` drift prevents coord-bucket dedup from firing.
+
+        Aggregates across every screen node that shares the current node's
+        activity — so a feed that spans multiple visual hashes (different
+        scroll positions or content states) still counts as ONE list being
+        sampled.  Falls back to per-screen counting when the activity is
+        unknown (e.g. pre-registered first frame).
+
+        Only counts non-repeatable actions (tap, long_press, type); scrolls
+        and swipes never "sample" a list item.
+        """
+
+        canonical = self._resolve_canonical(visual_hash)
+        current_node = self.__nodes.get(canonical)
+        activity = current_node.activity if current_node else None
+
+        sampling_actions = {"tap", "long_press", "type"}
+
+        if activity is None:
+            edges = self.__edges.get(canonical, [])
+            return sum(
+                1
+                for edge in edges
+                if edge.element_category == category and edge.action_type in sampling_actions
+            )
+
+        total = 0
+        for node_hash, node in self.__nodes.items():
+            if normalize_activity(node.activity) != normalize_activity(activity):
+                continue
+            edges = self.__edges.get(self._resolve_canonical(node_hash), [])
+            total += sum(
+                1
+                for edge in edges
+                if edge.element_category == category and edge.action_type in sampling_actions
+            )
+        return total
+
+    def get_tried_actions(
+        self, visual_hash: str
+    ) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
         """
         Returns actions already recorded from a screen.
 
-        Each entry is a tuple of ``(action_type, action_target,
-        destination_description)`` where *destination_description* is the
-        description stored on the destination screen node (or ``None``).
+        Each entry is ``(action_type, action_target, coord_bucket,
+        destination_description)``.  ``coord_bucket`` is the quantized
+        0-1000 center used as the stable dedup key; ``action_target`` is
+        retained for human-readable prompt rendering.
         """
 
         edges = self.__edges.get(self._resolve_canonical(visual_hash), [])
-        result: List[Tuple[str, str, Optional[str]]] = []
+        result: List[Tuple[str, str, Optional[str], Optional[str]]] = []
         for edge in edges:
             if edge.action_type == "back":
                 continue
             dest_node = self.__nodes.get(edge.destination_hash)
             dest_desc = dest_node.description if dest_node else None
-            result.append((edge.action_type, edge.action_target, dest_desc))
+            result.append((edge.action_type, edge.action_target, edge.coord_bucket, dest_desc))
         return result
 
     def build_exploration_context(
@@ -576,25 +685,58 @@ class KnowledgeGraph:
         if parent_description:
             lines.append(f"PARENT SCREEN: {parent_description}")
 
+        # ── Activity-coverage signal ──────────────────────────────────
+        # Surface the full set of mapped activities and, when the agent has
+        # landed on an activity it has seen before, push it toward an
+        # unseen one. Coverage beats depth for exploration.
+        known_activities = sorted(
+            {normalize_activity(n.activity) for n in self.__nodes.values() if n.activity}
+        )
+        if known_activities:
+            lines.append(
+                f"KNOWN ACTIVITIES ({len(known_activities)}): " + ", ".join(known_activities)
+            )
+
+        current_activity: Optional[str] = None
+        node: Optional[GraphNode] = None
         if current_hash:
             current_hash = self._resolve_canonical(current_hash)
             node = self.__nodes.get(current_hash)
-            if node and node.description:
-                lines.append(f"CURRENT SCREEN: {node.description}")
-
-            # Inject existing activity description so the LLM knows what
-            # has already been captured and only outputs NEW observations.
             if node:
-                existing_desc = self._get_activity_description(node.activity)
-                if existing_desc:
-                    lines.append(
-                        "EXISTING DESCRIPTION FOR THIS ACTIVITY (do NOT repeat — only describe what is NEW):\n"
-                        + existing_desc
-                    )
+                current_activity = normalize_activity(node.activity)
 
-            # Aggregate tried actions across ALL screens sharing the same
-            # activity, so revisiting an activity on a different visual hash
-            # still shows the full history of what was tried.
+        if current_activity and len(known_activities) > 1:
+            other_nodes_on_activity = [
+                h
+                for h, n in self.__nodes.items()
+                if normalize_activity(n.activity) == current_activity and h != current_hash
+            ]
+            revisit = bool(other_nodes_on_activity) or (node is not None and node.visit_count > 1)
+            if revisit:
+                lines.append(
+                    "⚠ REVISIT — this activity is already mapped. PRIORITIZE navigating to "
+                    "an UNSEEN activity over tapping another element inside this one.\n"
+                    "- Prefer P1 global_navigation tabs/drawer items that jump to a different section.\n"
+                    "- Skip P3 content items (they lead to detail screens within this same activity).\n"
+                    "- If every visible P1 element leads back to a KNOWN activity, use BACK to "
+                    "climb out and find a different entry point."
+                )
+
+        if node and node.description:
+            lines.append(f"CURRENT SCREEN: {node.description}")
+
+        if node:
+            existing_desc = self._get_activity_description(node.activity)
+            if existing_desc:
+                lines.append(
+                    "EXISTING DESCRIPTION FOR THIS ACTIVITY (do NOT repeat — only describe what is NEW):\n"
+                    + existing_desc
+                )
+
+        # Aggregate tried actions across ALL screens sharing the same
+        # activity, so revisiting an activity on a different visual hash
+        # still shows the full history of what was tried.
+        if current_hash:
             activity = node.activity if node else None
             tried = self._get_tried_actions_for_activity(activity) if activity else []
             if not tried:
@@ -604,7 +746,7 @@ class KnowledgeGraph:
             if tried:
                 lines.append("ALREADY TRIED IN THIS ACTIVITY:")
                 excess = len(tried) - MAX_TRIED_IN_CONTEXT
-                for action_type, action_target, dest_desc in tried[:MAX_TRIED_IN_CONTEXT]:
+                for action_type, action_target, _bucket, dest_desc in tried[:MAX_TRIED_IN_CONTEXT]:
                     entry = f"- {action_type}"
                     if action_target:
                         entry += f' "{action_target}"'
@@ -616,7 +758,7 @@ class KnowledgeGraph:
                 lines.append(f"ACTIONS TRIED: {len(tried)}")
 
                 # Hard-constraint forbidden list (exact target names)
-                forbidden = sorted({t for _, t, _ in tried if t})
+                forbidden = sorted({t for _, t, _, _ in tried if t})
                 if forbidden:
                     lines.append(
                         "FORBIDDEN TARGETS (do NOT select any of these): "
@@ -1060,6 +1202,7 @@ class KnowledgeGraph:
                         "destination_hash": edge.destination_hash,
                         "action_type": edge.action_type,
                         "action_target": edge.action_target,
+                        "coord_bucket": edge.coord_bucket,
                         "count": edge.count,
                         "first_seen": edge.first_seen,
                         "last_seen": edge.last_seen,

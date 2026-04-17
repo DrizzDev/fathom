@@ -127,8 +127,116 @@ def test_parse_explore_ui_element_category_and_expected_outcome():
 
     assert result.metadata.get("element_category") == "secondary_action"
     assert result.metadata.get("expected_outcome") == "new_screen"
-    assert result.action.target == "Settings icon"
+    assert result.action.natural_language_target == "Settings icon"
     assert result.action.confidence == 0.95
+
+
+def test_parse_explore_ui_region_enum_is_threaded_to_action_and_metadata():
+    parser = ToolResponseParser()
+
+    function_call = MagicMock()
+    function_call.name = "explore_ui"
+    function_call.args = {
+        "assistant_message": "Tapping Home tab in bottom nav",
+        "screen_description": "Home feed",
+        "action": {
+            "action_type": "tap",
+            "rationale": "P1 bottom-nav tab, not yet tried",
+            "target_name": "Home tab",
+            "element_category": "global_navigation",
+            "region": "bottom_nav",
+            "tap_target": {"x": 100, "y": 950},
+        },
+    }
+
+    mock_response = MockResponse(
+        [MockCandidate(MockContent([MockPart(function_call=function_call)]))]
+    )
+
+    result = parser.parse(mock_response)
+
+    assert result.metadata.get("region") == "bottom_nav"
+    assert result.action.region == "bottom_nav"
+
+
+def test_parse_explore_ui_type_action_threads_text():
+    parser = ToolResponseParser()
+
+    function_call = MagicMock()
+    function_call.name = "explore_ui"
+    function_call.args = {
+        "assistant_message": "Typing 'pizza' in search",
+        "screen_description": "Home feed with search bar",
+        "action": {
+            "action_type": "type",
+            "rationale": "Search bar P2, untried — typing unlocks the result flow",
+            "target_name": "Search bar",
+            "region": "top_bar",
+            "text": "pizza",
+            "tap_target": {"x": 500, "y": 100},
+        },
+    }
+
+    mock_response = MockResponse(
+        [MockCandidate(MockContent([MockPart(function_call=function_call)]))]
+    )
+
+    result = parser.parse(mock_response)
+
+    assert result.action.action_type.value == "type"
+    assert result.action.text == "pizza"
+
+
+def test_parse_explore_ui_swipe_left_action_type():
+    parser = ToolResponseParser()
+
+    function_call = MagicMock()
+    function_call.name = "explore_ui"
+    function_call.args = {
+        "assistant_message": "Swiping carousel",
+        "screen_description": "Home feed",
+        "action": {
+            "action_type": "swipe_left",
+            "rationale": "Horizontal carousel P4, untried — swipe to expose more items",
+            "target_name": "Featured restaurants carousel",
+            "region": "content",
+            "tap_target": {"x": 500, "y": 500},
+        },
+    }
+
+    mock_response = MockResponse(
+        [MockCandidate(MockContent([MockPart(function_call=function_call)]))]
+    )
+
+    result = parser.parse(mock_response)
+
+    assert result.action.action_type.value == "swipe_left"
+
+
+def test_parse_explore_ui_unknown_region_is_dropped():
+    parser = ToolResponseParser()
+
+    function_call = MagicMock()
+    function_call.name = "explore_ui"
+    function_call.args = {
+        "assistant_message": "msg",
+        "screen_description": "home",
+        "action": {
+            "action_type": "tap",
+            "rationale": "r",
+            "target_name": "X",
+            "region": "middle_left",  # not in enum
+            "tap_target": {"x": 500, "y": 500},
+        },
+    }
+
+    mock_response = MockResponse(
+        [MockCandidate(MockContent([MockPart(function_call=function_call)]))]
+    )
+
+    result = parser.parse(mock_response)
+
+    assert result.action.region is None
 
 
 def test_parse_unknown_tool_call_returns_fallback():

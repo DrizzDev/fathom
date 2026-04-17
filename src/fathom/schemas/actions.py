@@ -45,6 +45,19 @@ class Bounds(BaseModel):
 
         return self.y + self.height // 2
 
+    def coord_bucket(self, grid: int = 50) -> str:
+        """
+        Quantized center on the normalized 0-1000 grid for stable dedup.
+
+        Two taps aimed at the same visual element from the same screen
+        land in the same bucket even when the LLM's freeform ``target_name``
+        label drifts between calls.
+        """
+
+        cx = self.center_x if self.width > 0 else self.x
+        cy = self.center_y if self.height > 0 else self.y
+        return f"{cx // grid}_{cy // grid}"
+
     def to_pixels(self, screen_width: int, screen_height: int) -> tuple[int, int, int, int]:
         """
         Converts coordinates to absolute device pixels.
@@ -89,7 +102,6 @@ class Action(BaseModel):
 
     text: Optional[str] = Field(default=None, description="Text content for typing actions")
     bounds: Optional[Bounds] = Field(default=None, description="Bounding box for the interaction")
-    label_id: Optional[str] = Field(default=None, description="Numeric label ID from XML grounding")
 
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
     wait_duration: Optional[int] = Field(
@@ -105,24 +117,37 @@ class Action(BaseModel):
         default=None, description="Reason if action is invalid"
     )
 
-    # Conditional Execution
-    condition: Optional[str] = Field(
-        default=None,
-        description="Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
-    )
     overlay_detected: bool = Field(
         default=False,
         description="True when this action is specifically handling an overlay/popup blocker.",
     )
 
-    # Script export classification (VLM-provided; optional; fallback is TargetClassifier)
-    target_type: Optional[Literal["stable", "positional", "dynamic"]] = Field(
+    region: Optional[
+        Literal["top_bar", "bottom_nav", "content", "modal", "overlay", "fab", "footer"]
+    ] = Field(
         default=None,
-        description="How the target should be referenced in exported scripts: stable (fixed label), positional (ordinal in list), or dynamic (content that may change). Leave unset if unsure.",
+        description=(
+            "Which region of the screen the element lives in. Enum-constrained so "
+            "reports and prompts can group and dedup on a stable structural axis."
+        ),
     )
-    script_target: Optional[str] = Field(
+
+    element_category: Optional[
+        Literal[
+            "global_navigation",
+            "primary_action",
+            "content_item",
+            "filter_or_category",
+            "secondary_control",
+            "overlay_dismiss",
+        ]
+    ] = Field(
         default=None,
-        description="When target_type is positional or dynamic, the exact phrase for script export (e.g. 'the first search result', 'the promotional banner'). Omit for stable.",
+        description=(
+            "Priority-bucketed element category (P1-P5 / overlay_dismiss). "
+            "Enum-constrained so the sampling guard can count 'how many content_items "
+            "have been tapped on this screen' without depending on freeform target_name."
+        ),
     )
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
@@ -136,13 +161,8 @@ class Action(BaseModel):
         name = self.natural_language_target
 
         if not name or name.lower() in ("element", "ui element", "none", "label", "unknown"):
-            # Fallback to label ID or bounds if natural language target is generic/missing
-            if self.label_id:
-                name = f"Element (Label {self.label_id})"
-
-            elif self.bounds:
+            if self.bounds:
                 name = f"Element at [{self.bounds.x}, {self.bounds.y}]"
-
             else:
                 name = self.target or "UI Element"
 

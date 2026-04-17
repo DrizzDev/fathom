@@ -132,13 +132,9 @@ class ToolResponseParser(IResponseParser):
         if not data:
             return self.__create_fallback_result(message=request.assistant_message)
 
-        # Parse tap target (center point) or legacy bbox
         bounds = None
         tap_target = data.get("tap_target")
-        bbox = data.get("bbox")
         if tap_target:
-            # Center-point format: create a zero-size Bounds at the center.
-            # center_to_pixels will detect width=0 and use (x, y) directly.
             bounds = Bounds(
                 x=int(tap_target.get("x", 0)),
                 y=int(tap_target.get("y", 0)),
@@ -146,18 +142,9 @@ class ToolResponseParser(IResponseParser):
                 height=0,
                 coord_system="normalized",
             )
-        elif bbox:
-            # Legacy bbox fallback
-            bounds = Bounds(
-                x=int(bbox.get("x", 0)),
-                y=int(bbox.get("y", 0)),
-                width=int(bbox.get("width", 0)),
-                height=int(bbox.get("height", 0)),
-                coord_system="normalized",
-            )
         else:
             logger.warning(
-                "No tap_target or bbox in explore_ui action — taps will fall back to screen center"
+                "No tap_target in explore_ui action — taps will fall back to screen center"
             )
 
         # Parse action type
@@ -168,14 +155,42 @@ class ToolResponseParser(IResponseParser):
 
         target_name = data.get("target_name") or "UI Element"
 
+        raw_region = data.get("region")
+        region_value = (
+            raw_region
+            if raw_region
+            in {"top_bar", "bottom_nav", "content", "modal", "overlay", "fab", "footer"}
+            else None
+        )
+
+        raw_category = data.get("element_category")
+        category_value = (
+            raw_category
+            if raw_category
+            in {
+                "global_navigation",
+                "primary_action",
+                "content_item",
+                "filter_or_category",
+                "secondary_control",
+                "overlay_dismiss",
+            }
+            else None
+        )
+
+        raw_text = data.get("text")
+        text_value = str(raw_text) if raw_text else None
+
         action = Action(
             bounds=bounds,
-            target=target_name,
             natural_language_target=target_name,
             action_type=action_type,
             rationale=str(data.get("rationale", "")),
             confidence=self.__safe_float(data.get("confidence", 0.9), default=0.9),
             overlay_detected=bool(data.get("overlay_detected", False)),
+            region=region_value,
+            element_category=category_value,
+            text=text_value,
         )
 
         # Capture exploration-specific fields in metadata
@@ -184,6 +199,8 @@ class ToolResponseParser(IResponseParser):
             metadata["element_category"] = data["element_category"]
         if data.get("expected_outcome"):
             metadata["expected_outcome"] = data["expected_outcome"]
+        if data.get("region"):
+            metadata["region"] = data["region"]
 
         return AnalysisResult(
             action=action,

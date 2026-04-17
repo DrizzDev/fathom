@@ -44,6 +44,7 @@ class FathomCLI:
         max_steps: int = 50,
         device_serial: Optional[str] = None,
         package_name: Optional[str] = None,
+        focus: Optional[str] = None,
     ) -> int:
         """
         Run an exploration workflow with rich UI.
@@ -52,11 +53,13 @@ class FathomCLI:
         self.__setup_signals()
 
         package_label = package_name or "auto-detect"
+        focus_line = f"\n[cyan]Focus:[/cyan] {focus}" if focus and focus.strip() else ""
         console.print(
             Panel.fit(
                 f"[bold blue]Fathom Explorer[/bold blue]\n"
                 f"[cyan]Package:[/cyan] {package_label}\n"
-                f"[cyan]Max steps:[/cyan] {max_steps}",
+                f"[cyan]Max steps:[/cyan] {max_steps}"
+                f"{focus_line}",
                 border_style="blue",
             )
         )
@@ -67,6 +70,7 @@ class FathomCLI:
                     max_steps=max_steps,
                     device_serial=device_serial,
                     package_name=package_name,
+                    focus=focus,
                 )
 
             # Results table
@@ -154,6 +158,16 @@ def main() -> int:
     explore_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
     explore_parser.add_argument("--serial", "-s", type=str, default=None, help="Device serial")
     explore_parser.add_argument(
+        "--focus",
+        "-f",
+        type=str,
+        default=None,
+        help=(
+            "Focus exploration on a specific section or flow (e.g. "
+            "'the checkout flow', 'profile settings'). Omit for full-breadth mapping."
+        ),
+    )
+    explore_parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enable verbose output"
     )
 
@@ -184,6 +198,7 @@ def main() -> int:
                     max_steps=args.max_steps,
                     device_serial=args.serial,
                     package_name=args.package,
+                    focus=args.focus,
                 )
             )
         else:

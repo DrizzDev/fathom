@@ -65,6 +65,7 @@ def build_exploration_graph(
     cancel_event: Optional[asyncio.Event] = None,
     pause_event: Optional[asyncio.Event] = None,
     target_package: Optional[str] = None,
+    focus: Optional[str] = None,
 ) -> tuple["CompiledStateGraph[Any, Any, Any]", ExplorationNodeContext]:
     """
     Build and compile a LangGraph :class:`StateGraph` for DFS exploration.
@@ -112,6 +113,7 @@ def build_exploration_graph(
         cancel_event=cancel_event,
         pause_event=pause_event,
         target_package=target_package,
+        focus=focus,
     )
 
     # ── 2. Build node functions ────────────────────────────────────

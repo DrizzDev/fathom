@@ -228,7 +228,7 @@ class ActionHistory(BaseModel):
                 "activity": activity,
                 "type": action.action_type.value.upper(),
                 "full_description": action.to_description(),
-                "target": action.natural_language_target or action.label_id or "UI",
+                "target": action.natural_language_target or action.target or "UI",
             }
         )
         if not success:

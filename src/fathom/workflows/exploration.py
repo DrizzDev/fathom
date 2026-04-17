@@ -42,6 +42,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         configuration: Optional[WorkflowConfig] = None,
         knowledge_graph: Optional[KnowledgeGraph] = None,
         target_package: Optional[str] = None,
+        focus: Optional[str] = None,
     ) -> None:
         """
         Initialize exploration workflow.
@@ -51,6 +52,10 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
                 application package.  After every action the agent verifies
                 the foreground package and recovers if the device has drifted
                 outside the target app.
+            focus: Optional freeform description of a section, flow, or
+                feature to focus on (e.g. "the checkout flow"). When set,
+                biases the agent toward reaching and mapping that section
+                via the cached-prompt GOAL. When None, full-breadth mapping.
         """
 
         super().__init__(workflow_id=workflow_id, configuration=configuration)
@@ -63,6 +68,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         self.__seed = seed
         self.__knowledge_graph = knowledge_graph
         self.__target_package = target_package
+        self.__focus = focus
         self.__completion_reason = ""
         self.__start_time: float = 0.0
 
@@ -102,6 +108,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
             cancel_event=self.cancel_event,
             pause_event=self.pause_event,
             target_package=self.__target_package,
+            focus=self.__focus,
         )
 
         initial_state = {

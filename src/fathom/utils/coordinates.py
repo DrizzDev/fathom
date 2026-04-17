@@ -4,6 +4,16 @@ from typing import Tuple
 
 from fathom.schemas.actions import Bounds
 
+# Fixed swipe magnitude in device pixels. All swipe/scroll actions travel
+# exactly this distance regardless of the element's bounds or the screen
+# size, so behavior is deterministic and predictable. The pivot (center)
+# still comes from the LLM-decided coordinates; only the distance is fixed.
+#
+# 350px is well above Android's touch slop (~24-32px), large enough to
+# trigger a fling, and conservative enough to stay inside most viewports
+# without heavy clamping.
+_SWIPE_DISTANCE_PX = 350
+
 
 class CoordinateConverter:
     """
@@ -79,25 +89,53 @@ class CoordinateConverter:
     ) -> Tuple[int, int, int, int]:
         """
         Calculate swipe start and end coordinates.
+
+        Pivot is the bounds' center — for LLM-emitted actions that is the
+        ``tap_target`` point the model chose. Distance is a fixed constant
+        (:data:`_SWIPE_DISTANCE_PX`) regardless of bounds size or screen
+        size, so swipes are deterministic. Endpoints are clamped to the
+        device viewport.
         """
 
-        x, y, width, height = self.to_pixels(bounds=bounds)
         center_x, center_y = self.center_to_pixels(bounds=bounds)
+        half = _SWIPE_DISTANCE_PX // 2
 
-        distance_x = int(width * 0.7)
-        distance_y = int(height * 0.45)
+        def _clamp_x(val: int) -> int:
+            return max(0, min(val, self.__width - 1))
+
+        def _clamp_y(val: int) -> int:
+            return max(0, min(val, self.__height - 1))
 
         if direction == "up":
-            return center_x, center_y + distance_y // 2, center_x, center_y - distance_y // 2
+            return (
+                center_x,
+                _clamp_y(center_y + half),
+                center_x,
+                _clamp_y(center_y - half),
+            )
 
-        elif direction == "down":
-            return center_x, center_y - distance_y // 2, center_x, center_y + distance_y // 2
+        if direction == "down":
+            return (
+                center_x,
+                _clamp_y(center_y - half),
+                center_x,
+                _clamp_y(center_y + half),
+            )
 
-        elif direction == "left":
-            return center_x + distance_x // 2, center_y, center_x - distance_x // 2, center_y
+        if direction == "left":
+            return (
+                _clamp_x(center_x + half),
+                center_y,
+                _clamp_x(center_x - half),
+                center_y,
+            )
 
-        elif direction == "right":
-            return center_x - distance_x // 2, center_y, center_x + distance_x // 2, center_y
+        if direction == "right":
+            return (
+                _clamp_x(center_x - half),
+                center_y,
+                _clamp_x(center_x + half),
+                center_y,
+            )
 
-        else:
-            return center_x, center_y, center_x, center_y
+        return center_x, center_y, center_x, center_y

@@ -62,12 +62,23 @@ class ToolRegistry:
                         "properties": {
                             "action_type": {
                                 "type": "STRING",
-                                "description": "Physical action to perform on the element.",
+                                "description": (
+                                    "Physical action to perform on the element. "
+                                    "TAP discrete elements. SCROLL / SWIPE_UP / SWIPE_DOWN "
+                                    "a scrollable area to reveal content below the fold. "
+                                    "SWIPE_LEFT / SWIPE_RIGHT horizontal carousels or "
+                                    "swipeable tab strips to expose more items. "
+                                    "TYPE into a search bar or input (also set `text`). "
+                                    "LONG_PRESS to reveal context menus. BACK to escape."
+                                ),
                                 "enum": [
                                     "tap",
+                                    "type",
                                     "scroll",
                                     "swipe_up",
                                     "swipe_down",
+                                    "swipe_left",
+                                    "swipe_right",
                                     "back",
                                     "long_press",
                                 ],
@@ -75,24 +86,28 @@ class ToolRegistry:
                             "rationale": {
                                 "type": "STRING",
                                 "description": (
-                                    "Why this element was chosen over other untried elements. "
-                                    "Reference priority level (P1-P5). "
-                                    "Example: 'P1 navigation tab — higher priority than "
-                                    "P3 list items below.'"
+                                    "Why this element was chosen over the other untried elements "
+                                    "visible on screen. Focus on what's novel about it — do not "
+                                    "restate the priority bucket (that's in element_category)."
                                 ),
                             },
                             "target_name": {
                                 "type": "STRING",
                                 "description": (
-                                    "Stable element identifier in this EXACT format:\n"
-                                    "  {element_type}_{region}_{index}\n\n"
-                                    "- element_type: button, tab, card, icon, input, chip, toggle, link, image\n"
-                                    "- region: top_bar, content, bottom_nav, modal, fab, footer\n"
-                                    "- index: 1-based position within that region (left-to-right, top-to-bottom)\n\n"
-                                    "Examples: tab_bottom_nav_1, card_content_3, icon_top_bar_2, "
-                                    "input_content_1, chip_content_4, button_modal_1\n\n"
-                                    "NEVER use runtime text, product names, prices, or placeholder content. "
-                                    "The same element must get the SAME target_name every time this screen is seen."
+                                    "Human-readable label exactly as it appears on screen. "
+                                    "Use the visible text or icon description. "
+                                    "Examples: 'Home tab', 'Search icon', 'Add to Cart button', "
+                                    "'3rd restaurant card', 'Hamburger menu icon'."
+                                ),
+                            },
+                            "text": {
+                                "type": "STRING",
+                                "description": (
+                                    "Text to type. REQUIRED when action_type is 'type'; ignored "
+                                    "otherwise. Use a short, generic query that exercises the "
+                                    "input's flow without overfitting (e.g. 'pizza' in a food app, "
+                                    "'news' in a reader, 'a' as a cheap wildcard). Omit for any "
+                                    "non-type action."
                                 ),
                             },
                             "tap_target": {
@@ -133,6 +148,28 @@ class ToolRegistry:
                                     "filter_or_category",
                                     "secondary_control",
                                     "overlay_dismiss",
+                                ],
+                            },
+                            "region": {
+                                "type": "STRING",
+                                "description": (
+                                    "Which region of the screen the element lives in. "
+                                    "top_bar = status/app bar at the top (back, title, bell, cart, hamburger). "
+                                    "bottom_nav = persistent tab bar at the bottom. "
+                                    "content = main scrollable area between top_bar and bottom_nav. "
+                                    "modal = elements inside a modal, dialog, or bottom sheet. "
+                                    "overlay = permission prompt, cookie banner, tooltip, tutorial overlay. "
+                                    "fab = floating action button (usually bottom-right circle). "
+                                    "footer = persistent non-nav bar at the bottom (e.g. 'Apply filters')."
+                                ),
+                                "enum": [
+                                    "top_bar",
+                                    "bottom_nav",
+                                    "content",
+                                    "modal",
+                                    "overlay",
+                                    "fab",
+                                    "footer",
                                 ],
                             },
                             "expected_outcome": {

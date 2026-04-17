@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from fathom.constants import ActionType
 from fathom.infrastructure.memory.knowledge_graph import GraphEdge, GraphNode, KnowledgeGraph
+from fathom.schemas.actions import Action, Bounds
 
 
 @pytest.fixture
@@ -381,6 +383,248 @@ class TestVisualizationContext:
 
         context = kg.get_visualization_context("hash_a")
         assert context["in_cycle"] is True
+
+
+class TestFirstSeenLabelCanonicalization:
+    """The first label the LLM uses at a given coord_bucket wins for the session."""
+
+    @pytest.mark.asyncio
+    async def test_second_transition_at_same_bucket_adopts_first_label(self, knowledge_graph):
+        kg = knowledge_graph
+        add_test_nodes(kg, ["hash_src", "hash_dst"])
+
+        first = Action(
+            action_type=ActionType.TAP,
+            rationale="P3 card, not tried",
+            natural_language_target="3rd restaurant card",
+            bounds=Bounds(x=500, y=600, width=0, height=0),
+        )
+        await kg.record_transition(
+            source_hash="hash_src", action=first, destination_hash="hash_dst"
+        )
+
+        drifted = Action(
+            action_type=ActionType.TAP,
+            rationale="re-evaluating same card",
+            natural_language_target="Joe's Pizza card",  # same element, drifted label
+            bounds=Bounds(x=500, y=600, width=0, height=0),
+        )
+        await kg.record_transition(
+            source_hash="hash_src", action=drifted, destination_hash="hash_dst"
+        )
+
+        tried = kg.get_tried_actions("hash_src")
+        assert len(tried) == 1, "drifted label must merge into first-seen edge"
+        action_type, target, bucket, _ = tried[0]
+        assert action_type == "tap"
+        assert target == "3rd restaurant card"
+        assert bucket == "10_12"  # 500//50, 600//50
+
+    @pytest.mark.asyncio
+    async def test_different_bucket_creates_separate_edge(self, knowledge_graph):
+        kg = knowledge_graph
+        add_test_nodes(kg, ["hash_src", "hash_dst"])
+
+        top = Action(
+            action_type=ActionType.TAP,
+            rationale="top-bar icon",
+            natural_language_target="Search icon",
+            bounds=Bounds(x=100, y=100, width=0, height=0),
+        )
+        bottom = Action(
+            action_type=ActionType.TAP,
+            rationale="bottom-nav tab",
+            natural_language_target="Home tab",
+            bounds=Bounds(x=100, y=950, width=0, height=0),
+        )
+        await kg.record_transition(source_hash="hash_src", action=top, destination_hash="hash_dst")
+        await kg.record_transition(
+            source_hash="hash_src", action=bottom, destination_hash="hash_dst"
+        )
+
+        tried = kg.get_tried_actions("hash_src")
+        assert len(tried) == 2
+        labels = {target for _, target, _, _ in tried}
+        assert labels == {"Search icon", "Home tab"}
+
+
+class TestCategorySamplingCount:
+    """count_category_taps must count non-repeatable taps of a given
+    element_category on a screen, so the sampling guard can cap long-list
+    enumeration."""
+
+    @pytest.mark.asyncio
+    async def test_counts_only_sampling_actions_of_matching_category(self, knowledge_graph):
+        kg = knowledge_graph
+        add_test_nodes(kg, ["hash_src", "hash_card_1", "hash_card_2", "hash_other"])
+
+        def _card(x, y, label):
+            return Action(
+                action_type=ActionType.TAP,
+                rationale="r",
+                natural_language_target=label,
+                bounds=Bounds(x=x, y=y, width=0, height=0),
+                element_category="content_item",
+            )
+
+        await kg.record_transition(
+            source_hash="hash_src", action=_card(200, 300, "Card A"), destination_hash="hash_card_1"
+        )
+        await kg.record_transition(
+            source_hash="hash_src", action=_card(200, 500, "Card B"), destination_hash="hash_card_2"
+        )
+        # Different category at a different coord — should NOT count.
+        await kg.record_transition(
+            source_hash="hash_src",
+            action=Action(
+                action_type=ActionType.TAP,
+                rationale="r",
+                natural_language_target="Settings icon",
+                bounds=Bounds(x=50, y=50, width=0, height=0),
+                element_category="secondary_control",
+            ),
+            destination_hash="hash_other",
+        )
+        # A scroll (repeatable) on a content_item — should NOT count.
+        await kg.record_transition(
+            source_hash="hash_src",
+            action=Action(
+                action_type=ActionType.SCROLL,
+                rationale="r",
+                natural_language_target="feed",
+                bounds=Bounds(x=500, y=500, width=0, height=0),
+                element_category="content_item",
+            ),
+            destination_hash="hash_other",
+        )
+
+        assert kg.count_category_taps("hash_src", "content_item") == 2
+        assert kg.count_category_taps("hash_src", "secondary_control") == 1
+        assert kg.count_category_taps("hash_src", "primary_action") == 0
+
+    @pytest.mark.asyncio
+    async def test_counts_are_aggregated_across_activity_not_just_screen(self, knowledge_graph):
+        """A feed that spans multiple visual hashes (different scroll positions)
+        must still count as ONE list being sampled — otherwise the LLM could
+        cycle across hashes and tap N cards each time."""
+        kg = knowledge_graph
+        # Two screens on the same activity, different visual hashes (as if the
+        # user scrolled and triggered a new hash).
+        kg._KnowledgeGraph__nodes["hash_feed_top"] = GraphNode(
+            visual_hash="hash_feed_top",
+            activity="com.app/FeedActivity",
+            description="Feed (top)",
+            first_seen=1,
+            last_seen=1,
+            visit_count=1,
+        )
+        kg._KnowledgeGraph__nodes["hash_feed_mid"] = GraphNode(
+            visual_hash="hash_feed_mid",
+            activity="com.app/FeedActivity",
+            description="Feed (scrolled)",
+            first_seen=2,
+            last_seen=2,
+            visit_count=1,
+        )
+        add_test_nodes(kg, ["hash_card_a", "hash_card_b", "hash_card_c"])
+
+        def _card(x, y, label):
+            return Action(
+                action_type=ActionType.TAP,
+                rationale="r",
+                natural_language_target=label,
+                bounds=Bounds(x=x, y=y, width=0, height=0),
+                element_category="content_item",
+            )
+
+        # Two cards tapped from the top of the feed, one from the scrolled view.
+        await kg.record_transition(
+            source_hash="hash_feed_top",
+            action=_card(200, 300, "A"),
+            destination_hash="hash_card_a",
+        )
+        await kg.record_transition(
+            source_hash="hash_feed_top",
+            action=_card(200, 500, "B"),
+            destination_hash="hash_card_b",
+        )
+        await kg.record_transition(
+            source_hash="hash_feed_mid",
+            action=_card(200, 400, "C"),
+            destination_hash="hash_card_c",
+        )
+
+        # Per-screen would give 2 and 1 respectively. Per-activity must give 3.
+        assert kg.count_category_taps("hash_feed_top", "content_item") == 3
+        assert kg.count_category_taps("hash_feed_mid", "content_item") == 3
+
+
+class TestActivityCoverageSignal:
+    """build_exploration_context should push the agent toward unseen activities
+    when it lands on one it has already mapped."""
+
+    def _seed(self, kg):
+        """Seed the graph with three nodes across two activities."""
+        # Two screens on Activity A (the "home" activity), one on Activity B.
+        kg._KnowledgeGraph__nodes["hash_home_1"] = GraphNode(
+            visual_hash="hash_home_1",
+            activity="com.app/HomeActivity",
+            description="Home feed",
+            first_seen=1,
+            last_seen=1,
+            visit_count=2,
+        )
+        kg._KnowledgeGraph__nodes["hash_home_2"] = GraphNode(
+            visual_hash="hash_home_2",
+            activity="com.app/HomeActivity",
+            description="Home feed (scrolled)",
+            first_seen=2,
+            last_seen=2,
+            visit_count=1,
+        )
+        kg._KnowledgeGraph__nodes["hash_orders"] = GraphNode(
+            visual_hash="hash_orders",
+            activity="com.app/OrdersActivity",
+            description="Orders list",
+            first_seen=3,
+            last_seen=3,
+            visit_count=1,
+        )
+
+    def test_known_activities_are_listed(self, knowledge_graph):
+        self._seed(knowledge_graph)
+        context = knowledge_graph.build_exploration_context(current_hash="hash_home_1")
+        # Activity prefix is stripped by normalize_activity.
+        assert "KNOWN ACTIVITIES (2):" in context
+        assert "HomeActivity" in context
+        assert "OrdersActivity" in context
+
+    def test_revisit_warning_fires_when_activity_already_mapped(self, knowledge_graph):
+        self._seed(knowledge_graph)
+        # hash_home_1 shares its activity with hash_home_2 → revisit signal.
+        context = knowledge_graph.build_exploration_context(current_hash="hash_home_1")
+        assert "REVISIT" in context
+        assert "UNSEEN activity" in context
+
+    def test_no_revisit_warning_on_first_visit_to_activity(self, knowledge_graph):
+        self._seed(knowledge_graph)
+        # hash_orders is the sole screen on OrdersActivity and visit_count=1.
+        context = knowledge_graph.build_exploration_context(current_hash="hash_orders")
+        assert "REVISIT" not in context
+
+    def test_no_revisit_warning_when_only_one_activity_mapped(self, knowledge_graph):
+        kg = knowledge_graph
+        kg._KnowledgeGraph__nodes["hash_only"] = GraphNode(
+            visual_hash="hash_only",
+            activity="com.app/HomeActivity",
+            description="Home feed",
+            first_seen=1,
+            last_seen=1,
+            visit_count=3,
+        )
+        context = kg.build_exploration_context(current_hash="hash_only")
+        # Even revisiting, don't push — there's nowhere else to go yet.
+        assert "REVISIT" not in context
 
 
 if __name__ == "__main__":

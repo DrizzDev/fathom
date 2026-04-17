@@ -80,6 +80,7 @@ class ExplorationNodeContext:
         cancel_event: Optional[asyncio.Event] = None,
         pause_event: Optional[asyncio.Event] = None,
         target_package: Optional[str] = None,
+        focus: Optional[str] = None,
     ) -> None:
         self.device = device
         self.capture_tool = capture
@@ -94,10 +95,22 @@ class ExplorationNodeContext:
         self._pause_event = pause_event or asyncio.Event()
         self._pause_event.set()
 
+        # Focused exploration: when `focus` is set, bias the agent toward the
+        # named section via the cached-prompt GOAL; otherwise fall back to the
+        # full-breadth mapping intent.
+        focus_clean = (focus or "").strip()
+        if focus_clean:
+            intent = (
+                f"Focus on exploring {focus_clean} of this app. Map every screen "
+                f"and element within that section; skip unrelated sections."
+            )
+        else:
+            intent = "Explore this app to discover all screens and features"
+
         # Reused services (adapted for exploration)
         self.ledger: ILedger = Ledger()
         self.agent_state = AgentState(
-            intent="Explore this app to discover all screens and features",
+            intent=intent,
             max_steps=max_steps,
             # Disable loop detection — DFS exploration deliberately revisits
             # screens and the LoopDetector would falsely terminate the run.
@@ -280,26 +293,83 @@ def build_exploration_nodes(
         )
 
         # ── Dedup guard: reject actions already tried on this screen ──
-        # Build a set of (action_type, target_name) already recorded as
-        # KG edges from this screen.  If the LLM picks one of them, re-
-        # analyze with an explicit failure hint.  After MAX_DEDUP_RETRIES
-        # the action is treated as content_exhausted to prevent loops.
+        # Keyed on (action_type, coord_bucket) — stable across LLM label drift.
+        # Falls back to (action_type, target_name) for legacy edges persisted
+        # before coord_bucket was recorded.
         tried_set = {
-            (atype.lower(), atarget.lower())
-            for atype, atarget, _ in ctx.knowledge_graph.get_tried_actions(fingerprint)
+            (atype.lower(), (bucket or atarget).lower())
+            for atype, atarget, bucket, _ in ctx.knowledge_graph.get_tried_actions(fingerprint)
+        }
+
+        def _action_key(action: Any) -> Tuple[str, str]:
+            bucket = action.bounds.coord_bucket() if action.bounds else None
+            label = bucket or (action.natural_language_target or action.target or "")
+            return (action.action_type.value.lower(), label.lower())
+
+        # Repeatable actions are exempt from dedup: scrolling a feed three times
+        # legitimately reveals three chunks of content, and each swipe of a
+        # carousel exposes more items. BACK is also unconditionally allowed as
+        # an escape hatch from any state.
+        _REPEATABLE_ACTIONS = {
+            ActionType.BACK,
+            ActionType.SCROLL,
+            ActionType.SWIPE,
+            ActionType.SWIPE_UP,
+            ActionType.SWIPE_DOWN,
+            ActionType.SWIPE_LEFT,
+            ActionType.SWIPE_RIGHT,
+        }
+
+        # Categories subject to sampling (LIST SAMPLING rule): cap content_item
+        # taps per screen so the agent can't enumerate a 50-restaurant list.
+        # filter_or_category chips can also be long ribbons — cap them too.
+        _CATEGORY_SAMPLE_LIMIT = {
+            "content_item": 3,
+            "filter_or_category": 4,
         }
 
         _MAX_DEDUP_RETRIES = 2
         for _retry in range(_MAX_DEDUP_RETRIES):
             if not analysis.action or analysis.content_exhausted:
                 break
-            # Back actions are always allowed — never dedup them
-            if analysis.action.action_type == ActionType.BACK:
+            if analysis.action.action_type in _REPEATABLE_ACTIONS:
                 break
-            action_key = (
-                analysis.action.action_type.value.lower(),
-                (analysis.action.natural_language_target or analysis.action.target or "").lower(),
-            )
+
+            # Category-sampling guard — fires when freeform target_name would
+            # otherwise let the LLM enumerate a list (every card has a
+            # distinct bucket + label, so coord-bucket dedup doesn't catch it).
+            proposed_category = analysis.action.element_category
+            if proposed_category in _CATEGORY_SAMPLE_LIMIT:
+                already_sampled = ctx.knowledge_graph.count_category_taps(
+                    fingerprint, proposed_category
+                )
+                limit = _CATEGORY_SAMPLE_LIMIT[proposed_category]
+                if already_sampled >= limit:
+                    logger.warning(
+                        "Sampling guard: %s already sampled %d×/%d on screen %s — rejecting",
+                        proposed_category,
+                        already_sampled,
+                        limit,
+                        fingerprint[:8],
+                    )
+                    dedup_failures = [
+                        f"You have already sampled {already_sampled} {proposed_category} "
+                        f"elements on this screen (limit {limit}). Per LIST SAMPLING, the "
+                        f"rest are effectively tried — pick a DIFFERENT category "
+                        f"(P1 global_navigation, P2 primary_action, P5 secondary_control) "
+                        f"or press BACK."
+                    ]
+                    analysis = await ctx.vision.analyze(
+                        intent=ctx.agent_state.intent,
+                        capture=capture,
+                        context=kg_context,
+                        mode=PromptMode.EXPLORATION,
+                        resolved_fingerprint=fingerprint,
+                        failures=dedup_failures,
+                    )
+                    continue  # re-check the fresh analysis from the top
+
+            action_key = _action_key(analysis.action)
             if action_key not in tried_set:
                 break  # Novel action — proceed
 
@@ -310,8 +380,11 @@ def build_exploration_nodes(
                 _retry + 1,
                 _MAX_DEDUP_RETRIES,
             )
+            repeated_label = (
+                analysis.action.natural_language_target or analysis.action.target or action_key[1]
+            )
             dedup_failures = [
-                f'You already tried {action_key[0]} "{action_key[1]}" — pick a DIFFERENT untried element.'
+                f'You already tried {action_key[0]} "{repeated_label}" — pick a DIFFERENT untried element.'
             ]
             analysis = await ctx.vision.analyze(
                 intent=ctx.agent_state.intent,
@@ -322,17 +395,14 @@ def build_exploration_nodes(
                 failures=dedup_failures,
             )
         else:
-            # Check if the final retry still picked a tried action
+            # Check if the final retry still picked a tried action — but skip
+            # the check for repeatable actions (scroll/swipe/back), which are
+            # meant to be re-issued.
             if (
                 analysis.action
                 and not analysis.content_exhausted
-                and (
-                    analysis.action.action_type.value.lower(),
-                    (
-                        analysis.action.natural_language_target or analysis.action.target or ""
-                    ).lower(),
-                )
-                in tried_set
+                and analysis.action.action_type not in _REPEATABLE_ACTIONS
+                and _action_key(analysis.action) in tried_set
             ):
                 logger.warning(
                     "Dedup guard exhausted retries on screen %s — forcing content_exhausted",
