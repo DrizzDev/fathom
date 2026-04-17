@@ -33,6 +33,7 @@ from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, RichLog, Static
 
+from fathom.adapters.telemetry.event_panels import render_event_panel
 from fathom.constants.events import FathomEvent
 from fathom.interfaces.telemetry import TelemetryPort
 
@@ -87,57 +88,6 @@ class _FooterBar(Static):  # type: ignore[misc]
     def render(self) -> Panel:
         body = f"[bold cyan]🎯[/bold cyan]  {self.sub_goal or '—'}\n[dim]{self.hint}[/dim]"
         return Panel(body, border_style="#6b3fd4", padding=(0, 1))
-
-
-class TuiTelemetryAdapter(TelemetryPort):
-    """
-    Forwards every telemetry call to an inner adapter (usually
-    ``StructlogAdapter``) and notifies a ``DemoApp`` so it can update
-    the header/footer and push rendered panels into the scrollable
-    body.
-
-    The adapter is task-safe: Textual's ``RichLog.write`` and reactive
-    attributes are designed to be set from any coroutine on the same
-    event loop.
-    """
-
-    def __init__(self, *, app: "DemoApp", inner: TelemetryPort) -> None:
-        self.__app = app
-        self.__inner = inner
-
-    async def debug(self, message: str, **context: Any) -> None:
-        await self.__inner.debug(message, **context)
-
-    async def info(self, message: str, **context: Any) -> None:
-        await self.__inner.info(message, **context)
-        self.__app.record_event(level="info", message=message, context=context)
-
-    async def warning(self, message: str, **context: Any) -> None:
-        await self.__inner.warning(message, **context)
-        self.__app.record_event(level="warning", message=message, context=context)
-
-    async def error(self, message: str, **context: Any) -> None:
-        await self.__inner.error(message, **context)
-        self.__app.record_event(level="error", message=message, context=context)
-
-    async def exception(
-        self,
-        message: str,
-        *,
-        exception: Optional[BaseException] = None,
-        **context: Any,
-    ) -> None:
-        await self.__inner.exception(message, exception=exception, **context)
-        self.__app.record_event(level="error", message=message, context=context)
-
-    def update_identity(self, *, identity: str) -> None:
-        """
-        Forward identity updates to the wrapped inner telemetry, if it
-        supports the optional method.
-        """
-
-        if hasattr(self.__inner, "update_identity"):
-            self.__inner.update_identity(identity=identity)
 
 
 class _HitlAskScreen(ModalScreen[str]):  # type: ignore[misc]
@@ -524,109 +474,17 @@ class DemoApp(App[int]):  # type: ignore[misc]
     ) -> Optional[Panel]:
         """
         Map a telemetry event to a ``rich.Panel`` for the body scroll.
+
+        Delegates to the shared ``render_event_panel`` so TUI and console
+        styling cannot drift.
         """
 
-        if event_type == FathomEvent.INTENT_CLASSIFIED:
-            should_decompose = bool(context.get("should_decompose", True))
-            verdict = (
-                "[bold magenta]Complex[/bold magenta] task — will be decomposed."
-                if should_decompose
-                else "[bold green]Simple[/bold green] task — running end-to-end."
-            )
-            return Panel.fit(
-                f"[bold #a88fd8]🧠 Understanding your request[/bold #a88fd8]\n{verdict}",
-                border_style="#a88fd8",
-            )
-
-        if event_type == FathomEvent.DECOMPOSITION_COMPLETE:
-            raw = context.get("sub_goals") or []
-            sub_goals = [str(item) for item in raw if item]
-            if not sub_goals:
-                return None
-            numbered = "\n".join(
-                f"[bold cyan]{index}[/bold cyan] · {description}"
-                for index, description in enumerate(sub_goals, start=1)
-            )
-            noun = "step" if len(sub_goals) == 1 else "steps"
-            return Panel.fit(
-                f"[bold #6b3fd4]📋 Plan ({len(sub_goals)} {noun})[/bold #6b3fd4]\n{numbered}",
-                border_style="#6b3fd4",
-            )
-
-        if event_type == FathomEvent.SUB_GOAL_STARTED:
-            index = context.get("index", 0)
-            total = context.get("total", 1)
-            description = context.get("description") or "(unnamed)"
-            human_index = int(index) + 1 if isinstance(index, int) else "?"
-            return Panel.fit(
-                f"[bold cyan]🎯 Starting sub-goal {human_index}/{total}[/bold cyan]\n{description}",
-                border_style="cyan",
-            )
-
-        if event_type == FathomEvent.SUB_GOAL_COMPLETED:
-            index = context.get("index", 0)
-            total = context.get("total", 1)
-            description = context.get("description") or "(unnamed)"
-            human_index = int(index) + 1 if isinstance(index, int) else "?"
-            return Panel.fit(
-                f"[bold green]✓ Completed sub-goal {human_index}/{total}[/bold green]\n{description}",
-                border_style="green",
-            )
-
-        if event_type == FathomEvent.HITL_REQUESTED:
-            prompt = context.get("prompt") or message
-            return Panel.fit(
-                f"[bold yellow]⏸  Awaiting your input[/bold yellow]\n{prompt}",
-                border_style="yellow",
-            )
-
-        if event_type == FathomEvent.REASONING:
-            step_number = context.get("step", "?")
-            reasoning = context.get("reasoning") or message
-            return Panel.fit(
-                f"[bold #a88fd8]💭 Step {step_number} · Reasoning[/bold #a88fd8]\n{reasoning}",
-                border_style="#a88fd8",
-            )
-
-        if event_type == FathomEvent.PLANNED_ACTION:
-            step_number = context.get("step", "?")
-            action_description = context.get("action_description") or message
-            target = context.get("target")
-            confidence = context.get("confidence")
-            body_parts = [f"[bold white]{action_description}[/bold white]"]
-            if target:
-                body_parts.append(f"[dim]target:[/dim] {target}")
-            if isinstance(confidence, (int, float)):
-                body_parts.append(f"[dim]confidence:[/dim] {float(confidence):.2f}")
-            body = "\n".join(body_parts)
-            return Panel.fit(
-                f"[bold #6b3fd4]▶ Step {step_number} · Action[/bold #6b3fd4]\n{body}",
-                border_style="#6b3fd4",
-            )
-
-        if event_type == FathomEvent.STEP_COMPLETED:
-            step_number = context.get("step", "?")
-            success = bool(context.get("success"))
-            action_description = context.get("action_description") or "unknown"
-            observation = context.get("observation") or "—"
-            border = "green" if success else "red"
-            icon = "✓" if success else "✗"
-            title_color = "green" if success else "red"
-            return Panel.fit(
-                f"[bold {title_color}]{icon} Step {step_number} · "
-                f"{'Success' if success else 'Failed'}[/bold {title_color}]\n"
-                f"[dim]action:[/dim] {action_description}\n"
-                f"[dim]observation:[/dim] {observation}",
-                border_style=border,
-            )
-
-        if level == "error":
-            return Panel.fit(
-                f"[bold red]{message}[/bold red]",
-                border_style="red",
-            )
-
-        return None
+        return render_event_panel(
+            event_type=event_type,
+            message=message,
+            context=context,
+            level=level,
+        )
 
     def __update_state_from_event(
         self,
