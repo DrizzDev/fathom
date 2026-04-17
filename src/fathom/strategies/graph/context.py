@@ -133,7 +133,7 @@ class GraphContext:
         self.__auditor = auditor or AuditService()
 
         self.__vision = vision or VisionService(
-            llm=llm,
+            llm=llm.with_bucket("vision_planner"),
             memory=memory,
             telemetry=telemetry,
             session_id=workflow_id,

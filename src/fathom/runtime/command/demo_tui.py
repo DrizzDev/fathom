@@ -418,8 +418,7 @@ class DemoApp(App[int]):  # type: ignore[misc]
         without mounting the full app).
         """
 
-        running = bool(getattr(self, "is_running", False) or getattr(self, "_running", False))
-        if running:
+        if bool(getattr(self, "is_running", False)):
             # ``return`` is not suppressed by ``contextlib.suppress`` —
             # it unwinds normally when the marshal succeeds. Only
             # exceptions from ``call_from_thread`` fall through to the

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import random
 from logging import getLogger
 from pathlib import Path
@@ -68,6 +69,7 @@ class GeminiLLM(LLMPort):
         self.__credentials: Optional[Any] = None
 
         self.__cache: Optional[CacheService] = None
+        self.__bucket: str = DEFAULT_BUCKET
 
         self.__initialize()
 
@@ -210,7 +212,6 @@ class GeminiLLM(LLMPort):
         system_instruction: Optional[str] = None,
         conversation_history: Optional[Sequence[ConversationTurn]] = None,
         thinking_level: Optional[str] = None,
-        cache_bucket: str = DEFAULT_BUCKET,
     ) -> GenerateResult:
         """
         Main handler for LLM interaction.
@@ -224,7 +225,7 @@ class GeminiLLM(LLMPort):
             cache_name = await self.__cache.get_cached_content(
                 system_instruction=system_instruction,
                 tools=tools.get("function_declarations") if tools else None,
-                bucket=cache_bucket,
+                bucket=self.__bucket,
             )
 
         # Wrap content parts correctly for SDK
@@ -385,7 +386,6 @@ class GeminiLLM(LLMPort):
         *,
         system_instruction: Optional[str],
         tools: Optional[Dict[str, Any]] = None,
-        cache_bucket: str = DEFAULT_BUCKET,
     ) -> None:
         """
         Prewarm provider-side prompt cache before the first LLM call.
@@ -402,8 +402,20 @@ class GeminiLLM(LLMPort):
         await self.__cache.get_cached_content(
             tools=declarations,
             system_instruction=system_instruction,
-            bucket=cache_bucket,
+            bucket=self.__bucket,
         )
+
+    def with_bucket(self, name: str) -> "GeminiLLM":
+        """
+        Return a shallow clone of this adapter bound to ``name`` as its
+        cache bucket. The clone shares the underlying client, credentials,
+        and :class:`CacheService` so per-bucket stats aggregate correctly;
+        only the bucket field is overridden.
+        """
+
+        clone = copy.copy(self)
+        clone.__bucket = name
+        return clone
 
     async def cleanup(self) -> None:
         """

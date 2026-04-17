@@ -77,14 +77,13 @@ class TuiSignalAdapterAskTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[0], "Where is the delivery address?")
         self.assertIsInstance(args[1], concurrent.futures.Future)
 
-    async def test_ask_returns_empty_string_when_scheduling_fails(self) -> None:
+    async def test_ask_raises_when_scheduling_fails(self) -> None:
         app = MagicMock()
         app.call_from_thread.side_effect = RuntimeError("no active app")
         adapter = TuiSignalAdapter(app=app)
 
-        answer = await adapter.ask(prompt="Anything?")
-
-        self.assertEqual(answer, "")
+        with self.assertRaises(RuntimeError):
+            await adapter.ask(prompt="Anything?")
 
     async def test_ask_cancellation_cancels_pending_future(self) -> None:
         """
@@ -173,8 +172,8 @@ class TuiSignalAdapterBlockingMethodsTest(unittest.IsolatedAsyncioTestCase):
         adapter = TuiSignalAdapter(app=_FakeApp())  # type: ignore[arg-type]
         await asyncio.wait_for(adapter.wait_for_resume(), timeout=0.1)
 
-    async def test_wait_for_pause_blocks_forever_until_cancelled(self) -> None:
+    async def test_wait_for_pause_raises_not_implemented(self) -> None:
         adapter = TuiSignalAdapter(app=_FakeApp())  # type: ignore[arg-type]
 
-        with self.assertRaises(asyncio.TimeoutError):
-            await asyncio.wait_for(adapter.wait_for_pause(), timeout=0.05)
+        with self.assertRaises(NotImplementedError):
+            await adapter.wait_for_pause()
