@@ -292,7 +292,10 @@ async def test_advance_emits_completed_then_started_when_next_sub_goal_exists() 
 
     # Two cues in order: COMPLETED(idx=0), STARTED(idx=1).
     cue_events = [
-        event for event in telemetry.events if event.get("type") in {
+        event
+        for event in telemetry.events
+        if event.get("type")
+        in {
             FathomEvent.SUB_GOAL_COMPLETED,
             FathomEvent.SUB_GOAL_STARTED,
         }
@@ -334,8 +337,12 @@ async def test_advance_completes_intent_when_last_sub_goal_passes() -> None:
         reason="goal met",
     )
 
-    completed = [event for event in telemetry.events if event.get("type") == FathomEvent.SUB_GOAL_COMPLETED]
-    started = [event for event in telemetry.events if event.get("type") == FathomEvent.SUB_GOAL_STARTED]
+    completed = [
+        event for event in telemetry.events if event.get("type") == FathomEvent.SUB_GOAL_COMPLETED
+    ]
+    started = [
+        event for event in telemetry.events if event.get("type") == FathomEvent.SUB_GOAL_STARTED
+    ]
 
     assert len(completed) == 1
     assert completed[0]["index"] == 0
