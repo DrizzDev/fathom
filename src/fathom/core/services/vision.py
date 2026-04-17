@@ -88,7 +88,6 @@ class VisionService:
             await self.__llm.prewarm(
                 tools=tools,
                 system_instruction=instruction,
-                cache_bucket="vision_planner",
             )
 
         duration = time.time() - start
@@ -330,7 +329,6 @@ class VisionService:
                 system_instruction=instruction,
                 conversation_history=conversation_history if conversation_history else None,
                 thinking_level=retry_thinking,
-                cache_bucket="vision_planner",
             )
             duration = time.time() - commence
 

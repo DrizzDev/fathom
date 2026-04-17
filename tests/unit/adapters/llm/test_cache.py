@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from typing import List, Optional
+from typing import Any, List, Optional
 from unittest.mock import AsyncMock, Mock
 
 from fathom.adapters.llm.cache import DEFAULT_BUCKET, CacheService
@@ -273,11 +273,13 @@ class CacheServiceConcurrencyTest(unittest.IsolatedAsyncioTestCase):
 
 class GeminiLLMCacheBucketPlumbingTest(unittest.IsolatedAsyncioTestCase):
     """
-    Verify GeminiLLM.generate forwards its cache_bucket kwarg through
-    to CacheService.get_cached_content.
+    Verify ``GeminiLLM.with_bucket`` produces a clone whose ``generate``
+    routes through ``CacheService.get_cached_content`` under the named
+    bucket, and that the original instance keeps its own bucket.
     """
 
-    async def test_generate_forwards_cache_bucket(self) -> None:
+    def __build_llm(self, cache: Mock) -> Any:
+        from fathom.adapters.llm.cache import DEFAULT_BUCKET
         from fathom.adapters.llm.gemini import GeminiLLM
 
         # Build a GeminiLLM instance without going through __init__
@@ -293,10 +295,8 @@ class GeminiLLMCacheBucketPlumbingTest(unittest.IsolatedAsyncioTestCase):
         llm._GeminiLLM__configuration.media_resolution = "low"
         llm._GeminiLLM__configuration.thinking_level = "low"
         llm._GeminiLLM__configuration.include_thoughts = False
-
-        cache = Mock()
-        cache.get_cached_content = AsyncMock(return_value="cache-name")
         llm._GeminiLLM__cache = cache
+        llm._GeminiLLM__bucket = DEFAULT_BUCKET
 
         # Stub the SDK generate_content call to return a minimal response.
         fake_response = Mock()
@@ -305,13 +305,20 @@ class GeminiLLMCacheBucketPlumbingTest(unittest.IsolatedAsyncioTestCase):
         llm._GeminiLLM__client.aio = Mock()
         llm._GeminiLLM__client.aio.models = Mock()
         llm._GeminiLLM__client.aio.models.generate_content = AsyncMock(return_value=fake_response)
+        return llm
 
-        await llm.generate(
+    async def test_with_bucket_routes_generate_through_named_bucket(self) -> None:
+        cache = Mock()
+        cache.get_cached_content = AsyncMock(return_value="cache-name")
+
+        base = self.__build_llm(cache=cache)
+        bucketed = base.with_bucket("vision_planner")
+
+        await bucketed.generate(
             use_cache=True,
             prompt=["hello"],
             system_instruction="instr",
             tools={"function_declarations": [{"name": "noop"}]},
-            cache_bucket="vision_planner",
         )
 
         cache.get_cached_content.assert_awaited_once()
@@ -319,3 +326,21 @@ class GeminiLLMCacheBucketPlumbingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_kwargs["bucket"], "vision_planner")
         self.assertEqual(call_kwargs["system_instruction"], "instr")
         self.assertEqual(call_kwargs["tools"], [{"name": "noop"}])
+
+    async def test_with_bucket_does_not_mutate_base(self) -> None:
+        from fathom.adapters.llm.cache import DEFAULT_BUCKET
+
+        cache = Mock()
+        cache.get_cached_content = AsyncMock(return_value="cache-name")
+
+        base = self.__build_llm(cache=cache)
+        base.with_bucket("vision_planner")
+
+        await base.generate(
+            use_cache=True,
+            prompt=["hello"],
+            system_instruction="instr",
+        )
+
+        call_kwargs = cache.get_cached_content.await_args.kwargs
+        self.assertEqual(call_kwargs["bucket"], DEFAULT_BUCKET)

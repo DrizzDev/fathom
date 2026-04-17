@@ -81,11 +81,17 @@ class TuiSignalAdapter(SignalPort):
 
     async def wait_for_pause(self) -> None:
         """
-        Block forever — should never be called while
-        ``supports_interruption()`` is ``False``.
+        Reject pause waits loudly.
+
+        ``supports_interruption()`` returns ``False``, so LangGraph never
+        calls this. If another caller invokes it directly, a silent
+        block-forever would be indistinguishable from a real pause; raise
+        instead so the misuse surfaces as a stack trace.
         """
 
-        await asyncio.Event().wait()
+        raise NotImplementedError(
+            "TuiSignalAdapter does not support pause; check supports_interruption() first"
+        )
 
     async def wait_for_resume(self) -> None:
         """
@@ -106,9 +112,9 @@ class TuiSignalAdapter(SignalPort):
           and ``_HitlAskScreen.on_input_submitted`` sets the future
           result when the user presses Enter.
 
-        Returns the raw string the user typed. Returns an empty string
-        on modal scheduling failure so the agent can treat the call
-        as a graceful no-response fallback.
+        Returns the raw string the user typed. An empty string is a
+        legitimate value (the user pressed Enter blank), so scheduling
+        failures raise rather than masquerading as blank submits.
         """
 
         future: concurrent.futures.Future[str] = concurrent.futures.Future()
@@ -117,7 +123,7 @@ class TuiSignalAdapter(SignalPort):
             self.__app.call_from_thread(self.__app.push_hitl_ask, prompt, future)
         except Exception as exception:
             logger.warning("Failed to schedule HITL modal: %s", exception)
-            return ""
+            raise RuntimeError("Failed to schedule HITL modal") from exception
 
         try:
             return await asyncio.wrap_future(future)
