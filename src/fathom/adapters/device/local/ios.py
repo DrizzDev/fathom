@@ -137,14 +137,26 @@ class IOSDevice(DevicePort):
                 duration=int((time.time() - start_time) * 1000),
             )
 
-    async def type(self, *, text: str) -> ActionResult:
+    async def type(
+        self,
+        *,
+        text: str,
+        prefilled: str = "",
+        replace: bool = True,
+        locator: Optional[str] = None,
+    ) -> ActionResult:
         """
         Type text with the active iOS interaction backend.
+        Clears existing content via WebDriverAgent when *replace* is True and *prefilled* is non-empty.
         """
 
+        _ = locator
         start_time = time.time()
 
         try:
+            if replace and len(prefilled) > 0:
+                await self.__automation_gateway.clear_text(length=len(prefilled))
+
             if self.__should_route_interactions_via_automation_gateway():
                 await self.__automation_gateway.type_text(text=text)
             else:

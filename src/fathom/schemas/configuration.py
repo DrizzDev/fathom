@@ -95,6 +95,11 @@ class TypeInteractionPolicy(BaseModel):
     Runtime policy for text input interactions.
     """
 
+    delay: int = Field(
+        ge=0,
+        default=500,
+        description="Delay in milliseconds before retrying a type action when the initial attempt fails due to focus loss.",
+    )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
         description="Type policy extension metadata",

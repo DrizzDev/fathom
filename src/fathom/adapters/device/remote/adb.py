@@ -216,13 +216,25 @@ class ADBRemoteDeviceAdapter(DevicePort):
         )
         return await self.__send_command(request)
 
-    async def type(self, *, text: str) -> ActionResult:
+    async def type(
+        self,
+        *,
+        text: str,
+        prefilled: str = "",
+        replace: bool = True,
+        locator: Optional[str] = None,
+    ) -> ActionResult:
         """
         Execute remote text input.
         """
 
         request = RemoteInteractionRequest(
-            action=InteractionAction.TYPE, text=text, execution_id=self.__execution_id
+            text=text,
+            locator=locator,
+            replace=replace,
+            prefilled=prefilled,
+            action=InteractionAction.TYPE,
+            execution_id=self.__execution_id,
         )
         return await self.__send_command(request)
 

@@ -38,7 +38,7 @@ MAX_ACTION_WAIT_MS = 10_000
 
 # Retry configuration
 DEFAULT_MAX_RETRIES = 2
-DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
+DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff (milliseconds)
 
 # Signal adapter heartbeat interval (seconds)
 SIGNAL_HEARTBEAT_INTERVAL = 5.0

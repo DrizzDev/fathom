@@ -21,7 +21,7 @@ from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.processing.annotator import ImageAnnotator
-from fathom.schemas.actions import Action, ExecutionRegion, GesturePath
+from fathom.schemas.actions import Action, ExecutionRegion, GesturePath, InputContext
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult, ExecutionResult
 from fathom.schemas.screens import ScreenCapture
@@ -310,10 +310,18 @@ class ActionExecutor:
         return result, coords
 
     async def __execute_type(
-        self, action: Action, converter: CoordinateConverter, width: int, height: int
+        self,
+        width: int,
+        height: int,
+        action: Action,
+        converter: CoordinateConverter,
     ) -> Tuple[ActionResult, Tuple[int, ...]]:
         """
-        Helper Method To Execute `TYPE` Command
+        Execute TYPE command: focus tap, stabilization wait, then type.
+
+        When ``input_context`` is present on the action (populated during resolution),
+        the locator and prefilled text are forwarded to the provider. When absent,
+        the provider receives a plain text input with no clear or locator fallback.
         """
 
         _ = width, height
@@ -323,14 +331,47 @@ class ActionExecutor:
 
         x, y = converter.center_to_pixels(bounds=action.bounds)
         x, y = self.__apply_tap_bias(x=x, y=y, action=action, converter=converter)
+
         coords = (x, y)
+        context = action.input_context or InputContext()
+        configuration = self.__device.configuration or DeviceRuntimeConfiguration()
 
-        focus_result = await self.__device.tap(x=x, y=y)
-        if not focus_result.success:
-            return focus_result, coords
+        wait = configuration.interaction.policy.type.delay / 1000.0
 
-        result = await self.__device.type(text=action.text or "")
+        if len(context.prefilled) > 0:
+            logger.info("Existing text detected, will replace (locator=%s)", context.locator)
+
+        if not (
+            result := await self.__focus_and_type(
+                text=action.text or "", context=context, x=x, y=y, wait=wait
+            )
+        ).success:
+            logger.warning("Type failed (error=%s). Re-tapping and retrying.", result.error)
+            result = await self.__focus_and_type(
+                text=action.text or "", context=context, x=x, y=y, wait=wait
+            )
+
         return result, coords
+
+    async def __focus_and_type(
+        self, *, text: str, context: InputContext, x: int, y: int, wait: float
+    ) -> ActionResult:
+        """
+        Tap to focus, wait for stabilization, then send text.
+        """
+
+        if not (result := await self.__device.tap(x=x, y=y)).success:
+            return result
+
+        logger.info(f"Waiting for {wait} seconds since element was not focused")
+        await asyncio.sleep(delay=wait)
+
+        return await self.__device.type(
+            text=text,
+            locator=context.locator,
+            prefilled=context.prefilled,
+            replace=len(context.prefilled) > 0,
+        )
 
     async def __execute_swipe(
         self, *, action: Action, converter: CoordinateConverter

@@ -7,6 +7,29 @@ from pydantic import BaseModel, ConfigDict, Field
 from fathom.constants import ActionType
 
 CoordinateSource = Literal["model", "viewport", "xml"]
+InputContextSource = Literal["xml", "accessibility", "model", "vision"]
+
+
+class InputContext(BaseModel):
+    """
+    Optional execution context for text input actions.
+
+    Populated during resolution when element metadata is available (XML, accessibility, etc.).
+    When absent, typing falls back to visual focus with no locator or clear behavior.
+    """
+
+    locator: Optional[str] = Field(
+        default=None,
+        description="Provider-neutral locator for the input element.",
+    )
+    prefilled: str = Field(
+        default="",
+        description="Observed text already present in the input field.",
+    )
+    source: Optional[InputContextSource] = Field(
+        default=None,
+        description="Evidence source used to derive the input context.",
+    )
 
 
 class Bounds(BaseModel):
@@ -146,6 +169,11 @@ class Action(BaseModel):
     text: Optional[str] = Field(default=None, description="Text content for typing actions")
     bounds: Optional[Bounds] = Field(default=None, description="Bounding box for the interaction")
     label_id: Optional[str] = Field(default=None, description="Numeric label ID from XML grounding")
+
+    input_context: Optional[InputContext] = Field(
+        default=None,
+        description="Optional execution context for text input, populated during resolution when element metadata is available.",
+    )
 
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
     wait_duration: Optional[float] = Field(default=None, description="Duration to wait in seconds")

@@ -5,9 +5,9 @@ import re
 from logging import getLogger
 from typing import Any, Dict, Optional, Pattern
 
-from fathom.constants import SPATIAL_ACTION_TYPES
+from fathom.constants import SPATIAL_ACTION_TYPES, ActionType
 from fathom.interfaces.memory import MemoryPort
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, InputContext
 
 logger = getLogger(__name__)
 
@@ -104,22 +104,70 @@ class ReferenceResolutionService:
                 f"-> Pixel Bounds: {x1},{y1} {width}x{height}"
             )
 
-            return action.model_copy(
-                update={
-                    "bounds": Bounds(
-                        x=x1,
-                        y=y1,
-                        source="xml",
-                        width=width,
-                        height=height,
-                        coord_system="pixel",
-                    ),
-                }
-            )
+            update: Dict[str, Any] = {
+                "bounds": Bounds(
+                    x=x1,
+                    y=y1,
+                    source="xml",
+                    width=width,
+                    height=height,
+                    coord_system="pixel",
+                ),
+            }
+
+            if (
+                isinstance(info, Dict)
+                and action.action_type == ActionType.TYPE
+                and (input_context := self.__build_input_context(element=info))
+            ):
+                update["input_context"] = input_context
+
+            return action.model_copy(update=update)
 
         except Exception as exception:
             logger.warning(f"Failed to snap to label {action.label_id}: {exception}")
             return action
+
+    @staticmethod
+    def __build_input_context(*, element: Dict[str, Any]) -> Optional[InputContext]:
+        """
+        Build an InputContext from XML element attributes when meaningful metadata exists.
+
+        Returns None when neither a locator nor prefilled text can be derived,
+        keeping input_context absent rather than populated with empty defaults.
+        """
+
+        locator = str(element.get("resource-id", "")).strip() or None
+        prefilled = ReferenceResolutionService.__prefilled_text_from_element(element=element)
+
+        if not locator and len(prefilled) == 0:
+            return None
+
+        return InputContext(locator=locator, prefilled=prefilled, source="xml")
+
+    @staticmethod
+    def __prefilled_text_from_element(*, element: Dict[str, Any]) -> str:
+        """
+        Return real existing text while excluding placeholder/hint text.
+        """
+
+        text = str(element.get("text", "")).strip()
+
+        if not text:
+            return ""
+
+        placeholder = str(
+            element.get("hint", "")
+            or element.get("hintText", "")
+            or element.get("placeholder", "")
+            or element.get("placeholderText", "")
+            or ""
+        ).strip()
+
+        if placeholder and text == placeholder:
+            return ""
+
+        return text
 
     async def __resolve_string(self, text: str) -> str:
         """

@@ -8,7 +8,6 @@ from pathlib import Path
 from fathom.schemas.actions import Bounds
 from fathom.utils.coordinates import CoordinateConverter
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -108,11 +107,7 @@ class CoordinateConverterTest(unittest.TestCase):
         Return the real Rolodex knob bounds from workflow 7e1dae80.
         """
 
-        path = (
-            PROJECT_ROOT
-            / "tests/fixtures/leadbeam/7e1dae80"
-            / "20260414_191321.xml"
-        )
+        path = PROJECT_ROOT / "tests/fixtures/leadbeam/7e1dae80" / "20260414_191321.xml"
         root = ElementTree.parse(path).getroot()
 
         for node in root.iter("node"):
@@ -139,11 +134,7 @@ class CoordinateConverterTest(unittest.TestCase):
         Return the real Save to draft button bounds from workflow 52a0bb73.
         """
 
-        path = (
-            PROJECT_ROOT
-            / "tests/fixtures/leadbeam/52a0bb73"
-            / "20260414_190109.xml"
-        )
+        path = PROJECT_ROOT / "tests/fixtures/leadbeam/52a0bb73" / "20260414_190109.xml"
         root = ElementTree.parse(path).getroot()
 
         for node in root.iter("node"):
