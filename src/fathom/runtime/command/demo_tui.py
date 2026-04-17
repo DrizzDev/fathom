@@ -35,7 +35,6 @@ from textual.widgets import Input, Label, RichLog, Static
 
 from fathom.adapters.telemetry.event_panels import render_event_panel
 from fathom.constants.events import FathomEvent
-from fathom.interfaces.telemetry import TelemetryPort
 
 logger = getLogger(__name__)
 

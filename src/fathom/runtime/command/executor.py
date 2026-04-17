@@ -12,6 +12,7 @@ from rich.table import Table
 
 from fathom.adapters.signal.tui import TuiSignalAdapter
 from fathom.adapters.telemetry.console import ConsoleTelemetryAdapter
+from fathom.adapters.telemetry.tui import TuiTelemetryAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.core.exceptions import FathomError
 from fathom.interfaces.factory import (
@@ -25,7 +26,6 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
-from fathom.adapters.telemetry.tui import TuiTelemetryAdapter
 from fathom.runtime.command.demo_tui import DemoApp
 from fathom.runtime.command.resolver import (
     RuntimeDeviceDefaultsResolver,
