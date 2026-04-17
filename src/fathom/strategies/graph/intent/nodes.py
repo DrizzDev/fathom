@@ -32,7 +32,6 @@ from fathom.core.services.hitl import HITLService
 from fathom.schemas.hierarchy import HierarchyProcessingResult
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.screens import (
     PostActionScreenComparison,
     ScreenCapture,
@@ -41,6 +40,7 @@ from fathom.schemas.screens import (
     ScreenState,
 )
 from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.ui import LabeledElement
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
@@ -373,9 +373,7 @@ class IntentNodeProvider:
 
         # Last sub-goal verified — mark intent complete.
         logger.info("[NODE: VERIFY] All sub-goals verified. Marking intent complete.")
-        agent_state.mark_complete(
-            reason="All sub-goals completed and verified sequentially"
-        )
+        agent_state.mark_complete(reason="All sub-goals completed and verified sequentially")
         result = cast(
             "IntentGraphState",
             {
@@ -1678,9 +1676,7 @@ class IntentNodeProvider:
 
             # Last sub-goal verified — mark intent complete.
             logger.info("[NODE: VERIFY] All sub-goals verified. Marking intent complete.")
-            agent_state.mark_complete(
-                reason="All sub-goals completed and verified sequentially"
-            )
+            agent_state.mark_complete(reason="All sub-goals completed and verified sequentially")
             result = cast(
                 "IntentGraphState",
                 {
