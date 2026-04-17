@@ -206,3 +206,34 @@ class IOSRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
         await adapter.tap(x=585, y=1266)
 
         self.assertEqual(delegate.tap_calls, [(195, 422)])
+
+    def test_unparseable_bytes_do_not_raise_from_dim_cache(self) -> None:
+        """
+        Regression for 7eb22e5: when the PNG parser rejects the bytes
+        AND the PIL fallback also rejects them,
+        ``__cache_screenshot_dimensions`` must swallow the
+        ``DeviceError``. Raising from this best-effort helper previously
+        took down the capture flow on a single bad screenshot.
+        """
+
+        delegate = FakeADBRemoteDeviceAdapter(
+            automation_dimensions=(390, 844),
+            screenshot_dimensions=(1170, 2532),
+        )
+
+        adapter = IOSRemoteDeviceAdapter(
+            configuration=DeviceConfiguration(
+                type=DeviceConnectionType.REMOTE,
+                platform=DevicePlatform.IOS,
+            ),
+            delegate=cast("ADBRemoteDeviceAdapter", delegate),
+        )
+
+        # Must not raise — the whole point of the fix.
+        adapter._IOSRemoteDeviceAdapter__cache_screenshot_dimensions(  # type: ignore[attr-defined]
+            image=b"not-a-valid-image",
+        )
+
+        self.assertIsNone(
+            adapter._IOSRemoteDeviceAdapter__cached_screenshot_dimensions,  # type: ignore[attr-defined]
+        )
