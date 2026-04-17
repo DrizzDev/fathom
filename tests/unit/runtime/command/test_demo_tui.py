@@ -5,7 +5,8 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from fathom.constants.events import FathomEvent
-from fathom.runtime.command.demo_tui import DemoApp, TuiTelemetryAdapter, _HitlAskScreen
+from fathom.adapters.telemetry.tui import TuiTelemetryAdapter
+from fathom.runtime.command.demo_tui import DemoApp, _HitlAskScreen
 
 
 async def _noop_workflow() -> bool:

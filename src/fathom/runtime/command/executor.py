@@ -25,7 +25,8 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
-from fathom.runtime.command.demo_tui import DemoApp, TuiTelemetryAdapter
+from fathom.adapters.telemetry.tui import TuiTelemetryAdapter
+from fathom.runtime.command.demo_tui import DemoApp
 from fathom.runtime.command.resolver import (
     RuntimeDeviceDefaultsResolver,
     RuntimeDeviceDefaultsResolverPort,
