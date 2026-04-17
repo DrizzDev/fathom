@@ -109,10 +109,11 @@ class ReferenceResolutionService:
                     "bounds": Bounds(
                         x=x1,
                         y=y1,
+                        source="xml",
                         width=width,
                         height=height,
                         coord_system="pixel",
-                    )
+                    ),
                 }
             )
 

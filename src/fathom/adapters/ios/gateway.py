@@ -65,7 +65,7 @@ class IOSAutomationGateway:
         start_y: float,
         end_x: float,
         end_y: float,
-        duration_milliseconds: int,
+        duration: int,
     ) -> None:
         """
         Swipe between two points through the configured iOS automation gateway.
@@ -98,7 +98,7 @@ class IOSAutomationGateway:
                                 },
                                 {
                                     "type": "pointerMove",
-                                    "duration": max(int(duration_milliseconds), 0),
+                                    "duration": max(int(duration), 0),
                                     "x": round(end_x),
                                     "y": round(end_y),
                                     "origin": "viewport",

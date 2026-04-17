@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import Bounds, CoordinateSource, ExecutionRegion, GesturePath
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 
 
@@ -63,29 +63,143 @@ class CoordinateConverter:
         direction: str,
     ) -> Tuple[int, int, int, int]:
         """
-        Calculate swipe start and end coordinates.
+        Return swipe coordinates derived from the bounds edges.
+        """
+
+        region = self.region_from_bounds(bounds=bounds, source="model")
+        return self.resolve_swipe_path(region=region, direction=direction).to_coordinates()
+
+    def region_from_bounds(self, *, bounds: Bounds, source: CoordinateSource) -> ExecutionRegion:
+        """
+        Convert action bounds into an execution region in screen pixels.
         """
 
         x, y, width, height = self.to_pixels(bounds=bounds)
-        center_x, center_y = x + width // 2, y + height // 2
+        return ExecutionRegion(x=x, y=y, width=width, height=height, source=source)
+
+    def viewport_region(self) -> ExecutionRegion:
+        """
+        Return the full screen as a viewport execution region.
+        """
+
+        return ExecutionRegion(
+            x=0,
+            y=0,
+            source="viewport",
+            width=self.__width,
+            height=self.__height,
+        )
+
+    def resolve_swipe_path(self, *, region: ExecutionRegion, direction: str) -> GesturePath:
+        """
+        Derive a finger swipe path from the execution region edges.
+        """
+
+        swipe_policy = self.__configuration.interaction.policy.swipe
+
+        horizontal_margin = self.__edge_margin(
+            size=region.width,
+            ratio=swipe_policy.edge_margin_ratio,
+            minimum=swipe_policy.minimum_edge_margin,
+            maximum=swipe_policy.maximum_edge_margin,
+        )
+        vertical_margin = self.__edge_margin(
+            size=region.height,
+            ratio=swipe_policy.edge_margin_ratio,
+            minimum=swipe_policy.minimum_edge_margin,
+            maximum=swipe_policy.maximum_edge_margin,
+        )
+        center_x = region.x + region.width // 2
+        center_y = region.y + region.height // 2
+
+        if direction == "up":
+            return GesturePath(
+                start_x=center_x,
+                start_y=region.y + region.height - vertical_margin,
+                end_x=center_x,
+                end_y=region.y + vertical_margin,
+                duration=swipe_policy.duration,
+            )
+
+        if direction == "down":
+            return GesturePath(
+                start_x=center_x,
+                start_y=region.y + vertical_margin,
+                end_x=center_x,
+                end_y=region.y + region.height - vertical_margin,
+                duration=swipe_policy.duration,
+            )
+
+        if direction == "left":
+            return GesturePath(
+                start_x=region.x + region.width - horizontal_margin,
+                start_y=center_y,
+                end_x=region.x + horizontal_margin,
+                end_y=center_y,
+                duration=swipe_policy.duration,
+            )
+
+        if direction == "right":
+            return GesturePath(
+                start_x=region.x + horizontal_margin,
+                start_y=center_y,
+                end_x=region.x + region.width - horizontal_margin,
+                end_y=center_y,
+                duration=swipe_policy.duration,
+            )
+
+        return GesturePath(
+            start_x=center_x,
+            start_y=center_y,
+            end_x=center_x,
+            end_y=center_y,
+            duration=swipe_policy.duration,
+        )
+
+    def resolve_scroll_path(self, *, region: ExecutionRegion, direction: str) -> GesturePath:
+        """
+        Derive a content scroll path from the viewport edges.
+        """
 
         swipe_policy = self.__configuration.interaction.policy.swipe
         scroll_policy = self.__configuration.interaction.policy.scroll
 
-        distance_x = int(width * swipe_policy.distance_ratio)
-        distance_y = int(height * scroll_policy.distance_ratio)
+        vertical_margin = self.__edge_margin(
+            size=region.height,
+            ratio=scroll_policy.edge_margin_ratio,
+            minimum=scroll_policy.minimum_edge_margin,
+            maximum=scroll_policy.maximum_edge_margin,
+        )
+        center_x = region.x + region.width // 2
 
         if direction == "up":
-            return center_x, center_y + distance_y // 2, center_x, center_y - distance_y // 2
+            return GesturePath(
+                start_x=center_x,
+                start_y=region.y + vertical_margin,
+                end_x=center_x,
+                end_y=region.y + region.height - vertical_margin,
+                duration=swipe_policy.duration,
+            )
 
-        elif direction == "down":
-            return center_x, center_y - distance_y // 2, center_x, center_y + distance_y // 2
+        return GesturePath(
+            start_x=center_x,
+            start_y=region.y + region.height - vertical_margin,
+            end_x=center_x,
+            end_y=region.y + vertical_margin,
+            duration=swipe_policy.duration,
+        )
 
-        elif direction == "left":
-            return center_x + distance_x // 2, center_y, center_x - distance_x // 2, center_y
+    @staticmethod
+    def __edge_margin(*, size: int, ratio: float, minimum: int, maximum: int) -> int:
+        """
+        Return a safe margin that preserves travel across small regions.
+        """
 
-        elif direction == "right":
-            return center_x - distance_x // 2, center_y, center_x + distance_x // 2, center_y
+        if size <= 1:
+            return 0
 
-        else:
-            return center_x, center_y, center_x, center_y
+        preferred = int(size * ratio)
+        midpoint_limit = max(0, (size - 1) // 2)
+        bounded = max(minimum, min(preferred, maximum))
+
+        return min(bounded, midpoint_limit)

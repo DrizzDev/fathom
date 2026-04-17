@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Dict, Literal, Optional
+from typing import Dict, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import ActionType
+
+CoordinateSource = Literal["model", "viewport", "xml"]
 
 
 class Bounds(BaseModel):
@@ -18,6 +20,10 @@ class Bounds(BaseModel):
     height: int = Field(ge=0, le=5000, description="Height of the element")
     system: str = Field(
         default="normalized", description="Coordinate system used", alias="coord_system"
+    )
+    source: Optional[CoordinateSource] = Field(
+        default=None,
+        description="Evidence source used to derive these coordinates.",
     )
 
     @property
@@ -54,11 +60,13 @@ class Bounds(BaseModel):
         # If explicitly told it's pixels, don't normalize
         if self.system == "pixel":
             x, y, width, height = self.x, self.y, self.width, self.height
+
         elif self.is_normalized:
             x = int(self.x * screen_width / 1000)
             y = int(self.y * screen_height / 1000)
             width = int(self.width * screen_width / 1000)
             height = int(self.height * screen_height / 1000)
+
         else:
             # Fallback for large values that must be pixels
             x, y, width, height = self.x, self.y, self.width, self.height
@@ -71,6 +79,55 @@ class Bounds(BaseModel):
         height = max(1, min(height, max(1, screen_height - y)))
 
         return x, y, width, height
+
+
+class ExecutionRegion(BaseModel):
+    """
+    Region used to derive executable coordinates for an action.
+    """
+
+    x: int = Field(ge=0, le=5000, description="Left edge of the region in screen pixels.")
+    y: int = Field(ge=0, le=5000, description="Top edge of the region in screen pixels.")
+
+    width: int = Field(ge=1, le=5000, description="Region width in screen pixels.")
+    height: int = Field(ge=1, le=5000, description="Region height in screen pixels.")
+    source: CoordinateSource = Field(description="Coordinate evidence used to derive this region.")
+
+    model_config = ConfigDict(frozen=True)
+
+
+class GesturePath(BaseModel):
+    """
+    Concrete pointer path used to execute a gesture.
+    """
+
+    start_x: int = Field(ge=0, le=5000, description="Gesture start x-coordinate in screen pixels.")
+    start_y: int = Field(ge=0, le=5000, description="Gesture start y-coordinate in screen pixels.")
+
+    end_x: int = Field(ge=0, le=5000, description="Gesture end x-coordinate in screen pixels.")
+    end_y: int = Field(ge=0, le=5000, description="Gesture end y-coordinate in screen pixels.")
+
+    duration: int = Field(ge=0, description="Gesture duration in milliseconds.")
+
+    model_config = ConfigDict(frozen=True)
+
+    @property
+    def distance(self) -> int:
+        """
+        Return the gesture travel distance in screen pixels.
+        """
+
+        horizontal = abs(self.end_x - self.start_x)
+        vertical = abs(self.end_y - self.start_y)
+
+        return max(horizontal, vertical)
+
+    def to_coordinates(self) -> Tuple[int, int, int, int]:
+        """
+        Return the path as trace and device coordinates.
+        """
+
+        return self.start_x, self.start_y, self.end_x, self.end_y
 
 
 class Action(BaseModel):

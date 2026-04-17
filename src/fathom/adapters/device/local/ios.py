@@ -60,13 +60,27 @@ class IOSDevice(DevicePort):
             interaction=InteractionRuntimeConfiguration(
                 policy=InteractionPolicyConfiguration(
                     swipe=SwipeInteractionPolicy(
-                        duration_milliseconds=(
-                            self.__configuration.interaction.policy.swipe.duration_milliseconds
+                        duration=self.__configuration.interaction.policy.swipe.duration,
+                        edge_margin_ratio=(
+                            self.__configuration.interaction.policy.swipe.edge_margin_ratio
                         ),
-                        distance_ratio=self.__configuration.interaction.policy.swipe.distance_ratio,
+                        minimum_edge_margin=(
+                            self.__configuration.interaction.policy.swipe.minimum_edge_margin
+                        ),
+                        maximum_edge_margin=(
+                            self.__configuration.interaction.policy.swipe.maximum_edge_margin
+                        ),
                     ),
                     scroll=ScrollInteractionPolicy(
-                        distance_ratio=self.__configuration.interaction.policy.scroll.distance_ratio
+                        edge_margin_ratio=(
+                            self.__configuration.interaction.policy.scroll.edge_margin_ratio
+                        ),
+                        minimum_edge_margin=(
+                            self.__configuration.interaction.policy.scroll.minimum_edge_margin
+                        ),
+                        maximum_edge_margin=(
+                            self.__configuration.interaction.policy.scroll.maximum_edge_margin
+                        ),
                     ),
                 )
             ),
@@ -170,9 +184,7 @@ class IOSDevice(DevicePort):
         start_time = time.time()
 
         requested_speed = speed
-        resolved_duration = duration or (
-            self.__configuration.interaction.policy.swipe.duration_milliseconds
-        )
+        resolved_duration = duration or (self.__configuration.interaction.policy.swipe.duration)
 
         if requested_speed is not None:
             logger.debug("Ignoring swipe speed for iOS simctl adapter: %s", requested_speed)
@@ -181,12 +193,13 @@ class IOSDevice(DevicePort):
             if self.__should_route_interactions_via_automation_gateway():
                 start_x, start_y = await self.__to_automation_coordinates(x=x1, y=y1)
                 end_x, end_y = await self.__to_automation_coordinates(x=x2, y=y2)
+
                 await self.__automation_gateway.swipe(
                     start_x=start_x,
                     start_y=start_y,
                     end_x=end_x,
                     end_y=end_y,
-                    duration_milliseconds=resolved_duration,
+                    duration=resolved_duration,
                 )
             else:
                 device_identifier = await self.__resolve_device_identifier()
@@ -227,7 +240,7 @@ class IOSDevice(DevicePort):
             y1=y,
             x2=x2,
             y2=y,
-            duration=self.__gesture_defaults.back_duration_milliseconds,
+            duration=self.__gesture_defaults.back_duration,
         )
 
     async def home(self) -> ActionResult:

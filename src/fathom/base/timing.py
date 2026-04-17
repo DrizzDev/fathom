@@ -43,12 +43,9 @@ def time_it(
                     )
                     return await typed_function(*args, **kwargs)
                 finally:
-                    duration_milliseconds = (time.perf_counter() - start_time) * 1000
+                    duration = (time.perf_counter() - start_time) * 1000
                     resolved_logger.log(
-                        level,
-                        "[TIMING] %s completed in %.2fms",
-                        operation,
-                        duration_milliseconds,
+                        level, "[TIMING] %s completed in %.2fms", operation, duration
                     )
 
             return cast("Callable[ParameterSpecification, ReturnType]", __async_wrapper)

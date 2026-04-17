@@ -52,13 +52,27 @@ class ADBDevice(DevicePort):
             interaction=InteractionRuntimeConfiguration(
                 policy=InteractionPolicyConfiguration(
                     swipe=SwipeInteractionPolicy(
-                        duration_milliseconds=(
-                            self.__configuration.interaction.policy.swipe.duration_milliseconds
+                        duration=self.__configuration.interaction.policy.swipe.duration,
+                        edge_margin_ratio=(
+                            self.__configuration.interaction.policy.swipe.edge_margin_ratio
                         ),
-                        distance_ratio=self.__configuration.interaction.policy.swipe.distance_ratio,
+                        minimum_edge_margin=(
+                            self.__configuration.interaction.policy.swipe.minimum_edge_margin
+                        ),
+                        maximum_edge_margin=(
+                            self.__configuration.interaction.policy.swipe.maximum_edge_margin
+                        ),
                     ),
                     scroll=ScrollInteractionPolicy(
-                        distance_ratio=self.__configuration.interaction.policy.scroll.distance_ratio
+                        edge_margin_ratio=(
+                            self.__configuration.interaction.policy.scroll.edge_margin_ratio
+                        ),
+                        minimum_edge_margin=(
+                            self.__configuration.interaction.policy.scroll.minimum_edge_margin
+                        ),
+                        maximum_edge_margin=(
+                            self.__configuration.interaction.policy.scroll.maximum_edge_margin
+                        ),
                     ),
                 )
             ),
@@ -117,9 +131,7 @@ class ADBDevice(DevicePort):
             logger.debug("Ignoring swipe speed for ADB adapter: %s", speed)
 
         duration = duration or (
-            self.__configuration.interaction.policy.swipe.duration_milliseconds
-            if self.__configuration
-            else 300
+            self.__configuration.interaction.policy.swipe.duration if self.__configuration else 300
         )
 
         return await self.__shell(command=f"input swipe {x1} {y1} {x2} {y2} {duration}")
