@@ -32,6 +32,7 @@ from fathom.core.services.hitl import HITLService
 from fathom.schemas.hierarchy import HierarchyProcessingResult
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.screens import (
     PostActionScreenComparison,
     ScreenCapture,
@@ -278,6 +279,114 @@ class IntentNodeProvider:
                 self.__context.agent_state.sub_goal_list
             ):
                 self.__context.agent_state.set_current_sub_goal_index(current_index)
+
+    async def __advance_after_verify_passed(
+        self,
+        *,
+        is_subgoal_verify: bool,
+        current_sub_goal: Optional[SubGoal],
+        reason: str,
+    ) -> IntentGraphState:
+        """
+        Handle the ``is_truly_complete`` branch of ``verify``.
+
+        Extracted so the sub-goal transition cues (SUB_GOAL_COMPLETED →
+        SUB_GOAL_STARTED) can be unit-tested without standing up the
+        full verification machinery. Three outcomes:
+
+        - sub-goal verified with more remaining: emit COMPLETED +
+          STARTED, return a retry result;
+        - sub-goal verified with none remaining: emit COMPLETED, mark
+          the intent complete, return the terminal result;
+        - full-intent verify (no sub-goals): mark complete, return the
+          terminal result with the LLM's rationale as the reason.
+        """
+
+        agent_state = self.__context.agent_state
+
+        if not (is_subgoal_verify and current_sub_goal is not None):
+            # Full intent verified — exit.
+            agent_state.mark_complete(reason=reason)
+            result = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: reason,
+                },
+            )
+            self.__persist_agent_state_to_graph(result=result)
+            return result
+
+        # Sub-goal verified — advance to next sub-goal (or complete intent).
+        has_more = agent_state.mark_current_sub_goal_complete(
+            completion_signal=SubGoalCompletionSignal(
+                evidence=f"Verified by screenshot: {reason}",
+                llm_signaled=True,
+                rationale_verified=False,
+                action_executed=True,
+                screen_verified=True,
+            ),
+        )
+        agent_state.reset_completion()
+
+        # Clear stale verification feedback from previous sub-goals
+        # so it doesn't pollute the next sub-goal's context.
+        self.__context.context_manager.clear_user_guidance()
+
+        total_sub_goals = len(agent_state.sub_goal_list)
+
+        # Cue: the just-finished sub-goal.
+        await self.__context.telemetry.info(
+            "Sub-goal completed",
+            type=FathomEvent.SUB_GOAL_COMPLETED,
+            index=current_sub_goal.index,
+            total=total_sub_goals,
+            description=current_sub_goal.description,
+        )
+
+        if has_more:
+            next_sg = agent_state.get_current_sub_goal()
+            logger.info(
+                f"[NODE: VERIFY] ✓ Sub-goal {current_sub_goal.index} VERIFIED. "
+                f"Advancing to sub-goal {next_sg.index if next_sg else '(none)'}: "
+                f"'{next_sg.description if next_sg else ''}'"
+            )
+
+            # Cue: the newly-active sub-goal.
+            if next_sg is not None:
+                await self.__context.telemetry.info(
+                    "Sub-goal started",
+                    type=FathomEvent.SUB_GOAL_STARTED,
+                    index=next_sg.index,
+                    total=total_sub_goals,
+                    description=next_sg.description,
+                )
+            result = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: False,
+                    IntentStateKey.SHOULD_RETRY: True,
+                },
+            )
+            self.__persist_agent_state_to_graph(result=result)
+            return result
+
+        # Last sub-goal verified — mark intent complete.
+        logger.info("[NODE: VERIFY] All sub-goals verified. Marking intent complete.")
+        agent_state.mark_complete(
+            reason="All sub-goals completed and verified sequentially"
+        )
+        result = cast(
+            "IntentGraphState",
+            {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: (
+                    "All sub-goals completed and verified sequentially"
+                ),
+            },
+        )
+        self.__persist_agent_state_to_graph(result=result)
+        return result
 
     def __persist_agent_state_to_graph(
         self,
@@ -1494,6 +1603,108 @@ class IntentNodeProvider:
             },
         )
 
+    async def __advance_after_verified(
+        self,
+        *,
+        current_sub_goal: Optional[SubGoal],
+        is_subgoal_verify: bool,
+        reason: str,
+    ) -> IntentGraphState:
+        """
+        Apply state transitions after the verifier confirms completion.
+
+        When a sub-goal was under verification, mark it complete, emit the
+        ``SUB_GOAL_COMPLETED`` cue, and either emit ``SUB_GOAL_STARTED`` for
+        the next sub-goal (returning a retry state) or mark the whole intent
+        complete (returning a terminal state).  When the full intent was
+        under verification, mark the intent complete with ``reason``.
+        """
+
+        agent_state = self.__context.agent_state
+
+        if is_subgoal_verify and current_sub_goal is not None:
+            has_more = agent_state.mark_current_sub_goal_complete(
+                completion_signal=SubGoalCompletionSignal(
+                    evidence=f"Verified by screenshot: {reason}",
+                    llm_signaled=True,
+                    rationale_verified=False,
+                    action_executed=True,
+                    screen_verified=True,
+                ),
+            )
+            agent_state.reset_completion()
+
+            # Clear stale verification feedback from previous sub-goals
+            # so it doesn't pollute the next sub-goal's context.
+            self.__context.context_manager.clear_user_guidance()
+
+            total_sub_goals = len(agent_state.sub_goal_list)
+
+            # Cue: the just-finished sub-goal.
+            await self.__context.telemetry.info(
+                "Sub-goal completed",
+                type=FathomEvent.SUB_GOAL_COMPLETED,
+                index=current_sub_goal.index,
+                total=total_sub_goals,
+                description=current_sub_goal.description,
+            )
+
+            if has_more:
+                next_sg = agent_state.get_current_sub_goal()
+                logger.info(
+                    f"[NODE: VERIFY] ✓ Sub-goal {current_sub_goal.index} VERIFIED. "
+                    f"Advancing to sub-goal {next_sg.index if next_sg else '(none)'}: "
+                    f"'{next_sg.description if next_sg else ''}'"
+                )
+
+                # Cue: the newly-active sub-goal.
+                if next_sg is not None:
+                    await self.__context.telemetry.info(
+                        "Sub-goal started",
+                        type=FathomEvent.SUB_GOAL_STARTED,
+                        index=next_sg.index,
+                        total=total_sub_goals,
+                        description=next_sg.description,
+                    )
+                result = cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.IS_COMPLETE: False,
+                        IntentStateKey.SHOULD_RETRY: True,
+                    },
+                )
+                self.__persist_agent_state_to_graph(result=result)
+                return result
+
+            # Last sub-goal verified — mark intent complete.
+            logger.info("[NODE: VERIFY] All sub-goals verified. Marking intent complete.")
+            agent_state.mark_complete(
+                reason="All sub-goals completed and verified sequentially"
+            )
+            result = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: (
+                        "All sub-goals completed and verified sequentially"
+                    ),
+                },
+            )
+            self.__persist_agent_state_to_graph(result=result)
+            return result
+
+        # Full intent verified — exit.
+        agent_state.mark_complete(reason=reason)
+        result = cast(
+            "IntentGraphState",
+            {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: reason,
+            },
+        )
+        self.__persist_agent_state_to_graph(result=result)
+        return result
+
     async def verify(self, state: IntentGraphState) -> IntentGraphState:
         """
         Explicitly verify if the intent is truly complete by capturing the screen and asking the LLM.
@@ -1624,89 +1835,11 @@ class IntentNodeProvider:
         )
 
         if is_truly_complete:
-            if is_subgoal_verify and current_sub_goal is not None:
-                # Sub-goal verified — advance to next sub-goal.
-                has_more = agent_state.mark_current_sub_goal_complete(
-                    completion_signal=SubGoalCompletionSignal(
-                        evidence=f"Verified by screenshot: {reason}",
-                        llm_signaled=True,
-                        rationale_verified=False,
-                        action_executed=True,
-                        screen_verified=True,
-                    ),
-                )
-                agent_state.reset_completion()
-
-                # Clear stale verification feedback from previous sub-goals
-                # so it doesn't pollute the next sub-goal's context.
-                self.__context.context_manager.clear_user_guidance()
-
-                total_sub_goals = len(agent_state.sub_goal_list)
-
-                # Cue: the just-finished sub-goal.
-                await self.__context.telemetry.info(
-                    "Sub-goal completed",
-                    type=FathomEvent.SUB_GOAL_COMPLETED,
-                    index=current_sub_goal.index,
-                    total=total_sub_goals,
-                    description=current_sub_goal.description,
-                )
-
-                if has_more:
-                    next_sg = agent_state.get_current_sub_goal()
-                    logger.info(
-                        f"[NODE: VERIFY] ✓ Sub-goal {current_sub_goal.index} VERIFIED. "
-                        f"Advancing to sub-goal {next_sg.index if next_sg else '(none)'}: "
-                        f"'{next_sg.description if next_sg else ''}'"
-                    )
-
-                    # Cue: the newly-active sub-goal.
-                    if next_sg is not None:
-                        await self.__context.telemetry.info(
-                            "Sub-goal started",
-                            type=FathomEvent.SUB_GOAL_STARTED,
-                            index=next_sg.index,
-                            total=total_sub_goals,
-                            description=next_sg.description,
-                        )
-                    result = cast(
-                        "IntentGraphState",
-                        {
-                            CommonStateKey.IS_COMPLETE: False,
-                            IntentStateKey.SHOULD_RETRY: True,
-                        },
-                    )
-                    self.__persist_agent_state_to_graph(result=result)
-                    return result
-                else:
-                    # Last sub-goal verified — mark intent complete.
-                    logger.info("[NODE: VERIFY] All sub-goals verified. Marking intent complete.")
-                    agent_state.mark_complete(
-                        reason="All sub-goals completed and verified sequentially"
-                    )
-                    result = cast(
-                        "IntentGraphState",
-                        {
-                            CommonStateKey.IS_COMPLETE: True,
-                            CommonStateKey.COMPLETION_REASON: (
-                                "All sub-goals completed and verified sequentially"
-                            ),
-                        },
-                    )
-                    self.__persist_agent_state_to_graph(result=result)
-                    return result
-            else:
-                # Full intent verified — exit.
-                agent_state.mark_complete(reason=reason)
-                result = cast(
-                    "IntentGraphState",
-                    {
-                        CommonStateKey.IS_COMPLETE: True,
-                        CommonStateKey.COMPLETION_REASON: reason,
-                    },
-                )
-                self.__persist_agent_state_to_graph(result=result)
-                return result
+            return await self.__advance_after_verify_passed(
+                is_subgoal_verify=is_subgoal_verify,
+                current_sub_goal=current_sub_goal,
+                reason=reason,
+            )
         else:
             agent_state.record_verify_failure()
             failure_count = agent_state.sub_goal_verify_failures
