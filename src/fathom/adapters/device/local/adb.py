@@ -65,6 +65,7 @@ class ADBDevice(DevicePort):
             metadata={"executable_path": self.__configuration.executable_path},
         )
         self.__cached_size: Optional[Tuple[int, int]] = None
+        self.__launch_attempted: bool = False
 
     @property
     def configuration(self) -> DeviceRuntimeConfiguration:
@@ -84,7 +85,17 @@ class ADBDevice(DevicePort):
     async def type(self, *, text: str) -> ActionResult:
         """
         Type text on device character-by-character to prevent ADB input drops.
+
+        ``__execute_type`` taps the text field to focus it immediately
+        before calling this method, but Android needs a brief moment to
+        route the focus event to the IME + open the input connection.
+        Without a guard the first few characters of the stream can
+        arrive before the field is ready and get dropped. 200 ms
+        covers slower-to-focus fields (search bars that expand on tap,
+        inputs inside modals) without being humanly noticeable.
         """
+
+        await asyncio.sleep(0.2)
 
         last_result = ActionResult(success=True, duration=0)
 
@@ -247,6 +258,108 @@ class ADBDevice(DevicePort):
             raise
         except Exception as exception:
             raise DeviceError(f"Screenshot capture failed: {exception}") from exception
+
+    async def launch_configured_package(self) -> None:
+        """
+        Launch the configured Android package exactly once per session.
+
+        Called from ``IntentStrategy.execute`` as a background task so
+        the launch runs concurrently with LLM-based intent
+        classification and decomposition — the app is typically ready
+        by the time the agent takes its first screenshot.
+
+        Uses ``monkey -p <pkg> -c android.intent.category.LAUNCHER 1``
+        which resolves the launcher activity itself, so the adapter
+        doesn't need to know the app's entry Activity. Failures are
+        logged and swallowed — the agent can still navigate from the
+        launcher if the auto-launch fails (e.g., package not installed).
+        """
+
+        if self.__launch_attempted:
+            return
+
+        package_name = self.__configuration.package_name
+        if not package_name:
+            return
+
+        self.__launch_attempted = True
+
+        arguments = self.__build_arguments(
+            parts=[
+                "shell",
+                "monkey",
+                "-p",
+                package_name,
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "1",
+            ],
+        )
+
+        try:
+            returncode, _stdout, stderr = await self.__run_safe_subprocess(
+                arguments=arguments,
+                timeout=self.__configuration.command_timeout,
+                capture_stdout=True,
+                capture_stderr=True,
+            )
+            if returncode != 0:
+                stderr_text = stderr.decode("utf-8", errors="ignore").strip() if stderr else ""
+                logger.warning(
+                    "[adb] auto-launch of %s failed (exit=%s): %s; agent will navigate from launcher",
+                    package_name,
+                    returncode,
+                    stderr_text or "no stderr",
+                )
+                return
+            logger.info("[adb] auto-launched %s", package_name)
+        except Exception as exception:
+            logger.warning(
+                "[adb] auto-launch of %s raised %s; agent will navigate from launcher",
+                package_name,
+                exception,
+            )
+
+    async def terminate_configured_package(self) -> None:
+        """
+        Stop the configured Android package on run exit.
+
+        Uses ``adb shell am force-stop <pkg>``. Safe on apps that are
+        not running (force-stop is a no-op in that case). Failures are
+        logged and swallowed — cleanup must never raise.
+        """
+
+        package_name = self.__configuration.package_name
+        if not package_name:
+            return
+
+        arguments = self.__build_arguments(
+            parts=["shell", "am", "force-stop", package_name],
+        )
+
+        try:
+            returncode, _stdout, stderr = await self.__run_safe_subprocess(
+                arguments=arguments,
+                timeout=self.__configuration.command_timeout,
+                capture_stdout=True,
+                capture_stderr=True,
+            )
+            if returncode != 0:
+                stderr_text = stderr.decode("utf-8", errors="ignore").strip() if stderr else ""
+                logger.warning(
+                    "[adb] terminate of %s failed (exit=%s): %s",
+                    package_name,
+                    returncode,
+                    stderr_text or "no stderr",
+                )
+                return
+            logger.info("[adb] terminated %s", package_name)
+        except Exception as exception:
+            logger.warning(
+                "[adb] terminate of %s raised %s",
+                package_name,
+                exception,
+            )
 
     async def get_current_package(self) -> str:
         """
