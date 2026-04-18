@@ -93,6 +93,7 @@ class InteractiveWizardHappyPathsTest(unittest.TestCase):
         prompt_ask.side_effect = _prompts(
             [
                 "ABCDEF123",  # android serial (free text)
+                "",  # package (blank → omit)
                 "Open the Strava app",  # intent
             ]
         )
@@ -101,6 +102,7 @@ class InteractiveWizardHappyPathsTest(unittest.TestCase):
 
         with (
             patch.object(InteractiveWizard, "_InteractiveWizard__detect_devices", return_value=[]),
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_packages", return_value=[]),
             _mock_questionary_selects(["run", "android"]),
         ):
             result = InteractiveWizard(console=_build_console()).run()
@@ -127,7 +129,7 @@ class InteractiveWizardHappyPathsTest(unittest.TestCase):
         prompt_ask.side_effect = _prompts(
             [
                 "SIM-UDID-1234",  # device identifier (free text)
-                "com.example.swiggy",  # bundle id (free text)
+                "com.example.swiggy",  # bundle id from package picker (free text)
                 "Tap the challenges tab",  # intent
             ]
         )
@@ -136,6 +138,7 @@ class InteractiveWizardHappyPathsTest(unittest.TestCase):
 
         with (
             patch.object(InteractiveWizard, "_InteractiveWizard__detect_devices", return_value=[]),
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_packages", return_value=[]),
             _mock_questionary_selects(["demo", "ios", "xcuitest"]),
         ):
             result = InteractiveWizard(console=_build_console()).run()
@@ -164,12 +167,14 @@ class InteractiveWizardControlFlowTest(unittest.TestCase):
         int_prompt_ask: Any,
         confirm_ask: Any,
     ) -> None:
-        prompt_ask.side_effect = _prompts(["", "Open app"])  # blank serial, then intent
+        # blank serial, blank package, then intent
+        prompt_ask.side_effect = _prompts(["", "", "Open app"])
         int_prompt_ask.side_effect = _ints([100])
         confirm_ask.side_effect = _confirms([False, False])  # verbose=False, proceed=False
 
         with (
             patch.object(InteractiveWizard, "_InteractiveWizard__detect_devices", return_value=[]),
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_packages", return_value=[]),
             _mock_questionary_selects(["run", "android"]),
         ):
             result = InteractiveWizard(console=_build_console()).run()
@@ -185,14 +190,15 @@ class InteractiveWizardControlFlowTest(unittest.TestCase):
         int_prompt_ask: Any,
         confirm_ask: Any,
     ) -> None:
-        # Serial free-text blank, then intent: blank, blank-whitespace,
+        # Serial blank, package blank, then intent: blank, blank-whitespace,
         # real. Wizard must loop until intent is non-empty.
-        prompt_ask.side_effect = _prompts(["", "", "   ", "real intent text"])
+        prompt_ask.side_effect = _prompts(["", "", "", "   ", "real intent text"])
         int_prompt_ask.side_effect = _ints([100])
         confirm_ask.side_effect = _confirms([False, True])
 
         with (
             patch.object(InteractiveWizard, "_InteractiveWizard__detect_devices", return_value=[]),
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_packages", return_value=[]),
             _mock_questionary_selects(["run", "android"]),
         ):
             result = InteractiveWizard(console=_build_console()).run()
@@ -215,7 +221,8 @@ class DeviceAutoDetectionTest(unittest.TestCase):
         int_prompt_ask: Any,
         confirm_ask: Any,
     ) -> None:
-        prompt_ask.side_effect = _prompts(["", "intent"])  # serial free-text blank, then intent
+        # blank serial, blank package, then intent
+        prompt_ask.side_effect = _prompts(["", "", "intent"])
         int_prompt_ask.side_effect = _ints([100])
         confirm_ask.side_effect = _confirms([False, True])
 
@@ -228,6 +235,7 @@ class DeviceAutoDetectionTest(unittest.TestCase):
                 "_InteractiveWizard__detect_adb_devices",
                 side_effect=explode,
             ),
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_packages", return_value=[]),
             _mock_questionary_selects(["run", "android"]),
         ):
             result = InteractiveWizard(console=_build_console()).run()
@@ -246,7 +254,7 @@ class DeviceAutoDetectionTest(unittest.TestCase):
     ) -> None:
         # Select menu returns command=run, platform=android, then the
         # second detected serial via the device picker.
-        prompt_ask.side_effect = _prompts(["intent"])
+        prompt_ask.side_effect = _prompts(["", "intent"])  # blank package, then intent
         int_prompt_ask.side_effect = _ints([100])
         confirm_ask.side_effect = _confirms([False, True])
 
@@ -256,6 +264,7 @@ class DeviceAutoDetectionTest(unittest.TestCase):
                 "_InteractiveWizard__detect_devices",
                 return_value=["SERIAL-ONE", "SERIAL-TWO"],
             ),
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_packages", return_value=[]),
             _mock_questionary_selects(["run", "android", "SERIAL-TWO"]),
         ):
             result = InteractiveWizard(console=_build_console()).run()
@@ -274,7 +283,7 @@ class DeviceAutoDetectionTest(unittest.TestCase):
     ) -> None:
         # Device picker returns the literal "skip (use default)" option
         # → wizard omits the serial key from the result.
-        prompt_ask.side_effect = _prompts(["intent"])
+        prompt_ask.side_effect = _prompts(["", "intent"])  # blank package, then intent
         int_prompt_ask.side_effect = _ints([100])
         confirm_ask.side_effect = _confirms([False, True])
 
@@ -284,6 +293,7 @@ class DeviceAutoDetectionTest(unittest.TestCase):
                 "_InteractiveWizard__detect_devices",
                 return_value=["SERIAL-ONE", "SERIAL-TWO"],
             ),
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_packages", return_value=[]),
             _mock_questionary_selects(["run", "android", "skip (use default)"]),
         ):
             result = InteractiveWizard(console=_build_console()).run()
@@ -302,7 +312,8 @@ class DeviceAutoDetectionTest(unittest.TestCase):
     ) -> None:
         # Device picker returns "enter manually" — the wizard then
         # prompts for a free-text serial via Prompt.ask.
-        prompt_ask.side_effect = _prompts(["CUSTOM-SERIAL", "intent"])
+        # manual serial, then blank package, then intent
+        prompt_ask.side_effect = _prompts(["CUSTOM-SERIAL", "", "intent"])
         int_prompt_ask.side_effect = _ints([100])
         confirm_ask.side_effect = _confirms([False, True])
 
@@ -312,12 +323,277 @@ class DeviceAutoDetectionTest(unittest.TestCase):
                 "_InteractiveWizard__detect_devices",
                 return_value=["SERIAL-ONE", "SERIAL-TWO"],
             ),
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_packages", return_value=[]),
             _mock_questionary_selects(["run", "android", "enter manually"]),
         ):
             result = InteractiveWizard(console=_build_console()).run()
 
         assert result is not None
         self.assertEqual(result["serial"], "CUSTOM-SERIAL")
+
+
+class PackagePickerTest(unittest.TestCase):
+    """
+    Cover the installed-package picker added after device selection.
+    """
+
+    @patch("fathom.runtime.command.wizard.Confirm.ask")
+    @patch("fathom.runtime.command.wizard.IntPrompt.ask")
+    @patch("fathom.runtime.command.wizard.Prompt.ask")
+    def test_detected_android_packages_render_in_picker(
+        self,
+        prompt_ask: Any,
+        int_prompt_ask: Any,
+        confirm_ask: Any,
+    ) -> None:
+        """Selecting a detected package threads it into ``--package``."""
+
+        # device free-text (blank), then intent. Package step uses select.
+        prompt_ask.side_effect = _prompts(["", "intent"])
+        int_prompt_ask.side_effect = _ints([100])
+        confirm_ask.side_effect = _confirms([False, True])
+
+        with (
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_devices", return_value=[]),
+            patch.object(
+                InteractiveWizard,
+                "_InteractiveWizard__detect_packages",
+                return_value=["com.example.alpha", "com.example.beta"],
+            ),
+            _mock_questionary_selects(
+                ["run", "android", "com.example.beta"],
+            ),
+        ):
+            result = InteractiveWizard(console=_build_console()).run()
+
+        assert result is not None
+        self.assertEqual(result["package"], "com.example.beta")
+
+    @patch("fathom.runtime.command.wizard.Confirm.ask")
+    @patch("fathom.runtime.command.wizard.IntPrompt.ask")
+    @patch("fathom.runtime.command.wizard.Prompt.ask")
+    def test_detected_ios_bundles_pick_into_bundle_identifier_key(
+        self,
+        prompt_ask: Any,
+        int_prompt_ask: Any,
+        confirm_ask: Any,
+    ) -> None:
+        """iOS package picker writes ``ios_bundle_identifier``, not ``package``."""
+
+        # device free-text (blank), then intent. Package + backend use selects.
+        prompt_ask.side_effect = _prompts(["", "intent"])
+        int_prompt_ask.side_effect = _ints([100])
+        confirm_ask.side_effect = _confirms([False, True])
+
+        with (
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_devices", return_value=[]),
+            patch.object(
+                InteractiveWizard,
+                "_InteractiveWizard__detect_packages",
+                return_value=["com.apple.mobilesafari", "com.example.app"],
+            ),
+            # device free-text falls through (no detect), so no extra prompt.
+            # Selects (in order): command, platform, ios backend, package.
+            _mock_questionary_selects(
+                ["demo", "ios", "xcuitest", "com.example.app"],
+            ),
+        ):
+            result = InteractiveWizard(console=_build_console()).run()
+
+        assert result is not None
+        self.assertEqual(result["ios_bundle_identifier"], "com.example.app")
+        self.assertNotIn("package", result)
+
+    @patch("fathom.runtime.command.wizard.Confirm.ask")
+    @patch("fathom.runtime.command.wizard.IntPrompt.ask")
+    @patch("fathom.runtime.command.wizard.Prompt.ask")
+    def test_skip_option_omits_package_key(
+        self,
+        prompt_ask: Any,
+        int_prompt_ask: Any,
+        confirm_ask: Any,
+    ) -> None:
+        """Picking ``skip`` leaves the result without a ``package`` key."""
+
+        # device free-text (blank), then intent.
+        prompt_ask.side_effect = _prompts(["", "intent"])
+        int_prompt_ask.side_effect = _ints([100])
+        confirm_ask.side_effect = _confirms([False, True])
+
+        with (
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_devices", return_value=[]),
+            patch.object(
+                InteractiveWizard,
+                "_InteractiveWizard__detect_packages",
+                return_value=["com.example.alpha"],
+            ),
+            _mock_questionary_selects(
+                ["run", "android", "skip (use default)"],
+            ),
+        ):
+            result = InteractiveWizard(console=_build_console()).run()
+
+        assert result is not None
+        self.assertNotIn("package", result)
+
+    @patch("fathom.runtime.command.wizard.Confirm.ask")
+    @patch("fathom.runtime.command.wizard.IntPrompt.ask")
+    @patch("fathom.runtime.command.wizard.Prompt.ask")
+    def test_manual_entry_branch_in_package_picker(
+        self,
+        prompt_ask: Any,
+        int_prompt_ask: Any,
+        confirm_ask: Any,
+    ) -> None:
+        """``enter manually`` collects a free-text package via Prompt.ask."""
+
+        # prompts: device (blank), manual package entry, then intent.
+        prompt_ask.side_effect = _prompts(["", "com.custom.pkg", "intent"])
+        int_prompt_ask.side_effect = _ints([100])
+        confirm_ask.side_effect = _confirms([False, True])
+
+        with (
+            patch.object(InteractiveWizard, "_InteractiveWizard__detect_devices", return_value=[]),
+            patch.object(
+                InteractiveWizard,
+                "_InteractiveWizard__detect_packages",
+                return_value=["com.example.alpha"],
+            ),
+            _mock_questionary_selects(
+                ["run", "android", "enter manually"],
+            ),
+        ):
+            result = InteractiveWizard(console=_build_console()).run()
+
+        assert result is not None
+        self.assertEqual(result["package"], "com.custom.pkg")
+
+    def test_detect_android_packages_parses_pm_list_output(self) -> None:
+        """``adb shell pm list packages -3`` output is parsed and sorted."""
+
+        wizard = InteractiveWizard(console=_build_console())
+        fake_result = MagicMock()
+        fake_result.returncode = 0
+        fake_result.stdout = (
+            "package:com.example.beta\n"
+            "package:com.example.alpha\n"
+            "junk line\n"
+            "package:\n"  # empty after prefix → skipped
+        )
+
+        with (
+            patch("fathom.runtime.command.wizard.shutil.which", return_value="/usr/bin/adb"),
+            patch(
+                "fathom.runtime.command.wizard.subprocess.run",
+                return_value=fake_result,
+            ) as mock_run,
+        ):
+            packages = wizard._InteractiveWizard__detect_android_packages(  # type: ignore[attr-defined]
+                device_id="DEVICE-1",
+            )
+
+        self.assertEqual(packages, ["com.example.alpha", "com.example.beta"])
+        # Verify the device id was forwarded as `-s DEVICE-1`.
+        argv = mock_run.call_args[0][0]
+        self.assertIn("-s", argv)
+        self.assertIn("DEVICE-1", argv)
+        self.assertIn("-3", argv)
+
+    def test_detect_ios_bundle_identifiers_requires_device_id(self) -> None:
+        """No simctl call is made when the user skipped device selection."""
+
+        wizard = InteractiveWizard(console=_build_console())
+        with patch("fathom.runtime.command.wizard.subprocess.run") as mock_run:
+            packages = wizard._InteractiveWizard__detect_packages(  # type: ignore[attr-defined]
+                platform="ios",
+                device_id=None,
+            )
+        self.assertEqual(packages, [])
+        mock_run.assert_not_called()
+
+    def test_idb_backend_routes_picker_through_idb_list_apps(self) -> None:
+        """When the iOS backend is ``idb``, package detection calls
+        ``idb list-apps`` rather than ``xcrun simctl listapps``."""
+
+        wizard = InteractiveWizard(console=_build_console())
+
+        captured: List[List[str]] = []
+
+        def fake_run(argv: List[str], **_kwargs: Any) -> MagicMock:
+            captured.append(list(argv))
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = (
+                '{"bundle_id": "com.example.alpha"}\n{"bundle_id": "com.example.beta"}\n'
+            )
+            return result
+
+        with (
+            patch(
+                "fathom.runtime.command.wizard.shutil.which",
+                side_effect=lambda name: f"/usr/local/bin/{name}",
+            ),
+            patch("fathom.runtime.command.wizard.subprocess.run", side_effect=fake_run),
+        ):
+            packages = wizard._InteractiveWizard__detect_packages(  # type: ignore[attr-defined]
+                platform="ios",
+                device_id="UDID-1",
+                ios_backend="idb",
+            )
+
+        self.assertEqual(packages, ["com.example.alpha", "com.example.beta"])
+        # Only one subprocess call, and it was idb (not xcrun).
+        self.assertEqual(len(captured), 1)
+        self.assertIn("idb", captured[0][0])
+        self.assertIn("--udid", captured[0])
+        self.assertIn("UDID-1", captured[0])
+        self.assertIn("list-apps", captured[0])
+
+    def test_idb_picker_works_without_device_id(self) -> None:
+        """``idb`` resolves a default target when ``--udid`` is omitted,
+        unlike simctl which requires a UDID."""
+
+        wizard = InteractiveWizard(console=_build_console())
+
+        captured: List[List[str]] = []
+
+        def fake_run(argv: List[str], **_kwargs: Any) -> MagicMock:
+            captured.append(list(argv))
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = '{"bundle_id": "com.example.foo"}\n'
+            return result
+
+        with (
+            patch(
+                "fathom.runtime.command.wizard.shutil.which",
+                side_effect=lambda name: f"/usr/local/bin/{name}",
+            ),
+            patch("fathom.runtime.command.wizard.subprocess.run", side_effect=fake_run),
+        ):
+            packages = wizard._InteractiveWizard__detect_packages(  # type: ignore[attr-defined]
+                platform="ios",
+                device_id=None,
+                ios_backend="idb",
+            )
+
+        self.assertEqual(packages, ["com.example.foo"])
+        # No --udid forwarded since the user skipped device selection.
+        self.assertNotIn("--udid", captured[0])
+
+    def test_detection_failure_falls_back_to_free_text(self) -> None:
+        """Subprocess errors are swallowed; helper returns []."""
+
+        wizard = InteractiveWizard(console=_build_console())
+        with patch(
+            "fathom.runtime.command.wizard.shutil.which",
+            side_effect=RuntimeError("kaboom"),
+        ):
+            packages = wizard._InteractiveWizard__detect_packages(  # type: ignore[attr-defined]
+                platform="android",
+                device_id="DEVICE-1",
+            )
+        self.assertEqual(packages, [])
 
 
 class WizardArgvTest(unittest.TestCase):
@@ -372,6 +648,41 @@ class WizardArgvTest(unittest.TestCase):
     def test_missing_command_raises(self) -> None:
         with self.assertRaises(ValueError):
             wizard_argv(args={"intent": "x"})
+
+    def test_package_flag_round_trips(self) -> None:
+        argv = wizard_argv(
+            args={
+                "command": "run",
+                "intent": "Open Swiggy",
+                "platform": "android",
+                "package": "in.swiggy.android",
+                "max_steps": 100,
+                "verbose": False,
+            }
+        )
+
+        self.assertIn("--package", argv)
+        self.assertIn("in.swiggy.android", argv)
+
+    def test_package_argv_parses_and_threads_through_real_parser(self) -> None:
+        from fathom.runtime.command.application import CommandApplication
+
+        application = CommandApplication()
+        parser = application._CommandApplication__parser  # type: ignore[attr-defined]
+
+        argv = wizard_argv(
+            args={
+                "command": "run",
+                "intent": "Open Swiggy",
+                "platform": "android",
+                "package": "in.swiggy.android",
+                "max_steps": 100,
+                "verbose": False,
+            }
+        )
+        namespace = parser.parse_args(argv)
+
+        self.assertEqual(namespace.package, "in.swiggy.android")
 
 
 class ArgparseIntegrationTest(unittest.TestCase):

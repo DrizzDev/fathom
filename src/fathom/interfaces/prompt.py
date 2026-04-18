@@ -8,6 +8,32 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 
 
 @dataclass(frozen=True)
+class NamedSection:
+    """A provider-neutral prompt section.
+
+    Shared contract type between ``core.prompts.*`` (which builds the
+    sections) and adapter renderers (which format them for a specific
+    provider). Lives in ``interfaces/`` so adapters can consume it
+    without reaching into core internals.
+
+    Attributes:
+        name: Stable identifier for the section. Adapters use this to
+            wrap the body in provider-specific markup (e.g.
+            ``<NAME>...</NAME>`` for Gemini, ``## Name`` for markdown
+            providers).
+        body: The provider-neutral text body. Should never include
+            adapter-specific tags.
+        wrap: When True, adapters that use sectioned markup should wrap
+            ``body`` in their section markup. When False, ``body`` is
+            already self-contained prose and should be emitted as-is.
+    """
+
+    name: str
+    body: str
+    wrap: bool = True
+
+
+@dataclass(frozen=True)
 class SubGoalFocus:
     """Focus descriptor for the currently-active sub-goal.
 

@@ -118,3 +118,30 @@ class DevicePort(ABC):
         """
 
         raise NotImplementedError
+
+    async def launch_configured_package(self) -> None:
+        """
+        Launch the adapter's pre-configured application.
+
+        Default is a no-op. Adapters with auto-launch capability
+        (``ADBDevice``, ``IOSDevice`` on the idb backend) override
+        this to launch the package/bundle the user selected in the
+        wizard (or via ``--package`` / ``--ios-bundle-identifier``)
+        before the agent loop starts. Safe to call repeatedly —
+        implementations guard against double-launch.
+        """
+
+        return None
+
+    async def terminate_configured_package(self) -> None:
+        """
+        Terminate the adapter's pre-configured application on run exit.
+
+        Symmetric counterpart to :meth:`launch_configured_package` —
+        keeps teardown tidy so we don't leave the app running after
+        the agent finishes. Default is a no-op; adapters with a
+        ``terminate`` capability override. Failures are logged and
+        swallowed; cleanup must never raise.
+        """
+
+        return None

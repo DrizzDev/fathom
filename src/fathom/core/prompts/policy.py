@@ -11,7 +11,6 @@ core, formatting concerns live in adapters.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from fathom.core.prompts.rules import (
@@ -20,26 +19,9 @@ from fathom.core.prompts.rules import (
     COORD_RULES,
     TOOL_GUIDANCE,
 )
+from fathom.interfaces.prompt import NamedSection
 
-
-@dataclass(frozen=True)
-class NamedSection:
-    """A provider-neutral prompt section.
-
-    Attributes:
-        name: Stable identifier for the section. Adapters use this to wrap
-            the body in provider-specific markup (e.g. ``<NAME>...</NAME>``
-            for Gemini, ``## Name`` for markdown providers).
-        body: The provider-neutral text body. Should never include
-            adapter-specific tags.
-        wrap: When True, adapters that use sectioned markup should wrap
-            ``body`` in their section markup. When False, ``body`` is
-            already self-contained prose and should be emitted as-is.
-    """
-
-    name: str
-    body: str
-    wrap: bool = True
+__all__ = ["NamedSection", "PromptPolicy"]
 
 
 # ---------------------------------------------------------------------------

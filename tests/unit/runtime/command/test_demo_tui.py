@@ -223,6 +223,108 @@ class TuiTelemetryAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inner.last_identity, "test-run")
 
 
+class DemoAppQuitTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Cover the quit flow: first ``q`` press cancels the agent without
+    exiting the UI; second press force-exits; workflow-finish auto-
+    exits when quit was requested.
+    """
+
+    async def test_first_quit_invokes_on_quit_but_does_not_exit(self) -> None:
+        exit_calls = 0
+
+        class _Tracker(DemoApp):  # type: ignore[misc]
+            def exit(self, *args: object, **kwargs: object) -> None:  # type: ignore[override]
+                nonlocal exit_calls
+                exit_calls += 1
+
+        cancel_calls: list[None] = []
+
+        def on_quit() -> None:
+            cancel_calls.append(None)
+
+        app = _Tracker(intent="x", workflow=_noop_workflow, on_quit=on_quit)
+
+        await app.action_quit()
+
+        self.assertEqual(cancel_calls, [None])
+        self.assertEqual(exit_calls, 0, "First quit must not exit while worker cleans up")
+        self.assertTrue(
+            app._DemoApp__quit_requested  # type: ignore[attr-defined]
+        )
+
+    async def test_second_quit_force_exits(self) -> None:
+        exit_calls = 0
+
+        class _Tracker(DemoApp):  # type: ignore[misc]
+            def exit(self, *args: object, **kwargs: object) -> None:  # type: ignore[override]
+                nonlocal exit_calls
+                exit_calls += 1
+
+        cancel_calls: list[None] = []
+
+        def on_quit() -> None:
+            cancel_calls.append(None)
+
+        app = _Tracker(intent="x", workflow=_noop_workflow, on_quit=on_quit)
+
+        await app.action_quit()
+        await app.action_quit()
+
+        # on_quit only fires on the first press; second press goes
+        # straight to exit.
+        self.assertEqual(len(cancel_calls), 1)
+        self.assertEqual(exit_calls, 1)
+
+    async def test_workflow_finish_after_quit_auto_exits(self) -> None:
+        exit_calls = 0
+
+        class _Tracker(DemoApp):  # type: ignore[misc]
+            def exit(self, *args: object, **kwargs: object) -> None:  # type: ignore[override]
+                nonlocal exit_calls
+                exit_calls += 1
+
+        app = _Tracker(intent="x", workflow=_noop_workflow, on_quit=lambda: None)
+
+        await app.action_quit()
+        # Simulate the worker thread's completion callback firing after
+        # runner.cancel() caused the graph to shut down.
+        app._DemoApp__render_workflow_finish(success=False)  # type: ignore[attr-defined]
+
+        self.assertEqual(exit_calls, 1, "Workflow finish after quit must auto-exit")
+
+    async def test_workflow_finish_without_quit_stays_open(self) -> None:
+        exit_calls = 0
+
+        class _Tracker(DemoApp):  # type: ignore[misc]
+            def exit(self, *args: object, **kwargs: object) -> None:  # type: ignore[override]
+                nonlocal exit_calls
+                exit_calls += 1
+
+        app = _Tracker(intent="x", workflow=_noop_workflow)
+        app._DemoApp__render_workflow_finish(success=True)  # type: ignore[attr-defined]
+
+        self.assertEqual(exit_calls, 0, "Normal completion should leave the UI open for scrollback")
+
+    async def test_on_quit_callback_is_optional(self) -> None:
+        """Building a DemoApp without ``on_quit`` must still handle
+        ``q`` cleanly — the quit flow should degrade to a simple
+        first-press-noop, second-press-exit without raising."""
+
+        exit_calls = 0
+
+        class _Tracker(DemoApp):  # type: ignore[misc]
+            def exit(self, *args: object, **kwargs: object) -> None:  # type: ignore[override]
+                nonlocal exit_calls
+                exit_calls += 1
+
+        app = _Tracker(intent="x", workflow=_noop_workflow, on_quit=None)
+        await app.action_quit()
+        await app.action_quit()
+
+        self.assertEqual(exit_calls, 1)
+
+
 class DemoAppHitlModalTest(unittest.TestCase):
     """
     Cover the HITL modal push path on DemoApp.

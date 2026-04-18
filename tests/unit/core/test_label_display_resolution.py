@@ -1,10 +1,12 @@
 """Tests for manifest-backed display-name resolution in ReferenceResolutionService.
 
 When an Action carries a ``label_id`` but no human-readable target name
-(either empty, generic ``"element"``, or the namespaced ``"label:{id}"``
-placeholder that ``parsing.py`` stamps for label-only emissions), the
-resolution service must look up the element in the manifest and copy a
-display name from its XML attributes onto the Action at snap time.
+(either empty, a member of ``GENERIC_TARGET_PLACEHOLDERS`` such as
+``"element"`` / ``"unknown"`` / ``"button"``, or the namespaced
+``"label:{id}"`` placeholder that ``parsing.py`` stamps for label-only
+emissions), the resolution service must look up the element in the
+manifest and copy a display name from its XML attributes onto the
+Action at snap time.
 """
 
 from __future__ import annotations
@@ -125,6 +127,35 @@ class TestLabelDisplayResolution:
         resolved = await service.resolve(action=action, elements={"11": _element(text="Pay now")})
         assert resolved.target == "Pay now"
         assert resolved.natural_language_target == "Pay now"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "placeholder",
+        ["unknown", "button", "icon", "field", "label", "text", "ui element"],
+    )
+    async def test_every_generic_placeholder_is_replaced(
+        self, service: ReferenceResolutionService, placeholder: str
+    ) -> None:
+        """The snapper rejects every member of GENERIC_TARGET_PLACEHOLDERS.
+
+        ``"unknown"`` is the new default returned by
+        ``resolve_action_target`` when nothing resolves, so it has to
+        be covered here alongside the historic ``"element"`` filler.
+        The other entries (``"button"``, ``"icon"``, ...) lock the
+        widened check in against regression — any value in the
+        placeholder frozenset must trigger manifest lookup.
+        """
+
+        action = Action(
+            action_type=ActionType.TAP,
+            rationale="r",
+            target=placeholder,
+            natural_language_target=placeholder,
+            label_id="42",
+        )
+        resolved = await service.resolve(action=action, elements={"42": _element(text="Checkout")})
+        assert resolved.target == "Checkout"
+        assert resolved.natural_language_target == "Checkout"
 
     @pytest.mark.asyncio
     async def test_explicit_target_not_overwritten(

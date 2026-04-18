@@ -4,6 +4,7 @@ from typing import Any, Dict, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, Field
 
+from fathom.constants.ios import DEFAULT_WEB_DRIVER_AGENT_URL
 from fathom.constants.platform import (
     DeviceConnectionType,
     DevicePlatform,
@@ -187,7 +188,7 @@ class IOSConfiguration(BaseModel):
         description="iOS automation backend strategy",
     )
     web_driver_agent_url: str = Field(
-        default="http://127.0.0.1:8100",
+        default=DEFAULT_WEB_DRIVER_AGENT_URL,
         description="WebDriverAgent server URL for hierarchy extraction and optional fallback gestures",
     )
     web_driver_agent_bundle_identifier: Optional[str] = Field(

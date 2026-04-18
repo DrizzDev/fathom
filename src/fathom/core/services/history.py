@@ -39,7 +39,7 @@ class HistoryService:
         package_name: str,
         exporter: ScriptExporter,
         path_manager: SharedPathManager,
-        storage: Optional[StoragePort] = None,
+        storage: StoragePort,
     ) -> None:
         self.__workflow_id = workflow_id
         self.__package_name = package_name
@@ -241,35 +241,29 @@ class HistoryService:
     @time_it(operation="history.save_json")
     async def __save_json(self, data: Dict[str, Any], *, package_name: str) -> None:
         """
-        Writes history to structured JSON format.
+        Writes history to structured JSON format via the injected
+        ``StoragePort``. Awaits so the file is on disk before the caller
+        reads it back in ``__read_existing_script`` / ``__load_history``.
         """
 
-        path = self.__get_history_file_path(package_name=package_name, filename="history.json")
-
         json_data = json.dumps(obj=data, indent=2)
-        with path.open(mode="w") as handle:
-            handle.write(json_data)
-
-        if self.__storage:
-            self.__fire_and_forget(
-                self.__storage.save(
-                    data=json_data.encode("utf-8"),
-                    metadata={
-                        "category": "history",
-                        "filename": "history.json",
-                        "package_name": package_name,
-                        "session_id": self.__workflow_id,
-                    },
-                )
-            )
+        await self.__storage.save(
+            data=json_data.encode("utf-8"),
+            metadata={
+                "category": "history",
+                "filename": "history.json",
+                "package_name": package_name,
+                "session_id": self.__workflow_id,
+            },
+        )
 
     @time_it(operation="history.save_yaml")
     async def __save_yaml(self, history: List[Dict[str, Any]], *, package_name: str) -> None:
         """
-        Generates a YAML representation of the execution.
+        Generates a YAML representation of the execution and writes it
+        via the injected ``StoragePort``.
         """
 
-        path = self.__get_history_file_path(package_name=package_name, filename="history.yaml")
         steps = [
             self.__build_yaml_item(index=index, record=item)
             for index, item in enumerate(iterable=history, start=1)
@@ -285,21 +279,15 @@ class HistoryService:
         else:
             yaml_data = self.__build_manual_yaml_string(steps=steps)
 
-        with path.open(mode="w") as handle:
-            handle.write(yaml_data)
-
-        if self.__storage:
-            self.__fire_and_forget(
-                self.__storage.save(
-                    data=yaml_data.encode("utf-8"),
-                    metadata={
-                        "category": "history",
-                        "filename": "history.yaml",
-                        "package_name": package_name,
-                        "session_id": self.__workflow_id,
-                    },
-                )
-            )
+        await self.__storage.save(
+            data=yaml_data.encode("utf-8"),
+            metadata={
+                "category": "history",
+                "filename": "history.yaml",
+                "package_name": package_name,
+                "session_id": self.__workflow_id,
+            },
+        )
 
     @time_it(operation="history.update_script")
     async def __update_script(
@@ -310,10 +298,9 @@ class HistoryService:
         package_name: str,
     ) -> str:
         """
-        Generates and persists a final natural language script.
+        Generates and persists a final natural language script via the
+        injected ``StoragePort``.
         """
-
-        path = self.__get_history_file_path(package_name=package_name, filename="script.txt")
 
         export_package_name = self.__resolve_export_package_name(history=history)
         script_data = await self.__exporter.export_with_llm(
@@ -326,21 +313,15 @@ class HistoryService:
         if script_data is None or not script_data.strip():
             return self.__read_existing_script(package_name=package_name)
 
-        with path.open(mode="w") as handle:
-            handle.write(script_data)
-
-        if self.__storage:
-            self.__fire_and_forget(
-                self.__storage.save(
-                    data=script_data.encode("utf-8"),
-                    metadata={
-                        "category": "history",
-                        "filename": "script.txt",
-                        "package_name": package_name,
-                        "session_id": self.__workflow_id,
-                    },
-                )
-            )
+        await self.__storage.save(
+            data=script_data.encode("utf-8"),
+            metadata={
+                "category": "history",
+                "filename": "script.txt",
+                "package_name": package_name,
+                "session_id": self.__workflow_id,
+            },
+        )
 
         return script_data
 

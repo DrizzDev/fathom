@@ -3,15 +3,19 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import re
+import tempfile
 import time
 import xml.etree.ElementTree as ElementTree  # nosec
 from logging import getLogger
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from PIL import Image
 
 from fathom.adapters.ios.gateway import IOSAutomationGateway
+from fathom.adapters.ios.idb import IDBClient
 from fathom.constants.interaction import SwipeSpeed
 from fathom.constants.ios import IOSAdapterDefaults, IOSGestureDefaults
 from fathom.constants.platform import DevicePlatform, IOSAutomationBackend
@@ -52,6 +56,16 @@ class IOSDevice(DevicePort):
         self.__adapter_defaults = IOSAdapterDefaults()
         self.__gesture_defaults = IOSGestureDefaults()
         self.__automation_gateway = IOSAutomationGateway(configuration=self.__configuration)
+        self.__idb_client: Optional[IDBClient] = (
+            IDBClient(
+                udid=self.__configuration.device_identifier,
+                executable_path="idb",
+                timeout_seconds=float(self.__configuration.command_timeout),
+            )
+            if self.__configuration.automation_backend is IOSAutomationBackend.IDB
+            else None
+        )
+        self.__idb_launch_attempted: bool = False
 
         self.__runtime_configuration = DeviceRuntimeConfiguration(
             platform=DevicePlatform.IOS,
@@ -99,7 +113,11 @@ class IOSDevice(DevicePort):
         start_time = time.time()
 
         try:
-            if self.__should_route_interactions_via_automation_gateway():
+            if self.__should_route_interactions_via_idb():
+                assert self.__idb_client is not None  # nosec - guard above
+                point_x, point_y = await self.__to_idb_point_coordinates(x=x, y=y)
+                await self.__idb_client.tap(x=point_x, y=point_y)
+            elif self.__should_route_interactions_via_automation_gateway():
                 automation_x, automation_y = await self.__to_automation_coordinates(x=x, y=y)
                 await self.__automation_gateway.tap(x=automation_x, y=automation_y)
             else:
@@ -131,7 +149,10 @@ class IOSDevice(DevicePort):
         start_time = time.time()
 
         try:
-            if self.__should_route_interactions_via_automation_gateway():
+            if self.__should_route_interactions_via_idb():
+                assert self.__idb_client is not None  # nosec - guard above
+                await self.__idb_client.type_text(text=text)
+            elif self.__should_route_interactions_via_automation_gateway():
                 await self.__automation_gateway.type_text(text=text)
             else:
                 device_identifier = await self.__resolve_device_identifier()
@@ -178,7 +199,18 @@ class IOSDevice(DevicePort):
             logger.debug("Ignoring swipe speed for iOS simctl adapter: %s", requested_speed)
 
         try:
-            if self.__should_route_interactions_via_automation_gateway():
+            if self.__should_route_interactions_via_idb():
+                assert self.__idb_client is not None  # nosec - guard above
+                start_point_x, start_point_y = await self.__to_idb_point_coordinates(x=x1, y=y1)
+                end_point_x, end_point_y = await self.__to_idb_point_coordinates(x=x2, y=y2)
+                await self.__idb_client.swipe(
+                    x1=start_point_x,
+                    y1=start_point_y,
+                    x2=end_point_x,
+                    y2=end_point_y,
+                    duration_milliseconds=resolved_duration,
+                )
+            elif self.__should_route_interactions_via_automation_gateway():
                 start_x, start_y = await self.__to_automation_coordinates(x=x1, y=y1)
                 end_x, end_y = await self.__to_automation_coordinates(x=x2, y=y2)
                 await self.__automation_gateway.swipe(
@@ -238,7 +270,10 @@ class IOSDevice(DevicePort):
         start_time = time.time()
 
         try:
-            if self.__should_route_interactions_via_automation_gateway():
+            if self.__should_route_interactions_via_idb():
+                assert self.__idb_client is not None  # nosec - guard above
+                await self.__idb_client.press_home()
+            elif self.__should_route_interactions_via_automation_gateway():
                 await self.__automation_gateway.press_home()
             else:
                 device_identifier = await self.__resolve_device_identifier()
@@ -281,39 +316,74 @@ class IOSDevice(DevicePort):
 
     async def capture_screen(self) -> bytes:
         """
-        Capture screenshot bytes from simctl.
+        Capture screenshot bytes from the active backend (idb when
+        configured, otherwise simctl).
         """
+
+        if self.__should_route_interactions_via_idb():
+            assert self.__idb_client is not None  # nosec - guard above
+            stdout = await self.__idb_client.capture_screen()
+            if len(stdout) < self.__adapter_defaults.screenshot_minimum_bytes:
+                raise DeviceError("Capture screen: screenshot payload was empty or truncated")
+            self.__cache_dimensions_from_image(image=stdout)
+            return stdout
 
         device_identifier = await self.__resolve_device_identifier()
 
-        return_code, stdout, stderr = await self.__run_simctl(
-            parts=["io", device_identifier, "screenshot", "--type=png", "-"],
-            timeout=self.__configuration.command_timeout,
-            capture_stdout=True,
-            capture_stderr=True,
-        )
+        # Modern simctl (Xcode 15+) rejects ``-`` as a stdout sentinel
+        # and tries to write a literal file named ``-`` to the cwd,
+        # which fails with NSPOSIXErrorDomain code 30 when the cwd is
+        # read-only. Route through a tempfile and read it back.
+        fd, tmp_path = tempfile.mkstemp(suffix=".png", prefix="fathom-simctl-")
+        os.close(fd)
 
-        if return_code != 0:
-            error_message = (
-                stderr.decode("utf-8", errors="ignore").strip() if stderr else "Unknown error"
+        try:
+            return_code, _stdout, stderr = await self.__run_simctl(
+                parts=["io", device_identifier, "screenshot", "--type=png", tmp_path],
+                timeout=self.__configuration.command_timeout,
+                capture_stderr=True,
             )
-            raise DeviceError(f"Capture screen: simctl screenshot failed: {error_message}")
 
-        if len(stdout) < self.__adapter_defaults.screenshot_minimum_bytes:
+            if return_code != 0:
+                error_message = (
+                    stderr.decode("utf-8", errors="ignore").strip() if stderr else "Unknown error"
+                )
+                raise DeviceError(f"Capture screen: simctl screenshot failed: {error_message}")
+
+            try:
+                with Path(tmp_path).open("rb") as handle:
+                    payload = handle.read()
+            except OSError as exception:
+                raise DeviceError(
+                    f"Capture screen: simctl wrote no readable PNG to {tmp_path}: {exception}"
+                ) from exception
+        finally:
+            try:
+                Path(tmp_path).unlink()
+            except OSError:
+                logger.debug("Could not unlink simctl screenshot tempfile: %s", tmp_path)
+
+        if len(payload) < self.__adapter_defaults.screenshot_minimum_bytes:
             raise DeviceError("Capture screen: screenshot payload was empty or truncated")
 
-        self.__cache_dimensions_from_image(image=stdout)
-        return stdout
+        self.__cache_dimensions_from_image(image=payload)
+        return payload
 
     async def dump_hierarchy(self) -> Optional[str]:
         """
         Capture hierarchy XML from the configured iOS automation backend.
         """
 
+        if self.__should_route_interactions_via_idb():
+            # IDBClient.dump_source raises with a message pointing users
+            # at the backends that produce XCUIElement-shaped XML.
+            assert self.__idb_client is not None  # nosec - guard above
+            return await self.__idb_client.dump_source()
+
         if not self.__should_route_interactions_via_automation_gateway():
             raise DeviceError(
-                "xcrun simctl does not currently expose a native XML hierarchy dump. "
-                "Use XCUITEST/WEBDRIVER_AGENT backend for hierarchy extraction."
+                "Current iOS backend does not expose a native XML hierarchy dump. "
+                "Use XCUITEST or WEBDRIVER_AGENT for hierarchy extraction."
             )
 
         try:
@@ -557,6 +627,72 @@ class IOSDevice(DevicePort):
 
         return False
 
+    async def terminate_configured_package(self) -> None:
+        """
+        Terminate the configured iOS bundle on the idb backend on run
+        exit. No-op on other backends (simctl/xcuitest/wda have no
+        reliable symmetric terminate path in this adapter).
+
+        Failures are logged and swallowed — cleanup must never raise.
+        """
+
+        if not self.__should_route_interactions_via_idb():
+            return
+
+        bundle_identifier = self.__configuration.bundle_identifier
+        if not bundle_identifier:
+            return
+
+        assert self.__idb_client is not None  # nosec - guard above
+        try:
+            await self.__idb_client.terminate(bundle_identifier=bundle_identifier)
+            logger.info("[idb] terminated %s", bundle_identifier)
+        except DeviceError as exception:
+            logger.warning(
+                "[idb] terminate of %s failed: %s",
+                bundle_identifier,
+                exception,
+            )
+
+    async def launch_configured_package(self) -> None:
+        """
+        Launch the configured iOS bundle on the idb backend exactly
+        once per session.
+
+        Called from ``IntentStrategy.execute`` as a background task so
+        the launch runs concurrently with LLM-based intent
+        classification and decomposition — the app is typically ready
+        by the time the agent takes its first screenshot. Failures are
+        logged and swallowed — the agent can still navigate to the app
+        from SpringBoard if launch fails.
+
+        Only active on the IDB backend; xcrun_simctl / xcuitest /
+        webdriver_agent paths rely on the agent to navigate from
+        SpringBoard via screenshot grounding.
+        """
+
+        if self.__idb_launch_attempted:
+            return
+
+        if not self.__should_route_interactions_via_idb():
+            return
+
+        bundle_identifier = self.__configuration.bundle_identifier
+        if not bundle_identifier:
+            return
+
+        assert self.__idb_client is not None  # nosec - guard above
+        self.__idb_launch_attempted = True
+        try:
+            await self.__idb_client.launch(bundle_identifier=bundle_identifier)
+            logger.info("[idb] auto-launched %s", bundle_identifier)
+        except DeviceError as exception:
+            logger.warning(
+                "[idb] auto-launch of %s failed; agent will navigate from SpringBoard: %s",
+                bundle_identifier,
+                exception,
+            )
+
     async def close(self) -> None:
         """
         Close adapter resources.
@@ -574,6 +710,16 @@ class IOSDevice(DevicePort):
             IOSAutomationBackend.WEBDRIVER_AGENT,
         }
 
+    def __should_route_interactions_via_idb(self) -> bool:
+        """
+        Determine whether gestures should use the Facebook idb backend.
+        """
+
+        return (
+            self.__configuration.automation_backend is IOSAutomationBackend.IDB
+            and self.__idb_client is not None
+        )
+
     async def __to_automation_coordinates(self, *, x: int, y: int) -> Tuple[float, float]:
         """
         Convert screenshot pixel coordinates into automation-window coordinates.
@@ -588,6 +734,32 @@ class IOSDevice(DevicePort):
         return (
             float(x) * float(automation_width) / float(screenshot_width),
             float(y) * float(automation_height) / float(screenshot_height),
+        )
+
+    async def __to_idb_point_coordinates(self, *, x: int, y: int) -> Tuple[float, float]:
+        """
+        Convert screenshot pixel coordinates into idb HID point coordinates.
+
+        idb's ``ui tap`` / ``ui swipe`` operate in the UIKit point space
+        (e.g. 402×874 on an iPhone 17) while perception and planning run
+        in screenshot pixel space (e.g. 1206×2622 at density 3×).
+        Forwarding pixel coords directly lands the HID event far
+        off-screen and idb silently returns success because the gRPC
+        endpoint does not validate against screen bounds.
+        """
+
+        if self.__idb_client is None:
+            raise DeviceError("IDB coordinate conversion requested without an IDB client")
+
+        screenshot_width, screenshot_height = await self.get_dimensions()
+        if screenshot_width <= 0 or screenshot_height <= 0:
+            raise DeviceError("Invalid iOS screenshot dimensions for IDB coordinate conversion")
+
+        point_width, point_height = await self.__idb_client.describe()
+
+        return (
+            float(x) * float(point_width) / float(screenshot_width),
+            float(y) * float(point_height) / float(screenshot_height),
         )
 
     async def __get_automation_window_size(self) -> Tuple[int, int]:
@@ -608,12 +780,16 @@ class IOSDevice(DevicePort):
         """
 
         if self.__configuration.device_identifier:
+            if self.__idb_client is not None:
+                self.__idb_client.set_udid(udid=self.__configuration.device_identifier)
             return self.__configuration.device_identifier
 
         device_identifier = await self.__select_booted_device_identifier()
 
         self.__configuration.device_identifier = device_identifier
         self.__runtime_configuration.identifier = device_identifier
+        if self.__idb_client is not None:
+            self.__idb_client.set_udid(udid=device_identifier)
 
         return device_identifier
 

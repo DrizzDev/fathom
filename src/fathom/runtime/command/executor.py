@@ -125,7 +125,7 @@ class CommandExecutor:
 
         signal_adapter = self.__signal_factory.create(
             interactive=request.runtime.interactive,
-            signal_type=request.runtime.signal_type.value,
+            signal_type=request.runtime.signal_type,
         )
 
         if request.runtime.interactive:
@@ -211,6 +211,7 @@ class CommandExecutor:
                 max_steps=request.objective.max_steps,
                 request_id=request.runtime.session_id,
                 realignment=request.interaction.realignment,
+                package_name=request.objective.package_name,
             )
 
         with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
@@ -220,6 +221,7 @@ class CommandExecutor:
                 max_steps=request.objective.max_steps,
                 request_id=request.runtime.session_id,
                 realignment=request.interaction.realignment,
+                package_name=request.objective.package_name,
             )
 
     def __print_execution_summary(self, *, result: IntentResult) -> None:
@@ -425,12 +427,27 @@ class CommandExecutor:
                     max_steps=request.objective.max_steps,
                     request_id=request.runtime.session_id,
                     realignment=request.interaction.realignment,
+                    package_name=request.objective.package_name,
                 )
                 return bool(result.success)
             finally:
                 await self.__cleanup_runner()
 
-        app = DemoApp(intent=request.objective.intent, workflow=workflow)
+        def on_quit() -> None:
+            """
+            Cancel the running agent when the user presses ``q`` in
+            the TUI. Runner may not be built yet (if the user quits
+            during startup), so guard the reference.
+            """
+
+            if self.__runner is not None:
+                self.__runner.cancel()
+
+        app = DemoApp(
+            intent=request.objective.intent,
+            workflow=workflow,
+            on_quit=on_quit,
+        )
 
         try:
             await app.run_async()

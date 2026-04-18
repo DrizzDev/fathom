@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Dict, List
 
+from fathom.constants.ios import DEFAULT_WEB_DRIVER_AGENT_URL
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform, IOSAutomationBackend
 from fathom.schemas.cli import LocalCommandInput
 from fathom.schemas.configuration import (
@@ -109,7 +110,7 @@ class IOSDeviceConfigurationStrategy(DeviceConfigurationStrategy):
                     command_input.ios_automation_backend or IOSAutomationBackend.XCRUN_SIMCTL
                 ),
                 web_driver_agent_url=(
-                    command_input.ios_web_driver_agent_url or "http://127.0.0.1:8100"
+                    command_input.ios_web_driver_agent_url or DEFAULT_WEB_DRIVER_AGENT_URL
                 ),
                 web_driver_agent_bundle_identifier=command_input.ios_web_driver_agent_bundle_identifier,
                 web_driver_agent_request_timeout_seconds=(

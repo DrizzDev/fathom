@@ -120,6 +120,7 @@ class IntentStrategy:
 
         start_time = time.time()
         prewarm_task: Optional["asyncio.Task[None]"] = None
+        launch_task: Optional["asyncio.Task[None]"] = None
 
         try:
             async with AsyncExitStack() as stack:
@@ -133,6 +134,14 @@ class IntentStrategy:
 
                 # Prewarm prompt cache concurrently with decomposition to reduce first-call latency.
                 prewarm_task = asyncio.create_task(self.__graph_context.vision.prewarm())
+
+                # Auto-launch the configured app in parallel with the
+                # LLM classifier + decomposer so the app is ready by
+                # the time the agent captures its first screen. No-op
+                # on adapters without a configured package.
+                launch_task = asyncio.create_task(
+                    self.__graph_context.device.launch_configured_package()
+                )
 
                 sub_goals = await self.__resolve_initial_sub_goals()
                 self.__graph_context.agent_state.set_sub_goals(sub_goals)
@@ -233,7 +242,15 @@ class IntentStrategy:
             )
         finally:
             await self.__cleanup_background_task(task=prewarm_task, task_name="planner prewarm")
+            await self.__cleanup_background_task(task=launch_task, task_name="app auto-launch")
 
+            # Note: app termination is intentionally deferred to
+            # ``FathomRunner.run_intent`` — running it here would
+            # happen before the runner has collected final metrics,
+            # flushed the WORKFLOW_COMPLETED event, and decided
+            # whether the run was cancelled. On user cancellation we
+            # want to leave the app on-screen so the user can inspect
+            # the final state, which the runner handles.
             try:
                 await self.__graph_context.shutdown()
             except Exception as shutdown_error:

@@ -152,7 +152,7 @@ class SignalFactory(SignalFactoryPort):
     def create(
         self,
         *,
-        signal_type: str,
+        signal_type: SignalAdapterType,
         interactive: bool,
         workflow_id: Optional[str] = None,
     ) -> SignalPort:

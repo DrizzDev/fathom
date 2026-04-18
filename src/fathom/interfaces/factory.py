@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Optional
 
+from fathom.constants.run import SignalAdapterType
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.perception import PerceptionPort
@@ -72,7 +73,7 @@ class SignalFactoryPort(ABC):
     def create(
         self,
         *,
-        signal_type: str,
+        signal_type: SignalAdapterType,
         interactive: bool,
         workflow_id: Optional[str] = None,
     ) -> SignalPort:

@@ -73,13 +73,18 @@ class TestTracePayloadRouting:
         )
         assert payload[0]["target"] == "Login button"
 
-    def test_validate_with_missing_subject_falls_back_to_element(self) -> None:
+    def test_validate_with_missing_subject_falls_back_to_unknown(self) -> None:
         """Defense-in-depth: if validation_subject is somehow None, the
-        'element' literal is the last-resort placeholder. The exporter's
-        enforce_policy guard catches it downstream."""
+        canonical resolver returns ``"unknown"`` (never the historic
+        filler ``"element"``). ``"unknown"`` is itself in
+        ``GENERIC_TARGET_PLACEHOLDERS`` so downstream consumers that
+        run ``is_resolved_target`` on it will still skip the line, and
+        the exporter's ``enforce_policy`` guard rejects any validation
+        string containing the filler word."""
 
         payload = build_export_payload(step_results=[{"action_type": "validate"}])
-        assert payload[0]["target"] == "element"
+        assert payload[0]["target"] == "unknown"
+        assert payload[0]["target"] != "element"
 
 
 def _policy_payload(
