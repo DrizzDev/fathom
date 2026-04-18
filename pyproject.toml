@@ -52,6 +52,8 @@ dependencies = [
     "google-genai>=0.2.0",
     "google-cloud-storage>=2.0.0",
     "types-PyYAML>=6.0.12.20250915",
+    "questionary>=2.0.0",
+    "textual>=0.70.0",
 ]
 
 [project.scripts]

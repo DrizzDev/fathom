@@ -21,7 +21,7 @@ Topology::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 if TYPE_CHECKING:
     import asyncio
@@ -34,6 +34,7 @@ from logging import getLogger
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from fathom.constants.events import ExplorationEvent
 from fathom.graph.exploration_nodes import (
     ExplorationNodeContext,
     build_exploration_nodes,
@@ -66,6 +67,7 @@ def build_exploration_graph(
     pause_event: Optional[asyncio.Event] = None,
     target_package: Optional[str] = None,
     focus: Optional[str] = None,
+    event_bus: Optional[Callable[[ExplorationEvent, Dict[str, Any]], None]] = None,
 ) -> tuple["CompiledStateGraph[Any, Any, Any]", ExplorationNodeContext]:
     """
     Build and compile a LangGraph :class:`StateGraph` for DFS exploration.
@@ -114,6 +116,7 @@ def build_exploration_graph(
         pause_event=pause_event,
         target_package=target_package,
         focus=focus,
+        event_bus=event_bus,
     )
 
     # ── 2. Build node functions ────────────────────────────────────

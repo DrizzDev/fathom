@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import uuid
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
+from fathom.constants.events import ExplorationEvent
 from fathom.exceptions import FathomError
 from fathom.infrastructure.llm.langchain_adapter import LangChainLLMClient
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
@@ -68,6 +69,7 @@ class FathomRunner:
         device_serial: Optional[str] = None,
         package_name: Optional[str] = None,
         focus: Optional[str] = None,
+        event_bus: Optional[Callable[[ExplorationEvent, Dict[str, Any]], None]] = None,
     ) -> ExplorationResult:
         """
         Run an application exploration workflow.
@@ -135,6 +137,7 @@ class FathomRunner:
             knowledge_graph=self.__knowledge_graph,
             target_package=package_name,
             focus=focus,
+            event_bus=event_bus,
         )
         self.__current_workflow = workflow
 

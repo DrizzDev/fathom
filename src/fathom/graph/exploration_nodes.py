@@ -26,6 +26,7 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
 from fathom.agent.state import AgentState
 from fathom.agent.strategies.exploration import BFSPhase, BFSQueueEntry
 from fathom.constants import ActionType
+from fathom.constants.events import ExplorationEvent
 from fathom.graph.exploration_state import ExplorationGraphState
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.infrastructure.memory.ledger import Ledger
@@ -81,6 +82,7 @@ class ExplorationNodeContext:
         pause_event: Optional[asyncio.Event] = None,
         target_package: Optional[str] = None,
         focus: Optional[str] = None,
+        event_bus: Optional[Callable[[ExplorationEvent, Dict[str, Any]], None]] = None,
     ) -> None:
         self.device = device
         self.capture_tool = capture
@@ -94,6 +96,9 @@ class ExplorationNodeContext:
         self._cancel_event = cancel_event or asyncio.Event()
         self._pause_event = pause_event or asyncio.Event()
         self._pause_event.set()
+        self._event_bus: Callable[[ExplorationEvent, Dict[str, Any]], None] = (
+            event_bus if event_bus is not None else (lambda _event, _ctx: None)
+        )
 
         # Focused exploration: when `focus` is set, bias the agent toward the
         # named section via the cached-prompt GOAL; otherwise fall back to the
@@ -150,6 +155,14 @@ class ExplorationNodeContext:
 
         self.agent_state.set_intent(intent)
 
+    def emit(self, event: ExplorationEvent, /, **fields: Any) -> None:
+        """Publish an event to the bus. Best-effort — never raises."""
+
+        try:
+            self._event_bus(event, fields)
+        except Exception:  # noqa: BLE001 — bus failures must not break the graph
+            logger.debug("event bus raised for %s", event, exc_info=True)
+
 
 # ── Node factory ────────────────────────────────────────────────────────
 
@@ -193,6 +206,13 @@ def build_exploration_nodes(
         screen_state = ctx.capture_tool.compute_state(capture=screen)
         screen = screen.model_copy(update={"state": screen_state})
         is_new = ctx.agent_state.update_screen(screen=screen_state)
+
+        ctx.emit(
+            ExplorationEvent.SCREEN_CAPTURED,
+            activity=screen_state.activity,
+            screen_hash=screen_state.visual_hash,
+            is_new=is_new,
+        )
 
         return {
             **state,
@@ -417,10 +437,21 @@ def build_exploration_nodes(
         # The analysis.metrics dict may not contain token values if the provider
         # didn't populate them (e.g., missing usage_metadata), so we always attempt
         # to record with sensible defaults.
+        prompt_tokens = int(analysis.metrics.get("prompt_tokens", 0))
+        completion_tokens = int(analysis.metrics.get("completion_tokens", 0))
+        cached_tokens = int(analysis.metrics.get("cached_tokens", 0))
         ctx.metrics.record_tokens(
-            prompt=int(analysis.metrics.get("prompt_tokens", 0)),
-            completion=int(analysis.metrics.get("completion_tokens", 0)),
-            cached=int(analysis.metrics.get("cached_tokens", 0)),
+            prompt=prompt_tokens,
+            completion=completion_tokens,
+            cached=cached_tokens,
+        )
+
+        ctx.emit(
+            ExplorationEvent.LLM_CALL_COMPLETED,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cached_tokens=cached_tokens,
+            duration=analysis_duration,
         )
 
         # Register screen + persist VLM description in a single add_screen call
@@ -445,11 +476,16 @@ def build_exploration_nodes(
         # VLM signals all elements exhausted
         if analysis.content_exhausted:
             ctx.fully_scanned.add(fingerprint)
+            prev_phase = ctx.phase.value
             ctx.phase = BFSPhase.BACKTRACK
             logger.info(
                 "Screen %s fully scanned, backtracking (depth=%d)",
                 fingerprint[:8],
                 len(ctx.current_path),
+            )
+            ctx.emit(
+                ExplorationEvent.PHASE_TRANSITION,
+                **{"from": prev_phase, "to": ctx.phase.value, "reason": "content_exhausted"},
             )
             return {
                 **state,
@@ -467,6 +503,13 @@ def build_exploration_nodes(
         # HARDWARE BACK override (clear bounds for back actions)
         if action.action_type == ActionType.BACK:
             action = action.model_copy(update={"bounds": None})
+
+        ctx.emit(
+            ExplorationEvent.ACTION_PLANNED,
+            action_type=action.action_type.value,
+            target=action.natural_language_target or action.target,
+            reasoning=action.rationale,
+        )
 
         return {
             **state,
@@ -547,6 +590,7 @@ def build_exploration_nodes(
                     action_type=ActionType.BACK,
                     rationale="DFS: backtracking from exhausted screen",
                 )
+                ctx.emit(ExplorationEvent.BACKTRACK, action="back", depth=len(ctx.current_path))
         elif ctx.pending_nav:
             action = ctx.pending_nav.pop(0)
         else:
@@ -585,6 +629,13 @@ def build_exploration_nodes(
                 entry.screen_hash[:8],
                 entry.depth,
                 len(ctx.pending_nav),
+            )
+
+            ctx.emit(
+                ExplorationEvent.NAVIGATION_STARTED,
+                target=entry.screen_hash[:8],
+                steps=len(ctx.pending_nav),
+                depth=entry.depth,
             )
 
             if ctx.pending_nav:
@@ -658,6 +709,13 @@ def build_exploration_nodes(
         action_result = await execute_device_action(device=ctx.device, action=action)
         execution_duration = time.time() - step_start
         ctx.metrics.record(operation="action", duration=execution_duration)
+
+        ctx.emit(
+            ExplorationEvent.ACTION_EXECUTED,
+            success=action_result.success,
+            action=action.action_type.value,
+            error=action_result.error,
+        )
 
         step_result = StepResult(
             step=step,
@@ -814,6 +872,13 @@ def build_exploration_nodes(
         execution_duration = time.time() - step_start
         ctx.metrics.record(operation="action", duration=execution_duration)
 
+        ctx.emit(
+            ExplorationEvent.ACTION_EXECUTED,
+            success=action_result.success,
+            action=action.action_type.value,
+            error=action_result.error,
+        )
+
         step_result = StepResult(
             step=step,
             error=action_result.error,
@@ -921,6 +986,22 @@ def build_exploration_nodes(
         # KG screen must complete first (transition + DFS logic depend on it)
         await ctx.knowledge_graph.add_screen(state=post_state)
 
+        if step_result.screen_changed:
+            kg_stats = ctx.knowledge_graph.get_stats()
+            unique = int(kg_stats.get("unique_screens", 0))
+            unexplored = int(kg_stats.get("unexplored", 0))
+            coverage = ((unique - unexplored) / unique * 100) if unique > 0 else 0.0
+            event_payload = {
+                "activity": post_state.activity,
+                "screen_hash": post_hash[:8],
+                "unique_screens": unique,
+                "coverage": coverage,
+            }
+            if post_is_new:
+                ctx.emit(ExplorationEvent.SCREEN_DISCOVERED, **event_payload)
+            else:
+                ctx.emit(ExplorationEvent.SCREEN_REVISITED, **event_payload)
+
         # Run independent writes in parallel
         parallel_writes: List[Any] = []
         if action and pre_hash != "0":
@@ -999,6 +1080,7 @@ def build_exploration_nodes(
 
         # ── DFS phase transitions ─────────────────────────────────
         is_complete = False
+        prev_phase = ctx.phase.value
 
         if ctx.phase == BFSPhase.SCAN:
             if pre_hash != post_hash:
@@ -1087,6 +1169,19 @@ def build_exploration_nodes(
             completion_reason = "DFS complete — all screens scanned"
         else:
             completion_reason = None
+
+        if prev_phase != ctx.phase.value:
+            ctx.emit(
+                ExplorationEvent.PHASE_TRANSITION,
+                **{"from": prev_phase, "to": ctx.phase.value},
+            )
+
+        ctx.emit(
+            ExplorationEvent.STEP_COMPLETED,
+            step=ctx.agent_state.step_count,
+            max_steps=ctx.max_steps,
+            phase=ctx.phase.value,
+        )
 
         return {
             **state,

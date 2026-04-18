@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 if TYPE_CHECKING:
     from fathom.graph.exploration_nodes import ExplorationNodeContext
 
+from fathom.constants.events import ExplorationEvent
 from fathom.exceptions import FathomError
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.interfaces import IMemoryProvider
@@ -43,6 +44,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         knowledge_graph: Optional[KnowledgeGraph] = None,
         target_package: Optional[str] = None,
         focus: Optional[str] = None,
+        event_bus: Optional[Callable[[ExplorationEvent, Dict[str, Any]], None]] = None,
     ) -> None:
         """
         Initialize exploration workflow.
@@ -69,6 +71,7 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         self.__knowledge_graph = knowledge_graph
         self.__target_package = target_package
         self.__focus = focus
+        self.__event_bus = event_bus
         self.__completion_reason = ""
         self.__start_time: float = 0.0
 
@@ -79,6 +82,16 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
         """
 
         return "exploration"
+
+    def __emit(self, event: ExplorationEvent, /, **fields: Any) -> None:
+        """Best-effort publish to the workflow's event bus."""
+
+        if self.__event_bus is None:
+            return
+        try:
+            self.__event_bus(event, fields)
+        except Exception:  # noqa: BLE001 — bus failures must not break the run
+            logger.debug("event bus raised for %s", event, exc_info=True)
 
     async def execute(self) -> ExplorationResult:
         """
@@ -108,6 +121,14 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
             cancel_event=self.cancel_event,
             pause_event=self.pause_event,
             target_package=self.__target_package,
+            focus=self.__focus,
+            event_bus=self.__event_bus,
+        )
+
+        self.__emit(
+            ExplorationEvent.WORKFLOW_STARTED,
+            package=self.__target_package,
+            max_steps=config.max_steps if config else 100,
             focus=self.__focus,
         )
 
@@ -199,6 +220,13 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
             unexplored = stats.get("unexplored", 0)
             coverage = ((unique - unexplored) / unique * 100) if unique > 0 else 0.0
 
+            self.__emit(
+                ExplorationEvent.WORKFLOW_CANCELLED,
+                completion_reason=self.__completion_reason or "Workflow cancelled by user",
+                unique_screens=unique,
+                coverage=coverage,
+            )
+
             return ExplorationResult(
                 unique_screens=unique,
                 screen_graph=kg.export_json(),
@@ -221,9 +249,18 @@ class ExplorationWorkflow(BaseWorkflow[ExplorationResult]):
 
         completion_reason = final_state.get("completion_reason", "")
         is_complete = final_state.get("is_complete", False)
+        success = bool(is_complete and unique > 0)
+
+        self.__emit(
+            ExplorationEvent.WORKFLOW_COMPLETED,
+            success=success,
+            completion_reason=str(completion_reason) if completion_reason else "",
+            unique_screens=unique,
+            coverage=coverage,
+        )
 
         return ExplorationResult(
-            success=bool(is_complete and unique > 0),
+            success=success,
             completion_reason=str(completion_reason) if completion_reason else "",
             unique_screens=unique,
             screen_graph=kg.export_json(),
