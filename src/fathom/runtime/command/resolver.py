@@ -149,6 +149,7 @@ class AndroidDeviceConfigurationStrategy(DeviceConfigurationStrategy):
             android=ADBConfiguration(
                 serial_number=command_input.serial_number or settings.android_serial,
                 executable_path=command_input.adb_executable_path or settings.adb_path,
+                package_name=command_input.package,
             ),
             remote=RemoteDeviceConfiguration(),
         )

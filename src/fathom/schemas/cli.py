@@ -17,6 +17,7 @@ class LocalCommandInput(BaseModel):
     platform: DevicePlatform = Field(default=DevicePlatform.ANDROID)
     serial_number: Optional[str] = Field(default=None, alias="serial")
     adb_executable_path: Optional[str] = Field(default=None, alias="adb_path")
+    package: Optional[str] = Field(default=None)
     ios_device_identifier: Optional[str] = Field(default=None)
     ios_bundle_identifier: Optional[str] = Field(default=None)
     ios_executable_path: Optional[str] = Field(default=None)
@@ -49,6 +50,7 @@ class LocalCommandInput(BaseModel):
     @field_validator(
         "serial_number",
         "adb_executable_path",
+        "package",
         "ios_device_identifier",
         "ios_bundle_identifier",
         "ios_executable_path",

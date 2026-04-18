@@ -156,6 +156,13 @@ class ADBConfiguration(BaseModel):
     serial_number: Optional[str] = Field(
         default=None, description="Target Android device identifier"
     )
+    package_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Package to auto-launch before the agent loop starts. "
+            "Mirrors IOSConfiguration.bundle_identifier."
+        ),
+    )
     command_timeout: float = Field(default=10.0, description="Shell command timeout in seconds")
 
     interaction: InteractionRuntimeConfiguration = Field(

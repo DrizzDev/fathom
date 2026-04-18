@@ -113,6 +113,12 @@ class CommandApplication:
             help="Default iOS bundle identifier context",
         )
         run_parser.add_argument(
+            "--package",
+            type=str,
+            dest="package",
+            help="Android package name to scope the run (overrides foreground detection)",
+        )
+        run_parser.add_argument(
             "--ios-executable-path",
             type=str,
             help="Path to xcrun executable for iOS local adapter",
@@ -121,8 +127,12 @@ class CommandApplication:
             "--ios-automation-backend",
             type=str,
             default=None,
-            choices=["xcrun_simctl", "xcuitest", "webdriver_agent"],
-            help="iOS perception strategy: native xcrun or enhanced hierarchy via XCUITest/WebDriverAgent",
+            choices=["xcrun_simctl", "xcuitest", "webdriver_agent", "idb"],
+            help=(
+                "iOS perception strategy: native xcrun, enhanced hierarchy via "
+                "XCUITest/WebDriverAgent, or Facebook idb (no WDA build, supports "
+                "physical devices; screenshot-only grounding)"
+            ),
         )
         run_parser.add_argument(
             "--ios-web-driver-agent-url",
@@ -230,6 +240,12 @@ class CommandApplication:
             help="Default iOS bundle identifier context",
         )
         demo_parser.add_argument(
+            "--package",
+            type=str,
+            dest="package",
+            help="Android package name to scope the run (overrides foreground detection)",
+        )
+        demo_parser.add_argument(
             "--ios-executable-path",
             type=str,
             help="Path to xcrun executable for iOS local adapter",
@@ -238,7 +254,7 @@ class CommandApplication:
             "--ios-automation-backend",
             type=str,
             default=None,
-            choices=["xcrun_simctl", "xcuitest", "webdriver_agent"],
+            choices=["xcrun_simctl", "xcuitest", "webdriver_agent", "idb"],
             help="iOS perception strategy",
         )
         demo_parser.add_argument(
@@ -340,6 +356,7 @@ class CommandApplication:
                 intent=command_input.intent,
                 use_xml=command_input.use_xml,
                 max_steps=command_input.max_steps,
+                package_name=command_input.package,
             ),
             runtime=RuntimeConfiguration(
                 interactive=command_input.interactive,
