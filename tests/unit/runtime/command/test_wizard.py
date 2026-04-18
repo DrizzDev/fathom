@@ -544,10 +544,16 @@ class PackagePickerTest(unittest.TestCase):
         self.assertEqual(packages, ["com.example.alpha", "com.example.beta"])
         # Only one subprocess call, and it was idb (not xcrun).
         self.assertEqual(len(captured), 1)
-        self.assertIn("idb", captured[0][0])
-        self.assertIn("--udid", captured[0])
-        self.assertIn("UDID-1", captured[0])
-        self.assertIn("list-apps", captured[0])
+        argv = captured[0]
+        self.assertIn("idb", argv[0])
+        self.assertIn("--udid", argv)
+        self.assertIn("UDID-1", argv)
+        self.assertIn("list-apps", argv)
+        # ``--udid`` is a per-subcommand flag in idb; putting it before
+        # ``list-apps`` makes idb's argparse treat the UDID as the
+        # subcommand name and fail with ``invalid choice``. Enforce the
+        # correct ordering so this doesn't regress.
+        self.assertLess(argv.index("list-apps"), argv.index("--udid"))
 
     def test_idb_picker_works_without_device_id(self) -> None:
         """``idb`` resolves a default target when ``--udid`` is omitted,

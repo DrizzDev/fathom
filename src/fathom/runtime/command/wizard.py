@@ -568,10 +568,13 @@ class InteractiveWizard:
         if not idb:
             return []
 
-        argv: List[str] = [idb]
+        # ``--udid`` is a per-subcommand flag in idb's argparse (not
+        # a root-level flag), so it must come AFTER ``list-apps`` —
+        # otherwise idb errors with ``invalid choice: '<udid>'`` as it
+        # treats the UDID as a positional subcommand name.
+        argv: List[str] = [idb, "list-apps", "--json"]
         if device_id:
             argv += ["--udid", device_id]
-        argv += ["list-apps", "--json"]
 
         result = subprocess.run(  # nosec - fixed argv, shell=False default
             argv,

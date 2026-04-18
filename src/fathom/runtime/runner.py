@@ -94,6 +94,12 @@ class FathomRunner:
         # Track current workflow for cancellation
         self.__current_strategy: Optional[object] = None
 
+        # True when the most recent ``run_*`` exited via user
+        # cancellation. ``cleanup`` skips terminating the auto-launched
+        # app in that case so the user can inspect the final screen
+        # state manually.
+        self.__last_run_cancelled: bool = False
+
     @property
     def engine(self) -> ExecutionEngine:
         """
@@ -141,6 +147,9 @@ class FathomRunner:
         Execute intent-based workflow.
         """
 
+        # Reset cancellation state for this run so a previous cancelled
+        # run doesn't suppress the current run's cleanup-time terminate.
+        self.__last_run_cancelled = False
         start_time = time.time()
         workflow_id = request_id or uuid.uuid4().hex[:8]
 
@@ -270,18 +279,13 @@ class FathomRunner:
                 type=FathomEvent.WORKFLOW_COMPLETED,
             )
 
-            # Terminate the auto-launched app only after the agent has
-            # fully ended execution — all metrics collected, final
-            # validation + script generation done, WORKFLOW_COMPLETED
-            # telemetry delivered. On user cancellation we leave the
-            # app on-screen so the user can inspect the final state
-            # manually; only natural completion triggers teardown.
-            if not is_cancelled:
-                try:
-                    await self.__device.terminate_configured_package()
-                except Exception as terminate_error:
-                    logger.warning("[runner] app terminate failed: %s", terminate_error)
-
+            # Remember cancellation state so ``cleanup`` can skip the
+            # app teardown and leave the final screen on-device for
+            # manual inspection. Termination itself is deferred to
+            # ``cleanup`` — the CLI prints its summary table after
+            # ``run_intent`` returns, and we don't want the app to be
+            # killed before the user has seen the summary.
+            self.__last_run_cancelled = is_cancelled
             return result
 
         finally:
@@ -456,27 +460,38 @@ class FathomRunner:
             except Exception as exception:
                 logger.warning(f"[FathomRunner] context_manager shutdown failed: {exception}")
 
-        # 2. LLM — delete cached content, close clients
+        # 2. Terminate the auto-launched app. Runs AFTER the CLI has
+        # printed its summary table (``run_intent`` returned first) and
+        # AFTER context-manager drain — so the agent has truly wrapped
+        # up before the app dies. Skipped on user cancellation so the
+        # final screen stays on-device for manual inspection.
+        if not self.__last_run_cancelled:
+            try:
+                await self.__device.terminate_configured_package()
+            except Exception as terminate_error:
+                logger.warning("[FathomRunner] app terminate failed: %s", terminate_error)
+
+        # 3. LLM — delete cached content, close clients
         try:
             await self.__llm.cleanup()
         except Exception as exception:
             logger.warning(f"[FathomRunner] llm cleanup failed: {exception}")
 
-        # 3. Device — close HTTP client (ADB remote, iOS remote)
+        # 4. Device — close HTTP client (ADB remote, iOS remote)
         if hasattr(self.__device, "close"):
             try:
                 await self.__device.close()
             except Exception as exception:
                 logger.warning(f"[FathomRunner] device close failed: {exception}")
 
-        # 4. Telemetry — close Redis connection if applicable
+        # 5. Telemetry — close Redis connection if applicable
         if hasattr(self.__telemetry, "close"):
             try:
                 await self.__telemetry.close()
             except Exception as exception:
                 logger.warning(f"[FathomRunner] telemetry close failed: {exception}")
 
-        # 5. Storage — close any open handles
+        # 6. Storage — close any open handles
         if hasattr(self.__storage, "close"):
             try:
                 await self.__storage.close()
