@@ -270,6 +270,18 @@ class FathomRunner:
                 type=FathomEvent.WORKFLOW_COMPLETED,
             )
 
+            # Terminate the auto-launched app only after the agent has
+            # fully ended execution — all metrics collected, final
+            # validation + script generation done, WORKFLOW_COMPLETED
+            # telemetry delivered. On user cancellation we leave the
+            # app on-screen so the user can inspect the final state
+            # manually; only natural completion triggers teardown.
+            if not is_cancelled:
+                try:
+                    await self.__device.terminate_configured_package()
+                except Exception as terminate_error:
+                    logger.warning("[runner] app terminate failed: %s", terminate_error)
+
             return result
 
         finally:

@@ -34,3 +34,4 @@ class IOSAutomationBackend(StrEnum):
     XCUITEST = "XCUITEST"
     XCRUN_SIMCTL = "XCRUN_SIMCTL"
     WEBDRIVER_AGENT = "WEBDRIVER_AGENT"
+    IDB = "IDB"

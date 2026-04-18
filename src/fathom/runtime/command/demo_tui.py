@@ -82,7 +82,7 @@ class _FooterBar(Static):  # type: ignore[misc]
     """
 
     sub_goal: reactive[str] = reactive("")
-    hint: reactive[str] = reactive("q to quit · ↑/↓ / PageUp / PageDown to scroll")
+    hint: reactive[str] = reactive("q to stop (q×2 to force) · ↑/↓ / PageUp / PageDown to scroll")
 
     def render(self) -> Panel:
         body = f"[bold cyan]🎯[/bold cyan]  {self.sub_goal or '—'}\n[dim]{self.hint}[/dim]"
@@ -218,6 +218,7 @@ class DemoApp(App[int]):  # type: ignore[misc]
         *,
         intent: str,
         workflow: Callable[[], Awaitable[bool]],
+        on_quit: Optional[Callable[[], None]] = None,
     ) -> None:
         """
         Build the app with a pre-wired workflow coroutine factory.
@@ -227,11 +228,20 @@ class DemoApp(App[int]):  # type: ignore[misc]
         (``True`` on success, ``False`` on failure). Wiring (runner,
         signal adapter, telemetry) is the caller's responsibility so
         this module stays UI-only.
+
+        ``on_quit`` is invoked on the main Textual thread when the
+        user presses ``q`` / ``ctrl+c``. Callers use it to cancel the
+        running workflow (e.g. ``runner.cancel()``) so teardown hooks
+        (terminate configured package, cleanup) run before the app
+        exits. The app stays open after the first quit press to let
+        the worker thread complete cleanup; a second press force-exits.
         """
 
         super().__init__()
         self.__intent = intent
         self.__workflow = workflow
+        self.__on_quit = on_quit
+        self.__quit_requested: bool = False
         self.__started_at: Optional[float] = None
         self.exit_code: int = 1
         self.__state: Dict[str, Any] = {
@@ -324,6 +334,10 @@ class DemoApp(App[int]):  # type: ignore[misc]
         """
         Main-thread continuation that paints the final success/fail
         panel and updates the header icon after the workflow ends.
+
+        Auto-exits the TUI when the workflow ended because the user
+        pressed ``q`` — cleanup completed, nothing left to do. Normal
+        completion leaves the UI open so the user can scroll the log.
         """
 
         self.__state["status_icon"] = "✓" if success else "✗"
@@ -337,11 +351,14 @@ class DemoApp(App[int]):  # type: ignore[misc]
                     border_style="green" if success else "red",
                 )
             )
+        if self.__quit_requested:
+            self.exit()
 
     def __render_workflow_error(self, *, error: str) -> None:
         """
         Main-thread continuation that paints a red error panel when
-        the worker thread raised.
+        the worker thread raised. Also auto-exits if the user had
+        requested quit.
         """
 
         self.__state["status_icon"] = "✗"
@@ -351,6 +368,43 @@ class DemoApp(App[int]):  # type: ignore[misc]
                 Panel.fit(
                     f"[bold red]Workflow error:[/bold red] {error}",
                     border_style="red",
+                )
+            )
+        if self.__quit_requested:
+            self.exit()
+
+    async def action_quit(self) -> None:
+        """
+        First ``q`` press: request a graceful cancellation. We invoke
+        the ``on_quit`` callback (wired to ``runner.cancel()`` by the
+        executor) and paint a "stopping" panel; the app stays open
+        until the worker thread finishes its cleanup — at which point
+        ``__render_workflow_finish`` / ``__render_workflow_error``
+        calls ``self.exit()``.
+
+        Second press: force-exit immediately, cleanup be damned.
+        Users who hit it twice generally mean it.
+        """
+
+        if self.__quit_requested:
+            self.exit()
+            return
+
+        self.__quit_requested = True
+        self.__state["status_icon"] = "⏹"
+
+        if self.__on_quit is not None:
+            with contextlib.suppress(Exception):
+                self.__on_quit()
+
+        with contextlib.suppress(Exception):
+            body = self.query_one("#body", RichLog)
+            body.write(
+                Panel.fit(
+                    "[bold yellow]⏹  Stopping agent…[/bold yellow]\n"
+                    "[dim]Running cleanup (terminate app, flush history). "
+                    "Press q again to force quit.[/dim]",
+                    border_style="yellow",
                 )
             )
 

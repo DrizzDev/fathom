@@ -4,9 +4,9 @@ import json
 import logging
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from fathom.core.prompts.policy import NamedSection, PromptPolicy
+from fathom.core.prompts.policy import PromptPolicy
 from fathom.core.prompts.trace import extract_action_fields
-from fathom.interfaces.prompt import PromptBuilder, PromptUserContext
+from fathom.interfaces.prompt import NamedSection, PromptBuilder, PromptUserContext
 
 logger = logging.getLogger(__name__)
 

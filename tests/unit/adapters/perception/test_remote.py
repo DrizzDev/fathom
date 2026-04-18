@@ -8,6 +8,21 @@ from fathom.core.exceptions import DeviceConnectionClosedError, DeviceError
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 
 
+def build_png(*, width: int, height: int) -> bytes:
+    """
+    Build a minimal PNG header containing the requested dimensions.
+    """
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + b"\x00\x00\x00\r"
+        + b"IHDR"
+        + width.to_bytes(4, byteorder="big")
+        + height.to_bytes(4, byteorder="big")
+        + b"\x08\x02\x00\x00\x00"
+    )
+
+
 class RemotePerceptionAdapterTest(unittest.IsolatedAsyncioTestCase):
     """
     Cover remote perception fallback behavior for snapshot capture.
@@ -84,3 +99,35 @@ class RemotePerceptionAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         device.capture_screen.assert_not_awaited()
         device.dump_hierarchy.assert_not_awaited()
+
+    async def test_capture_uses_png_dimensions_over_device_get_dimensions(self) -> None:
+        """
+        Trust the screenshot PNG IHDR over the device's reported dimensions.
+        """
+
+        device = self.__build_device()
+        device.get_snapshot = AsyncMock(
+            return_value=(build_png(width=1179, height=2556), None),
+        )
+
+        adapter = RemotePerceptionAdapter(device=device, include_hierarchy=True)
+
+        capture = await adapter.capture()
+
+        self.assertEqual((capture.width, capture.height), (1179, 2556))
+        device.get_dimensions.assert_not_awaited()
+
+    async def test_capture_falls_back_to_device_dimensions_on_invalid_png(self) -> None:
+        """
+        Fall back to device.get_dimensions only when PNG header parse fails.
+        """
+
+        device = self.__build_device()
+        device.get_snapshot = AsyncMock(return_value=(b"not-a-valid-png", None))
+
+        adapter = RemotePerceptionAdapter(device=device, include_hierarchy=True)
+
+        capture = await adapter.capture()
+
+        self.assertEqual((capture.width, capture.height), (1080, 2400))
+        device.get_dimensions.assert_awaited_once_with()

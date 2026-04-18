@@ -13,6 +13,7 @@ still enforce correctness.
 from __future__ import annotations
 
 import json
+import plistlib
 import shutil
 import subprocess  # nosec - used with explicit shell=False + fixed argv
 from logging import getLogger
@@ -30,7 +31,7 @@ logger = getLogger(__name__)
 
 _COMMAND_CHOICES = ["demo", "run"]
 _PLATFORM_CHOICES = ["android", "ios"]
-_IOS_BACKEND_CHOICES = ["xcuitest", "webdriver_agent", "xcrun_simctl"]
+_IOS_BACKEND_CHOICES = ["xcuitest", "webdriver_agent", "xcrun_simctl", "idb"]
 _DEFAULT_MAX_STEPS = 100
 _DEFAULT_COMMAND = "demo"
 _DEFAULT_PLATFORM = "android"
@@ -103,6 +104,11 @@ class InteractiveWizard:
         platform = self.__prompt_platform()
         device_args = self.__prompt_device(platform=platform)
         ios_args = self.__prompt_ios_details(platform=platform) if platform == "ios" else {}
+        package_args = self.__prompt_package(
+            platform=platform,
+            device_args=device_args,
+            ios_args=ios_args,
+        )
         max_steps = self.__prompt_max_steps()
         verbose = self.__prompt_verbose()
 
@@ -116,6 +122,7 @@ class InteractiveWizard:
             "verbose": verbose,
             **device_args,
             **ios_args,
+            **package_args,
         }
 
         if not self.__confirm(args=args):
@@ -275,20 +282,13 @@ class InteractiveWizard:
 
     def __prompt_ios_details(self, *, platform: str) -> Dict[str, Any]:
         """
-        Collect iOS-specific flags.
+        Collect iOS-specific flags. The bundle identifier is collected
+        upstream by ``__prompt_package``; this prompt only owns the
+        automation backend choice.
         """
 
         if platform != "ios":
             return {}
-
-        bundle = cast(
-            "str",
-            Prompt.ask(
-                "[cyan]iOS bundle identifier[/cyan] [dim](blank to skip)[/dim]",
-                default="",
-                console=self.__console,
-            ),
-        ).strip()
 
         backend = self.__prompt_select(
             title="iOS automation backend",
@@ -296,10 +296,105 @@ class InteractiveWizard:
             default_index=_IOS_BACKEND_CHOICES.index(_DEFAULT_IOS_BACKEND),
         )
 
-        args: Dict[str, Any] = {"ios_automation_backend": backend}
-        if bundle:
-            args["ios_bundle_identifier"] = bundle
-        return args
+        return {"ios_automation_backend": backend}
+
+    def __prompt_package(
+        self,
+        *,
+        platform: str,
+        device_args: Dict[str, Any],
+        ios_args: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Pick an installed package / bundle identifier from the device.
+
+        The selection feeds the runner via the existing CLI flags:
+
+        - Android → ``--package`` (threaded into ``IntentObjectiveConfiguration.package_name``)
+        - iOS → ``--ios-bundle-identifier`` (threaded into the iOS adapter context)
+
+        Detection source depends on platform + iOS backend:
+
+        - Android → ``adb shell pm list packages -3``
+        - iOS + idb backend → ``idb list-apps`` (works for sims AND
+          physical devices)
+        - iOS otherwise → ``xcrun simctl listapps <udid>`` (sims only)
+
+        Falls back to free-text entry when nothing can be auto-detected
+        (no device id, missing toolchain, parse failure). Always offers
+        a "skip" option so the user can let the agent infer the package
+        from the foreground at runtime.
+        """
+
+        device_id = self.__device_identifier_for_platform(
+            platform=platform, device_args=device_args
+        )
+        key = "ios_bundle_identifier" if platform == "ios" else "package"
+        label = "iOS bundle identifier" if platform == "ios" else "Android package"
+        ios_backend = ios_args.get("ios_automation_backend") if platform == "ios" else None
+
+        packages = self.__detect_packages(
+            platform=platform,
+            device_id=device_id,
+            ios_backend=ios_backend if isinstance(ios_backend, str) else None,
+        )
+
+        if packages:
+            options = [*packages, "enter manually", "skip (use default)"]
+            choice = self.__prompt_select(
+                title=f"Select {label} (installed on device)",
+                options=options,
+                default_index=0,
+            )
+
+            if choice == "enter manually":
+                manual = cast(
+                    "str",
+                    Prompt.ask(
+                        f"[cyan]{label}[/cyan]",
+                        default="",
+                        console=self.__console,
+                    ),
+                ).strip()
+                return {key: manual} if manual else {}
+
+            if choice == "skip (use default)":
+                return {}
+
+            return {key: choice}
+
+        # No detection possible: free-text fallback.
+        raw = cast(
+            "str",
+            Prompt.ask(
+                f"[cyan]{label}[/cyan] [dim](blank = let agent infer)[/dim]",
+                default="",
+                console=self.__console,
+            ),
+        ).strip()
+        return {key: raw} if raw else {}
+
+    @staticmethod
+    def __device_identifier_for_platform(
+        *,
+        platform: str,
+        device_args: Dict[str, Any],
+    ) -> Optional[str]:
+        """
+        Pull the per-platform device identifier out of the device-step
+        result, returning ``None`` when the user skipped device
+        selection.
+        """
+
+        if platform == "ios":
+            value = device_args.get("ios_device_identifier")
+        else:
+            value = device_args.get("serial")
+
+        if not isinstance(value, str):
+            return None
+        stripped = value.strip()
+        return stripped or None
 
     def __prompt_max_steps(self) -> int:
         """
@@ -348,6 +443,7 @@ class InteractiveWizard:
 
         for key in (
             "serial",
+            "package",
             "ios_device_identifier",
             "ios_bundle_identifier",
             "ios_automation_backend",
@@ -386,6 +482,157 @@ class InteractiveWizard:
         except Exception as exception:
             logger.debug("Device auto-detection failed: %s", exception)
         return []
+
+    def __detect_packages(
+        self,
+        *,
+        platform: str,
+        device_id: Optional[str],
+        ios_backend: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Return installed package / bundle identifiers on the chosen
+        device. Never raises; degrades to ``[]`` so the caller falls
+        back to free-text entry.
+
+        On iOS, the detection source depends on the chosen automation
+        backend: ``idb`` calls ``idb list-apps`` (works for sims AND
+        physical devices); any other backend uses ``xcrun simctl
+        listapps`` (sims only).
+        """
+
+        try:
+            if platform == "android":
+                return self.__detect_android_packages(device_id=device_id)
+            if platform == "ios":
+                if ios_backend == "idb":
+                    return self.__detect_idb_bundle_identifiers(device_id=device_id)
+                if not device_id:
+                    return []
+                return self.__detect_ios_bundle_identifiers(device_id=device_id)
+        except Exception as exception:
+            logger.debug("Package auto-detection failed: %s", exception)
+        return []
+
+    @staticmethod
+    def __detect_android_packages(*, device_id: Optional[str]) -> List[str]:
+        """
+        Parse ``adb [-s <serial>] shell pm list packages -3`` output.
+
+        ``-3`` filters to third-party packages so the picker shows the
+        apps a user is likely to test, not the ~200 system packages
+        Android ships with.
+        """
+
+        adb = shutil.which("adb")
+        if not adb:
+            return []
+
+        argv: List[str] = [adb]
+        if device_id:
+            argv += ["-s", device_id]
+        argv += ["shell", "pm", "list", "packages", "-3"]
+
+        result = subprocess.run(  # nosec - fixed argv, shell=False default
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            check=False,
+        )
+        if result.returncode != 0:
+            return []
+
+        packages: List[str] = []
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("package:"):
+                continue
+            name = stripped[len("package:") :].strip()
+            if name:
+                packages.append(name)
+        return sorted(set(packages))
+
+    @staticmethod
+    def __detect_idb_bundle_identifiers(*, device_id: Optional[str]) -> List[str]:
+        """
+        Parse ``idb list-apps --json`` output (NDJSON of app records).
+
+        ``device_id`` is optional — when omitted, ``idb`` falls back to
+        its own default target resolution (single connected device or
+        the ``IDB_COMPANION_HOSTNAME`` env var). Returns ``[]`` on any
+        failure so the picker degrades to free-text.
+        """
+
+        idb = shutil.which("idb")
+        if not idb:
+            return []
+
+        argv: List[str] = [idb]
+        if device_id:
+            argv += ["--udid", device_id]
+        argv += ["list-apps", "--json"]
+
+        result = subprocess.run(  # nosec - fixed argv, shell=False default
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return []
+
+        bundles: List[str] = []
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                payload = json.loads(stripped)
+            except ValueError:
+                continue
+            bundle_id = payload.get("bundle_id") if isinstance(payload, dict) else None
+            if isinstance(bundle_id, str) and bundle_id:
+                bundles.append(bundle_id)
+        return sorted(set(bundles))
+
+    @staticmethod
+    def __detect_ios_bundle_identifiers(*, device_id: str) -> List[str]:
+        """
+        Parse ``xcrun simctl listapps <udid>`` output as a plist.
+
+        ``listapps`` emits an OpenStep-style plist keyed by bundle id;
+        we decode with ``plistlib`` from stdlib so no external
+        ``plutil`` shell-out is needed.
+        """
+
+        xcrun = shutil.which("xcrun")
+        if not xcrun:
+            return []
+
+        result = subprocess.run(  # nosec - fixed argv, shell=False default
+            [xcrun, "simctl", "listapps", device_id],
+            capture_output=True,
+            timeout=3.0,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return []
+
+        try:
+            payload = plistlib.loads(result.stdout)
+        except (ValueError, plistlib.InvalidFileException):
+            return []
+
+        if not isinstance(payload, dict):
+            return []
+
+        bundles: List[str] = []
+        for bundle_id in payload:
+            if isinstance(bundle_id, str) and bundle_id:
+                bundles.append(bundle_id)
+        return sorted(set(bundles))
 
     def __detect_adb_devices(self) -> List[str]:
         """
@@ -475,6 +722,7 @@ def wizard_argv(args: Dict[str, Any]) -> List[str]:
     flag_map = (
         ("platform", "--platform"),
         ("serial", "--serial"),
+        ("package", "--package"),
         ("ios_device_identifier", "--ios-device-identifier"),
         ("ios_bundle_identifier", "--ios-bundle-identifier"),
         ("ios_automation_backend", "--ios-automation-backend"),

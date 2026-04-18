@@ -47,14 +47,19 @@ class TestReplaceRemainingSubGoals:
             state.record_sub_goal_action()
         state.record_verify_failure()
         state.record_verify_failure()
+        state.record_planner_retry()
+        state.record_planner_retry()
+        state.record_planner_retry()
 
         assert state.sub_goal_action_count == 10
         assert state.sub_goal_verify_failures == 2
+        assert state.sub_goal_planner_retries == 3
 
         state.replace_remaining_sub_goals(_make_sub_goals(["new step"]))
 
         assert state.sub_goal_action_count == 0
         assert state.sub_goal_verify_failures == 0
+        assert state.sub_goal_planner_retries == 0
 
     def test_empty_replacement_clears_unfinished(self) -> None:
         state = AgentState(intent="test", max_steps=50)
@@ -89,6 +94,17 @@ class TestCheckpointPersistence:
 
         assert restored.sub_goal_action_count == 7
 
+    def test_planner_retries_counter_survives_checkpoint(self) -> None:
+        state = AgentState(intent="test intent", max_steps=100)
+        state.set_sub_goals(_make_sub_goals(["step 1", "step 2"]))
+        state.record_planner_retry()
+        state.record_planner_retry()
+
+        checkpoint = state.to_checkpoint()
+        restored = AgentState.from_checkpoint(checkpoint)
+
+        assert restored.sub_goal_planner_retries == 2
+
     def test_counters_default_zero_for_old_checkpoints(self) -> None:
         """Checkpoints from before these fields were added should default to 0."""
 
@@ -98,7 +114,9 @@ class TestCheckpointPersistence:
         # Simulate old checkpoint without these keys
         del checkpoint["sub_goal_verify_failures"]
         del checkpoint["sub_goal_action_count"]
+        del checkpoint["sub_goal_planner_retries"]
 
         restored = AgentState.from_checkpoint(checkpoint)
         assert restored.sub_goal_verify_failures == 0
         assert restored.sub_goal_action_count == 0
+        assert restored.sub_goal_planner_retries == 0
