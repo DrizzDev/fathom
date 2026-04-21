@@ -203,7 +203,6 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
             input_context=input_context,
             action_type=ActionType.TYPE,
             bounds=bounds or Bounds(x=100, y=200, width=400, height=100, coord_system="pixel"),
-            
         )
 
     @staticmethod

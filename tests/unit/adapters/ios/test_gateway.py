@@ -35,11 +35,12 @@ class IOSAutomationGatewayClearTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                gateway, "_IOSAutomationGateway__create_session", new_callable=AsyncMock, return_value="sess-1"
+                gateway,
+                "_IOSAutomationGateway__create_session",
+                new_callable=AsyncMock,
+                return_value="sess-1",
             ),
-            patch.object(
-                gateway, "_IOSAutomationGateway__delete_session", new_callable=AsyncMock
-            ),
+            patch.object(gateway, "_IOSAutomationGateway__delete_session", new_callable=AsyncMock),
             patch.object(
                 gateway, "_IOSAutomationGateway__request", new_callable=AsyncMock
             ) as mock_request,
@@ -62,11 +63,12 @@ class IOSAutomationGatewayClearTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                gateway, "_IOSAutomationGateway__create_session", new_callable=AsyncMock, return_value="sess-1"
+                gateway,
+                "_IOSAutomationGateway__create_session",
+                new_callable=AsyncMock,
+                return_value="sess-1",
             ),
-            patch.object(
-                gateway, "_IOSAutomationGateway__delete_session", new_callable=AsyncMock
-            ),
+            patch.object(gateway, "_IOSAutomationGateway__delete_session", new_callable=AsyncMock),
             patch.object(
                 gateway, "_IOSAutomationGateway__request", new_callable=AsyncMock
             ) as mock_request,

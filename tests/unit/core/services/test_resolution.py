@@ -74,7 +74,9 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         service = self.__build_service()
         action = self.__build_action(label_id="5", text="search")
-        elements = self.__build_elements("5", text="chennai adyar", hint="Search an area", resource_id="com.app:id/search")
+        elements = self.__build_elements(
+            "5", text="chennai adyar", hint="Search an area", resource_id="com.app:id/search"
+        )
 
         resolved = await service.resolve(action=action, elements=elements)
 
@@ -90,7 +92,9 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         service = self.__build_service()
         action = self.__build_action(label_id="3", text="search")
-        elements = self.__build_elements("3", text="Search an area", hint="Search an area", resource_id="com.app:id/input")
+        elements = self.__build_elements(
+            "3", text="Search an area", hint="Search an area", resource_id="com.app:id/input"
+        )
 
         resolved = await service.resolve(action=action, elements=elements)
 

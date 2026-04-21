@@ -41,7 +41,9 @@ class ADBDeviceClearTest(unittest.IsolatedAsyncioTestCase):
             result = await device.type(text="x", replace=True, prefilled="old text")
 
         self.assertTrue(result.success)
-        calls = [c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list]
+        calls = [
+            c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list
+        ]
 
         self.assertIn("getprop ro.build.version.sdk", calls[0])
         self.assertIn(
@@ -69,7 +71,9 @@ class ADBDeviceClearTest(unittest.IsolatedAsyncioTestCase):
             result = await device.type(text="x", replace=True, prefilled="old text")
 
         self.assertTrue(result.success)
-        calls = [c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list]
+        calls = [
+            c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list
+        ]
 
         # Legacy path: move cursor to end + right arrows
         self.assertIn(str(AndroidKeycode.MOVE_END), calls[1])
@@ -114,11 +118,15 @@ class ADBDeviceClearTest(unittest.IsolatedAsyncioTestCase):
         device = self.__build_device()
 
         with patch.object(
-            device, "_ADBDevice__shell", new_callable=AsyncMock,
+            device,
+            "_ADBDevice__shell",
+            new_callable=AsyncMock,
             return_value=ActionResult(success=True, duration=1),
         ) as mock_shell:
             await device.type(text="a", replace=True, prefilled="")
 
         # Only type calls, no getprop or clear
-        commands = [c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list]
+        commands = [
+            c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list
+        ]
         self.assertTrue(all("getprop" not in cmd for cmd in commands))
