@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+  <node text="" class="android.view.View" bounds="[66,2010][1014,2072]">
+    <node text="Add to rolodex" class="android.widget.TextView" bounds="[66,2043][1014,2072]" />
+    <node text="" class="android.view.View" bounds="[66,2010][198,2072]" />
+  </node>
+</hierarchy>

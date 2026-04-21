@@ -6,7 +6,7 @@ from logging import getLogger
 from typing import List, Optional, Tuple
 
 from fathom.constants.interaction import SwipeSpeed
-from fathom.constants.platform import DevicePlatform
+from fathom.constants.platform import AndroidClearStrategy, AndroidKeycode, DevicePlatform
 from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.configuration import (
@@ -52,13 +52,27 @@ class ADBDevice(DevicePort):
             interaction=InteractionRuntimeConfiguration(
                 policy=InteractionPolicyConfiguration(
                     swipe=SwipeInteractionPolicy(
-                        duration_milliseconds=(
-                            self.__configuration.interaction.policy.swipe.duration_milliseconds
+                        duration=self.__configuration.interaction.policy.swipe.duration,
+                        edge_margin_ratio=(
+                            self.__configuration.interaction.policy.swipe.edge_margin_ratio
                         ),
-                        distance_ratio=self.__configuration.interaction.policy.swipe.distance_ratio,
+                        minimum_edge_margin=(
+                            self.__configuration.interaction.policy.swipe.minimum_edge_margin
+                        ),
+                        maximum_edge_margin=(
+                            self.__configuration.interaction.policy.swipe.maximum_edge_margin
+                        ),
                     ),
                     scroll=ScrollInteractionPolicy(
-                        distance_ratio=self.__configuration.interaction.policy.scroll.distance_ratio
+                        edge_margin_ratio=(
+                            self.__configuration.interaction.policy.scroll.edge_margin_ratio
+                        ),
+                        minimum_edge_margin=(
+                            self.__configuration.interaction.policy.scroll.minimum_edge_margin
+                        ),
+                        maximum_edge_margin=(
+                            self.__configuration.interaction.policy.scroll.maximum_edge_margin
+                        ),
                     ),
                 )
             ),
@@ -81,9 +95,33 @@ class ADBDevice(DevicePort):
 
         return await self.__shell(command=f"input tap {x} {y}")
 
-    async def type(self, *, text: str) -> ActionResult:
+    async def type(
+        self,
+        *,
+        text: str,
+        prefilled: str = "",
+        replace: bool = True,
+        locator: Optional[str] = None,
+    ) -> ActionResult:
         """
         Type text on device character-by-character to prevent ADB input drops.
+        Clears existing content first when *replace* is True and *prefilled* is non-empty.
+        """
+
+        _ = locator
+
+        if (
+            replace
+            and len(prefilled) > 0
+            and not (cleared := await self.__clear_focused_field()).success
+        ):
+            return cleared
+
+        return await self.__type_characters(text=text)
+
+    async def __type_characters(self, *, text: str) -> ActionResult:
+        """
+        Type text character-by-character to prevent ADB input drops.
         """
 
         last_result = ActionResult(success=True, duration=0)
@@ -91,13 +129,63 @@ class ADBDevice(DevicePort):
         for character in text:
             escaped = self.__escape(text=character)
 
-            if (result := await self.__shell(command=f'input text "{escaped}"')).success is False:
+            if not (result := await self.__shell(command=f'input text "{escaped}"')).success:
                 return result
 
             last_result = result
             await asyncio.sleep(0.01)
 
         return last_result
+
+    async def __clear_focused_field(self) -> ActionResult:
+        """
+        Clear the focused Android text field using robust ADB key strategies.
+
+        On SDK 30+ uses Ctrl+A (keycombination) to select all then deletes.
+        Falls back to cursor-end + batched delete keyevents for older devices.
+        Batching keycodes into a single ``adb shell input keyevent`` call is
+        critical for performance (~100ms vs 5-8s for individual calls).
+        """
+
+        if (sdk_version := await self.__get_sdk_version()) >= AndroidClearStrategy.MODERN_MIN_SDK:
+            select = await self.__shell(
+                command=f"input keycombination {AndroidKeycode.CTRL_LEFT} {AndroidKeycode.A}"
+            )
+            if (
+                select.success
+                and (
+                    delete := await self.__shell(
+                        command=f"input keyevent {AndroidKeycode.DEL} {AndroidKeycode.DEL}"
+                    )
+                ).success
+            ):
+                return delete
+
+            logger.warning("Modern clear failed (sdk=%d), falling back to legacy.", sdk_version)
+
+        move_codes = f"{AndroidKeycode.MOVE_END} " + " ".join(
+            [str(AndroidKeycode.DPAD_RIGHT)] * AndroidClearStrategy.RIGHT_ARROW_COUNT
+        )
+        if not (move := await self.__shell(command=f"input keyevent {move_codes}")).success:
+            return move
+
+        delete_codes = " ".join([str(AndroidKeycode.DEL)] * AndroidClearStrategy.DELETE_COUNT)
+        return await self.__shell(command=f"input keyevent {delete_codes}")
+
+    async def __get_sdk_version(self) -> int:
+        """
+        Return Android SDK version, or 0 when unavailable.
+        """
+
+        result = await self.__shell(command="getprop ro.build.version.sdk", capture_output=True)
+
+        if not result.success or not result.output:
+            return 0
+
+        try:
+            return int(str(result.output).strip())
+        except ValueError:
+            return 0
 
     async def swipe(
         self,
@@ -117,9 +205,7 @@ class ADBDevice(DevicePort):
             logger.debug("Ignoring swipe speed for ADB adapter: %s", speed)
 
         duration = duration or (
-            self.__configuration.interaction.policy.swipe.duration_milliseconds
-            if self.__configuration
-            else 300
+            self.__configuration.interaction.policy.swipe.duration if self.__configuration else 300
         )
 
         return await self.__shell(command=f"input swipe {x1} {y1} {x2} {y2} {duration}")

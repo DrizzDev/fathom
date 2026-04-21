@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime
 from logging import getLogger
@@ -11,7 +12,6 @@ from fathom.base.paths import SharedPathManager
 from fathom.constants import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY,
-    DEFAULT_SWIPE_DURATION,
     DRAIN_TIMEOUT,
     ActionType,
 )
@@ -21,7 +21,7 @@ from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.processing.annotator import ImageAnnotator
-from fathom.schemas.actions import Action
+from fathom.schemas.actions import Action, ExecutionRegion, GesturePath, InputContext
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult, ExecutionResult
 from fathom.schemas.screens import ScreenCapture
@@ -251,17 +251,21 @@ class ActionExecutor:
         """
 
         if action.action_type.value.startswith(ActionType.SWIPE.lower()):
-            return await self.__execute_swipe(action, converter, width, height)
+            return await self.__execute_swipe(action=action, converter=converter)
 
         action_handlers: dict[
             ActionType,
             Callable[[], Awaitable[Tuple[ActionResult, Optional[Tuple[int, ...]]]]],
         ] = {
-            ActionType.TAP: lambda: self.__execute_tap(action, converter, width, height),
-            ActionType.TYPE: lambda: self.__execute_type(action, converter, width, height),
-            ActionType.SCROLL: lambda: self.__execute_scroll(width, height),
+            ActionType.TAP: lambda: self.__execute_tap(
+                action=action, converter=converter, width=width, height=height
+            ),
+            ActionType.TYPE: lambda: self.__execute_type(
+                action=action, converter=converter, width=width, height=height
+            ),
+            ActionType.SCROLL: lambda: self.__execute_scroll(converter=converter),
             ActionType.LONG_PRESS: lambda: self.__execute_long_press(
-                action, converter, width, height
+                action=action, converter=converter, width=width, height=height
             ),
             ActionType.BACK: self.__execute_back,
             ActionType.HOME: self.__execute_home,
@@ -306,10 +310,18 @@ class ActionExecutor:
         return result, coords
 
     async def __execute_type(
-        self, action: Action, converter: CoordinateConverter, width: int, height: int
+        self,
+        width: int,
+        height: int,
+        action: Action,
+        converter: CoordinateConverter,
     ) -> Tuple[ActionResult, Tuple[int, ...]]:
         """
-        Helper Method To Execute `TYPE` Command
+        Execute TYPE command: focus tap, stabilization wait, then type.
+
+        When ``input_context`` is present on the action (populated during resolution),
+        the locator and prefilled text are forwarded to the provider. When absent,
+        the provider receives a plain text input with no clear or locator fallback.
         """
 
         _ = width, height
@@ -319,17 +331,50 @@ class ActionExecutor:
 
         x, y = converter.center_to_pixels(bounds=action.bounds)
         x, y = self.__apply_tap_bias(x=x, y=y, action=action, converter=converter)
+
         coords = (x, y)
+        context = action.input_context or InputContext()
+        configuration = self.__device.configuration or DeviceRuntimeConfiguration()
 
-        focus_result = await self.__device.tap(x=x, y=y)
-        if not focus_result.success:
-            return focus_result, coords
+        wait = configuration.interaction.policy.type.delay / 1000.0
 
-        result = await self.__device.type(text=action.text or "")
+        if len(context.prefilled) > 0:
+            logger.info("Existing text detected, will replace (locator=%s)", context.locator)
+
+        if not (
+            result := await self.__focus_and_type(
+                text=action.text or "", context=context, x=x, y=y, wait=wait
+            )
+        ).success:
+            logger.warning("Type failed (error=%s). Re-tapping and retrying.", result.error)
+            result = await self.__focus_and_type(
+                text=action.text or "", context=context, x=x, y=y, wait=wait
+            )
+
         return result, coords
 
+    async def __focus_and_type(
+        self, *, text: str, context: InputContext, x: int, y: int, wait: float
+    ) -> ActionResult:
+        """
+        Tap to focus, wait for stabilization, then send text.
+        """
+
+        if not (result := await self.__device.tap(x=x, y=y)).success:
+            return result
+
+        logger.info(f"Waiting for {wait} seconds since element was not focused")
+        await asyncio.sleep(delay=wait)
+
+        return await self.__device.type(
+            text=text,
+            locator=context.locator,
+            prefilled=context.prefilled,
+            replace=len(context.prefilled) > 0,
+        )
+
     async def __execute_swipe(
-        self, action: Action, converter: CoordinateConverter, width: int, height: int
+        self, *, action: Action, converter: CoordinateConverter
     ) -> Tuple[ActionResult, Tuple[int, ...]]:
         """
         Helper Method To Execute `SWIPE` Command
@@ -341,53 +386,92 @@ class ActionExecutor:
             direction = "up"
 
         if action.bounds:
-            x1, y1, x2, y2 = converter.swipe_coordinates(bounds=action.bounds, direction=direction)
+            region = converter.region_from_bounds(
+                bounds=action.bounds,
+                source=action.bounds.source or "model",
+            )
         else:
-            # Full screen swipe if no bounds
-            cx, cy = width // 2, height // 2
-            offset = 300  # Reasonable default swipe distance
+            region = converter.viewport_region()
 
-            if direction == "up":
-                x1, y1 = cx, cy + offset
-                x2, y2 = cx, cy - offset
-            elif direction == "down":
-                x1, y1 = cx, cy - offset
-                x2, y2 = cx, cy + offset
-            elif direction == "left":
-                x1, y1 = cx + offset, cy
-                x2, y2 = cx - offset, cy
-            elif direction == "right":
-                x1, y1 = cx - offset, cy
-                x2, y2 = cx + offset, cy
-            else:
-                # Default to up
-                x1, y1 = cx, cy + offset
-                x2, y2 = cx, cy - offset
+        path = converter.resolve_swipe_path(region=region, direction=direction)
+        coords = path.to_coordinates()
 
-        coords = (x1, y1, x2, y2)
+        self.__log_gesture_path(
+            path=path,
+            kind="swipe",
+            region=region,
+            action=action,
+            direction=direction,
+        )
+
         result = await self.__device.swipe(
-            x1=x1, y1=y1, x2=x2, y2=y2, duration=DEFAULT_SWIPE_DURATION
+            x1=path.start_x,
+            y1=path.start_y,
+            x2=path.end_x,
+            y2=path.end_y,
+            duration=path.duration,
         )
         return result, coords
 
     async def __execute_scroll(
-        self, width: int, height: int
+        self, *, converter: CoordinateConverter
     ) -> Tuple[ActionResult, Tuple[int, ...]]:
         """
         Helper Method To Execute `SCROLL` Command (Default Scroll Down)
         """
 
-        cx, cy = width // 2, height // 2
+        region = converter.viewport_region()
+        path = converter.resolve_scroll_path(region=region, direction="down")
 
-        # Scroll down content = Swipe UP
-        x1, y1 = cx, cy + 300
-        x2, y2 = cx, cy - 300
-        coords = (x1, y1, x2, y2)
-
+        coords = path.to_coordinates()
+        self.__log_gesture_path(
+            path=path,
+            action=None,
+            kind="scroll",
+            region=region,
+            direction="down",
+        )
         result = await self.__device.swipe(
-            x1=x1, y1=y1, x2=x2, y2=y2, duration=DEFAULT_SWIPE_DURATION
+            x1=path.start_x,
+            y1=path.start_y,
+            x2=path.end_x,
+            y2=path.end_y,
+            duration=path.duration,
         )
         return result, coords
+
+    @staticmethod
+    def __log_gesture_path(
+        *,
+        kind: str,
+        direction: str,
+        path: GesturePath,
+        region: ExecutionRegion,
+        action: Optional[Action],
+    ) -> None:
+        """
+        Log the executable gesture path with compact routing context.
+        """
+
+        target = (action.natural_language_target or action.target) if action else "viewport"
+        path_payload = path.model_dump()
+        path_payload["distance"] = path.distance
+
+        logger.info(
+            json.dumps(
+                {
+                    "kind": kind,
+                    "target": target,
+                    "path": path_payload,
+                    "direction": direction,
+                    "component": "ActionExecutor",
+                    "region": region.model_dump(),
+                    "event": "gesture_path_resolved",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
 
     async def __execute_long_press(
         self, action: Action, converter: CoordinateConverter, width: int, height: int

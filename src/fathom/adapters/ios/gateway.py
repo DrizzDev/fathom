@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
+from fathom.constants.platform import IOSClearStrategy
 from fathom.core.exceptions import DeviceError
 from fathom.schemas.configuration import IOSConfiguration
 
@@ -58,6 +59,26 @@ class IOSAutomationGateway:
         finally:
             await self.__delete_session(session_identifier=session_identifier)
 
+    async def clear_text(self, *, length: int) -> None:
+        """
+        Clear focused text by sending backspace characters through WebDriverAgent.
+        """
+
+        if length <= 0:
+            return
+
+        count = min(length, IOSClearStrategy.MAX_LENGTH)
+        session_identifier = await self.__create_session()
+
+        try:
+            await self.__request(
+                method="POST",
+                json_body={"value": ["\b"] * count},
+                path=f"session/{session_identifier}/wda/keys",
+            )
+        finally:
+            await self.__delete_session(session_identifier=session_identifier)
+
     async def swipe(
         self,
         *,
@@ -65,7 +86,7 @@ class IOSAutomationGateway:
         start_y: float,
         end_x: float,
         end_y: float,
-        duration_milliseconds: int,
+        duration: int,
     ) -> None:
         """
         Swipe between two points through the configured iOS automation gateway.
@@ -98,7 +119,7 @@ class IOSAutomationGateway:
                                 },
                                 {
                                     "type": "pointerMove",
-                                    "duration": max(int(duration_milliseconds), 0),
+                                    "duration": max(int(duration), 0),
                                     "x": round(end_x),
                                     "y": round(end_y),
                                     "origin": "viewport",

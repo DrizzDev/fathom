@@ -95,6 +95,11 @@ class TypeInteractionPolicy(BaseModel):
     Runtime policy for text input interactions.
     """
 
+    delay: int = Field(
+        ge=0,
+        default=500,
+        description="Delay in milliseconds before retrying a type action when the initial attempt fails due to focus loss.",
+    )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
         description="Type policy extension metadata",
@@ -106,13 +111,25 @@ class SwipeInteractionPolicy(BaseModel):
     Runtime policy for swipe interactions.
     """
 
-    duration_milliseconds: int = Field(
+    duration: int = Field(
         default=300,
-        description="Default swipe gesture duration in milliseconds",
+        description="Default swipe gesture duration in milliseconds.",
     )
-    distance_ratio: float = Field(
-        default=0.7,
-        description="Swipe distance ratio within the source bounds",
+    edge_margin_ratio: float = Field(
+        ge=0.0,
+        lt=0.5,
+        default=0.08,
+        description="Fraction of the execution region reserved as a safe edge margin.",
+    )
+    minimum_edge_margin: int = Field(
+        ge=0,
+        default=16,
+        description="Smallest safe edge margin in screen pixels.",
+    )
+    maximum_edge_margin: int = Field(
+        ge=0,
+        default=64,
+        description="Largest safe edge margin in screen pixels.",
     )
 
 
@@ -121,9 +138,21 @@ class ScrollInteractionPolicy(BaseModel):
     Runtime policy for scroll interactions.
     """
 
-    distance_ratio: float = Field(
-        default=0.5,
-        description="Scroll distance ratio within the source bounds",
+    edge_margin_ratio: float = Field(
+        ge=0.0,
+        lt=0.5,
+        default=0.15,
+        description="Fraction of the scroll region reserved as a safe edge margin.",
+    )
+    minimum_edge_margin: int = Field(
+        ge=0,
+        default=48,
+        description="Smallest safe edge margin in screen pixels.",
+    )
+    maximum_edge_margin: int = Field(
+        ge=0,
+        default=160,
+        description="Largest safe edge margin in screen pixels.",
     )
 
 

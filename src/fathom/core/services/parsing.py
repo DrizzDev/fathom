@@ -418,6 +418,7 @@ class ToolResponseParser:
                 bounds = Bounds(
                     x=data.bbox.x,
                     y=data.bbox.y,
+                    source="model",
                     width=data.bbox.width,
                     height=data.bbox.height,
                     coord_system=data.bbox.coord_system,

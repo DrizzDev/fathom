@@ -27,6 +27,18 @@ class RemoteInteractionRequest(BaseModel):
     )
 
     text: Optional[str] = Field(default=None, description="Input text for typing actions")
+    replace: Optional[bool] = Field(
+        default=True,
+        description="Replace existing field content before typing; set False to append",
+    )
+    locator: Optional[str] = Field(
+        default=None,
+        description="UI element locator to type into (resource ID, accessibility ID, etc.)",
+    )
+    prefilled: Optional[str] = Field(
+        default="",
+        description="Existing content in the target field, used by providers for backspace-based clearing",
+    )
     duration: Optional[int] = Field(default=None, description="Gesture duration in ms")
     speed: Optional[SwipeSpeed] = Field(
         default=None, description="Gesture speed for swipe, scroll, and drag actions"
