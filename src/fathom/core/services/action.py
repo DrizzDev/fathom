@@ -238,7 +238,9 @@ class ActionExecutor:
             ActionType.TYPE: lambda: self.__execute_type(
                 action=action, converter=converter, width=width, height=height
             ),
-            ActionType.SCROLL: lambda: self.__execute_scroll(width, height),
+            ActionType.SCROLL: lambda: self.__execute_scroll(
+                action=action, converter=converter, width=width, height=height
+            ),
             ActionType.LONG_PRESS: lambda: self.__execute_long_press(
                 action=action, converter=converter, width=width, height=height
             ),
@@ -349,38 +351,41 @@ class ActionExecutor:
         self, action: Action, converter: CoordinateConverter, width: int, height: int
     ) -> Tuple[ActionResult, Tuple[int, ...]]:
         """
-        Helper Method To Execute `SWIPE` Command
+        Helper Method To Execute `SWIPE` Command.
+
+        Per the LLM tool contract (see core/prompts/tools.py and rules.py),
+        every ``swipe_*`` action MUST carry ``bounds`` whose center is the
+        scrollable region. Missing bounds is treated as a contract
+        violation: we log + emit a telemetry warning + raise so the bug
+        surfaces, rather than silently executing a degraded screen-center
+        swipe.
         """
+
+        _ = width, height
+
+        if not action.bounds:
+            logger.warning(
+                "Swipe action received without bounds (LLM contract violation): "
+                "action_type=%s target=%r label_id=%r rationale=%r",
+                action.action_type.value,
+                action.target,
+                action.label_id,
+                action.rationale,
+            )
+            await self.__telemetry.warning(
+                "Swipe action missing required bounds",
+                action_type=action.action_type.value,
+                target=action.target,
+                label_id=action.label_id,
+            )
+            raise ExecutionError("Swipe action requires bounds — LLM did not supply bbox.")
 
         if "_" in action.action_type.value:
             direction = action.action_type.value.split("_")[-1]
         else:
             direction = "up"
 
-        if action.bounds:
-            x1, y1, x2, y2 = converter.swipe_coordinates(bounds=action.bounds, direction=direction)
-        else:
-            # Full screen swipe if no bounds
-            cx, cy = width // 2, height // 2
-            offset = 300  # Reasonable default swipe distance
-
-            if direction == "up":
-                x1, y1 = cx, cy + offset
-                x2, y2 = cx, cy - offset
-            elif direction == "down":
-                x1, y1 = cx, cy - offset
-                x2, y2 = cx, cy + offset
-            elif direction == "left":
-                x1, y1 = cx + offset, cy
-                x2, y2 = cx - offset, cy
-            elif direction == "right":
-                x1, y1 = cx - offset, cy
-                x2, y2 = cx + offset, cy
-            else:
-                # Default to up
-                x1, y1 = cx, cy + offset
-                x2, y2 = cx, cy - offset
-
+        x1, y1, x2, y2 = converter.swipe_coordinates(bounds=action.bounds, direction=direction)
         coords = (x1, y1, x2, y2)
         result = await self.__device.swipe(
             x1=x1, y1=y1, x2=x2, y2=y2, duration=DEFAULT_SWIPE_DURATION
@@ -388,17 +393,33 @@ class ActionExecutor:
         return result, coords
 
     async def __execute_scroll(
-        self, width: int, height: int
+        self, action: Action, converter: CoordinateConverter, width: int, height: int
     ) -> Tuple[ActionResult, Tuple[int, ...]]:
         """
-        Helper Method To Execute `SCROLL` Command (Default Scroll Down)
+        Helper Method To Execute `SCROLL` Command.
+
+        Like ``swipe_*``, SCROLL requires bounds supplied by the LLM —
+        missing bounds is treated as a contract violation. ``Scroll down
+        content`` maps to ``swipe up``.
         """
 
-        cx, cy = width // 2, height // 2
+        _ = width, height
 
-        # Scroll down content = Swipe UP
-        x1, y1 = cx, cy + 300
-        x2, y2 = cx, cy - 300
+        if not action.bounds:
+            logger.warning(
+                "Scroll action received without bounds (contract violation): "
+                "target=%r rationale=%r",
+                action.target,
+                action.rationale,
+            )
+            await self.__telemetry.warning(
+                "Scroll action missing required bounds",
+                action_type=action.action_type.value,
+                target=action.target,
+            )
+            raise ExecutionError("Scroll action requires bounds — emitter did not supply bbox.")
+
+        x1, y1, x2, y2 = converter.swipe_coordinates(bounds=action.bounds, direction="up")
         coords = (x1, y1, x2, y2)
 
         result = await self.__device.swipe(

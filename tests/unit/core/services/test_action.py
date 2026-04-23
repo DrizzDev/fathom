@@ -47,6 +47,7 @@ class FakeDevice(DevicePort):
 
         self.__tap_calls: List[Tuple[int, int]] = []
         self.__type_calls: List[Dict[str, Any]] = []
+        self.__swipe_calls: List[Dict[str, Any]] = []
 
         self.__dimensions = dimensions
         self.__configuration = device_configuration or FAST_TYPE_POLICY
@@ -67,6 +68,14 @@ class FakeDevice(DevicePort):
         """
 
         return self.__type_calls
+
+    @property
+    def swipe_calls(self) -> List[Dict[str, Any]]:
+        """
+        Recorded swipe call parameters.
+        """
+
+        return self.__swipe_calls
 
     @property
     def configuration(self) -> Optional[DeviceRuntimeConfiguration]:
@@ -116,9 +125,12 @@ class FakeDevice(DevicePort):
         speed: Optional[SwipeSpeed] = None,
     ) -> ActionResult:
         """
-        Return success for swipe actions.
+        Record swipe parameters and return success.
         """
 
+        self.__swipe_calls.append(
+            {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "duration": duration, "speed": speed}
+        )
         return ActionResult(success=True, duration=1)
 
     async def back(self) -> ActionResult:
@@ -473,3 +485,193 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_sleep.await_count, 2)
         self.assertEqual(len(device.tap_calls), 2)
         self.assertEqual(len(device.type_calls), 2)
+
+
+class ActionExecutorSwipeTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Cover swipe and scroll execution paths: contract enforcement on
+    missing bounds for swipes, and edge-safe coordinate generation for
+    both bounds-driven swipes and the bounds-less SCROLL fallback.
+    """
+
+    SCREEN_W = 1080
+    SCREEN_H = 2340
+
+    @staticmethod
+    def __build_swipe_action(
+        *,
+        action_type: ActionType = ActionType.SWIPE_UP,
+        bounds: Optional[Bounds] = None,
+        label_id: Optional[str] = None,
+    ) -> Action:
+        return Action(
+            target="scrollable region",
+            rationale="test swipe",
+            action_type=action_type,
+            label_id=label_id,
+            bounds=bounds,
+        )
+
+    @staticmethod
+    def __build_scroll_action(*, bounds: Optional[Bounds] = None) -> Action:
+        return Action(
+            target="exploration scroll",
+            rationale="test scroll",
+            action_type=ActionType.SCROLL,
+            bounds=bounds,
+        )
+
+    @staticmethod
+    def __build_step(action: Action) -> Step:
+        return Step(
+            metadata={},
+            action=action,
+            step_number=1,
+            condition=None,
+            event_type="action",
+            screen_hash="abc123",
+            is_conditional=False,
+        )
+
+    @staticmethod
+    def __build_capture(*, width: int = SCREEN_W, height: int = SCREEN_H) -> ScreenCapture:
+        return ScreenCapture(
+            width=width,
+            height=height,
+            timestamp=0,
+            image=b"fake",
+            activity="com.test.app",
+        )
+
+    @staticmethod
+    def __build_executor(device: FakeDevice) -> Tuple[ActionExecutor, Mock]:
+        telemetry = Mock(warning=AsyncMock(), info=AsyncMock(), error=AsyncMock())
+        executor = ActionExecutor(
+            max_retries=0,
+            device=device,
+            telemetry=telemetry,
+            path_manager=Mock(),
+        )
+        return executor, telemetry
+
+    async def test_swipe_without_bounds_fails_and_emits_telemetry(self) -> None:
+        """
+        Missing bounds on a swipe is a contract violation: no device.swipe
+        call, a telemetry warning, and a failed ExecutionResult.
+        """
+
+        device = FakeDevice(dimensions=(self.SCREEN_W, self.SCREEN_H))
+        executor, telemetry = self.__build_executor(device)
+
+        action = self.__build_swipe_action(action_type=ActionType.SWIPE_UP, bounds=None)
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertFalse(result.success)
+        self.assertIn("bounds", (result.error or "").lower())
+        self.assertEqual(len(device.swipe_calls), 0)
+        telemetry.warning.assert_awaited()
+        warning_args = telemetry.warning.await_args
+        self.assertIn("missing required bounds", warning_args.args[0])
+        self.assertEqual(warning_args.kwargs["action_type"], "swipe_up")
+
+    async def test_swipe_near_top_edge_produces_in_screen_endpoints(self) -> None:
+        """
+        Regression for off-screen endpoints: a swipe-up whose source bounds
+        sit near the top of the screen must still produce coordinates that
+        stay within the screen's safe region.
+        """
+
+        device = FakeDevice(dimensions=(self.SCREEN_W, self.SCREEN_H))
+        executor, _ = self.__build_executor(device)
+
+        action = self.__build_swipe_action(
+            action_type=ActionType.SWIPE_UP,
+            bounds=Bounds(x=400, y=10, width=200, height=80, coord_system="pixel"),
+        )
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(len(device.swipe_calls), 1)
+        call = device.swipe_calls[0]
+        for axis_key, screen_dim in (
+            ("x1", self.SCREEN_W),
+            ("x2", self.SCREEN_W),
+            ("y1", self.SCREEN_H),
+            ("y2", self.SCREEN_H),
+        ):
+            self.assertGreaterEqual(call[axis_key], 0)
+            self.assertLess(call[axis_key], screen_dim)
+        # Vertical swipe — x is fixed, y travels up
+        self.assertEqual(call["x1"], call["x2"])
+        self.assertGreater(call["y1"], call["y2"])
+
+    async def test_scroll_without_bounds_fails_and_emits_telemetry(self) -> None:
+        """
+        Like swipe, SCROLL now requires bounds; missing bounds is a contract
+        violation surfaced via telemetry warning + ExecutionError.
+        """
+
+        device = FakeDevice(dimensions=(self.SCREEN_W, self.SCREEN_H))
+        executor, telemetry = self.__build_executor(device)
+
+        action = self.__build_scroll_action()
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertFalse(result.success)
+        self.assertIn("bounds", (result.error or "").lower())
+        self.assertEqual(len(device.swipe_calls), 0)
+        telemetry.warning.assert_awaited()
+        warning_args = telemetry.warning.await_args
+        self.assertIn("missing required bounds", warning_args.args[0])
+        self.assertEqual(warning_args.kwargs["action_type"], "scroll")
+
+    async def test_scroll_with_bounds_produces_in_screen_endpoints(
+        self,
+    ) -> None:
+        """
+        When the LLM emits SCROLL with valid bounds, the handler executes
+        a real, in-screen swipe-up gesture.
+        """
+
+        device = FakeDevice(dimensions=(self.SCREEN_W, self.SCREEN_H))
+        executor, _ = self.__build_executor(device)
+
+        action = self.__build_scroll_action(bounds=Bounds(x=200, y=200, width=600, height=600))
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(len(device.swipe_calls), 1)
+        call = device.swipe_calls[0]
+        self.assertGreaterEqual(call["x1"], 0)
+        self.assertLess(call["x1"], self.SCREEN_W)
+        self.assertGreaterEqual(call["y1"], 0)
+        self.assertLess(call["y1"], self.SCREEN_H)
+        self.assertGreaterEqual(call["y2"], 0)
+        self.assertLess(call["y2"], self.SCREEN_H)
+        # "Scroll down content" maps to swipe-up: vertical, finger moves up
+        self.assertEqual(call["x1"], call["x2"])
+        self.assertGreater(call["y1"], call["y2"])

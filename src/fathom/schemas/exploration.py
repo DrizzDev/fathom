@@ -232,11 +232,8 @@ class ActionGenerator:
             Action to execute for exploration
         """
 
-        if node.visits <= 2:
-            return self.__tap(width=width, height=height)
-
         if node.visits <= 4:
-            return self.__scroll()
+            return self.__tap(width=width, height=height)
 
         return self.__back()
 
@@ -265,23 +262,6 @@ class ActionGenerator:
             action_type=ActionType.TAP,
             target=f"random tap at ({x}, {y})",
             bounds=Bounds(x=x, y=y, width=self.__tap_target_size, height=self.__tap_target_size),
-        )
-
-    def __scroll(self) -> Action:
-        """
-        Random scroll.
-
-        Returns:
-            Scroll action with random direction
-        """
-
-        direction = self.__rng.choice(["up", "down"])
-
-        return Action(
-            confidence=0.4,
-            action_type=ActionType.SCROLL,
-            rationale=f"Scrolling {direction}",
-            target=f"exploration scroll {direction}",
         )
 
     def __back(self) -> Action:

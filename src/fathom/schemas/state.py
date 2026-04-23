@@ -29,7 +29,7 @@ class LoopDetector(BaseModel):
     threshold: int = Field(default=3, description="Standard repetition threshold")
     window_size: int = Field(default=15, description="Size of the pattern analysis window")
 
-    __max_recovery: int = PrivateAttr(default=3)
+    __max_recovery: int = PrivateAttr(default=2)
     __recovery_attempts: int = PrivateAttr(default=0)
     __recent_actions: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
     __recent_types: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=15))

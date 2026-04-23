@@ -120,6 +120,25 @@ class SwipeInteractionPolicy(BaseModel):
         default=0.7,
         description="Swipe distance ratio within the source bounds",
     )
+    edge_margin_ratio: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=0.45,
+        description=(
+            "Fraction of the relevant screen dimension to keep clear at each "
+            "edge so swipes never start/end on the boundary (where iOS treats "
+            "the gesture as a back/app-switch swipe)."
+        ),
+    )
+    min_distance_px: int = Field(
+        default=200,
+        ge=1,
+        description=(
+            "Minimum effective swipe length in pixels after edge clamping. "
+            "If clamping shrinks the gesture below this, the helper recenters "
+            "on the screen midline to recover a usable distance."
+        ),
+    )
 
 
 class ScrollInteractionPolicy(BaseModel):
@@ -130,6 +149,24 @@ class ScrollInteractionPolicy(BaseModel):
     distance_ratio: float = Field(
         default=0.5,
         description="Scroll distance ratio within the source bounds",
+    )
+    edge_margin_ratio: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=0.45,
+        description=(
+            "Fraction of the relevant screen dimension to keep clear at each "
+            "edge so scroll endpoints never land on the boundary."
+        ),
+    )
+    min_distance_px: int = Field(
+        default=200,
+        ge=1,
+        description=(
+            "Minimum effective scroll length in pixels after edge clamping. "
+            "If clamping shrinks the gesture below this, the helper recenters "
+            "on the screen midline to recover a usable distance."
+        ),
     )
 
 

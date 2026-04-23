@@ -549,8 +549,11 @@ class AgentState:
 
         Uses escalating recovery strategies:
         1. First attempt: Press back
-        2. Second attempt: Scroll down
-        3. Third attempt: Press home
+        2. Second attempt: Press home
+
+        Synthesized swipes are intentionally not part of the escalation —
+        every swipe in the system must come from the LLM with real bounds
+        for the targeted scrollable region.
 
         Returns:
             Recovery action or None if recovery exhausted.
@@ -568,20 +571,12 @@ class AgentState:
                 action_type=ActionType.BACK,
                 rationale="Loop detected (Screen repeating). Forcing BACK to break context.",
             )
-        elif attempt_number == 2:
-            return Action(
-                confidence=0.8,
-                target="system: scroll",
-                action_type=ActionType.SCROLL,
-                rationale="Loop detected (Screen repeating). Forcing SCROLL to reveal new state.",
-            )
-        else:
-            return Action(
-                confidence=0.7,
-                target="system: home",
-                action_type=ActionType.HOME,
-                rationale="Loop detected (Screen repeating). Forcing HOME to reset agent.",
-            )
+        return Action(
+            confidence=0.7,
+            target="system: home",
+            action_type=ActionType.HOME,
+            rationale="Loop detected (Screen repeating). Forcing HOME to reset agent.",
+        )
 
     def record_recovery_attempt(self) -> int:
         """

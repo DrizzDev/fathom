@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from logging import getLogger
+from typing import Literal, Optional, Tuple
 
 from fathom.schemas.actions import Bounds
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
+
+logger = getLogger(__name__)
 
 
 class CoordinateConverter:
@@ -73,6 +76,14 @@ class CoordinateConverter:
     ) -> Tuple[int, int, int, int]:
         """
         Calculate swipe start and end coordinates.
+
+        Endpoints are clamped to a safe in-screen region (defined by
+        ``edge_margin_ratio`` on the relevant interaction policy) so
+        gestures never start or end on the screen boundary, where iOS
+        treats them as back/app-switch swipes and Android silently
+        clamps them. If edge clamping shrinks the gesture below
+        ``min_distance_px``, the swipe is recentered on the screen
+        midline along the swipe axis to recover a usable distance.
         """
 
         _, _, width, height = self.to_pixels(bounds=bounds)
@@ -84,17 +95,95 @@ class CoordinateConverter:
         distance_x = max(450, int(width * swipe_policy.distance_ratio))
         distance_y = max(450, int(height * scroll_policy.distance_ratio))
 
-        if direction == "up":
-            return center_x, center_y + distance_y // 2, center_x, center_y - distance_y // 2
+        if direction in ("up", "down"):
+            return self.__build_axial_swipe(
+                axis="y",
+                fixed=center_x,
+                center=center_y,
+                distance=distance_y,
+                reverse=(direction == "up"),
+                edge_margin_ratio=scroll_policy.edge_margin_ratio,
+                min_distance_px=scroll_policy.min_distance_px,
+            )
 
-        elif direction == "down":
-            return center_x, center_y - distance_y // 2, center_x, center_y + distance_y // 2
+        if direction in ("left", "right"):
+            return self.__build_axial_swipe(
+                axis="x",
+                fixed=center_y,
+                center=center_x,
+                distance=distance_x,
+                reverse=(direction == "left"),
+                edge_margin_ratio=swipe_policy.edge_margin_ratio,
+                min_distance_px=swipe_policy.min_distance_px,
+            )
 
-        elif direction == "left":
-            return center_x + distance_x // 2, center_y, center_x - distance_x // 2, center_y
+        logger.warning(
+            "Unknown swipe direction %r; falling back to vertical midline scroll-up",
+            direction,
+        )
+        return self.__build_axial_swipe(
+            axis="y",
+            fixed=self.__width // 2,
+            center=self.__height // 2,
+            distance=distance_y,
+            reverse=True,
+            edge_margin_ratio=scroll_policy.edge_margin_ratio,
+            min_distance_px=scroll_policy.min_distance_px,
+        )
 
-        elif direction == "right":
-            return center_x - distance_x // 2, center_y, center_x + distance_x // 2, center_y
+    def __build_axial_swipe(
+        self,
+        *,
+        axis: Literal["x", "y"],
+        fixed: int,
+        center: int,
+        distance: int,
+        reverse: bool,
+        edge_margin_ratio: float,
+        min_distance_px: int,
+    ) -> Tuple[int, int, int, int]:
+        """
+        Build a swipe along one axis with edge clamping and min-distance
+        midline recovery.
 
+        ``fixed`` is the constant coordinate on the perpendicular axis
+        (e.g. the x coordinate of a vertical swipe). ``center`` is the
+        midpoint along the swipe axis. ``reverse=True`` means the start
+        coordinate is greater than the end (e.g. swipe-up starts below
+        center, ends above).
+        """
+
+        screen_dim = self.__height if axis == "y" else self.__width
+        fixed_screen_dim = self.__width if axis == "y" else self.__height
+
+        margin = max(0, int(screen_dim * edge_margin_ratio))
+        safe_low = margin
+        safe_high = max(safe_low, screen_dim - 1 - margin)
+        safe_span = safe_high - safe_low
+
+        half = distance // 2
+        if reverse:
+            start, end = center + half, center - half
         else:
-            return center_x, center_y, center_x, center_y
+            start, end = center - half, center + half
+
+        start = max(safe_low, min(start, safe_high))
+        end = max(safe_low, min(end, safe_high))
+
+        recovery_threshold = min(min_distance_px, safe_span)
+        if abs(end - start) < recovery_threshold:
+            desired = min(max(distance, min_distance_px), safe_span)
+            midline = (safe_low + safe_high) // 2
+            half_desired = desired // 2
+            if reverse:
+                start, end = midline + half_desired, midline - half_desired
+            else:
+                start, end = midline - half_desired, midline + half_desired
+            start = max(safe_low, min(start, safe_high))
+            end = max(safe_low, min(end, safe_high))
+
+        fixed_clamped = max(0, min(fixed, fixed_screen_dim - 1))
+
+        if axis == "y":
+            return fixed_clamped, start, fixed_clamped, end
+        return start, fixed_clamped, end, fixed_clamped
