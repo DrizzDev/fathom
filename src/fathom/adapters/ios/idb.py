@@ -37,6 +37,15 @@ logger = getLogger(__name__)
 
 DEFAULT_IDB_TIMEOUT_SECONDS = 30.0
 
+# Stderr fingerprint for a stale ``idb_companion`` registration. When
+# the companion process dies (sim reboot, sleep, crash) its domain
+# socket lingers under ``/tmp/idb/<udid>_companion.sock`` and idb
+# reports "Failed to connect to companion ... Connection refused" on
+# every subsequent subcommand. ``idb disconnect <udid>`` flushes the
+# stale entry so the next call spawns a fresh companion.
+_STALE_COMPANION_SIGNATURE = "Failed to connect to companion"
+_COMPANION_DISCONNECT_TIMEOUT_SECONDS = 5.0
+
 
 class IDBClient:
     """
@@ -305,6 +314,7 @@ class IDBClient:
         capture_stdout: bool = False,
         capture_stderr: bool = True,
         raise_on_error: bool = True,
+        allow_companion_recovery: bool = True,
     ) -> Tuple[int, bytes, bytes]:
         """
         Invoke ``idb`` with the given argv tail.
@@ -317,10 +327,65 @@ class IDBClient:
 
         ``raise_on_error=False`` is for opportunistic calls (terminate,
         list-apps) that should degrade rather than blow up.
+
+        ``allow_companion_recovery`` enables a one-shot retry when the
+        failure matches the stale-companion fingerprint — the retry
+        bypasses recovery to prevent infinite loops.
         """
 
         if not argv:
             raise DeviceError("IDBClient.__run requires at least a subcommand in argv")
+
+        return_code, stdout, stderr = await self.__invoke(
+            argv=argv,
+            failure_message=failure_message,
+            capture_stdout=capture_stdout,
+            capture_stderr=capture_stderr,
+        )
+
+        # One-shot stale-companion recovery. idb caches companion
+        # registrations in ``/tmp/idb/state``; when the backing process
+        # dies the entry goes dangling and every subcommand fails with
+        # a "Failed to connect to companion" banner until something
+        # runs ``idb disconnect <udid>``. We handle that transparently
+        # so the agent survives sim reboots without operator
+        # intervention.
+        if (
+            return_code != 0
+            and allow_companion_recovery
+            and self.__is_stale_companion_failure(stderr=stderr)
+        ):
+            await self.__recover_stale_companion()
+            return await self.__run(
+                argv,
+                failure_message=failure_message,
+                capture_stdout=capture_stdout,
+                capture_stderr=capture_stderr,
+                raise_on_error=raise_on_error,
+                allow_companion_recovery=False,
+            )
+
+        if return_code != 0 and raise_on_error:
+            stderr_text = (stderr or b"").decode("utf-8", errors="ignore").strip()
+            raise DeviceError(
+                f"{failure_message} (exit={return_code}): {stderr_text or 'no stderr'}"
+            )
+
+        return return_code, stdout or b"", stderr or b""
+
+    async def __invoke(
+        self,
+        *,
+        argv: Sequence[str],
+        failure_message: str,
+        capture_stdout: bool,
+        capture_stderr: bool,
+    ) -> Tuple[int, bytes, bytes]:
+        """
+        Spawn a single ``idb`` subprocess and return ``(return_code,
+        stdout, stderr)``. Raises ``DeviceError`` only for conditions
+        that cannot be recovered by retrying (missing binary, timeout).
+        """
 
         full_argv: List[str] = [self.__executable_path, *argv]
 
@@ -354,11 +419,40 @@ class IDBClient:
             ) from exception
 
         return_code = process.returncode if process.returncode is not None else -1
-
-        if return_code != 0 and raise_on_error:
-            stderr_text = (stderr or b"").decode("utf-8", errors="ignore").strip()
-            raise DeviceError(
-                f"{failure_message} (exit={return_code}): {stderr_text or 'no stderr'}"
-            )
-
         return return_code, stdout or b"", stderr or b""
+
+    @staticmethod
+    def __is_stale_companion_failure(*, stderr: bytes) -> bool:
+        """
+        Detect the stderr fingerprint idb prints when its cached
+        companion registration points at a dead process.
+        """
+
+        return _STALE_COMPANION_SIGNATURE in stderr.decode("utf-8", errors="ignore")
+
+    async def __recover_stale_companion(self) -> None:
+        """
+        Best-effort ``idb disconnect <udid>`` to flush the stale
+        companion entry. Errors are swallowed — if recovery itself
+        fails the follow-up retry will surface the underlying idb
+        error, which is more informative than a recovery failure.
+        """
+
+        if not self.__udid:
+            return
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.__executable_path,
+                "disconnect",
+                self.__udid,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(
+                process.wait(),
+                timeout=_COMPANION_DISCONNECT_TIMEOUT_SECONDS,
+            )
+        except (OSError, asyncio.TimeoutError) as exception:
+            logger.debug("idb companion recovery failed: %s", exception)
+            return
