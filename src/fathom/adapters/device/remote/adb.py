@@ -20,6 +20,7 @@ from tenacity import (
 
 from fathom.constants.execution import REMOTE_DEVICE_REQUEST_TIMEOUT_SECONDS
 from fathom.constants.interaction import InteractionAction, SwipeSpeed
+from fathom.constants.platform import DevicePlatform
 from fathom.core.exceptions import (
     DeviceConnectionClosedError,
     DeviceError,
@@ -32,6 +33,7 @@ from fathom.schemas.configuration import (
     DeviceRuntimeConfiguration,
     InteractionPolicyConfiguration,
     InteractionRuntimeConfiguration,
+    ScrollInteractionPolicy,
     SwipeInteractionPolicy,
 )
 from fathom.schemas.remote import RemoteInteractionRequest
@@ -64,12 +66,24 @@ class ADBRemoteDeviceAdapter(DevicePort):
         self.__token = remote.authentication_token
         self.__url = remote.provider_url.rstrip("/") + "/"
 
+        interaction = (
+            configuration.ios.interaction
+            if configuration.platform == DevicePlatform.IOS
+            else configuration.android.interaction
+        )
+
         self.__runtime_configuration = DeviceRuntimeConfiguration(
             identifier=self.__session,
             platform=configuration.platform,
             interaction=InteractionRuntimeConfiguration(
                 policy=InteractionPolicyConfiguration(
-                    swipe=SwipeInteractionPolicy(),
+                    swipe=SwipeInteractionPolicy(
+                        duration_milliseconds=interaction.policy.swipe.duration_milliseconds,
+                        distance_ratio=interaction.policy.swipe.distance_ratio,
+                    ),
+                    scroll=ScrollInteractionPolicy(
+                        distance_ratio=interaction.policy.scroll.distance_ratio,
+                    ),
                 )
             ),
         )
@@ -200,13 +214,25 @@ class ADBRemoteDeviceAdapter(DevicePort):
         )
         return await self.__send_command(request)
 
-    async def type(self, *, text: str) -> ActionResult:
+    async def type(
+        self,
+        *,
+        text: str,
+        prefilled: str = "",
+        replace: bool = True,
+        locator: Optional[str] = None,
+    ) -> ActionResult:
         """
         Execute remote text input.
         """
 
         request = RemoteInteractionRequest(
-            action=InteractionAction.TYPE, text=text, execution_id=self.__execution_id
+            text=text,
+            locator=locator,
+            replace=replace,
+            prefilled=prefilled,
+            action=InteractionAction.TYPE,
+            execution_id=self.__execution_id,
         )
         return await self.__send_command(request)
 

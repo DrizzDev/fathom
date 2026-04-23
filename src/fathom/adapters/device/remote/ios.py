@@ -50,12 +50,21 @@ class IOSRemoteDeviceAdapter(DevicePort):
         automation_x, automation_y = await self.__to_automation_coordinates(x=x, y=y)
         return await self.__delegate.tap(x=automation_x, y=automation_y)
 
-    async def type(self, *, text: str) -> ActionResult:
+    async def type(
+        self,
+        *,
+        text: str,
+        prefilled: str = "",
+        replace: bool = True,
+        locator: Optional[str] = None,
+    ) -> ActionResult:
         """
         Delegate remote text entry.
         """
 
-        return await self.__delegate.type(text=text)
+        return await self.__delegate.type(
+            text=text, locator=locator, replace=replace, prefilled=prefilled
+        )
 
     async def swipe(
         self,

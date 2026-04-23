@@ -7,6 +7,32 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fathom.constants import ActionType
 
+CoordinateSource = Literal["model", "viewport", "xml"]
+InputContextSource = Literal["xml", "accessibility", "model", "vision"]
+
+
+class InputContext(BaseModel):
+    """
+    Optional execution context for text input actions.
+
+    Populated during resolution when element metadata is available (XML, accessibility, etc.).
+    When absent, typing falls back to visual focus with no locator or clear behavior.
+    """
+
+    locator: Optional[str] = Field(
+        default=None,
+        description="Provider-neutral locator for the input element.",
+    )
+    prefilled: str = Field(
+        default="",
+        description="Observed text already present in the input field.",
+    )
+    source: Optional[InputContextSource] = Field(
+        default=None,
+        description="Evidence source used to derive the input context.",
+    )
+
+
 # Matches the filler word "element" as a standalone token (not inside
 # "elements" or "elementary"). The validate-action guard uses this to
 # reject prose like "HealthTap homepage content, element visible" that
@@ -233,6 +259,10 @@ class Bounds(BaseModel):
     system: str = Field(
         default="normalized", description="Coordinate system used", alias="coord_system"
     )
+    source: Optional[CoordinateSource] = Field(
+        default=None,
+        description="Evidence source used to derive these coordinates.",
+    )
 
     @property
     def is_normalized(self) -> bool:
@@ -268,11 +298,13 @@ class Bounds(BaseModel):
         # If explicitly told it's pixels, don't normalize
         if self.system == "pixel":
             x, y, width, height = self.x, self.y, self.width, self.height
+
         elif self.is_normalized:
             x = int(self.x * screen_width / 1000)
             y = int(self.y * screen_height / 1000)
             width = int(self.width * screen_width / 1000)
             height = int(self.height * screen_height / 1000)
+
         else:
             # Fallback for large values that must be pixels
             x, y, width, height = self.x, self.y, self.width, self.height
@@ -303,6 +335,11 @@ class Action(BaseModel):
     text: Optional[str] = Field(default=None, description="Text content for typing actions")
     bounds: Optional[Bounds] = Field(default=None, description="Bounding box for the interaction")
     label_id: Optional[str] = Field(default=None, description="Numeric label ID from XML grounding")
+
+    input_context: Optional[InputContext] = Field(
+        default=None,
+        description="Optional execution context for text input, populated during resolution when element metadata is available.",
+    )
 
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
     wait_duration: Optional[float] = Field(default=None, description="Duration to wait in seconds")

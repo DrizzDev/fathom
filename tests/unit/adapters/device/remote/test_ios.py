@@ -61,10 +61,20 @@ class FakeADBRemoteDeviceAdapter:
         self.tap_calls.append((x, y))
         return ActionResult(success=True, duration=1)
 
-    async def type(self, *, text: str) -> ActionResult:
+    async def type(
+        self,
+        *,
+        text: str,
+        prefilled: str = "",
+        replace: bool = True,
+        locator: Optional[str] = None,
+    ) -> ActionResult:
         """
         Ignore text input for tests.
         """
+
+        _ = text, prefilled
+        _ = replace, locator
 
         return ActionResult(success=True, duration=1)
 

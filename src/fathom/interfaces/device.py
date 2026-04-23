@@ -31,9 +31,19 @@ class DevicePort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def type(self, *, text: str) -> ActionResult:
+    async def type(
+        self,
+        *,
+        text: str,
+        prefilled: str = "",
+        replace: bool = True,
+        locator: Optional[str] = None,
+    ) -> ActionResult:
         """
-        Type text into focused element.
+        Type text into the focused or identified element.
+
+        When *replace* is True and *prefilled* is non-empty,
+        the provider should clear the existing content before typing.
         """
 
         raise NotImplementedError

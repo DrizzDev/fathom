@@ -38,7 +38,7 @@ MAX_ACTION_WAIT_MS = 10_000
 
 # Retry configuration
 DEFAULT_MAX_RETRIES = 2
-DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff
+DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff (milliseconds)
 
 # Number of verification rejections on the SAME sub-goal after which
 # the agent calls the decomposer LLM to rebuild the remaining plan.
