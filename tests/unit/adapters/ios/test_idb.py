@@ -350,6 +350,76 @@ class IDBClientDescribeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("unparseable", str(ctx.exception).lower())
 
 
+class IDBClientStaleCompanionRecoveryTest(unittest.IsolatedAsyncioTestCase):
+    """
+    When ``idb_companion`` dies (sim reboot, sleep, crash) idb keeps
+    the dangling socket under ``/tmp/idb/<udid>_companion.sock`` and
+    reports ``Failed to connect to companion ... Connection refused``
+    on every subcommand. ``IDBClient`` auto-recovers by running
+    ``idb disconnect <udid>`` and retrying once so the next invocation
+    spawns a fresh companion.
+    """
+
+    def __stale_stderr(self) -> bytes:
+        return (
+            b"Failed to connect to companion at address "
+            b"DomainSocketAddress(path='/tmp/idb/DEVICE-1_companion.sock'): "
+            b"[Errno 61] Connection refused\n"
+        )
+
+    async def test_tap_recovers_after_stale_companion(self) -> None:
+        """Tap retries transparently once the stale entry is flushed."""
+
+        client = IDBClient(udid="DEVICE-1")
+        processes = [
+            _FakeProcess(return_code=1, stderr=self.__stale_stderr()),
+            _FakeProcess(return_code=0),  # idb disconnect succeeds
+            _FakeProcess(return_code=0),  # retry tap succeeds
+        ]
+        patcher, captured, _env = _patch_subprocess(processes=processes)
+        with patcher:
+            await client.tap(x=10, y=10)
+
+        self.assertEqual(len(captured), 3)
+        # First call: the original tap.
+        self.assertEqual(captured[0][1:4], ["ui", "tap", "10"])
+        # Second call: recovery via ``idb disconnect <udid>``.
+        self.assertEqual(captured[1][1:], ["disconnect", "DEVICE-1"])
+        # Third call: retry of the original tap.
+        self.assertEqual(captured[2][1:4], ["ui", "tap", "10"])
+
+    async def test_does_not_retry_on_non_stale_failure(self) -> None:
+        """Generic failures must NOT trigger recovery — we don't want
+        to mask unrelated idb errors behind a retry."""
+
+        client = IDBClient(udid="DEVICE-1")
+        patcher, captured, _env = _patch_subprocess(
+            processes=[_FakeProcess(return_code=2, stderr=b"target not found")],
+        )
+        with patcher, self.assertRaises(DeviceError):
+            await client.tap(x=10, y=10)
+        # Only the original invocation fires; no recovery, no retry.
+        self.assertEqual(len(captured), 1)
+
+    async def test_recovery_fires_at_most_once(self) -> None:
+        """If the retry itself also returns the stale fingerprint, the
+        client must NOT enter an infinite recovery loop — it surfaces
+        the error after exactly one recovery attempt."""
+
+        client = IDBClient(udid="DEVICE-1")
+        processes = [
+            _FakeProcess(return_code=1, stderr=self.__stale_stderr()),
+            _FakeProcess(return_code=0),  # disconnect succeeds
+            _FakeProcess(return_code=1, stderr=self.__stale_stderr()),  # retry still stale
+        ]
+        patcher, captured, _env = _patch_subprocess(processes=processes)
+        with patcher, self.assertRaises(DeviceError):
+            await client.tap(x=10, y=10)
+
+        # Original + disconnect + retry = 3. No fourth call.
+        self.assertEqual(len(captured), 3)
+
+
 class IDBClientUDIDMutabilityTest(unittest.IsolatedAsyncioTestCase):
     """
     ``IOSDevice`` resolves device identifiers lazily; ``set_udid`` must
