@@ -94,6 +94,7 @@ class PerceptionService:
             data=data,
             metadata={
                 "type": "screenshot",
+                "phase": "pre_action",
                 "timestamp": time.time(),
                 "session_id": session_id,
                 "package_name": package_name,
