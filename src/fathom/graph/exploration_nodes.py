@@ -55,6 +55,13 @@ from fathom.utils.hitl import prompt_human_review
 logger = getLogger(__name__)
 
 
+# Minimum DFS path length (in edges traversed from root) before the agent
+# is allowed to honour a VLM ``content_exhausted=True`` flag.  Below this
+# floor we veto the exhaustion *once* per screen and re-prompt the VLM
+# with a stronger directive so long flows have a chance to develop.
+MIN_DFS_DEPTH: int = 4
+
+
 # ── Context ─────────────────────────────────────────────────────────────
 
 
@@ -104,6 +111,9 @@ class ExplorationNodeContext:
         # named section via the cached-prompt GOAL; otherwise fall back to the
         # full-breadth mapping intent.
         focus_clean = (focus or "").strip()
+        # Keep the raw focus phrase so per-turn KG context can surface it as a
+        # short reminder (the cached system GOAL handles the long-form intent).
+        self.focus: Optional[str] = focus_clean or None
         if focus_clean:
             intent = (
                 f"Focus on exploring {focus_clean} of this app. Map every screen "
@@ -138,6 +148,10 @@ class ExplorationNodeContext:
         self.pending_nav: List[Action] = []
         self.root_hash: Optional[str] = None
         self.fully_scanned: Set[str] = set()
+        # Per-screen counter of how many times the VLM has declared
+        # ``content_exhausted`` for it.  Used by the depth-floor guard to
+        # tolerate one premature exhaustion before honouring it.
+        self.exhaustion_retries: Dict[str, int] = {}
 
     @property
     def is_cancelled(self) -> bool:
@@ -293,12 +307,22 @@ def build_exploration_nodes(
         if isinstance(raw_actions, list) and raw_actions:
             recent_steps = raw_actions[-5:]
 
+        # Depth-floor active when (a) we're below the minimum chain length
+        # and (b) the VLM has already declared this screen exhausted at
+        # least once.  The injected directive nudges the model to find any
+        # untried element on the retry pass.
+        depth_floor_active = (
+            len(ctx.current_path) < MIN_DFS_DEPTH and ctx.exhaustion_retries.get(fingerprint, 0) > 0
+        )
         kg_context = ctx.knowledge_graph.build_exploration_context(
             current_hash=fingerprint,
             depth=len(ctx.current_path),
             parent_description=parent_description,
             fully_scanned_count=len(ctx.fully_scanned),
             recent_steps=recent_steps,
+            depth_floor_active=depth_floor_active,
+            min_dfs_depth=MIN_DFS_DEPTH,
+            focus=ctx.focus,
         )
 
         # Ask VLM for next untried element
@@ -475,6 +499,39 @@ def build_exploration_nodes(
 
         # VLM signals all elements exhausted
         if analysis.content_exhausted:
+            retries_so_far = ctx.exhaustion_retries.get(fingerprint, 0)
+            depth = len(ctx.current_path)
+            # Depth-floor veto: on a fresh shallow screen, give the VLM one
+            # more chance to pick an element before we backtrack.  The retry
+            # pass triggers the DEPTH FLOOR directive in the kg_context.
+            if depth < MIN_DFS_DEPTH and retries_so_far == 0:
+                ctx.exhaustion_retries[fingerprint] = retries_so_far + 1
+                logger.info(
+                    "Depth-floor veto: screen %s exhausted at depth %d (< %d); "
+                    "re-prompting with DEPTH FLOOR directive",
+                    fingerprint[:8],
+                    depth,
+                    MIN_DFS_DEPTH,
+                )
+                ctx.emit(
+                    ExplorationEvent.PHASE_TRANSITION,
+                    **{
+                        "from": ctx.phase.value,
+                        "to": ctx.phase.value,
+                        "reason": "depth_floor_retry",
+                    },
+                )
+                return {
+                    **state,
+                    "action": None,
+                    "analysis": analysis,
+                    "kg_context": kg_context,
+                    "content_exhausted": False,
+                    "screen_description": analysis.screen_description,
+                    "analysis_duration": analysis_duration,
+                    "bfs_phase": ctx.phase.value,
+                }
+
             ctx.fully_scanned.add(fingerprint)
             prev_phase = ctx.phase.value
             ctx.phase = BFSPhase.BACKTRACK
@@ -497,6 +554,9 @@ def build_exploration_nodes(
                 "analysis_duration": analysis_duration,
                 "bfs_phase": ctx.phase.value,
             }
+        # Successful action picked — reset exhaustion-retry counter for this
+        # screen so a future stall isn't pre-empted by an old veto.
+        ctx.exhaustion_retries.pop(fingerprint, None)
 
         action = analysis.action
 

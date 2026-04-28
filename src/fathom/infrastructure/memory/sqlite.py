@@ -138,6 +138,13 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute("ALTER TABLE screens ADD COLUMN rich_description TEXT")
             migrations_applied = True
 
+        # MLSIA dedup: persist the structural identifiers that ScreenState
+        # already computes so _resolve_canonical_for_state can use them.
+        for col in ("activity_hash", "structural_hash", "xml_hash", "interaction_hash"):
+            if col not in columns:
+                await db.execute(f"ALTER TABLE screens ADD COLUMN {col} TEXT")
+                migrations_applied = True
+
         async with (
             db.execute("PRAGMA table_info(transitions)") as cursor,
         ):
@@ -171,16 +178,47 @@ class SQLiteMemoryProvider(IMemoryProvider):
         await self.__initialize()
         now = int(time.time())
 
+        # Preserve the first meaningful description — on revisit we only
+        # upgrade if the stored one is empty/placeholder.  Keeps the stored
+        # description aligned with the node's first_seen-anchored screenshot
+        # (fuzzy-hash merging can otherwise swap in a description of a
+        # visually similar but semantically different screen).
+        # Persist MLSIA hashes too — they're cheap and make _resolve_canonical
+        # accurate across runs.  COALESCE preserves the first non-NULL value
+        # we ever saw (defensive: some captures may emit zero-hashes for
+        # transient frames).
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
-                "INSERT INTO screens (visual_hash, activity, description, first_seen, last_seen, visit_count) "
-                "VALUES (?, ?, ?, ?, ?, 1) "
+                "INSERT INTO screens "
+                "(visual_hash, activity, description, first_seen, last_seen, visit_count, "
+                " activity_hash, structural_hash, xml_hash, interaction_hash) "
+                "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?) "
                 "ON CONFLICT(visual_hash) DO UPDATE SET "
                 "activity = excluded.activity, "
-                "description = COALESCE(excluded.description, screens.description), "
+                "description = CASE "
+                "    WHEN screens.description IS NOT NULL "
+                "         AND TRIM(screens.description) != '' "
+                "         AND LOWER(TRIM(screens.description)) NOT IN ('unknown', 'tool-based analysis') "
+                "        THEN screens.description "
+                "    ELSE COALESCE(excluded.description, screens.description) "
+                "END, "
                 "last_seen = excluded.last_seen, "
-                "visit_count = screens.visit_count + 1",
-                (screen.visual_hash, screen.activity, description, now, now),
+                "visit_count = screens.visit_count + 1, "
+                "activity_hash = COALESCE(screens.activity_hash, excluded.activity_hash), "
+                "structural_hash = COALESCE(screens.structural_hash, excluded.structural_hash), "
+                "xml_hash = COALESCE(screens.xml_hash, excluded.xml_hash), "
+                "interaction_hash = COALESCE(screens.interaction_hash, excluded.interaction_hash)",
+                (
+                    screen.visual_hash,
+                    screen.activity,
+                    description,
+                    now,
+                    now,
+                    screen.activity_hash,
+                    screen.structural_hash,
+                    screen.xml_hash,
+                    screen.interaction_hash,
+                ),
             )
             await db.commit()
 
@@ -381,7 +419,9 @@ class SQLiteMemoryProvider(IMemoryProvider):
         async with (
             aiosqlite.connect(self.__path) as db,
             db.execute(
-                "SELECT visual_hash, activity, description, first_seen, last_seen, visit_count, rich_description "
+                "SELECT visual_hash, activity, description, first_seen, last_seen, "
+                "visit_count, rich_description, "
+                "activity_hash, structural_hash, xml_hash, interaction_hash "
                 "FROM screens ORDER BY last_seen DESC"
             ) as cursor,
         ):
@@ -395,6 +435,10 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         "last_seen": row[4],
                         "visit_count": row[5],
                         "rich_description": row[6],
+                        "activity_hash": row[7],
+                        "structural_hash": row[8],
+                        "xml_hash": row[9],
+                        "interaction_hash": row[10],
                     }
                 )
 

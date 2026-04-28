@@ -15,6 +15,20 @@ logger = getLogger(__name__)
 # Cap "ALREADY TRIED" list in VLM context to bound token usage (per-screen).
 MAX_TRIED_IN_CONTEXT = 25
 
+# Descriptions the VLM emits that carry no signal — we treat these as "no
+# description" so a later meaningful one can fill them in.  Mirrors the set
+# in fathom/services/export.py; duplicated to avoid a circular import.
+_USELESS_DESCRIPTIONS: Set[str] = {"", "unknown", "tool-based analysis"}
+
+
+def _has_meaningful_description(desc: Optional[str]) -> bool:
+    """True when *desc* is something worth preserving across revisits."""
+
+    if not desc:
+        return False
+    return desc.strip().lower() not in _USELESS_DESCRIPTIONS
+
+
 # Maximum Hamming distance (in bits, out of 256 for a 16×16 dHash) for two
 # visual hashes to be considered the same logical screen.  12 bits ≈ 95%
 # similarity — safely merges minor pixel variations (status-bar clock, cursor
@@ -50,6 +64,12 @@ class GraphNode:
     first_seen: Optional[int] = None
     last_seen: Optional[int] = None
     visit_count: int = 0
+    # MLSIA structural identifiers — used by _resolve_canonical_for_state
+    # to dedupe screens whose visual_hash drifts due to dynamic content.
+    activity_hash: Optional[str] = None
+    structural_hash: Optional[str] = None
+    xml_hash: Optional[str] = None
+    interaction_hash: Optional[str] = None
 
 
 @dataclass
@@ -118,6 +138,55 @@ class KnowledgeGraph:
 
         return visual_hash
 
+    @staticmethod
+    def _is_meaningful_hash(value: Optional[str]) -> bool:
+        """True when *value* is a usable hash (not None, empty, or all-zero)."""
+
+        if not value:
+            return False
+        return any(c not in ("0", " ") for c in value)
+
+    def _resolve_canonical_for_state(self, state: ScreenState) -> str:
+        """Layered MLSIA dedup: prefer structural identity, fall back to Hamming.
+
+        Order (mirrors :meth:`ScreenState.is_same_screen`):
+          1. ``state.visual_hash`` already a canonical or alias.
+          2. Same ``activity_hash`` AND same ``structural_hash`` (both meaningful).
+          3. Same ``activity_hash`` AND same ``xml_hash`` (both meaningful).
+          4. Same ``activity_hash`` AND same ``interaction_hash`` (both meaningful).
+          5. Hamming-on-``visual_hash`` ≤ ``HAMMING_THRESHOLD`` fallback.
+
+        Each match records an alias so subsequent visual-hash-only lookups
+        short-circuit without re-running the search.
+        """
+
+        vh = state.visual_hash
+        if vh in self.__nodes:
+            return vh
+        if vh in self.__hash_aliases:
+            return self.__hash_aliases[vh]
+
+        if self._is_meaningful_hash(state.activity_hash):
+            for field, candidate in (
+                ("structural_hash", state.structural_hash),
+                ("xml_hash", state.xml_hash),
+                ("interaction_hash", state.interaction_hash),
+            ):
+                if not self._is_meaningful_hash(candidate):
+                    continue
+                for existing_hash, node in self.__nodes.items():
+                    if not self._is_meaningful_hash(getattr(node, field, None)):
+                        continue
+                    if node.activity_hash != state.activity_hash:
+                        continue
+                    if getattr(node, field) != candidate:
+                        continue
+                    self.__hash_aliases[vh] = existing_hash
+                    return existing_hash
+
+        # Visual-hash Hamming fallback (existing behaviour).
+        return self._resolve_canonical(vh)
+
     @property
     def provider(self) -> SQLiteMemoryProvider:
         """Returns the underlying SQLiteMemoryProvider for backward compat."""
@@ -163,6 +232,10 @@ class KnowledgeGraph:
                     existing.description = screen["description"]
                 if not existing.rich_description and screen.get("rich_description"):
                     existing.rich_description = screen["rich_description"]
+                # First non-empty hash wins — preserves the canonical's identity.
+                for field in ("activity_hash", "structural_hash", "xml_hash", "interaction_hash"):
+                    if not getattr(existing, field) and screen.get(field):
+                        setattr(existing, field, screen[field])
             else:
                 node = GraphNode(
                     visual_hash=canonical,
@@ -171,6 +244,10 @@ class KnowledgeGraph:
                     rich_description=screen.get("rich_description"),
                     first_seen=screen["first_seen"],
                     last_seen=screen["last_seen"],
+                    activity_hash=screen.get("activity_hash"),
+                    structural_hash=screen.get("structural_hash"),
+                    xml_hash=screen.get("xml_hash"),
+                    interaction_hash=screen.get("interaction_hash"),
                     visit_count=screen["visit_count"] or 0,
                 )
                 self.__nodes[canonical] = node
@@ -260,16 +337,29 @@ class KnowledgeGraph:
         # Persist to SQLite (handles upsert + visit_count increment)
         await self.__provider.store_observation(screen=state, description=description)
 
-        # Resolve to canonical hash for in-memory dedup
-        canonical = self._resolve_canonical(state.visual_hash)
+        # Resolve to canonical hash via layered MLSIA dedup.
+        canonical = self._resolve_canonical_for_state(state)
         now = int(time.time())
         existing = self.__nodes.get(canonical)
 
         if existing:
             existing.visit_count += 1
             existing.last_seen = now
-            if description:
+            # Preserve the first meaningful description so it stays in sync
+            # with the node's first_seen-anchored screenshot.  Only upgrade
+            # when the existing description is empty / placeholder.
+            if description and not _has_meaningful_description(existing.description):
                 existing.description = description
+            # Backfill structural hashes if the canonical was created before
+            # we had them (e.g., loaded from a pre-migration row).
+            for attr, value in (
+                ("activity_hash", state.activity_hash),
+                ("structural_hash", state.structural_hash),
+                ("xml_hash", state.xml_hash),
+                ("interaction_hash", state.interaction_hash),
+            ):
+                if not getattr(existing, attr) and value:
+                    setattr(existing, attr, value)
             return existing
 
         node = GraphNode(
@@ -279,6 +369,10 @@ class KnowledgeGraph:
             first_seen=now,
             last_seen=now,
             visit_count=1,
+            activity_hash=state.activity_hash,
+            structural_hash=state.structural_hash,
+            xml_hash=state.xml_hash,
+            interaction_hash=state.interaction_hash,
         )
         self.__nodes[state.visual_hash] = node
         return node
@@ -345,37 +439,6 @@ class KnowledgeGraph:
             visual_hash=target_node.visual_hash,
             rich_description=target_node.rich_description,
         )
-
-    def _get_tried_actions_for_activity(
-        self, activity: str
-    ) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
-        """
-        Aggregates tried actions across ALL screen nodes that share the
-        given activity.  Deduplicates by (action_type, action_target).
-
-        Each entry is ``(action_type, action_target, coord_bucket, dest_desc)``.
-        """
-
-        seen: Set[Tuple[str, str]] = set()
-        result: List[Tuple[str, str, Optional[str], Optional[str]]] = []
-
-        for node_hash, node in self.__nodes.items():
-            if node.activity != activity:
-                continue
-            canonical = self._resolve_canonical(node_hash)
-            for edge in self.__edges.get(canonical, []):
-                if edge.action_type == "back":
-                    continue
-                key = (edge.action_type, edge.action_target)
-                if key not in seen:
-                    seen.add(key)
-                    dest_node = self.__nodes.get(edge.destination_hash)
-                    dest_desc = dest_node.description if dest_node else None
-                    result.append(
-                        (edge.action_type, edge.action_target, edge.coord_bucket, dest_desc)
-                    )
-
-        return result
 
     def _get_activity_description(self, activity: str) -> Optional[str]:
         """Returns the existing rich description for an activity, or None."""
@@ -623,6 +686,9 @@ class KnowledgeGraph:
         parent_description: Optional[str] = None,
         fully_scanned_count: Optional[int] = None,
         recent_steps: Optional[List[Dict[str, Any]]] = None,
+        depth_floor_active: bool = False,
+        min_dfs_depth: int = 4,
+        focus: Optional[str] = None,
     ) -> str:
         """
         Formats the current knowledge graph state as LLM-readable context
@@ -650,6 +716,10 @@ class KnowledgeGraph:
         """
 
         lines: List[str] = []
+
+        # ── Focus reminder (very top so it survives long contexts) ───
+        if focus and focus.strip():
+            lines.append(f"FOCUS: {focus.strip()}")
 
         # ── Recent-step reactive feedback (anchored at the top) ──────
         if recent_steps:
@@ -681,6 +751,18 @@ class KnowledgeGraph:
 
         if depth is not None:
             lines.append(f"DEPTH: {depth}")
+
+        # Depth-floor directive: the previous turn declared content_exhausted
+        # at a shallow depth.  Push the VLM toward picking ANY untried
+        # element so the DFS chain has a chance to grow.
+        if depth_floor_active:
+            lines.append(
+                "⚠ DEPTH FLOOR — the previous turn declared content_exhausted "
+                f"at depth {depth} (< minimum {min_dfs_depth}). "
+                "Pick ANY untried interactive element on this screen. "
+                "Do NOT set content_exhausted=true unless the screen has "
+                "ZERO clickable items."
+            )
 
         if parent_description:
             lines.append(f"PARENT SCREEN: {parent_description}")
@@ -733,18 +815,17 @@ class KnowledgeGraph:
                     + existing_desc
                 )
 
-        # Aggregate tried actions across ALL screens sharing the same
-        # activity, so revisiting an activity on a different visual hash
-        # still shows the full history of what was tried.
+        # Tried actions are scoped to THIS screen (visual_hash).  Fuzzy-hash
+        # resolution upstream already maps near-duplicate screens to a
+        # canonical hash, so revisiting "the same" screen picks up its
+        # actual history without contaminating sibling screens of the same
+        # activity (which is how the agent ended up treating unexplored
+        # deep screens as already-exhausted).
         if current_hash:
-            activity = node.activity if node else None
-            tried = self._get_tried_actions_for_activity(activity) if activity else []
-            if not tried:
-                # Fallback to per-screen tried actions
-                tried = self.get_tried_actions(current_hash)
+            tried = self.get_tried_actions(current_hash)
 
             if tried:
-                lines.append("ALREADY TRIED IN THIS ACTIVITY:")
+                lines.append("ALREADY TRIED ON THIS SCREEN:")
                 excess = len(tried) - MAX_TRIED_IN_CONTEXT
                 for action_type, action_target, _bucket, dest_desc in tried[:MAX_TRIED_IN_CONTEXT]:
                     entry = f"- {action_type}"
@@ -765,7 +846,7 @@ class KnowledgeGraph:
                         + ", ".join(f'"{t}"' for t in forbidden)
                     )
             else:
-                lines.append("ALREADY TRIED IN THIS ACTIVITY: (none -- this is a fresh activity)")
+                lines.append("ALREADY TRIED ON THIS SCREEN: (none -- this screen is fresh)")
 
         # Recent discoveries — last 5 screens by first_seen (descending)
         nodes_with_ts = [
@@ -1238,3 +1319,16 @@ class KnowledgeGraph:
         from fathom.services.export import GraphExportService
 
         return GraphExportService.to_mermaid(self.export_json())
+
+    def export_html(self) -> str:
+        """
+        Exports the knowledge graph as a self-contained interactive HTML page.
+
+        Returns a single HTML document with the graph data embedded inline
+        and vis-network loaded from a CDN.  Open it directly in a browser
+        to pan/zoom, inspect nodes and edges, and filter by activity.
+        """
+
+        from fathom.services.export import GraphExportService
+
+        return GraphExportService.to_html(self.export_json())

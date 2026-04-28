@@ -170,7 +170,10 @@ EXPLORATION_EXHAUSTION_RULES = (
     "rest of the list as effectively tried.\n"
     "If you see an untried NAVIGATION element (P1/P2/P4/P5), you MUST interact with it instead.\n"
     "NEVER invent elements that are not visible on screen.\n"
-    "NEVER repeat an element that appears in the ALREADY TRIED list (except BACK, SCROLL, and SWIPE)."
+    "NEVER repeat an element that appears in the ALREADY TRIED list (except BACK, SCROLL, and SWIPE).\n"
+    "If the context contains a DEPTH FLOOR notice, you MUST pick ANY untried element "
+    "rather than declaring content_exhausted — long user flows depend on you "
+    "continuing forward a few more steps before backtracking."
 )
 
 EXPLORATION_RESPONSE_DIRECTIVE = (
