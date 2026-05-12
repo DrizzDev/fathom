@@ -138,14 +138,14 @@ class StepPlanner:
             last_action=state.last_action_type,
             tracking_note=current_tracking_note,
             delta_context=state.get_delta_context(),
+            prior_rejection_history=state.rejection_history,
             visual_hash=self.__compute_simple_hash(capture=capture),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
-            prior_rejection_history=state.rejection_history,
         )
         # Clear rejection history after successful analysis — prevents stale
         # multi-turn context from leaking into unrelated future steps.
         state.clear_rejection_history()
-        state.update_delta_context(analysis.gemini_delta)
+        state.update_delta_context(analysis.delta)
 
         if analysis.content_exhausted:
             state.reset_loop_detector()

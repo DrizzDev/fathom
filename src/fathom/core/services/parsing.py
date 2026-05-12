@@ -9,7 +9,7 @@ from fathom.constants import ActionType
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.actions import Action, Bounds
-from fathom.schemas.delta import GeminiDeltaSignal
+from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.gemini_tools import (
     AskUserArgs,
     ExecuteAction,
@@ -214,17 +214,10 @@ class ToolResponseParser:
 
         return result
 
-    def __parse_delta_telemetry(self, args: ExecuteUIArgs) -> Optional[GeminiDeltaSignal]:
+    def __parse_delta_telemetry(self, args: ExecuteUIArgs) -> Optional[DeltaSignal]:
         """
-        Normalize raw Gemini delta telemetry into a GeminiDeltaSignal.
-
-        Contract:
-        - If the model provides NO delta-specific fields (all None/empty), this
-          returns None so downstream code can treat it as "no signal".
-        - If the model provides values, we:
-            * Preserve raw values for auditability.
-            * Clamp confidence into [0.0, 1.0] when out-of-range.
-            * Do NOT fabricate default confidence or booleans when missing.
+        Normalize raw provider delta telemetry into a :class:`DeltaSignal`.
+        Returns None when no delta-specific fields are present.
         """
 
         # Fast path: detect complete absence of delta signal
@@ -263,7 +256,7 @@ class ToolResponseParser:
         # For now, we treat delta_observed as already boolean-normalized by the schema.
         normalized_observed: Optional[bool] = raw_observed
 
-        return GeminiDeltaSignal(
+        return DeltaSignal(
             previous_screen_summary=args.previous_screen_summary,
             current_screen_summary=args.current_screen_summary,
             delta_observed=normalized_observed,
@@ -538,7 +531,7 @@ class ToolResponseParser:
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
-            gemini_delta=parsed_delta,
+            delta=parsed_delta,
             screen_description=message or action.rationale or "Analyzing screen...",
         )
 

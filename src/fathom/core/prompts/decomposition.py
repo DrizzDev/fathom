@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import List, Optional
 
 
 class DecompositionPromptBuilder(ABC):
@@ -20,6 +21,29 @@ class DecompositionPromptBuilder(ABC):
     def build_user_prompt(self, *, intent: str) -> str:
         """
         Build dynamic user prompt for decomposing an intent.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def build_replan_system_note(self) -> str:
+        """
+        Build the system-instruction addendum used when re-decomposing from a stuck state.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def build_replan_user_preamble(
+        self,
+        *,
+        stuck_sub_goal: str,
+        failure_reason: str,
+        recent_actions: List[str],
+        suggested_next_action: Optional[str],
+    ) -> str:
+        """
+        Build the user-prompt preamble describing the stuck state.
         """
 
         raise NotImplementedError
@@ -72,4 +96,41 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             '  "sub_goals": ["step 1", "step 2", "step 3"],\n'
             '  "confidence": 0.9\n'
             "}\n"
+        )
+
+    def build_replan_system_note(self) -> str:
+        """
+        System-instruction addendum appended when decomposing in replan
+        mode: tells the model a screenshot is attached and that failure
+        evidence describes paths to avoid, not retry.
+        """
+
+        return (
+            "\n\nA screenshot of the agent's current screen is attached. Plan sub-goals "
+            "starting from this screen. Do NOT include steps to reach this screen — the "
+            "agent is already here. Treat the supplied failure reason and recent actions "
+            "as evidence of paths to avoid, not paths to retry."
+        )
+
+    def build_replan_user_preamble(
+        self,
+        *,
+        stuck_sub_goal: str,
+        failure_reason: str,
+        recent_actions: List[str],
+        suggested_next_action: Optional[str],
+    ) -> str:
+        """
+        Render the stuck-state preamble (stuck sub-goal, failure reason,
+        suggested next action, recent actions) prepended to the user prompt
+        when re-decomposing from a stuck state.
+        """
+
+        recent = "\n".join(f"- {entry}" for entry in recent_actions) or "- (none)"
+        return (
+            "REPLAN CONTEXT (the previous decomposition got stuck):\n"
+            f"- Stuck sub-goal: {stuck_sub_goal}\n"
+            f"- Failure reason: {failure_reason}\n"
+            f"- Suggested next action: {suggested_next_action or '(none)'}\n"
+            f"- Recent actions (most recent last):\n{recent}\n\n"
         )

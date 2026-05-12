@@ -40,6 +40,12 @@ LOOP_SCROLL_STALL_MIN_STREAK: int = 7
 LOOP_SCROLL_STALL_DISTANCE_THRESHOLD: int = 4
 LOOP_ACTION_VELOCITY_INTERVAL_THRESHOLD_SECONDS: float = 1.5
 
+# Tight pHash hamming threshold for the visual-only near-duplicate loop detector.
+# Catches cases where DOM micro-changes (animation frames, transient overlays,
+# map redraws) flip xml/interaction hashes but the screen is visually identical.
+# Independent from DEFAULT_SAME_SCREEN_THRESHOLD which is the broader equality bar.
+LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD: int = 4
+
 STATUS_BAR_HEIGHT_PX: int = 80
 NAVIGATION_BAR_HEIGHT_PX: int = 60
 

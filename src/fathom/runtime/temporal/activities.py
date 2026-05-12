@@ -185,6 +185,7 @@ class FathomActivities:
                 intent=validated_request.objective.intent,
                 use_xml=validated_request.objective.use_xml,
                 max_steps=validated_request.objective.max_steps,
+                recovery=validated_request.interaction.recovery,
                 context_scope=validated_request.memory.context_scope,
                 realignment=validated_request.interaction.realignment,
                 conversation_id=validated_request.memory.conversation_id,

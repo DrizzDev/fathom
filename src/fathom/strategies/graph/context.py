@@ -33,6 +33,7 @@ from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
+from fathom.schemas.recovery import RecoveryPolicy
 from fathom.schemas.run import RealignmentPolicy
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class GraphContext:
         vision: Optional[VisionService] = None,
         agent_state: Optional[AgentState] = None,
         history: Optional[HistoryService] = None,
+        recovery: Optional[RecoveryPolicy] = None,
         knowledge: Optional[KnowledgePort] = None,
         metrics: Optional[ExecutionMetrics] = None,
         cancel_event: Optional[asyncio.Event] = None,
@@ -102,6 +104,7 @@ class GraphContext:
         self.__package_name = package_name
         self.__configuration = configuration
 
+        self.__recovery = recovery or RecoveryPolicy()
         self.__cancel_event = cancel_event or asyncio.Event()
         self.__realignment = realignment or RealignmentPolicy()
 
@@ -300,6 +303,14 @@ class GraphContext:
         """
 
         return self.__realignment
+
+    @property
+    def recovery(self) -> RecoveryPolicy:
+        """
+        Returns the RecoveryPolicy instance used to construct the recovery coordinator at the composition root.
+        """
+
+        return self.__recovery
 
     @property
     def configuration(self) -> FathomConfiguration:

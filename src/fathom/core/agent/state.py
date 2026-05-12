@@ -4,10 +4,11 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
+from fathom.constants.reasoning import LOW_DELTA_PROGRESS_THRESHOLD
 from fathom.constants.state import CompletionReason
 from fathom.schemas.actions import Action
 from fathom.schemas.conversation import ConversationTurn
-from fathom.schemas.delta import GeminiDeltaSignal
+from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import ActionHistory, InteractionTracker, LoopDetector
@@ -139,6 +140,14 @@ class AgentState:
         """
 
         return self.__loop_detector.is_stuck()
+
+    @property
+    def last_delta_score(self) -> Optional[float]:
+        """
+        Most recent post-action screen-change magnitude in [0.0, 1.0].
+        """
+
+        return self.__last_delta_score
 
     def record_hitl_intervention(self) -> None:
         """
@@ -384,25 +393,25 @@ class AgentState:
         # to prevent false positives from screen changes unrelated to sub-goal completion.
         updated_signal = SubGoalCompletionSignal(
             evidence=completion_signal.evidence,
-            llm_confidence=completion_signal.llm_confidence,
             keyword_match=completion_signal.keyword_match,
+            llm_confidence=completion_signal.llm_confidence,
             action_executed=completion_signal.action_executed,
-            llm_signaled=completion_signal.llm_signaled,
+            flagged_complete=completion_signal.flagged_complete,
             rationale_verified=completion_signal.rationale_verified,
             trace_verified=False,
         )
 
         # Mark complete with all signals
         current.mark_complete(
-            llm_signal=updated_signal.llm_signaled,
             trace_verified=updated_signal.trace_verified,
+            flagged_complete=updated_signal.flagged_complete,
             rationale_verified=updated_signal.rationale_verified,
         )
 
         signal_count = updated_signal.count_signals()
         logger.info(
             f"[AgentState] Sub-goal {current.index} marked complete: {current.description} | "
-            f"Signals: {signal_count} [llm={updated_signal.llm_signaled}, "
+            f"Signals: {signal_count} [llm={updated_signal.flagged_complete}, "
             f"trace={updated_signal.trace_verified}, rationale={updated_signal.rationale_verified}] | "
             f"Evidence: {updated_signal.evidence}"
         )
@@ -413,9 +422,11 @@ class AgentState:
         if self.__current_sub_goal_index < len(self.__sub_goals):
             next_goal = self.__sub_goals[self.__current_sub_goal_index]
             next_goal.mark_in_progress()
-            # Reset tracking for new sub-goal
+
+            # Reset per-sub-goal counters on advancement.
             if self.__current_screen:
                 self.__sub_goal_start_screen = self.__current_screen.visual_hash
+
             self.__sub_goal_action_count = 0
             logger.info(
                 f"[AgentState] Advanced to sub-goal {next_goal.index}: {next_goal.description}"
@@ -432,6 +443,31 @@ class AgentState:
         """
         self.__sub_goal_action_count += 1
 
+    def replan_pending_sub_goals(self, *, new_sub_goals: List[SubGoal]) -> None:
+        """
+        Replace every unfinished sub-goal with ``new_sub_goals`` (preserving completed work)
+        and mark the first new sub-goal IN_PROGRESS.
+        """
+
+        completed = [goal for goal in self.__sub_goals if goal.is_complete()]
+
+        reindexed = [
+            goal.model_copy(update={"index": len(completed) + offset})
+            for offset, goal in enumerate(new_sub_goals)
+        ]
+
+        self.__sub_goal_action_count = 0
+        self.__sub_goals = completed + reindexed
+        self.__current_sub_goal_index = len(completed)
+
+        if self.__current_sub_goal_index < len(self.__sub_goals):
+            current = self.__sub_goals[self.__current_sub_goal_index]
+            current.mark_in_progress()
+            logger.info(
+                f"[AgentState] Replanned: kept={len(completed)} replaced={len(reindexed)} "
+                f"current={current.description[:60]!r}"
+            )
+
     def all_sub_goals_complete(self) -> bool:
         """
         Check if all sub-goals have been completed.
@@ -439,8 +475,10 @@ class AgentState:
         Returns:
             True if all sub-goals are complete or no sub-goals defined.
         """
+
         if not self.__sub_goals:
             return True
+
         return all(sg.is_complete() for sg in self.__sub_goals)
 
     def get_sub_goal_progress(self) -> tuple[int, int]:
@@ -450,8 +488,10 @@ class AgentState:
         Returns:
             Tuple of (current_index, total_count).
         """
+
         if not self.__sub_goals:
             return (0, 0)
+
         return (self.__current_sub_goal_index, len(self.__sub_goals))
 
     def get_all_sub_goals(self) -> List[SubGoal]:
@@ -461,6 +501,7 @@ class AgentState:
         Returns:
             List of all sub-goals.
         """
+
         return self.__sub_goals.copy()
 
     def has_sub_goals(self) -> bool:
@@ -470,6 +511,7 @@ class AgentState:
         Returns:
             True if sub-goals exist.
         """
+
         return len(self.__sub_goals) > 0
 
     def get_recovery_action(self) -> Optional[Action]:
@@ -536,31 +578,38 @@ class AgentState:
             "low_delta_streak": self.__low_delta_streak,
         }
 
-    def update_delta_context(self, gemini_delta: Optional[GeminiDeltaSignal]) -> None:
+    def update_delta_context(self, delta: Optional[DeltaSignal]) -> None:
         """
-        Update rolling delta metrics from model-provided semantic delta signal.
+        Update rolling delta metrics from the model's semantic delta signal.
         """
 
-        if gemini_delta is None:
-            return
-
-        score: Optional[float] = None
-        if gemini_delta.delta_confidence is not None:
-            score = max(0.0, min(1.0, float(gemini_delta.delta_confidence)))
-        elif gemini_delta.delta_observed is True:
-            score = 1.0
-        elif gemini_delta.delta_observed is False:
-            score = 0.0
-
-        if score is None:
+        if (score := self.__derive_delta_score(delta=delta)) is None:
             return
 
         self.__last_delta_score = score
-        low_progress_threshold = 0.3
-        if score < low_progress_threshold:
-            self.__low_delta_streak += 1
-        else:
-            self.__low_delta_streak = 0
+        self.__low_delta_streak = (
+            self.__low_delta_streak + 1 if score < LOW_DELTA_PROGRESS_THRESHOLD else 0
+        )
+
+    @staticmethod
+    def __derive_delta_score(*, delta: Optional[DeltaSignal]) -> Optional[float]:
+        """
+        Project a :class:`DeltaSignal` onto a [0.0, 1.0] score; None when absent.
+        """
+
+        if delta is None:
+            return None
+
+        if delta.delta_confidence is not None:
+            return max(0.0, min(1.0, float(delta.delta_confidence or 0)))
+
+        if delta.delta_observed is True:
+            return 1.0
+
+        if delta.delta_observed is False:
+            return 0.0
+
+        return None
 
     def build_context(self) -> Dict[str, object]:
         """
@@ -569,18 +618,20 @@ class AgentState:
 
         current_activity = self.__current_screen.activity if self.__current_screen else "unknown"
 
-        return {
+        context: Dict[str, object] = {
             "intent": self.__intent,
             "is_stuck": self.is_stuck,
             "max_steps": self.__max_steps,
             "step_count": self.__step_count,
+            "delta_context": self.get_delta_context(),
             "unique_screens_seen": len(self.__seen_screens),
             "compact_history": self.__action_history.get_compact_history(),
             "relevant_failures": self.__action_history.get_activity_failures(
                 current_activity=current_activity
             ),
-            "delta_context": self.get_delta_context(),
         }
+
+        return context
 
     def should_avoid_action(self, action: Action) -> bool:
         """
@@ -683,11 +734,11 @@ class AgentState:
         completion_reason: Optional[str],
         seen_screens: List[Dict[str, Any]],
         *,
-        realignment_count: int = 0,
-        last_delta_score: Optional[float] = None,
         low_delta_streak: int = 0,
-        sub_goals: Optional[List[Dict[str, Any]]] = None,
+        realignment_count: int = 0,
         current_sub_goal_index: int = 0,
+        last_delta_score: Optional[float] = None,
+        sub_goals: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -697,6 +748,7 @@ class AgentState:
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
         self.__realignment_count = realignment_count
+
         self.__last_delta_score = last_delta_score
         self.__low_delta_streak = max(0, low_delta_streak)
 
@@ -704,6 +756,7 @@ class AgentState:
             self.__seen_screens.append(ScreenState(**data))
 
         self.__sub_goals = []
+
         if sub_goals:
             for goal in sub_goals:
                 self.__sub_goals.append(SubGoal.model_validate(goal))
@@ -784,14 +837,14 @@ class AgentState:
         )
 
         state.__restore_from_data(
+            sub_goals=sub_goals,
             step_count=step_count,
             is_complete=is_complete,
             seen_screens=seen_screens,
+            low_delta_streak=low_delta_streak,
+            last_delta_score=last_delta_score,
             completion_reason=completion_reason,
             realignment_count=realignment_count,
-            last_delta_score=last_delta_score,
-            low_delta_streak=low_delta_streak,
-            sub_goals=sub_goals,
             current_sub_goal_index=current_sub_goal_index,
         )
 

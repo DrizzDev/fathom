@@ -1,25 +1,30 @@
 from __future__ import annotations
 
-# Minimum SequenceMatcher ratio for a context to be considered semantically
-# aligned with the current goal. Below this, context alignment is not counted.
+# Minimum SequenceMatcher ratio for goal-aligned context.
 RATIONALE_CONTEXT_RELEVANCE_THRESHOLD: float = 0.60
 
-# Minimum ratio for keyword-based completion to register as a strong match.
+# Ratio threshold for keyword-based completion match.
 RATIONALE_KEYWORD_MATCH_THRESHOLD: float = 0.72
 
-# Absolute minimum semantic similarity that must be present before keyword-based
-# rationale verification is accepted. Prevents near-zero similarity accidental
-# keyword hits (e.g. similarity=0.04) from triggering completion on term overlap alone.
+# Floor below which similarity is too low for keyword-based rationale verification.
 RATIONALE_MIN_SIMILARITY_FLOOR: float = 0.10
 
-# Confidence floor below which an action is rejected outright.
+# Magnitude below which a post-action screen change is treated as noise.
+MEANINGFUL_SCREEN_DELTA_FLOOR: float = 0.05
+
+# Minimum decomposer confidence below which the fallback single-goal path is used.
+MINIMUM_DECOMPOSITION_CONFIDENCE: float = 0.6
+
+# Delta score below which a step counts as low-progress for streak tracking.
+LOW_DELTA_PROGRESS_THRESHOLD: float = 0.3
+
+# Action confidence floor; below this the action is rejected outright.
 ACTION_MIN_CONFIDENCE: float = 0.40
 
-# Confidence floor required after a previous failure for the same action.
+# Confidence floor required when retrying after a previous failure of the same action.
 ACTION_MIN_CONFIDENCE_AFTER_FAILURE: float = 0.80
 
-# Synthetic confidence assigned when a next-phase action transition is detected,
-# indicating high certainty that the current opener sub-goal is already complete.
+# Synthetic confidence assigned when a next-phase action is detected.
 ACTION_NEXT_PHASE_CONFIDENCE: float = 0.85
 
 # Words in reasoning that signal a sub-goal or intent has been completed.
@@ -38,12 +43,10 @@ COMPLETION_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 
-# Words in a sub-goal description that identify it as an opener/launcher goal.
-# Used to detect when the agent has moved past the opening phase.
+# Sub-goal description words that identify an opener/launcher goal.
 OPENER_GOAL_WORDS: frozenset[str] = frozenset({"open", "launch", "navigate", "go to", "start"})
 
-# Words in LLM reasoning that indicate the agent is performing a next-phase task,
-# implying the current opener sub-goal is already satisfied.
+# Reasoning words indicating a next-phase task is in progress.
 NEXT_PHASE_KEYWORDS: frozenset[str] = frozenset(
     {
         "go",

@@ -18,6 +18,7 @@ from fathom.schemas.configuration import (
     FathomConfiguration,
     IntentConfiguration,
 )
+from fathom.schemas.recovery import RecoveryPolicy
 from fathom.schemas.run import RealignmentPolicy
 from fathom.settings.env import FathomSettings
 
@@ -59,6 +60,7 @@ class FathomBuilder:
         self.__signal: Optional[SignalPort] = None
         self.__storage: Optional[StoragePort] = None
         self.__telemetry: Optional[TelemetryPort] = None
+        self.__recovery: Optional[RecoveryPolicy] = None
         self.__summarizer: Optional[SummarizationPort] = None
         self.__realignment: Optional[RealignmentPolicy] = None
 
@@ -261,6 +263,22 @@ class FathomBuilder:
         self.__realignment = policy
         return self
 
+    def with_recovery(self, policy: RecoveryPolicy) -> FathomBuilder:
+        """
+        Configure recovery policy.
+
+        Args:
+            policy: Recovery policy instance controlling the stuck-loop
+                recovery coordinator (master toggle, strategy selection,
+                escalation thresholds).
+
+        Returns:
+            Builder instance for chaining
+        """
+
+        self.__recovery = policy
+        return self
+
     def build(self) -> FathomRunner:
         """
         Build configured Fathom instance.
@@ -312,20 +330,24 @@ class FathomBuilder:
         if not self.__summarizer:
             self.__summarizer = LLMSummarizer(llm=self.__llm)
 
+        if not self.__recovery:
+            self.__recovery = RecoveryPolicy()
+
         if not self.__realignment:
             self.__realignment = RealignmentPolicy()
 
         return FathomRunner(
             llm=self.__llm,
             device=self.__device,
-            perception=self.__perception,
             config=self.__config,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
+            recovery=self.__recovery,
             knowledge=self.__knowledge,
             telemetry=self.__telemetry,
             summarizer=self.__summarizer,
+            perception=self.__perception,
             realignment=self.__realignment,
             path_manager=self.__path_manager,
         )

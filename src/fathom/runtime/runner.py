@@ -21,6 +21,7 @@ from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
+from fathom.schemas.recovery import RecoveryPolicy
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
@@ -56,6 +57,7 @@ class FathomRunner:
         telemetry: TelemetryPort,
         summarizer: SummarizationPort,
         path_manager: SharedPathManager,
+        recovery: Optional[RecoveryPolicy] = None,
         config: Optional[FathomConfiguration] = None,
         realignment: Optional[RealignmentPolicy] = None,
     ) -> None:
@@ -75,6 +77,7 @@ class FathomRunner:
         self.__telemetry = telemetry
         self.__summarizer = summarizer
         self.__path_manager = path_manager
+        self.__recovery = recovery or RecoveryPolicy()
         self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
 
@@ -134,6 +137,7 @@ class FathomRunner:
         request_id: Optional[str] = None,
         package_name: Optional[str] = None,
         conversation_id: Optional[str] = None,
+        recovery: Optional[RecoveryPolicy] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_scope: ContextScope = ContextScope.EXECUTION,
     ) -> IntentResult:
@@ -185,7 +189,6 @@ class FathomRunner:
             intent=intent,
             llm=self.__llm,
             device=self.__device,
-            perception=self.__perception,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
@@ -193,8 +196,10 @@ class FathomRunner:
             package_name=package_name,
             telemetry=self.__telemetry,
             configuration=self.__config,
-            path_manager=self.__path_manager,
             summarizer=self.__summarizer,
+            perception=self.__perception,
+            path_manager=self.__path_manager,
+            recovery=recovery or self.__recovery,
             realignment=realignment or self.__realignment,
             max_steps=max_steps or self.__config.intent.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,

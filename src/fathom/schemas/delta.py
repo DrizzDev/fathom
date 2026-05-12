@@ -5,17 +5,11 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
-class GeminiDeltaSignal(BaseModel):
+class DeltaSignal(BaseModel):
     """
-    Normalized semantic delta signal used by the planner and agent state.
-
-    Design goals:
-    - Preserve raw provider values for auditability and analytics.
-    - Expose normalized fields for downstream decision-making.
-    - Distinguish between:
-        * "Model says delta"      → delta_observed is True/False
-        * "Model is unsure/low confidence" via delta_confidence
-        * "Model said nothing"    → this object may be omitted entirely
+    Normalized semantic delta signal emitted by any vision provider.
+    Distinguishes "model says delta" (delta_observed True/False) from
+    "model is unsure" (delta_confidence) and "model said nothing" (object omitted entirely).
     """
 
     # High-level semantic summaries
@@ -57,6 +51,6 @@ class GeminiDeltaSignal(BaseModel):
     )
 
     # Anchor-based localization hints
-    visible_anchors: List[str] = Field(default_factory=list)
     top_anchor: Optional[str] = Field(default=None)
     bottom_anchor: Optional[str] = Field(default=None)
+    visible_anchors: List[str] = Field(default_factory=list)

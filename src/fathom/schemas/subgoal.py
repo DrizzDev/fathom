@@ -1,17 +1,17 @@
-"""Sub-goal schema for intent decomposition and sequential execution tracking."""
-
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class SubGoalStatus(str, Enum):
-    """Lifecycle states for a sub-goal."""
+class SubGoalStatus(StrEnum):
+    """
+    Lifecycle states for a sub-goal.
+    """
 
-    PENDING = "PENDING"  # Not yet started
-    IN_PROGRESS = "IN_PROGRESS"  # Currently being executed
-    COMPLETE = "COMPLETE"  # Successfully completed
-    FAILED = "FAILED"  # Execution attempt failed
+    FAILED = "FAILED"
+    PENDING = "PENDING"
+    COMPLETE = "COMPLETE"
+    IN_PROGRESS = "IN_PROGRESS"
 
 
 class SubGoal(BaseModel):
@@ -27,14 +27,12 @@ class SubGoal(BaseModel):
     )
 
     # Completion signals (tracked for multi-signal verification)
-    llm_signaled: bool = Field(
-        default=False, description="LLM explicitly indicated completion via rationale"
-    )
+    flagged_complete: bool = Field(default=False, description="Model raised the completion flag")
     trace_verified: bool = Field(
         default=False, description="Trace/action history confirms completion"
     )
     rationale_verified: bool = Field(
-        default=False, description="LLM rationale tokens match sub-goal completion keywords"
+        default=False, description="Rationale tokens match sub-goal completion keywords"
     )
     completion_verified: bool = Field(
         default=False, description="Final verification that sub-goal is complete"
@@ -45,31 +43,34 @@ class SubGoal(BaseModel):
     )
 
     def mark_in_progress(self) -> None:
-        """Mark sub-goal as currently being executed."""
+        """
+        Mark sub-goal as currently being executed.
+        """
+
         self.status = SubGoalStatus.IN_PROGRESS
 
     def mark_complete(
         self,
-        llm_signal: bool = False,
         trace_verified: bool = False,
+        flagged_complete: bool = False,
         rationale_verified: bool = False,
     ) -> None:
         """
         Mark sub-goal as complete with multi-signal verification.
-
-        Args:
-            llm_signal: LLM provided explicit completion signal
-            trace_verified: Trace/action analysis confirmed completion
-            rationale_verified: Rationale token matching confirmed completion
         """
-        self.llm_signaled = llm_signal
+
         self.trace_verified = trace_verified
+        self.flagged_complete = flagged_complete
         self.rationale_verified = rationale_verified
+
         self.completion_verified = True
         self.status = SubGoalStatus.COMPLETE
 
     def is_complete(self) -> bool:
-        """Check if sub-goal is in COMPLETE state."""
+        """
+        Check if sub-goal is in COMPLETE state.
+        """
+
         return self.status == SubGoalStatus.COMPLETE
 
     def __repr__(self) -> str:

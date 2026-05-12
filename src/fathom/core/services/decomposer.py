@@ -1,42 +1,62 @@
 """Intent decomposition service for sequential sub-goal execution."""
 
+from __future__ import annotations
+
 import json
 import logging
-from typing import List
+from typing import List, Optional, Sequence
 
 from pydantic import ValidationError
 
+from fathom.constants.reasoning import MINIMUM_DECOMPOSITION_CONFIDENCE
 from fathom.core.exceptions import ConfigurationError
 from fathom.core.prompts.factory import PromptFactory
-from fathom.interfaces.llm import LLMPort
+from fathom.interfaces.llm import LLMPort, PromptPart
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.decomposition import DecompositionSchema
 from fathom.schemas.subgoal import SubGoal, SubGoalStatus
 
 logger = logging.getLogger(__name__)
-MINIMUM_DECOMPOSITION_CONFIDENCE = 0.6
+
+
+class DecompositionAugmentation:
+    """
+    Optional caller-supplied hooks that enrich a decomposition prompt with
+    extra context. All hooks default to empty so subclasses override only what they need.
+    """
+
+    def system_addendum(self) -> str:
+        """
+        Text appended to the base system instruction.
+        """
+
+        return ""
+
+    def user_preamble(self) -> str:
+        """
+        Text prepended to the base user prompt.
+        """
+
+        return ""
+
+    def extra_prompt_parts(self) -> Sequence[PromptPart]:
+        """
+        Extra prompt parts (e.g. images) appended after the user prompt.
+        """
+
+        return ()
 
 
 class IntentDecomposer:
     """
-    Decomposes a high-level intent into sequential sub-goals using LLM.
-
-    Sub-goals must be:
-    - Atomic (one action per goal)
-    - Sequential (ordered, no skipping)
-    - Complete (sufficient to achieve parent intent)
-    - Executable (within agent capabilities)
+    Decomposes a high-level intent into sequential sub-goals via the LLM.
+    Accepts an optional :class:`DecompositionAugmentation` to inject
+    caller-specific context without coupling to the caller's domain.
     """
 
     def __init__(self, llm: LLMPort) -> None:
-        """
-        Initialize decomposer with LLM service.
-
-        Args:
-            llm: LLM interface for generating decompositions
-        """
         self.__llm = llm
-        self.__llm_configuration = LLMConfiguration()
+        self.__configuration = LLMConfiguration()
         self.__prompt_builder = PromptFactory.get_decomposition_builder(model_name=llm.model_name)
 
     @classmethod
@@ -44,84 +64,122 @@ class IntentDecomposer:
         cls, *, llm: LLMPort, configuration: LLMConfiguration
     ) -> "IntentDecomposer":
         """
-        Build decomposer with provided LLM configuration.
+        Build decomposer with an explicit LLM configuration (caching, etc.).
         """
 
         decomposer = cls(llm=llm)
-        decomposer.__llm_configuration = configuration
+        decomposer.__configuration = configuration
+
         return decomposer
 
-    async def decompose(self, intent: str) -> List[SubGoal]:
+    async def decompose(
+        self,
+        intent: str,
+        *,
+        augmentation: Optional[DecompositionAugmentation] = None,
+    ) -> List[SubGoal]:
         """
         Decompose intent into sequential sub-goals.
-
-        Args:
-            intent: High-level intent to decompose
-
-        Returns:
-            List of SubGoal objects in sequential order
-
-        Raises:
-            ValueError: If decomposition fails or produces invalid schema
         """
+
         if not intent or not intent.strip():
             raise ConfigurationError("Intent cannot be empty")
 
-        logger.info(f"[Decomposer] Starting decomposition: {intent[:100]}...")
+        augmented = augmentation is not None
+        logger.info(
+            "[Decomposer] decomposing intent (augmented=%s): %s",
+            augmented,
+            intent[:100],
+            extra={
+                "event": "start",
+                "augmented": augmented,
+                "component": "decomposer",
+                "intent_preview": intent[:160],
+            },
+        )
 
-        prompt = self.__prompt_builder.build_user_prompt(intent=intent)
+        extra_parts: Sequence[PromptPart] = ()
+        user_prompt = self.__prompt_builder.build_user_prompt(intent=intent)
+        system_instruction = self.__prompt_builder.build_system_instruction()
 
-        # Call LLM to decompose
+        if augmentation is not None:
+            extra_parts = augmentation.extra_prompt_parts()
+            user_prompt = f"{augmentation.user_preamble()}{user_prompt}"
+            system_instruction = f"{system_instruction}{augmentation.system_addendum()}"
+
+        prompt_parts: List[PromptPart] = [user_prompt, *extra_parts]
+
         try:
             result = await self.__llm.generate(
-                use_cache=False,
-                prompt=[prompt],
-                system_instruction=self.__prompt_builder.build_system_instruction(),
+                prompt=prompt_parts,
+                system_instruction=system_instruction,
+                use_cache=self.__configuration.use_cache,
             )
             response = result.content
         except Exception as exception:
-            logger.warning(f"[Decomposer] LLM decomposition failed: {exception}, using fallback")
-            return self.__fallback_decomposition(intent)
+            logger.warning(
+                "[Decomposer] LLM call failed (%s) — using fallback",
+                exception,
+                extra={
+                    "error": str(exception),
+                    "component": "decomposer",
+                    "event": "fallback_llm_error",
+                },
+            )
+            return self.__fallback(intent=intent)
 
-        # Parse response with strict Schema validation
         try:
-            parsed = json.loads(response)
-            schema = DecompositionSchema(**parsed)
+            schema = DecompositionSchema(**json.loads(response))
         except (json.JSONDecodeError, ValidationError) as exception:
             logger.warning(
-                f"[Decomposer] Failed to parse response (schema validation failed: {exception}), using fallback"
+                "[Decomposer] parse failed (%s) — using fallback",
+                exception,
+                extra={
+                    "error": str(exception),
+                    "component": "decomposer",
+                    "event": "fallback_parse_error",
+                    "response_preview": response[:200] if response else "",
+                },
             )
-            return self.__fallback_decomposition(intent)
+            return self.__fallback(intent=intent)
 
-        # Check confidence threshold
         if schema.confidence is not None and schema.confidence < MINIMUM_DECOMPOSITION_CONFIDENCE:
-            logger.warning(f"[Decomposer] Low confidence {schema.confidence}, using fallback")
-            return self.__fallback_decomposition(intent)
-
-        # Convert to SubGoal objects
-        sub_goals: List[SubGoal] = []
-        for idx, description in enumerate(schema.sub_goals):
-            sub_goal = SubGoal(
-                index=idx, description=description, confidence=schema.confidence or 0.9
+            logger.warning(
+                "[Decomposer] confidence %.2f below floor %.2f — using fallback",
+                schema.confidence,
+                MINIMUM_DECOMPOSITION_CONFIDENCE,
+                extra={
+                    "component": "decomposer",
+                    "event": "low_confidence",
+                    "confidence": schema.confidence,
+                    "floor": MINIMUM_DECOMPOSITION_CONFIDENCE,
+                },
             )
-            sub_goals.append(sub_goal)
+            return self.__fallback(intent=intent)
 
+        sub_goals = [
+            SubGoal(index=idx, description=description, confidence=schema.confidence or 0.9)
+            for idx, description in enumerate(schema.sub_goals)
+        ]
         logger.info(
-            f"[Decomposer] Successfully decomposed into {len(sub_goals)} sub-goals "
-            f"(confidence={schema.confidence})"
+            "[Decomposer] produced %d sub-goal(s) confidence=%s",
+            len(sub_goals),
+            schema.confidence,
+            extra={
+                "event": "success",
+                "augmented": augmented,
+                "component": "decomposer",
+                "sub_goal_count": len(sub_goals),
+                "confidence": schema.confidence,
+            },
         )
         return sub_goals
 
-    def __fallback_decomposition(self, intent: str) -> List[SubGoal]:
+    @staticmethod
+    def __fallback(*, intent: str) -> List[SubGoal]:
         """
-        Fallback decomposition when LLM parsing fails.
-        Creates a single safe sub-goal that includes the entire intent.
-
-        Args:
-            intent: Full intent string
-
-        Returns:
-            List with single SubGoal containing the full intent
+        Single-goal fallback when LLM call or parsing fails.
         """
+
         logger.info("[Decomposer] Using fallback single-step decomposition")
         return [SubGoal(index=0, description=intent, status=SubGoalStatus.PENDING, confidence=0.5)]

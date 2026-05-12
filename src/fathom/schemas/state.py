@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from fathom.constants.screen import (
     DEFAULT_SAME_SCREEN_THRESHOLD,
     LOOP_ACTION_VELOCITY_INTERVAL_THRESHOLD_SECONDS,
+    LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD,
     LOOP_OSCILLATION_AB_WINDOW,
     LOOP_OSCILLATION_ABC_WINDOW,
     LOOP_SCROLL_STALL_DISTANCE_THRESHOLD,
@@ -80,15 +81,24 @@ class LoopDetector(BaseModel):
             if self.__detect_repetition():
                 return True
 
-            # 2. State Oscillation (A-B-A-B or A-B-C-A)
+            # 2. Near-duplicate Visual Repetition (visual pHash only).
+            # Catches the case where DOM micro-changes (overlay animation frames,
+            # map redraws, transient spinners) flip ``xml_hash``/``interaction_hash``
+            # and force ``is_same_screen`` to return False even though the screen
+            # is visually identical. The standard repetition detector is bypassed
+            # in that case; this complementary detector closes the gap.
+            if self.__detect_near_duplicate_visual_repetition():
+                return True
+
+            # 3. State Oscillation (A-B-A-B or A-B-C-A)
             if self.__detect_oscillation():
                 return True
 
-            # 3. Scroll Stalling (Repetitive scrolling with minimal progress)
+            # 4. Scroll Stalling (Repetitive scrolling with minimal progress)
             if self.__detect_scroll_stall():
                 return True
 
-            # 4. Action Velocity (Rapid firing with no progress)
+            # 5. Action Velocity (Rapid firing with no progress)
             if self.__detect_action_velocity_loop():
                 return True
 
@@ -127,6 +137,42 @@ class LoopDetector(BaseModel):
 
         return False
 
+    def __detect_near_duplicate_visual_repetition(self) -> bool:
+        """
+        Detect screens whose visual pHash is within a tight hamming threshold
+        of one another, ignoring structural and interaction hashes.
+
+        Distinct from ``__detect_repetition`` (which uses ``is_same_screen``):
+        that path returns False as soon as ``xml_hash`` or ``interaction_hash`` disagree, which masks overlay-animation and map-redraw loops.
+
+        The visual-only check is intentionally narrow (threshold = pHash hamming)
+        and only counts repetition when the same near-duplicate appears at least ``self.threshold`` times in the window.
+        """
+
+        hashes = [hash for hash in self.__recent_hashes if hash]
+
+        if len(hashes) < self.threshold:
+            return False
+
+        for index, anchor in enumerate(hashes):
+            count = 1
+            for forward_index in range(index + 1, len(hashes)):
+                distance = ScreenState.hamming_distance(
+                    left_hash=anchor,
+                    right_hash=hashes[forward_index],
+                )
+                if distance <= LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD:
+                    count += 1
+
+            if count >= self.threshold:
+                logger.warning(
+                    f"LoopDetector: Stuck via near-duplicate visual repetition "
+                    f"({count}x within hamming {LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD})"
+                )
+                return True
+
+        return False
+
     def __detect_action_repetition(self) -> bool:
         """
         Detect repeated identical actions regardless of screen state.
@@ -136,14 +182,17 @@ class LoopDetector(BaseModel):
         """
 
         action_counts: Dict[str, int] = {}
+
         for action in self.__recent_actions:
             if action == "None":
                 continue
+
             action_counts[action] = action_counts.get(action, 0) + 1
             if action_counts[action] >= self.threshold + 1:
                 action_lower = action.lower()
                 if any(token in action_lower for token in ("swipe", "scroll", "flick")):
                     continue
+
                 logger.warning(
                     f"LoopDetector: Stuck via action repetition '{action}' ({action_counts[action]}x)"
                 )
@@ -153,8 +202,8 @@ class LoopDetector(BaseModel):
 
     def has_repeated_action_on_same_screen(
         self,
-        action_description: str,
         screen_hash: str,
+        action_description: str,
         *,
         repeat_threshold: int = 3,
     ) -> bool:

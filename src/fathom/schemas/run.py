@@ -15,6 +15,7 @@ from fathom.schemas.configuration import (
     LLMConfiguration,
     StorageConfiguration,
 )
+from fathom.schemas.recovery import RecoveryPolicy
 
 
 class RealignmentPolicy(BaseModel):
@@ -164,6 +165,10 @@ class InteractionConfiguration(BaseModel):
     realignment: RealignmentPolicy = Field(
         default_factory=RealignmentPolicy,
         description="Course-correction policy",
+    )
+    recovery: RecoveryPolicy = Field(
+        default_factory=RecoveryPolicy,
+        description="Stuck-loop recovery policy (toggle + strategy selection + thresholds)",
     )
     intent_configuration: IntentConfiguration = Field(
         default_factory=IntentConfiguration,

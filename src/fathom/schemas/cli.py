@@ -17,9 +17,11 @@ class LocalCommandInput(BaseModel):
     platform: DevicePlatform = Field(default=DevicePlatform.ANDROID)
     serial_number: Optional[str] = Field(default=None, alias="serial")
     adb_executable_path: Optional[str] = Field(default=None, alias="adb_path")
+
+    ios_executable_path: Optional[str] = Field(default=None)
     ios_device_identifier: Optional[str] = Field(default=None)
     ios_bundle_identifier: Optional[str] = Field(default=None)
-    ios_executable_path: Optional[str] = Field(default=None)
+
     ios_automation_backend: Optional[IOSAutomationBackend] = Field(default=None)
     ios_web_driver_agent_url: Optional[str] = Field(default=None)
     ios_web_driver_agent_bundle_identifier: Optional[str] = Field(default=None)
@@ -91,13 +93,19 @@ class RunCommandInput(LocalCommandInput):
     """
 
     command: Literal["run"] = Field(default="run")
+
     intent: str = Field(..., min_length=1)
     use_xml: bool = Field(default=False)
+
     signal: Literal["interactive", "socket"] = Field(default="interactive")
+
     max_steps: int = Field(default=50, ge=1)
     interactive: bool = Field(default=False)
+
+    recovery: bool = Field(default=True)
     realignment_budget: int = Field(default=3, ge=0)
     immediate_realignment: bool = Field(default=True)
+
     api_key: Optional[str] = Field(default=None)
     verbose: bool = Field(default=False)
 

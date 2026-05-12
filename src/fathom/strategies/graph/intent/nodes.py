@@ -17,6 +17,15 @@ from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.exceptions import FathomError
 from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
+from fathom.core.recovery import (
+    RecoveryContext,
+    RecoveryCoordinator,
+    RecoveryOutcome,
+    RecoveryRequest,
+    RecoveryStrategyFactory,
+    RecoveryTrigger,
+    ReplanOutcome,
+)
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
 from fathom.schemas.hierarchy import HierarchyProcessingResult
@@ -51,13 +60,15 @@ class IntentNodeProvider:
         self,
         *,
         context: GraphContext,
+        recovery: RecoveryCoordinator,
         screen_comparator: ScreenComparator,
     ) -> None:
         """
-        Initialize provider with shared context.
+        Initialize provider with shared context and the recovery coordinator injected by the composition root.
         """
 
         self.__context = context
+        self.__recovery = recovery
         self.__screen_comparator = screen_comparator
 
     def __build_screen_state(
@@ -233,6 +244,99 @@ class IntentNodeProvider:
             if consumed > 0:
                 logger.info("[HITL] Processed %d user contexts after resume", consumed)
 
+    async def __try_recover(
+        self,
+        *,
+        reason: str,
+        capture: ScreenCapture,
+        trigger: RecoveryTrigger,
+        hint: Optional[str] = None,
+    ) -> Optional[IntentGraphState]:
+        """
+        Single entry point for graph-node recovery: builds the request,
+        dispatches via the coordinator, applies the outcome.
+        """
+
+        agent_state = self.__context.agent_state
+        if (current := agent_state.get_current_sub_goal()) is None:
+            return None
+
+        request = RecoveryRequest(
+            hint=hint,
+            reason=reason,
+            trigger=trigger,
+            capture=capture,
+            stuck_sub_goal=current.description,
+            recent_actions=self.__recent_action_descriptors(),
+            pending_sub_goals=[
+                sub_goal.description
+                for sub_goal in agent_state.sub_goal_list
+                if not sub_goal.is_complete()
+            ],
+        )
+
+        outcome = await self.__recovery.handle(
+            trigger=trigger, request=request, scope=current.index
+        )
+        if outcome is None:
+            return None
+
+        return self.__apply_recovery(outcome=outcome, scope=current.index)
+
+    def __apply_recovery(
+        self, *, outcome: RecoveryOutcome, scope: int
+    ) -> Optional[IntentGraphState]:
+        """
+        Apply a committed recovery outcome and produce a graph patch.
+        """
+
+        if isinstance(outcome, ReplanOutcome):
+            self.__context.agent_state.replan_pending_sub_goals(new_sub_goals=outcome.new_sub_goals)
+            self.__context.agent_state.reset_completion()
+
+            self.__recovery.reset(scope=scope)
+            self.__context.context_manager.clear_user_guidance()
+
+            logger.info("[NODE: RECOVERY] %s — routing back to GROUND", outcome.summary)
+            result = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: False,
+                    IntentStateKey.SHOULD_RETRY: True,
+                },
+            )
+            self.__persist_agent_state_to_graph(result=result)
+            return result
+
+        return None
+
+    def __recent_action_descriptors(self) -> List[str]:
+        """
+        Last N action descriptors from the trace, oldest first, capped at the policy's recent_window. Best-effort.
+        """
+
+        try:
+            full_context = self.__context.context_manager.get_full_context()
+            trace = full_context.get("trace", [])
+            if not isinstance(trace, list):
+                return []
+
+        except Exception:
+            return []
+
+        descriptors: List[str] = []
+        recent = list(trace)[-self.__recovery.policy.recent_window :]
+
+        for entry in recent:
+            if isinstance(entry, dict):
+                action_kind = entry.get("action") or entry.get("action_type") or "action"
+                target = entry.get("target") or entry.get("description") or ""
+                descriptors.append(f"{action_kind}: {target}".strip())
+            else:
+                descriptors.append(str(entry))
+
+        return descriptors
+
     def __restore_agent_state_from_graph(self, *, state: IntentGraphState) -> None:
         """
         Restore agent_state from graph checkpoint if present.
@@ -317,8 +421,8 @@ class IntentNodeProvider:
 
         await self.__context.telemetry.info(
             script_data,
-            type=FathomEvent.SCRIPT_GENERATED,
             step=step_number + 1,
+            type=FathomEvent.SCRIPT_GENERATED,
         )
 
     def __enqueue_history_persistence(
@@ -340,10 +444,10 @@ class IntentNodeProvider:
 
         self.__context.history.enqueue_save_step(
             result=step_result,
+            on_complete=__publish,
             intent=self.__context.intent,
             package_name=current_activity,
             execution_activity=execution_activity,
-            on_complete=__publish,
         )
 
     async def ground(self, state: IntentGraphState) -> IntentGraphState:
@@ -665,22 +769,30 @@ class IntentNodeProvider:
                     f"should_retry={plan.should_retry}, reason={plan.reason}"
                 )
 
-            # Handle ACTION_BLOCKED signal from planner: inject guidance into
-            # the context manager so the next GROUND→ANALYZE cycle sees it as
-            # a <SYSTEM_OVERRIDE>. This keeps guidance mutation in the graph node
-            # rather than the planner (SRP).
+            # ACTION_BLOCKED: inject rejection guidance and signal the recovery
+            # coordinator; the coordinator owns thresholds and dispatch.
             blocked_action = (plan.metadata or {}).get("blocked_action")
-            if plan.reason == CompletionReason.ACTION_BLOCKED.value and blocked_action:
-                await self.__context.context_manager.inject_user_guidance(
-                    guidance=(
-                        f"ACTION BLOCKED: '{blocked_action}' has been repeated 3+ times on this "
-                        "screen without progress and is now BLOCKED. You MUST use a completely "
-                        "different action or interaction path to achieve the same goal. "
-                        "Consider alternative UI elements, different navigation paths, or "
-                        "scrolling to reveal new elements."
-                    ),
-                    step=current_step,
+            if plan.reason == CompletionReason.ACTION_BLOCKED.value:
+                if blocked_action:
+                    await self.__context.context_manager.inject_user_guidance(
+                        guidance=(
+                            f"ACTION BLOCKED: '{blocked_action}' has been repeated 3+ times on this "
+                            "screen without progress and is now BLOCKED. You MUST use a completely "
+                            "different action or interaction path to achieve the same goal. "
+                            "Consider alternative UI elements, different navigation paths, or "
+                            "scrolling to reveal new elements."
+                        ),
+                        step=current_step,
+                    )
+
+                recovered = await self.__try_recover(
+                    capture=capture,
+                    trigger=RecoveryTrigger.ACTION_BLOCKED,
+                    hint=blocked_action if isinstance(blocked_action, str) else None,
+                    reason="Planner emitted ACTION_BLOCKED; previously-planned approach unreachable from current screen.",
                 )
+                if recovered is not None:
+                    return recovered
 
             logger.info(
                 f"[NODE: ANALYZE] Analysis completed in {duration:.2f}s: "
@@ -1271,16 +1383,15 @@ class IntentNodeProvider:
         sub_goal_signal = self.__context.reasoner.analyze_subgoal_completion(
             analysis=analysis,
             sub_goal_description=current_sub_goal.description,
-            screen_description=step_result.observation or step_result.step.action.target or "",
+            delta_score=self.__context.agent_state.last_delta_score,
             screen_changed=step_result.screen_changed or is_validation_step,
-            pre_screen_hash=step_result.pre_hash,
-            post_screen_hash=step_result.post_hash,
+            screen_description=step_result.observation or step_result.step.action.target or "",
         )
 
         # For validation steps where the LLM explicitly signals completion,
         # short-circuit — the screen is not expected to change so the normal
         # multi-signal gate would be overly strict.
-        if is_validation_step and sub_goal_signal.llm_signaled:
+        if is_validation_step and sub_goal_signal.flagged_complete:
             logger.info(
                 f"[NODE: RECORD] Validation step with LLM completion signal — "
                 f"completing sub-goal '{current_sub_goal.description[:50]}...'"
@@ -1313,7 +1424,7 @@ class IntentNodeProvider:
                     },
                 )
 
-        # Three-signal policy: llm_signaled + rationale_verified + action_executed.
+        # Three-signal policy: flagged_complete + rationale_verified + action_executed.
         # ``action_executed`` is now gated by ``screen_verified`` — the action must
         # actually change the screen to count (validation steps are exempt above).
         # Validation checks advance with 2-of-3, action steps require all 3.
@@ -1324,7 +1435,7 @@ class IntentNodeProvider:
         logger.info(
             f"[NODE: RECORD] Sub-goal completion check: '{current_sub_goal.description[:50]}...' | "
             f"signals={signal_count}/{required_threshold} | "
-            f"llm={sub_goal_signal.llm_signaled} | "
+            f"llm={sub_goal_signal.flagged_complete} | "
             f"rationale={sub_goal_signal.rationale_verified} | "
             f"action={sub_goal_signal.action_executed} | "
             f"screen_verified={sub_goal_signal.screen_verified} | "
@@ -1489,14 +1600,20 @@ class IntentNodeProvider:
             self.__persist_agent_state_to_graph(result=result)
             return result
         else:
-            # Inject negative feedback to force the agent to continue
+            # Signal the rejection to the recovery coordinator; fall through
+            # to the standard rejection path if no strategy commits.
+            recovered = await self.__try_recover(
+                reason=reason,
+                capture=capture,
+                trigger=RecoveryTrigger.VERIFY_REJECTED,
+            )
+            if recovered is not None:
+                return recovered
+
             feedback = f"Verification failed: {reason}"
             logger.warning(f"[NODE: VERIFY] {feedback}")
-
-            # Reset the is_complete flag
             self.__context.agent_state.reset_completion()
 
-            # Inject into ContextManager so the LLM sees it next iteration
             await self.__context.context_manager.inject_user_guidance(
                 guidance=feedback, step=self.__context.agent_state.step_count
             )
@@ -1525,8 +1642,22 @@ class IntentGraphFactory:
         Builds the node functions for the intent graph.
         """
 
+        recovery_context = RecoveryContext(
+            llm=context.llm,
+            memory=context.memory,
+        )
+        recovery_strategies = RecoveryStrategyFactory.build(
+            context=recovery_context,
+            names=list(context.recovery.strategies),
+        )
+        recovery_coordinator = RecoveryCoordinator(
+            policy=context.recovery,
+            strategies=recovery_strategies,
+        )
+
         provider = IntentNodeProvider(
             context=context,
+            recovery=recovery_coordinator,
             screen_comparator=context.comparator,
         )
 

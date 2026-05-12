@@ -27,6 +27,7 @@ from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.metrics import ExecutionMetrics
+from fathom.schemas.recovery import RecoveryPolicy
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.schemas.steps import StepResult
@@ -71,27 +72,30 @@ class IntentStrategy:
         max_steps: int,
         workflow_id: str,
         package_name: str,
+        recovery: Optional[RecoveryPolicy] = None,
         realignment: Optional[RealignmentPolicy] = None,
     ) -> None:
+        self.__llm = llm
         self.__intent = intent
         self.__workflow_id = workflow_id
-        self.__llm = llm
-        self.__step_results: List[StepResult] = []
+
         self.__graph: Any = None
+        self.__step_results: List[StepResult] = []
         self.__completion_reason: Optional[str] = None
 
         self.__graph_context = GraphContext(
             llm=llm,
             intent=intent,
             device=device,
-            perception=perception,
             memory=memory,
             signal=signal,
             use_xml=use_xml,
             storage=storage,
+            recovery=recovery,
             telemetry=telemetry,
             max_steps=max_steps,
             summarizer=summarizer,
+            perception=perception,
             workflow_id=workflow_id,
             realignment=realignment,
             package_name=package_name,
