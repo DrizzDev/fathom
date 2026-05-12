@@ -13,8 +13,10 @@ from fathom.constants.execution import (
     VISUAL_HASH_LENGTH,
 )
 from fathom.constants.graph import NodeName
+from fathom.constants.reasoning import VALIDATION_KEYWORDS
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.core.agent.completion import CompletionGateFactory
 from fathom.core.exceptions import FathomError
 from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
 from fathom.core.recovery import (
@@ -38,6 +40,7 @@ from fathom.schemas.screens import (
     ScreenState,
 )
 from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.subgoal import SubGoalKind
 from fathom.schemas.ui import LabeledElement
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
@@ -239,6 +242,11 @@ class IntentNodeProvider:
                     guidance=context,
                     step=self.__context.agent_state.step_count,
                 )
+                # Symmetric with executor.__inject_context: every drained
+                # user instruction charges the realignment budget and
+                # resets loop history so budget accounting is consistent
+                # across both HITL injection paths.
+                self.__context.agent_state.record_hitl_intervention()
                 await self.__context.hitl.consume_context()
 
             if consumed > 0:
@@ -295,7 +303,12 @@ class IntentNodeProvider:
             self.__context.agent_state.reset_completion()
 
             self.__recovery.reset(scope=scope)
+            # Replan supersedes the prior plan. Clear user guidance (it was
+            # given against a plan that no longer exists; the user can
+            # re-issue if still relevant) and verifier feedback (rejection
+            # of a completion claim from the old plan is no longer relevant).
             self.__context.context_manager.clear_user_guidance()
+            self.__context.context_manager.clear_verifier_feedback()
 
             logger.info("[NODE: RECOVERY] %s — routing back to GROUND", outcome.summary)
             result = cast(
@@ -336,6 +349,22 @@ class IntentNodeProvider:
                 descriptors.append(str(entry))
 
         return descriptors
+
+    @staticmethod
+    def __classify_sub_goal(*, step_result: StepResult, sub_goal_description: str) -> SubGoalKind:
+        """
+        Classify a sub-goal as a validation (observation-only) or action
+        step. Checks the step's event_type first (set by the LLM tool
+        schema), falling back to the sub-goal description keyword set.
+        """
+
+        if step_result.step.event_type == "validation":
+            return SubGoalKind.VALIDATION
+
+        if any(keyword in sub_goal_description.lower() for keyword in VALIDATION_KEYWORDS):
+            return SubGoalKind.VALIDATION
+
+        return SubGoalKind.ACTION
 
     def __restore_agent_state_from_graph(self, *, state: IntentGraphState) -> None:
         """
@@ -769,22 +798,12 @@ class IntentNodeProvider:
                     f"should_retry={plan.should_retry}, reason={plan.reason}"
                 )
 
-            # ACTION_BLOCKED: inject rejection guidance and signal the recovery
-            # coordinator; the coordinator owns thresholds and dispatch.
+            # ACTION_BLOCKED: planner already set rejection_history (the LLM
+            # sees its own rejected tool call on the next vision turn). Just
+            # signal the recovery coordinator — the coordinator owns
+            # thresholds and dispatch.
             blocked_action = (plan.metadata or {}).get("blocked_action")
             if plan.reason == CompletionReason.ACTION_BLOCKED.value:
-                if blocked_action:
-                    await self.__context.context_manager.inject_user_guidance(
-                        guidance=(
-                            f"ACTION BLOCKED: '{blocked_action}' has been repeated 3+ times on this "
-                            "screen without progress and is now BLOCKED. You MUST use a completely "
-                            "different action or interaction path to achieve the same goal. "
-                            "Consider alternative UI elements, different navigation paths, or "
-                            "scrolling to reveal new elements."
-                        ),
-                        step=current_step,
-                    )
-
                 recovered = await self.__try_recover(
                     capture=capture,
                     trigger=RecoveryTrigger.ACTION_BLOCKED,
@@ -1372,13 +1391,10 @@ class IntentNodeProvider:
             else AnalysisResult.model_validate(raw_analysis)
         )
 
-        # Validation-type steps don't require a screen change — observing
-        # the screen IS the goal.  Detected from the step's event_type
-        # (set by the LLM tool schema) OR from sub-goal description keywords.
-        is_validation_step = step_result.step.event_type == "validation" or any(
-            keyword in current_sub_goal.description.lower()
-            for keyword in ["validate", "verify", "confirm", "check if", "check that"]
+        sub_goal_kind = self.__classify_sub_goal(
+            step_result=step_result, sub_goal_description=current_sub_goal.description
         )
+        is_validation_step = sub_goal_kind == SubGoalKind.VALIDATION
 
         sub_goal_signal = self.__context.reasoner.analyze_subgoal_completion(
             analysis=analysis,
@@ -1388,66 +1404,42 @@ class IntentNodeProvider:
             screen_description=step_result.observation or step_result.step.action.target or "",
         )
 
-        # For validation steps where the LLM explicitly signals completion,
-        # short-circuit — the screen is not expected to change so the normal
-        # multi-signal gate would be overly strict.
-        if is_validation_step and sub_goal_signal.flagged_complete:
-            logger.info(
-                f"[NODE: RECORD] Validation step with LLM completion signal — "
-                f"completing sub-goal '{current_sub_goal.description[:50]}...'"
-            )
-            has_more = agent_state.mark_current_sub_goal_complete(completion_signal=sub_goal_signal)
+        gate = CompletionGateFactory.for_kind(kind=sub_goal_kind)
 
-            if has_more:
-                next_sub_goal = agent_state.get_current_sub_goal()
-                logger.info(
-                    f"[NODE: RECORD] ✓ Sub-goal {current_sub_goal.index} COMPLETE (validation). "
-                    f"Advancing to sub-goal {next_sub_goal.index if next_sub_goal else '(none)'}: "
-                    f"'{next_sub_goal.description if next_sub_goal else ''}'"
-                )
-                return cast(
-                    "IntentGraphState",
-                    {
-                        IntentStateKey.STEP_RESULTS: accumulated_step_results,
-                        IntentStateKey.SHOULD_RETRY: True,
-                    },
-                )
-            else:
-                logger.info("[NODE: RECORD] All sub-goals complete (final was validation).")
-                agent_state.mark_complete(reason="All sub-goals completed sequentially")
-                return cast(
-                    "IntentGraphState",
-                    {
-                        CommonStateKey.IS_COMPLETE: True,
-                        CommonStateKey.COMPLETION_REASON: "All sub-goals completed sequentially",
-                        IntentStateKey.STEP_RESULTS: accumulated_step_results,
-                    },
-                )
-
-        # Three-signal policy: flagged_complete + rationale_verified + action_executed.
-        # ``action_executed`` is now gated by ``screen_verified`` — the action must
-        # actually change the screen to count (validation steps are exempt above).
-        # Validation checks advance with 2-of-3, action steps require all 3.
-        required_threshold = 2 if is_validation_step else 3
-        signal_count = sub_goal_signal.count_signals()
-        current_idx, total = agent_state.get_sub_goal_progress()
+        verdict = gate.evaluate(signal=sub_goal_signal)
+        current_index, total = agent_state.get_sub_goal_progress()
 
         logger.info(
-            f"[NODE: RECORD] Sub-goal completion check: '{current_sub_goal.description[:50]}...' | "
-            f"signals={signal_count}/{required_threshold} | "
-            f"llm={sub_goal_signal.flagged_complete} | "
-            f"rationale={sub_goal_signal.rationale_verified} | "
-            f"action={sub_goal_signal.action_executed} | "
-            f"screen_verified={sub_goal_signal.screen_verified} | "
-            f"evidence: {sub_goal_signal.evidence}"
+            "[NODE: RECORD] Sub-goal verdict",
+            extra={
+                "component": "record",
+                "progress_total": total,
+                "reason": verdict.reason,
+                "event": "subgoal_verdict",
+                "kind": sub_goal_kind.value,
+                "complete": verdict.complete,
+                "progress_current": current_index + 1,
+                "sub_goal_index": current_sub_goal.index,
+                "claim_verified": sub_goal_signal.claim_verified,
+                "missing": [item.value for item in verdict.missing],
+                "action_effective": sub_goal_signal.action_effective,
+                "sub_goal_description": current_sub_goal.description[:80],
+            },
         )
 
-        if not sub_goal_signal.meets_threshold(required_signals=required_threshold):
+        if not verdict.complete:
             logger.warning(
-                f"[NODE: RECORD] Sub-goal {current_sub_goal.index} NOT completing yet: "
-                f"{signal_count}/{required_threshold} signals | "
-                f"Progress: [{current_idx + 1}/{total}] | "
-                f"Type: {'validation' if is_validation_step else 'action'}"
+                "[NODE: RECORD] Sub-goal not advancing",
+                extra={
+                    "component": "record",
+                    "progress_total": total,
+                    "reason": verdict.reason,
+                    "event": "subgoal_blocked",
+                    "kind": sub_goal_kind.value,
+                    "progress_current": current_index + 1,
+                    "sub_goal_index": current_sub_goal.index,
+                    "missing": [item.value for item in verdict.missing],
+                },
             )
             return None
 
@@ -1463,22 +1455,19 @@ class IntentNodeProvider:
             return cast(
                 "IntentGraphState",
                 {
-                    IntentStateKey.STEP_RESULTS: accumulated_step_results,
                     IntentStateKey.SHOULD_RETRY: True,
+                    IntentStateKey.STEP_RESULTS: accumulated_step_results,
                 },
             )
         else:
-            logger.info(
-                f"[NODE: RECORD] All sub-goals complete. Final sub-goal had "
-                f"{sub_goal_signal.count_signals()}/{required_threshold} signals."
-            )
+            logger.info("[NODE: RECORD] All sub-goals complete; marking intent complete.")
             agent_state.mark_complete(reason="All sub-goals completed sequentially")
             return cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: "All sub-goals completed sequentially",
                     IntentStateKey.STEP_RESULTS: accumulated_step_results,
+                    CommonStateKey.COMPLETION_REASON: "All sub-goals completed sequentially",
                 },
             )
 
@@ -1487,6 +1476,8 @@ class IntentNodeProvider:
         Explicitly verify if the intent is truly complete by capturing the screen and asking the LLM.
         If verification fails, it adds negative feedback and routes back to the main loop.
         """
+
+        _ = state
 
         logger.info("[NODE: VERIFY] Starting verification phase")
 
@@ -1518,8 +1509,8 @@ class IntentNodeProvider:
         # 1. Capture the latest screen state
         try:
             capture = await self.__context.perception_port.capture()
-            image_bytes = capture.image
-            if not image_bytes:
+
+            if not capture.image:
                 logger.warning("[NODE: VERIFY] Failed to capture screen for verification")
                 self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
 
@@ -1548,6 +1539,7 @@ class IntentNodeProvider:
 
         guidance_section = ""
         user_guidance = self.__context.context_manager.get_user_guidance()
+
         if user_guidance:
             guidance_text = "\n".join([f"- {guidance.content}" for guidance in user_guidance])
             guidance_section = f"\nUser Guidance:\n{guidance_text}\n"
@@ -1561,7 +1553,7 @@ class IntentNodeProvider:
             llm_result = await self.__context.llm.generate(
                 use_cache=False,
                 system_instruction=system_prompt,
-                prompt=[user_prompt, image_bytes],
+                prompt=[user_prompt, capture.image],
             )
 
             text = strip_code_fences(llm_result.content)
@@ -1614,8 +1606,11 @@ class IntentNodeProvider:
             logger.warning(f"[NODE: VERIFY] {feedback}")
             self.__context.agent_state.reset_completion()
 
-            await self.__context.context_manager.inject_user_guidance(
-                guidance=feedback, step=self.__context.agent_state.step_count
+            # Route verifier rejection through the typed verifier-feedback
+            # channel so the next planner iteration sees it as system feedback
+            # — distinct from real user instructions.
+            await self.__context.context_manager.inject_verifier_feedback(
+                feedback=feedback, step=self.__context.agent_state.step_count
             )
 
             result = cast(
@@ -1623,7 +1618,6 @@ class IntentNodeProvider:
                 {
                     CommonStateKey.IS_COMPLETE: False,
                     IntentStateKey.SHOULD_RETRY: True,
-                    IntentStateKey.INJECTED_CONTEXT: feedback,
                 },
             )
             self.__persist_agent_state_to_graph(result=result)

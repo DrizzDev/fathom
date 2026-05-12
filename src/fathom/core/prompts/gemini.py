@@ -160,19 +160,31 @@ class GeminiPromptBuilder(PromptBuilder):
                         "</SCREEN_CHANGE_NOTICE>"
                     )
 
-        # 4. Priority Guidance (HITL) - The "System Override"
+        # 4. User Override (real human instructions — MUST comply)
         if guidance := context.get("guidance", []):
             instructions = [f"- {item}" for item in guidance]
             parts.append(
-                "<SYSTEM_OVERRIDE>\n"
+                "<USER_OVERRIDE>\n"
                 "  <INSTRUCTION>\n" + "\n".join(f"    {inst}" for inst in instructions) + "\n"
                 "  </INSTRUCTION>\n"
                 "  <WARNING>\n"
-                "    This is a meta-instruction for the agent's behavior.\n"
+                "    This is a meta-instruction from the human user.\n"
                 "    Do NOT treat this as content to be typed or searched.\n"
                 "    You MUST adjust your plan to comply with this override.\n"
                 "  </WARNING>\n"
-                "</SYSTEM_OVERRIDE>"
+                "</USER_OVERRIDE>"
+            )
+
+        # 5. Verifier Feedback (system-internal rejection — re-plan against it)
+        if verifier_feedback := context.get("verifier_feedback", []):
+            entries = [f"- {item}" for item in verifier_feedback]
+            parts.append(
+                "<VERIFIER_FEEDBACK>\n"
+                "Your previous completion claim was rejected by the verifier. "
+                "Re-plan to address these issues, then attempt completion again only when resolved.\n"
+                + "\n".join(entries)
+                + "\n"
+                "</VERIFIER_FEEDBACK>"
             )
 
         # 5. Interaction Cadence (Deterministic Repetition Tracking)

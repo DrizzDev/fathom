@@ -35,41 +35,47 @@ class SubGoalCompletionSignal(BaseModel):
         """
 
         score = 0.0
+
         if self.llm_confidence >= 0.8:
             score += 0.5
+
         elif self.llm_confidence >= 0.5:
             score += 0.25
+
         if self.keyword_match:
             score += 0.3
+
         if self.action_executed and self.screen_verified:
             score += 0.15
+
         if self.flagged_complete:
             score += 0.2
+
         if self.trace_verified:
             score += 0.2
+
         if self.rationale_verified:
             score += 0.1
+
         return min(score, 1.0)
 
-    def count_signals(self) -> int:
+    @property
+    def claim_verified(self) -> bool:
         """
-        Count independent verification signals: LLM self-report (tool flag AND
-        rationale agree) plus effective action (executed AND screen verified).
-        """
-
-        return sum(
-            [
-                self.flagged_complete and self.rationale_verified,
-                self.action_executed and self.screen_verified,
-            ]
-        )
-
-    def meets_threshold(self, required_signals: int = 2) -> bool:
-        """
-        Whether enough independent signals are present for the completion gate.
+        Both LLM-derived completion signals agree — the model raised the
+        completion flag AND its rationale text matches the sub-goal.
         """
 
-        return self.count_signals() >= required_signals
+        return self.flagged_complete and self.rationale_verified
+
+    @property
+    def action_effective(self) -> bool:
+        """
+        The action actually landed — an action was executed AND the
+        post-action screen change exceeded the meaningful-delta floor.
+        """
+
+        return self.action_executed and self.screen_verified
 
 
 class CompletionSignal(BaseModel):
@@ -101,14 +107,20 @@ class CompletionSignal(BaseModel):
         """
 
         score = 0.0
+
         if self.llm_confidence >= 0.8:
             score += 0.5
+
         elif self.llm_confidence >= 0.5:
             score += 0.25
+
         if self.keyword_match:
             score += 0.3
+
         if self.success_indicator:
             score += 0.15
+
         if self.expected_screen:
             score += 0.1
+
         return score >= 0.5

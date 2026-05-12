@@ -111,6 +111,23 @@ class ScreenState(BaseModel):
         except (ValueError, TypeError):
             return MAX_VISUAL_HASH_DISTANCE
 
+    def has_visual_progress_from(
+        self, *, previous: Optional["ScreenState"], threshold: int
+    ) -> bool:
+        """
+        Whether the visual pHash hamming distance from ``previous`` exceeds the near-duplicate threshold
+        (i.e. the screen visually moved forward, not just had animation noise). First screen always counts as progress.
+        """
+
+        if previous is None:
+            return True
+
+        distance = self.hamming_distance(
+            left_hash=previous.visual_hash, right_hash=self.visual_hash
+        )
+
+        return distance > threshold
+
 
 class ScreenDiff(BaseModel):
     """

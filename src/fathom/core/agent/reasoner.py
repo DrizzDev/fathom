@@ -216,23 +216,19 @@ class Reasoner:
         )
 
         logger.info(
-            "[Reasoner] Sub-goal verdict: flagged=%s rationale=%s action=%s screen=%s count=%d",
-            flagged_complete,
-            rationale_verified,
-            action_executed,
-            screen_verified,
-            signal.count_signals(),
+            "[Reasoner] Sub-goal verdict",
             extra={
                 "component": "reasoner",
                 "event": "subgoal_signals",
-                "delta_score": delta_score,
-                "similarity": round(similarity, 3),
+                "sub_goal": sub_goal_description[:80],
+                "claim_verified": signal.claim_verified,
+                "action_effective": signal.action_effective,
+                "flagged_complete": flagged_complete,
+                "rationale_verified": rationale_verified,
                 "action_executed": action_executed,
                 "screen_verified": screen_verified,
-                "flagged_complete": flagged_complete,
-                "sub_goal": sub_goal_description[:80],
-                "signal_count": signal.count_signals(),
-                "rationale_verified": rationale_verified,
+                "delta_score": delta_score,
+                "similarity": round(similarity, 3),
                 "llm_confidence": round(llm_confidence, 3),
             },
         )

@@ -5,6 +5,7 @@ from typing import Callable, Dict, List
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.core.exceptions import ConfigurationError
 from fathom.core.recovery.strategies.replan import ReplanRecovery
 from fathom.core.recovery.strategy import RecoveryStrategy
 from fathom.interfaces.llm import LLMPort
@@ -32,42 +33,58 @@ StrategyBuilder = Callable[[RecoveryContext], RecoveryStrategy]
 
 class RecoveryStrategyFactory:
     """
-    Name-keyed registry of recovery strategy builders.
+    Name-keyed registry of recovery strategy builders. Mirrors the
+    ``PromptFactory`` pattern: built-in builders live in an immutable
+    map; custom registrations live in a separate mutable map so test
+    isolation via :meth:`reset` does not touch defaults.
     """
 
-    __builders: Dict[str, StrategyBuilder] = {
-        "replan": lambda context: ReplanRecovery(llm=context.llm),
+    __BUILTINS: Dict[str, StrategyBuilder] = {
+        "replan": ReplanRecovery.build,
     }
+
+    __custom: Dict[str, StrategyBuilder] = {}
 
     @classmethod
     def register(cls, name: str, builder: StrategyBuilder) -> None:
         """
-        Register a strategy builder under ``name`` (last-write-wins).
+        Register a custom strategy builder under ``name``. Last-write-wins
+        among customs; customs shadow builtins on name collision.
         """
 
-        cls.__builders[name] = builder
+        cls.__custom[name] = builder
+
+    @classmethod
+    def reset(cls) -> None:
+        """
+        Drop all custom registrations and restore the factory to the
+        builtin-only state. Intended for test teardown.
+        """
+
+        cls.__custom.clear()
 
     @classmethod
     def build(cls, *, names: List[str], context: RecoveryContext) -> List[RecoveryStrategy]:
         """
-        Construct the strategy list in priority order; unknown names skipped.
+        Construct the strategy list in priority order. Raises
+        :class:`ConfigurationError` for any unknown name so a typo in
+        configuration fails fast at the call site.
         """
 
         strategies: List[RecoveryStrategy] = []
-
         for name in names:
-            if (builder := cls.__builders.get(name)) is None:
-                logger.warning("[RecoveryStrategyFactory] Unknown strategy %r — skipping", name)
-                continue
-
+            builder = cls.__custom.get(name) or cls.__BUILTINS.get(name)
+            if builder is None:
+                raise ConfigurationError(
+                    f"Unknown recovery strategy {name!r}; available: {cls.available()}"
+                )
             strategies.append(builder(context))
-
         return strategies
 
     @classmethod
     def available(cls) -> List[str]:
         """
-        Return registered strategy names.
+        Return all registered strategy names (builtins + customs), sorted.
         """
 
-        return sorted(cls.__builders)
+        return sorted(set(cls.__BUILTINS) | set(cls.__custom))

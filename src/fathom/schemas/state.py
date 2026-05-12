@@ -10,9 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from fathom.constants.screen import (
     DEFAULT_SAME_SCREEN_THRESHOLD,
     LOOP_ACTION_VELOCITY_INTERVAL_THRESHOLD_SECONDS,
+    LOOP_DETECTOR_WINDOW_SIZE,
+    LOOP_MAX_AUTONOMOUS_RECOVERIES,
     LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD,
     LOOP_OSCILLATION_AB_WINDOW,
     LOOP_OSCILLATION_ABC_WINDOW,
+    LOOP_REPETITION_THRESHOLD,
     LOOP_SCROLL_STALL_DISTANCE_THRESHOLD,
     LOOP_SCROLL_STALL_MIN_STREAK,
 )
@@ -22,35 +25,102 @@ from fathom.schemas.screens import ScreenState
 logger = getLogger(__name__)
 
 
+class LoopDetectorState(BaseModel):
+    """
+    Serializable snapshot of :class:`LoopDetector` internal deque's used
+    to round-trip loop-detection evidence through graph checkpoints so accumulating signals survive iteration boundaries.
+    """
+
+    types: List[str] = Field(default_factory=list, description="Action type tokens window")
+    actions: List[str] = Field(default_factory=list, description="Action descriptors window")
+    hashes: List[str] = Field(default_factory=list, description="Screen visual hashes window")
+    screens: List[ScreenState] = Field(
+        default_factory=list, description="ScreenState entries window"
+    )
+
+    timestamps: List[float] = Field(default_factory=list, description="Record timestamps window")
+    recovery_attempts: int = Field(default=0, description="Autonomous recovery attempts taken")
+
+    model_config = ConfigDict(frozen=True)
+
+
 class LoopDetector(BaseModel):
     """
     Detects when agent is stuck in a loop using multi-strategy pattern analysis.
+
+    Note: stateful. Designed for single-threaded asyncio access — coordinator
+    instances are scoped per agent run, so cross-task mutation does not occur under the current execution model.
     """
 
-    threshold: int = Field(default=3, description="Standard repetition threshold")
-    window_size: int = Field(default=15, description="Size of the pattern analysis window")
+    max_recovery: int = Field(
+        default=LOOP_MAX_AUTONOMOUS_RECOVERIES,
+        description="Maximum autonomous recovery attempts permitted",
+    )
+    window_size: int = Field(
+        default=LOOP_DETECTOR_WINDOW_SIZE, description="Size of the pattern analysis window"
+    )
+    threshold: int = Field(
+        default=LOOP_REPETITION_THRESHOLD, description="Window occurrences before classifying stuck"
+    )
 
-    __max_recovery: int = PrivateAttr(default=3)
     __recovery_attempts: int = PrivateAttr(default=0)
-    __recent_actions: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
-    __recent_types: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
-    __recent_hashes: Deque[str] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
-    __recent_screens: Deque[ScreenState] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
-    __recent_timestamps: Deque[float] = PrivateAttr(default_factory=lambda: deque(maxlen=15))
+    __recent_types: Deque[str] = PrivateAttr(default_factory=deque)
+    __recent_hashes: Deque[str] = PrivateAttr(default_factory=deque)
+    __recent_actions: Deque[str] = PrivateAttr(default_factory=deque)
+    __recent_timestamps: Deque[float] = PrivateAttr(default_factory=deque)
+    __recent_screens: Deque[ScreenState] = PrivateAttr(default_factory=deque)
+
+    def model_post_init(self, _context: Any) -> None:
+        """
+        Size all internal deque's from ``window_size`` so the maxlen tracks
+        the configured field rather than the literal default.
+        """
+
+        self.__recent_types = deque(maxlen=self.window_size)
+        self.__recent_hashes = deque(maxlen=self.window_size)
+        self.__recent_actions = deque(maxlen=self.window_size)
+        self.__recent_screens = deque(maxlen=self.window_size)
+        self.__recent_timestamps = deque(maxlen=self.window_size)
+
+    def to_state(self) -> LoopDetectorState:
+        """
+        Capture an immutable snapshot of the deque's for serialization.
+        """
+
+        return LoopDetectorState(
+            types=list(self.__recent_types),
+            hashes=list(self.__recent_hashes),
+            screens=list(self.__recent_screens),
+            actions=list(self.__recent_actions),
+            timestamps=list(self.__recent_timestamps),
+            recovery_attempts=self.__recovery_attempts,
+        )
+
+    def restore(self, *, state: LoopDetectorState) -> None:
+        """
+        Rehydrate the deque's from a snapshot. Replaces current contents.
+        """
+
+        self.__recovery_attempts = max(0, state.recovery_attempts)
+        self.__recent_types = deque(state.types, maxlen=self.window_size)
+        self.__recent_hashes = deque(state.hashes, maxlen=self.window_size)
+        self.__recent_screens = deque(state.screens, maxlen=self.window_size)
+        self.__recent_actions = deque(state.actions, maxlen=self.window_size)
+        self.__recent_timestamps = deque(state.timestamps, maxlen=self.window_size)
 
     def record(
         self,
         screen: ScreenState,
-        action_description: Optional[str] = None,
         action_type: Optional[str] = None,
+        action_description: Optional[str] = None,
     ) -> None:
         """
         Record state and action data for pattern analysis.
         """
 
         self.__recent_screens.append(screen)
-        self.__recent_hashes.append(screen.visual_hash)
         self.__recent_timestamps.append(time.time())
+        self.__recent_hashes.append(screen.visual_hash)
 
         # Store descriptions for semantic matching
         identifier = action_description or action_type or "None"
@@ -63,6 +133,19 @@ class LoopDetector(BaseModel):
             f"LoopDetector.record: {screen.visual_hash[:8]} | "
             f"action={identifier} | type={action_type}"
         )
+
+    def observe_screen(self, *, previous: Optional[ScreenState], current: ScreenState) -> None:
+        """
+        Tell the detector a new screen was seen. Advances the loop-detection
+        window only when the new screen is visually distinct from the
+        previous one (hamming > near-duplicate threshold); otherwise keeps
+        accumulating evidence so the near-duplicate detector can fire.
+        """
+
+        if current.has_visual_progress_from(
+            previous=previous, threshold=LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD
+        ):
+            self.advance()
 
     def is_stuck(self) -> bool:
         """
@@ -306,6 +389,7 @@ class LoopDetector(BaseModel):
                 trailing_scroll_streak += 1
             else:
                 break
+
         if trailing_scroll_streak < LOOP_SCROLL_STALL_MIN_STREAK:
             return False
 
@@ -357,7 +441,7 @@ class LoopDetector(BaseModel):
         Check if recovery is still possible.
         """
 
-        return self.__recovery_attempts < self.__max_recovery
+        return self.__recovery_attempts < self.max_recovery
 
     def record_recovery_attempt(self) -> int:
         """

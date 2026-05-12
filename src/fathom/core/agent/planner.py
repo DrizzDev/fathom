@@ -142,9 +142,11 @@ class StepPlanner:
             visual_hash=self.__compute_simple_hash(capture=capture),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
-        # Clear rejection history after successful analysis — prevents stale
-        # multi-turn context from leaking into unrelated future steps.
+
+        # Clear rejection history + verifier feedback after successful
+        # analysis — both are use-once signals consumed by this iteration.
         state.clear_rejection_history()
+        context_manager.clear_verifier_feedback()
         state.update_delta_context(analysis.delta)
 
         if analysis.content_exhausted:

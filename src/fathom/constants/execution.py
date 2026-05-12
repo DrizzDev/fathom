@@ -48,7 +48,7 @@ RECOMMENDED_WORKFLOW_TASK_TIMEOUT_SECONDS = 60
 REMOTE_DEVICE_REQUEST_TIMEOUT_SECONDS = 60.0
 
 # Maximum time (seconds) to wait for background tasks during shutdown
-DRAIN_TIMEOUT = 30.0
+DRAIN_TIMEOUT = 60.0
 
 
 class SignalType(StrEnum):

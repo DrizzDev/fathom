@@ -1,7 +1,16 @@
+"""
+Unit tests for :class:`RecoveryStrategyFactory`. Pin built-in
+registration, custom-strategy registration via :meth:`register`,
+fail-fast behaviour for unknown names, and priority-order preservation.
+"""
+
 from __future__ import annotations
 
-from typing import Optional
+from typing import Generator, Optional
 
+import pytest
+
+from fathom.core.exceptions import ConfigurationError
 from fathom.core.recovery import (
     RecoveryContext,
     RecoveryOutcome,
@@ -20,7 +29,8 @@ class TestRecoveryStrategyFactory:
     class __Custom(RecoveryStrategy):
         """
         Tagged :class:`RecoveryStrategy` double whose ``name`` exposes
-        the tag so tests can assert that :meth:`build` returns instances in the expected order.
+        the tag so tests can assert that :meth:`build` returns instances
+        in the expected order.
         """
 
         def __init__(self, *, tag: str) -> None:
@@ -50,9 +60,22 @@ class TestRecoveryStrategyFactory:
             _ = request
             return None
 
+    @pytest.fixture(autouse=True)
+    def __reset_factory(self) -> Generator[None, None, None]:
+        """
+        Drop custom registrations between tests so state never leaks.
+        """
+
+        RecoveryStrategyFactory.reset()
+        try:
+            yield
+        finally:
+            RecoveryStrategyFactory.reset()
+
     def test_builtin_replan_registered(self) -> None:
         """
-        The built-in ``replan`` strategy must be present in the factory without any explicit registration call.
+        The built-in ``replan`` strategy must be present in the factory
+        without any explicit registration call.
         """
 
         assert "replan" in RecoveryStrategyFactory.available()
@@ -72,17 +95,15 @@ class TestRecoveryStrategyFactory:
         assert len(built) == 1
         assert built[0].name == "custom:x"
 
-    def test_unknown_strategy_name_skipped(self, llm_port_stub, memory_port_stub) -> None:
+    def test_unknown_strategy_name_raises(self, llm_port_stub, memory_port_stub) -> None:
         """
-        Unknown strategy names must be skipped silently so a typo in
-        ``RecoveryPolicy.strategies`` degrades gracefully.
+        Unknown strategy names must raise :class:`ConfigurationError` so
+        a typo in ``RecoveryPolicy.strategies`` fails fast.
         """
 
         context = RecoveryContext(llm=llm_port_stub, memory=memory_port_stub)
-        built = RecoveryStrategyFactory.build(
-            names=["definitely_not_real_strategy"], context=context
-        )
-        assert built == []
+        with pytest.raises(ConfigurationError):
+            RecoveryStrategyFactory.build(names=["definitely_not_real_strategy"], context=context)
 
     def test_priority_order_preserved(self, llm_port_stub, memory_port_stub) -> None:
         """
@@ -99,3 +120,34 @@ class TestRecoveryStrategyFactory:
 
         assert [strategy.name for strategy in built_ab] == ["custom:a", "custom:b"]
         assert [strategy.name for strategy in built_ba] == ["custom:b", "custom:a"]
+
+    def test_reset_drops_customs_keeps_builtins(self) -> None:
+        """
+        :meth:`reset` must clear registrations made via ``register`` but
+        retain the built-in defaults.
+        """
+
+        RecoveryStrategyFactory.register("ephemeral", lambda _ctx: self.__Custom(tag="z"))
+        assert "ephemeral" in RecoveryStrategyFactory.available()
+
+        RecoveryStrategyFactory.reset()
+        assert "ephemeral" not in RecoveryStrategyFactory.available()
+        assert "replan" in RecoveryStrategyFactory.available()
+
+    def test_custom_shadows_builtin_on_name_collision(
+        self, llm_port_stub, memory_port_stub
+    ) -> None:
+        """
+        A custom registration under a built-in name must take precedence
+        without removing the builtin (so :meth:`reset` restores it).
+        """
+
+        RecoveryStrategyFactory.register("replan", lambda _ctx: self.__Custom(tag="shadow"))
+        context = RecoveryContext(llm=llm_port_stub, memory=memory_port_stub)
+
+        built = RecoveryStrategyFactory.build(names=["replan"], context=context)
+        assert built[0].name == "custom:shadow"
+
+        RecoveryStrategyFactory.reset()
+        built_after_reset = RecoveryStrategyFactory.build(names=["replan"], context=context)
+        assert built_after_reset[0].name == "replan"

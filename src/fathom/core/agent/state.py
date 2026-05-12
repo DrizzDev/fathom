@@ -11,7 +11,12 @@ from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenState
-from fathom.schemas.state import ActionHistory, InteractionTracker, LoopDetector
+from fathom.schemas.state import (
+    ActionHistory,
+    InteractionTracker,
+    LoopDetector,
+    LoopDetectorState,
+)
 from fathom.schemas.steps import StepResult
 from fathom.schemas.subgoal import SubGoal, SubGoalStatus
 
@@ -149,13 +154,31 @@ class AgentState:
 
         return self.__last_delta_score
 
-    def record_hitl_intervention(self) -> None:
+    def bump_realignment_budget(self) -> None:
         """
-        Atomic update when user provides guidance to break a loop.
+        Increment the realignment counter so :attr:`can_continue`
+        enforces the per-run intervention budget.
         """
 
         self.__realignment_count += 1
+
+    def reset_loop_history(self) -> None:
+        """
+        Drop accumulated loop-detection evidence (e.g. after a user
+        intervention course-corrects from the stuck path).
+        """
+
         self.__loop_detector.reset()
+
+    def record_hitl_intervention(self) -> None:
+        """
+        Composite of :meth:`bump_realignment_budget` and
+        :meth:`reset_loop_history`. Use the granular methods when only
+        one effect is desired.
+        """
+
+        self.bump_realignment_budget()
+        self.reset_loop_history()
 
     @property
     def can_continue(self) -> bool:
@@ -218,24 +241,18 @@ class AgentState:
         previous_screen = self.__current_screen
         self.__current_screen = screen
 
-        # Fuzzy matching for seen screens
         is_new_screen = self.__is_new_screen(screen=screen)
 
         if is_new_screen:
             self.__seen_screens.append(screen)
             logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
-            # New screen = visual progress. Clear screen-based detection but
-            # preserve action history so action-repeat detection survives across
-            # visually-different screens (e.g. tapping a counter button).
-            self.__loop_detector.advance()
+            # Loop detector owns the visual-progress policy:
+            # it advances only when the new screen is visually distinct from the previous one, ignoring xml/interaction hash flips.
+            self.__loop_detector.observe_screen(previous=previous_screen, current=screen)
         elif previous_screen and previous_screen.activity_hash != screen.activity_hash:
-            # Keep loop history when revisiting known screens across activities.
-            # This preserves oscillation/stall evidence instead of masking it.
             logger.debug(
-                (
-                    f"Activity changed on known screen: {previous_screen.activity} -> "
-                    f"{screen.activity}. Preserving loop detector state."
-                )
+                f"Activity changed on known screen: {previous_screen.activity} -> "
+                f"{screen.activity}. Preserving loop detector state."
             )
         else:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
@@ -408,12 +425,18 @@ class AgentState:
             rationale_verified=updated_signal.rationale_verified,
         )
 
-        signal_count = updated_signal.count_signals()
         logger.info(
-            f"[AgentState] Sub-goal {current.index} marked complete: {current.description} | "
-            f"Signals: {signal_count} [llm={updated_signal.flagged_complete}, "
-            f"trace={updated_signal.trace_verified}, rationale={updated_signal.rationale_verified}] | "
-            f"Evidence: {updated_signal.evidence}"
+            "[AgentState] Sub-goal marked complete",
+            extra={
+                "component": "agent_state",
+                "event": "subgoal_complete",
+                "sub_goal_index": current.index,
+                "evidence": updated_signal.evidence,
+                "sub_goal_description": current.description[:80],
+                "claim_verified": updated_signal.claim_verified,
+                "trace_verified": updated_signal.trace_verified,
+                "action_effective": updated_signal.action_effective,
+            },
         )
 
         # Advance to next sub-goal
@@ -720,11 +743,14 @@ class AgentState:
             "realignment_budget": self.__realignment_budget,
             "last_delta_score": self.__last_delta_score,
             "low_delta_streak": self.__low_delta_streak,
-            "action_stats": self.__action_history.get_stats(),
-            "action_context": self.__action_history.get_context(),
             "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
             "sub_goals": [goal.model_dump(mode="json") for goal in self.__sub_goals],
             "current_sub_goal_index": self.__current_sub_goal_index,
+            "loop_detector_state": self.__loop_detector.to_state().model_dump(mode="json"),
+            # Diagnostic snapshot retained for backward-compatibility with
+            # external checkpoint readers. Not consumed during restore.
+            "action_stats": self.__action_history.get_stats(),
+            "action_context": self.__action_history.get_context(),
         }
 
     def __restore_from_data(
@@ -739,6 +765,7 @@ class AgentState:
         current_sub_goal_index: int = 0,
         last_delta_score: Optional[float] = None,
         sub_goals: Optional[List[Dict[str, Any]]] = None,
+        loop_detector_state: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -771,6 +798,11 @@ class AgentState:
                     current.mark_in_progress()
         else:
             self.__current_sub_goal_index = 0
+
+        if loop_detector_state:
+            self.__loop_detector.restore(
+                state=LoopDetectorState.model_validate(loop_detector_state)
+            )
 
     @classmethod
     def from_checkpoint(cls, data: Dict[str, object]) -> "AgentState":
@@ -836,6 +868,11 @@ class AgentState:
             else 0
         )
 
+        loop_detector_state_raw = data.get("loop_detector_state")
+        loop_detector_state = (
+            dict(loop_detector_state_raw) if isinstance(loop_detector_state_raw, dict) else None
+        )
+
         state.__restore_from_data(
             sub_goals=sub_goals,
             step_count=step_count,
@@ -846,6 +883,7 @@ class AgentState:
             completion_reason=completion_reason,
             realignment_count=realignment_count,
             current_sub_goal_index=current_sub_goal_index,
+            loop_detector_state=loop_detector_state,
         )
 
         return state

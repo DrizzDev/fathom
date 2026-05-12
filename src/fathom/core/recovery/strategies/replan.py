@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import List, Optional, Sequence
+from typing import TYPE_CHECKING, List, Optional, Sequence
 
 from fathom.core.prompts.decomposition import DecompositionPromptBuilder
 from fathom.core.prompts.factory import PromptFactory
@@ -14,6 +14,9 @@ from fathom.core.recovery.types import (
 )
 from fathom.core.services.decomposer import DecompositionAugmentation, IntentDecomposer
 from fathom.interfaces.llm import LLMPort, PromptPart
+
+if TYPE_CHECKING:
+    from fathom.core.recovery.factory import RecoveryContext
 
 logger = getLogger(__name__)
 
@@ -80,6 +83,15 @@ class ReplanRecovery(RecoveryStrategy):
     def __init__(self, *, llm: LLMPort) -> None:
         self.__decomposer = IntentDecomposer(llm=llm)
         self.__prompt_builder = PromptFactory.get_decomposition_builder(model_name=llm.model_name)
+
+    @classmethod
+    def build(cls, context: "RecoveryContext") -> "ReplanRecovery":
+        """
+        Construct a :class:`ReplanRecovery` from the factory's recovery
+        context, plucking only the ports this strategy requires.
+        """
+
+        return cls(llm=context.llm)
 
     @property
     def name(self) -> str:

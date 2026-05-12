@@ -14,6 +14,15 @@ class SubGoalStatus(StrEnum):
     IN_PROGRESS = "IN_PROGRESS"
 
 
+class SubGoalKind(StrEnum):
+    """
+    Classification used to select the completion gate strategy for a sub-goal.
+    """
+
+    ACTION = "action"
+    VALIDATION = "validation"
+
+
 class SubGoal(BaseModel):
     """
     Represents a single sub-goal in a decomposed intent.

@@ -27,6 +27,18 @@ ACTION_MIN_CONFIDENCE_AFTER_FAILURE: float = 0.80
 # Synthetic confidence assigned when a next-phase action is detected.
 ACTION_NEXT_PHASE_CONFIDENCE: float = 0.85
 
+# Sub-goal description tokens that classify the step as a validation
+# (observation-only) goal where the screen is not expected to change.
+VALIDATION_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "verify",
+        "validate",
+        "confirm",
+        "check if",
+        "check that",
+    }
+)
+
 # Words in reasoning that signal a sub-goal or intent has been completed.
 COMPLETION_KEYWORDS: frozenset[str] = frozenset(
     {

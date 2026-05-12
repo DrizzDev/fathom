@@ -46,6 +46,18 @@ LOOP_ACTION_VELOCITY_INTERVAL_THRESHOLD_SECONDS: float = 1.5
 # Independent from DEFAULT_SAME_SCREEN_THRESHOLD which is the broader equality bar.
 LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD: int = 4
 
+# Minimum window occurrences required before the loop detector classifies a
+# pattern as stuck. Applied to all five detectors (repetition, near-duplicate,
+# oscillation, scroll-stall, action-velocity).
+LOOP_REPETITION_THRESHOLD: int = 3
+
+# Size of the sliding window the loop detector inspects for pattern analysis.
+LOOP_DETECTOR_WINDOW_SIZE: int = 15
+
+# Maximum autonomous recovery attempts (BACK / SCROLL / HOME) before the loop
+# detector declines further recovery and the agent terminates as STUCK.
+LOOP_MAX_AUTONOMOUS_RECOVERIES: int = 3
+
 STATUS_BAR_HEIGHT_PX: int = 80
 NAVIGATION_BAR_HEIGHT_PX: int = 60
 

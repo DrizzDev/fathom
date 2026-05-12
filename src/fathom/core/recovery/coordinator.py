@@ -12,10 +12,15 @@ logger = getLogger(__name__)
 
 class RecoveryCoordinator:
     """
-    Dispatches recovery triggers to an ordered chain of strategies.
-    Owns per-(scope, trigger) counters so escalation thresholds are tracked independently of agent state.
-    ``scope`` is an opaque integer the caller uses to group counters (today: the active sub-goal index).
-    Coordinator instances are scoped per agent run — no shared state.
+    Dispatches recovery triggers to an ordered chain of strategies. Owns
+    per-(scope, trigger) counters so escalation thresholds are tracked
+    independently of agent state. ``scope`` is an opaque integer the
+    caller uses to group counters (today: the active sub-goal index).
+
+    Concurrency: instance-scoped per agent run. Designed for
+    single-threaded asyncio access — counter read-modify-write is not
+    atomic and is unsafe under threading. Document if the execution
+    model changes.
     """
 
     def __init__(
@@ -55,7 +60,12 @@ class RecoveryCoordinator:
     def reset(self, *, scope: int) -> None:
         """
         Drop counters for ``scope`` (e.g. on sub-goal advancement).
+        Raises :class:`ValueError` for negative scope so caller bugs
+        surface immediately rather than silently no-op.
         """
+
+        if scope < 0:
+            raise ValueError(f"scope must be non-negative, got {scope}")
 
         for key in [key for key in self.__counters if key[0] == scope]:
             del self.__counters[key]

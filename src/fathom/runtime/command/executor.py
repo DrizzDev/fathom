@@ -168,29 +168,35 @@ class CommandExecutor:
 
     async def __run_intent_workflow(self, *, request: IntentRunRequest) -> IntentResult:
         """
-        Execute intent workflow with spinner in non-interactive mode.
+        Execute intent workflow; wraps in a console spinner only when
+        the run is non-interactive (interactive sessions need stdin and would conflict with the spinner).
         """
 
         if self.__runner is None:
             raise FathomError("Runner is not initialized")
 
         if request.runtime.interactive:
-            return await self.__runner.run_intent(
-                intent=request.objective.intent,
-                use_xml=request.objective.use_xml,
-                max_steps=request.objective.max_steps,
-                request_id=request.runtime.session_id,
-                realignment=request.interaction.realignment,
-            )
+            return await self.__invoke_runner(request=request)
 
         with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
-            return await self.__runner.run_intent(
-                intent=request.objective.intent,
-                use_xml=request.objective.use_xml,
-                max_steps=request.objective.max_steps,
-                request_id=request.runtime.session_id,
-                realignment=request.interaction.realignment,
-            )
+            return await self.__invoke_runner(request=request)
+
+    async def __invoke_runner(self, *, request: IntentRunRequest) -> IntentResult:
+        """
+        Single dispatch into the runner
+        """
+
+        if self.__runner is None:
+            raise FathomError("Runner is not initialized")
+
+        return await self.__runner.run_intent(
+            intent=request.objective.intent,
+            use_xml=request.objective.use_xml,
+            max_steps=request.objective.max_steps,
+            request_id=request.runtime.session_id,
+            recovery=request.interaction.recovery,
+            realignment=request.interaction.realignment,
+        )
 
     def __print_execution_summary(self, *, result: IntentResult) -> None:
         """
