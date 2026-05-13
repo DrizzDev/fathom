@@ -11,6 +11,7 @@ from fathom.constants.screen import (
     DEFAULT_SAME_SCREEN_THRESHOLD,
     LOOP_ACTION_VELOCITY_INTERVAL_THRESHOLD_SECONDS,
     LOOP_DETECTOR_WINDOW_SIZE,
+    LOOP_HASH_CLUSTER_HAMMING_THRESHOLD,
     LOOP_MAX_AUTONOMOUS_RECOVERIES,
     LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD,
     LOOP_OSCILLATION_AB_WINDOW,
@@ -18,6 +19,7 @@ from fathom.constants.screen import (
     LOOP_REPETITION_THRESHOLD,
     LOOP_SCROLL_STALL_DISTANCE_THRESHOLD,
     LOOP_SCROLL_STALL_MIN_STREAK,
+    SCREEN_PROGRESS_HAMMING_THRESHOLD,
 )
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
@@ -136,14 +138,21 @@ class LoopDetector(BaseModel):
 
     def observe_screen(self, *, previous: Optional[ScreenState], current: ScreenState) -> None:
         """
-        Tell the detector a new screen was seen. Advances the loop-detection
-        window only when the new screen is visually distinct from the
-        previous one (hamming > near-duplicate threshold); otherwise keeps
-        accumulating evidence so the near-duplicate detector can fire.
+        Tell the detector a new screen was seen.
+
+        Advances the loop-detection window only when the new screen is
+        *genuinely* distinct from the previous one — hamming greater than
+        :data:`SCREEN_PROGRESS_HAMMING_THRESHOLD`. The progress threshold
+        is deliberately much higher than the near-duplicate threshold
+        used by the stuck detectors below, so cosmetic differences
+        (status-bar tick, suggestion-count increment, anti-aliasing
+        noise) do not trip ``advance()`` and wipe accumulating evidence.
+        That distinction is what enables the scroll-loop detection to
+        actually fire on long sequences of near-identical screens.
         """
 
         if current.has_visual_progress_from(
-            previous=previous, threshold=LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD
+            previous=previous, threshold=SCREEN_PROGRESS_HAMMING_THRESHOLD
         ):
             self.advance()
 
@@ -192,15 +201,17 @@ class LoopDetector(BaseModel):
     def __detect_repetition(self) -> bool:
         """
         Detect simple screen repetition.
-        """
 
-        def _is_scroll_navigation_sequence(window: int = 4) -> bool:
-            recent_types = list(self.__recent_types)[-window:]
-            if len(recent_types) < window:
-                return False
-            return all(
-                any(token in t for token in ("scroll", "swipe", "flick")) for t in recent_types
-            )
+        The previous implementation carved out scroll/swipe/flick action
+        sequences entirely on the assumption that scrolling legitimately
+        produces same-looking screens. That assumption breaks the moment
+        scrolling no longer advances content (a non-scrollable list, an
+        already-revealed CTA, an exhausted feed), so the carve-out is
+        replaced with a screen-convergence check: if action diversity is
+        high we still treat that as legitimate exploration, but identical
+        screens with similar actions and converging visual hashes are
+        flagged as stuck regardless of action kind.
+        """
 
         for index in range(len(self.__recent_screens)):
             count = 1
@@ -210,12 +221,18 @@ class LoopDetector(BaseModel):
                     count += 1
 
             if count >= self.threshold:
-                if _is_scroll_navigation_sequence():
-                    continue
                 if len(set(self.__recent_actions)) >= self.threshold:
                     continue
 
-                logger.warning(f"LoopDetector: Stuck via screen repetition ({count}x)")
+                logger.warning(
+                    "LoopDetector: stuck via screen repetition (%dx)",
+                    count,
+                    extra={
+                        "component": "loop_detector",
+                        "event": "stuck_screen_repetition",
+                        "count": count,
+                    },
+                )
                 return True
 
         return False
@@ -261,7 +278,18 @@ class LoopDetector(BaseModel):
         Detect repeated identical actions regardless of screen state.
 
         Survives screen resets (advance) so it can catch loops where each
-        action produces a visually-different screen (e.g. incrementing a counter).
+        action produces a visually-different screen (e.g. tapping a
+        counter button that increments a number).
+
+        Scroll-like actions (swipe / scroll / flick) used to be carved
+        out entirely. That's wrong when the scroll target has nothing
+        left to reveal — scrolling produces near-duplicate screens and
+        the agent loops indefinitely. Replace the carve-out with a
+        screen-convergence check: scroll-like actions only suppress
+        repetition detection when the screens they produced are still
+        diverging (productive scroll). When the screens converge into a
+        near-duplicate cluster (stuck scroll) they trip stuck like any
+        other repeated action.
         """
 
         action_counts: Dict[str, int] = {}
@@ -274,14 +302,49 @@ class LoopDetector(BaseModel):
             if action_counts[action] >= self.threshold + 1:
                 action_lower = action.lower()
                 if any(token in action_lower for token in ("swipe", "scroll", "flick")):
-                    continue
+                    if not self.__recent_hashes_are_converging():
+                        # Screens are still diverging — legitimate scroll
+                        # through fresh content. Suppress this repeat.
+                        continue
 
                 logger.warning(
-                    f"LoopDetector: Stuck via action repetition '{action}' ({action_counts[action]}x)"
+                    "LoopDetector: stuck via action repetition '%s' (%dx)",
+                    action,
+                    action_counts[action],
+                    extra={
+                        "component": "loop_detector",
+                        "event": "stuck_action_repetition",
+                        "action": action,
+                        "count": action_counts[action],
+                    },
                 )
                 return True
 
         return False
+
+    def __recent_hashes_are_converging(self) -> bool:
+        """
+        Return True when the most recent ``self.threshold`` visual
+        hashes all lie within :data:`LOOP_HASH_CLUSTER_HAMMING_THRESHOLD`
+        of one another.
+
+        Used by the scroll-repetition guard to distinguish productive
+        scrolling (screens diverging through fresh content) from stuck
+        scrolling (screens converging into a near-duplicate cluster).
+        """
+
+        recent_hashes = [hash_ for hash_ in self.__recent_hashes if hash_]
+        tail = recent_hashes[-self.threshold :]
+        if len(tail) < self.threshold:
+            return False
+
+        anchor = tail[0]
+        for hash_ in tail[1:]:
+            distance = ScreenState.hamming_distance(left_hash=anchor, right_hash=hash_)
+            if distance > LOOP_HASH_CLUSTER_HAMMING_THRESHOLD:
+                return False
+
+        return True
 
     def has_repeated_action_on_same_screen(
         self,
@@ -399,15 +462,39 @@ class LoopDetector(BaseModel):
         first_hash = self.__recent_hashes[streak_start]
         last_hash = self.__recent_hashes[-1]
 
-        streak_hashes = list(self.__recent_hashes)[streak_start:]
-        unique_hash_count = len(set(streak_hashes))
-
+        streak_hashes = [hash_ for hash_ in list(self.__recent_hashes)[streak_start:] if hash_]
         distance = ScreenState.hamming_distance(left_hash=first_hash, right_hash=last_hash)
-        # Stall must show both low net movement and low diversity across streak.
-        if distance < LOOP_SCROLL_STALL_DISTANCE_THRESHOLD and unique_hash_count <= 2:
+
+        # Stall must show both low net movement AND all streak hashes
+        # clustered tightly around the anchor. The previous
+        # ``unique_hash_count <= 2`` check was too strict: pHash jitter
+        # routinely produces 3+ unique short hashes even when the screen
+        # is visually identical, so it never fired in practice. The
+        # cluster-hamming check is jitter-tolerant.
+        all_clustered = True
+        if streak_hashes:
+            anchor = streak_hashes[0]
+            for hash_ in streak_hashes[1:]:
+                if (
+                    ScreenState.hamming_distance(left_hash=anchor, right_hash=hash_)
+                    > LOOP_HASH_CLUSTER_HAMMING_THRESHOLD
+                ):
+                    all_clustered = False
+                    break
+
+        if distance < LOOP_SCROLL_STALL_DISTANCE_THRESHOLD and all_clustered:
             logger.warning(
-                "LoopDetector: Scroll stall detected "
-                f"(dist={distance}, streak={trailing_scroll_streak}, unique={unique_hash_count})"
+                "LoopDetector: scroll stall detected (dist=%d, streak=%d, clustered=%s)",
+                distance,
+                trailing_scroll_streak,
+                all_clustered,
+                extra={
+                    "component": "loop_detector",
+                    "event": "stuck_scroll_stall",
+                    "net_distance": distance,
+                    "streak_length": trailing_scroll_streak,
+                    "all_within_cluster": all_clustered,
+                },
             )
             return True
 

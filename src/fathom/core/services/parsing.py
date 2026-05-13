@@ -19,7 +19,12 @@ from fathom.schemas.gemini_tools import (
     ValidateStateArgs,
     VerifyGoalArgs,
 )
-from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
+from fathom.schemas.results import (
+    AnalysisOutcome,
+    AnalysisResult,
+    GenerateResult,
+    ToolErrorFeedback,
+)
 
 logger = getLogger(__name__)
 
@@ -31,7 +36,13 @@ class ToolResponseParser:
 
     # Primary tools produce the AnalysisResult; side-effect tools merge into it.
     __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
-    __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state", "ask_user"}
+    __PRIMARY_TOOLS = {
+        "execute_ui",
+        "verify_goal",
+        "validate_state",
+        "ask_user",
+        "report_screen_unactionable",
+    }
 
     @staticmethod
     def __require_bool(
@@ -157,6 +168,9 @@ class ToolResponseParser:
 
         elif name == "ask_user":
             return self.__parse_ask_user(arguments=arguments)
+
+        elif name == "report_screen_unactionable":
+            return self.__parse_report_unactionable(arguments=arguments)
 
         else:
             raise VisionError(f"Unknown function call: {name}")
@@ -659,6 +673,37 @@ class ToolResponseParser:
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
             screen_description="User guidance requested",
+        )
+
+    def __parse_report_unactionable(self, arguments: Any) -> AnalysisResult:
+        """
+        Parse the ``report_screen_unactionable`` tool call.
+
+        Produces an :class:`AnalysisResult` with
+        ``outcome=REPORT_UNACTIONABLE`` and an ``unactionable_reason``.
+        The action is a non-spatial WAIT placeholder so existing
+        downstream code (which expects ``result.action`` to be valid)
+        keeps working without inventing a synthetic target — the
+        planner branches on ``outcome`` instead of the action.
+        """
+
+        raw = arguments or {}
+        reason = str(raw.get("reason", "")).strip() or "screen does not match the active sub-goal"
+
+        return AnalysisResult(
+            action=Action(
+                confidence=1.0,
+                rationale=reason,
+                action_type=ActionType.WAIT,
+                target="report_screen_unactionable",
+            ),
+            alternatives=[],
+            reasoning=reason,
+            is_goal_complete=False,
+            is_sub_goal_complete=False,
+            outcome=AnalysisOutcome.REPORT_UNACTIONABLE,
+            unactionable_reason=reason,
+            screen_description="Agent reported screen as unactionable for active sub-goal",
         )
 
     def __create_fallback_result(self, message: str, completed: bool = False) -> AnalysisResult:

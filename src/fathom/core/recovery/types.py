@@ -13,10 +13,32 @@ class RecoveryTrigger(StrEnum):
     """
     Enumerates the points at which the graph asks the recovery coordinator
     for help. New triggers can be added without touching existing strategies.
+
+    Each value is a distinct stuck signal:
+
+    - ``ACTION_BLOCKED``: the planner determined the previously-planned
+      approach is unreachable from the current screen.
+    - ``VERIFY_REJECTED``: final verification refused the run as complete.
+    - ``LOOP_DETECTED``: the loop detector observed repetition across
+      screens or actions strong enough to indicate the agent is cycling.
+    - ``NO_PROGRESS``: the action-effect classifier marked the last N
+      actions as producing no visual progress.
+    - ``TARGET_UNRESOLVED``: the resolution layer could not map the
+      agent's named target to a tappable manifest element or screen
+      coordinate.
+    - ``SUBGOAL_BUDGET_EXCEEDED``: the active sub-goal exhausted its
+      per-sub-goal step budget without its success criterion being met.
+    - ``REPORT_UNACTIONABLE``: the agent itself reported that the active
+      sub-goal does not match the current screen.
     """
 
     ACTION_BLOCKED = "ACTION_BLOCKED"
     VERIFY_REJECTED = "VERIFY_REJECTED"
+    LOOP_DETECTED = "LOOP_DETECTED"
+    NO_PROGRESS = "NO_PROGRESS"
+    TARGET_UNRESOLVED = "TARGET_UNRESOLVED"
+    SUBGOAL_BUDGET_EXCEEDED = "SUBGOAL_BUDGET_EXCEEDED"
+    REPORT_UNACTIONABLE = "REPORT_UNACTIONABLE"
 
 
 class RecoveryRequest(BaseModel):

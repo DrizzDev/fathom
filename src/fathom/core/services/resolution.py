@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import re
 from logging import getLogger
-from typing import Any, Dict, Optional, Pattern
+from typing import Any, Dict, Optional, Pattern, Tuple
 
 from fathom.constants import SPATIAL_ACTION_TYPES, ActionType
 from fathom.interfaces.memory import MemoryPort
 from fathom.schemas.actions import Action, Bounds, InputContext
+from fathom.schemas.resolution import ResolveResult
 
 logger = getLogger(__name__)
 
@@ -35,15 +36,47 @@ class ReferenceResolutionService:
         self,
         action: Action,
         elements: Optional[Dict[str, Any]] = None,
-    ) -> Action:
+    ) -> ResolveResult:
         """
-        Resolve dynamic references and snap to ground-truth coordinates.
+        Resolve dynamic references and map a named target to concrete
+        manifest-grounded coordinates.
+
+        Returns a :class:`ResolveResult` whose status reflects what
+        actually happened:
+
+        - ``RESOLVED``: snap succeeded or the action is non-spatial.
+        - ``UNRESOLVED``: action is spatial and named a label that
+          either doesn't exist in the manifest or carries unparseable
+          bounds. The Action returned still has its variable references
+          substituted so the planner can surface a useful failure
+          reason.
+
+        Variable substitution (``$memory.key``, ``$env.VAR``) always
+        runs, even on the unresolved path, so the diagnostic carries
+        the literal substituted target.
         """
 
-        # 1. Snap to Label ID (Ground Truth)
-        action = self.__snap_to_label(action=action, elements=elements)
+        snapped, snap_status, snap_reason = self.__snap_to_label(
+            action=action, elements=elements
+        )
 
-        # 2. Resolve Variable References in text fields
+        substituted = await self.__substitute_references(action=snapped)
+
+        if snap_status == "resolved":
+            return ResolveResult.resolved(action=substituted)
+
+        return ResolveResult.unresolved(
+            action=substituted,
+            reason=snap_reason or "named target could not be located in the manifest",
+        )
+
+    async def __substitute_references(self, *, action: Action) -> Action:
+        """
+        Substitute ``$memory.key`` / ``$env.VAR`` references in the
+        action's text fields. Returns a fresh Action when any field
+        changed; returns the original otherwise.
+        """
+
         updates: Dict[str, Any] = {}
 
         if action.text:
@@ -66,42 +99,80 @@ class ReferenceResolutionService:
         self,
         action: Action,
         elements: Optional[Dict[str, Any]],
-    ) -> Action:
+    ) -> Tuple[Action, str, Optional[str]]:
         """
-        Overwrites action bounds with ground-truth pixel coordinates if label_id matches.
+        Overwrite action bounds with ground-truth pixel coordinates when
+        ``label_id`` matches an element in the manifest.
 
-        Snapping is skipped for non-spatial action types (wait, validate, complete, etc.)
-        that carry no meaningful target element coordinates.
+        Returns ``(action, status, reason)`` where ``status`` is one of:
+
+        - ``"resolved"``: action does not require snapping (non-spatial)
+          OR the snap succeeded.
+        - ``"unresolved"``: action is spatial and named a target that
+          could not be mapped to a manifest element. ``reason`` carries
+          a short mechanical diagnostic the planner can hand to the
+          recovery coordinator.
         """
 
         if action.action_type not in SPATIAL_ACTION_TYPES:
-            return action
+            return action, "resolved", None
 
-        if not action.label_id or not elements:
-            return action
+        if not action.label_id:
+            return action, "unresolved", "spatial action emitted without a label_id"
+
+        if not elements:
+            return action, "unresolved", "manifest empty; no labeled elements to snap against"
 
         info = elements.get(action.label_id)
         if not info:
-            return action
+            return action, "unresolved", (
+                f"label_id '{action.label_id}' not present in current manifest"
+            )
 
         bounds_str = str(info.get("bounds", ""))
         if not bounds_str:
-            return action
+            return action, "unresolved", (
+                f"label_id '{action.label_id}' has no bounds; element is not snappable"
+            )
+
+        match = self.__bounds_pattern.match(bounds_str)
+        if not match:
+            logger.warning(
+                "[Resolution] invalid bounds format for label %s: %s",
+                action.label_id,
+                bounds_str,
+                extra={
+                    "component": "resolution",
+                    "event": "invalid_bounds",
+                    "label_id": action.label_id,
+                    "bounds": bounds_str,
+                },
+            )
+            return action, "unresolved", (
+                f"label_id '{action.label_id}' has unparseable bounds '{bounds_str}'"
+            )
 
         try:
-            # Parse [x1,y1][x2,y2] using pre-compiled regex for speed
-            match = self.__bounds_pattern.match(bounds_str)
-            if not match:
-                logger.warning(f"Invalid bounds format for label {action.label_id}: {bounds_str}")
-                return action
-
             x1, y1, x2, y2 = map(int, match.groups())
             width = x2 - x1
             height = y2 - y1
 
             logger.info(
-                f"Snapped Action to Label [{action.label_id}] "
-                f"-> Pixel Bounds: {x1},{y1} {width}x{height}"
+                "[Resolution] snapped action to label [%s] bounds=%d,%d %dx%d",
+                action.label_id,
+                x1,
+                y1,
+                width,
+                height,
+                extra={
+                    "component": "resolution",
+                    "event": "snapped",
+                    "label_id": action.label_id,
+                    "x": x1,
+                    "y": y1,
+                    "width": width,
+                    "height": height,
+                },
             )
 
             update: Dict[str, Any] = {
@@ -122,11 +193,23 @@ class ReferenceResolutionService:
             ):
                 update["input_context"] = input_context
 
-            return action.model_copy(update=update)
+            return action.model_copy(update=update), "resolved", None
 
         except Exception as exception:
-            logger.warning(f"Failed to snap to label {action.label_id}: {exception}")
-            return action
+            logger.warning(
+                "[Resolution] failed to snap label %s: %s",
+                action.label_id,
+                exception,
+                extra={
+                    "component": "resolution",
+                    "event": "snap_error",
+                    "label_id": action.label_id,
+                    "error": str(exception),
+                },
+            )
+            return action, "unresolved", (
+                f"snap failed for label_id '{action.label_id}': {exception}"
+            )
 
     @staticmethod
     def __build_input_context(*, element: Dict[str, Any]) -> Optional[InputContext]:

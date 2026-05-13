@@ -11,7 +11,7 @@ from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.core.services.vision import SubGoalContext, VisionService
 from fathom.schemas.actions import Action
-from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.results import AnalysisOutcome, AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
 
@@ -138,6 +138,8 @@ class StepPlanner:
             last_action=state.last_action_type,
             tracking_note=current_tracking_note,
             delta_context=state.get_delta_context(),
+            recent_effects=state.get_recent_effects(),
+            loop_observation=state.build_loop_observation(),
             prior_rejection_history=state.rejection_history,
             visual_hash=self.__compute_simple_hash(capture=capture),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
@@ -153,6 +155,26 @@ class StepPlanner:
             state.reset_loop_detector()
             # Do not mark_complete here: content_exhausted means "no more content on this list/feed",
             # not "task done". Marking complete would cause early exits; fall through and plan next.
+
+        # Early structured outcome: agent declared the sub-goal does not
+        # match the current screen. Surface this as a PlanResult with
+        # ``reason=REPORT_UNACTIONABLE.value`` so the graph node routes
+        # it to the recovery coordinator instead of dispatching the
+        # placeholder action — no synthetic action ever reaches EXECUTE.
+        if analysis.outcome == AnalysisOutcome.REPORT_UNACTIONABLE:
+            return PlanResult(
+                step=None,
+                is_complete=False,
+                should_retry=True,
+                metrics=analysis.metrics,
+                memories=analysis.memories,
+                reason=CompletionReason.REPORT_UNACTIONABLE.value,
+                metadata={
+                    **(analysis.metadata or {}),
+                    "unactionable_reason": analysis.unactionable_reason
+                    or "screen does not match the active sub-goal",
+                },
+            )
 
         # Select and gate the action BEFORE evaluating sub-goal completion.
         # If the action is rejected (low confidence, repeated failure), we must not

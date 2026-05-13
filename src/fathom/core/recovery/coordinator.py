@@ -201,9 +201,23 @@ class RecoveryCoordinator:
     def __threshold_for(self, *, trigger: RecoveryTrigger) -> int:
         """
         Resolve the configured threshold for ``trigger``.
+
+        Legacy triggers (``VERIFY_REJECTED`` / ``ACTION_BLOCKED``) honour
+        the user-configurable thresholds on ``RecoveryPolicy`` because
+        their upstream evidence is per-step and may be noisy.
+
+        Newer triggers (``LOOP_DETECTED``, ``NO_PROGRESS``,
+        ``TARGET_UNRESOLVED``, ``SUBGOAL_BUDGET_EXCEEDED``,
+        ``REPORT_UNACTIONABLE``) are pre-aggregated upstream — the loop
+        detector, action-effect classifier, sub-goal budget and the
+        agent itself only emit them once the evidence already meets a
+        local threshold — so dispatch is immediate.
         """
 
         if trigger == RecoveryTrigger.VERIFY_REJECTED:
             return self.__policy.verify_threshold
 
-        return self.__policy.plan_threshold
+        if trigger == RecoveryTrigger.ACTION_BLOCKED:
+            return self.__policy.plan_threshold
+
+        return 1

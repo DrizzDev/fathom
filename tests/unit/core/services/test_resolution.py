@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 from fathom.constants import ActionType
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.resolution import ResolveStatus
 
 
 class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
@@ -80,10 +81,10 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         resolved = await service.resolve(action=action, elements=elements)
 
-        self.assertIsNotNone(resolved.input_context)
-        self.assertEqual(resolved.input_context.source, "xml")
-        self.assertEqual(resolved.input_context.prefilled, "chennai adyar")
-        self.assertEqual(resolved.input_context.locator, "com.app:id/search")
+        self.assertIsNotNone(resolved.action.input_context)
+        self.assertEqual(resolved.action.input_context.source, "xml")
+        self.assertEqual(resolved.action.input_context.prefilled, "chennai adyar")
+        self.assertEqual(resolved.action.input_context.locator, "com.app:id/search")
 
     async def test_text_equals_hint_skips_prefilled(self) -> None:
         """
@@ -98,9 +99,9 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         resolved = await service.resolve(action=action, elements=elements)
 
-        self.assertIsNotNone(resolved.input_context)
-        self.assertEqual(resolved.input_context.prefilled, "")
-        self.assertEqual(resolved.input_context.locator, "com.app:id/input")
+        self.assertIsNotNone(resolved.action.input_context)
+        self.assertEqual(resolved.action.input_context.prefilled, "")
+        self.assertEqual(resolved.action.input_context.locator, "com.app:id/input")
 
     async def test_text_present_hint_missing_sets_prefilled(self) -> None:
         """
@@ -113,8 +114,8 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         resolved = await service.resolve(action=action, elements=elements)
 
-        self.assertIsNotNone(resolved.input_context)
-        self.assertEqual(resolved.input_context.prefilled, "existing value")
+        self.assertIsNotNone(resolved.action.input_context)
+        self.assertEqual(resolved.action.input_context.prefilled, "existing value")
 
     async def test_empty_text_empty_hint_no_locator_skips_input_context(self) -> None:
         """
@@ -127,11 +128,13 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         resolved = await service.resolve(action=action, elements=elements)
 
-        self.assertIsNone(resolved.input_context)
+        self.assertIsNone(resolved.action.input_context)
 
     async def test_no_elements_skips_input_context(self) -> None:
         """
-        When no elements dict is provided, input_context stays None.
+        When no elements dict is provided, the spatial action cannot be
+        snapped to a manifest element — :class:`ResolveResult` reports
+        UNRESOLVED and ``input_context`` stays ``None``.
         """
 
         service = self.__build_service()
@@ -139,7 +142,8 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         resolved = await service.resolve(action=action, elements=None)
 
-        self.assertIsNone(resolved.input_context)
+        self.assertEqual(resolved.status, ResolveStatus.UNRESOLVED)
+        self.assertIsNone(resolved.action.input_context)
 
     async def test_text_equals_placeholder_skips_prefilled(self) -> None:
         """
@@ -159,9 +163,9 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         resolved = await service.resolve(action=action, elements=elements)
 
-        self.assertIsNotNone(resolved.input_context)
-        self.assertEqual(resolved.input_context.prefilled, "")
-        self.assertEqual(resolved.input_context.locator, "com.app:id/search")
+        self.assertIsNotNone(resolved.action.input_context)
+        self.assertEqual(resolved.action.input_context.prefilled, "")
+        self.assertEqual(resolved.action.input_context.locator, "com.app:id/search")
 
     async def test_tap_action_does_not_get_input_context(self) -> None:
         """
@@ -174,11 +178,13 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         resolved = await service.resolve(action=action, elements=elements)
 
-        self.assertIsNone(resolved.input_context)
+        self.assertIsNone(resolved.action.input_context)
 
     async def test_bounds_still_snapped_without_input_context(self) -> None:
         """
-        Label snapping sets pixel bounds regardless of whether input_context is populated.
+        Label snapping sets pixel bounds regardless of whether
+        ``input_context`` is populated. The result status must report
+        RESOLVED so EXECUTE consumes the snapped bounds.
         """
 
         service = self.__build_service()
@@ -187,10 +193,11 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         resolved = await service.resolve(action=action, elements=elements)
 
-        self.assertIsNotNone(resolved.bounds)
-        self.assertIsNone(resolved.input_context)
+        self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
+        self.assertIsNotNone(resolved.action.bounds)
+        self.assertIsNone(resolved.action.input_context)
 
-        self.assertEqual(resolved.bounds.x, 10)
-        self.assertEqual(resolved.bounds.y, 20)
-        self.assertEqual(resolved.bounds.width, 190)
-        self.assertEqual(resolved.bounds.height, 30)
+        self.assertEqual(resolved.action.bounds.x, 10)
+        self.assertEqual(resolved.action.bounds.y, 20)
+        self.assertEqual(resolved.action.bounds.width, 190)
+        self.assertEqual(resolved.action.bounds.height, 30)

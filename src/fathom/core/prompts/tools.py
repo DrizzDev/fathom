@@ -22,6 +22,7 @@ class ToolRegistry:
                 cls.__store_memory(),
                 cls.__recall_memory(),
                 cls.__ask_user(),
+                cls.__report_screen_unactionable(),
             ]
         }
 
@@ -521,6 +522,44 @@ class ToolRegistry:
                     },
                 },
                 "required": ["question", "goal_completed", "sub_goal_completed"],
+            },
+        }
+
+    @staticmethod
+    def __report_screen_unactionable() -> Dict[str, Any]:
+        """
+        Definition for the ``report_screen_unactionable`` tool.
+
+        The agent uses this to declare that the active sub-goal does
+        not match the current screen — no synthetic action is invented,
+        no rationale needs to be manufactured. The system routes the
+        report through the recovery coordinator with the
+        ``REPORT_UNACTIONABLE`` trigger so the decomposer can re-plan
+        with the actual screen in view.
+        """
+
+        return {
+            "name": "report_screen_unactionable",
+            "description": (
+                "Use this when the active sub-goal does not match what you "
+                "see on screen, or when no available element corresponds to "
+                "the required action. The system will replan based on the "
+                "current screen instead of forcing an uncertain action. "
+                "Prefer this over guessing when the sub-goal is genuinely "
+                "unreachable from the current state."
+            ),
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "reason": {
+                        "type": "STRING",
+                        "description": (
+                            "Brief description of why the active sub-goal "
+                            "is unreachable from the current screen."
+                        ),
+                    },
+                },
+                "required": ["reason"],
             },
         }
 

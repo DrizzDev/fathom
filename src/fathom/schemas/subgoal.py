@@ -2,6 +2,18 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+# Default per-sub-goal step budget. The agent gets this many ANALYZE →
+# EXECUTE → RECORD cycles per sub-goal before the recovery coordinator
+# is dispatched with ``SUBGOAL_BUDGET_EXCEEDED``. Hard cap regardless of
+# whether the loop detector or no-progress classifier has fired.
+#
+# Sized generously so popup-heavy iOS flows (Allow / Skip / coachmark
+# chains) don't blow the budget on legitimate work. A run that needs
+# more than this many steps to satisfy a single sub-goal almost always
+# indicates the sub-goal was over-decomposed or names a target the
+# screen doesn't expose — both healed at the decomposer (Phase 2).
+DEFAULT_SUB_GOAL_MAX_STEPS: int = 8
+
 
 class SubGoalStatus(StrEnum):
     """
@@ -49,6 +61,18 @@ class SubGoal(BaseModel):
 
     confidence: float = Field(
         default=1.0, ge=0.0, le=1.0, description="Decomposer confidence (0.0=low, 1.0=perfect)"
+    )
+
+    max_steps: int = Field(
+        default=DEFAULT_SUB_GOAL_MAX_STEPS,
+        ge=1,
+        description=(
+            "Maximum graph iterations (ANALYZE → EXECUTE → RECORD) the "
+            "agent may spend on this sub-goal before the recovery "
+            "coordinator is dispatched with SUBGOAL_BUDGET_EXCEEDED. "
+            "Decomposers may override per-sub-goal; default keeps "
+            "popup-heavy flows comfortable."
+        ),
     )
 
     def mark_in_progress(self) -> None:

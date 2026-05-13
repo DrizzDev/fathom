@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -8,6 +9,26 @@ from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
 from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.steps import Step, StepResult
+
+
+class AnalysisOutcome(StrEnum):
+    """
+    What the agent decided to do this ANALYZE turn.
+
+    Three values, each routes through a distinct planner path:
+
+    - ``ACT``: the agent committed to a concrete action; ``action`` is
+      load-bearing and EXECUTE consumes it.
+    - ``ASK_USER``: the agent wants the human to clarify the next move
+      (existing HITL path; planner emits an ``ASK_USER`` action).
+    - ``REPORT_UNACTIONABLE``: the agent declares the active sub-goal
+      does not match the current screen. Planner routes this into the
+      recovery coordinator with :data:`RecoveryTrigger.REPORT_UNACTIONABLE`.
+    """
+
+    ACT = "act"
+    ASK_USER = "ask_user"
+    REPORT_UNACTIONABLE = "report_unactionable"
 
 
 class AnalysisResult(BaseModel):
@@ -54,6 +75,26 @@ class AnalysisResult(BaseModel):
     )
     delta: Optional[DeltaSignal] = Field(
         default=None, description="Optional model-provided semantic delta hints"
+    )
+
+    outcome: AnalysisOutcome = Field(
+        default=AnalysisOutcome.ACT,
+        description=(
+            "What the agent decided this turn. ``ACT`` is the default and "
+            "consumes ``action``. ``ASK_USER`` and ``REPORT_UNACTIONABLE`` "
+            "are structured alternatives that route through HITL and the "
+            "recovery coordinator respectively without inventing a synthetic "
+            "action."
+        ),
+    )
+    unactionable_reason: Optional[str] = Field(
+        default=None,
+        description=(
+            "Free-text reason supplied by the agent when ``outcome`` is "
+            "``REPORT_UNACTIONABLE``. Surfaced to the decomposer as part of "
+            "the recovery request so the next decomposition can reason "
+            "about why the prior plan didn't fit the screen."
+        ),
     )
 
 

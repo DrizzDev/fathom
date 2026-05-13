@@ -14,6 +14,7 @@ class CompletionReason(StrEnum):
     ACTION_BLOCKED = "Action blocked: repeated without progress"
     INTERVENTION_REQUIRED = "Human intervention required"
     USER_DIRECTIVE = "Marked complete via user directive"
+    REPORT_UNACTIONABLE = "Agent reported screen unactionable for active sub-goal"
 
 
 class CommonStateKey(StrEnum):

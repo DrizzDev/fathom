@@ -31,6 +31,7 @@ class _ReplanAugmentation(DecompositionAugmentation):
         self,
         *,
         screenshot: bytes,
+        trigger: RecoveryTrigger,
         stuck_sub_goal: str,
         failure_reason: str,
         recent_actions: List[str],
@@ -38,6 +39,7 @@ class _ReplanAugmentation(DecompositionAugmentation):
         suggested_next_action: Optional[str],
     ) -> None:
         self.__builder = builder
+        self.__trigger = trigger
         self.__screenshot = screenshot
         self.__stuck_sub_goal = stuck_sub_goal
         self.__failure_reason = failure_reason
@@ -54,11 +56,14 @@ class _ReplanAugmentation(DecompositionAugmentation):
 
     def user_preamble(self) -> str:
         """
-        Failure-evidence preamble prepended to the user prompt: stuck
-        sub-goal, failure reason, suggested next action, recent actions.
+        Failure-evidence preamble prepended to the user prompt: trigger,
+        stuck sub-goal, failure reason, suggested next action, recent
+        actions. The trigger drives per-failure-mode framing so the
+        decomposer can adapt instead of treating every replan identically.
         """
 
         return self.__builder.build_replan_user_preamble(
+            trigger=self.__trigger,
             stuck_sub_goal=self.__stuck_sub_goal,
             failure_reason=self.__failure_reason,
             recent_actions=self.__recent_actions,
@@ -103,11 +108,22 @@ class ReplanRecovery(RecoveryStrategy):
 
     def supports(self, *, trigger: RecoveryTrigger) -> bool:
         """
-        Handle both verifier rejection and planner-blocked triggers; both
-        indicate the current sub-goal cannot be completed as planned.
+        Replan handles every stuck-evidence trigger. The trigger varies the
+        decomposer's preamble framing (see :class:`_ReplanAugmentation`) so
+        the same strategy can respond to different failure modes — loop,
+        no-progress, unresolved target, budget exceeded, unactionable —
+        without per-trigger code branches here.
         """
 
-        return trigger in (RecoveryTrigger.VERIFY_REJECTED, RecoveryTrigger.ACTION_BLOCKED)
+        return trigger in (
+            RecoveryTrigger.ACTION_BLOCKED,
+            RecoveryTrigger.VERIFY_REJECTED,
+            RecoveryTrigger.LOOP_DETECTED,
+            RecoveryTrigger.NO_PROGRESS,
+            RecoveryTrigger.TARGET_UNRESOLVED,
+            RecoveryTrigger.SUBGOAL_BUDGET_EXCEEDED,
+            RecoveryTrigger.REPORT_UNACTIONABLE,
+        )
 
     async def recover(self, *, request: RecoveryRequest) -> Optional[RecoveryOutcome]:
         """
@@ -132,6 +148,7 @@ class ReplanRecovery(RecoveryStrategy):
             return None
 
         augmentation = _ReplanAugmentation(
+            trigger=request.trigger,
             builder=self.__prompt_builder,
             failure_reason=request.reason,
             screenshot=request.capture.image,

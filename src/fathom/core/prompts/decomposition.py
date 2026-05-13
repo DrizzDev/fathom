@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from fathom.core.recovery.types import RecoveryTrigger
 
 
 class DecompositionPromptBuilder(ABC):
@@ -37,6 +40,7 @@ class DecompositionPromptBuilder(ABC):
     def build_replan_user_preamble(
         self,
         *,
+        trigger: RecoveryTrigger,
         stuck_sub_goal: str,
         failure_reason: str,
         recent_actions: List[str],
@@ -44,9 +48,49 @@ class DecompositionPromptBuilder(ABC):
     ) -> str:
         """
         Build the user-prompt preamble describing the stuck state.
+
+        ``trigger`` selects a short framing sentence that names the stuck
+        evidence — e.g. "looped without progress" vs "target not on screen"
+        — so the model can reason about *why* a replan was requested
+        instead of treating every replan as the same kind of failure.
         """
 
         raise NotImplementedError
+
+
+# Keyed on RecoveryTrigger value strings so this module stays free of any
+# direct import on ``fathom.core.recovery`` — that module imports prompts
+# transitively, and a direct dependency here would cycle.
+_TRIGGER_FRAMING: Dict[str, str] = {
+    "ACTION_BLOCKED": (
+        "The previously-planned action could not be reached from the current "
+        "screen; the prior plan assumed UI affordances that are not present."
+    ),
+    "VERIFY_REJECTED": (
+        "Final verification refused the run as complete. The remaining work "
+        "must be reconsidered against what is actually on screen."
+    ),
+    "LOOP_DETECTED": (
+        "The agent looped on the same screen without producing progress; the "
+        "prior plan repeated an action that the screen does not respond to."
+    ),
+    "NO_PROGRESS": (
+        "Recent actions produced no measurable visual progress; the prior "
+        "plan's tactics are not advancing the goal on this screen."
+    ),
+    "TARGET_UNRESOLVED": (
+        "The previously-named target could not be located on the current "
+        "screen; the prior plan referenced an element that is not present."
+    ),
+    "SUBGOAL_BUDGET_EXCEEDED": (
+        "The active sub-goal exhausted its step budget without its success "
+        "criterion being met; the sub-goal as written is not reachable here."
+    ),
+    "REPORT_UNACTIONABLE": (
+        "The agent reported that the active sub-goal does not match the "
+        "current screen; rewrite the remaining plan around what IS on screen."
+    ),
+}
 
 
 class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
@@ -115,20 +159,31 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
     def build_replan_user_preamble(
         self,
         *,
+        trigger: RecoveryTrigger,
         stuck_sub_goal: str,
         failure_reason: str,
         recent_actions: List[str],
         suggested_next_action: Optional[str],
     ) -> str:
         """
-        Render the stuck-state preamble (stuck sub-goal, failure reason,
-        suggested next action, recent actions) prepended to the user prompt
-        when re-decomposing from a stuck state.
+        Render the stuck-state preamble prepended to the user prompt when
+        re-decomposing from a stuck state.
+
+        Per-trigger framing names the kind of evidence the system observed
+        (loop, no-progress, unresolved target, ...) so the model treats the
+        prior plan's failure mode appropriately rather than re-emitting
+        equivalent steps.
         """
 
+        framing = _TRIGGER_FRAMING.get(
+            trigger.value,
+            "The prior plan failed; reconsider the remaining work against the current screen.",
+        )
         recent = "\n".join(f"- {entry}" for entry in recent_actions) or "- (none)"
         return (
             "REPLAN CONTEXT (the previous decomposition got stuck):\n"
+            f"- Trigger: {trigger.value}\n"
+            f"- What happened: {framing}\n"
             f"- Stuck sub-goal: {stuck_sub_goal}\n"
             f"- Failure reason: {failure_reason}\n"
             f"- Suggested next action: {suggested_next_action or '(none)'}\n"

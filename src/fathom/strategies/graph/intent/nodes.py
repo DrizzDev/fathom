@@ -14,7 +14,11 @@ from fathom.constants.execution import (
 )
 from fathom.constants.graph import NodeName
 from fathom.constants.reasoning import VALIDATION_KEYWORDS
-from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
+from fathom.constants.screen import (
+    ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD,
+    NO_PROGRESS_RECOVERY_THRESHOLD,
+    ZERO_HASH,
+)
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.agent.completion import CompletionGateFactory
 from fathom.core.exceptions import FathomError
@@ -30,7 +34,9 @@ from fathom.core.recovery import (
 )
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
+from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.hierarchy import HierarchyProcessingResult
+from fathom.schemas.resolution import ResolveStatus
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import (
     PostActionScreenComparison,
@@ -813,6 +819,26 @@ class IntentNodeProvider:
                 if recovered is not None:
                     return recovered
 
+            # REPORT_UNACTIONABLE: agent itself declared the sub-goal does
+            # not match the current screen via the structured tool. Route
+            # straight to the recovery coordinator — no synthetic action
+            # is dispatched. Decomposer gets a chance to replan against
+            # the actual screen state on the next turn.
+            if plan.reason == CompletionReason.REPORT_UNACTIONABLE.value:
+                unactionable_reason = (plan.metadata or {}).get("unactionable_reason")
+                recovered = await self.__try_recover(
+                    capture=capture,
+                    trigger=RecoveryTrigger.REPORT_UNACTIONABLE,
+                    hint=None,
+                    reason=(
+                        unactionable_reason
+                        if isinstance(unactionable_reason, str) and unactionable_reason
+                        else "Agent reported screen unactionable for active sub-goal."
+                    ),
+                )
+                if recovered is not None:
+                    return recovered
+
             logger.info(
                 f"[NODE: ANALYZE] Analysis completed in {duration:.2f}s: "
                 f"is_complete={plan.is_complete}, should_retry={plan.should_retry}, "
@@ -923,10 +949,60 @@ class IntentNodeProvider:
         start_time = time.time()
 
         # Resolve References & Snap to Label
-        resolved_action = await self.__context.resolution.resolve(
+        resolve_result = await self.__context.resolution.resolve(
             action=step.action, elements=elements
         )
-        step = step.model_copy(update={"action": resolved_action})
+        step = step.model_copy(update={"action": resolve_result.action})
+
+        if resolve_result.status != ResolveStatus.RESOLVED:
+            logger.warning(
+                "[NODE: EXECUTE] resolution did not produce a snappable action",
+                extra={
+                    "component": "execute",
+                    "event": "resolve_unresolved",
+                    "reason": resolve_result.reason,
+                    "action_type": step.action.action_type.value,
+                    "target": step.action.target,
+                    "label_id": step.action.label_id,
+                    **resolve_result.telemetry_dict(),
+                },
+            )
+
+            recovery_result = await self.__try_recover(
+                reason=resolve_result.reason or "target_unresolved",
+                capture=capture,
+                trigger=RecoveryTrigger.TARGET_UNRESOLVED,
+                hint=step.action.target,
+            )
+            if recovery_result is not None:
+                return recovery_result
+
+            # No recovery committed; surface as a failed step so RECORD can
+            # observe the unactionable state and the planner can re-plan
+            # on the next turn instead of dispatching to a half-bound action.
+            unresolved_step_result = StepResult(
+                step=step,
+                pre_hash=ZERO_HASH,
+                post_hash=ZERO_HASH,
+                observation=None,
+                duration=int((time.time() - start_time) * 1000),
+                error=resolve_result.reason or "target_unresolved",
+                screen_changed=False,
+                success=False,
+                generalized_target=step.action.script_target,
+                is_positional=(step.action.target_type == "positional"),
+            )
+
+            unresolved_result_dict: Dict[Any, Any] = {
+                CommonStateKey.STEP_RESULT: unresolved_step_result,
+                CommonStateKey.EXECUTION_DURATION: time.time() - start_time,
+                IntentStateKey.ELEMENTS: state.get(IntentStateKey.ELEMENTS),
+                IntentStateKey.SHOULD_RETRY: True,
+                IntentStateKey.PLAN: None,
+                IntentStateKey.PLANNED_STEP: None,
+            }
+            self.__persist_agent_state_to_graph(result=unresolved_result_dict)
+            return cast("IntentGraphState", unresolved_result_dict)
 
         # Use a stable session package for trace/screenshot history paths.
         # Dynamic foreground activity changes (launcher -> target app) fragment artifacts
@@ -1025,6 +1101,9 @@ class IntentNodeProvider:
         duration = time.time() - start_time
         self.__context.metrics.record(operation="action", duration=duration)
 
+        action_effect = ActionEffect.from_screen_diff(diff=screen_diff)
+        self.__context.agent_state.record_action_effect(effect=action_effect)
+
         if screen_diff is not None:
             screen_changed = screen_diff.action_had_effect
             ssim_str = (
@@ -1036,11 +1115,25 @@ class IntentNodeProvider:
                 else "N/A"
             )
             logger.info(
-                f"[NODE: EXECUTE] ScreenDiff: phash={screen_diff.phash_distance}, "
-                f"ssim={ssim_str}, content_diff={pixel_diff_str}, "
-                f"regions={len(screen_diff.changed_regions)}, "
-                f"scroll={screen_diff.scroll_translation}, "
-                f"action_had_effect={screen_diff.action_had_effect}"
+                "[NODE: EXECUTE] ScreenDiff phash=%d ssim=%s content_diff=%s regions=%d scroll=%s "
+                "effect_status=%s visual_progress=%.4f",
+                screen_diff.phash_distance,
+                ssim_str,
+                pixel_diff_str,
+                len(screen_diff.changed_regions),
+                screen_diff.scroll_translation,
+                action_effect.status.value,
+                action_effect.visual_progress,
+                extra={
+                    "component": "execute",
+                    "event": "screen_diff",
+                    "phash_distance": screen_diff.phash_distance,
+                    "ssim_score": screen_diff.ssim_score,
+                    "content_diff": screen_diff.content_pixel_diff_ratio,
+                    "regions": len(screen_diff.changed_regions),
+                    "effect_status": action_effect.status.value,
+                    "visual_progress": action_effect.visual_progress,
+                },
             )
         else:
             screen_changed = (
@@ -1326,6 +1419,24 @@ class IntentNodeProvider:
                 self.__persist_agent_state_to_graph(result=subgoal_result)
                 return subgoal_result
 
+            # ── Stuck-signal recovery dispatch ──
+            # The sub-goal didn't advance this turn. Before sending the
+            # agent back into another ANALYZE-EXECUTE cycle, ask the
+            # deterministic detectors whether the system has accumulated
+            # enough evidence to warrant a replan. Loop and no-progress
+            # signals are computed upstream (LoopDetector / ActionEffect)
+            # so this is just the trigger-dispatch point — agent decides
+            # nothing here, the coordinator does.
+            record_capture = state.get(CommonStateKey.CAPTURE)
+            if isinstance(record_capture, ScreenCapture):
+                stuck_result = await self.__try_dispatch_stuck_recovery(
+                    capture=record_capture,
+                    step_result=step_result,
+                )
+                if stuck_result is not None:
+                    self.__persist_agent_state_to_graph(result=stuck_result)
+                    return stuck_result
+
             logger.info(
                 f"[NODE: RECORD] Step {self.__context.agent_state.step_count} recorded successfully"
             )
@@ -1355,6 +1466,67 @@ class IntentNodeProvider:
             result = cast("IntentGraphState", {IntentStateKey.STEP_RESULTS: existing_step_results})
             self.__persist_agent_state_to_graph(result=result)
             return result
+
+    async def __try_dispatch_stuck_recovery(
+        self,
+        *,
+        capture: ScreenCapture,
+        step_result: StepResult,
+    ) -> Optional[IntentGraphState]:
+        """
+        Dispatch the recovery coordinator with the appropriate stuck
+        trigger when post-execution evidence indicates the agent is not
+        making progress.
+
+        Priority (most specific first):
+
+        1. ``LOOP_DETECTED`` — :meth:`AgentState.is_stuck` returns True
+           because the loop detector has accumulated screen / action
+           repetition evidence on the active sub-goal.
+        2. ``NO_PROGRESS`` — the trailing tail of the action-effect
+           trajectory has ``NO_PROGRESS_RECOVERY_THRESHOLD`` consecutive
+           ``NO_PROGRESS`` classifications without an interrupting
+           ``PROGRESS``.
+
+        Both triggers route through the existing ``__try_recover`` /
+        coordinator pipeline. Returning ``None`` means no trigger fired
+        and RECORD continues normally.
+        """
+
+        agent_state = self.__context.agent_state
+
+        if agent_state.is_stuck:
+            return await self.__try_recover(
+                reason="loop detector observed repetition without progress",
+                capture=capture,
+                trigger=RecoveryTrigger.LOOP_DETECTED,
+                hint=step_result.step.action.target,
+            )
+
+        if agent_state.consecutive_no_progress_count >= NO_PROGRESS_RECOVERY_THRESHOLD:
+            return await self.__try_recover(
+                reason=(
+                    f"{agent_state.consecutive_no_progress_count} consecutive actions "
+                    "produced no measurable visual progress"
+                ),
+                capture=capture,
+                trigger=RecoveryTrigger.NO_PROGRESS,
+                hint=step_result.step.action.target,
+            )
+
+        if agent_state.current_sub_goal_over_budget:
+            return await self.__try_recover(
+                reason=(
+                    f"sub-goal exhausted step budget "
+                    f"({agent_state.current_sub_goal_action_count} actions) "
+                    "without its success criterion being met"
+                ),
+                capture=capture,
+                trigger=RecoveryTrigger.SUBGOAL_BUDGET_EXCEEDED,
+                hint=step_result.step.action.target,
+            )
+
+        return None
 
     def __evaluate_subgoal_completion(
         self,

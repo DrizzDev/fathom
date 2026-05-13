@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from collections import deque
 from logging import getLogger
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Deque, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.constants.reasoning import LOW_DELTA_PROGRESS_THRESHOLD
+from fathom.constants.screen import ACTION_EFFECT_TRAJECTORY_WINDOW
 from fathom.constants.state import CompletionReason
 from fathom.schemas.actions import Action
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.delta import DeltaSignal
+from fathom.schemas.effect import ActionEffect, ActionEffectStatus
+from fathom.schemas.observation import LoopObservation, ScreenRelation
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import (
@@ -83,6 +87,14 @@ class AgentState:
         self.__last_action_description: Optional[str] = None
         self.__last_delta_score: Optional[float] = None
         self.__low_delta_streak: int = 0
+
+        # Rolling window of structured action-effect classifications. The
+        # window feeds the ANALYZE prompt's <RECENT_TRAJECTORY> block so
+        # the agent can see whether its recent actions produced progress
+        # — replaces the unreliable ``screen_changed: bool`` signal.
+        self.__recent_effects: Deque[ActionEffect] = deque(
+            maxlen=ACTION_EFFECT_TRAJECTORY_WINDOW
+        )
 
         # Multi-turn rejection history for cross-iteration feedback loops.
         # Stores provider-neutral ConversationTurn objects so the next
@@ -466,6 +478,32 @@ class AgentState:
         """
         self.__sub_goal_action_count += 1
 
+    @property
+    def current_sub_goal_action_count(self) -> int:
+        """
+        Number of actions executed against the active sub-goal.
+        Reset to zero on sub-goal advance and on replan.
+        """
+
+        return self.__sub_goal_action_count
+
+    @property
+    def current_sub_goal_over_budget(self) -> bool:
+        """
+        Whether the active sub-goal has consumed at least
+        :attr:`SubGoal.max_steps` actions without advancing.
+
+        Returns ``False`` when there is no active sub-goal (between
+        runs, after completion). The RECORD node uses this property to
+        decide whether to escalate via ``SUBGOAL_BUDGET_EXCEEDED``.
+        """
+
+        current = self.get_current_sub_goal()
+        if current is None:
+            return False
+
+        return self.__sub_goal_action_count >= current.max_steps
+
     def replan_pending_sub_goals(self, *, new_sub_goals: List[SubGoal]) -> None:
         """
         Replace every unfinished sub-goal with ``new_sub_goals`` (preserving completed work)
@@ -594,12 +632,147 @@ class AgentState:
     def get_delta_context(self) -> Dict[str, object]:
         """
         Return compact no-XML delta context used for planning hints.
+
+        NOTE: superseded by :meth:`get_recent_effects` /
+        :meth:`get_last_action_effect` and slated for removal in the
+        Phase 1C signal-hygiene cleanup. Kept here so external callers
+        keep compiling until the cleanup lands.
         """
 
         return {
             "last_delta_score": self.__last_delta_score,
             "low_delta_streak": self.__low_delta_streak,
         }
+
+    def record_action_effect(self, *, effect: ActionEffect) -> None:
+        """
+        Append a structured action-effect outcome to the rolling
+        trajectory window.
+
+        Called from EXECUTE after each step using
+        :meth:`ActionEffect.from_screen_diff` against the post-action
+        :class:`ScreenDiff`. The window is bounded by
+        ``ACTION_EFFECT_TRAJECTORY_WINDOW`` so the prompt size stays
+        stable regardless of run length.
+        """
+
+        self.__recent_effects.append(effect)
+
+    def get_recent_effects(self) -> List[ActionEffect]:
+        """
+        Return the rolling window of recent action effects (oldest first).
+        """
+
+        return list(self.__recent_effects)
+
+    def get_last_action_effect(self) -> Optional[ActionEffect]:
+        """
+        Return the most recent recorded action effect, or ``None`` when
+        no action has produced a classifiable outcome yet (e.g. very
+        first step of a run, before EXECUTE has fired).
+        """
+
+        if not self.__recent_effects:
+            return None
+
+        return self.__recent_effects[-1]
+
+    def build_loop_observation(self) -> Optional[LoopObservation]:
+        """
+        Construct a :class:`LoopObservation` summarising the current
+        stuck evidence, or ``None`` when the agent is not stuck.
+
+        The observation is the structured input the ANALYZE prompt
+        renders into ``<SYSTEM_OBSERVATION>``. Built here (not in the
+        prompt assembler) so the rules for *when* to inject — and what
+        evidence to surface — live with the state that produced the
+        evidence.
+
+        Returns ``None`` when:
+
+        - The loop detector hasn't fired (``is_stuck`` is False) AND
+        - The action-effect trajectory hasn't crossed the no-progress
+          recovery threshold.
+
+        In either of those branches the agent receives no
+        ``SYSTEM_OBSERVATION`` block — the runtime tells the agent
+        nothing when there's nothing reliable to tell.
+        """
+
+        stuck = self.is_stuck
+        no_progress_run = self.consecutive_no_progress_count
+        if not stuck and no_progress_run < 2:
+            return None
+
+        recent_actions = [
+            entry.get("action") or entry.get("action_type") or "unknown"
+            for entry in self.__action_history.get_history_items()
+            if isinstance(entry, dict)
+        ]
+        if not recent_actions:
+            return None
+
+        # Most-repeated descriptor in the recent window.
+        counts: Dict[str, int] = {}
+        for descriptor in recent_actions:
+            counts[descriptor] = counts.get(descriptor, 0) + 1
+        repeated, count = max(counts.items(), key=lambda item: item[1])
+        if count < 2:
+            return None
+
+        progress_scores = [
+            round(effect.visual_progress, 3) for effect in self.__recent_effects
+        ]
+
+        relation = self.__classify_screen_relation()
+
+        return LoopObservation(
+            count=count,
+            note=None,
+            repeated_action=repeated,
+            screen_relation=relation,
+            progress_scores=progress_scores,
+        )
+
+    def __classify_screen_relation(self) -> ScreenRelation:
+        """
+        Bucket the recent screen history into a coarse
+        :class:`ScreenRelation`. Pure read of existing state — does not
+        require XML or any external dependency.
+        """
+
+        if len(self.__seen_screens) < 2:
+            return ScreenRelation.DIVERGING
+
+        last_two = self.__seen_screens[-2:]
+        if last_two[0].is_same_screen(last_two[1]):
+            return ScreenRelation.NEAR_DUPLICATE
+
+        if len(self.__seen_screens) >= 4:
+            tail = self.__seen_screens[-4:]
+            if tail[0].is_same_screen(tail[2]) and tail[1].is_same_screen(tail[3]):
+                return ScreenRelation.OSCILLATING
+
+        return ScreenRelation.DIVERGING
+
+    @property
+    def consecutive_no_progress_count(self) -> int:
+        """
+        Number of trailing actions classified as ``NO_PROGRESS``.
+
+        Used by the RECORD node to decide whether to emit the
+        ``NO_PROGRESS`` recovery trigger. Counts only the contiguous
+        tail of the trajectory window — a single ``PROGRESS`` step
+        resets the counter.
+        """
+
+        count = 0
+        for effect in reversed(self.__recent_effects):
+            if effect.status == ActionEffectStatus.NO_PROGRESS:
+                count += 1
+                continue
+            break
+        return count
 
     def update_delta_context(self, delta: Optional[DeltaSignal]) -> None:
         """

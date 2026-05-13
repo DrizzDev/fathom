@@ -20,6 +20,8 @@ from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.conversation import ConversationTurn, TurnPart
+from fathom.schemas.effect import ActionEffect
+from fathom.schemas.observation import LoopObservation
 from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
@@ -127,6 +129,8 @@ class VisionService:
         elements: Optional[Dict[str, Any]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
         delta_context: Optional[Dict[str, object]] = None,
+        recent_effects: Optional[List[ActionEffect]] = None,
+        loop_observation: Optional[LoopObservation] = None,
         prior_rejection_history: Optional[List[ConversationTurn]] = None,
     ) -> AnalysisResult:
         """
@@ -226,7 +230,12 @@ class VisionService:
             current_screen_hash=fingerprint[:8],
         )
 
-        if is_stuck:
+        if loop_observation is not None:
+            dynamic_context += self.__render_loop_observation(observation=loop_observation)
+        elif is_stuck:
+            # Fallback for callers that haven't built a structured
+            # observation yet — preserves the prior nudge so behaviour
+            # doesn't regress while the wiring catches up.
             dynamic_context += (
                 "\n\n<SYSTEM_ALERT>\n"
                 "Loop risk detected; avoid repeating the same ineffective action."
@@ -252,6 +261,9 @@ class VisionService:
             dynamic_context += (
                 f"\n\n<DELTA_CONTEXT>\n{json.dumps(delta_context, default=str)}\n</DELTA_CONTEXT>"
             )
+
+        if recent_effects:
+            dynamic_context += self.__render_action_effect_blocks(effects=recent_effects)
 
         logger.debug(
             f"[H3] Dynamic Context Built | "
@@ -609,6 +621,101 @@ class VisionService:
         payload.append(optimized)
 
         return payload
+
+    def __render_loop_observation(self, *, observation: LoopObservation) -> str:
+        """
+        Render a :class:`LoopObservation` as a structured block in the
+        ANALYZE prompt.
+
+        The block is deliberately framed as an observation, not as an
+        instruction. The agent reads it, may consult it when choosing
+        the next action, and is free to disagree if it has reason. The
+        runtime enforces nothing here — that contract lives in the
+        recovery coordinator, not in prompt text.
+        """
+
+        progress = (
+            ", ".join(f"{score:.3f}" for score in observation.progress_scores)
+            if observation.progress_scores
+            else "(none recorded)"
+        )
+
+        alternatives = (
+            "\n  - " + "\n  - ".join(observation.suggested_alternatives)
+            if observation.suggested_alternatives
+            else " (none)"
+        )
+
+        note_line = f"\nnote: {observation.note}" if observation.note else ""
+
+        return (
+            "\n\n<SYSTEM_OBSERVATION>\n"
+            f"repeated_action: {observation.repeated_action}\n"
+            f"count: {observation.count}\n"
+            f"screen_relation: {observation.screen_relation.value}\n"
+            f"progress_scores (oldest first): {progress}\n"
+            f"alternatives:{alternatives}{note_line}\n"
+            "This is an observation from the runtime, not an instruction. "
+            "Decide the next action yourself; consider whether the current "
+            "approach is working, whether to ask the user, or whether to "
+            "report the screen as unactionable.\n"
+            "</SYSTEM_OBSERVATION>"
+        )
+
+    def __render_action_effect_blocks(self, *, effects: List[ActionEffect]) -> str:
+        """
+        Render structured ``<LAST_ACTION_EFFECT>`` and
+        ``<RECENT_TRAJECTORY>`` blocks into the prompt body.
+
+        ``status`` is the load-bearing signal — the raw numbers are
+        included as diagnostic context so the model can reason about
+        edge cases (e.g. SSIM 0.97 should not be claimed as "progress"
+        in the rationale), not so it has to learn thresholds from prompt
+        text.
+
+        Trajectory entries appear oldest-first so the model reads the
+        sequence in execution order.
+        """
+
+        last = effects[-1]
+        ssim_str = f"{last.ssim_score:.4f}" if last.ssim_score is not None else "N/A"
+        content_str = (
+            f"{last.content_change:.4f}" if last.content_change is not None else "N/A"
+        )
+        scroll_str = (
+            f"dx={last.scroll_dx:.1f} dy={last.scroll_dy:.1f}"
+            if last.scroll_dx is not None and last.scroll_dy is not None
+            else "N/A"
+        )
+
+        last_block = (
+            "\n\n<LAST_ACTION_EFFECT>\n"
+            f"status: {last.status.value}\n"
+            f"visual_progress: {last.visual_progress:.3f}\n"
+            f"phash_distance: {last.phash_distance}\n"
+            f"ssim: {ssim_str}\n"
+            f"content_change: {content_str}\n"
+            f"scroll: {scroll_str}\n"
+            "</LAST_ACTION_EFFECT>"
+        )
+
+        if len(effects) <= 1:
+            return last_block
+
+        lines = []
+        for index, effect in enumerate(effects, start=1):
+            lines.append(
+                f"  {index}. status={effect.status.value} "
+                f"visual_progress={effect.visual_progress:.3f}"
+            )
+
+        trajectory_block = (
+            "\n\n<RECENT_TRAJECTORY>\n"
+            + "\n".join(lines)
+            + "\n</RECENT_TRAJECTORY>"
+        )
+
+        return last_block + trajectory_block
 
     def __format_elements(self, elements: Optional[Dict[str, Any]]) -> str:
         """
