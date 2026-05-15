@@ -89,6 +89,36 @@ class TestScreenArtifactBundle(unittest.TestCase):
 
         self.assertIsNone(bundle.before)
         self.assertIsNone(bundle.after)
+        self.assertIsNone(bundle.trace)
+
+    def test_trace_only_is_supported(self) -> None:
+        """
+        Some flows may produce an annotated trace without persisting before/after.
+        """
+
+        bundle = ScreenArtifactBundle(
+            trace=ScreenArtifact(uri="/tmp/trace.png"),
+        )
+
+        self.assertIsNone(bundle.before)
+        self.assertIsNone(bundle.after)
+        self.assertIsNotNone(bundle.trace)
+        self.assertEqual(bundle.trace.uri, "/tmp/trace.png")
+
+    def test_full_bundle_with_trace_round_trips(self) -> None:
+        """A populated bundle with trace serializes to nested keys."""
+        bundle = ScreenArtifactBundle(
+            before=ScreenArtifact(uri="/tmp/before.png", visual_hash="aaaa"),
+            after=ScreenArtifact(uri="/tmp/after.png", visual_hash="bbbb"),
+            trace=ScreenArtifact(uri="/tmp/trace.png", visual_hash="cccc"),
+        )
+
+        payload = bundle.model_dump(mode="json")
+
+        self.assertEqual(payload["before"]["uri"], "/tmp/before.png")
+        self.assertEqual(payload["after"]["uri"], "/tmp/after.png")
+        self.assertEqual(payload["trace"]["uri"], "/tmp/trace.png")
+        self.assertEqual(payload["trace"]["visual_hash"], "cccc")
 
     def test_only_before_is_supported(self) -> None:
         """

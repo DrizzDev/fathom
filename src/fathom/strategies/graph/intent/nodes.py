@@ -130,9 +130,15 @@ class IntentNodeProvider:
         package_name: str,
         before_capture: ScreenCapture,
         before_state: Optional[ScreenState],
+        trace_artifact: Optional[ScreenArtifact] = None,
     ) -> PostActionScreenComparison:
         """
         Capture the post-action screen, diff it against the pre-action state, and persist both artifacts.
+
+        ``trace_artifact`` is the annotated pre-action screen produced by
+        ``ActionExecutor`` (red circle / arrow over the target). It is passed
+        in alongside the before/after captures so consumers can render all
+        three images per step.
         """
 
         before_visual_hash = before_state.visual_hash if before_state is not None else None
@@ -150,7 +156,9 @@ class IntentNodeProvider:
 
         if not post_capture.image:
             return PostActionScreenComparison(
-                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+                artifacts=self.__compose_step_artifacts(
+                    before=before_artifact, after=None, trace=trace_artifact,
+                ),
             )
 
         elements_start = time.time()
@@ -197,7 +205,9 @@ class IntentNodeProvider:
         return PostActionScreenComparison(
             screen_diff=screen_diff,
             post_visual_hash=post_hashes.visual_hash,
-            artifacts=self.__compose_step_artifacts(before=before_artifact, after=after_artifact),
+            artifacts=self.__compose_step_artifacts(
+                before=before_artifact, after=after_artifact, trace=trace_artifact,
+            ),
         )
 
     def __build_screen_artifact_from_capture(
@@ -266,15 +276,18 @@ class IntentNodeProvider:
         *,
         after: Optional[ScreenArtifact],
         before: Optional[ScreenArtifact],
+        trace: Optional[ScreenArtifact] = None,
     ) -> Optional[StepArtifacts]:
         """
-        Build the `StepArtifacts` envelope for a step, or `None` when both sides are missing.
+        Build the `StepArtifacts` envelope for a step, or `None` when all sides are missing.
         """
 
-        if before is None and after is None:
+        if before is None and after is None and trace is None:
             return None
 
-        return StepArtifacts(screen=ScreenArtifactBundle(before=before, after=after))
+        return StepArtifacts(
+            screen=ScreenArtifactBundle(before=before, after=after, trace=trace),
+        )
 
     def __resolve_storage_backend(self) -> StorageBackend:
         """
@@ -980,6 +993,7 @@ class IntentNodeProvider:
                 before_capture=capture,
                 before_state=current_state,
                 package_name=package_name,
+                trace_artifact=execution_result.trace_artifact,
             )
             screen_diff = post_action_comparison.screen_diff
             step_artifacts = post_action_comparison.artifacts

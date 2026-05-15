@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
+from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.delta import GeminiDeltaSignal
 from fathom.schemas.steps import Step, StepResult
 
@@ -189,6 +190,14 @@ class ExecutionResult(BaseModel):
     error: Optional[str] = Field(default=None, description="Error message if failed")
     screen_changed: bool = Field(default=False, description="Whether the screen changed")
     is_cancelled: bool = Field(default=False, description="Whether the execution was cancelled")
+    trace_artifact: Optional[ScreenArtifact] = Field(
+        default=None,
+        description=(
+            "Annotated pre-action screen with the action's target drawn on top. "
+            "Populated only when tracing succeeded; downstream consumers should "
+            "treat None as 'no trace available' rather than an error."
+        ),
+    )
 
 
 class PlanResult(BaseModel):

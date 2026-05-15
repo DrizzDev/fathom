@@ -32,13 +32,23 @@ class ScreenArtifact(BaseModel):
 
 class ScreenArtifactBundle(BaseModel):
     """
-    Pre-action and post-action screen artifacts for one step.
+    Pre-action and post-action screen artifacts for one step, plus an optional
+    annotated "trace" image showing where the action landed.
     """
 
     model_config = ConfigDict(frozen=True)
 
     before: Optional[ScreenArtifact] = Field(default=None, description="Pre-action screen artifact")
     after: Optional[ScreenArtifact] = Field(default=None, description="Post-action screen artifact")
+    trace: Optional[ScreenArtifact] = Field(
+        default=None,
+        description=(
+            "Annotated copy of the pre-action screen with the action's target "
+            "drawn on top (red circle for tap/type, arrow for swipe). Produced "
+            "by TraceService when the action succeeds and emitted alongside the "
+            "raw before/after captures."
+        ),
+    )
 
 
 class StepArtifacts(BaseModel):

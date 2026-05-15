@@ -20,8 +20,10 @@ from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.constants.storage import StorageBackend
 from fathom.processing.annotator import ImageAnnotator
 from fathom.schemas.actions import Action, ExecutionRegion, GesturePath, InputContext
+from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult, ExecutionResult
 from fathom.schemas.screens import ScreenCapture
@@ -69,17 +71,18 @@ class ActionExecutor:
             try:
                 result, coords = await self.__execute_primitive(step=step)
 
-                if result.success and coords:
-                    self.__schedule_trace(
-                        step=step,
-                        coords=coords,
-                        session_id=session_id,
-                        pre_capture=pre_capture,
-                        package_name=package_name,
-                    )
-
                 if result.success:
-                    return result
+                    trace_artifact: Optional[ScreenArtifact] = None
+                    if coords:
+                        trace_artifact = await self.__capture_trace(
+                            step=step,
+                            coords=coords,
+                            session_id=session_id,
+                            pre_capture=pre_capture,
+                            package_name=package_name,
+                        )
+                    # ExecutionResult is frozen — use model_copy to attach the trace.
+                    return result.model_copy(update={"trace_artifact": trace_artifact})
 
                 last_error = result.error
 
@@ -491,57 +494,34 @@ class ActionExecutor:
         long_press_result = await self.__device.swipe(x1=x, y1=y, x2=x, y2=y, duration=1000)
         return long_press_result, coords
 
-    def __schedule_trace(
+    async def __capture_trace(
         self,
         step: Step,
         session_id: str,
         package_name: str,
         coords: Tuple[int, ...],
         pre_capture: ScreenCapture,
-    ) -> None:
+    ) -> Optional[ScreenArtifact]:
         """
-        Schedules background trace annotation.
+        Annotate the pre-action screen with the action target (red circle for
+        tap/type, arrow for swipe), upload it via the storage adapter, and
+        return a ``ScreenArtifact`` so it can be embedded in the step result.
+
+        Returns ``None`` when no storage adapter is configured, or when any
+        step (drawing, file write, upload) fails — callers treat None as
+        "no trace available" rather than an error.
+
+        This used to be fire-and-forget (``asyncio.create_task``) which meant
+        the trace URI never made it into ``StepArtifacts``. Now it is awaited
+        in the action execution flow so the URI is available to the intent
+        node when it composes the step's artifacts.
         """
-
-        async def __trace_and_upload(
-            trace_path: str,
-            action_type: str,
-            image_data: bytes,
-            label_description: str,
-            coordinates: Tuple[int, ...],
-        ) -> None:
-            try:
-                await asyncio.to_thread(
-                    ImageAnnotator.trace,
-                    coords=coordinates,
-                    image_data=image_data,
-                    output_path=trace_path,
-                    action_type=action_type,
-                    label=label_description,
-                )
-
-                if self.__storage:
-                    with Path(trace_path).open("rb") as new_file:
-                        data = new_file.read()
-
-                    filename = Path(trace_path).name
-                    await self.__storage.save(
-                        data=data,
-                        metadata={
-                            "category": "traces",
-                            "filename": filename,
-                            "session_id": session_id,
-                            "package_name": package_name,
-                        },
-                    )
-            except Exception as exception:
-                # Use standard logger in background thread
-                logger.exception(f"Tracing failed: {exception}", stack_info=True)
+        if not self.__storage:
+            return None
 
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             filename = f"step_{step.step_number}_{step.action.action_type.value}_{timestamp}.png"
-
             trace_path = str(
                 self.__path_manager.get_trace_path(
                     filename=filename,
@@ -550,19 +530,49 @@ class ActionExecutor:
                 )
             )
 
-            task = asyncio.create_task(
-                __trace_and_upload(
-                    coordinates=coords,
-                    trace_path=trace_path,
-                    image_data=pre_capture.image,
-                    action_type=step.action.action_type.value,
-                    label_description=step.action.to_description(),
-                )
+            # Drawing + disk write are CPU/IO bound; offload to a thread so
+            # we don't block the event loop.
+            await asyncio.to_thread(
+                ImageAnnotator.trace,
+                coords=coords,
+                image_data=pre_capture.image,
+                output_path=trace_path,
+                action_type=step.action.action_type.value,
+                label=step.action.to_description(),
             )
-            self.__background_tasks.add(task)
-            task.add_done_callback(self.__background_tasks.discard)
+
+            data = await asyncio.to_thread(Path(trace_path).read_bytes)
+            uri = await self.__storage.save(
+                data=data,
+                metadata={
+                    "category": "traces",
+                    "filename": Path(trace_path).name,
+                    "session_id": session_id,
+                    "package_name": package_name,
+                },
+            )
+
+            return ScreenArtifact(
+                uri=uri,
+                storage_backend=self.__resolve_storage_backend(),
+                captured_at=int(time.time() * 1000),
+                mime_type="image/png",
+            )
+
         except Exception as exception:
-            logger.exception(f"Failed to schedule tracing: {exception}", stack_info=True)
+            logger.exception(f"Tracing failed: {exception}", stack_info=True)
+            return None
+
+    def __resolve_storage_backend(self) -> StorageBackend:
+        """Read the adapter's declared ``backend`` attribute, falling back to ``LOCAL``.
+
+        Mirrors the same helper in ``intent/nodes.py`` — kept local to avoid
+        a service-layer→strategy-layer import.
+        """
+        backend = getattr(self.__storage, "backend", None)
+        if isinstance(backend, StorageBackend):
+            return backend
+        return StorageBackend.LOCAL
 
     async def drain_background_tasks(self) -> None:
         """
