@@ -34,7 +34,7 @@ from fathom.core.recovery import (
 )
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
-from fathom.schemas.effect import ActionEffect, ActionEffectStatus
+from fathom.schemas.effect import ActionEffect
 from fathom.schemas.hierarchy import HierarchyProcessingResult
 from fathom.schemas.resolution import ResolveStatus
 from fathom.schemas.results import AnalysisResult, PlanResult
@@ -977,9 +977,6 @@ class IntentNodeProvider:
             if recovery_result is not None:
                 return recovery_result
 
-            # No recovery committed; surface as a failed step so RECORD can
-            # observe the unactionable state and the planner can re-plan
-            # on the next turn instead of dispatching to a half-bound action.
             unresolved_step_result = StepResult(
                 step=step,
                 pre_hash=ZERO_HASH,
@@ -1419,14 +1416,6 @@ class IntentNodeProvider:
                 self.__persist_agent_state_to_graph(result=subgoal_result)
                 return subgoal_result
 
-            # ── Stuck-signal recovery dispatch ──
-            # The sub-goal didn't advance this turn. Before sending the
-            # agent back into another ANALYZE-EXECUTE cycle, ask the
-            # deterministic detectors whether the system has accumulated
-            # enough evidence to warrant a replan. Loop and no-progress
-            # signals are computed upstream (LoopDetector / ActionEffect)
-            # so this is just the trigger-dispatch point — agent decides
-            # nothing here, the coordinator does.
             record_capture = state.get(CommonStateKey.CAPTURE)
             if isinstance(record_capture, ScreenCapture):
                 stuck_result = await self.__try_dispatch_stuck_recovery(

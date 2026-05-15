@@ -11,9 +11,9 @@ not a synthetic action — so the planner can branch deterministically.
 
 from __future__ import annotations
 
+import unittest
 from dataclasses import dataclass
 from typing import Any, Dict, List
-import unittest
 
 from fathom.constants import ActionType
 from fathom.core.services.parsing import ToolResponseParser
@@ -79,9 +79,7 @@ class ToolResponseParserUnactionableTest(unittest.TestCase):
         """
 
         parser = ToolResponseParser()
-        response = self.__response(
-            calls=[_Call(name="report_screen_unactionable", args={})]
-        )
+        response = self.__response(calls=[_Call(name="report_screen_unactionable", args={})])
 
         result = parser.parse(response=response)
 

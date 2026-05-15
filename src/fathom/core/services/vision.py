@@ -128,7 +128,6 @@ class VisionService:
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
-        delta_context: Optional[Dict[str, object]] = None,
         recent_effects: Optional[List[ActionEffect]] = None,
         loop_observation: Optional[LoopObservation] = None,
         prior_rejection_history: Optional[List[ConversationTurn]] = None,
@@ -233,9 +232,6 @@ class VisionService:
         if loop_observation is not None:
             dynamic_context += self.__render_loop_observation(observation=loop_observation)
         elif is_stuck:
-            # Fallback for callers that haven't built a structured
-            # observation yet — preserves the prior nudge so behaviour
-            # doesn't regress while the wiring catches up.
             dynamic_context += (
                 "\n\n<SYSTEM_ALERT>\n"
                 "Loop risk detected; avoid repeating the same ineffective action."
@@ -255,11 +251,6 @@ class VisionService:
         if last_action:
             dynamic_context += (
                 f"\n\n<LAST_ACTION>\nMost recent action: {last_action}\n</LAST_ACTION>"
-            )
-
-        if delta_context:
-            dynamic_context += (
-                f"\n\n<DELTA_CONTEXT>\n{json.dumps(delta_context, default=str)}\n</DELTA_CONTEXT>"
             )
 
         if recent_effects:
@@ -679,9 +670,7 @@ class VisionService:
 
         last = effects[-1]
         ssim_str = f"{last.ssim_score:.4f}" if last.ssim_score is not None else "N/A"
-        content_str = (
-            f"{last.content_change:.4f}" if last.content_change is not None else "N/A"
-        )
+        content_str = f"{last.content_change:.4f}" if last.content_change is not None else "N/A"
         scroll_str = (
             f"dx={last.scroll_dx:.1f} dy={last.scroll_dy:.1f}"
             if last.scroll_dx is not None and last.scroll_dy is not None
@@ -709,11 +698,7 @@ class VisionService:
                 f"visual_progress={effect.visual_progress:.3f}"
             )
 
-        trajectory_block = (
-            "\n\n<RECENT_TRAJECTORY>\n"
-            + "\n".join(lines)
-            + "\n</RECENT_TRAJECTORY>"
-        )
+        trajectory_block = "\n\n<RECENT_TRAJECTORY>\n" + "\n".join(lines) + "\n</RECENT_TRAJECTORY>"
 
         return last_block + trajectory_block
 

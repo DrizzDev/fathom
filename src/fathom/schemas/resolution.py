@@ -96,8 +96,7 @@ class ResolveResult(BaseModel):
     candidates: List[ResolveCandidate] = Field(
         default_factory=list,
         description=(
-            "Top-K candidate elements when status is AMBIGUOUS. Empty for "
-            "RESOLVED and UNRESOLVED."
+            "Top-K candidate elements when status is AMBIGUOUS. Empty for RESOLVED and UNRESOLVED."
         ),
     )
 

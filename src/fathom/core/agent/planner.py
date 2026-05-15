@@ -26,11 +26,8 @@ class StepPlanner:
     def __init__(
         self,
         vision_tool: VisionService,
-        *,
-        min_confidence: float = 0.4,
     ) -> None:
         self.__vision = vision_tool
-        self.__min_confidence = min_confidence
 
     @property
     def vision_tool(self) -> VisionService:
@@ -137,7 +134,6 @@ class StepPlanner:
             context_manager=context_manager,
             last_action=state.last_action_type,
             tracking_note=current_tracking_note,
-            delta_context=state.get_delta_context(),
             recent_effects=state.get_recent_effects(),
             loop_observation=state.build_loop_observation(),
             prior_rejection_history=state.rejection_history,
@@ -149,7 +145,6 @@ class StepPlanner:
         # analysis — both are use-once signals consumed by this iteration.
         state.clear_rejection_history()
         context_manager.clear_verifier_feedback()
-        state.update_delta_context(analysis.delta)
 
         if analysis.content_exhausted:
             state.reset_loop_detector()
@@ -176,31 +171,8 @@ class StepPlanner:
                 },
             )
 
-        # Select and gate the action BEFORE evaluating sub-goal completion.
-        # If the action is rejected (low confidence, repeated failure), we must not
-        # advance the sub-goal — the LLM's completion signal is tied to an action
-        # that won't execute.
         action = self.__select_action(state=state, reasoner=reasoner, analysis=analysis)
 
-        # Confidence gating: reject actions below the minimum confidence threshold.
-        if action.confidence < self.__min_confidence:
-            logger.warning(
-                "[Planner] Action '%s' rejected: confidence %.2f < threshold %.2f",
-                action.to_description()[:60],
-                action.confidence,
-                self.__min_confidence,
-            )
-            return PlanResult(
-                step=None,
-                is_complete=False,
-                should_retry=True,
-                metrics=analysis.metrics,
-                metadata=analysis.metadata,
-                memories=analysis.memories,
-                reason=f"Action confidence {action.confidence:.2f} below threshold {self.__min_confidence}",
-            )
-
-        # Check if this EXACT action just failed on this screen hash
         if state.should_avoid_action(action=action):
             return PlanResult(
                 step=None,

@@ -250,7 +250,8 @@ class GeminiPromptBuilder(PromptBuilder):
 
         if any(word in intent.lower() for word in ["type", "enter", "input"]):
             rules.append(
-                "- CRITICAL SEQ: Use 'tap' to gain focus on the input field, followed by 'type'."
+                "- CRITICAL SEQ: If the input field is not already focused, use 'tap' "
+                "to gain focus, followed by 'type'."
             )
 
         return "RULES:\n" + "\n".join(rules) if rules else ""

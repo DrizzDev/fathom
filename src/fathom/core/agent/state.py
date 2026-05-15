@@ -5,12 +5,16 @@ from logging import getLogger
 from typing import Any, Deque, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
-from fathom.constants.reasoning import LOW_DELTA_PROGRESS_THRESHOLD
-from fathom.constants.screen import ACTION_EFFECT_TRAJECTORY_WINDOW
+from fathom.constants.screen import (
+    ACTION_EFFECT_TRAJECTORY_WINDOW,
+    LOOP_OSCILLATION_AB_WINDOW,
+    MIN_LOOP_OBSERVATION_REPETITIONS,
+    MIN_NO_PROGRESS_FOR_OBSERVATION,
+    MIN_SCREENS_FOR_NEAR_DUPLICATE,
+)
 from fathom.constants.state import CompletionReason
 from fathom.schemas.actions import Action
 from fathom.schemas.conversation import ConversationTurn
-from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.observation import LoopObservation, ScreenRelation
 from fathom.schemas.reasoning import SubGoalCompletionSignal
@@ -85,16 +89,20 @@ class AgentState:
         self.__last_error: Optional[str] = None
         self.__last_action_type: Optional[str] = None
         self.__last_action_description: Optional[str] = None
+
+        # Legacy delta-context fields. Kept as immutable defaults so the
+        # checkpoint round-trip continues to accept payloads written by
+        # earlier versions of the schema. No code path mutates them
+        # any more — the signal lives in ``__recent_effects`` instead.
         self.__last_delta_score: Optional[float] = None
         self.__low_delta_streak: int = 0
 
-        # Rolling window of structured action-effect classifications. The
-        # window feeds the ANALYZE prompt's <RECENT_TRAJECTORY> block so
-        # the agent can see whether its recent actions produced progress
-        # — replaces the unreliable ``screen_changed: bool`` signal.
-        self.__recent_effects: Deque[ActionEffect] = deque(
-            maxlen=ACTION_EFFECT_TRAJECTORY_WINDOW
-        )
+        # Rolling window of structured action-effect classifications.
+        # The window feeds the ANALYZE prompt's ``<RECENT_TRAJECTORY>``
+        # block so the agent can reason about whether its recent
+        # actions produced progress — replaces the unreliable
+        # ``screen_changed: bool`` signal.
+        self.__recent_effects: Deque[ActionEffect] = deque(maxlen=ACTION_EFFECT_TRAJECTORY_WINDOW)
 
         # Multi-turn rejection history for cross-iteration feedback loops.
         # Stores provider-neutral ConversationTurn objects so the next
@@ -629,21 +637,6 @@ class AgentState:
 
         self.__loop_detector.signal_content_exhausted()
 
-    def get_delta_context(self) -> Dict[str, object]:
-        """
-        Return compact no-XML delta context used for planning hints.
-
-        NOTE: superseded by :meth:`get_recent_effects` /
-        :meth:`get_last_action_effect` and slated for removal in the
-        Phase 1C signal-hygiene cleanup. Kept here so external callers
-        keep compiling until the cleanup lands.
-        """
-
-        return {
-            "last_delta_score": self.__last_delta_score,
-            "low_delta_streak": self.__low_delta_streak,
-        }
-
     def record_action_effect(self, *, effect: ActionEffect) -> None:
         """
         Append a structured action-effect outcome to the rolling
@@ -701,7 +694,7 @@ class AgentState:
 
         stuck = self.is_stuck
         no_progress_run = self.consecutive_no_progress_count
-        if not stuck and no_progress_run < 2:
+        if not stuck and no_progress_run < MIN_NO_PROGRESS_FOR_OBSERVATION:
             return None
 
         recent_actions = [
@@ -712,17 +705,14 @@ class AgentState:
         if not recent_actions:
             return None
 
-        # Most-repeated descriptor in the recent window.
         counts: Dict[str, int] = {}
         for descriptor in recent_actions:
             counts[descriptor] = counts.get(descriptor, 0) + 1
         repeated, count = max(counts.items(), key=lambda item: item[1])
-        if count < 2:
+        if count < MIN_LOOP_OBSERVATION_REPETITIONS:
             return None
 
-        progress_scores = [
-            round(effect.visual_progress, 3) for effect in self.__recent_effects
-        ]
+        progress_scores = [round(effect.visual_progress, 3) for effect in self.__recent_effects]
 
         relation = self.__classify_screen_relation()
 
@@ -737,19 +727,20 @@ class AgentState:
     def __classify_screen_relation(self) -> ScreenRelation:
         """
         Bucket the recent screen history into a coarse
-        :class:`ScreenRelation`. Pure read of existing state — does not
-        require XML or any external dependency.
+        :class:`ScreenRelation`.
         """
 
-        if len(self.__seen_screens) < 2:
+        screen_count = len(self.__seen_screens)
+
+        if screen_count < MIN_SCREENS_FOR_NEAR_DUPLICATE:
             return ScreenRelation.DIVERGING
 
-        last_two = self.__seen_screens[-2:]
+        last_two = self.__seen_screens[-MIN_SCREENS_FOR_NEAR_DUPLICATE:]
         if last_two[0].is_same_screen(last_two[1]):
             return ScreenRelation.NEAR_DUPLICATE
 
-        if len(self.__seen_screens) >= 4:
-            tail = self.__seen_screens[-4:]
+        if screen_count >= LOOP_OSCILLATION_AB_WINDOW:
+            tail = self.__seen_screens[-LOOP_OSCILLATION_AB_WINDOW:]
             if tail[0].is_same_screen(tail[2]) and tail[1].is_same_screen(tail[3]):
                 return ScreenRelation.OSCILLATING
 
@@ -774,39 +765,6 @@ class AgentState:
             break
         return count
 
-    def update_delta_context(self, delta: Optional[DeltaSignal]) -> None:
-        """
-        Update rolling delta metrics from the model's semantic delta signal.
-        """
-
-        if (score := self.__derive_delta_score(delta=delta)) is None:
-            return
-
-        self.__last_delta_score = score
-        self.__low_delta_streak = (
-            self.__low_delta_streak + 1 if score < LOW_DELTA_PROGRESS_THRESHOLD else 0
-        )
-
-    @staticmethod
-    def __derive_delta_score(*, delta: Optional[DeltaSignal]) -> Optional[float]:
-        """
-        Project a :class:`DeltaSignal` onto a [0.0, 1.0] score; None when absent.
-        """
-
-        if delta is None:
-            return None
-
-        if delta.delta_confidence is not None:
-            return max(0.0, min(1.0, float(delta.delta_confidence or 0)))
-
-        if delta.delta_observed is True:
-            return 1.0
-
-        if delta.delta_observed is False:
-            return 0.0
-
-        return None
-
     def build_context(self) -> Dict[str, object]:
         """
         Build context for vision-language model with token optimization.
@@ -819,7 +777,6 @@ class AgentState:
             "is_stuck": self.is_stuck,
             "max_steps": self.__max_steps,
             "step_count": self.__step_count,
-            "delta_context": self.get_delta_context(),
             "unique_screens_seen": len(self.__seen_screens),
             "compact_history": self.__action_history.get_compact_history(),
             "relevant_failures": self.__action_history.get_activity_failures(

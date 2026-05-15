@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from logging import getLogger
-from typing import Any, Dict, Optional, Pattern, Tuple
+from typing import Any, Dict, Optional, Pattern
 
 from fathom.constants import SPATIAL_ACTION_TYPES, ActionType
 from fathom.interfaces.memory import MemoryPort
@@ -29,8 +29,14 @@ class ReferenceResolutionService:
         # Regex for variable substitution: $source.key
         self.__ref_pattern: Pattern[str] = re.compile(r"\$(memory|env)\.([a-zA-Z0-9_]+)")
 
-        # Regex to parse bounds string: [x1,y1][x2,y2]
-        self.__bounds_pattern: Pattern[str] = re.compile(r"^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$")
+        # Regex to parse bounds string: [x1,y1][x2,y2]. Accepts negative
+        # coordinates (off-viewport scroll containers etc.) — the
+        # clamp step in :meth:`__snap_to_label` is responsible for
+        # bringing them back into the viewport before they reach an
+        # executor.
+        self.__bounds_pattern: Pattern[str] = re.compile(
+            r"^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$"
+        )
 
     async def resolve(
         self,
@@ -56,19 +62,9 @@ class ReferenceResolutionService:
         the literal substituted target.
         """
 
-        snapped, snap_status, snap_reason = self.__snap_to_label(
-            action=action, elements=elements
-        )
-
-        substituted = await self.__substitute_references(action=snapped)
-
-        if snap_status == "resolved":
-            return ResolveResult.resolved(action=substituted)
-
-        return ResolveResult.unresolved(
-            action=substituted,
-            reason=snap_reason or "named target could not be located in the manifest",
-        )
+        attempt = self.__snap_to_label(action=action, elements=elements)
+        substituted = await self.__substitute_references(action=attempt.action)
+        return attempt.model_copy(update={"action": substituted})
 
     async def __substitute_references(self, *, action: Action) -> Action:
         """
@@ -99,40 +95,45 @@ class ReferenceResolutionService:
         self,
         action: Action,
         elements: Optional[Dict[str, Any]],
-    ) -> Tuple[Action, str, Optional[str]]:
+    ) -> ResolveResult:
         """
         Overwrite action bounds with ground-truth pixel coordinates when
-        ``label_id`` matches an element in the manifest.
+        ``label_id`` matches an element in the manifest, returning a
+        typed :class:`ResolveResult` carrying the outcome.
 
-        Returns ``(action, status, reason)`` where ``status`` is one of:
-
-        - ``"resolved"``: action does not require snapping (non-spatial)
-          OR the snap succeeded.
-        - ``"unresolved"``: action is spatial and named a target that
-          could not be mapped to a manifest element. ``reason`` carries
-          a short mechanical diagnostic the planner can hand to the
-          recovery coordinator.
+        Non-spatial actions and successful snaps return ``RESOLVED``.
+        Any other path (missing ``label_id``, label not in manifest,
+        empty / unparseable bounds, snap exception) returns
+        ``UNRESOLVED`` with a short mechanical reason the planner can
+        hand to the recovery coordinator.
         """
 
         if action.action_type not in SPATIAL_ACTION_TYPES:
-            return action, "resolved", None
+            return ResolveResult.resolved(action=action)
 
         if not action.label_id:
-            return action, "unresolved", "spatial action emitted without a label_id"
+            return ResolveResult.unresolved(
+                action=action, reason="spatial action emitted without a label_id"
+            )
 
         if not elements:
-            return action, "unresolved", "manifest empty; no labeled elements to snap against"
+            return ResolveResult.unresolved(
+                action=action,
+                reason="manifest empty; no labeled elements to snap against",
+            )
 
         info = elements.get(action.label_id)
         if not info:
-            return action, "unresolved", (
-                f"label_id '{action.label_id}' not present in current manifest"
+            return ResolveResult.unresolved(
+                action=action,
+                reason=f"label_id '{action.label_id}' not present in current manifest",
             )
 
         bounds_str = str(info.get("bounds", ""))
         if not bounds_str:
-            return action, "unresolved", (
-                f"label_id '{action.label_id}' has no bounds; element is not snappable"
+            return ResolveResult.unresolved(
+                action=action,
+                reason=(f"label_id '{action.label_id}' has no bounds; element is not snappable"),
             )
 
         match = self.__bounds_pattern.match(bounds_str)
@@ -148,14 +149,28 @@ class ReferenceResolutionService:
                     "bounds": bounds_str,
                 },
             )
-            return action, "unresolved", (
-                f"label_id '{action.label_id}' has unparseable bounds '{bounds_str}'"
+            return ResolveResult.unresolved(
+                action=action,
+                reason=(f"label_id '{action.label_id}' has unparseable bounds '{bounds_str}'"),
             )
 
         try:
-            x1, y1, x2, y2 = map(int, match.groups())
+            raw_x1, raw_y1, raw_x2, raw_y2 = (int(value) for value in match.groups())
+            x1 = max(0, raw_x1)
+            y1 = max(0, raw_y1)
+            x2 = max(0, raw_x2)
+            y2 = max(0, raw_y2)
             width = x2 - x1
             height = y2 - y1
+
+            if width <= 0 or height <= 0:
+                return ResolveResult.unresolved(
+                    action=action,
+                    reason=(
+                        f"label_id '{action.label_id}' bounds collapse to zero "
+                        f"after viewport clamp (raw={bounds_str})"
+                    ),
+                )
 
             logger.info(
                 "[Resolution] snapped action to label [%s] bounds=%d,%d %dx%d",
@@ -172,6 +187,8 @@ class ReferenceResolutionService:
                     "y": y1,
                     "width": width,
                     "height": height,
+                    "raw_bounds": bounds_str,
+                    "clamped": raw_x1 < 0 or raw_y1 < 0 or raw_x2 < 0 or raw_y2 < 0,
                 },
             )
 
@@ -193,7 +210,7 @@ class ReferenceResolutionService:
             ):
                 update["input_context"] = input_context
 
-            return action.model_copy(update=update), "resolved", None
+            return ResolveResult.resolved(action=action.model_copy(update=update))
 
         except Exception as exception:
             logger.warning(
@@ -207,8 +224,9 @@ class ReferenceResolutionService:
                     "error": str(exception),
                 },
             )
-            return action, "unresolved", (
-                f"snap failed for label_id '{action.label_id}': {exception}"
+            return ResolveResult.unresolved(
+                action=action,
+                reason=f"snap failed for label_id '{action.label_id}': {exception}",
             )
 
     @staticmethod

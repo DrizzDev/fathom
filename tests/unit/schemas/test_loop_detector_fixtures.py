@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from typing import List
 
+from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.constants.screen import LOOP_DETECTOR_WINDOW_SIZE, LOOP_REPETITION_THRESHOLD
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import LoopDetector
 
@@ -33,16 +35,20 @@ def _screen(visual_hash: str, *, activity: str = "bundl.swiggy.production") -> S
     """
     Build a minimal :class:`ScreenState` for fixture replay.
 
-    The visual hash is padded to the canonical 16 hex-char form so
+    The visual hash is padded to :data:`VISUAL_HASH_LENGTH` so
     :meth:`ScreenState.hamming_distance` returns the same values as it
     would for a real production capture.
     """
 
-    padded = visual_hash if len(visual_hash) >= 16 else visual_hash + "0" * (16 - len(visual_hash))
+    padded = (
+        visual_hash
+        if len(visual_hash) >= VISUAL_HASH_LENGTH
+        else visual_hash + "0" * (VISUAL_HASH_LENGTH - len(visual_hash))
+    )
     return ScreenState(
         activity=activity,
         timestamp=0,
-        activity_hash="aaaaaaaaaaaaaaaa",
+        activity_hash="a" * VISUAL_HASH_LENGTH,
         visual_hash=padded,
     )
 
@@ -63,7 +69,7 @@ def _replay(
     assert len(visual_hashes) == len(actions) == len(action_types)
 
     previous: ScreenState | None = None
-    for visual_hash, action, action_type in zip(visual_hashes, actions, action_types):
+    for visual_hash, action, action_type in zip(visual_hashes, actions, action_types, strict=True):
         current = _screen(visual_hash=visual_hash)
         detector.observe_screen(previous=previous, current=current)
         detector.record(screen=current, action_type=action_type, action_description=action)
@@ -97,7 +103,9 @@ class TestLoopDetectorFixtures:
         that motivated the threshold split and the carve-out removal.
         """
 
-        detector = LoopDetector(threshold=3, window_size=15)
+        detector = LoopDetector(
+            threshold=LOOP_REPETITION_THRESHOLD, window_size=LOOP_DETECTOR_WINDOW_SIZE
+        )
         _replay(
             detector,
             visual_hashes=self.SCROLL_LOOP_HASHES,
@@ -116,7 +124,9 @@ class TestLoopDetectorFixtures:
         repetition detectors must converge on stuck.
         """
 
-        detector = LoopDetector(threshold=3, window_size=15)
+        detector = LoopDetector(
+            threshold=LOOP_REPETITION_THRESHOLD, window_size=LOOP_DETECTOR_WINDOW_SIZE
+        )
         # Two near-duplicate screens within hamming-cluster threshold
         oscillating = ["98e8a527", "98e8a526"] * 6
         _replay(
@@ -135,7 +145,9 @@ class TestLoopDetectorFixtures:
         otherwise long-feed scrolling becomes impossible.
         """
 
-        detector = LoopDetector(threshold=3, window_size=15)
+        detector = LoopDetector(
+            threshold=LOOP_REPETITION_THRESHOLD, window_size=LOOP_DETECTOR_WINDOW_SIZE
+        )
         # Hashes diverge by >> SCREEN_PROGRESS_HAMMING_THRESHOLD (16)
         diverging = [
             "0000000000000000",
@@ -162,7 +174,9 @@ class TestLoopDetectorFixtures:
         unchanging screen.
         """
 
-        detector = LoopDetector(threshold=3, window_size=15)
+        detector = LoopDetector(
+            threshold=LOOP_REPETITION_THRESHOLD, window_size=LOOP_DETECTOR_WINDOW_SIZE
+        )
         clustered = ["d8e8a12f", "d8e8a12e", "d8e8a12d", "d8e8a12f"]
         _replay(
             detector,
@@ -186,7 +200,9 @@ class TestLoopDetectorFixtures:
         evidence survives.
         """
 
-        detector = LoopDetector(threshold=3, window_size=15)
+        detector = LoopDetector(
+            threshold=LOOP_REPETITION_THRESHOLD, window_size=LOOP_DETECTOR_WINDOW_SIZE
+        )
         # One-bit jitter between consecutive frames is below the
         # SCREEN_PROGRESS_HAMMING_THRESHOLD (16); buffer must accumulate
         # rather than reset on every step.

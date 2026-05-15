@@ -112,6 +112,24 @@ ACTION_EFFECT_TRAJECTORY_WINDOW: int = 5
 # tries on a tough screen before recovery dispatches.
 NO_PROGRESS_RECOVERY_THRESHOLD: int = 3
 
+# Minimum number of repeated action occurrences in the recent window
+# before a :class:`LoopObservation` is worth surfacing to the agent.
+# A single repetition is not yet a loop; two is the smallest evidence
+# threshold that justifies a structured observation in the prompt.
+MIN_LOOP_OBSERVATION_REPETITIONS: int = 2
+
+# Number of trailing NO_PROGRESS classifications that crosses from
+# "ambiguous outcome" into "worth flagging in the prompt". Lower than
+# :data:`NO_PROGRESS_RECOVERY_THRESHOLD` because the observation is
+# informational and fires before the harder recovery dispatch.
+MIN_NO_PROGRESS_FOR_OBSERVATION: int = 2
+
+# Minimum number of recent screens required before the screen-relation
+# classifier (used by :meth:`AgentState.build_loop_observation`) can
+# decide whether the last two captures are near-duplicates. One screen
+# is insufficient evidence to classify a relation.
+MIN_SCREENS_FOR_NEAR_DUPLICATE: int = 2
+
 STATUS_BAR_HEIGHT_PX: int = 80
 NAVIGATION_BAR_HEIGHT_PX: int = 60
 

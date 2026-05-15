@@ -180,6 +180,26 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(resolved.action.input_context)
 
+    async def test_negative_y_bounds_are_clamped_to_viewport(self) -> None:
+        """
+        Bounds with a negative origin (off-viewport scroll containers)
+        must be clamped to zero so the element stays snappable; the
+        post-clamp rect carries the visible portion only.
+        """
+
+        service = self.__build_service()
+        action = self.__build_action(action_type=ActionType.TAP, label_id="9")
+        elements = self.__build_elements("9", bounds="[0,-720][1206,1905]")
+
+        resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
+        self.assertIsNotNone(resolved.action.bounds)
+        self.assertEqual(resolved.action.bounds.x, 0)
+        self.assertEqual(resolved.action.bounds.y, 0)
+        self.assertEqual(resolved.action.bounds.width, 1206)
+        self.assertEqual(resolved.action.bounds.height, 1905)
+
     async def test_bounds_still_snapped_without_input_context(self) -> None:
         """
         Label snapping sets pixel bounds regardless of whether

@@ -301,11 +301,11 @@ class LoopDetector(BaseModel):
             action_counts[action] = action_counts.get(action, 0) + 1
             if action_counts[action] >= self.threshold + 1:
                 action_lower = action.lower()
-                if any(token in action_lower for token in ("swipe", "scroll", "flick")):
-                    if not self.__recent_hashes_are_converging():
-                        # Screens are still diverging — legitimate scroll
-                        # through fresh content. Suppress this repeat.
-                        continue
+                is_scroll_like = any(
+                    token in action_lower for token in ("swipe", "scroll", "flick")
+                )
+                if is_scroll_like and not self.__recent_hashes_are_converging():
+                    continue
 
                 logger.warning(
                     "LoopDetector: stuck via action repetition '%s' (%dx)",

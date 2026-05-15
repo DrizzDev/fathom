@@ -13,8 +13,9 @@ exercise the public surface used by:
 
 from __future__ import annotations
 
-from fathom.schemas.effect import ActionEffect, ActionEffectStatus
+from fathom.constants.screen import NO_PROGRESS_RECOVERY_THRESHOLD
 from fathom.core.agent.state import AgentState
+from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 
 
 def _effect(status: ActionEffectStatus, *, visual_progress: float = 0.0) -> ActionEffect:
@@ -71,17 +72,18 @@ class TestActionEffectTrajectory:
 
         assert state.consecutive_no_progress_count == 1
 
-    def test_consecutive_no_progress_counts_three_in_a_row(self) -> None:
+    def test_consecutive_no_progress_counts_recovery_threshold_in_a_row(self) -> None:
         """
-        Three ``NO_PROGRESS`` classifications in a row cross the
-        recovery threshold (``NO_PROGRESS_RECOVERY_THRESHOLD = 3``).
+        :data:`NO_PROGRESS_RECOVERY_THRESHOLD` consecutive
+        ``NO_PROGRESS`` classifications cross the recovery escalation
+        bar — RECORD dispatches ``NO_PROGRESS`` when this is met.
         """
 
         state = AgentState(intent="x")
-        for _ in range(3):
+        for _ in range(NO_PROGRESS_RECOVERY_THRESHOLD):
             state.record_action_effect(effect=_effect(ActionEffectStatus.NO_PROGRESS))
 
-        assert state.consecutive_no_progress_count == 3
+        assert state.consecutive_no_progress_count == NO_PROGRESS_RECOVERY_THRESHOLD
 
     def test_uncertain_breaks_no_progress_run(self) -> None:
         """
