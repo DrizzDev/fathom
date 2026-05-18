@@ -135,6 +135,7 @@ class PerceptionService:
             data=capture.image,
             metadata={
                 "type": "screenshot",
+                "phase": "pre_action",
                 "timestamp": time.time(),
                 "session_id": session_id,
                 "package_name": capture.activity,

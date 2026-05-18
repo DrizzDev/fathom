@@ -25,6 +25,7 @@ from fathom.constants.screen import (
     XML_HASH_CHANGED_SIGNAL_WEIGHT,
     ZERO_HASH,
 )
+from fathom.schemas.artifacts import StepArtifacts
 
 
 class ScreenState(BaseModel):
@@ -330,6 +331,13 @@ class PostActionScreenComparison(BaseModel):
     screen_diff: Optional[ScreenDiff] = Field(
         default=None,
         description="Rich screen comparison between pre-action and post-action captures",
+    )
+    artifacts: Optional[StepArtifacts] = Field(
+        default=None,
+        description=(
+            "Namespaced artifact envelope produced for this step "
+            "(screen.before, screen.after, future namespaces such as hierarchy/trace)."
+        ),
     )
 
 

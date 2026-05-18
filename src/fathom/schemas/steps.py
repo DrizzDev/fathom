@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.schemas.actions import Action
+from fathom.schemas.artifacts import StepArtifacts
 
 
 class Step(BaseModel):
@@ -56,6 +57,11 @@ class StepResult(BaseModel):
     is_positional: bool = Field(
         default=False,
         description="Whether the generalized_target is a positional/ordinal reference",
+    )
+
+    artifacts: Optional[StepArtifacts] = Field(
+        default=None,
+        description="Optional namespaced artifacts captured during the step (screen.before, screen.after, ...)",
     )
 
     def to_record(
