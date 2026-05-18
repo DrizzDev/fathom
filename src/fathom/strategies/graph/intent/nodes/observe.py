@@ -83,6 +83,7 @@ class ObserveNode:
             screen_diff,
             post_hash,
             post_activity,
+            step_artifacts,
         ) = await self.__provider.effects.observe(
             context=context,
         )
@@ -139,6 +140,7 @@ class ObserveNode:
             observation=plan_observation,
             duration=context.duration,
             error=context.execution_result.error,
+            artifacts=step_artifacts,
             screen_changed=screen_changed,
             success=context.execution_result.success,
             generalized_target=context.step.action.script_target,

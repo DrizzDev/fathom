@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.schemas.actions import Bounds
+from fathom.schemas.artifacts import StepArtifacts
 from fathom.schemas.screens import ScreenDiff, ScreenHashBundle
 
 
@@ -236,4 +237,11 @@ class PostActionObservation(BaseModel):
     observation: Optional[ScreenObservation] = Field(
         default=None,
         description="Post-action screen observation when capture succeeded.",
+    )
+    artifacts: Optional[StepArtifacts] = Field(
+        default=None,
+        description=(
+            "Namespaced artifact envelope (screen.before / screen.after) "
+            "persisted via the StoragePort during post-action capture."
+        ),
     )

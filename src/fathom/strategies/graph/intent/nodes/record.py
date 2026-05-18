@@ -185,11 +185,18 @@ class RecordNode:
             if isinstance(plan_raw, PlanResult):
                 plan_metrics = dict(plan_raw.metrics or {})
 
+            artifacts_payload = (
+                step_result.artifacts.model_dump(mode="json")
+                if step_result.artifacts is not None
+                else None
+            )
+
             await self.__provider.context.telemetry.info(
                 f"Step {step_result.step.step_number} completed",
                 type=FathomEvent.STEP_COMPLETED,
                 success=record.success,
                 duration=total_duration,
+                artifacts=artifacts_payload,
                 rationale=record.rationale,
                 observation=record.observation,
                 action_type=record.action_type,
