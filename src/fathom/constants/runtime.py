@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Final
 
 DEFAULT_LOCALIZATION_BUDGET: Final[int] = 120
-DEFAULT_OCR_PERCEPTION_BUDGET: Final[int] = 800
+DEFAULT_OCR_PERCEPTION_BUDGET: Final[int] = 4000
 DEFAULT_LOCAL_PERCEPTION_BUDGET: Final[int] = 120
 DEFAULT_LOCALIZATION_CONFIDENCE_THRESHOLD: Final[float] = 0.72
 

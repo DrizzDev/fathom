@@ -949,6 +949,7 @@ class AgentState:
             "sub_goals": [goal.model_dump(mode="json") for goal in self.__sub_goals],
             "current_sub_goal_index": self.__current_sub_goal_index,
             "sub_goal_action_count": self.__sub_goal_action_count,
+            "consecutive_complete_deferrals": self.__consecutive_complete_deferrals,
             "recent_effects": [
                 effect.model_dump(mode="json") for effect in self.get_recent_effects()
             ],
@@ -976,6 +977,7 @@ class AgentState:
         loop_detector_state: Optional[Dict[str, Any]] = None,
         recent_effects: Optional[List[Dict[str, Any]]] = None,
         sub_goal_action_count: int = 0,
+        consecutive_complete_deferrals: int = 0,
         realignment_state: Optional[Dict[str, Any]] = None,
         healing_state: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -986,6 +988,7 @@ class AgentState:
         self.__step_count = step_count
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
+        self.__consecutive_complete_deferrals = max(0, consecutive_complete_deferrals)
 
         if realignment_state is not None:
             self.__runtime.realignment.load_state(state=realignment_state)
@@ -1103,6 +1106,13 @@ class AgentState:
             else 0
         )
 
+        consecutive_complete_deferrals_raw = data.get("consecutive_complete_deferrals", 0)
+        consecutive_complete_deferrals = (
+            int(cast("int", consecutive_complete_deferrals_raw))
+            if isinstance(consecutive_complete_deferrals_raw, (int, float))
+            else 0
+        )
+
         recent_effects: List[Dict[str, Any]] = []
         recent_effects_value = data.get("recent_effects")
         if isinstance(recent_effects_value, list):
@@ -1138,6 +1148,7 @@ class AgentState:
             loop_detector_state=loop_detector_state,
             recent_effects=recent_effects,
             sub_goal_action_count=sub_goal_action_count,
+            consecutive_complete_deferrals=consecutive_complete_deferrals,
         )
 
         return state

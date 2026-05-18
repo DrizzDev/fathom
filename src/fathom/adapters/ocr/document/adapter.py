@@ -105,16 +105,18 @@ class DocumentAiOcr(OcrPort):
         except OcrError:
             raise
         except Exception as exception:
+            # quota etc.
             logger.warning(
                 "OCR request failed",
                 extra={
                     **log_context,
                     "event": "ocr.request.failed",
                     "error.message": str(exception),
+                    "error.type": type(exception).__name__,
                 },
             )
             raise OcrError(
-                f"Document AI request failed: {exception}",
+                f"Document AI request failed: {type(exception).__name__}: {exception}",
                 retryable=False,
             ) from exception
 
