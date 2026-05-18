@@ -3,6 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+from fathom.schemas.escape import EscapeCategory
+
 if TYPE_CHECKING:
     from fathom.core.recovery.types import RecoveryTrigger
 
@@ -40,19 +42,21 @@ class DecompositionPromptBuilder(ABC):
     def build_replan_user_preamble(
         self,
         *,
-        trigger: RecoveryTrigger,
         stuck_sub_goal: str,
         failure_reason: str,
+        trigger: RecoveryTrigger,
         recent_actions: List[str],
         suggested_next_action: Optional[str],
+        escape_category: Optional[EscapeCategory] = None,
     ) -> str:
         """
         Build the user-prompt preamble describing the stuck state.
 
-        ``trigger`` selects a short framing sentence that names the stuck
-        evidence — e.g. "looped without progress" vs "target not on screen"
-        — so the model can reason about *why* a replan was requested
-        instead of treating every replan as the same kind of failure.
+        ``trigger`` selects a short framing sentence that names the stuck evidence — e.g. "looped without progress" vs "target not on screen"
+        — so the model can reason about *why* a replan was requested instead of treating every replan as the same kind of failure.
+
+        When ``trigger`` is ``REQUEST_REPLAN`` the optional ``escape_category`` overrides the generic trigger framing with a category-specific sentence
+        so the decomposer adapts to *why* the agent escaped (target missing, wrong screen, missing precondition) rather than treating every escape identically.
         """
 
         raise NotImplementedError
@@ -64,7 +68,7 @@ class DecompositionPromptBuilder(ABC):
 _TRIGGER_FRAMING: Dict[str, str] = {
     "ACTION_BLOCKED": (
         "The previously-planned action could not be reached from the current "
-        "screen; the prior plan assumed UI affordances that are not present."
+        "screen; the prior plan assumed UI affordance's that are not present."
     ),
     "VERIFY_REJECTED": (
         "Final verification refused the run as complete. The remaining work "
@@ -86,9 +90,32 @@ _TRIGGER_FRAMING: Dict[str, str] = {
         "The active sub-goal exhausted its step budget without its success "
         "criterion being met; the sub-goal as written is not reachable here."
     ),
-    "REPORT_UNACTIONABLE": (
-        "The agent reported that the active sub-goal does not match the "
-        "current screen; rewrite the remaining plan around what IS on screen."
+    "REQUEST_REPLAN": (
+        "The agent emitted a structured escape report against the active "
+        "sub-goal. Use the category framing below to drive the next plan."
+    ),
+}
+
+
+# Per-:class:`EscapeCategory` framing for ``REQUEST_REPLAN`` replans.
+# The category-specific sentence overrides the generic ``REQUEST_REPLAN`` trigger framing
+# So the decomposer can adapt to *why* the agent escaped (target missing, wrong screen, missing precondition) rather than treating every escape identically.
+_ESCAPE_CATEGORY_FRAMING: Dict[str, str] = {
+    EscapeCategory.TARGET_NOT_AVAILABLE.value: (
+        "The agent could not ground the named target by either path — "
+        "no matching element in the manifest and nothing visible on the "
+        "current screenshot that corresponds to it. Rewrite the remaining "
+        "plan around elements that ARE reachable from this screen, or insert a sub-goal that brings the target into view."
+    ),
+    EscapeCategory.WRONG_SCREEN.value: (
+        "The agent is on a different screen than the prior plan assumed. "
+        "Rewrite the remaining plan starting from this screen — do not "
+        "re-issue steps that depend on the expected (but absent) screen."
+    ),
+    EscapeCategory.PRECONDITION_NOT_MET.value: (
+        "The agent reports that prior state required by the active sub-goal "
+        "has not been reached. Insert the missing precondition step(s) at "
+        "the head of the new plan before the previously-blocked work."
     ),
 }
 
@@ -135,9 +162,18 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             '\u2717 BAD: User says "Scroll to labs section and select any category" \u2192 Sub-goals: ["Scroll to labs section", "Select any category"]\n\n'
             '\u2713 GOOD: User says "Go to cart and verify total amount" \u2192 Sub-goal: "Go to cart and verify total amount"\n'
             '\u2717 BAD: User says "Go to cart and verify total amount" \u2192 Sub-goals: ["Go to cart", "Verify total amount"]\n\n'
+            "OBSERVABLE TERMINAL CRITERION (MANDATORY):\n"
+            "Every task must declare a terminal screen state — what the agent will see when the task is complete.\n"
+            "The criterion describes the post-condition, NOT the action used to reach it.\n"
+            '- Task description names WHAT the agent does ("Tap on Continue").\n'
+            '- Task criterion names WHAT THE SCREEN SHOWS afterwards ("Cart screen with items list visible").\n'
+            "Without an observable criterion the runtime cannot tell the difference between a wrong tap that happened to change the screen and a correct tap that achieved the goal.\n\n"
             "Return ONLY a valid JSON with this structure:\n"
             "{\n"
-            '  "sub_goals": ["step 1", "step 2", "step 3"],\n'
+            '  "sub_goals": [\n'
+            '    {"description": "step 1", "criterion": "what the screen looks like after step 1"},\n'
+            '    {"description": "step 2", "criterion": "what the screen looks like after step 2"}\n'
+            "  ],\n"
             '  "confidence": 0.9\n'
             "}\n"
         )
@@ -164,18 +200,21 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
         failure_reason: str,
         recent_actions: List[str],
         suggested_next_action: Optional[str],
+        escape_category: Optional[EscapeCategory] = None,
     ) -> str:
         """
-        Render the stuck-state preamble prepended to the user prompt when
-        re-decomposing from a stuck state.
+        Render the stuck-state preamble prepended to the user prompt when re-decomposing from a stuck state.
 
         Per-trigger framing names the kind of evidence the system observed
-        (loop, no-progress, unresolved target, ...) so the model treats the
-        prior plan's failure mode appropriately rather than re-emitting
-        equivalent steps.
+        (loop, no-progress, unresolved target, ...). When an ``escape_category`` is supplied (REQUEST_REPLAN path)
+        the category-specific framing overrides the generic trigger sentence so the decomposer sees the typed reason the agent escaped.
         """
 
-        framing = _TRIGGER_FRAMING.get(
+        category_value = escape_category.value if escape_category is not None else None
+        category_framing = (
+            _ESCAPE_CATEGORY_FRAMING.get(category_value) if category_value is not None else None
+        )
+        framing = category_framing or _TRIGGER_FRAMING.get(
             trigger.value,
             "The prior plan failed; reconsider the remaining work against the current screen.",
         )
@@ -183,6 +222,7 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
         return (
             "REPLAN CONTEXT (the previous decomposition got stuck):\n"
             f"- Trigger: {trigger.value}\n"
+            f"- Escape category: {category_value or '(none)'}\n"
             f"- What happened: {framing}\n"
             f"- Stuck sub-goal: {stuck_sub_goal}\n"
             f"- Failure reason: {failure_reason}\n"

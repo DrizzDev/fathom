@@ -5,8 +5,13 @@ from typing import Annotated, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.schemas.actions import Action
+from fathom.schemas.escape import EscapeReport
+from fathom.schemas.localization import LocalizationCandidate
+from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.supervision import BlockReason
 
 
 class RecoveryTrigger(StrEnum):
@@ -28,17 +33,20 @@ class RecoveryTrigger(StrEnum):
       coordinate.
     - ``SUBGOAL_BUDGET_EXCEEDED``: the active sub-goal exhausted its
       per-sub-goal step budget without its success criterion being met.
-    - ``REPORT_UNACTIONABLE``: the agent itself reported that the active
-      sub-goal does not match the current screen.
+    - ``REQUEST_REPLAN``: the agent emitted a structured
+      :class:`fathom.schemas.escape.EscapeReport` declaring it cannot
+      make safe forward progress on the active sub-goal; the
+      ``escape_report.category`` on :class:`RecoveryRequest` drives
+      per-category framing in the decomposer preamble.
     """
 
+    NO_PROGRESS = "NO_PROGRESS"
+    LOOP_DETECTED = "LOOP_DETECTED"
+    REQUEST_REPLAN = "REQUEST_REPLAN"
     ACTION_BLOCKED = "ACTION_BLOCKED"
     VERIFY_REJECTED = "VERIFY_REJECTED"
-    LOOP_DETECTED = "LOOP_DETECTED"
-    NO_PROGRESS = "NO_PROGRESS"
     TARGET_UNRESOLVED = "TARGET_UNRESOLVED"
     SUBGOAL_BUDGET_EXCEEDED = "SUBGOAL_BUDGET_EXCEEDED"
-    REPORT_UNACTIONABLE = "REPORT_UNACTIONABLE"
 
 
 class RecoveryRequest(BaseModel):
@@ -65,13 +73,35 @@ class RecoveryRequest(BaseModel):
         default_factory=list, description="Most-recent action descriptors, oldest first"
     )
 
+    escape_report: Optional[EscapeReport] = Field(
+        default=None,
+        description=(
+            "Structured escape signal forwarded from the planner when ``trigger`` is ``REQUEST_REPLAN``. "
+            "Strategies consult ``escape_report.category`` to vary framing per category."
+        ),
+    )
+
+    block_reason: Optional[BlockReason] = Field(
+        default=None,
+        description="Supervisor block reason that initiated recovery, when present.",
+    )
+
+    observation: Optional[ScreenObservation] = Field(
+        default=None,
+        description="Current screen observation; consumed by mechanical recovery strategies.",
+    )
+
+    candidates: List[LocalizationCandidate] = Field(
+        default_factory=list,
+        description="Localization candidates for alternative-target recovery.",
+    )
+
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
 
 class ReplanOutcome(BaseModel):
     """
-    Strategy decided to replace the pending sub-goal tail.
-    The graph node applies the result via ``AgentState.replan_pending_sub_goals``.
+    Replace the pending sub-goal tail with re-decomposed sub-goals.
     """
 
     summary: str = Field(description="Short human-readable summary for telemetry/logs")
@@ -81,10 +111,47 @@ class ReplanOutcome(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
+class TryActionOutcome(BaseModel):
+    """
+    Retry execution with an alternative action proposed by recovery.
+    """
+
+    kind: Literal["try_action"] = Field(default="try_action", description="Outcome discriminator")
+    summary: str = Field(description="Short human-readable summary for telemetry/logs")
+    action: Action = Field(description="Alternative action the coordinator must execute next")
+
+    model_config = ConfigDict(frozen=True)
+
+
+class EscalateOutcome(BaseModel):
+    """
+    Escalate the stuck state to the human operator.
+    """
+
+    kind: Literal["escalate"] = Field(default="escalate", description="Outcome discriminator")
+    summary: str = Field(description="Short human-readable summary for telemetry/logs")
+    question: str = Field(description="Question surfaced to the human operator")
+
+    model_config = ConfigDict(frozen=True)
+
+
+class BoundedFailureOutcome(BaseModel):
+    """
+    Terminate the run with a structured diagnostic.
+    """
+
+    kind: Literal["bounded_failure"] = Field(
+        default="bounded_failure", description="Outcome discriminator"
+    )
+    summary: str = Field(description="Short human-readable summary for telemetry/logs")
+    diagnostic: str = Field(description="Actionable failure diagnostic for telemetry and audit")
+
+    model_config = ConfigDict(frozen=True)
+
+
 class NoopOutcome(BaseModel):
     """
-    Strategy considered the situation but declined to act. Coordinator
-    treats this as "fall through to the standard rejection path."
+    Strategy declined to act; coordinator falls through to the next strategy.
     """
 
     kind: Literal["noop"] = Field(default="noop", description="Outcome discriminator")
@@ -94,6 +161,12 @@ class NoopOutcome(BaseModel):
 
 
 RecoveryOutcome = Annotated[
-    Union[ReplanOutcome, NoopOutcome],
+    Union[
+        NoopOutcome,
+        ReplanOutcome,
+        EscalateOutcome,
+        TryActionOutcome,
+        BoundedFailureOutcome,
+    ],
     Field(discriminator="kind"),
 ]

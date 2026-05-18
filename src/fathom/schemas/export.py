@@ -206,12 +206,39 @@ class ScriptExportStructuredPayload(ScriptExportStructuredPayloadShape):
                         "Conditional block action_ids must follow the canonical step order."
                     )
 
-        if payload.required_action_ids and Counter(ordered_action_ids) != Counter(
-            payload.required_action_ids
-        ):
-            raise ValueError(
-                "Executable action IDs must match step data exactly (no missing, extra, or duplicated IDs)."
-            )
+        if payload.required_action_ids:
+            required_counts = Counter(payload.required_action_ids)
+            emitted_counts = Counter(ordered_action_ids)
+
+            extras = emitted_counts - required_counts
+            if extras:
+                raise ValueError(
+                    "Executable action IDs contain extras not present in step data: "
+                    f"{sorted(extras.elements())}."
+                )
+
+            missing = required_counts - emitted_counts
+            if missing:
+                # Mirror the OPEN_APP auto-prepend pattern: rather than rejecting
+                # the whole structured payload because the LLM omitted some
+                # action IDs, splice the missing IDs back in at their canonical
+                # positions. Strict equality here was failing too many otherwise
+                # well-formed exports — particularly long traces where the LLM
+                # consolidated or skipped noisy intermediate steps. Extras still
+                # hard-fail because we cannot synthesize catalog entries for
+                # them.
+                logger.warning(
+                    "LLM omitted %d required action ID(s); auto-splicing at "
+                    "canonical positions: %s",
+                    sum(missing.values()),
+                    sorted(missing.elements()),
+                )
+                emitted_set = set(ordered_action_ids)
+                ordered_action_ids = [
+                    action_id
+                    for action_id in payload.required_action_ids
+                    if action_id in emitted_set or action_id in missing
+                ]
 
         for action_id in ordered_action_ids:
             if action_id not in payload.action_catalog:

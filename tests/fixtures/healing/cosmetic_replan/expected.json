@@ -1,0 +1,8 @@
+{
+  "terminal_status": "SUCCEEDED",
+  "max_step_count": 14,
+  "max_repeated_no_effect": 2,
+  "block_reasons": ["repeated_no_effect"],
+  "recoveries_invoked": ["replan"],
+  "raw_llm_coordinates_executed": 0
+}

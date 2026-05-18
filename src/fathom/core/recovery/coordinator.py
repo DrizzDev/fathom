@@ -4,7 +4,12 @@ from logging import getLogger
 from typing import Dict, List, Optional, Tuple
 
 from fathom.core.recovery.strategy import RecoveryStrategy
-from fathom.core.recovery.types import RecoveryOutcome, RecoveryRequest, RecoveryTrigger
+from fathom.core.recovery.types import (
+    NoopOutcome,
+    RecoveryOutcome,
+    RecoveryRequest,
+    RecoveryTrigger,
+)
 from fathom.schemas.recovery import RecoveryPolicy
 
 logger = getLogger(__name__)
@@ -19,8 +24,7 @@ class RecoveryCoordinator:
 
     Concurrency: instance-scoped per agent run. Designed for
     single-threaded asyncio access — counter read-modify-write is not
-    atomic and is unsafe under threading. Document if the execution
-    model changes.
+    atomic and is unsafe under threading. Document if the execution model changes.
     """
 
     def __init__(
@@ -115,7 +119,7 @@ class RecoveryCoordinator:
                     "component": "recovery",
                     "threshold": threshold,
                     "trigger": trigger.value,
-                    "event": "below_threshold",
+                    "event": "below.threshold",
                 },
             )
             return None
@@ -148,21 +152,24 @@ class RecoveryCoordinator:
                         "component": "recovery",
                         "trigger": trigger.value,
                         "strategy": strategy.name,
-                        "event": "strategy_skipped",
+                        "event": "strategy.skipped",
                     },
                 )
                 continue
 
-            if (outcome := await strategy.recover(request=request)) is None:
+            outcome = await strategy.recover(request=request)
+            if outcome is None or isinstance(outcome, NoopOutcome):
                 logger.info(
-                    "[RecoveryCoordinator] strategy %r declined",
+                    "[RecoveryCoordinator] strategy %r declined: %s",
                     strategy.name,
+                    outcome.summary if outcome is not None else "no outcome returned",
                     extra={
                         "scope": scope,
                         "component": "recovery",
                         "trigger": trigger.value,
                         "strategy": strategy.name,
-                        "event": "strategy_declined",
+                        "event": "strategy.declined",
+                        "summary": outcome.summary if outcome is not None else None,
                     },
                 )
                 continue
@@ -178,7 +185,7 @@ class RecoveryCoordinator:
                     "summary": outcome.summary,
                     "strategy": strategy.name,
                     "outcome_kind": outcome.kind,
-                    "event": "strategy_committed",
+                    "event": "strategy.committed",
                 },
             )
             self.__counters[key] = 0
@@ -203,15 +210,11 @@ class RecoveryCoordinator:
         Resolve the configured threshold for ``trigger``.
 
         Legacy triggers (``VERIFY_REJECTED`` / ``ACTION_BLOCKED``) honour
-        the user-configurable thresholds on ``RecoveryPolicy`` because
-        their upstream evidence is per-step and may be noisy.
+        the user-configurable thresholds on ``RecoveryPolicy`` because their upstream evidence is per-step and may be noisy.
 
-        Newer triggers (``LOOP_DETECTED``, ``NO_PROGRESS``,
-        ``TARGET_UNRESOLVED``, ``SUBGOAL_BUDGET_EXCEEDED``,
-        ``REPORT_UNACTIONABLE``) are pre-aggregated upstream — the loop
-        detector, action-effect classifier, sub-goal budget and the
-        agent itself only emit them once the evidence already meets a
-        local threshold — so dispatch is immediate.
+        Newer triggers (``LOOP_DETECTED``, ``NO_PROGRESS``, ``TARGET_UNRESOLVED``, ``SUBGOAL_BUDGET_EXCEEDED``, ``REQUEST_REPLAN``)
+        are pre-aggregated upstream — the loop detector, action-effect classifier, sub-goal budget and the agent itself only emit them
+        once the evidence already meets a local threshold — so dispatch is immediate.
         """
 
         if trigger == RecoveryTrigger.VERIFY_REJECTED:

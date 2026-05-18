@@ -42,7 +42,7 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
             rationale="test",
             label_id=label_id,
             action_type=action_type,
-            bounds=Bounds(x=0, y=0, width=100, height=100, coord_system="normalized"),
+            bounds=Bounds(x=0, y=0, width=100, height=100, coordinate_system="normalized"),
         )
 
     @staticmethod
@@ -144,6 +144,162 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(resolved.status, ResolveStatus.UNRESOLVED)
         self.assertIsNone(resolved.action.input_context)
+
+    async def test_swipe_without_label_id_resolves_to_viewport_gesture(self) -> None:
+        """
+        Viewport gestures are spatial, but they are not element-targeted.
+        They must remain executable without a manifest label.
+        """
+
+        service = self.__build_service()
+        action = Action(
+            rationale="scroll list",
+            target="auto suggest page",
+            action_type=ActionType.SWIPE_UP,
+            confidence=1.0,
+        )
+
+        resolved = await service.resolve(action=action, elements=None)
+
+        self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
+        self.assertIs(resolved.action.bounds, None)
+
+    async def test_model_bbox_without_label_id_is_unresolved(self) -> None:
+        """
+        Model coordinates are not trusted by reference resolution. They
+        require perception-backed localization before execution.
+        """
+
+        service = self.__build_service()
+        bounds = Bounds(x=10, y=20, width=100, height=40, coordinate_system="pixel", source="model")
+        action = Action(
+            bounds=bounds,
+            rationale="tap visible button",
+            target="visible button",
+            action_type=ActionType.TAP,
+            confidence=1.0,
+        )
+
+        resolved = await service.resolve(action=action, elements=None)
+
+        self.assertEqual(resolved.status, ResolveStatus.UNRESOLVED)
+        self.assertEqual(resolved.action.bounds, bounds)
+
+    async def test_model_bbox_with_hallucinated_label_is_unresolved(self) -> None:
+        """
+        A hallucinated label_id cannot be rescued by model coordinates in
+        reference resolution.
+        """
+
+        service = self.__build_service()
+        bounds = Bounds(
+            x=429, y=543, width=348, height=120, coordinate_system="pixel", source="model"
+        )
+        action = Action(
+            bounds=bounds,
+            label_id="110",
+            rationale="tap visible Alright button",
+            target="Alright, got it button",
+            action_type=ActionType.TAP,
+            confidence=1.0,
+        )
+        elements = {"11": {"bounds": "[387,1185][720,1608]", "type": "View"}}
+
+        resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.UNRESOLVED)
+        self.assertEqual(resolved.action.bounds, bounds)
+
+    async def test_model_bbox_does_not_beat_generic_textless_container_label(self) -> None:
+        """
+        A textless View label is often a layout container. Reference
+        resolution must not silently choose the model bbox instead.
+        """
+
+        service = self.__build_service()
+        bounds = Bounds(
+            x=429, y=522, width=348, height=120, coordinate_system="pixel", source="model"
+        )
+        action = Action(
+            bounds=bounds,
+            label_id="11",
+            rationale="tap visible Alright button",
+            target="Alright, got it button",
+            action_type=ActionType.TAP,
+            confidence=1.0,
+        )
+        elements = {"11": {"bounds": "[387,1185][720,1608]", "type": "View"}}
+
+        resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.UNRESOLVED)
+        self.assertEqual(resolved.action.bounds, bounds)
+
+    async def test_semantic_label_still_beats_model_bbox(self) -> None:
+        """
+        Manifest snapping remains preferred when the chosen label has
+        semantic metadata. The model bbox fallback is only for missing or
+        generic manifest grounding.
+        """
+
+        service = self.__build_service()
+        model_bounds = Bounds(
+            x=429, y=522, width=348, height=120, coordinate_system="pixel", source="model"
+        )
+        action = Action(
+            bounds=model_bounds,
+            label_id="28",
+            rationale="tap close button",
+            target="close button",
+            action_type=ActionType.TAP,
+            confidence=1.0,
+        )
+        elements = {"28": {"bounds": "[1050,186][1158,294]", "label": "Close"}}
+
+        resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
+        self.assertIsNotNone(resolved.action.bounds)
+        self.assertEqual(resolved.action.bounds.x, 1050)
+        self.assertEqual(resolved.action.bounds.y, 186)
+        self.assertEqual(resolved.action.bounds.width, 108)
+        self.assertEqual(resolved.action.bounds.height, 108)
+
+    async def test_cv_label_still_beats_model_bbox(self) -> None:
+        """
+        CV labels are already visual grounding evidence. If the model
+        chooses a CV label, execute the CV bounds rather than a possibly
+        noisy bbox from the same turn.
+        """
+
+        service = self.__build_service()
+        model_bounds = Bounds(
+            x=429, y=543, width=348, height=120, coordinate_system="normalized", source="model"
+        )
+        action = Action(
+            bounds=model_bounds,
+            label_id="37",
+            rationale="tap visible Alright button",
+            target="Alright, got it button",
+            action_type=ActionType.TAP,
+            confidence=1.0,
+        )
+        elements = {
+            "37": {
+                "bounds": "[429,1148][806,1256]",
+                "class": "VisualControl",
+                "source": "cv",
+            }
+        }
+
+        resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
+        self.assertIsNotNone(resolved.action.bounds)
+        self.assertEqual(resolved.action.bounds.x, 429)
+        self.assertEqual(resolved.action.bounds.y, 1148)
+        self.assertEqual(resolved.action.bounds.width, 377)
+        self.assertEqual(resolved.action.bounds.height, 108)
 
     async def test_text_equals_placeholder_skips_prefilled(self) -> None:
         """

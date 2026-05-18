@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import unittest
+from typing import Any, Dict, List, Optional
+
+from fathom.adapters.artifact.cloud import CloudSink
+from fathom.interfaces.storage import StoragePort
+from fathom.schemas.artifact import ArtifactKind, ArtifactMetadata
+
+
+class _RecordingStorage(StoragePort):
+    """
+    :class:`StoragePort` test double that records calls and returns a fake URL.
+    """
+
+    def __init__(self, *, identifier: str = "cloud://artifact/1") -> None:
+        """
+        Initialise the double with the identifier ``save`` should return.
+        """
+
+        self.__identifier = identifier
+        self.calls: List[Dict[str, Any]] = []
+
+    async def save(self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Record the call and return the fake cloud identifier.
+        """
+
+        self.calls.append({"size": len(data), "metadata": dict(metadata or {})})
+        return self.__identifier
+
+
+class _RaisingStorage(StoragePort):
+    """
+    :class:`StoragePort` test double that always raises on upload.
+    """
+
+    async def save(self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Raise to exercise the failure path of the cloud sink.
+        """
+
+        _ = (data, metadata)
+        raise RuntimeError("cloud unavailable")
+
+
+class CloudSinkTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins :class:`CloudSink` upload + receipt semantics.
+
+    Success path returns ``local_cleanup=True`` so the pipeline removes
+    the EFS staging files. Failure path returns ``local_cleanup=False``
+    so the next ``replay()`` can retry uploading.
+    """
+
+    @staticmethod
+    def __metadata() -> ArtifactMetadata:
+        """
+        Minimal :class:`ArtifactMetadata` fixture identifying the artifact.
+        """
+
+        return ArtifactMetadata(
+            kind=ArtifactKind.SCREENSHOT,
+            session_id="run-test",
+            package_name="app",
+            step_number=0,
+            created=1,
+        )
+
+    async def test_successful_upload_returns_cleanup_receipt(self) -> None:
+        """
+        On a successful upload the cloud sink returns the cloud
+        identifier and clears the local copy.
+        """
+
+        storage = _RecordingStorage(identifier="cloud://artifact/42")
+        sink = CloudSink(storage=storage, workflow_id="run-test")
+
+        receipt = await sink.persist(metadata=self.__metadata(), content=b"PNG")
+
+        self.assertTrue(receipt.local_cleanup)
+        self.assertEqual(receipt.identifier, "cloud://artifact/42")
+        self.assertEqual(len(storage.calls), 1)
+        self.assertEqual(storage.calls[0]["metadata"]["category"], "screenshot")
+
+    async def test_failed_upload_keeps_local_copy_for_replay(self) -> None:
+        """
+        Any provider exception must surface as
+        ``local_cleanup=False`` so the pipeline preserves the EFS file
+        for the next replay scan.
+        """
+
+        sink = CloudSink(storage=_RaisingStorage(), workflow_id="run-test")
+
+        receipt = await sink.persist(metadata=self.__metadata(), content=b"PNG")
+
+        self.assertFalse(receipt.local_cleanup)
+        self.assertEqual(receipt.identifier, "")

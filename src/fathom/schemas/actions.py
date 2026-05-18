@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import ActionType
 
-CoordinateSource = Literal["model", "viewport", "xml"]
+CoordinateSource = Literal["model", "viewport", "xml", "ocr"]
 InputContextSource = Literal["xml", "accessibility", "model", "vision"]
 
 
@@ -37,12 +37,14 @@ class Bounds(BaseModel):
     Bounds for UI elements.
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     x: int = Field(ge=0, le=5000, description="Top-left X coordinate")
     y: int = Field(ge=0, le=5000, description="Top-left Y coordinate")
     width: int = Field(ge=0, le=5000, description="Width of the element")
     height: int = Field(ge=0, le=5000, description="Height of the element")
     system: str = Field(
-        default="normalized", description="Coordinate system used", alias="coord_system"
+        default="normalized", description="Coordinate system used", alias="coordinate_system"
     )
     source: Optional[CoordinateSource] = Field(
         default=None,
@@ -73,7 +75,7 @@ class Bounds(BaseModel):
 
         return self.y + self.height // 2
 
-    def to_pixels(self, screen_width: int, screen_height: int) -> tuple[int, int, int, int]:
+    def to_pixels(self, screen_width: int, screen_height: int) -> Tuple[int, int, int, int]:
         """
         Converts coordinates to absolute device pixels.
         Handles both normalized and already-pixel coordinates.

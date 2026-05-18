@@ -11,10 +11,10 @@ class CompletionReason(StrEnum):
     MAX_STEPS = "Max steps reached"
     SUCCESS = "Completed successfully"
     STUCK = "Stuck: Recovery exhausted"
-    ACTION_BLOCKED = "Action blocked: repeated without progress"
     INTERVENTION_REQUIRED = "Human intervention required"
     USER_DIRECTIVE = "Marked complete via user directive"
-    REPORT_UNACTIONABLE = "Agent reported screen unactionable for active sub-goal"
+    ACTION_BLOCKED = "Action blocked: repeated without progress"
+    REQUEST_REPLAN = "Agent requested replan via structured escape report"
 
 
 class CommonStateKey(StrEnum):
@@ -34,6 +34,8 @@ class CommonStateKey(StrEnum):
     CAPTURE = "CAPTURE"
     SCREEN_STATE = "SCREEN_STATE"
     IS_NEW_SCREEN = "IS_NEW_SCREEN"
+    ACTION_OUTCOME = "ACTION_OUTCOME"
+    SCREEN_OBSERVATION = "SCREEN_OBSERVATION"
 
     # Analysis
     ANALYSIS = "ANALYSIS"
@@ -68,6 +70,18 @@ class IntentStateKey(StrEnum):
     PLAN = "PLAN"
     PLANNED_STEP = "PLANNED_STEP"
 
+    # Execution coordination across SUPERVISE / EXECUTE / OBSERVE
+    EXECUTION_CONTEXT = "EXECUTION_CONTEXT"
+    EXECUTION_BLOCKED = "EXECUTION_BLOCKED"
+
+    # Supervisor feedback to the next planner turn. When supervise blocks
+    # an action, LAST_BLOCK_REASON carries the BlockReason and
+    # LAST_BLOCK_MESSAGE the operator-facing text. ANALYZE reads these
+    # and renders them into the LLM prompt so the planner knows why its
+    # previous action was rejected.
+    LAST_BLOCK_REASON = "LAST_BLOCK_REASON"
+    LAST_BLOCK_MESSAGE = "LAST_BLOCK_MESSAGE"
+
     # Sub-goal state propagation (for global checkpoint persistence)
     CURRENT_SUB_GOAL_INDEX = "CURRENT_SUB_GOAL_INDEX"
     AGENT_STATE_CHECKPOINT = "AGENT_STATE_CHECKPOINT"
@@ -79,6 +93,17 @@ class IntentStateKey(StrEnum):
     POST_ACTIVITY = "POST_ACTIVITY"
 
 
+class PlanMetadataKey(StrEnum):
+    """
+    Stable keys for fields the planner writes into PlanResult.metadata.
+    """
+
+    ANALYSIS = "analysis_result"
+    ESCAPE_REPORT = "escape_report"
+    OBSERVATION = "observation"
+    BLOCKED_ACTION = "blocked_action"
+
+
 class ExplorationStateKey(StrEnum):
     """
     Exploration-specific state keys for ExplorationGraphState.
@@ -87,11 +112,13 @@ class ExplorationStateKey(StrEnum):
     # BFS State
     BFS_PHASE = "BFS_PHASE"
     BFS_QUEUE = "BFS_QUEUE"
-    VISITED_HASHES = "VISITED_HASHES"
-    CURRENT_PATH = "CURRENT_PATH"
+
     PENDING_NAV = "PENDING_NAV"
-    SCANNING_HASH = "SCANNING_HASH"
+    CURRENT_PATH = "CURRENT_PATH"
+
     ROOT_HASH = "ROOT_HASH"
+    SCANNING_HASH = "SCANNING_HASH"
+    VISITED_HASHES = "VISITED_HASHES"
 
     # Scan artifacts
     ACTION = "ACTION"

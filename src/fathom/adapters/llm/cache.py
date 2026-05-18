@@ -18,6 +18,13 @@ class CacheService:
     Service for managing LLM context caching with key hashing and stats.
     """
 
+    # Gemini context caching has a provider-side minimum of ~1024 input
+    # tokens. A rough character heuristic of 3 chars/token gives a
+    # conservative ~3100 character floor — anything smaller will be
+    # rejected by the provider with a "minimum token count" error, so
+    # there is no point spending an RPC to discover that.
+    __CACHE_CHAR_FLOOR: int = 3100
+
     def __init__(
         self,
         client: Any,
@@ -67,6 +74,27 @@ class CacheService:
 
         # Short-circuit: content is known to be below the provider minimum token count.
         if current_hash in self.__undersized_hashes:
+            return None
+
+        # Pre-flight size gate: under-threshold prompts cannot be cached
+        # by the provider, so don't pay an RPC to find that out. The
+        # exporter system instruction is the canonical small payload that
+        # used to spend one create() call per export to be rejected.
+        approximate_size = len(system_instruction)
+        if tools:
+            approximate_size += len(json.dumps(tools, sort_keys=True))
+        if approximate_size < self.__CACHE_CHAR_FLOOR:
+            self.__undersized_hashes.add(current_hash)
+            logger.debug(
+                "Skipping cache creation (pre-flight size below threshold)",
+                extra={
+                    "component": "adapter.llm.cache",
+                    "event": "cache.create.pre_flight_skip",
+                    "approximate.size.chars": approximate_size,
+                    "threshold.chars": self.__CACHE_CHAR_FLOOR,
+                    "hash": current_hash[:8],
+                },
+            )
             return None
 
         cached_entry = self.__cache_entries.get(current_hash)

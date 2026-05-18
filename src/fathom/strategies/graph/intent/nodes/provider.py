@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+import logging
+
+from fathom.core.recovery import (
+    RecoveryCoordinator,
+)
+from fathom.core.services.comparator import ScreenComparator
+from fathom.strategies.graph.context import GraphContext
+from fathom.strategies.graph.intent.nodes.completion import SubGoalEvaluator
+from fathom.strategies.graph.intent.nodes.effect import PostAction
+from fathom.strategies.graph.intent.nodes.gate import ActionGate
+from fathom.strategies.graph.intent.nodes.hitl import Hitl
+from fathom.strategies.graph.intent.nodes.observer import ScreenObserver
+from fathom.strategies.graph.intent.nodes.persistence import GraphStatePersistence
+from fathom.strategies.graph.intent.nodes.recovery import RecoveryDispatcher
+
+logger = logging.getLogger(__name__)
+
+
+class IntentNodeProvider:
+    """
+    Provides LangGraph nodes for intent execution.
+    Encapsulates dependencies and shared private logic.
+    """
+
+    def __init__(
+        self,
+        *,
+        context: GraphContext,
+        recovery: RecoveryCoordinator,
+        screen_comparator: ScreenComparator,
+    ) -> None:
+        """
+        Initialize provider with shared context and the recovery coordinator injected by the composition root.
+        """
+
+        self.__context = context
+        self.__recovery = recovery
+        self.__screen_comparator = screen_comparator
+        self.__persistence = GraphStatePersistence(context=context)
+        self.__recovery_dispatcher = RecoveryDispatcher(
+            context=context,
+            coordinator=recovery,
+            persistence=self.__persistence,
+        )
+        self.__observer = ScreenObserver(context=context)
+        self.__gate = ActionGate(context=context, persistence=self.__persistence)
+        self.__effects = PostAction(
+            context=context,
+            observer=self.__observer,
+            comparator=screen_comparator,
+        )
+        self.__hitl = Hitl(context=context)
+        self.__completion = SubGoalEvaluator(
+            context=context,
+            recovery=self.__recovery_dispatcher,
+        )
+
+    @property
+    def context(self) -> GraphContext:
+        """
+        Return the shared graph context.
+        """
+
+        return self.__context
+
+    @property
+    def gate(self) -> ActionGate:
+        """
+        Return the action gate (localization + supervision + healing + blocked builders).
+        """
+
+        return self.__gate
+
+    @property
+    def hitl(self) -> Hitl:
+        """
+        Return the HITL bridge.
+        """
+
+        return self.__hitl
+
+    @property
+    def observer(self) -> ScreenObserver:
+        """
+        Return the screen observer.
+        """
+
+        return self.__observer
+
+    @property
+    def effects(self) -> PostAction:
+        """
+        Return the post-action effect recorder.
+        """
+
+        return self.__effects
+
+    @property
+    def completion(self) -> SubGoalEvaluator:
+        """
+        Return the sub-goal completion evaluator.
+        """
+
+        return self.__completion
+
+    @property
+    def persistence(self) -> GraphStatePersistence:
+        """
+        Return the graph-state persistence helper.
+        """
+
+        return self.__persistence
+
+    @property
+    def recovery(self) -> RecoveryDispatcher:
+        """
+        Return the recovery dispatcher.
+        """
+
+        return self.__recovery_dispatcher
+
+    @property
+    def screen_comparator(self) -> ScreenComparator:
+        """
+        Return the screen comparator service.
+        """
+
+        return self.__screen_comparator
+
+    async def is_cancelled(self) -> bool:
+        """
+        Consolidated check for execution cancellation.
+        """
+
+        if self.__context.is_cancelled:
+            return True
+
+        signal = await self.__context.hitl.check_signal()
+        return signal == "CANCELLED"

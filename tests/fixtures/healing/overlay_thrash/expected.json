@@ -1,0 +1,8 @@
+{
+  "terminal_status": "BOUNDED_FAILURE",
+  "max_step_count": 12,
+  "max_repeated_no_effect": 3,
+  "block_reasons": ["overlay_still_present"],
+  "recoveries_invoked": ["overlay"],
+  "raw_llm_coordinates_executed": 0
+}

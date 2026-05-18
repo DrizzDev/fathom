@@ -12,7 +12,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fathom.schemas.subgoal import DEFAULT_SUB_GOAL_MAX_STEPS, SubGoal, SubGoalStatus
+from fathom.constants.subgoal import DEFAULT_SUB_GOAL_MAX_STEPS
+from fathom.schemas.subgoal import SubGoal, SubGoalStatus
 
 
 class TestSubGoalBudget:

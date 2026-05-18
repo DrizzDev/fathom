@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     import xml.etree.ElementTree as ET  # nosec
 
 from fathom.constants import ActionType
+from fathom.constants.screen import REPEATED_TEXT_SUPPRESSION_THRESHOLD
 from fathom.processing.geometry import GeometryUtils
 from fathom.processing.parsers.base import PlatformParser
 from fathom.schemas.hierarchy import NormalizedHierarchyNodeSignature
@@ -737,8 +738,43 @@ class IOSParser(PlatformParser):
             iou_threshold=iou_threshold,
         )
         meaningful = self.__filter_for_meaningfulness(elements=suppressed)
+        deduped = self.__suppress_repeated_decorative_text(elements=meaningful)
 
-        return sorted(meaningful, key=lambda element: element.bounds.area, reverse=True)
+        return sorted(deduped, key=lambda element: element.bounds.area, reverse=True)
+
+    @staticmethod
+    def __suppress_repeated_decorative_text(
+        elements: List[LabeledElement],
+    ) -> List[LabeledElement]:
+        """
+        Collapse identical decorative-text labels that repeat across cards.
+
+        Repeated ``StaticText`` entries (bullet dots, location labels,
+        rating strings) inflate the manifest without giving the planner
+        new grounding signal. The first occurrence is kept so the
+        screen still carries one anchor per unique string; subsequent
+        duplicates are dropped.
+        """
+
+        seen: Dict[str, int] = {}
+        retained: List[LabeledElement] = []
+        for element in elements:
+            kind = element.attributes.get("type")
+            if kind != "XCUIElementTypeStaticText":
+                retained.append(element)
+                continue
+            key = (
+                (element.attributes.get("label") or element.attributes.get("name") or "")
+                .strip()
+                .lower()
+            )
+            if not key:
+                retained.append(element)
+                continue
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] <= REPEATED_TEXT_SUPPRESSION_THRESHOLD - 1:
+                retained.append(element)
+        return retained
 
     def filter_by_action(self, elements: List[LabeledElement], action: Any) -> List[LabeledElement]:
         """

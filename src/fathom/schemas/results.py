@@ -7,8 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
+from fathom.schemas.decisions import ActDecision, Decision
 from fathom.schemas.delta import DeltaSignal
+from fathom.schemas.escape import EscapeReport
 from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.tasks import TaskStatus
 
 
 class AnalysisOutcome(StrEnum):
@@ -17,17 +20,15 @@ class AnalysisOutcome(StrEnum):
 
     Three values, each routes through a distinct planner path:
 
-    - ``ACT``: the agent committed to a concrete action; ``action`` is
-      load-bearing and EXECUTE consumes it.
-    - ``ASK_USER``: the agent wants the human to clarify the next move
-      (existing HITL path; planner emits an ``ASK_USER`` action).
-    - ``REPORT_UNACTIONABLE``: the agent declares the active sub-goal
-      does not match the current screen. Planner routes this into the
-      recovery coordinator with :data:`RecoveryTrigger.REPORT_UNACTIONABLE`.
+    - ``ACT``: the agent committed to a concrete action; ``action`` is load-bearing and EXECUTE consumes it.
+    - ``ASK_USER``: the agent wants the human to clarify the next move (existing HITL path; planner emits an ``ASK_USER`` action).
+    - ``REQUEST_REPLAN``: the agent emitted a structured :class:`EscapeReport` because it cannot make safe forward progress on the active sub-goal.
+    The category drives routing — replan against the current screen, or escalate to the human — without synthesizing an uncertain action.
     """
 
     ACT = "act"
     ASK_USER = "ask_user"
+    REQUEST_REPLAN = "request_replan"
     REPORT_UNACTIONABLE = "report_unactionable"
 
 
@@ -36,7 +37,14 @@ class AnalysisResult(BaseModel):
     Result of vision analysis.
     """
 
-    action: Action = Field(description="Primary recommended action")
+    action: Action = Field(
+        description=(
+            "Legacy primary recommended action. New consumers must read "
+            "`decision` (typed `Decision` union) instead; this field is "
+            "kept only for backwards-compatibility and is no longer the "
+            "authoritative carrier when `decision` is present."
+        ),
+    )
     alternatives: List[Action] = Field(
         default_factory=list, description="Alternative actions considered"
     )
@@ -81,21 +89,44 @@ class AnalysisResult(BaseModel):
         default=AnalysisOutcome.ACT,
         description=(
             "What the agent decided this turn. ``ACT`` is the default and "
-            "consumes ``action``. ``ASK_USER`` and ``REPORT_UNACTIONABLE`` "
+            "consumes ``action``. ``ASK_USER`` and ``REQUEST_REPLAN`` "
             "are structured alternatives that route through HITL and the "
             "recovery coordinator respectively without inventing a synthetic "
             "action."
         ),
     )
-    unactionable_reason: Optional[str] = Field(
+    escape_report: Optional[EscapeReport] = Field(
         default=None,
         description=(
-            "Free-text reason supplied by the agent when ``outcome`` is "
-            "``REPORT_UNACTIONABLE``. Surfaced to the decomposer as part of "
-            "the recovery request so the next decomposition can reason "
-            "about why the prior plan didn't fit the screen."
+            "Structured escape signal populated when ``outcome`` is "
+            "``REQUEST_REPLAN``. Carries the typed category (drives "
+            "routing) and a one-sentence detail (surfaced to the "
+            "decomposer or to the human depending on category)."
         ),
     )
+    decision: Optional[Decision] = Field(
+        default=None,
+        description="Structured decision envelope for the new runtime contract.",
+    )
+    task_status: Optional[TaskStatus] = Field(
+        default=None,
+        description=(
+            "Model-reported status for the active execution task. Carries "
+            "MET / PARTIAL / NOT_MET / BLOCKED so the CompletionService can "
+            "fuse the agent's verdict with deterministic outcome evidence instead of trusting the legacy boolean flag alone."
+        ),
+    )
+
+    @property
+    def recommended_action(self) -> Action:
+        """
+        Return the canonical action: from ``decision`` when present, else legacy ``action``.
+        """
+
+        if isinstance(self.decision, ActDecision):
+            return self.decision.action
+
+        return self.action
 
 
 class ToolErrorFeedback(BaseModel):
@@ -104,6 +135,7 @@ class ToolErrorFeedback(BaseModel):
     """
 
     tool_name: str = Field(description="Name of the tool that failed")
+
     tool_call_id: Optional[str] = Field(
         default=None,
         description=(

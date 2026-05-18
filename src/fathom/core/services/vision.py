@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from logging import getLogger
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, Set, TypedDict
 
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
@@ -21,7 +21,7 @@ from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.conversation import ConversationTurn, TurnPart
 from fathom.schemas.effect import ActionEffect
-from fathom.schemas.observation import LoopObservation
+from fathom.schemas.observation import LoopObservation, ScreenObservation
 from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.utils.image import ImageProcessor
@@ -66,7 +66,7 @@ class VisionService:
         self.__use_cache = use_cache
         self.__session_id = session_id
         self.__parser = ToolResponseParser()
-        self.__background_tasks: set[asyncio.Task[Any]] = set()
+        self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
         # Use the original prompt builder factory
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
@@ -90,8 +90,8 @@ class VisionService:
 
         await self.__telemetry.debug(
             "Latency phase completed",
-            phase="planner_prewarm",
             duration=duration,
+            phase="planner.prewarm",
             type=FathomEvent.LATENCY_PHASE,
         )
 
@@ -107,6 +107,14 @@ class VisionService:
             return [
                 {"function_declarations": [by_name["execute_ui"]]},
                 {"function_declarations": [by_name["execute_ui"], by_name["verify_goal"]]},
+                {
+                    "function_declarations": [
+                        by_name["ask_user"],
+                        by_name["execute_ui"],
+                        by_name["request_replan"],
+                        by_name["report_unactionable"],
+                    ]
+                },
             ]
         except KeyError as exception:
             logger.warning("[VisionService] Tool definition missing for prewarm: %s", exception)
@@ -128,9 +136,12 @@ class VisionService:
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
-        recent_effects: Optional[List[ActionEffect]] = None,
         loop_observation: Optional[LoopObservation] = None,
+        recent_effects: Optional[List[ActionEffect]] = None,
+        screen_observation: Optional[ScreenObservation] = None,
         prior_rejection_history: Optional[List[ConversationTurn]] = None,
+        last_block_reason: Optional[str] = None,
+        last_block_message: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
@@ -255,6 +266,15 @@ class VisionService:
 
         if recent_effects:
             dynamic_context += self.__render_action_effect_blocks(effects=recent_effects)
+
+        if last_block_reason or last_block_message:
+            dynamic_context += self.__render_last_action_block(
+                reason=last_block_reason,
+                message=last_block_message,
+            )
+
+        if screen_observation is not None:
+            dynamic_context += self.__render_screen_observation(observation=screen_observation)
 
         logger.debug(
             f"[H3] Dynamic Context Built | "
@@ -702,9 +722,80 @@ class VisionService:
 
         return last_block + trajectory_block
 
+    @staticmethod
+    def __render_last_action_block(*, reason: Optional[str], message: Optional[str]) -> str:
+        """
+        Render the supervisor-block feedback channel for the next turn.
+
+        Surfaced as ``<LAST_ACTION_BLOCK>`` so the planner can see
+        *why* its previous action was rejected by the runtime
+        supervisor (target unresolved, non-scrollable surface, keyboard
+        occlusion, etc.) and choose a different action type or target
+        instead of re-proposing the blocked action verbatim.
+        """
+
+        reason_line = reason or "unspecified"
+        detail_line = message or "No additional detail provided."
+        return (
+            "\n\n<LAST_ACTION_BLOCK>\n"
+            f"reason: {reason_line}\n"
+            f"detail: {detail_line}\n"
+            "guidance: The previous action was rejected by the runtime supervisor. "
+            "Choose a different action type or target; do not re-propose the same action.\n"
+            "</LAST_ACTION_BLOCK>"
+        )
+
+    def __render_screen_observation(self, *, observation: ScreenObservation) -> str:
+        """
+        Render compact runtime perception facts into the ANALYZE prompt.
+        """
+
+        calls_to_action = []
+        for element in observation.calls_to_action[:5]:
+            label = element.text or element.identifier
+            calls_to_action.append(
+                f"  - id={element.identifier} text={label} source={element.source.value}"
+            )
+
+        scroll_regions = []
+        for index, region in enumerate(observation.scroll[:3], start=1):
+            scroll_regions.append(
+                f"  - region_{index}: x={region.bounds.x} y={region.bounds.y} "
+                f"w={region.bounds.width} h={region.bounds.height}"
+            )
+
+        overlay_lines = []
+        for index, overlay in enumerate(observation.overlays[:3], start=1):
+            overlay_lines.append(
+                f"  - overlay_{index}: candidates={len(overlay.candidates)} "
+                f"x={overlay.bounds.x} y={overlay.bounds.y} "
+                f"w={overlay.bounds.width} h={overlay.bounds.height}"
+            )
+
+        return (
+            "\n\n<SCREEN_OBSERVATION>\n"
+            f"keyboard_visible: {str(observation.keyboard.visible).lower()}\n"
+            f"overlay_count: {len(observation.overlays)}\n"
+            "visible_calls_to_action:\n"
+            f"{chr(10).join(calls_to_action) if calls_to_action else '  - none'}\n"
+            "scroll_regions:\n"
+            f"{chr(10).join(scroll_regions) if scroll_regions else '  - none'}\n"
+            "overlays:\n"
+            f"{chr(10).join(overlay_lines) if overlay_lines else '  - none'}\n"
+            "</SCREEN_OBSERVATION>"
+        )
+
     def __format_elements(self, elements: Optional[Dict[str, Any]]) -> str:
         """
-        Converts label map to grounding manifest (strictly mirrored).
+        Convert the drawer label map into a grounding manifest the
+        planner can bind ``label_id`` references against.
+
+        Reads attribute keys from both platform vocabularies — Android
+        (``class``, ``text``, ``content-desc``) and iOS / XCUITest
+        (``type``, ``name``, ``label``, ``value``) — so an element
+        coming out of :class:`IOSParser` (which keeps its raw XML
+        attribute names) renders with its real semantic label instead
+        of an anonymous ``View``.
         """
 
         logger.info(f"Converting {len(elements) if elements else 0} elements into manifest")
@@ -718,13 +809,11 @@ class VisionService:
             if label.startswith("__"):
                 continue
 
-            kind = str(info.get("class", "View")).split(".")[-1]
+            kind = self.__manifest_kind(info=info)
             value = f"[{label}] {kind}"
 
-            # Inject Ground Truth Bounds
             if bounds_str := str(info.get("bounds", "")):
                 with contextlib.suppress(Exception):
-                    # Parse [x1,y1][x2,y2]
                     parts = (
                         bounds_str.replace("][", ",").replace("[", "").replace("]", "").split(",")
                     )
@@ -733,14 +822,8 @@ class VisionService:
                         w, h = x2 - x1, y2 - y1
                         value += f" ({x1},{y1},{w},{h})"
 
-            text = str(info.get("text", "")).strip()
-            detail = str(info.get("content-desc", "")).strip()
-
-            # if str(info.get("enabled", "true")).lower() == "false":
-            #     value += " [DISABLED]"
-
-            # if str(info.get("clickable", "false")).lower() == "true":
-            #     value += " [CLICKABLE]"
+            text = self.__manifest_text(info=info)
+            detail = self.__manifest_detail(info=info)
 
             if text:
                 value += f" | text: '{text}'"
@@ -752,12 +835,55 @@ class VisionService:
 
         return "\n".join(lines) if lines else "No interactive elements found."
 
+    @staticmethod
+    def __manifest_kind(*, info: Dict[str, Any]) -> str:
+        """
+        Resolve the element kind label, falling back across Android and
+        iOS attribute names. The iOS ``XCUIElementType`` prefix is
+        stripped so the manifest reads as ``Button`` / ``Icon`` etc.
+        """
+
+        raw = str(info.get("class") or info.get("type") or "View")
+        last = raw.split(".")[-1]
+        return last.replace("XCUIElementType", "") or last
+
+    @staticmethod
+    def __manifest_text(*, info: Dict[str, Any]) -> str:
+        """
+        Resolve the primary text label across both platforms' attribute
+        names. iOS uses ``label`` / ``name``; Android uses ``text``.
+        """
+
+        for key in ("text", "label", "name"):
+            if (raw := info.get(key)) is not None and (stripped := str(raw).strip()):
+                return stripped
+        return ""
+
+    @staticmethod
+    def __manifest_detail(*, info: Dict[str, Any]) -> str:
+        """
+        Resolve the secondary descriptor. iOS uses ``value``; Android
+        uses ``content-desc``.
+        """
+
+        for key in ("content-desc", "value"):
+            if (raw := info.get(key)) is not None and (stripped := str(raw).strip()):
+                return stripped
+        return ""
+
     def __scope_tools(self, intent: str) -> Dict[str, Any]:
         """
         Dynamically selects tools (strictly mirrored).
         """
 
-        allowed = {"execute_ui", "store_memory", "recall_memory"}
+        allowed = {
+            "ask_user",
+            "execute_ui",
+            "recall_memory",
+            "report_unactionable",
+            "request_replan",
+            "store_memory",
+        }
         if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):
             allowed.update({"validate_state", "verify_goal"})
 

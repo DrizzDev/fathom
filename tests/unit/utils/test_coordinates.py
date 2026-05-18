@@ -75,7 +75,7 @@ class CoordinateConverterTest(unittest.TestCase):
         """
 
         converter = CoordinateConverter(screen_width=1080, screen_height=2340)
-        bounds = Bounds(x=44, y=1983, width=250, height=116, coord_system="normalized")
+        bounds = Bounds(x=44, y=1983, width=250, height=116, coordinate_system="normalized")
 
         region = converter.region_from_bounds(bounds=bounds, source="model")
         path = converter.resolve_swipe_path(region=region, direction="right")
@@ -171,5 +171,5 @@ class CoordinateConverterTest(unittest.TestCase):
             y=top,
             width=right - left,
             height=bottom - top,
-            coord_system="pixel",
+            coordinate_system="pixel",
         )

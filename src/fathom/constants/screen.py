@@ -13,10 +13,26 @@ SIGNATURE_VALUE_PREVIEW_LENGTH: int = 16
 BOUNDS_DIGEST_LENGTH: int = 6
 INTERACTION_TEXT_PREVIEW_LENGTH: int = 30
 
+# Repeated-decorative-text suppression: when more than this many
+# elements share an identical lowercase text label after stripping,
+# keep only the first occurrence. Targets noisy XML patterns where
+# the same StaticText ("•", "Adyar", rating numbers) is emitted once
+# per card and balloons the manifest without adding semantic info.
+REPEATED_TEXT_SUPPRESSION_THRESHOLD: int = 2
+
 ACTION_EFFECT_SSIM_THRESHOLD: float = 0.98
 ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD: int = 4
 ACTION_EFFECT_SCROLL_DISTANCE_THRESHOLD_PX: float = 5.0
 ACTION_EFFECT_CONTENT_DIFF_RATIO_THRESHOLD: float = 0.005
+
+# When two frames register as effectively identical (very high SSIM
+# combined with negligible content-pixel diff), :func:`cv2.phaseCorrelate`
+# can still return a small non-zero shift from DC-noise. We gate the
+# scroll computation behind these thresholds so the comparator returns
+# a clean zero translation instead, preventing the OutcomeClassifier
+# from promoting no-op actions to EFFECTIVE on bogus scroll evidence.
+SCROLL_IDENTICAL_FRAME_SSIM_THRESHOLD: float = 0.999
+SCROLL_IDENTICAL_FRAME_CONTENT_DIFF_RATIO_THRESHOLD: float = 0.001
 
 ACTIVITY_CHANGED_SIGNAL_WEIGHT: int = 2
 XML_HASH_CHANGED_SIGNAL_WEIGHT: int = 2

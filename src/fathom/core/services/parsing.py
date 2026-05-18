@@ -9,12 +9,20 @@ from fathom.constants import ActionType
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.decisions import (
+    ActDecision,
+    AskUserDecision,
+    ReplanDecision,
+    UnactionableDecision,
+)
 from fathom.schemas.delta import DeltaSignal
+from fathom.schemas.escape import EscapeCategory, EscapeReport
 from fathom.schemas.gemini_tools import (
     AskUserArgs,
     ExecuteAction,
     ExecuteUIArgs,
     RecallMemoryArgs,
+    ReportUnactionableArgs,
     StoreMemoryArgs,
     ValidateStateArgs,
     VerifyGoalArgs,
@@ -37,22 +45,25 @@ class ToolResponseParser:
     # Primary tools produce the AnalysisResult; side-effect tools merge into it.
     __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
     __PRIMARY_TOOLS = {
+        "ask_user",
         "execute_ui",
         "verify_goal",
         "validate_state",
-        "ask_user",
-        "report_screen_unactionable",
+        "request_replan",
+        "report_unactionable",
     }
 
     @staticmethod
     def __require_bool(
-        arguments: Any,
         key: str,
+        arguments: Any,
         tool_name: str,
         *,
         default_if_missing: Optional[bool] = None,
     ) -> bool:
-        """Read a boolean field from model tool arguments with compatibility fallback."""
+        """
+        Read a boolean field from model tool arguments with compatibility fallback.
+        """
 
         if key not in arguments:
             if default_if_missing is not None:
@@ -169,7 +180,10 @@ class ToolResponseParser:
         elif name == "ask_user":
             return self.__parse_ask_user(arguments=arguments)
 
-        elif name == "report_screen_unactionable":
+        elif name == "request_replan":
+            return self.__parse_request_replan(arguments=arguments)
+
+        elif name == "report_unactionable":
             return self.__parse_report_unactionable(arguments=arguments)
 
         else:
@@ -207,9 +221,9 @@ class ToolResponseParser:
             # - COMPLETE always implies sub-goal completion.
             # - Goal completion is respected only when explicitly signaled by the tool flags.
             normalized = {
-                "is_goal_complete": bool(raw_goal_completed) or bool(result.is_goal_complete),
-                "is_sub_goal_complete": True,
                 "source_tool": source_tool,
+                "is_sub_goal_complete": True,
+                "is_goal_complete": bool(raw_goal_completed) or bool(result.is_goal_complete),
                 "reason": "COMPLETE→sub-goal complete; goal completion requires explicit signal",
             }
 
@@ -321,6 +335,7 @@ class ToolResponseParser:
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
+            task_status=getattr(args, "task_status", None),
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
@@ -377,6 +392,7 @@ class ToolResponseParser:
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
+            task_status=getattr(args, "task_status", None),
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
@@ -414,10 +430,10 @@ class ToolResponseParser:
         completed = bool(raw_goal_completed)
         sub_completed = bool(raw_sub_goal_completed)
 
-        if not args.actions:
+        if args.action is None:
             return self.__create_fallback_result(message=message, completed=completed)
 
-        data: ExecuteAction = args.actions[0]
+        data: ExecuteAction = args.action
 
         bounds = None
         if data.bbox:
@@ -428,7 +444,7 @@ class ToolResponseParser:
                     source="model",
                     width=data.bbox.width,
                     height=data.bbox.height,
-                    coord_system=data.bbox.coord_system,
+                    coordinate_system=data.bbox.coordinate_system,
                 )
             except Exception:
                 logger.warning("Ignoring malformed bbox payload from GeminiBBox: %s", data.bbox)
@@ -507,26 +523,7 @@ class ToolResponseParser:
             validation_pattern=data.validation_pattern,
         )
 
-        # Parse alternative actions from actions[1:] if provided.
         alternatives: List[Action] = []
-        for alt_data in args.actions[1:]:
-            try:
-                alt_at_str = str(alt_data.action_type or "").strip().lower()
-                alt_at = ActionType(alt_at_str) if alt_at_str else ActionType.WAIT
-            except ValueError:
-                alt_at = ActionType.WAIT
-            alt_target = alt_data.target_name or alt_data.element_name or "element"
-            alternatives.append(
-                Action(
-                    action_type=alt_at,
-                    target=alt_target,
-                    natural_language_target=alt_target,
-                    rationale=str(alt_data.rationale or ""),
-                    confidence=float(alt_data.confidence),
-                    is_valid=bool(alt_data.is_valid),
-                    export_target=alt_data.export_target,
-                )
-            )
 
         metadata_dict: Dict[str, Any] = {}
         if action_type == ActionType.VALIDATE:
@@ -542,11 +539,16 @@ class ToolResponseParser:
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
+            task_status=getattr(args, "task_status", None),
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
             delta=parsed_delta,
             screen_description=message or action.rationale or "Analyzing screen...",
+            decision=ActDecision(
+                action=action,
+                rationale=message or action.rationale,
+            ),
         )
 
         # Normalize completion flags for terminal COMPLETE actions while preserving raw signals.
@@ -669,41 +671,109 @@ class ToolResponseParser:
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
+            task_status=getattr(args, "task_status", None),
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
             screen_description="User guidance requested",
+            outcome=AnalysisOutcome.ASK_USER,
+            decision=AskUserDecision(
+                question=question or rationale,
+                reason=rationale,
+            ),
         )
 
-    def __parse_report_unactionable(self, arguments: Any) -> AnalysisResult:
+    def __parse_request_replan(self, arguments: Any) -> AnalysisResult:
         """
-        Parse the ``report_screen_unactionable`` tool call.
+        Parse the ``request_replan`` tool call into a typed
+        :class:`EscapeReport` payload on the :class:`AnalysisResult`.
 
-        Produces an :class:`AnalysisResult` with
-        ``outcome=REPORT_UNACTIONABLE`` and an ``unactionable_reason``.
-        The action is a non-spatial WAIT placeholder so existing
-        downstream code (which expects ``result.action`` to be valid)
-        keeps working without inventing a synthetic target — the
-        planner branches on ``outcome`` instead of the action.
+        Validates the typed contract at this boundary: ``category`` must
+        be a known :class:`EscapeCategory` value and ``detail`` must be
+        a non-empty string. Invalid arguments raise
+        :class:`ToolValidationError` so the planner never sees a
+        half-formed escape signal — :class:`EscapeReport` itself enforces
+        the same invariants via Pydantic, and this method maps any
+        validation error onto the structured tool-feedback path.
+
+        The placeholder action is a non-spatial WAIT so existing
+        downstream code that expects ``result.action`` to be valid keeps
+        working; the planner branches on ``outcome`` and on
+        ``escape_report.category``, not on the action itself.
         """
 
         raw = arguments or {}
-        reason = str(raw.get("reason", "")).strip() or "screen does not match the active sub-goal"
+        try:
+            escape_report = EscapeReport(
+                detail=str(raw.get("detail", "")).strip(),
+                category=EscapeCategory(str(raw.get("category", "")).strip()),
+            )
+        except (ValueError, ValidationError) as error:
+            logger.exception("request_replan schema validation failed: %s", error)
+            raise ToolValidationError(
+                feedback=ToolErrorFeedback(
+                    tool_call_id=None,
+                    error_kind="validation",
+                    tool_name="request_replan",
+                    message=f"request_replan arguments validation failed: {error}",
+                )
+            ) from error
 
         return AnalysisResult(
             action=Action(
                 confidence=1.0,
-                rationale=reason,
+                target="request_replan",
                 action_type=ActionType.WAIT,
-                target="report_screen_unactionable",
+                rationale=escape_report.detail,
+            ),
+            alternatives=[],
+            is_goal_complete=False,
+            is_sub_goal_complete=False,
+            escape_report=escape_report,
+            reasoning=escape_report.detail,
+            outcome=AnalysisOutcome.REQUEST_REPLAN,
+            screen_description=(f"Agent requested replan ({escape_report.category.value})"),
+            decision=ReplanDecision(reason=escape_report.detail),
+        )
+
+    def __parse_report_unactionable(self, arguments: Any) -> AnalysisResult:
+        """
+        Parses report_unactionable tool arguments.
+        """
+
+        try:
+            args = ReportUnactionableArgs.model_validate(arguments or {})
+        except ValidationError as error:
+            logger.exception("report_unactionable schema validation failed: %s", error)
+            feedback = ToolErrorFeedback(
+                tool_name="report_unactionable",
+                tool_call_id=None,
+                error_kind="validation",
+                message=f"report_unactionable arguments validation failed: {error}",
+            )
+            raise ToolValidationError(feedback) from error
+
+        reason = args.reason.strip()
+        escape_report = EscapeReport(
+            category=EscapeCategory.PRECONDITION_NOT_MET,
+            detail=reason,
+        )
+
+        return AnalysisResult(
+            action=Action(
+                confidence=1.0,
+                target="report_unactionable",
+                action_type=ActionType.WAIT,
+                rationale=reason,
             ),
             alternatives=[],
             reasoning=reason,
-            is_goal_complete=False,
-            is_sub_goal_complete=False,
+            is_goal_complete=bool(args.goal_completed),
+            is_sub_goal_complete=bool(args.sub_goal_completed),
+            escape_report=escape_report,
             outcome=AnalysisOutcome.REPORT_UNACTIONABLE,
-            unactionable_reason=reason,
-            screen_description="Agent reported screen as unactionable for active sub-goal",
+            screen_description="Agent reported current screen as unactionable",
+            decision=UnactionableDecision(reason=reason),
         )
 
     def __create_fallback_result(self, message: str, completed: bool = False) -> AnalysisResult:

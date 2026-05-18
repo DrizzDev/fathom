@@ -50,6 +50,8 @@ class ExplorationStrategy:
         intent = "Explore application"
 
         # Exploration strategy doesn't use XML grounding (uses visual-only approach)
+        from fathom.core.config.loader import RuntimeConfigLoader
+
         self.__graph_context = GraphContext(
             llm=llm,
             intent=intent,
@@ -65,6 +67,7 @@ class ExplorationStrategy:
             package_name=package_name,
             path_manager=path_manager,
             configuration=configuration,
+            perception_configuration=RuntimeConfigLoader().perception(),
         )
 
         builder = ExplorationGraphBuilder(context=self.__graph_context)

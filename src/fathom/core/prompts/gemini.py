@@ -203,7 +203,7 @@ class GeminiPromptBuilder(PromptBuilder):
             "You are a Mobile UI expert agent.\n"
             "COORDINATE MODE: NORMALIZED by default.\n"
             "Use normalized coordinates (0-1000) in 'bbox' unless you explicitly set "
-            "coord_system='pixel'.\n"
+            "coordinate_system='pixel'.\n"
             "When using bbox, x/y are TOP-LEFT and width/height extend right/down."
         )
 

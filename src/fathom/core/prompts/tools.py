@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from fathom.schemas.escape import EscapeCategory
+
 
 class ToolRegistry:
     """
@@ -16,13 +18,14 @@ class ToolRegistry:
 
         return {
             "function_declarations": [
+                cls.__ask_user(),
                 cls.__execute_ui(),
-                cls.__validate_state(),
                 cls.__verify_goal(),
                 cls.__store_memory(),
                 cls.__recall_memory(),
-                cls.__ask_user(),
-                cls.__report_screen_unactionable(),
+                cls.__validate_state(),
+                cls.__request_replan(),
+                cls.__report_unactionable(),
             ]
         }
 
@@ -69,202 +72,199 @@ class ToolRegistry:
                         "type": "STRING",
                         "description": "A message to the user explaining the reasoning behind these actions.",
                     },
-                    "actions": {
-                        "type": "ARRAY",
-                        "description": "A list of actions to execute in sequence.",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                # --- Critical execution fields (prioritized) ---
-                                "action_type": {
-                                    "type": "STRING",
-                                    "description": "The type of action to perform. Use swipe_* for all scrolling gestures.",
-                                    "enum": [
-                                        "tap",
-                                        "type",
-                                        "swipe_left",
-                                        "swipe_right",
-                                        "swipe_up",
-                                        "swipe_down",
-                                        "wait",
-                                        "validate",
-                                        "home",
-                                        "back",
-                                        "enter",
-                                    ],
-                                },
-                                "label_id": {
-                                    "type": "STRING",
-                                    "description": "The ID of the element from the manifest (e.g. '4'). REQUIRED if the element is in the manifest.",
-                                },
-                                "bbox": {
-                                    "type": "OBJECT",
-                                    "description": "Bounding box for the action target. x,y are TOP-LEFT and width,height extend right/down. Use normalized values (0-1000) by default; use pixel values only with coord_system='pixel'.",
-                                    "properties": {
-                                        "x": {"type": "INTEGER"},
-                                        "y": {"type": "INTEGER"},
-                                        "width": {"type": "INTEGER"},
-                                        "height": {"type": "INTEGER"},
-                                        "coord_system": {
-                                            "type": "STRING",
-                                            "enum": ["normalized", "pixel"],
-                                            "description": "Coordinate system for bbox values. Default is 'normalized' (0-1000). Set 'pixel' only when using raw pixel coordinates.",
-                                        },
+                    "action": {
+                        "type": "OBJECT",
+                        "description": "The single UI action to execute for this turn.",
+                        "properties": {
+                            # --- Critical execution fields (prioritized) ---
+                            "action_type": {
+                                "type": "STRING",
+                                "description": "The type of action to perform. Use swipe_* for all scrolling gestures.",
+                                "enum": [
+                                    "tap",
+                                    "type",
+                                    "swipe_left",
+                                    "swipe_right",
+                                    "swipe_up",
+                                    "swipe_down",
+                                    "wait",
+                                    "validate",
+                                    "home",
+                                    "back",
+                                    "enter",
+                                ],
+                            },
+                            "label_id": {
+                                "type": "STRING",
+                                "description": "The ID of the element from the manifest (e.g. '4'). REQUIRED if the element is in the manifest.",
+                            },
+                            "bbox": {
+                                "type": "OBJECT",
+                                "description": "Bounding box for the action target. x,y are TOP-LEFT and width,height extend right/down. Use normalized values (0-1000) by default; use pixel values only with coordinate_system='pixel'.",
+                                "properties": {
+                                    "x": {"type": "INTEGER"},
+                                    "y": {"type": "INTEGER"},
+                                    "width": {"type": "INTEGER"},
+                                    "height": {"type": "INTEGER"},
+                                    "coordinate_system": {
+                                        "type": "STRING",
+                                        "enum": ["normalized", "pixel"],
+                                        "description": "Coordinate system for bbox values. Default is 'normalized' (0-1000). Set 'pixel' only when using raw pixel coordinates.",
                                     },
                                 },
-                                "target_name": {
-                                    "type": "STRING",
-                                    "description": (
-                                        "Descriptive, user-facing name of the element "
-                                        "(e.g., 'Search box', 'Add to cart button', "
-                                        "'Settings tab'). MUST NOT be a generic placeholder "
-                                        "like 'element', 'UI Element', 'button', 'label', "
-                                        "or 'icon'. Always choose the text a human tester "
-                                        "would naturally say when referring to this element."
-                                    ),
-                                },
-                                "text_to_type": {
-                                    "type": "STRING",
-                                    "description": "Text to type (only for 'type' action).",
-                                },
-                                "wait_duration": {
-                                    "type": "NUMBER",
-                                    "description": "Duration to wait in seconds (e.g. 2.0, 5.0). Use this for 'wait' actions to specify how long to pause.",
-                                },
-                                # --- Execution signals ---
-                                "confidence": {
-                                    "type": "NUMBER",
-                                    "description": "Confidence level (0.0-1.0) for this action.",
-                                },
-                                "is_valid": {
-                                    "type": "BOOLEAN",
-                                    "description": "Self-correction: Is this action valid given the current screen state?",
-                                },
-                                # --- Non-critical metadata ---
-                                "rationale": {
-                                    "type": "STRING",
-                                    "description": "Why this specific action is being taken.",
-                                },
-                                "validation_reason": {
-                                    "type": "STRING",
-                                    "description": "Reasoning for the validity judgment.",
-                                },
-                                "condition": {
-                                    "type": "STRING",
-                                    "description": "Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
-                                },
-                                "is_conditional": {
-                                    "type": "BOOLEAN",
-                                    "description": "Set true when this action should be executed only under a visible guard condition.",
-                                },
-                                "conditional_type": {
-                                    "type": "STRING",
-                                    "enum": ["blocker", "transient", "error", "optional"],
-                                    "description": (
-                                        "Condition class when is_conditional=true: "
-                                        "blocker (overlay/popup/permission dialog blocking the UI), "
-                                        "transient (spinner, skeleton shimmer, or splash screen that will auto-resolve), "
-                                        "error (red/orange error banner, toast, or validation message), "
-                                        "optional (non-blocking informational element)."
-                                    ),
-                                },
-                                "overlay_detected": {
-                                    "type": "BOOLEAN",
-                                    "description": (
-                                        "Set true when the screenshot shows an overlay blocking the main UI "
-                                        "(dimmed scrim, modal dialog, bottom sheet, permission prompt, or banner). "
-                                        "This action must dismiss it."
-                                    ),
-                                },
-                                "export_target": {
-                                    "type": "STRING",
-                                    "description": (
-                                        "The canonical phrase for this action in exported test scripts. "
-                                        "Must be specific and human-readable (e.g., 'Search box', "
-                                        "'the first search result', 'Add to cart button'). "
-                                        "REQUIRED for tap, type, long_press, scroll, swipe, and wait actions. "
-                                        "NEVER use generic placeholders like 'element', 'UI Element', "
-                                        "'button', 'label', 'icon', 'field', or 'text' alone."
-                                    ),
-                                },
-                                "target_type": {
-                                    "type": "STRING",
-                                    "enum": ["stable", "positional", "dynamic"],
-                                    "description": "How the target should be referenced in exported scripts: stable (fixed label), positional (ordinal in list), or dynamic (content that may change). Leave unset if unsure.",
-                                },
-                                "script_target": {
-                                    "type": "STRING",
-                                    "description": (
-                                        "When target_type is 'positional' or 'dynamic', the "
-                                        "exact natural-language phrase that should appear in "
-                                        "exported scripts (e.g. 'the first search result', "
-                                        "'the promotional banner', 'the selected cart item'). "
-                                        "Treat this field as REQUIRED whenever target_type is "
-                                        "'positional' or 'dynamic'. The phrase MUST be specific "
-                                        "and user-facing, not a generic placeholder."
-                                    ),
-                                },
-                                "scroll_target": {
-                                    "type": "STRING",
-                                    "description": (
-                                        "REQUIRED for all scroll/swipe actions. The element or section being "
-                                        "scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and "
-                                        "packages'). Use the exact phrase from the UI when possible. "
-                                        "Must not be empty for swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
-                                    ),
-                                },
-                                "wait_subject": {
-                                    "type": "STRING",
-                                    "description": (
-                                        "REQUIRED for all wait actions. What we're waiting for (e.g., 'app to "
-                                        "load', 'search results to appear', 'Home page content'). Describe the "
-                                        "expected state or element. Must not be empty for wait actions."
-                                    ),
-                                },
-                                "validation_subject": {
-                                    "type": "STRING",
-                                    "description": "For validate actions: what specifically is being validated (e.g., 'login status', 'banner visibility', 'item alignment'). Be specific about the validation target.",
-                                },
-                                "target_is_generic": {
-                                    "type": "BOOLEAN",
-                                    "description": "Set to true when this action taps/selects a non-specific target (e.g., 'any item', 'random category', 'first result'). Signals that target should be generalized in export.",
-                                },
-                                "target_element_type": {
-                                    "type": "STRING",
-                                    "enum": [
-                                        "button",
-                                        "icon",
-                                        "option",
-                                        "link",
-                                        "field",
-                                        "text",
-                                        "checkbox",
-                                    ],
-                                    "description": "For tap/interact actions: the element type/role (button, icon, option, etc.). Helps refine target descriptions when product-specific elements are tapped.",
-                                },
-                                "validation_pattern": {
-                                    "type": "STRING",
-                                    "enum": ["blocker", "transient", "error", "generic"],
-                                    "description": (
-                                        "For validate actions: blocker (modal/scrim/permission dialog blocking content), "
-                                        "transient (spinner, progress bar, or shimmer placeholder still visible), "
-                                        "error (red/orange text, error icon, or 'try again' message on screen), "
-                                        "or generic (general state check like toggle position or text presence)."
-                                    ),
-                                },
-                                "wait_pattern": {
-                                    "type": "STRING",
-                                    "enum": ["ad", "splash", "load", "search", "generic"],
-                                    "description": (
-                                        "For wait actions: ad (full-screen interstitial ad with countdown/skip button), "
-                                        "splash (branded launch screen with app logo, no interactive elements), "
-                                        "load (spinner, progress bar, skeleton/shimmer placeholders, or 'Loading...' text), "
-                                        "search (waiting for search results list to populate), or generic."
-                                    ),
-                                },
                             },
-                            "required": ["action_type", "rationale", "is_valid"],
+                            "target_name": {
+                                "type": "STRING",
+                                "description": (
+                                    "Descriptive, user-facing name of the element "
+                                    "(e.g., 'Search box', 'Add to cart button', "
+                                    "'Settings tab'). MUST NOT be a generic placeholder "
+                                    "like 'element', 'UI Element', 'button', 'label', "
+                                    "or 'icon'. Always choose the text a human tester "
+                                    "would naturally say when referring to this element."
+                                ),
+                            },
+                            "text_to_type": {
+                                "type": "STRING",
+                                "description": "Text to type (only for 'type' action).",
+                            },
+                            "wait_duration": {
+                                "type": "NUMBER",
+                                "description": "Duration to wait in seconds (e.g. 2.0, 5.0). Use this for 'wait' actions to specify how long to pause.",
+                            },
+                            # --- Execution signals ---
+                            "confidence": {
+                                "type": "NUMBER",
+                                "description": "Confidence level (0.0-1.0) for this action.",
+                            },
+                            "is_valid": {
+                                "type": "BOOLEAN",
+                                "description": "Self-correction: Is this action valid given the current screen state?",
+                            },
+                            # --- Non-critical metadata ---
+                            "rationale": {
+                                "type": "STRING",
+                                "description": "Why this specific action is being taken.",
+                            },
+                            "validation_reason": {
+                                "type": "STRING",
+                                "description": "Reasoning for the validity judgment.",
+                            },
+                            "condition": {
+                                "type": "STRING",
+                                "description": "Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
+                            },
+                            "is_conditional": {
+                                "type": "BOOLEAN",
+                                "description": "Set true when this action should be executed only under a visible guard condition.",
+                            },
+                            "conditional_type": {
+                                "type": "STRING",
+                                "enum": ["blocker", "transient", "error", "optional"],
+                                "description": (
+                                    "Condition class when is_conditional=true: "
+                                    "blocker (overlay/popup/permission dialog blocking the UI), "
+                                    "transient (spinner, skeleton shimmer, or splash screen that will auto-resolve), "
+                                    "error (red/orange error banner, toast, or validation message), "
+                                    "optional (non-blocking informational element)."
+                                ),
+                            },
+                            "overlay_detected": {
+                                "type": "BOOLEAN",
+                                "description": (
+                                    "Set true when the screenshot shows an overlay blocking the main UI "
+                                    "(dimmed scrim, modal dialog, bottom sheet, permission prompt, or banner). "
+                                    "This action must dismiss it."
+                                ),
+                            },
+                            "export_target": {
+                                "type": "STRING",
+                                "description": (
+                                    "The canonical phrase for this action in exported test scripts. "
+                                    "Must be specific and human-readable (e.g., 'Search box', "
+                                    "'the first search result', 'Add to cart button'). "
+                                    "REQUIRED for tap, type, long_press, scroll, swipe, and wait actions. "
+                                    "NEVER use generic placeholders like 'element', 'UI Element', "
+                                    "'button', 'label', 'icon', 'field', or 'text' alone."
+                                ),
+                            },
+                            "target_type": {
+                                "type": "STRING",
+                                "enum": ["stable", "positional", "dynamic"],
+                                "description": "How the target should be referenced in exported scripts: stable (fixed label), positional (ordinal in list), or dynamic (content that may change). Leave unset if unsure.",
+                            },
+                            "script_target": {
+                                "type": "STRING",
+                                "description": (
+                                    "When target_type is 'positional' or 'dynamic', the "
+                                    "exact natural-language phrase that should appear in "
+                                    "exported scripts (e.g. 'the first search result', "
+                                    "'the promotional banner', 'the selected cart item'). "
+                                    "Treat this field as REQUIRED whenever target_type is "
+                                    "'positional' or 'dynamic'. The phrase MUST be specific "
+                                    "and user-facing, not a generic placeholder."
+                                ),
+                            },
+                            "scroll_target": {
+                                "type": "STRING",
+                                "description": (
+                                    "REQUIRED for all scroll/swipe actions. The element or section being "
+                                    "scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and "
+                                    "packages'). Use the exact phrase from the UI when possible. "
+                                    "Must not be empty for swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
+                                ),
+                            },
+                            "wait_subject": {
+                                "type": "STRING",
+                                "description": (
+                                    "REQUIRED for all wait actions. What we're waiting for (e.g., 'app to "
+                                    "load', 'search results to appear', 'Home page content'). Describe the "
+                                    "expected state or element. Must not be empty for wait actions."
+                                ),
+                            },
+                            "validation_subject": {
+                                "type": "STRING",
+                                "description": "For validate actions: what specifically is being validated (e.g., 'login status', 'banner visibility', 'item alignment'). Be specific about the validation target.",
+                            },
+                            "target_is_generic": {
+                                "type": "BOOLEAN",
+                                "description": "Set to true when this action taps/selects a non-specific target (e.g., 'any item', 'random category', 'first result'). Signals that target should be generalized in export.",
+                            },
+                            "target_element_type": {
+                                "type": "STRING",
+                                "enum": [
+                                    "button",
+                                    "icon",
+                                    "option",
+                                    "link",
+                                    "field",
+                                    "text",
+                                    "checkbox",
+                                ],
+                                "description": "For tap/interact actions: the element type/role (button, icon, option, etc.). Helps refine target descriptions when product-specific elements are tapped.",
+                            },
+                            "validation_pattern": {
+                                "type": "STRING",
+                                "enum": ["blocker", "transient", "error", "generic"],
+                                "description": (
+                                    "For validate actions: blocker (modal/scrim/permission dialog blocking content), "
+                                    "transient (spinner, progress bar, or shimmer placeholder still visible), "
+                                    "error (red/orange text, error icon, or 'try again' message on screen), "
+                                    "or generic (general state check like toggle position or text presence)."
+                                ),
+                            },
+                            "wait_pattern": {
+                                "type": "STRING",
+                                "enum": ["ad", "splash", "load", "search", "generic"],
+                                "description": (
+                                    "For wait actions: ad (full-screen interstitial ad with countdown/skip button), "
+                                    "splash (branded launch screen with app logo, no interactive elements), "
+                                    "load (spinner, progress bar, skeleton/shimmer placeholders, or 'Loading...' text), "
+                                    "search (waiting for search results list to populate), or generic."
+                                ),
+                            },
                         },
+                        "required": ["action_type", "rationale", "is_valid"],
                     },
                     "goal_completed": {
                         "type": "BOOLEAN",
@@ -281,6 +281,17 @@ class ToolRegistry:
                     "subgoal_completion_reason": {
                         "type": "STRING",
                         "description": "Explicit reason why the sub-goal is complete (e.g., 'Item added to cart', 'User authenticated'). Required when sub_goal_completed=true.",
+                    },
+                    "task_status": {
+                        "type": "STRING",
+                        "enum": ["met", "partial", "not_met", "blocked"],
+                        "description": (
+                            "Typed verdict on the active execution task: 'met' when the task criterion is observably satisfied, "
+                            "'partial' when the action makes progress but the criterion is not yet satisfied, "
+                            "'not_met' when neither, 'blocked' when the task cannot proceed from the current screen. "
+                            "Required for action turns; the system fuses this with deterministic outcome evidence so "
+                            "sub-goal advancement never relies on the boolean flags alone."
+                        ),
                     },
                     "completion_criteria_met": {
                         "type": "ARRAY",
@@ -331,7 +342,7 @@ class ToolRegistry:
                 },
                 "required": [
                     "assistant_message",
-                    "actions",
+                    "action",
                     "goal_completed",
                     "sub_goal_completed",
                 ],
@@ -526,40 +537,79 @@ class ToolRegistry:
         }
 
     @staticmethod
-    def __report_screen_unactionable() -> Dict[str, Any]:
+    def __request_replan() -> Dict[str, Any]:
         """
-        Definition for the ``report_screen_unactionable`` tool.
+        Definition for the ``request_replan`` tool.
 
-        The agent uses this to declare that the active sub-goal does
-        not match the current screen — no synthetic action is invented,
-        no rationale needs to be manufactured. The system routes the
-        report through the recovery coordinator with the
-        ``REPORT_UNACTIONABLE`` trigger so the decomposer can re-plan
-        with the actual screen in view.
+        The agent invokes this when it cannot make safe forward progress on the active sub-goal.
+        The ``category`` parameter is a typed taxonomy (see :class:`fathom.schemas.escape.EscapeCategory`)
+        and drives whether the system replans against the current screen or escalates to the human.
+        The ``detail`` parameter carries a one-sentence justification surfaced to either the decomposer preamble or the HITL prompt depending on the category.
         """
 
         return {
-            "name": "report_screen_unactionable",
+            "name": "request_replan",
             "description": (
-                "Use this when the active sub-goal does not match what you "
-                "see on screen, or when no available element corresponds to "
-                "the required action. The system will replan based on the "
-                "current screen instead of forcing an uncertain action. "
-                "Prefer this over guessing when the sub-goal is genuinely "
-                "unreachable from the current state."
+                "Use this when you cannot make safe forward progress on the active sub-goal. "
+                "Pick the category that best describes what you observe; the system will either replan against the current screen or escalate to the human depending on the category. "
+                "Prefer this over snapping to a semantically wrong label or emitting a bbox for a region where you cannot see the target. "
+                "When an element is rendered outside the manifest but is visible on screen, ground it via bbox instead — request_replan is for cases where neither path works."
+            ),
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "category": {
+                        "type": "STRING",
+                        "enum": [category.value for category in EscapeCategory],
+                        "description": (
+                            "Typed reason. "
+                            "'target_not_available': the named target is neither in the manifest nor visible on the current screenshot. "
+                            "'wrong_screen': the current screen does not correspond to the sub-goal's expected screen. "
+                            "'precondition_not_met': the sub-goal assumes prior state that has not been reached. "
+                            "'ambiguous_target': multiple candidates plausibly match and no safe disambiguation is possible. "
+                            "'unsafe_action': proceeding would be irreversible or destructive."
+                        ),
+                    },
+                    "detail": {
+                        "type": "STRING",
+                        "description": (
+                            "One-sentence justification used as the decomposer preamble (replan path) or as the human prompt body (HITL path)."
+                        ),
+                    },
+                },
+                "required": ["category", "detail"],
+            },
+        }
+
+    @staticmethod
+    def __report_unactionable() -> Dict[str, Any]:
+        """
+        Definition for the report_unactionable tool.
+        """
+
+        return {
+            "name": "report_unactionable",
+            "description": (
+                "Use this when the active task cannot be acted on from the current screen. "
+                "The runtime will decide whether to heal, replan, ask the user, or fail bounded."
             ),
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
                     "reason": {
                         "type": "STRING",
-                        "description": (
-                            "Brief description of why the active sub-goal "
-                            "is unreachable from the current screen."
-                        ),
+                        "description": "One concise sentence explaining why the current screen cannot satisfy the active task.",
+                    },
+                    "goal_completed": {
+                        "type": "BOOLEAN",
+                        "description": "Must be false unless the overall goal is complete.",
+                    },
+                    "sub_goal_completed": {
+                        "type": "BOOLEAN",
+                        "description": "Must be false unless the current task is complete.",
                     },
                 },
-                "required": ["reason"],
+                "required": ["reason", "goal_completed", "sub_goal_completed"],
             },
         }
 

@@ -10,9 +10,16 @@ from fathom.interfaces.factory import (
     SignalFactoryPort,
     TelemetryFactoryPort,
 )
+from fathom.interfaces.healing import HealingAgentPort
+from fathom.interfaces.icon import IconDetectorPort
+from fathom.interfaces.journal import RuntimeJournalPort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
+from fathom.interfaces.localization import TargetLocalizerPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.observation import ScreenObservationPort
+from fathom.interfaces.ocr import OcrPort
+from fathom.interfaces.overlay import OverlayDetectorPort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
@@ -82,10 +89,17 @@ class IResponseParser(Protocol):
 
 __all__ = [
     "DevicePort",
+    "IconDetectorPort",
     "KnowledgePort",
     "LLMPort",
+    "HealingAgentPort",
+    "TargetLocalizerPort",
     "MemoryPort",
+    "OcrPort",
+    "OverlayDetectorPort",
     "PerceptionPort",
+    "RuntimeJournalPort",
+    "ScreenObservationPort",
     "SignalPort",
     "StoragePort",
     "TelemetryPort",

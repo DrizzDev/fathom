@@ -19,7 +19,9 @@ else:
 
     FontType = Any
 
+from fathom.constants.drawing import SourceColor
 from fathom.processing.geometry import GeometryUtils
+from fathom.schemas.observation import ElementSource
 from fathom.schemas.ui import LabeledElement
 
 logger = getLogger(__name__)
@@ -222,8 +224,21 @@ class ImageAnnotator:
     ) -> Optional[str]:
         """
         Draw action indicator on image for background verification.
-        coords: (x, y) for tap/type, or (x1, y1, x2, y2) for swipe/scroll.
+
+        .. deprecated::
+            Use :class:`fathom.core.artifact.pipeline.ArtifactPipeline`
+            with :class:`fathom.schemas.artifact.TracePayload` instead.
+            This direct-write path is retained as a fallback for
+            ad-hoc tooling that has not migrated yet.
         """
+
+        import warnings
+
+        warnings.warn(
+            "ImageAnnotator.trace is deprecated; emit a TracePayload via ArtifactPipeline instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         try:
             import io
@@ -296,7 +311,24 @@ class ImageAnnotator:
     ) -> Optional[str]:
         """
         Annotate an image with bounding boxes and labels.
+
+        .. deprecated::
+            Use :class:`fathom.core.artifact.pipeline.ArtifactPipeline`
+            with :class:`fathom.schemas.artifact.AnnotatedPayload` (and
+            the shared :class:`fathom.core.artifact.drawing.BoxDrawer`
+            primitive). Retained while
+            :class:`HierarchyService.process_xml_and_screen` migrates;
+            do not introduce new callers.
         """
+
+        import warnings
+
+        warnings.warn(
+            "ImageAnnotator.annotate is deprecated; emit an AnnotatedPayload via "
+            "ArtifactPipeline using the shared BoxDrawer primitive.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         font_name = "arial.ttf"
         font_size = int(kwargs.get("font_size", 24))
@@ -388,3 +420,129 @@ class ImageAnnotator:
         except Exception as exception:
             logger.exception(f"Failed to annotate: {exception}")
             return None
+
+    __PERCEPTION_SOURCE_COLOURS: Dict[ElementSource, str] = {
+        ElementSource.OCR: SourceColor.OCR,
+        ElementSource.ICON: SourceColor.ICON,
+        ElementSource.VISION: SourceColor.VISION,
+    }
+
+    @classmethod
+    def overlay_perception_boxes(
+        cls,
+        *,
+        image_bytes: bytes,
+        entries: List[Any],
+        font_size: int = 24,
+        min_font_size: int = 10,
+        box_thickness: int = 2,
+    ) -> Optional[bytes]:
+        """
+        Draw perception-source bounding boxes on top of an existing
+        annotated image and return the new PNG bytes.
+
+        Used when :class:`fathom.core.services.manifest.ManifestMerger`
+        appends OCR / Icon / Vision elements onto the XML manifest:
+        the LLM-facing image must show a box for every numeric label
+        the LLM sees in the manifest, otherwise the model is being
+        asked to ground against labels it cannot visually verify
+        (a documented hallucination regime).
+
+        ``entries`` are :class:`AppendedManifestEntry` tuples carrying
+        ``(label_id, source, text, bounds)`` — colours come from the
+        :class:`SourceColor` palette so OCR boxes are green, Icon
+        amber, Vision pink, distinguishable from the blue XML and
+        purple CV boxes already on the image. Styling (font size,
+        stroke width, label positioning) matches :meth:`annotate`
+        exactly so the combined image reads as one consistent pass.
+        """
+
+        if not entries:
+            return image_bytes
+
+        import io
+
+        try:
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+            draw = ImageDraw.Draw(image, "RGBA")
+
+            font_cache = cls.__load_fonts("arial.ttf", int(font_size), int(min_font_size))
+            default_font = font_cache.get(int(font_size)) or next(iter(font_cache.values()))
+            sorted_font_sizes = sorted(font_cache.keys(), reverse=True)
+
+            placed_outside_label_boxes: List[BoundsTuple] = []
+
+            for entry in entries:
+                colour = cls.__PERCEPTION_SOURCE_COLOURS.get(entry.source, SourceColor.FALLBACK)
+                bounds: BoundsTuple = (
+                    float(entry.bounds[0]),
+                    float(entry.bounds[1]),
+                    float(entry.bounds[2]),
+                    float(entry.bounds[3]),
+                )
+
+                draw.rectangle(bounds, outline=colour, width=box_thickness)
+
+                padding_inside = box_thickness + 2
+                box_width = bounds[2] - bounds[0]
+                box_height = bounds[3] - bounds[1]
+
+                label = str(entry.label_id)
+                draw_connector_line = False
+                final_label_box: Optional[BoundsTuple] = None
+                best_position: Tuple[float, float]
+
+                fit_result = cls.__find_best_font_for_inside(
+                    label=label,
+                    width=box_width,
+                    height=box_height,
+                    padding=padding_inside,
+                    draw=draw,
+                    sorted_font_sizes=sorted_font_sizes,
+                    font_cache=font_cache,
+                )
+
+                if fit_result:
+                    final_font, text_width, text_height = fit_result
+                    best_position = (
+                        bounds[0] + padding_inside,
+                        bounds[1] + padding_inside,
+                    )
+                    final_label_box = (
+                        best_position[0],
+                        best_position[1],
+                        best_position[0] + text_width,
+                        best_position[1] + text_height,
+                    )
+                else:
+                    final_font = default_font
+                    best_position, final_label_box = cls.__get_outside_position(
+                        label=label,
+                        image_width=image.width,
+                        image_height=image.height,
+                        font=default_font,
+                        bounds=bounds,
+                        draw=draw,
+                        _placed_label_boxes=placed_outside_label_boxes,
+                    )
+                    draw_connector_line = True
+                    placed_outside_label_boxes.append(final_label_box)
+
+                cls.__draw_label_and_connector(
+                    label=label,
+                    color=colour,
+                    font=final_font,
+                    draw=draw,
+                    draw_connector_line=draw_connector_line,
+                    element_bounds=bounds,
+                    best_position=best_position,
+                    final_label_box=final_label_box,
+                )
+
+            buffer = io.BytesIO()
+            image.convert("RGB").save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        except Exception as exception:
+            logger.warning(f"Failed to overlay perception boxes: {exception}")
+            return image_bytes

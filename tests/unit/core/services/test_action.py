@@ -202,7 +202,7 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
             label_id=label_id,
             input_context=input_context,
             action_type=ActionType.TYPE,
-            bounds=bounds or Bounds(x=100, y=200, width=400, height=100, coord_system="pixel"),
+            bounds=bounds or Bounds(x=100, y=200, width=400, height=100, coordinate_system="pixel"),
         )
 
     @staticmethod
@@ -410,7 +410,7 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
 
         action = self.__build_action(
             text="tap first",
-            bounds=Bounds(x=100, y=200, width=400, height=100, coord_system="pixel"),
+            bounds=Bounds(x=100, y=200, width=400, height=100, coordinate_system="pixel"),
         )
 
         await executor.act(

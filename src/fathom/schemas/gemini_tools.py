@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fathom.schemas.tasks import TaskStatus
 from fathom.schemas.validators import enforce_validate_prefix
 
 CoordSystem = Literal["normalized", "pixel"]
@@ -128,7 +129,7 @@ class EmitScriptArgs(BaseModel):
     @model_validator(mode="after")
     def _reject_duplicates_and_empty_blocks(self) -> "EmitScriptArgs":
         # Reject duplicate action IDs in remaining_action_ids.
-        seen: set[str] = set()
+        seen: Set[str] = set()
         for aid in self.remaining_action_ids:
             if aid in seen:
                 raise ValueError(f"Duplicate action ID '{aid}' in remaining_action_ids.")
@@ -138,7 +139,7 @@ class EmitScriptArgs(BaseModel):
         for i, block in enumerate(self.conditional_blocks):
             if not block.action_ids:
                 raise ValueError(f"conditional_blocks[{i}] has no action_ids; remove empty blocks.")
-            block_seen: set[str] = set()
+            block_seen: Set[str] = set()
             for aid in block.action_ids:
                 if aid in block_seen:
                     raise ValueError(
@@ -160,7 +161,7 @@ class GeminiBBox(BaseModel):
     y: int = Field(0, description="Top-left Y coordinate")
     width: int = Field(..., gt=0, description="Bounding box width")
     height: int = Field(..., gt=0, description="Bounding box height")
-    coord_system: CoordSystem = Field(
+    coordinate_system: CoordSystem = Field(
         "normalized",
         description="Coordinate system for bbox (normalized or pixel)",
     )
@@ -228,6 +229,16 @@ class GeminiCompletionFlags(BaseModel):
     subgoal_completion_reason: Optional[str] = None
     completion_criteria_met: Optional[Any] = None
     content_exhausted: bool = False
+    task_status: Optional[TaskStatus] = Field(
+        default=None,
+        description=(
+            "Typed verdict on the active execution task — MET when the "
+            "criterion is observably satisfied, PARTIAL when progress was "
+            "made but the criterion is unmet, NOT_MET when neither, "
+            "BLOCKED when the task cannot proceed from the current screen. "
+            "Consumed by CompletionService alongside outcome evidence."
+        ),
+    )
 
 
 class VerifyGoalArgs(GeminiCompletionFlags):
@@ -414,11 +425,34 @@ class ExecuteUIArgs(GeminiCompletionFlags, GeminiDeltaTelemetry):
         "",
         description="Reasoning for the chosen UI action.",
     )
+    action: Optional[ExecuteAction] = Field(
+        default=None,
+        description="Single low-level UI action for this turn.",
+    )
     actions: List[ExecuteAction] = Field(
         default_factory=list,
-        description="List of candidate low-level UI actions; first is executed.",
+        description="Legacy compatibility field. At most one action is accepted.",
     )
     memory_updates: Optional[Dict[str, str]] = None
+
+    @model_validator(mode="after")
+    def _normalize_single_action(self) -> "ExecuteUIArgs":
+        """
+        Normalize the temporary legacy actions list into the singular action contract.
+        """
+
+        if self.action is not None and self.actions:
+            raise ValueError("execute_ui accepts either action or actions, not both.")
+
+        if len(self.actions) > 1:
+            raise ValueError(
+                "execute_ui accepts exactly one action; multi-action payloads are unsupported."
+            )
+
+        if self.action is None and self.actions:
+            object.__setattr__(self, "action", self.actions[0])
+
+        return self
 
 
 class StoreMemoryArgs(BaseModel):
@@ -458,4 +492,16 @@ class AskUserArgs(GeminiCompletionFlags):
     context: str = Field(
         "",
         description="Optional context to help the user answer.",
+    )
+
+
+class ReportUnactionableArgs(GeminiCompletionFlags):
+    """
+    Schema for the report_unactionable tool.
+    """
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        description="Reason the current screen cannot satisfy the active task.",
     )

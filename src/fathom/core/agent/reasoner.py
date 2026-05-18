@@ -270,6 +270,21 @@ class Reasoner:
                 similarity,
             )
 
+        # Surface the rejection mode for observability: a completion
+        # keyword landed in the rationale but the rationale text shares
+        # too little with the target to be trusted as evidence. This is
+        # the regression mode the similarity floor was raised to catch.
+        if keywords_found and similarity < RATIONALE_MIN_SIMILARITY_FLOOR:
+            logger.info(
+                "Rationale rejected: completion keyword present but similarity below floor",
+                extra={
+                    "component": "reasoner",
+                    "event": "rationale.rejected.below_similarity_floor",
+                    "similarity": round(similarity, 3),
+                    "floor": RATIONALE_MIN_SIMILARITY_FLOOR,
+                },
+            )
+
         return False, None, keyword_match, similarity
 
     @staticmethod

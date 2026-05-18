@@ -5,12 +5,13 @@ from logging import getLogger
 from typing import Any, Dict, List, Literal, Optional, cast
 
 from fathom.constants import ActionType
-from fathom.constants.state import CompletionReason
+from fathom.constants.state import CompletionReason, PlanMetadataKey
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.core.services.vision import SubGoalContext, VisionService
 from fathom.schemas.actions import Action
+from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.results import AnalysisOutcome, AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
@@ -50,6 +51,9 @@ class StepPlanner:
         prompt_if_stuck: bool = False,
         interactive_mode: bool = False,
         elements: Optional[Dict[str, Any]] = None,
+        screen_observation: Optional[ScreenObservation] = None,
+        last_block_reason: Optional[str] = None,
+        last_block_message: Optional[str] = None,
     ) -> PlanResult:
         """
         Plan the next step based on current state.
@@ -136,14 +140,20 @@ class StepPlanner:
             tracking_note=current_tracking_note,
             recent_effects=state.get_recent_effects(),
             loop_observation=state.build_loop_observation(),
+            screen_observation=screen_observation,
             prior_rejection_history=state.rejection_history,
             visual_hash=self.__compute_simple_hash(capture=capture),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
+            last_block_reason=last_block_reason,
+            last_block_message=last_block_message,
         )
 
-        # Clear rejection history + verifier feedback after successful
-        # analysis — both are use-once signals consumed by this iteration.
+        # Use-once signals: rejection history, verifier feedback, and
+        # user guidance are consumed by this ANALYZE iteration and then
+        # cleared so a single HITL nudge cannot become a sticky
+        # imperative across later iterations.
         state.clear_rejection_history()
+        context_manager.clear_user_guidance()
         context_manager.clear_verifier_feedback()
 
         if analysis.content_exhausted:
@@ -151,24 +161,14 @@ class StepPlanner:
             # Do not mark_complete here: content_exhausted means "no more content on this list/feed",
             # not "task done". Marking complete would cause early exits; fall through and plan next.
 
-        # Early structured outcome: agent declared the sub-goal does not
-        # match the current screen. Surface this as a PlanResult with
-        # ``reason=REPORT_UNACTIONABLE.value`` so the graph node routes
-        # it to the recovery coordinator instead of dispatching the
-        # placeholder action — no synthetic action ever reaches EXECUTE.
-        if analysis.outcome == AnalysisOutcome.REPORT_UNACTIONABLE:
-            return PlanResult(
-                step=None,
-                is_complete=False,
-                should_retry=True,
-                metrics=analysis.metrics,
-                memories=analysis.memories,
-                reason=CompletionReason.REPORT_UNACTIONABLE.value,
-                metadata={
-                    **(analysis.metadata or {}),
-                    "unactionable_reason": analysis.unactionable_reason
-                    or "screen does not match the active sub-goal",
-                },
+        if analysis.outcome in (
+            AnalysisOutcome.REQUEST_REPLAN,
+            AnalysisOutcome.REPORT_UNACTIONABLE,
+        ):
+            return self.__build_escape_plan_result(
+                capture=capture,
+                analysis=analysis,
+                step_number=state.step_count,
             )
 
         action = self.__select_action(state=state, reasoner=reasoner, analysis=analysis)
@@ -251,8 +251,8 @@ class StepPlanner:
 
         # Record action for sub-goal trace verification
         if state.has_sub_goals() and action.action_type not in {
-            ActionType.ASK_USER,
             ActionType.WAIT,
+            ActionType.ASK_USER,
         }:
             state.record_sub_goal_action()
 
@@ -264,9 +264,9 @@ class StepPlanner:
             step_number=state.step_count,
             metadata={
                 **(analysis.metadata or {}),
-                "observation": analysis.screen_description,
+                PlanMetadataKey.OBSERVATION.value: analysis.screen_description,
                 # Pass analysis to RECORD node for post-execution sub-goal completion check.
-                "_analysis": analysis,
+                PlanMetadataKey.ANALYSIS.value: analysis,
             },
         )
 
@@ -288,6 +288,74 @@ class StepPlanner:
             primary=analysis.action,
             alternatives=analysis.alternatives,
             failed_actions={str(failure) for failure in failures},
+        )
+
+    def __build_escape_plan_result(
+        self,
+        *,
+        step_number: int,
+        capture: ScreenCapture,
+        analysis: AnalysisResult,
+    ) -> PlanResult:
+        """
+        Translate a ``REQUEST_REPLAN`` analysis into a PlanResult routed
+        by the structured :class:`EscapeReport` category.
+
+        Replan categories surface as a step-less PlanResult with
+        ``reason=CompletionReason.REQUEST_REPLAN.value`` so the graph
+        node dispatches the recovery coordinator with the escape report
+        attached. Human categories surface as an ``ASK_USER`` step whose
+        ``text`` is the escape detail so EXECUTE escalates through the
+        existing HITL path. The placeholder WAIT action on the analysis
+        never reaches EXECUTE in either branch.
+
+        ``step_number`` is the caller's current ``AgentState.step_count``
+        and is threaded through to the ASK_USER ``Step`` so telemetry
+        and history attribute the human-escalation to the right step.
+        """
+
+        if (escape_report := analysis.escape_report) is None:
+            raise ValueError(
+                "AnalysisResult.outcome=REQUEST_REPLAN requires a populated escape_report"
+            )
+
+        if escape_report.routes_to_replan():
+            return PlanResult(
+                step=None,
+                is_complete=False,
+                should_retry=True,
+                metrics=analysis.metrics,
+                memories=analysis.memories,
+                reason=CompletionReason.REQUEST_REPLAN.value,
+                metadata={
+                    **(analysis.metadata or {}),
+                    PlanMetadataKey.ESCAPE_REPORT.value: escape_report.model_dump(mode="json"),
+                },
+            )
+
+        ask_user_action = Action(
+            confidence=1.0,
+            text=escape_report.detail,
+            rationale=escape_report.detail,
+            target="Request user assistance",
+            action_type=ActionType.ASK_USER,
+        )
+
+        return PlanResult(
+            step=self.__build_step(
+                capture=capture,
+                is_recovery=True,
+                action=ask_user_action,
+                step_number=step_number,
+            ),
+            is_complete=False,
+            metrics=analysis.metrics,
+            memories=analysis.memories,
+            reason=CompletionReason.INTERVENTION_REQUIRED.value,
+            metadata={
+                **(analysis.metadata or {}),
+                PlanMetadataKey.ESCAPE_REPORT.value: escape_report.model_dump(mode="json"),
+            },
         )
 
     def __build_plan_result(

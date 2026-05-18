@@ -1,32 +1,39 @@
 from __future__ import annotations
 
-from collections import deque
 from logging import getLogger
-from typing import Any, Deque, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from fathom.constants import ActionType
+from fathom.constants.runtime import (
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_LOOP_THRESHOLD,
+    DEFAULT_MAX_STEPS,
+    DEFAULT_REALIGNMENT_BUDGET,
+)
 from fathom.constants.screen import (
-    ACTION_EFFECT_TRAJECTORY_WINDOW,
     LOOP_OSCILLATION_AB_WINDOW,
     MIN_LOOP_OBSERVATION_REPETITIONS,
     MIN_NO_PROGRESS_FOR_OBSERVATION,
     MIN_SCREENS_FOR_NEAR_DUPLICATE,
 )
 from fathom.constants.state import CompletionReason
+from fathom.core.recovery.ladder import RecoveryActionLadder
+from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState, TargetIdentity
 from fathom.schemas.actions import Action
 from fathom.schemas.conversation import ConversationTurn
-from fathom.schemas.effect import ActionEffect, ActionEffectStatus
+from fathom.schemas.effect import ActionEffect
 from fathom.schemas.observation import LoopObservation, ScreenRelation
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import (
     ActionHistory,
     InteractionTracker,
-    LoopDetector,
     LoopDetectorState,
 )
 from fathom.schemas.steps import StepResult
 from fathom.schemas.subgoal import SubGoal, SubGoalStatus
+from fathom.schemas.supervision import BlockReason
+from fathom.schemas.tasks import ExecutionTaskState
 
 logger = getLogger(__name__)
 
@@ -48,10 +55,10 @@ class AgentState:
         self,
         intent: str,
         *,
-        max_steps: int = 20,
-        loop_threshold: int = 3,
-        context_window: int = 10,
-        realignment_budget: int = 3,
+        max_steps: int = DEFAULT_MAX_STEPS,
+        loop_threshold: int = DEFAULT_LOOP_THRESHOLD,
+        context_window: int = DEFAULT_CONTEXT_WINDOW,
+        realignment_budget: int = DEFAULT_REALIGNMENT_BUDGET,
     ) -> None:
         """
         Initialize agent state.
@@ -67,17 +74,16 @@ class AgentState:
         self.__step_count = 0
         self.__intent = intent
         self.__max_steps = max_steps
-        self.__realignment_budget = realignment_budget
 
-        self.__loop_detector = LoopDetector(
-            threshold=loop_threshold,
-            window_size=context_window,
-        )
-        self.__action_history = ActionHistory(max_size=context_window)
         self.__interaction_tracker = InteractionTracker()
+        self.__action_history = ActionHistory(max_size=context_window)
 
-        self.__seen_screens: List[ScreenState] = []
-        self.__current_screen: Optional[ScreenState] = None
+        self.__runtime = RuntimeState.create(
+            loop_threshold=loop_threshold,
+            loop_window=context_window,
+            realignment_budget=realignment_budget,
+        )
+        self.__recovery_ladder = RecoveryActionLadder()
 
         self.__is_complete = False
         self.__completion_reason: Optional[str] = None
@@ -93,30 +99,28 @@ class AgentState:
         # Legacy delta-context fields. Kept as immutable defaults so the
         # checkpoint round-trip continues to accept payloads written by
         # earlier versions of the schema. No code path mutates them
-        # any more — the signal lives in ``__recent_effects`` instead.
-        self.__last_delta_score: Optional[float] = None
+        # any more — the signal lives in runtime effect history instead.
         self.__low_delta_streak: int = 0
-
-        # Rolling window of structured action-effect classifications.
-        # The window feeds the ANALYZE prompt's ``<RECENT_TRAJECTORY>``
-        # block so the agent can reason about whether its recent
-        # actions produced progress — replaces the unreliable
-        # ``screen_changed: bool`` signal.
-        self.__recent_effects: Deque[ActionEffect] = deque(maxlen=ACTION_EFFECT_TRAJECTORY_WINDOW)
+        self.__last_delta_score: Optional[float] = None
 
         # Multi-turn rejection history for cross-iteration feedback loops.
         # Stores provider-neutral ConversationTurn objects so the next
         # vision.analyze() call can pass them as conversation_history.
         self.__rejection_history: Optional[List[ConversationTurn]] = None
 
-        # HITL Tracking
-        self.__realignment_count = 0
-
-        # Sub-goal tracking for sequential intent execution
+        # Sub-goal tracking for sequential intent execution.
+        # The runtime aggregate owns task progress; these fields remain as
+        # compatibility shims while existing consumers migrate to runtime.tasks.
         self.__sub_goals: List[SubGoal] = []
         self.__current_sub_goal_index: int = 0
-        self.__sub_goal_start_screen: Optional[str] = None  # Track screen hash when sub-goal starts
-        self.__sub_goal_action_count: int = 0  # Track actions executed for current sub-goal
+        self.__sub_goal_action_count: int = 0
+        self.__sub_goal_start_screen: Optional[str] = None
+
+        # Counts how many consecutive ANALYZE turns produced
+        # ``is_complete=True`` while sub-goals were still open and the
+        # router deferred to GROUND. Bounded retry prevents the planner
+        # from looping on a "complete" verdict the runtime cannot honour.
+        self.__consecutive_complete_deferrals: int = 0
 
     @property
     def intent(self) -> str:
@@ -125,6 +129,14 @@ class AgentState:
         """
 
         return self.__intent
+
+    @property
+    def runtime(self) -> RuntimeState:
+        """
+        Return decomposed runtime state components.
+        """
+
+        return self.__runtime
 
     @property
     def step_count(self) -> int:
@@ -164,7 +176,7 @@ class AgentState:
         Whether the agent is stuck in a loop.
         """
 
-        return self.__loop_detector.is_stuck()
+        return self.__runtime.screen.detector.is_stuck()
 
     @property
     def last_delta_score(self) -> Optional[float]:
@@ -180,7 +192,7 @@ class AgentState:
         enforces the per-run intervention budget.
         """
 
-        self.__realignment_count += 1
+        self.__runtime.realignment.record()
 
     def reset_loop_history(self) -> None:
         """
@@ -188,7 +200,7 @@ class AgentState:
         intervention course-corrects from the stuck path).
         """
 
-        self.__loop_detector.reset()
+        self.__runtime.screen.detector.reset()
 
     def record_hitl_intervention(self) -> None:
         """
@@ -216,11 +228,11 @@ class AgentState:
         if self.is_stuck:
             # We fail if BOTH budgets are exhausted or relevant budget is exhausted.
             # In interactive mode, we only care about realignment budget.
-            if self.__realignment_count >= self.__realignment_budget:
+            if self.__runtime.realignment.count >= self.__runtime.realignment.budget:
                 return False
 
             # Autonomous budget (used in non-interactive mode)
-            return bool(self.__loop_detector.can_recover())
+            return bool(self.__runtime.screen.detector.can_recover())
 
         return True
 
@@ -230,7 +242,7 @@ class AgentState:
         Current screen state.
         """
 
-        return self.__current_screen
+        return self.__runtime.screen.current
 
     @property
     def tracking_note(self) -> Optional[str]:
@@ -245,7 +257,7 @@ class AgentState:
         Check if screen is new.
         """
 
-        return all(not seen.is_same_screen(screen) for seen in self.__seen_screens)
+        return self.__runtime.screen.is_new(screen=screen)
 
     def update_screen(self, screen: ScreenState) -> bool:
         """
@@ -258,17 +270,17 @@ class AgentState:
             True if this is a new screen, False if seen before.
         """
 
-        previous_screen = self.__current_screen
-        self.__current_screen = screen
-
-        is_new_screen = self.__is_new_screen(screen=screen)
+        previous_screen = self.__runtime.screen.current
+        is_new_screen = self.__runtime.screen.is_new(screen=screen)
+        self.__runtime.screen.update(screen=screen, observation=None)
 
         if is_new_screen:
-            self.__seen_screens.append(screen)
+            self.__runtime.screen.remember(screen=screen)
             logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
             # Loop detector owns the visual-progress policy:
             # it advances only when the new screen is visually distinct from the previous one, ignoring xml/interaction hash flips.
-            self.__loop_detector.observe_screen(previous=previous_screen, current=screen)
+            self.__runtime.screen.detector.observe_screen(previous=previous_screen, current=screen)
+
         elif previous_screen and previous_screen.activity_hash != screen.activity_hash:
             logger.debug(
                 f"Activity changed on known screen: {previous_screen.activity} -> "
@@ -277,7 +289,7 @@ class AgentState:
         else:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
 
-        self.__loop_detector.record(
+        self.__runtime.screen.detector.record(
             screen=screen,
             action_type=self.__last_action_type,
             action_description=self.__last_action_description,
@@ -316,7 +328,9 @@ class AgentState:
         self.__step_count += 1
 
         # Optimized record including activity context
-        activity = self.__current_screen.activity if self.__current_screen else "unknown"
+        activity = (
+            self.__runtime.screen.current.activity if self.__runtime.screen.current else "unknown"
+        )
         self.__action_history.record_action(
             action=result.step.action, success=result.success, activity=activity
         )
@@ -347,6 +361,40 @@ class AgentState:
         self.__is_complete = False
         self.__completion_reason = None
 
+    @property
+    def consecutive_complete_deferrals(self) -> int:
+        """
+        Number of consecutive ANALYZE turns whose ``is_complete=True``
+        verdict the router deferred because sub-goals were still open.
+        """
+
+        return self.__consecutive_complete_deferrals
+
+    def record_complete_deferral(self) -> int:
+        """
+        Increment and return the consecutive complete-deferral counter.
+
+        The router invokes this when it routes an ``is_complete=True``
+        ANALYZE verdict back to GROUND because sub-goals are still
+        open. Returning the post-increment value lets the caller
+        decide whether to escalate.
+        """
+
+        self.__consecutive_complete_deferrals += 1
+        return self.__consecutive_complete_deferrals
+
+    def reset_complete_deferrals(self) -> None:
+        """
+        Zero the consecutive complete-deferral counter.
+
+        Called on real progress: a non-complete plan, a successful
+        sub-goal advancement, or a verifier pass. Without the reset,
+        a single late deferral would forever bias the bounded-retry
+        threshold against the planner.
+        """
+
+        self.__consecutive_complete_deferrals = 0
+
     def set_sub_goals(self, sub_goals: List[SubGoal]) -> None:
         """
         Set the decomposed sub-goals for this intent.
@@ -354,13 +402,20 @@ class AgentState:
         Args:
             sub_goals: List of sequential sub-goals to execute.
         """
+
         self.__sub_goals = [goal.model_copy(deep=True) for goal in sub_goals]
         self.__current_sub_goal_index = 0
+
+        self.__runtime.tasks.load(
+            tasks=ExecutionTaskAdapter().from_sub_goals(sub_goals=self.__sub_goals),
+        )
+
         if self.__sub_goals:
             self.__sub_goals[0].mark_in_progress()
             # Track starting screen for first sub-goal
-            if self.__current_screen:
-                self.__sub_goal_start_screen = self.__current_screen.visual_hash
+            if self.__runtime.screen.current:
+                self.__sub_goal_start_screen = self.__runtime.screen.current.visual_hash
+
             self.__sub_goal_action_count = 0
             logger.info(
                 f"[AgentState] Initialized with {len(self.__sub_goals)} sub-goals. "
@@ -374,8 +429,10 @@ class AgentState:
         Returns:
             Current sub-goal or None if no sub-goals defined.
         """
+
         if not self.__sub_goals or self.__current_sub_goal_index >= len(self.__sub_goals):
             return None
+
         return self.__sub_goals[self.__current_sub_goal_index]
 
     def set_current_sub_goal_index(self, index: int) -> None:
@@ -385,11 +442,13 @@ class AgentState:
         Args:
             index: Index to set (will be clamped to valid range)
         """
+
         if self.__sub_goals:
             # Clamp to valid range
             clamped_index = max(0, min(index, len(self.__sub_goals) - 1))
             # Update index and mark the restored goal as in progress
             self.__current_sub_goal_index = clamped_index
+
             if clamped_index < len(self.__sub_goals):
                 self.__sub_goals[clamped_index].mark_in_progress()
                 logger.info(f"[AgentState] Sub-goal index restored to {clamped_index}")
@@ -399,6 +458,7 @@ class AgentState:
         """
         List of all sub-goals.
         """
+
         return self.__sub_goals
 
     @property
@@ -406,6 +466,7 @@ class AgentState:
         """
         Current sub-goal index.
         """
+
         return self.__current_sub_goal_index
 
     def mark_current_sub_goal_complete(
@@ -421,6 +482,7 @@ class AgentState:
         Returns:
             True if advanced to next sub-goal, False if all complete.
         """
+
         current = self.get_current_sub_goal()
         if not current:
             return False
@@ -429,13 +491,13 @@ class AgentState:
         # This method just records the signals and advances. Trace verification is disabled
         # to prevent false positives from screen changes unrelated to sub-goal completion.
         updated_signal = SubGoalCompletionSignal(
+            trace_verified=False,
             evidence=completion_signal.evidence,
             keyword_match=completion_signal.keyword_match,
             llm_confidence=completion_signal.llm_confidence,
             action_executed=completion_signal.action_executed,
             flagged_complete=completion_signal.flagged_complete,
             rationale_verified=completion_signal.rationale_verified,
-            trace_verified=False,
         )
 
         # Mark complete with all signals
@@ -444,6 +506,10 @@ class AgentState:
             flagged_complete=updated_signal.flagged_complete,
             rationale_verified=updated_signal.rationale_verified,
         )
+
+        # Sub-goal advanced -> any in-flight complete-deferral streak is now
+        # stale; the next planner verdict starts from a clean slate.
+        self.__consecutive_complete_deferrals = 0
 
         logger.info(
             "[AgentState] Sub-goal marked complete",
@@ -461,14 +527,16 @@ class AgentState:
 
         # Advance to next sub-goal
         self.__current_sub_goal_index += 1
+        self.__runtime.tasks.mark(state=ExecutionTaskState.SUCCEEDED)
+        self.__runtime.tasks.advance()
 
         if self.__current_sub_goal_index < len(self.__sub_goals):
             next_goal = self.__sub_goals[self.__current_sub_goal_index]
             next_goal.mark_in_progress()
 
             # Reset per-sub-goal counters on advancement.
-            if self.__current_screen:
-                self.__sub_goal_start_screen = self.__current_screen.visual_hash
+            if self.__runtime.screen.current:
+                self.__sub_goal_start_screen = self.__runtime.screen.current.visual_hash
 
             self.__sub_goal_action_count = 0
             logger.info(
@@ -484,7 +552,9 @@ class AgentState:
         Record that an action was executed for the current sub-goal.
         Call this from planner after executing each action.
         """
+
         self.__sub_goal_action_count += 1
+        self.__runtime.tasks.record_attempt()
 
     @property
     def current_sub_goal_action_count(self) -> int:
@@ -514,10 +584,15 @@ class AgentState:
 
     def replan_pending_sub_goals(self, *, new_sub_goals: List[SubGoal]) -> None:
         """
-        Replace every unfinished sub-goal with ``new_sub_goals`` (preserving completed work)
-        and mark the first new sub-goal IN_PROGRESS.
+        Replace every unfinished sub-goal with ``new_sub_goals``
+        (preserving completed work) and mark the first new sub-goal IN_PROGRESS.
+
+        Preserves the per-sub-goal action counter when the new first sub-goal names the same target as the previously active sub-goal.
+        A cosmetic replan that does not change the imperative the agent is attempting. The counter must accumulate across cosmetic replans
+        so ``SUBGOAL_BUDGET_EXCEEDED`` can fire when the same target is retried repeatedly under ``TARGET_UNRESOLVED`` (or any other repeat-triggering signal).
         """
 
+        previous_active = self.get_current_sub_goal()
         completed = [goal for goal in self.__sub_goals if goal.is_complete()]
 
         reindexed = [
@@ -525,16 +600,39 @@ class AgentState:
             for offset, goal in enumerate(new_sub_goals)
         ]
 
-        self.__sub_goal_action_count = 0
         self.__sub_goals = completed + reindexed
         self.__current_sub_goal_index = len(completed)
+        self.__runtime.tasks.load(
+            tasks=ExecutionTaskAdapter().from_sub_goals(sub_goals=self.__sub_goals),
+        )
+        for _ in range(self.__current_sub_goal_index):
+            self.__runtime.tasks.advance()
+
+        same_target = (
+            bool(reindexed)
+            and previous_active is not None
+            and TargetIdentity.describes_same_target(
+                previous=previous_active.description,
+                replacement=reindexed[0].description,
+            )
+        )
+        if not same_target:
+            self.__sub_goal_action_count = 0
 
         if self.__current_sub_goal_index < len(self.__sub_goals):
             current = self.__sub_goals[self.__current_sub_goal_index]
             current.mark_in_progress()
             logger.info(
-                f"[AgentState] Replanned: kept={len(completed)} replaced={len(reindexed)} "
-                f"current={current.description[:60]!r}"
+                "[AgentState] Replanned",
+                extra={
+                    "event": "replanned",
+                    "kept": len(completed),
+                    "component": "agent.state",
+                    "replaced": len(reindexed),
+                    "counter_preserved": same_target,
+                    "current": current.description[:60],
+                    "sub_goal_action_count": self.__sub_goal_action_count,
+                },
             )
 
     def all_sub_goals_complete(self) -> bool:
@@ -550,7 +648,7 @@ class AgentState:
 
         return all(sg.is_complete() for sg in self.__sub_goals)
 
-    def get_sub_goal_progress(self) -> tuple[int, int]:
+    def get_sub_goal_progress(self) -> Tuple[int, int]:
         """
         Get current progress through sub-goals.
 
@@ -585,57 +683,24 @@ class AgentState:
 
     def get_recovery_action(self) -> Optional[Action]:
         """
-        Get a recovery action when stuck.
-
-        Uses escalating recovery strategies:
-        1. First attempt: Press back
-        2. Second attempt: Scroll down
-        3. Third attempt: Press home
-
-        Returns:
-            Recovery action or None if recovery exhausted.
+        Get the next mechanical recovery action when the agent is stuck.
         """
 
-        if not self.__loop_detector.can_recover():
-            return None
-
-        attempt_number = self.__loop_detector.record_recovery_attempt()
-
-        if attempt_number == 1:
-            return Action(
-                confidence=0.9,
-                target="system: back",
-                action_type=ActionType.BACK,
-                rationale="Loop detected (Screen repeating). Forcing BACK to break context.",
-            )
-        elif attempt_number == 2:
-            return Action(
-                confidence=0.8,
-                target="system: scroll",
-                action_type=ActionType.SCROLL,
-                rationale="Loop detected (Screen repeating). Forcing SCROLL to reveal new state.",
-            )
-        else:
-            return Action(
-                confidence=0.7,
-                target="system: home",
-                action_type=ActionType.HOME,
-                rationale="Loop detected (Screen repeating). Forcing HOME to reset agent.",
-            )
+        return self.__recovery_ladder.next(detector=self.__runtime.screen.detector)
 
     def record_recovery_attempt(self) -> int:
         """
         Record a planner-level recovery attempt.
         """
 
-        return self.__loop_detector.record_recovery_attempt()
+        return self.__runtime.screen.detector.record_recovery_attempt()
 
     def reset_loop_detector(self) -> None:
         """
         Reset loop detector state after an explicit progress signal.
         """
 
-        self.__loop_detector.signal_content_exhausted()
+        self.__runtime.screen.detector.signal_content_exhausted()
 
     def record_action_effect(self, *, effect: ActionEffect) -> None:
         """
@@ -649,14 +714,14 @@ class AgentState:
         stable regardless of run length.
         """
 
-        self.__recent_effects.append(effect)
+        self.__runtime.effects.record_effect(effect=effect)
 
     def get_recent_effects(self) -> List[ActionEffect]:
         """
         Return the rolling window of recent action effects (oldest first).
         """
 
-        return list(self.__recent_effects)
+        return self.__runtime.effects.recent_effects()
 
     def get_last_action_effect(self) -> Optional[ActionEffect]:
         """
@@ -665,14 +730,11 @@ class AgentState:
         first step of a run, before EXECUTE has fired).
         """
 
-        if not self.__recent_effects:
-            return None
-
-        return self.__recent_effects[-1]
+        return self.__runtime.effects.last_effect()
 
     def build_loop_observation(self) -> Optional[LoopObservation]:
         """
-        Construct a :class:`LoopObservation` summarising the current
+        Construct a :class:`LoopObservation` summarizing the current
         stuck evidence, or ``None`` when the agent is not stuck.
 
         The observation is the structured input the ANALYZE prompt
@@ -712,7 +774,9 @@ class AgentState:
         if count < MIN_LOOP_OBSERVATION_REPETITIONS:
             return None
 
-        progress_scores = [round(effect.visual_progress, 3) for effect in self.__recent_effects]
+        progress_scores = [
+            round(effect.visual_progress, 3) for effect in self.__runtime.effects.recent_effects()
+        ]
 
         relation = self.__classify_screen_relation()
 
@@ -730,17 +794,17 @@ class AgentState:
         :class:`ScreenRelation`.
         """
 
-        screen_count = len(self.__seen_screens)
+        screen_count = len(self.__runtime.screen.seen)
 
         if screen_count < MIN_SCREENS_FOR_NEAR_DUPLICATE:
             return ScreenRelation.DIVERGING
 
-        last_two = self.__seen_screens[-MIN_SCREENS_FOR_NEAR_DUPLICATE:]
+        last_two = self.__runtime.screen.seen[-MIN_SCREENS_FOR_NEAR_DUPLICATE:]
         if last_two[0].is_same_screen(last_two[1]):
             return ScreenRelation.NEAR_DUPLICATE
 
         if screen_count >= LOOP_OSCILLATION_AB_WINDOW:
-            tail = self.__seen_screens[-LOOP_OSCILLATION_AB_WINDOW:]
+            tail = self.__runtime.screen.seen[-LOOP_OSCILLATION_AB_WINDOW:]
             if tail[0].is_same_screen(tail[2]) and tail[1].is_same_screen(tail[3]):
                 return ScreenRelation.OSCILLATING
 
@@ -757,27 +821,23 @@ class AgentState:
         resets the counter.
         """
 
-        count = 0
-        for effect in reversed(self.__recent_effects):
-            if effect.status == ActionEffectStatus.NO_PROGRESS:
-                count += 1
-                continue
-            break
-        return count
+        return self.__runtime.effects.consecutive_no_progress()
 
     def build_context(self) -> Dict[str, object]:
         """
         Build context for vision-language model with token optimization.
         """
 
-        current_activity = self.__current_screen.activity if self.__current_screen else "unknown"
+        current_activity = (
+            self.__runtime.screen.current.activity if self.__runtime.screen.current else "unknown"
+        )
 
         context: Dict[str, object] = {
             "intent": self.__intent,
             "is_stuck": self.is_stuck,
             "max_steps": self.__max_steps,
             "step_count": self.__step_count,
-            "unique_screens_seen": len(self.__seen_screens),
+            "unique_screens_seen": len(self.__runtime.screen.seen),
             "compact_history": self.__action_history.get_compact_history(),
             "relevant_failures": self.__action_history.get_activity_failures(
                 current_activity=current_activity
@@ -828,8 +888,18 @@ class AgentState:
         This prevents the model from proposing the same ineffective action on retry.
         """
 
-        activity = self.__current_screen.activity if self.__current_screen else "unknown"
+        activity = (
+            self.__runtime.screen.current.activity if self.__runtime.screen.current else "unknown"
+        )
         self.__action_history.record_action(action=action, success=False, activity=activity)
+        self.__runtime.failures.record(
+            action=action,
+            reason=BlockReason.REPEATED_NO_EFFECT,
+            detail=(
+                f"Action {action.to_description()[:80]!r} repeated 3+ times "
+                f"without progress on activity {activity!r}."
+            ),
+        )
         self.set_last_error(
             f"Action '{action.to_description()[:80]}' was repeated 3+ times on the same screen "
             "without progress. Try a different approach to achieve the same goal."
@@ -847,12 +917,12 @@ class AgentState:
             True if the same action has been repeated 3+ times on the current screen.
         """
 
-        if not self.__current_screen:
+        if (current := self.__runtime.screen.current) is None:
             return False
 
-        return self.__loop_detector.has_repeated_action_on_same_screen(
+        return self.__runtime.screen.detector.has_repeated_action_on_same_screen(
             action_description=action.to_description(),
-            screen_hash=self.__current_screen.visual_hash,
+            screen_hash=current.visual_hash,
         )
 
     def to_checkpoint(self) -> Dict[str, object]:
@@ -868,15 +938,23 @@ class AgentState:
             "max_steps": self.__max_steps,
             "step_count": self.__step_count,
             "is_complete": self.__is_complete,
-            "realignment_count": self.__realignment_count,
+            "realignment_count": self.__runtime.realignment.count,
             "completion_reason": self.__completion_reason,
-            "realignment_budget": self.__realignment_budget,
+            "realignment_budget": self.__runtime.realignment.budget,
+            "realignment_state": self.__runtime.realignment.to_state(),
+            "healing_state": self.__runtime.healing.to_state(),
             "last_delta_score": self.__last_delta_score,
             "low_delta_streak": self.__low_delta_streak,
-            "seen_screens": [screen.model_dump() for screen in self.__seen_screens],
+            "seen_screens": [screen.model_dump() for screen in self.__runtime.screen.seen],
             "sub_goals": [goal.model_dump(mode="json") for goal in self.__sub_goals],
             "current_sub_goal_index": self.__current_sub_goal_index,
-            "loop_detector_state": self.__loop_detector.to_state().model_dump(mode="json"),
+            "sub_goal_action_count": self.__sub_goal_action_count,
+            "recent_effects": [
+                effect.model_dump(mode="json") for effect in self.get_recent_effects()
+            ],
+            "loop_detector_state": self.__runtime.screen.detector.to_state().model_dump(
+                mode="json"
+            ),
             # Diagnostic snapshot retained for backward-compatibility with
             # external checkpoint readers. Not consumed during restore.
             "action_stats": self.__action_history.get_stats(),
@@ -896,6 +974,10 @@ class AgentState:
         last_delta_score: Optional[float] = None,
         sub_goals: Optional[List[Dict[str, Any]]] = None,
         loop_detector_state: Optional[Dict[str, Any]] = None,
+        recent_effects: Optional[List[Dict[str, Any]]] = None,
+        sub_goal_action_count: int = 0,
+        realignment_state: Optional[Dict[str, Any]] = None,
+        healing_state: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -904,13 +986,23 @@ class AgentState:
         self.__step_count = step_count
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
-        self.__realignment_count = realignment_count
+
+        if realignment_state is not None:
+            self.__runtime.realignment.load_state(state=realignment_state)
+        else:
+            for _ in range(max(0, realignment_count - self.__runtime.realignment.count)):
+                self.__runtime.realignment.record()
+
+        if healing_state is not None:
+            self.__runtime.healing.load_state(state=healing_state)
 
         self.__last_delta_score = last_delta_score
         self.__low_delta_streak = max(0, low_delta_streak)
+        self.__sub_goal_action_count = max(0, sub_goal_action_count)
 
-        for data in seen_screens:
-            self.__seen_screens.append(ScreenState(**data))
+        self.__runtime.screen.load_seen(
+            screens=[ScreenState(**data) for data in seen_screens],
+        )
 
         self.__sub_goals = []
 
@@ -930,9 +1022,13 @@ class AgentState:
             self.__current_sub_goal_index = 0
 
         if loop_detector_state:
-            self.__loop_detector.restore(
+            self.__runtime.screen.detector.restore(
                 state=LoopDetectorState.model_validate(loop_detector_state)
             )
+
+        self.__runtime.effects.load_effects(
+            effects=[ActionEffect.model_validate(effect) for effect in recent_effects or []]
+        )
 
     @classmethod
     def from_checkpoint(cls, data: Dict[str, object]) -> "AgentState":
@@ -948,14 +1044,16 @@ class AgentState:
 
         max_steps_value = data.get("max_steps")
         max_steps = (
-            int(cast("int", max_steps_value)) if isinstance(max_steps_value, (int, float)) else 20
+            int(cast("int", max_steps_value))
+            if isinstance(max_steps_value, (int, float))
+            else DEFAULT_MAX_STEPS
         )
 
         realignment_budget_value = data.get("realignment_budget")
         realignment_budget = (
             int(cast("int", realignment_budget_value))
             if isinstance(realignment_budget_value, (int, float))
-            else 3
+            else DEFAULT_REALIGNMENT_BUDGET
         )
 
         state = cls(
@@ -998,10 +1096,32 @@ class AgentState:
             else 0
         )
 
+        sub_goal_action_count_raw = data.get("sub_goal_action_count", 0)
+        sub_goal_action_count = (
+            int(cast("int", sub_goal_action_count_raw))
+            if isinstance(sub_goal_action_count_raw, (int, float))
+            else 0
+        )
+
+        recent_effects: List[Dict[str, Any]] = []
+        recent_effects_value = data.get("recent_effects")
+        if isinstance(recent_effects_value, list):
+            recent_effects = [
+                dict(effect) for effect in recent_effects_value if isinstance(effect, dict)
+            ]
+
         loop_detector_state_raw = data.get("loop_detector_state")
         loop_detector_state = (
             dict(loop_detector_state_raw) if isinstance(loop_detector_state_raw, dict) else None
         )
+
+        realignment_state_raw = data.get("realignment_state")
+        realignment_state = (
+            dict(realignment_state_raw) if isinstance(realignment_state_raw, dict) else None
+        )
+
+        healing_state_raw = data.get("healing_state")
+        healing_state = dict(healing_state_raw) if isinstance(healing_state_raw, dict) else None
 
         state.__restore_from_data(
             sub_goals=sub_goals,
@@ -1012,8 +1132,12 @@ class AgentState:
             last_delta_score=last_delta_score,
             completion_reason=completion_reason,
             realignment_count=realignment_count,
+            realignment_state=realignment_state,
+            healing_state=healing_state,
             current_sub_goal_index=current_sub_goal_index,
             loop_detector_state=loop_detector_state,
+            recent_effects=recent_effects,
+            sub_goal_action_count=sub_goal_action_count,
         )
 
         return state

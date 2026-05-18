@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import uuid
 from logging import getLogger
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Set, cast
 
 from fathom.constants import DRAIN_TIMEOUT
 from fathom.core.context.engines.gcc import GitContextEngine
@@ -55,14 +55,16 @@ class ContextManager:
         # Tier 1: Immutable Roadmap
         self.__roadmap_intent: str = "unknown"
 
-        # User-sourced instructions (run-scoped, persists until run end)
+        # User-sourced instructions
+        # (use-once, planner clears after a single ANALYZE consumption — same lifecycle as verifier feedback below).
+        # Persisting beyond one iteration causes the nudge to become a sticky imperative against later screens.
         self.__user_guidance: List[UserGuidance] = []
 
         # System-sourced verifier rejection messages (use-once, planner clears after consuming for the next planning iteration)
         self.__verifier_feedback: List[VerifierFeedback] = []
 
         # Async Lifecycle
-        self.__background_tasks: set[asyncio.Task[None]] = set()
+        self.__background_tasks: Set[asyncio.Task[None]] = set()
 
         # Persistence Queue for Non-Blocking I/O.
         # Currently DISABLED: GCC context is not persisted to Ledger (see

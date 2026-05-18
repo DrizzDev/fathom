@@ -66,6 +66,34 @@ class FathomSettings(BaseSettings):
     # Assets path
     assets_path: Path = Field(default=PROJECT_ROOT / "assets", alias="FATHOM_ASSETS_PATH")
 
+    # Perception subsystem toggles. Defaults are True so every fallback
+    # contributor runs alongside the XML+LLM primary path during the
+    # current bring-up phase. Operators can flip any flag off in .env
+    # without code changes once the cascade is fully proven.
+    observation_ocr_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OCR")
+    observation_cv_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_CV")
+    observation_icon_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_ICON")
+    observation_overlay_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OVERLAY")
+
+    # Ensemble vision-localizer (Gemini-vision + DocumentAI-layout)
+    # toggles. Enabled with both members so the supervise cascade can
+    # fall back to name-based localization when the XML manifest snap
+    # fails or returns a generic container.
+    ensemble_localizer_enabled: bool = Field(default=True, alias="FATHOM_ENSEMBLE_LOCALIZER")
+    ensemble_localizer_members: Optional[str] = Field(
+        default="gemini_vision,document_ai_layout",
+        alias="FATHOM_ENSEMBLE_LOCALIZER_MEMBERS",
+    )
+
+    # Runtime journal adapter (local JSONL) toggle.
+    journal_local_enabled: bool = Field(default=False, alias="FATHOM_JOURNAL_LOCAL")
+
+    # Document AI OCR provider credentials. Required only when
+    # observation_ocr_enabled is True and Document AI is the active provider.
+    document_ai_project: Optional[str] = Field(default=None, alias="FATHOM_DOCUMENT_AI_PROJECT")
+    document_ai_location: Optional[str] = Field(default=None, alias="FATHOM_DOCUMENT_AI_LOCATION")
+    document_ai_processor: Optional[str] = Field(default=None, alias="FATHOM_DOCUMENT_AI_PROCESSOR")
+
     @field_validator("google_credentials_json", mode="before")
     @classmethod
     def parse_google_credentials(cls, value: Any) -> Optional[Dict[str, Any]]:

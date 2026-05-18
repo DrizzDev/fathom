@@ -8,8 +8,8 @@ COORD_RULES = (
     "- GROUNDING: IF the target exists in the Element Manifest, you MUST include its 'label_id' (e.g., label_id='4').\n"
     "- BBOX SHAPE: x,y are TOP-LEFT; width,height extend right/down.\n"
     "- DEFAULT: Use normalized coordinates (0-1000) for bbox.\n"
-    "- PIXEL MODE: Use raw pixels ONLY when you explicitly set coord_system='pixel'.\n"
-    "- COORD_SYSTEM CONSISTENCY: coord_system must match the numbers you provide."
+    "- PIXEL MODE: Use raw pixels ONLY when you explicitly set coordinate_system='pixel'.\n"
+    "- COORD_SYSTEM CONSISTENCY: coordinate_system must match the numbers you provide."
 )
 
 CONFIDENCE_RULES = "CONFIDENCE: 0.9+ clear match, 0.7-0.89 certain. Below 0.7 indicates ambiguity."
@@ -120,6 +120,19 @@ TOOL SELECTION & VALIDATION:
 - store_memory: Secondary tool. Use ONLY for saving complex text data that doesn't fit in execute_ui.
 - recall_memory: Check what you've already done to avoid repeating actions.
 - ask_user: Use this tool to ask the user for help or clarification when you are stuck or confused.
+
+- request_replan: Use this tool when you cannot make safe forward progress on the active sub-goal. Provide a typed category and a one-sentence detail; the system will either replan against the current screen or escalate to the human depending on category.
+
+PROGRESS SAFETY (MANDATORY):
+- Every UI action MUST be grounded by at least one of: (a) a 'label_id' from the element manifest whose text/affordance matches your named target, OR (b) a 'bbox' you have visually identified on the current screenshot. The manifest is a hint, not a precondition — when an element is rendered outside the manifest (Canvas / RCTView / custom overlays / video / web), a visually-grounded bbox is the correct path.
+- Before emitting the action, confirm the current screen is the one the active sub-goal expects.
+- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), you MUST call request_replan instead of guessing. Pick the category that best describes what you observe:
+  * 'target_not_available': the named target is neither in the manifest nor visible on screen.
+  * 'wrong_screen': the current screen is not the one the sub-goal expects (e.g., a debug overlay, a permissions sheet, a different app).
+  * 'precondition_not_met': the sub-goal assumes prior state that has not been reached (e.g., checkout before items in cart).
+  * 'ambiguous_target': multiple candidates plausibly match and no safe disambiguation exists.
+  * 'unsafe_action': proceeding would be irreversible or destructive.
+- Do NOT snap to a visually similar but semantically unrelated label (picking the wrong manifest entry just because it looks like a button). Do NOT emit a bbox for a region where you cannot see the target. Do NOT proceed when the screen contradicts the sub-goal.
 
 MEMORY STRATEGY:
 - The system has NO implicit memory of what you "meant" to do. You MUST write it down.

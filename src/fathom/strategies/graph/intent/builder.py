@@ -22,6 +22,8 @@ class IntentGraphBuilder(GraphBuilder):
     Constructs the LangGraph workflow for intent execution.
     """
 
+    __MAX_COMPLETE_DEFERRALS: int = 2
+
     def __init__(self, context: GraphContext) -> None:
         self.__context = context
 
@@ -38,10 +40,12 @@ class IntentGraphBuilder(GraphBuilder):
         nodes = IntentGraphFactory.build(context=self.__context)
 
         workflow.add_node(NodeName.GROUND, nodes[NodeName.GROUND])
-        workflow.add_node(NodeName.ANALYZE, nodes[NodeName.ANALYZE])
-        workflow.add_node(NodeName.EXECUTE, nodes[NodeName.EXECUTE])
         workflow.add_node(NodeName.RECORD, nodes[NodeName.RECORD])
         workflow.add_node(NodeName.VERIFY, nodes[NodeName.VERIFY])
+        workflow.add_node(NodeName.ANALYZE, nodes[NodeName.ANALYZE])
+        workflow.add_node(NodeName.EXECUTE, nodes[NodeName.EXECUTE])
+        workflow.add_node(NodeName.OBSERVE, nodes[NodeName.OBSERVE])
+        workflow.add_node(NodeName.SUPERVISE, nodes[NodeName.SUPERVISE])
 
         workflow.set_entry_point(NodeName.GROUND)
 
@@ -61,11 +65,22 @@ class IntentGraphBuilder(GraphBuilder):
                 NodeName.END: NodeName.END,
                 NodeName.VERIFY: NodeName.VERIFY,
                 NodeName.GROUND: NodeName.GROUND,
-                NodeName.EXECUTE: NodeName.EXECUTE,
+                NodeName.SUPERVISE: NodeName.SUPERVISE,
             },
         )
 
-        workflow.add_edge(NodeName.EXECUTE, NodeName.RECORD)
+        workflow.add_conditional_edges(
+            NodeName.SUPERVISE,
+            self.__route_after_supervise,
+            {
+                NodeName.EXECUTE: NodeName.EXECUTE,
+                NodeName.RECORD: NodeName.RECORD,
+                NodeName.END: NodeName.END,
+            },
+        )
+
+        workflow.add_edge(NodeName.EXECUTE, NodeName.OBSERVE)
+        workflow.add_edge(NodeName.OBSERVE, NodeName.RECORD)
 
         workflow.add_conditional_edges(
             NodeName.VERIFY,
@@ -103,9 +118,9 @@ class IntentGraphBuilder(GraphBuilder):
 
             # Fatal/terminal reasons should end immediately
             if reason in {
+                CompletionReason.FAILED.value,
                 CompletionReason.MAX_STEPS.value,
                 CompletionReason.CANCELLED.value,
-                CompletionReason.FAILED.value,
             }:
                 logger.info(f"[ROUTING] -> END ({reason})")
                 return NodeName.END
@@ -144,21 +159,41 @@ class IntentGraphBuilder(GraphBuilder):
 
             # When sub-goals are defined, verification must wait until all sub-goals
             # complete (handled in RECORD node). The planner's overall completion
-            # signal is treated as a soft hint — reset and continue working.
+            # signal is treated as a soft hint — reset and continue working, but
+            # only up to ``__MAX_COMPLETE_DEFERRALS`` consecutive times. Beyond
+            # that the planner has stably claimed completion for the same screen
+            # state; honouring the claim avoids a budget-burning ground-loop and
+            # lets the verifier — not the planner — make the final call.
             if (
                 self.__context.agent_state.has_sub_goals()
                 and not self.__context.agent_state.all_sub_goals_complete()
             ):
-                logger.info(
-                    "[ROUTING] -> GROUND (is_complete=True but sub-goals remain; "
-                    "deferring verification until all sub-goals complete)"
+                deferrals = self.__context.agent_state.record_complete_deferral()
+                if deferrals <= self.__MAX_COMPLETE_DEFERRALS:
+                    logger.info(
+                        "[ROUTING] -> GROUND "
+                        f"(is_complete=True but sub-goals remain; deferral {deferrals}/"
+                        f"{self.__MAX_COMPLETE_DEFERRALS}, deferring verification)"
+                    )
+                    self.__context.agent_state.reset_completion()
+                    return NodeName.GROUND
+
+                logger.warning(
+                    "[ROUTING] -> VERIFY "
+                    f"(is_complete=True repeated {deferrals} times with sub-goals open; "
+                    "honouring planner verdict and letting VERIFY adjudicate)"
                 )
-                self.__context.agent_state.reset_completion()
-                return NodeName.GROUND
+                self.__context.agent_state.reset_complete_deferrals()
+                return NodeName.VERIFY
 
             # Otherwise, it's a normal goal completion, proceed to verification
+            self.__context.agent_state.reset_complete_deferrals()
             logger.info("[ROUTING] -> VERIFY (is_complete=True)")
             return NodeName.VERIFY
+
+        # A non-complete ANALYZE outcome is forward progress; clear any
+        # stale complete-deferral streak from previous turns.
+        self.__context.agent_state.reset_complete_deferrals()
 
         # 3. Soft Retries (e.g. missing elements, LLM asked to retry)
         if should_retry:
@@ -170,7 +205,23 @@ class IntentGraphBuilder(GraphBuilder):
             logger.info(f"[ROUTING] -> GROUND (no planned_step, value={planned_step})")
             return NodeName.GROUND
 
-        logger.info("[ROUTING] -> EXECUTE")
+        logger.info("[ROUTING] -> SUPERVISE")
+        return NodeName.SUPERVISE
+
+    def __route_after_supervise(self, state: IntentGraphState) -> str:
+        """
+        Route after supervise based on whether the supervisor blocked the action.
+        """
+
+        if self.__context.is_cancelled:
+            logger.info("[ROUTING] After SUPERVISE -> END (Cancelled)")
+            return NodeName.END
+
+        if state.get(cast("str", IntentStateKey.EXECUTION_BLOCKED)):
+            logger.info("[ROUTING] After SUPERVISE -> RECORD (blocked)")
+            return NodeName.RECORD
+
+        logger.info("[ROUTING] After SUPERVISE -> EXECUTE")
         return NodeName.EXECUTE
 
     def __route_after_verify(self, state: IntentGraphState) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
@@ -9,6 +10,7 @@ if TYPE_CHECKING:
 from PIL import Image
 
 from fathom.constants import ActionType
+from fathom.processing.cv_labeler import VisualControlLabeler
 from fathom.processing.parsers.factory import PlatformParserFactory
 from fathom.schemas.ui import LabeledElement, UIBounds
 
@@ -41,10 +43,16 @@ class BoundsGenerator:
         root: ET.Element,
         image_path: str,
         action: Optional[ActionType] = None,
+        cv_enabled: bool = False,
         **extra: Any,
     ) -> Tuple[List[LabeledElement], Dict[str, Any]]:
         """
         Create bounding boxes for elements.
+
+        ``cv_enabled`` defaults to False so the OpenCV
+        :class:`VisualControlLabeler` is skipped on the original
+        XML+LLM-only flow. When True, CV-detected regions are appended
+        to the manifest as fallback anchors for icon-only screens.
         """
 
         logger.info(
@@ -78,19 +86,68 @@ class BoundsGenerator:
             screenshot_height=height,
             **extra,
         )
-        logger.info(f"Raw elements found: {len(logical)}")
+        raw_count = len(logical)
+        logger.info(
+            "Hierarchy stage count",
+            extra={
+                "component": "processing.drawer",
+                "event": "hierarchy.stage.count",
+                "stage": "raw",
+                "count": raw_count,
+            },
+        )
 
         if action:
-            logger.info(f"Applying pre-filter for action: '{action}'")
             logical = parser.filter_by_action(elements=logical, action=action)
-            logger.info(f"After pre-filter for action: {action}: {len(logical)}")
+            logger.info(
+                "Hierarchy stage count",
+                extra={
+                    "component": "processing.drawer",
+                    "event": "hierarchy.stage.count",
+                    "stage": "after_action_filter",
+                    "count": len(logical),
+                    "action": str(action),
+                },
+            )
 
+        action_filtered_count = len(logical)
         filtered = parser.filter_and_deduplicate(elements=logical, action=action)
-        logger.info(f"After deduplication filter: {len(filtered)}")
+        deduped_count = len(filtered)
+        logger.info(
+            "Hierarchy stage count",
+            extra={
+                "component": "processing.drawer",
+                "event": "hierarchy.stage.count",
+                "stage": "after_dedup",
+                "count": deduped_count,
+                "dropped_by_dedup": action_filtered_count - deduped_count,
+            },
+        )
+
+        cv_added = 0
+        if cv_enabled:
+            visual_controls = VisualControlLabeler.detect(
+                image_path=Path(image_path),
+                existing_elements=filtered,
+                scale_factor=factor,
+            )
+            if visual_controls:
+                cv_added = len(visual_controls)
+                filtered = [*filtered, *visual_controls]
 
         mapping: Dict[str, Any] = {}
         labeled = []
-        logger.info(f"Final element count after all filtering: {len(filtered)}")
+        logger.info(
+            "Hierarchy stage count",
+            extra={
+                "component": "processing.drawer",
+                "event": "hierarchy.stage.count",
+                "stage": "final",
+                "count": len(filtered),
+                "cv_added": cv_added,
+                "raw": raw_count,
+            },
+        )
 
         for index, element in enumerate(iterable=filtered, start=1):
             # Keep original logical bounds for platform-specific metadata.

@@ -15,7 +15,7 @@ class RecoveryStrategy(ABC):
     queries ``supports`` to decide eligibility per trigger and dispatches ``recover`` once the per-trigger threshold has been reached.
 
     Returning ``None`` (or a ``NoopOutcome``) signals "I cannot help with this situation," and the coordinator continues to the next strategy.
-    Returning a concrete outcome (e.g. ``ReplanOutcome``) commits the recovery decision and resets the coordinator's counters for that sub-goal.
+    Returning a concrete outcome (e.g. ``ReplanOutcome``) commits the recovery decision; callers decide when scope counters are reset.
     """
 
     @property

@@ -4,11 +4,20 @@ import asyncio
 import logging
 from typing import Optional
 
+from fathom.adapters.icon.noop import NoopIconDetector
+from fathom.adapters.journal.noop import NoopRuntimeJournal
+from fathom.adapters.ocr.noop import NoopOcr
+from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
 from fathom.base.paths import SharedPathManager
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
+from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.context.manager import ContextManager
+from fathom.core.healing import HealingOrchestrator
+from fathom.core.localization import EnsembleLocalizerService
+from fathom.core.perception import ScreenObservationService, TargetLocalizationService
+from fathom.core.runtime import CompletionService, RuntimeEventEmitter
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.audit import AuditService
 from fathom.core.services.comparator import ScreenComparator
@@ -20,10 +29,15 @@ from fathom.core.services.perception import PerceptionService
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
+from fathom.core.supervision import OutcomeClassifier, RuntimeSupervisor
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.icon import IconDetectorPort
+from fathom.interfaces.journal import RuntimeJournalPort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.ocr import OcrPort
+from fathom.interfaces.overlay import OverlayDetectorPort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
@@ -33,6 +47,7 @@ from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
+from fathom.schemas.perception import PerceptionConfiguration  # noqa: TC001
 from fathom.schemas.recovery import RecoveryPolicy
 from fathom.schemas.run import RealignmentPolicy
 
@@ -48,6 +63,7 @@ class GraphContext:
 
     def __init__(
         self,
+        *,
         intent: str,
         llm: LLMPort,
         device: DevicePort,
@@ -58,15 +74,18 @@ class GraphContext:
         perception: PerceptionPort,
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
-        *,
+        perception_configuration: PerceptionConfiguration,
         use_xml: bool,
         max_steps: int,
         workflow_id: str,
         package_name: str,
+        ocr: Optional[OcrPort] = None,
         reasoner: Optional[Reasoner] = None,
         trace: Optional[TraceService] = None,
         planner: Optional[StepPlanner] = None,
+        auditor: Optional[AuditService] = None,
         vision: Optional[VisionService] = None,
+        icons: Optional[IconDetectorPort] = None,
         agent_state: Optional[AgentState] = None,
         history: Optional[HistoryService] = None,
         recovery: Optional[RecoveryPolicy] = None,
@@ -74,15 +93,24 @@ class GraphContext:
         metrics: Optional[ExecutionMetrics] = None,
         cancel_event: Optional[asyncio.Event] = None,
         hierarchy: Optional[HierarchyService] = None,
+        journal: Optional[RuntimeJournalPort] = None,
         comparator: Optional[ScreenComparator] = None,
         summarizer: Optional[SummarizationPort] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_manager: Optional[ContextManager] = None,
         action_executor: Optional[ActionExecutor] = None,
+        pixel_overlay: Optional[OverlayDetectorPort] = None,
+        ensemble: Optional[EnsembleLocalizerService] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
+        runtime_supervisor: Optional[RuntimeSupervisor] = None,
+        outcome_classifier: Optional[OutcomeClassifier] = None,
+        completion_service: Optional[CompletionService] = None,
         perception_service: Optional[PerceptionService] = None,
-        auditor: Optional[AuditService] = None,
         resolution: Optional[ReferenceResolutionService] = None,
+        healing_orchestrator: Optional[HealingOrchestrator] = None,
+        screen_observer: Optional[ScreenObservationService] = None,
+        target_localizer: Optional[TargetLocalizationService] = None,
+        artifact_pipeline: Optional[ArtifactPipeline] = None,
     ) -> None:
         self.__intent = intent
         self.__device = device
@@ -103,6 +131,7 @@ class GraphContext:
         self.__workflow_id = workflow_id
         self.__package_name = package_name
         self.__configuration = configuration
+        self.__perception_configuration = perception_configuration
 
         self.__recovery = recovery or RecoveryPolicy()
         self.__cancel_event = cancel_event or asyncio.Event()
@@ -121,11 +150,14 @@ class GraphContext:
         self.__signal = signal
         self.__hitl = HITLService(signal=signal, telemetry=telemetry)
 
+        self.__artifact_pipeline = artifact_pipeline
+
         self.__perception = perception_service or PerceptionService(
             storage=storage,
             perception=perception,
             session_id=workflow_id,
             hierarchy_signature_builder=HierarchySignatureBuilder(),
+            pipeline=artifact_pipeline,
         )
 
         # GCC Context Manager with optional summarizer
@@ -149,10 +181,15 @@ class GraphContext:
             storage=storage,
             telemetry=telemetry,
             path_manager=path_manager,
+            pipeline=artifact_pipeline,
         )
 
         self.__comparator = comparator or ScreenComparator()
-        self.__hierarchy = hierarchy or HierarchyService(storage=storage)
+        self.__hierarchy = hierarchy or HierarchyService(
+            storage=storage,
+            pipeline=artifact_pipeline,
+            cv_enabled=perception_configuration.cv.enabled,
+        )
         self.__planner = planner or StepPlanner(vision_tool=self.__vision)
 
         self.__history = history or HistoryService(
@@ -161,9 +198,41 @@ class GraphContext:
             package_name=package_name,
             path_manager=path_manager,
             exporter=ScriptExporter(llm=llm, use_cache=configuration.llm.use_cache),
+            pipeline=artifact_pipeline,
         )
         self.__trace = trace or TraceService(path_manager=path_manager)
         self.__resolution = resolution or ReferenceResolutionService(ledger=memory)
+
+        self.__ocr = ocr or NoopOcr()
+        self.__icons = icons or NoopIconDetector()
+        self.__pixel_overlay = pixel_overlay or NoopOverlayDetector()
+        self.__ensemble = ensemble or EnsembleLocalizerService(workflow_id=workflow_id)
+
+        self.__screen_observer = screen_observer or ScreenObservationService(
+            ocr=self.__ocr,
+            icons=self.__icons,
+            workflow_id=workflow_id,
+            pixel_overlay=self.__pixel_overlay,
+            pipeline=artifact_pipeline,
+        )
+        self.__target_localizer = target_localizer or TargetLocalizationService(
+            workflow_id=workflow_id,
+            ensemble=self.__ensemble,
+        )
+
+        self.__outcome_classifier = outcome_classifier or OutcomeClassifier()
+        self.__runtime_supervisor = runtime_supervisor or RuntimeSupervisor.create()
+        self.__healing_orchestrator = healing_orchestrator or HealingOrchestrator(
+            workflow_id=workflow_id,
+        )
+
+        self.__completion_service = completion_service or CompletionService()
+        self.__journal = journal if journal is not None else NoopRuntimeJournal()
+
+        self.__event_emitter = RuntimeEventEmitter(
+            journal=self.__journal,
+            workflow_id=workflow_id,
+        )
 
     @property
     def intent(self) -> str:
@@ -459,6 +528,110 @@ class GraphContext:
 
         return self.__resolution
 
+    @property
+    def ocr(self) -> OcrPort:
+        """
+        Returns the injected OCR port used by perception and localization.
+        """
+
+        return self.__ocr
+
+    @property
+    def icons(self) -> IconDetectorPort:
+        """
+        Returns the injected icon detector used by perception.
+        """
+
+        return self.__icons
+
+    @property
+    def pixel_overlay(self) -> OverlayDetectorPort:
+        """
+        Returns the injected pixel-overlay detector used by perception.
+        """
+
+        return self.__pixel_overlay
+
+    @property
+    def ensemble(self) -> EnsembleLocalizerService:
+        """
+        Returns the ensemble localizer service used by target localization.
+        """
+
+        return self.__ensemble
+
+    @property
+    def screen_observer(self) -> ScreenObservationService:
+        """
+        Returns the screen observation service.
+        """
+
+        return self.__screen_observer
+
+    @property
+    def target_localizer(self) -> TargetLocalizationService:
+        """
+        Returns the target localization service.
+        """
+
+        return self.__target_localizer
+
+    @property
+    def runtime_supervisor(self) -> RuntimeSupervisor:
+        """
+        Returns the runtime supervision service.
+        """
+
+        return self.__runtime_supervisor
+
+    @property
+    def outcome_classifier(self) -> OutcomeClassifier:
+        """
+        Returns the post-action outcome classifier.
+        """
+
+        return self.__outcome_classifier
+
+    @property
+    def healing_orchestrator(self) -> HealingOrchestrator:
+        """
+        Returns the healing orchestration service.
+        """
+
+        return self.__healing_orchestrator
+
+    @property
+    def completion_service(self) -> CompletionService:
+        """
+        Returns the runtime completion-service used to decide task advancement.
+        """
+
+        return self.__completion_service
+
+    @property
+    def journal(self) -> RuntimeJournalPort:
+        """
+        Returns the injected runtime journal port.
+        """
+
+        return self.__journal
+
+    @property
+    def event_emitter(self) -> RuntimeEventEmitter:
+        """
+        Returns the runtime event emitter wired against the journal port.
+        """
+
+        return self.__event_emitter
+
+    @property
+    def artifact_pipeline(self) -> Optional[ArtifactPipeline]:
+        """
+        Return the artifact pipeline producers emit into, or ``None`` when disabled.
+        """
+
+        return self.__artifact_pipeline
+
     async def shutdown(self) -> None:
         """
         Drain background tasks from all owned services before teardown.
@@ -472,3 +645,9 @@ class GraphContext:
                     logger.warning(
                         f"[graph-context] drain failed for {type(service).__name__}: {exception}"
                     )
+
+        if self.__artifact_pipeline is not None:
+            try:
+                await self.__artifact_pipeline.drain()
+            except Exception as exception:
+                logger.warning(f"[graph-context] artifact pipeline drain failed: {exception}")

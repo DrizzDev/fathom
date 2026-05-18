@@ -13,24 +13,24 @@ class ResolveStatus(StrEnum):
     Outcome of mapping an :class:`Action`'s named target to a manifest
     element and concrete coordinates.
 
-    Three values, distinct downstream behaviours:
+    Three values, distinct downstream behaviors:
 
     - ``RESOLVED``: a single labeled element matched cleanly; the
       returned :class:`Action` carries snapped bounds and any derived
       :class:`InputContext`.
     - ``UNRESOLVED``: no labeled element matched and no fallback located
       the target. The planner surfaces this as a tool-result so the
-      next ANALYZE turn can ``report_screen_unactionable`` or choose a
-      different target. Maps to ``TARGET_UNRESOLVED`` recovery trigger
-      when escalated.
+      next ANALYZE turn can call ``request_replan`` with category
+      ``target_not_available`` or choose a different target. Maps to
+      ``TARGET_UNRESOLVED`` recovery trigger when escalated.
     - ``AMBIGUOUS``: more than one candidate matched the named target
       with comparable confidence. ``candidates`` carries the top-K
       options so the next ANALYZE turn can disambiguate by label_id.
     """
 
     RESOLVED = "resolved"
-    UNRESOLVED = "unresolved"
     AMBIGUOUS = "ambiguous"
+    UNRESOLVED = "unresolved"
 
 
 class ResolveCandidate(BaseModel):
@@ -125,27 +125,27 @@ class ResolveResult(BaseModel):
         cls,
         *,
         action: Action,
-        candidates: List[ResolveCandidate],
         reason: Optional[str] = None,
+        candidates: List[ResolveCandidate],
     ) -> "ResolveResult":
         """
         Build an AMBIGUOUS outcome carrying candidate options.
         """
 
         return cls(
-            status=ResolveStatus.AMBIGUOUS,
             action=action,
             reason=reason,
             candidates=candidates,
+            status=ResolveStatus.AMBIGUOUS,
         )
 
-    def telemetry_dict(self) -> Dict[str, object]:
+    def telemetry(self) -> Dict[str, object]:
         """
         Compact representation suitable for ``extra={}`` log payloads.
         """
 
         return {
-            "resolve_status": self.status.value,
             "resolve_reason": self.reason,
+            "resolve_status": self.status.value,
             "candidate_count": len(self.candidates),
         }

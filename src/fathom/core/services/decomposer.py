@@ -13,7 +13,7 @@ from fathom.core.exceptions import ConfigurationError
 from fathom.core.prompts.factory import PromptFactory
 from fathom.interfaces.llm import LLMPort, PromptPart
 from fathom.schemas.configuration import LLMConfiguration
-from fathom.schemas.decomposition import DecompositionSchema
+from fathom.schemas.decomposition import DecomposedTask, DecompositionSchema
 from fathom.schemas.subgoal import SubGoal, SubGoalStatus
 
 logger = logging.getLogger(__name__)
@@ -50,8 +50,7 @@ class DecompositionAugmentation:
 class IntentDecomposer:
     """
     Decomposes a high-level intent into sequential sub-goals via the LLM.
-    Accepts an optional :class:`DecompositionAugmentation` to inject
-    caller-specific context without coupling to the caller's domain.
+    Accepts an optional :class:`DecompositionAugmentation` to inject caller-specific context without coupling to the caller's domain.
     """
 
     def __init__(self, llm: LLMPort) -> None:
@@ -123,7 +122,7 @@ class IntentDecomposer:
                 extra={
                     "error": str(exception),
                     "component": "decomposer",
-                    "event": "fallback_llm_error",
+                    "event": "fallback.llm.error",
                 },
             )
             return self.__fallback(intent=intent)
@@ -137,7 +136,7 @@ class IntentDecomposer:
                 extra={
                     "error": str(exception),
                     "component": "decomposer",
-                    "event": "fallback_parse_error",
+                    "event": "fallback.parse.error",
                     "response_preview": response[:200] if response else "",
                 },
             )
@@ -158,8 +157,8 @@ class IntentDecomposer:
             return self.__fallback(intent=intent)
 
         sub_goals = [
-            SubGoal(index=idx, description=description, confidence=schema.confidence or 0.9)
-            for idx, description in enumerate(schema.sub_goals)
+            self.__build_sub_goal(index=idx, entry=entry, confidence=schema.confidence or 0.9)
+            for idx, entry in enumerate(schema.sub_goals)
         ]
         logger.info(
             "[Decomposer] produced %d sub-goal(s) confidence=%s",
@@ -174,6 +173,34 @@ class IntentDecomposer:
             },
         )
         return sub_goals
+
+    @staticmethod
+    def __build_sub_goal(
+        *,
+        index: int,
+        entry: object,
+        confidence: float,
+    ) -> SubGoal:
+        """
+        Build one :class:`SubGoal` from a normalized decomposition entry.
+
+        Legacy string entries produce sub-goals without a terminal
+        criterion (the value remains ``None`` and falls back to the
+        description in downstream consumers). Typed
+        :class:`DecomposedTask` entries thread the criterion through so
+        ``CompletionService`` can evaluate task completion against
+        observable state rather than self-report alone.
+        """
+
+        if isinstance(entry, DecomposedTask):
+            return SubGoal(
+                index=index,
+                confidence=confidence,
+                criterion=entry.criterion,
+                description=entry.description,
+            )
+
+        return SubGoal(index=index, description=str(entry), confidence=confidence)
 
     @staticmethod
     def __fallback(*, intent: str) -> List[SubGoal]:

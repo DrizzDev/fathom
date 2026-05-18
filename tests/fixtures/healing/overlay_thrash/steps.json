@@ -1,0 +1,15 @@
+[
+  {
+    "index": 0,
+    "intent_segment": "Tap the heart icon on the paneer roll card",
+    "model_output": {
+      "tool": "execute_ui",
+      "arguments": {
+        "action": { "type": "TAP", "label_id": "L5" },
+        "task_status": "PARTIAL"
+      }
+    },
+    "frame": "frames/step_0.png",
+    "manifest": "manifests/step_0.xml"
+  }
+]

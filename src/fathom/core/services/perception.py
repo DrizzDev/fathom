@@ -22,10 +22,12 @@ from PIL import Image
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.screen import INTERACTION_TEXT_PREVIEW_LENGTH, ZERO_HASH
+from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.exceptions import ConfigurationError, MissingDependencyError, VisionError
 from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.storage import StoragePort
 from fathom.processing.parsers.signature import HierarchySignatureBuilder
+from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
 
@@ -44,15 +46,22 @@ class PerceptionService:
         hierarchy_signature_builder: HierarchySignatureBuilder,
         *,
         session_id: Optional[str] = None,
+        pipeline: Optional[ArtifactPipeline] = None,
     ) -> None:
         self.__storage = storage
         self.__perception = perception
         self.__hierarchy_signature_builder = hierarchy_signature_builder
 
         self.__session_id = session_id
+        self.__pipeline = pipeline
         self.__background_tasks: set[asyncio.Task[Any]] = set()
 
-    async def perceive(self, *, session_id: Optional[str] = None) -> ScreenCapture:
+    async def perceive(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        step_number: int,
+    ) -> ScreenCapture:
         """
         Capture current screen state via DevicePort.
 
@@ -67,46 +76,78 @@ class PerceptionService:
 
         capture = await self.__perception.capture()
 
-        # Store screenshot artifact with metadata for structured storage
-        storage_id = await self.__persist_capture(
-            data=capture.image,
-            package_name=capture.activity,
-            activity_name=capture.activity,
+        staged_path = await self.__emit_screenshot_artifact(
+            capture=capture,
             session_id=effective_session_id,
+            step_number=step_number,
         )
+        if staged_path is None:
+            return await self.__fallback_persist_capture(
+                capture=capture,
+                session_id=effective_session_id,
+            )
 
         metadata = dict(capture.metadata)
-        metadata["storage_id"] = storage_id
-
-        if self.__is_local_artifact_path(storage_id=storage_id):
-            metadata["path"] = storage_id
-
+        metadata["storage_id"] = str(staged_path)
+        metadata["path"] = str(staged_path)
         return capture.model_copy(update={"metadata": metadata})
 
-    async def __persist_capture(
-        self, *, data: bytes, session_id: str, package_name: str, activity_name: str
-    ) -> str:
+    async def __emit_screenshot_artifact(
+        self,
+        *,
+        capture: ScreenCapture,
+        session_id: str,
+        step_number: int,
+    ) -> Optional[Path]:
         """
-        Persists screenshot to storage.
+        Hand the raw screen capture to the artifact pipeline and surface
+        the EFS-staged payload path for downstream metadata enrichment.
         """
 
-        return await self.__storage.save(
-            data=data,
+        if self.__pipeline is None:
+            return None
+
+        return await self.__pipeline.emit(
+            record=ArtifactRecord(
+                session_id=session_id,
+                package_name=capture.activity,
+                step_number=step_number,
+                created=int(time.time() * 1000),
+                payload=ScreenshotPayload(capture=capture),
+            ),
+        )
+
+    async def __fallback_persist_capture(
+        self,
+        *,
+        capture: ScreenCapture,
+        session_id: str,
+    ) -> ScreenCapture:
+        """
+        Persist via :class:`StoragePort` when no artifact pipeline is wired.
+
+        Production runs always have the pipeline configured; this branch
+        exists so unit tests and minimal embeddings that omit the
+        pipeline still produce a usable storage identifier.
+        """
+
+        storage_id = await self.__storage.save(
+            data=capture.image,
             metadata={
                 "type": "screenshot",
                 "timestamp": time.time(),
                 "session_id": session_id,
-                "package_name": package_name,
-                "activity_name": activity_name,
+                "package_name": capture.activity,
+                "activity_name": capture.activity,
             },
         )
+        metadata = dict(capture.metadata)
+        metadata["storage_id"] = storage_id
 
-    def __is_local_artifact_path(self, *, storage_id: str) -> bool:
-        """
-        Determine whether the storage identifier points to a local filesystem artifact.
-        """
+        if Path(storage_id).is_absolute() and Path(storage_id).exists():
+            metadata["path"] = storage_id
 
-        return Path(storage_id).is_absolute() and Path(storage_id).exists()
+        return capture.model_copy(update={"metadata": metadata})
 
     def compute_visual_hash(self, *, capture: ScreenCapture) -> str:
         """

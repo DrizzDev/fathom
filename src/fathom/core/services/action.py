@@ -3,10 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from datetime import datetime
 from logging import getLogger
-from pathlib import Path
-from typing import Awaitable, Callable, Optional, Set, Tuple
+from typing import Awaitable, Callable, Dict, Optional, Set, Tuple
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import (
@@ -16,12 +14,13 @@ from fathom.constants import (
     ActionType,
 )
 from fathom.constants.execution import MAX_ACTION_WAIT_MS
+from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.processing.annotator import ImageAnnotator
 from fathom.schemas.actions import Action, ExecutionRegion, GesturePath, InputContext
+from fathom.schemas.artifact import ArtifactRecord, TracePayload
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult, ExecutionResult
 from fathom.schemas.screens import ScreenCapture
@@ -43,6 +42,8 @@ class ActionExecutor:
         path_manager: SharedPathManager,
         storage: Optional[StoragePort] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        *,
+        pipeline: Optional[ArtifactPipeline] = None,
     ) -> None:
         self.__device = device
         self.__telemetry = telemetry
@@ -50,6 +51,7 @@ class ActionExecutor:
 
         self.__storage = storage
         self.__path_manager = path_manager
+        self.__pipeline = pipeline
         self.__background_tasks: Set[asyncio.Task[None]] = set()
         self.__cached_dimensions: Optional[Tuple[int, int]] = None
 
@@ -70,7 +72,7 @@ class ActionExecutor:
                 result, coords = await self.__execute_primitive(step=step)
 
                 if result.success and coords:
-                    self.__schedule_trace(
+                    await self.__emit_trace_artifact(
                         step=step,
                         coords=coords,
                         session_id=session_id,
@@ -241,10 +243,10 @@ class ActionExecutor:
     async def __execute_interactive_action(
         self,
         *,
-        action: Action,
-        converter: CoordinateConverter,
         width: int,
         height: int,
+        action: Action,
+        converter: CoordinateConverter,
     ) -> Tuple[Optional[ActionResult], Optional[Tuple[int, ...]]]:
         """
         Execute interactive action through registered handlers.
@@ -253,7 +255,7 @@ class ActionExecutor:
         if action.action_type.value.startswith(ActionType.SWIPE.lower()):
             return await self.__execute_swipe(action=action, converter=converter)
 
-        action_handlers: dict[
+        action_handlers: Dict[
             ActionType,
             Callable[[], Awaitable[Tuple[ActionResult, Optional[Tuple[int, ...]]]]],
         ] = {
@@ -269,6 +271,7 @@ class ActionExecutor:
             ),
             ActionType.BACK: self.__execute_back,
             ActionType.HOME: self.__execute_home,
+            ActionType.HIDE_KEYBOARD: self.__execute_hide_keyboard,
         }
 
         handler = action_handlers.get(action.action_type)
@@ -290,6 +293,16 @@ class ActionExecutor:
         """
 
         return await self.__device.home(), None
+
+    async def __execute_hide_keyboard(self) -> Tuple[ActionResult, Optional[Tuple[int, ...]]]:
+        """
+        Execute platform-neutral keyboard dismissal.
+        """
+
+        if hasattr(self.__device, "hide_keyboard"):
+            return await self.__device.hide_keyboard(), None
+
+        return await self.__device.back(), None
 
     async def __execute_tap(
         self, action: Action, converter: CoordinateConverter, width: int, height: int
@@ -454,6 +467,7 @@ class ActionExecutor:
         """
 
         target = (action.natural_language_target or action.target) if action else "viewport"
+
         path_payload = path.model_dump()
         path_payload["distance"] = path.distance
 
@@ -466,7 +480,7 @@ class ActionExecutor:
                     "direction": direction,
                     "component": "ActionExecutor",
                     "region": region.model_dump(),
-                    "event": "gesture_path_resolved",
+                    "event": "gesture.path.resolved",
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -491,8 +505,9 @@ class ActionExecutor:
         long_press_result = await self.__device.swipe(x1=x, y1=y, x2=x, y2=y, duration=1000)
         return long_press_result, coords
 
-    def __schedule_trace(
+    async def __emit_trace_artifact(
         self,
+        *,
         step: Step,
         session_id: str,
         package_name: str,
@@ -500,69 +515,29 @@ class ActionExecutor:
         pre_capture: ScreenCapture,
     ) -> None:
         """
-        Schedules background trace annotation.
+        Hand the action-trace artifact to the artifact pipeline.
+
+        Producers never touch path-management or storage directly; the
+        pipeline owns staging, async dispatch, and durability for every
+        kind of artifact the run produces.
         """
 
-        async def __trace_and_upload(
-            trace_path: str,
-            action_type: str,
-            image_data: bytes,
-            label_description: str,
-            coordinates: Tuple[int, ...],
-        ) -> None:
-            try:
-                await asyncio.to_thread(
-                    ImageAnnotator.trace,
-                    coords=coordinates,
-                    image_data=image_data,
-                    output_path=trace_path,
-                    action_type=action_type,
-                    label=label_description,
-                )
+        if self.__pipeline is None:
+            return
 
-                if self.__storage:
-                    with Path(trace_path).open("rb") as new_file:
-                        data = new_file.read()
-
-                    filename = Path(trace_path).name
-                    await self.__storage.save(
-                        data=data,
-                        metadata={
-                            "category": "traces",
-                            "filename": filename,
-                            "session_id": session_id,
-                            "package_name": package_name,
-                        },
-                    )
-            except Exception as exception:
-                # Use standard logger in background thread
-                logger.exception(f"Tracing failed: {exception}", stack_info=True)
-
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"step_{step.step_number}_{step.action.action_type.value}_{timestamp}.png"
-
-            trace_path = str(
-                self.__path_manager.get_trace_path(
-                    filename=filename,
-                    session_id=session_id,
-                    package_name=package_name,
-                )
-            )
-
-            task = asyncio.create_task(
-                __trace_and_upload(
-                    coordinates=coords,
-                    trace_path=trace_path,
-                    image_data=pre_capture.image,
-                    action_type=step.action.action_type.value,
-                    label_description=step.action.to_description(),
-                )
-            )
-            self.__background_tasks.add(task)
-            task.add_done_callback(self.__background_tasks.discard)
-        except Exception as exception:
-            logger.exception(f"Failed to schedule tracing: {exception}", stack_info=True)
+        await self.__pipeline.emit(
+            record=ArtifactRecord(
+                session_id=session_id,
+                package_name=package_name,
+                step_number=step.step_number,
+                created=int(time.time() * 1000),
+                payload=TracePayload(
+                    capture=pre_capture,
+                    coords=coords,
+                    action=step.action,
+                ),
+            ),
+        )
 
     async def drain_background_tasks(self) -> None:
         """

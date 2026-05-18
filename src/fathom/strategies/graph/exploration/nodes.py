@@ -53,7 +53,10 @@ class ExplorationNodeProvider:
         start_time = time.time()
 
         try:
-            screen = await self.__context.perception.perceive(session_id=self.__context.workflow_id)
+            screen = await self.__context.perception.perceive(
+                session_id=self.__context.workflow_id,
+                step_number=self.__context.agent_state.step_count + 1,
+            )
 
             visual_hash = self.__context.perception.compute_visual_hash(capture=screen)
 

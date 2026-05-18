@@ -16,7 +16,15 @@ class RecoveryPolicy(BaseModel):
     )
 
     strategies: List[str] = Field(
-        default_factory=lambda: ["replan"],
+        default_factory=lambda: [
+            "overlay",
+            "keyboard",
+            "alternative",
+            "scroll",
+            "replan",
+            "escalation",
+            "failure",
+        ],
         description="Strategy names in priority order; empty list disables recovery",
     )
     verify_threshold: int = Field(
@@ -28,7 +36,14 @@ class RecoveryPolicy(BaseModel):
         description="Consecutive ACTION_BLOCKED emissions per sub-goal before dispatch",
     )
     recent_window: int = Field(
-        default=10, ge=1, description="Most-recent action descriptors handed to strategies"
+        default=10,
+        ge=0,
+        description=(
+            "Most-recent action descriptors handed to strategies. Zero is "
+            "accepted at the schema level so the dispatcher's runtime floor "
+            "(`max(1, recent_window)`) is reachable; callers should still "
+            "configure a meaningful positive value."
+        ),
     )
 
     model_config = ConfigDict(frozen=True)

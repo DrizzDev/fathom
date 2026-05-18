@@ -54,6 +54,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "google-genai>=0.2.0",
     "google-cloud-storage>=2.0.0",
+    "google-cloud-documentai>=2.20.0",
     "types-PyYAML>=6.0.12.20250915",
     "rustworkx>=0.15.0",
     "langgraph>=0.0.10",
@@ -163,7 +164,10 @@ disallow_untyped_defs = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-v --tb=short"
+# `importlib` mode avoids the rootdir-based basename collision (three
+# adapter test_noop.py files at sibling paths) without forcing tests/
+# to become a real package.
+addopts = "-v --tb=short --import-mode=importlib"
 
 [tool.coverage.run]
 source = ["src/fathom"]

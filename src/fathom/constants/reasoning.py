@@ -7,7 +7,13 @@ RATIONALE_CONTEXT_RELEVANCE_THRESHOLD: float = 0.60
 RATIONALE_KEYWORD_MATCH_THRESHOLD: float = 0.72
 
 # Floor below which similarity is too low for keyword-based rationale verification.
-RATIONALE_MIN_SIMILARITY_FLOOR: float = 0.10
+# Raised from 0.10 to 0.35: the old floor accepted any rationale that mentioned
+# a generic completion keyword (``done``, ``complete``, ``finished``…) with as
+# little as 10% string overlap against the target. That admitted unrelated
+# narrations that happened to use a completion word, causing false rationale
+# verifications. 0.35 still admits paraphrases (good) but rejects rationales
+# that share virtually nothing with the target text (the regression mode).
+RATIONALE_MIN_SIMILARITY_FLOOR: float = 0.35
 
 # Magnitude below which a post-action screen change is treated as noise.
 MEANINGFUL_SCREEN_DELTA_FLOOR: float = 0.05

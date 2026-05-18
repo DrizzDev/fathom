@@ -91,7 +91,10 @@ class ExecutionEngine:
 
             # Phase 2: Perceive (capture pre-action state)
             if pre_capture is None:
-                pre_capture = await self.__perception_service.perceive(session_id=session_id)
+                pre_capture = await self.__perception_service.perceive(
+                    session_id=session_id,
+                    step_number=step.step_number,
+                )
 
             pre_hash = self.__perception_service.compute_visual_hash(capture=pre_capture)
 
@@ -113,7 +116,10 @@ class ExecutionEngine:
 
             # Wait for screen stability
             await asyncio.sleep(delay=self.__stability_wait)
-            post_capture = await self.__perception_service.perceive(session_id=session_id)
+            post_capture = await self.__perception_service.perceive(
+                session_id=session_id,
+                step_number=step.step_number,
+            )
             post_hash = self.__perception_service.compute_visual_hash(capture=post_capture)
 
             # Phase 5: Learn

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import FrozenSet
 
 from fathom.constants.events import FathomEvent
 
@@ -50,6 +51,7 @@ class ActionType(StrEnum):
     BACK = "back"
     HOME = "home"
     WAIT = "wait"
+    HIDE_KEYBOARD = "hide_keyboard"
 
     SWIPE = "swipe"
     SWIPE_UP = "swipe_up"
@@ -72,7 +74,7 @@ class ActionType(StrEnum):
 # Action types that operate on a specific UI element at a pixel location.
 # Only spatial actions warrant label-ID snapping to ground-truth coordinates.
 # Non-spatial actions (wait, validate, complete, etc.) carry no meaningful target bounds.
-SPATIAL_ACTION_TYPES: frozenset[ActionType] = frozenset(
+SPATIAL_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
     {
         ActionType.TAP,
         ActionType.TYPE,
@@ -86,9 +88,22 @@ SPATIAL_ACTION_TYPES: frozenset[ActionType] = frozenset(
     }
 )
 
+# Gesture-only action types — every spatial action whose target is a region
+# rather than a single tappable element (scroll, swipe variants).
+GESTURE_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
+    {
+        ActionType.SWIPE,
+        ActionType.SCROLL,
+        ActionType.SWIPE_UP,
+        ActionType.SWIPE_DOWN,
+        ActionType.SWIPE_LEFT,
+        ActionType.SWIPE_RIGHT,
+    }
+)
+
 # Action types that, when planned during a sub-goal check, indicate the agent is
 # actively executing a next-phase task — used to infer opener sub-goal completion.
-NEXT_PHASE_ACTION_TYPES: frozenset[ActionType] = frozenset(
+NEXT_PHASE_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
     {
         ActionType.TAP,
         ActionType.WAIT,
@@ -98,7 +113,7 @@ NEXT_PHASE_ACTION_TYPES: frozenset[ActionType] = frozenset(
 )
 
 # Action types that count as "an action was executed" for sub-goal completion signalling.
-ACTION_EXECUTED_TYPES: frozenset[ActionType] = frozenset(
+ACTION_EXECUTED_TYPES: FrozenSet[ActionType] = frozenset(
     {
         ActionType.TAP,
         ActionType.TYPE,
@@ -166,6 +181,7 @@ __all__ = [
     "EXECUTABLE_ACTION_PREFIXES",
     "VALIDATE_PREFIX",
     "SPATIAL_ACTION_TYPES",
+    "GESTURE_ACTION_TYPES",
     "DeviceConnectionType",
     "IOSAutomationBackend",
     "ACTION_EXECUTED_TYPES",

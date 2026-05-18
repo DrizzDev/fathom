@@ -34,8 +34,8 @@ class ActionEffectStatus(StrEnum):
     """
 
     PROGRESS = "progress"
-    NO_PROGRESS = "no_progress"
     UNCERTAIN = "uncertain"
+    NO_PROGRESS = "no_progress"
 
 
 class ActionEffect(BaseModel):
@@ -62,9 +62,8 @@ class ActionEffect(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Normalised visual change in [0, 1]. Derived from ``1 - SSIM`` "
-            "when SSIM is available, otherwise from the pHash hamming "
-            "distance normalised by max possible distance."
+            "Normalized visual change in [0, 1]. Derived from ``1 - SSIM`` "
+            "when SSIM is available, otherwise from the pHash hamming distance normalized by max possible distance."
         ),
     )
     phash_distance: int = Field(
@@ -98,15 +97,14 @@ class ActionEffect(BaseModel):
         Build an :class:`ActionEffect` from a :class:`ScreenDiff`.
 
         When no diff is available (capture failure, missing pre-state)
-        the effect is reported as ``UNCERTAIN`` with zero raw metrics so
-        downstream consumers don't infer false progress.
+        the effect is reported as ``UNCERTAIN`` with zero raw metrics so downstream consumers don't infer false progress.
         """
 
         if diff is None:
             return cls(
-                status=ActionEffectStatus.UNCERTAIN,
-                visual_progress=0.0,
                 phash_distance=0,
+                visual_progress=0.0,
+                status=ActionEffectStatus.UNCERTAIN,
             )
 
         visual_progress = cls.__compute_visual_progress(diff=diff)
@@ -116,12 +114,12 @@ class ActionEffect(BaseModel):
 
         return cls(
             status=status,
-            visual_progress=visual_progress,
-            phash_distance=diff.phash_distance,
-            ssim_score=diff.ssim_score,
-            content_change=diff.content_pixel_diff_ratio,
             scroll_dx=scroll_dx,
             scroll_dy=scroll_dy,
+            ssim_score=diff.ssim_score,
+            visual_progress=visual_progress,
+            phash_distance=diff.phash_distance,
+            content_change=diff.content_pixel_diff_ratio,
         )
 
     @staticmethod
@@ -129,10 +127,8 @@ class ActionEffect(BaseModel):
         """
         Project the available similarity signals onto a [0, 1] scalar.
 
-        Prefer SSIM-derived progress (``1 - SSIM``) when SSIM is present
-        because it tracks perceptual similarity tightly. Fall back to
-        normalised pHash hamming distance otherwise. Either way the
-        result is clamped to [0, 1] so the prompt format stays stable.
+        Prefer SSIM-derived progress (``1 - SSIM``) when SSIM is present because it tracks perceptual similarity tightly.
+        Fall back to normalized pHash hamming distance otherwise. Either way the result is clamped to [0, 1] so the prompt format stays stable.
         """
 
         if diff.ssim_score is not None:
@@ -141,24 +137,20 @@ class ActionEffect(BaseModel):
         if diff.phash_distance <= 0:
             return 0.0
 
-        normalised = diff.phash_distance / 64.0
-        return max(0.0, min(1.0, normalised))
+        normalized = diff.phash_distance / 64.0
+        return max(0.0, min(1.0, normalized))
 
     @staticmethod
     def __classify(*, diff: ScreenDiff) -> ActionEffectStatus:
         """
         Bucket the diff into PROGRESS / NO_PROGRESS / UNCERTAIN.
 
-        PROGRESS fires when any single strong-progress signal is present
-        (large pHash jump, low SSIM, large content diff, OR meaningful
-        scroll translation). NO_PROGRESS requires every available
-        signal to sit below its no-progress floor. Anything else lands
-        in UNCERTAIN — the agent will treat it as ambiguous rather than
-        infer false progress.
+        PROGRESS fires when any single strong-progress signal is present (large pHash jump, low SSIM, large content diff OR meaningful scroll translation).
+        NO_PROGRESS requires every available signal to sit below its no-progress floor. Anything else lands in UNCERTAIN — the agent will treat it as ambiguous
+        rather than infer false progress.
         """
 
-        # Activity / xml / interaction hash changes are unambiguous progress.
-        if diff.activity_changed or diff.xml_hash_changed or diff.interaction_hash_changed:
+        if diff.activity_changed:
             return ActionEffectStatus.PROGRESS
 
         progress_hits = ActionEffect.__count_progress_signals(diff=diff)
@@ -169,6 +161,9 @@ class ActionEffect(BaseModel):
 
         if no_progress_hits >= ActionEffect.__expected_no_progress_signals(diff=diff):
             return ActionEffectStatus.NO_PROGRESS
+
+        if diff.xml_hash_changed or diff.interaction_hash_changed:
+            return ActionEffectStatus.UNCERTAIN
 
         return ActionEffectStatus.UNCERTAIN
 
@@ -206,8 +201,7 @@ class ActionEffect(BaseModel):
     @staticmethod
     def __count_no_progress_signals(*, diff: ScreenDiff) -> int:
         """
-        Count how many independent metrics indicate the screen did not
-        meaningfully change.
+        Count how many independent metrics indicate the screen did not meaningfully change.
         """
 
         hits = 0
@@ -238,19 +232,20 @@ class ActionEffect(BaseModel):
     @staticmethod
     def __expected_no_progress_signals(*, diff: ScreenDiff) -> int:
         """
-        Number of signals that must agree on "no progress" for the
-        classifier to commit to NO_PROGRESS. pHash is always present;
-        SSIM, content-diff, and scroll are optional. Requiring all
-        *available* signals to agree keeps the classifier conservative
-        — if any metric is unsure we land in UNCERTAIN, not in a false
-        NO_PROGRESS.
+        Number of signals that must agree on "no progress" for the classifier to commit to NO_PROGRESS.
+        pHash is always present; SSIM, content-diff, and scroll are optional. Requiring all *available*
+        signals to agree keeps the classifier conservative — if any metric is unsure we land in UNCERTAIN, not in a false NO_PROGRESS.
         """
 
         available = 1  # pHash always available
+
         if diff.ssim_score is not None:
             available += 1
+
         if diff.content_pixel_diff_ratio is not None:
             available += 1
+
         if diff.scroll_translation is not None:
             available += 1
+
         return available

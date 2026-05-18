@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import tempfile
+import time
 import xml.etree.ElementTree as ET  # nosec
 from datetime import datetime
 from logging import getLogger
@@ -11,9 +12,15 @@ from typing import Any, List, Optional, Set
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import DRAIN_TIMEOUT, ActionType
+from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.interfaces.storage import StoragePort
 from fathom.processing.annotator import ImageAnnotator
 from fathom.processing.drawer import BoundsGenerator
+from fathom.schemas.artifact import (
+    AnnotatedPayload,
+    ArtifactRecord,
+    HierarchyXmlPayload,
+)
 from fathom.schemas.hierarchy import (
     HierarchyElementExtraction,
     HierarchyProcessingResult,
@@ -30,12 +37,24 @@ class HierarchyService:
     Service responsible for UI hierarchy analysis. Optimized for high-speed grounding.
     """
 
-    def __init__(self, storage: Optional[StoragePort] = None) -> None:
+    def __init__(
+        self,
+        storage: Optional[StoragePort] = None,
+        *,
+        pipeline: Optional[ArtifactPipeline] = None,
+        cv_enabled: bool = False,
+    ) -> None:
         """
         Initialize hierarchy service.
+
+        ``cv_enabled`` toggles whether the OpenCV visual-control labeler
+        appends fallback boxes onto the XML manifest. Off by default so
+        the original XML+LLM flow boots without an extra detector pass.
         """
 
         self.__storage = storage
+        self.__pipeline = pipeline
+        self.__cv_enabled = cv_enabled
         self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
     def __fire_and_forget(self, coroutine: Any) -> None:
@@ -109,6 +128,7 @@ class HierarchyService:
         *,
         session_id: str,
         package_name: str,
+        step_number: int,
         path_manager: SharedPathManager,
         action_type: Optional[ActionType] = None,
     ) -> HierarchyProcessingResult:
@@ -144,18 +164,12 @@ class HierarchyService:
             xml_bytes = xml.encode("utf-8")
             self.__save_file(path=xml_path, data=xml_bytes, mode="wb")
 
-            if self.__storage:
-                self.__fire_and_forget(
-                    self.__storage.save(
-                        data=xml_bytes,
-                        metadata={
-                            "category": "xmls",
-                            "session_id": session_id,
-                            "package_name": package_name,
-                            "filename": f"{filename_base}.xml",
-                        },
-                    )
-                )
+            await self.__emit_xml_artifact(
+                content=xml,
+                session_id=session_id,
+                package_name=package_name,
+                step_number=step_number,
+            )
 
             # 2. Parse Elements (threaded to avoid blocking event loop)
             element_extraction = await asyncio.to_thread(
@@ -166,13 +180,12 @@ class HierarchyService:
             )
             labeled_elements = element_extraction.labeled_elements
 
-            # 3. Generate Annotated Image (threaded to avoid blocking event loop)
-            annotated_path = path_manager.get_annotated_path(
-                package_name=package_name, session_id=session_id, filename=f"{filename_base}.png"
-            )
-            annotated_result = await self.__annotate(
+            # 3. Generate Annotated Image. The legacy ImageAnnotator
+            # write path is bypassed via a temp output file — only the
+            # in-memory bytes survive, and the artifact pipeline owns
+            # the durable copy under its filename grammar.
+            annotated_result = await self.__annotate_to_temp(
                 elements=labeled_elements,
-                destination=annotated_path,
                 source=Path(resolved_screenshot.path),
             )
 
@@ -183,37 +196,46 @@ class HierarchyService:
                     label_map=element_extraction.label_map,
                 )
 
-            if self.__storage:
-                with annotated_result.open("rb") as handle:
-                    annotated_data = handle.read()
-
-                self.__fire_and_forget(
-                    self.__storage.save(
-                        data=annotated_data,
-                        metadata={
-                            "category": "annotated",
-                            "session_id": session_id,
-                            "package_name": package_name,
-                            "filename": f"{filename_base}.png",
-                        },
-                    )
-                )
-
             # 4. Build Result Capture
             capture = self.__build_capture(original=screen, path=annotated_result)
+            await self.__emit_annotated_artifact(
+                capture=capture,
+                session_id=session_id,
+                package_name=package_name,
+                step_number=step_number,
+            )
+
+            # Drop the temp file once the bytes are on the capture and
+            # the pipeline has them queued — no on-disk legacy copy.
+            with contextlib.suppress(FileNotFoundError, OSError):
+                annotated_result.unlink()
 
             # Inject metadata
             new_metadata = capture.metadata.copy()
 
             new_metadata["xml_path"] = str(xml_path)
-            new_metadata["path"] = str(annotated_result)
             capture = capture.model_copy(update={"metadata": new_metadata})
 
             duration = (datetime.now() - start_time).total_seconds()
+            # Align this terminal summary with the per-stage logs emitted
+            # inside :class:`BoundsGenerator`: same ``hierarchy.stage.count``
+            # event name, same field schema. Downstream log queries that
+            # filter on ``event="hierarchy.stage.count"`` will pick up
+            # every stage including the final ``summary`` row without
+            # needing a second predicate.
+            label_map_count = sum(
+                1 for key in element_extraction.label_map if not str(key).startswith("__")
+            )
             logger.info(
-                f"Hierarchy processing complete in {duration:.2f}s. "
-                f"Elements found: {len(labeled_elements)} "
-                f"(raw: {len(element_extraction.label_map)})"
+                "Hierarchy stage count",
+                extra={
+                    "component": "core.services.hierarchy",
+                    "event": "hierarchy.stage.count",
+                    "stage": "summary",
+                    "count": len(labeled_elements),
+                    "label_map_size": label_map_count,
+                    "duration_s": round(duration, 3),
+                },
             )
 
             return HierarchyProcessingResult(
@@ -241,6 +263,56 @@ class HierarchyService:
 
         with path.open(mode) as handle:
             handle.write(data)
+
+    async def __emit_xml_artifact(
+        self,
+        *,
+        content: str,
+        session_id: str,
+        package_name: str,
+        step_number: int,
+    ) -> None:
+        """
+        Hand the hierarchy XML dump to the artifact pipeline for durable upload.
+        """
+
+        if self.__pipeline is None:
+            return
+
+        await self.__pipeline.emit(
+            record=ArtifactRecord(
+                session_id=session_id,
+                package_name=package_name,
+                step_number=step_number,
+                created=int(time.time() * 1000),
+                payload=HierarchyXmlPayload(content=content),
+            ),
+        )
+
+    async def __emit_annotated_artifact(
+        self,
+        *,
+        capture: ScreenCapture,
+        session_id: str,
+        package_name: str,
+        step_number: int,
+    ) -> None:
+        """
+        Hand the XML-annotated capture to the artifact pipeline for durable upload.
+        """
+
+        if self.__pipeline is None:
+            return
+
+        await self.__pipeline.emit(
+            record=ArtifactRecord(
+                session_id=session_id,
+                package_name=package_name,
+                step_number=step_number,
+                created=int(time.time() * 1000),
+                payload=AnnotatedPayload(capture=capture),
+            ),
+        )
 
     def __create_working_screenshot(self, *, image: bytes) -> Path:
         """
@@ -303,7 +375,10 @@ class HierarchyService:
 
         root = ET.fromstring(xml)  # nosec
         elements, label_map = BoundsGenerator.create_element(
-            root=root, image_path=str(image_path), action=action or ActionType.TAP
+            root=root,
+            image_path=str(image_path),
+            action=action or ActionType.TAP,
+            cv_enabled=self.__cv_enabled,
         )
         return HierarchyElementExtraction(label_map=label_map, labeled_elements=elements)
 
@@ -326,6 +401,25 @@ class HierarchyService:
             elements=elements,
         )
         return Path(path) if path else None
+
+    async def __annotate_to_temp(
+        self,
+        *,
+        source: Path,
+        elements: List[LabeledElement],
+    ) -> Optional[Path]:
+        """
+        Render the manifest annotation to a temporary file.
+
+        The bytes survive (read into ``capture.annotated_image`` and
+        emitted via the pipeline). The on-disk legacy copy is deleted
+        immediately so the durable artifact lives only under the
+        pipeline's filename grammar.
+        """
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+            destination = Path(handle.name)
+        return await self.__annotate(source=source, destination=destination, elements=elements)
 
     def __build_capture(
         self,

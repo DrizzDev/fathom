@@ -2,17 +2,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-# Default per-sub-goal step budget. The agent gets this many ANALYZE →
-# EXECUTE → RECORD cycles per sub-goal before the recovery coordinator
-# is dispatched with ``SUBGOAL_BUDGET_EXCEEDED``. Hard cap regardless of
-# whether the loop detector or no-progress classifier has fired.
-#
-# Sized generously so popup-heavy iOS flows (Allow / Skip / coachmark
-# chains) don't blow the budget on legitimate work. A run that needs
-# more than this many steps to satisfy a single sub-goal almost always
-# indicates the sub-goal was over-decomposed or names a target the
-# screen doesn't expose — both healed at the decomposer (Phase 2).
-DEFAULT_SUB_GOAL_MAX_STEPS: int = 8
+from fathom.constants.subgoal import DEFAULT_SUB_GOAL_MAX_STEPS
 
 
 class SubGoalStatus(StrEnum):
@@ -41,8 +31,13 @@ class SubGoal(BaseModel):
     Sub-goals must be executed sequentially without skipping.
     """
 
-    index: int = Field(description="Position in the decomposition sequence (0-based)")
     description: str = Field(description="Task description for this sub-goal")
+    index: int = Field(description="Position in the decomposition sequence (0-based)")
+
+    criterion: str | None = Field(
+        default=None,
+        description="Observable terminal state criterion for compatibility with execution tasks.",
+    )
     status: SubGoalStatus = Field(
         default=SubGoalStatus.PENDING, description="Current lifecycle status"
     )
@@ -67,11 +62,8 @@ class SubGoal(BaseModel):
         default=DEFAULT_SUB_GOAL_MAX_STEPS,
         ge=1,
         description=(
-            "Maximum graph iterations (ANALYZE → EXECUTE → RECORD) the "
-            "agent may spend on this sub-goal before the recovery "
-            "coordinator is dispatched with SUBGOAL_BUDGET_EXCEEDED. "
-            "Decomposers may override per-sub-goal; default keeps "
-            "popup-heavy flows comfortable."
+            "Maximum graph iterations (ANALYZE → EXECUTE → RECORD) the agent may spend on this sub-goal before the recovery "
+            "coordinator is dispatched with SUBGOAL_BUDGET_EXCEEDED. Decomposers may override per-sub-goal; default keeps popup-heavy flows comfortable."
         ),
     )
 

@@ -83,8 +83,10 @@ class DeviceError(FathomError):
         """
         Check if an error is transient and should be retried.
         """
+
         if isinstance(exception, FathomError):
             return exception.retryable
+
         return isinstance(exception, (ConnectionError, TimeoutError))
 
 
@@ -121,13 +123,11 @@ class ToolValidationError(VisionError):
     Tool output could not be validated against its schema.
 
     This is recoverable at the strategy layer by surfacing the attached
-    feedback back to the model and retrying the tool call with corrected
-    arguments.
+    feedback back to the model and retrying the tool call with corrected arguments.
     """
 
     def __init__(self, feedback: ToolErrorFeedback) -> None:
-        # Use the feedback message directly so callers see a concise,
-        # model-ready description of what went wrong.
+        # Use the feedback message directly so callers see a concise, model-ready description of what went wrong.
         super().__init__(message=feedback.message, retryable=False)
         self.feedback = feedback
 
@@ -159,6 +159,15 @@ class ToolExecutionError(ToolError):
 
     def __init__(self, tool_name: str, message: str) -> None:
         super().__init__(message, tool_name=tool_name, retryable=False)
+
+
+class OcrError(FathomError):
+    """
+    OCR provider call failed, timed out, or returned malformed data.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message, retryable=retryable)
 
 
 class MissingDependencyError(ConfigurationError):
@@ -197,6 +206,7 @@ class StuckLoopError(AgentError):
     def __init__(self, iterations: int) -> None:
         message = f"Stuck in loop after {iterations} identical screens"
         super().__init__(message, retryable=False)
+
         self.iterations = iterations
 
 
@@ -208,6 +218,7 @@ class MaxStepsExceededError(AgentError):
     def __init__(self, max_steps: int) -> None:
         message = f"Exceeded maximum of {max_steps} steps"
         super().__init__(message, retryable=False)
+
         self.max_steps = max_steps
 
 
@@ -225,6 +236,7 @@ class WorkflowCancelledError(WorkflowError):
     def __init__(self, workflow_id: str) -> None:
         message = f"Workflow '{workflow_id}' was cancelled"
         super().__init__(message, retryable=False)
+
         self.workflow_id = workflow_id
 
 

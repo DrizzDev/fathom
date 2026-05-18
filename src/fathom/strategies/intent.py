@@ -16,6 +16,7 @@ from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CompletionReason, IntentStateKey
+from fathom.core.config import RuntimeConfigLoader
 from fathom.core.services.decomposer import IntentDecomposer
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
@@ -25,6 +26,7 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.runtime.adapters import AdapterAssembly
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.recovery import RecoveryPolicy
@@ -83,6 +85,13 @@ class IntentStrategy:
         self.__step_results: List[StepResult] = []
         self.__completion_reason: Optional[str] = None
 
+        assembly = AdapterAssembly(
+            loader=RuntimeConfigLoader(),
+            llm=llm,
+            workflow_id=workflow_id,
+            journal_directory=path_manager.base_path / "journal",
+        )
+
         self.__graph_context = GraphContext(
             llm=llm,
             intent=intent,
@@ -101,6 +110,16 @@ class IntentStrategy:
             package_name=package_name,
             path_manager=path_manager,
             configuration=configuration,
+            perception_configuration=assembly.perception_configuration,
+            ocr=assembly.ocr(),
+            icons=assembly.icons(),
+            pixel_overlay=assembly.overlay(),
+            ensemble=assembly.ensemble(),
+            journal=assembly.journal(),
+            artifact_pipeline=assembly.pipeline(
+                path_manager=path_manager,
+                storage_configuration=configuration.storage,
+            ),
         )
 
         builder = IntentGraphBuilder(context=self.__graph_context)
@@ -159,7 +178,8 @@ class IntentStrategy:
                 await self.__graph_context.history.flush_pending_operations()
 
                 script_data = await self.__graph_context.history.get_current_script(
-                    intent=self.__intent
+                    intent=self.__intent,
+                    step_number=self.__graph_context.agent_state.step_count,
                 )
                 if script_data:
                     await self.__graph_context.telemetry.info(
@@ -203,6 +223,10 @@ class IntentStrategy:
                 error=error,
             )
 
+        except asyncio.CancelledError:
+            # Re-raise the cooperative cancel so the runner sees it.
+            # The finally-block still runs and cleans up resources.
+            raise
         except Exception as exception:
             logger.exception(f"Intent strategy execution failed: {exception}")
             duration = int((time.time() - start_time) * 1000)
@@ -216,7 +240,7 @@ class IntentStrategy:
                     (final_state.values.get(IntentStateKey.STEP_RESULTS) if final_state else [])
                     or []
                 )
-            except Exception as recovery_error:
+            except (RuntimeError, KeyError, AttributeError, ValueError) as recovery_error:
                 logger.debug(f"Could not recover step results from checkpoint: {recovery_error}")
 
             return ExecutionResult(
