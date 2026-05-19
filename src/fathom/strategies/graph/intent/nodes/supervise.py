@@ -76,12 +76,25 @@ class SuperviseNode:
         screen_capture = state.get(CommonStateKey.CAPTURE)
         planned_step = state.get(IntentStateKey.PLANNED_STEP)
         if not isinstance(planned_step, Step) or not isinstance(screen_capture, ScreenCapture):
-            logger.error(
-                "Invalid state: has_step=%s, has_capture=%s",
-                isinstance(planned_step, Step),
-                isinstance(screen_capture, ScreenCapture),
+            # Upstream (GROUND or ANALYZE) failed to publish the capture or the planned step.
+            # Without both, SUPERVISE cannot localize a target — and neither can EXECUTE / OBSERVE.
+            # Signal a re-ground via SHOULD_RETRY so the router takes us back to GROUND (bounded by max_steps),
+            logger.warning(
+                "Supervise: upstream state incomplete; routing back to GROUND",
+                extra={
+                    "component": "graph.intent.supervise",
+                    "event": "supervise.upstream.invalid",
+                    "has_planned_step": isinstance(planned_step, Step),
+                    "workflow.id": self.__provider.context.workflow_id,
+                    "has_capture": isinstance(screen_capture, ScreenCapture),
+                },
             )
-            return cast("IntentGraphState", {})
+            retry_patch = cast(
+                "IntentGraphState",
+                {IntentStateKey.SHOULD_RETRY: True},
+            )
+            self.__provider.persistence.persist(result=retry_patch)
+            return retry_patch
 
         observation = await self.__provider.observer.fallback_observation(
             state=state, capture=screen_capture

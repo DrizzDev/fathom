@@ -73,9 +73,10 @@ class IntentGraphBuilder(GraphBuilder):
             NodeName.SUPERVISE,
             self.__route_after_supervise,
             {
-                NodeName.EXECUTE: NodeName.EXECUTE,
-                NodeName.RECORD: NodeName.RECORD,
                 NodeName.END: NodeName.END,
+                NodeName.GROUND: NodeName.GROUND,
+                NodeName.RECORD: NodeName.RECORD,
+                NodeName.EXECUTE: NodeName.EXECUTE,
             },
         )
 
@@ -216,6 +217,15 @@ class IntentGraphBuilder(GraphBuilder):
         if self.__context.is_cancelled:
             logger.info("[ROUTING] After SUPERVISE -> END (Cancelled)")
             return NodeName.END
+
+        if state.get(cast("str", IntentStateKey.SHOULD_RETRY)):
+            # SUPERVISE detected incomplete upstream state (missing
+            # capture or planned_step) and asked for a re-ground.
+            # Routing to GROUND avoids the silent EXECUTE→OBSERVE→RECORD
+            # cascade that would otherwise end with the misleading
+            # ``record.missing.step_result`` Sentry alert.
+            logger.info("[ROUTING] After SUPERVISE -> GROUND (should_retry=True)")
+            return NodeName.GROUND
 
         if state.get(cast("str", IntentStateKey.EXECUTION_BLOCKED)):
             logger.info("[ROUTING] After SUPERVISE -> RECORD (blocked)")
