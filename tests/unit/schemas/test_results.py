@@ -39,9 +39,7 @@ class TestExecutionResultTraceArtifact(unittest.TestCase):
         base = ExecutionResult(success=True, duration=42)
         self.assertIsNone(base.trace_artifact)
 
-        with_trace = base.model_copy(
-            update={"trace_artifact": ScreenArtifact(uri="gs://x/y.png")}
-        )
+        with_trace = base.model_copy(update={"trace_artifact": ScreenArtifact(uri="gs://x/y.png")})
 
         self.assertIsNotNone(with_trace.trace_artifact)
         self.assertEqual(with_trace.trace_artifact.uri, "gs://x/y.png")

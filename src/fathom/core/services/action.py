@@ -16,11 +16,11 @@ from fathom.constants import (
     ActionType,
 )
 from fathom.constants.execution import MAX_ACTION_WAIT_MS
+from fathom.constants.storage import StorageBackend
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.constants.storage import StorageBackend
 from fathom.processing.annotator import ImageAnnotator
 from fathom.schemas.actions import Action, ExecutionRegion, GesturePath, InputContext
 from fathom.schemas.artifacts import ScreenArtifact

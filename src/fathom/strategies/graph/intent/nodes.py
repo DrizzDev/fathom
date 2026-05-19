@@ -157,7 +157,9 @@ class IntentNodeProvider:
         if not post_capture.image:
             return PostActionScreenComparison(
                 artifacts=self.__compose_step_artifacts(
-                    before=before_artifact, after=None, trace=trace_artifact,
+                    before=before_artifact,
+                    after=None,
+                    trace=trace_artifact,
                 ),
             )
 
@@ -206,7 +208,9 @@ class IntentNodeProvider:
             screen_diff=screen_diff,
             post_visual_hash=post_hashes.visual_hash,
             artifacts=self.__compose_step_artifacts(
-                before=before_artifact, after=after_artifact, trace=trace_artifact,
+                before=before_artifact,
+                after=after_artifact,
+                trace=trace_artifact,
             ),
         )
 
