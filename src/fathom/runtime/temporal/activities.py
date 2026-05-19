@@ -8,6 +8,7 @@ from temporalio import activity
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import FathomEvent
+from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.infrastructure.temporal.state import SignalStateRegistry
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryLevel
@@ -38,10 +39,22 @@ class FathomActivities:
     def __init__(self, settings: Optional[FathomSettings] = None) -> None:
         """
         Initialize activities with runtime settings.
+
+        The :class:`FathomSettings` reference stays scoped to this
+        activity instance — it never crosses the runner / strategy
+        seam as a raw object. Instead we bind it to a
+        :class:`RuntimeConfigLoader` (Application layer) here, and
+        only the loader flows downstream via
+        :meth:`FathomBuilder.with_runtime_configuration`. This keeps SA
+        credentials, API keys, and other secrets confined to the
+        worker process scope — they cannot be passed as Temporal
+        activity arguments, cannot land in workflow history, and
+        cannot be logged by anything beneath this seam.
         """
 
         self.__settings = settings or FathomSettings()
         self.__assembly = RunAssemblyBuilder(settings=self.__settings)
+        self.__runtime_configuration = RuntimeConfigLoader(settings=self.__settings)
 
     def __validate_intent_request(self, *, request: Dict[str, Any]) -> IntentRunRequest:
         """
@@ -117,6 +130,7 @@ class FathomActivities:
             .with_storage(port=storage_adapter)
             .with_telemetry(port=telemetry_adapter)
             .with_perception(port=perception_adapter)
+            .with_runtime_configuration(loader=self.__runtime_configuration)
             .with_realignment(policy=request.interaction.realignment)
             .with_intent_config(configuration=request.interaction.intent_configuration)
             .with_execution_config(configuration=request.interaction.execution_configuration)

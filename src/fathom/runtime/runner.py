@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, cast
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ContextScope, FathomEvent
 from fathom.constants.state import CompletionReason
+from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.interfaces.device import DevicePort
@@ -60,9 +61,27 @@ class FathomRunner:
         recovery: Optional[RecoveryPolicy] = None,
         config: Optional[FathomConfiguration] = None,
         realignment: Optional[RealignmentPolicy] = None,
+        runtime_configuration: Optional[RuntimeConfigLoader] = None,
     ) -> None:
         """
         Initialize runner with all configured ports.
+
+        ``runtime_configuration`` is the application-layer translator that the
+        caller pre-bound to its own :class:`FathomSettings` (in the
+        Temporal worker registry, the healing bridge, the CLI, …).
+        It is propagated to :class:`IntentStrategy` and
+        :class:`ExplorationStrategy` so :class:`AdapterAssembly`
+        observes the same settings the caller built — not a fresh
+        ``FathomSettings()`` that only resolves fathom's own env
+        aliases and silently misses deployment-prefixed names like
+        ``DRIZZ_GOOGLE_APPLICATION_CREDENTIALS_JSON``.
+
+        Hexagonal note: we deliberately accept the *loader*
+        (Application layer) here, never the raw
+        :class:`FathomSettings` (Infrastructure). The loader keeps the
+        settings as a private reference; nothing in the runner /
+        strategy can hand the credentials material to a logger or out
+        as a Temporal activity argument.
         """
 
         self.__llm = llm
@@ -76,6 +95,7 @@ class FathomRunner:
         self.__storage = storage
         self.__telemetry = telemetry
         self.__summarizer = summarizer
+        self.__runtime_configuration = runtime_configuration
         self.__path_manager = path_manager
         self.__recovery = recovery or RecoveryPolicy()
         self.__config = config or FathomConfiguration()
@@ -202,6 +222,7 @@ class FathomRunner:
             recovery=recovery or self.__recovery,
             realignment=realignment or self.__realignment,
             max_steps=max_steps or self.__config.intent.max_steps,
+            runtime_configuration=self.__runtime_configuration,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
         )
         self.__current_strategy = strategy
@@ -335,6 +356,7 @@ class FathomRunner:
             seed=self.__config.exploration.random_seed,
             timeout=float(self.__config.exploration.timeout),
             max_steps=max_steps or self.__config.exploration.max_steps,
+            runtime_configuration=self.__runtime_configuration,
         )
 
         self.__current_strategy = strategy

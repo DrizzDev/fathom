@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 import time
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.base.paths import SharedPathManager
 from fathom.interfaces.device import DevicePort
+
+if TYPE_CHECKING:
+    from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.perception import PerceptionPort
@@ -44,6 +47,7 @@ class ExplorationStrategy:
         telemetry: TelemetryPort,
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
+        runtime_configuration: Optional["RuntimeConfigLoader"] = None,
     ) -> None:
         self.__seed = seed
         self.__timeout = timeout
@@ -51,6 +55,13 @@ class ExplorationStrategy:
 
         # Exploration strategy doesn't use XML grounding (uses visual-only approach)
         from fathom.core.config.loader import RuntimeConfigLoader
+
+        # Use the caller-bound loader when supplied; otherwise fall
+        # back to env-only construction so stand-alone / test paths
+        # remain unchanged.
+        loader = (
+            runtime_configuration if runtime_configuration is not None else RuntimeConfigLoader()
+        )
 
         self.__graph_context = GraphContext(
             llm=llm,
@@ -67,7 +78,7 @@ class ExplorationStrategy:
             package_name=package_name,
             path_manager=path_manager,
             configuration=configuration,
-            perception_configuration=RuntimeConfigLoader().perception(),
+            perception_configuration=loader.perception(),
         )
 
         builder = ExplorationGraphBuilder(context=self.__graph_context)

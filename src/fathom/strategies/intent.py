@@ -76,6 +76,7 @@ class IntentStrategy:
         package_name: str,
         recovery: Optional[RecoveryPolicy] = None,
         realignment: Optional[RealignmentPolicy] = None,
+        runtime_configuration: Optional[RuntimeConfigLoader] = None,
     ) -> None:
         self.__llm = llm
         self.__intent = intent
@@ -85,8 +86,16 @@ class IntentStrategy:
         self.__step_results: List[StepResult] = []
         self.__completion_reason: Optional[str] = None
 
+        # Use the caller-bound loader when supplied; fall back to an
+        # env-only :class:`RuntimeConfigLoader()` for stand-alone runs
+        # (tests, CLI) that don't construct a settings object upstream.
+        # The raw :class:`FathomSettings` is never accessible here —
+        # the strategy never sees credentials material, only the
+        # already-validated typed nested configs the loader returns.
         assembly = AdapterAssembly(
-            loader=RuntimeConfigLoader(),
+            loader=runtime_configuration
+            if runtime_configuration is not None
+            else RuntimeConfigLoader(),
             llm=llm,
             workflow_id=workflow_id,
             journal_directory=path_manager.base_path / "journal",
