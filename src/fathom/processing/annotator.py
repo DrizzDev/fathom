@@ -219,10 +219,21 @@ class ImageAnnotator:
         action_type: str,
         coords: Tuple[int, ...],
         label: str = "",
+        bounds: Optional[Tuple[int, int, int, int]] = None,
     ) -> Optional[str]:
         """
         Draw action indicator on image for background verification.
-        coords: (x, y) for tap/type, or (x1, y1, x2, y2) for swipe/scroll.
+
+        Args:
+            coords: (x, y) for tap/type, or (x1, y1, x2, y2) for swipe/scroll.
+            bounds: optional (x, y, width, height) pixel rect for the target
+                element. When set on a tap/type/long_press, the annotator
+                draws an orange rectangle around the element instead of a
+                coord-centered red circle — same visual style normal
+                (non-healing) steps render via enricher's bounding-box code,
+                so the report looks consistent across pipelines. ``None``
+                preserves the coord-circle fallback for grid-style taps that
+                have no element bounds.
         """
 
         try:
@@ -234,11 +245,24 @@ class ImageAnnotator:
             # Use red/orange for visibility
             color = "#FF3B30"
             alpha_fill = (255, 59, 48, 100)  # Semi-transparent
+            # Orange used when we have real element bounds — matches the
+            # rectangle color enricher's non-healing renderer draws.
+            bounds_color = "#FF9500"
 
             if action_type in ("tap", "type", "long_press"):
-                if len(coords) >= 2:
+                if bounds is not None and len(bounds) == 4:
+                    bx, by, bw, bh = bounds
+                    # Draw an unfilled rectangle around the element, mirroring
+                    # the style of `screen_<action>_<id>_BoundingBox.png`.
+                    draw.rectangle(
+                        [bx, by, bx + bw, by + bh],
+                        outline=bounds_color,
+                        width=6,
+                    )
+                elif len(coords) >= 2:
                     x, y = coords[0], coords[1]
-                    # Draw a target circle
+                    # Fallback: coord-centered circle when no element bounds
+                    # are available (e.g. grid/coord-only taps).
                     r = 40
                     draw.ellipse(
                         [x - r, y - r, x + r, y + r], outline=color, width=5, fill=alpha_fill

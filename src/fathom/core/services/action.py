@@ -69,7 +69,7 @@ class ActionExecutor:
         last_error: Optional[str] = None
         for attempt in range(self.__max_retries + 1):
             try:
-                result, coords = await self.__execute_primitive(step=step)
+                result, coords, bounds_px = await self.__execute_primitive(step=step)
 
                 if result.success:
                     trace_artifact: Optional[ScreenArtifact] = None
@@ -77,6 +77,7 @@ class ActionExecutor:
                         trace_artifact = await self.__capture_trace(
                             step=step,
                             coords=coords,
+                            bounds_px=bounds_px,
                             session_id=session_id,
                             pre_capture=pre_capture,
                             package_name=package_name,
@@ -113,9 +114,17 @@ class ActionExecutor:
 
     async def __execute_primitive(
         self, step: Step
-    ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
+    ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]], Optional[Tuple[int, int, int, int]]]:
         """
         Execute specific device primitive.
+
+        Returns ``(result, coords, bounds_px)`` where ``bounds_px`` is the
+        target element's pixel rectangle ``(x, y, width, height)`` when the
+        action targets a labeled element (so the trace can draw a bounding
+        box around the element, matching the orange-rectangle style normal
+        steps render). Returns ``None`` for coord-only actions (grid taps,
+        scroll/swipe gestures) — those fall back to the trace's coord-
+        centered indicator.
         """
 
         action = step.action
@@ -130,8 +139,21 @@ class ActionExecutor:
             screen_width=width, screen_height=height, configuration=configuration
         )
 
+        # Resolve element bounds → pixel rect once, so every return path below
+        # carries the same value. Conversion failure is non-fatal: we just lose
+        # the rectangle style and fall back to a circle in the trace.
+        bounds_px: Optional[Tuple[int, int, int, int]] = None
+        if action.bounds:
+            try:
+                bounds_px = converter.to_pixels(bounds=action.bounds)
+            except Exception:
+                bounds_px = None
+
         if self.__is_non_interactive_action(action=action):
-            return await self.__execute_non_interactive_action(action=action, start_time=start_time)
+            result, coords = await self.__execute_non_interactive_action(
+                action=action, start_time=start_time
+            )
+            return result, coords, bounds_px
 
         try:
             device_result, coords = await self.__execute_interactive_action(
@@ -148,6 +170,7 @@ class ActionExecutor:
                         error=f"Unknown action type: {action.action_type}",
                     ),
                     None,
+                    bounds_px,
                 )
 
             duration = int((time.time() - start_time) * 1000)
@@ -158,6 +181,7 @@ class ActionExecutor:
                     success=device_result.success,
                 ),
                 coords,
+                bounds_px,
             )
 
         except Exception as exception:
@@ -165,6 +189,7 @@ class ActionExecutor:
             return (
                 ExecutionResult(success=False, duration=duration, error=str(exception)),
                 None,
+                bounds_px,
             )
 
     def __apply_tap_bias(
@@ -501,20 +526,22 @@ class ActionExecutor:
         package_name: str,
         coords: Tuple[int, ...],
         pre_capture: ScreenCapture,
+        bounds_px: Optional[Tuple[int, int, int, int]] = None,
     ) -> Optional[ScreenArtifact]:
         """
-        Annotate the pre-action screen with the action target (red circle for
-        tap/type, arrow for swipe), upload it via the storage adapter, and
-        return a ``ScreenArtifact`` so it can be embedded in the step result.
+        Annotate the pre-action screen with the action target and upload it
+        via the storage adapter, returning a ``ScreenArtifact`` for embedding
+        in the step result.
+
+        Visual style — ``ImageAnnotator.trace`` draws an orange rectangle
+        around ``bounds_px`` when the action targets a labeled element (so
+        healing matches the regular step's bounding-box style); otherwise it
+        falls back to a coord-centered red circle. Swipe/scroll keep the
+        arrow indicator regardless of bounds.
 
         Returns ``None`` when no storage adapter is configured, or when any
         step (drawing, file write, upload) fails — callers treat None as
         "no trace available" rather than an error.
-
-        This used to be fire-and-forget (``asyncio.create_task``) which meant
-        the trace URI never made it into ``StepArtifacts``. Now it is awaited
-        in the action execution flow so the URI is available to the intent
-        node when it composes the step's artifacts.
         """
         if not self.__storage:
             return None
@@ -539,6 +566,7 @@ class ActionExecutor:
                 output_path=trace_path,
                 action_type=step.action.action_type.value,
                 label=step.action.to_description(),
+                bounds=bounds_px,
             )
 
             data = await asyncio.to_thread(Path(trace_path).read_bytes)
