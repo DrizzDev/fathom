@@ -15,8 +15,10 @@ class SuperviseNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
     SUPERVISE runs localization, supervision, and bounded healing against
     the planned step. Both pins verify that the node degrades gracefully
     when the prerequisite state is absent: cancellation propagates the
-    cancellation reason; missing planned step or capture returns an empty
-    patch (no execution context produced) instead of raising.
+    cancellation reason; missing planned step or capture emits a
+    ``SHOULD_RETRY`` signal so the router re-enters GROUND instead of
+    letting the silent EXECUTE→OBSERVE→RECORD cascade fail downstream
+    with a misleading ``record.missing.step_result`` Sentry alert.
     """
 
     @staticmethod
@@ -50,12 +52,13 @@ class SuperviseNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
             CompletionReason.CANCELLED.value,
         )
 
-    async def test_missing_planned_step_or_capture_returns_empty_state(self) -> None:
+    async def test_missing_planned_step_or_capture_signals_should_retry(self) -> None:
         """
-        Missing planned step or capture must return an empty patch rather
-        than crashing. The graph then re-enters GROUND on the next tick
-        instead of producing a partial execution context downstream
-        nodes would have to defend against.
+        Missing planned step or capture must publish ``SHOULD_RETRY`` so
+        :meth:`IntentGraphBuilder.__route_after_supervise` routes back to
+        GROUND. Without the signal the router would fall through to
+        EXECUTE on a partial state, which is the cascade that surfaced
+        on staging as the ``record.missing.step_result`` Sentry alert.
         """
 
         provider = self.__provider(cancelled=False)
@@ -68,4 +71,7 @@ class SuperviseNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertEqual(result, {})
+        self.assertEqual(result, {IntentStateKey.SHOULD_RETRY: True})
+        provider.persistence.persist.assert_called_once_with(
+            result={IntentStateKey.SHOULD_RETRY: True},
+        )

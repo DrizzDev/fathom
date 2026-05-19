@@ -26,7 +26,6 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.runtime.adapters import AdapterAssembly
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.recovery import RecoveryPolicy
@@ -38,15 +37,84 @@ from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 
 logger = getLogger(name=__name__)
 
+# Allow-list of (module, qualname) pairs whose deserialization through
+# LangGraph's :class:`JsonPlusSerializer` must not emit
+# "Deserializing unregistered type" warnings. Entries are matched by
+# string compare against the class IDs embedded in serialized
+# checkpoint payloads — they are never imported at module load, so a
+# stale entry is dead-weight rather than an ImportError.
+#
+# Membership is the **transitive closure** of every Pydantic / Enum
+# class reachable through :class:`IntentGraphState`'s type annotations.
+# Agent-state internals (SubGoal, LoopDetectorState, tasks, effects,
+# etc.) intentionally do NOT appear here — they round-trip through
+# ``AgentState.to_checkpoint()`` as plain dicts via ``.model_dump()``.
+#
+# This list is enforced by
+# ``tests/unit/strategies/test_checkpoint_allowlist.py`` which walks
+# the state schema and asserts (a) every reachable class is listed,
+# (b) every listed entry resolves to a real class, and (c) the
+# msgpack and json variants stay in sync. Adding a new typed field
+# to :class:`IntentGraphState` will break that test until the new
+# type is added here.
 CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
-    ("fathom.schemas.screens", "ScreenCapture"),
-    ("fathom.schemas.screens", "ScreenState"),
+    # ── Constants / enums ────────────────────────────────────────────────
+    ("fathom.constants", "ActionType"),
+    ("fathom.constants.storage", "StorageBackend"),
+    # ── Actions ──────────────────────────────────────────────────────────
+    ("fathom.schemas.actions", "Action"),
+    ("fathom.schemas.actions", "Bounds"),
+    ("fathom.schemas.actions", "InputContext"),
+    # ── Artifacts (StepResult.artifacts) ─────────────────────────────────
+    ("fathom.schemas.artifacts", "ScreenArtifact"),
+    ("fathom.schemas.artifacts", "ScreenArtifactBundle"),
+    ("fathom.schemas.artifacts", "StepArtifacts"),
+    # ── Decisions (AnalysisResult.decision discriminated union) ──────────
+    ("fathom.schemas.decisions", "ActDecision"),
+    ("fathom.schemas.decisions", "AskUserDecision"),
+    ("fathom.schemas.decisions", "DoneDecision"),
+    ("fathom.schemas.decisions", "ReplanDecision"),
+    ("fathom.schemas.decisions", "UnactionableDecision"),
+    # ── Delta (AnalysisResult.delta) ─────────────────────────────────────
+    ("fathom.schemas.delta", "DeltaSignal"),
+    # ── Escape (AnalysisResult.escape_report) ────────────────────────────
+    ("fathom.schemas.escape", "EscapeCategory"),
+    ("fathom.schemas.escape", "EscapeReport"),
+    # ── Execution context (SUPERVISE → EXECUTE handoff) ──────────────────
+    ("fathom.schemas.execution", "ExecutionContext"),
+    # ── Localization (Stage-2 vision-localizer; on ExecutionContext) ─────
+    ("fathom.schemas.localization", "LocalizationCandidate"),
+    ("fathom.schemas.localization", "LocalizationResult"),
+    ("fathom.schemas.localization", "LocalizationStatus"),
+    ("fathom.schemas.localization", "Point"),
+    # ── Observation (perception output) ──────────────────────────────────
+    ("fathom.schemas.observation", "ElementRole"),
+    ("fathom.schemas.observation", "ElementSource"),
+    ("fathom.schemas.observation", "KeyboardObservation"),
+    ("fathom.schemas.observation", "OverlayObservation"),
+    ("fathom.schemas.observation", "PerceivedElement"),
+    ("fathom.schemas.observation", "ScreenObservation"),
+    ("fathom.schemas.observation", "ScrollRegion"),
+    # ── Outcomes (post-action classification) ────────────────────────────
+    ("fathom.schemas.outcomes", "ActionOutcome"),
+    ("fathom.schemas.outcomes", "OutcomeStatus"),
+    # ── Results (planner / analysis / execution) ─────────────────────────
+    ("fathom.schemas.results", "AnalysisOutcome"),
+    ("fathom.schemas.results", "AnalysisResult"),
+    ("fathom.schemas.results", "ExecutionResult"),
     ("fathom.schemas.results", "PlanResult"),
+    # ── Screens (capture / state / diff / hashes) ────────────────────────
+    ("fathom.schemas.screens", "ScreenCapture"),
+    ("fathom.schemas.screens", "ScreenChangeRegion"),
+    ("fathom.schemas.screens", "ScreenDiff"),
+    ("fathom.schemas.screens", "ScreenHashBundle"),
+    ("fathom.schemas.screens", "ScreenScrollTranslation"),
+    ("fathom.schemas.screens", "ScreenState"),
+    # ── Steps ────────────────────────────────────────────────────────────
     ("fathom.schemas.steps", "Step"),
     ("fathom.schemas.steps", "StepResult"),
-    ("fathom.constants", "ActionType"),
-    ("fathom.constants.state", "CommonStateKey"),
-    ("fathom.constants.state", "IntentStateKey"),
+    # ── Tasks (AnalysisResult.task_status) ───────────────────────────────
+    ("fathom.schemas.tasks", "TaskStatus"),
 )
 CHECKPOINT_ALLOWED_MSGPACK_MODULES: Tuple[Tuple[str, ...], ...] = CHECKPOINT_ALLOWED_JSON_MODULES
 
@@ -92,6 +160,12 @@ class IntentStrategy:
         # The raw :class:`FathomSettings` is never accessible here —
         # the strategy never sees credentials material, only the
         # already-validated typed nested configs the loader returns.
+        #
+        # Imported lazily to break the
+        # ``strategies.intent`` ↔ ``runtime.runner`` import cycle that
+        # otherwise trips when callers import either package eagerly.
+        from fathom.runtime.adapters import AdapterAssembly
+
         assembly = AdapterAssembly(
             loader=runtime_configuration
             if runtime_configuration is not None
