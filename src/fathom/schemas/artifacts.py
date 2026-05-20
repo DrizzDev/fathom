@@ -44,9 +44,10 @@ class ScreenArtifactBundle(BaseModel):
         default=None,
         description=(
             "Annotated copy of the pre-action screen with the action's target "
-            "drawn on top (red circle for tap/type, arrow for swipe). Produced "
-            "by TraceService when the action succeeds and emitted alongside the "
-            "raw before/after captures."
+            "drawn on top (orange rectangle when element bounds are known, "
+            "red circle for coord-only tap/type, arrow for swipe). Generated "
+            "when the action succeeds and emitted alongside the raw "
+            "before/after captures."
         ),
     )
 

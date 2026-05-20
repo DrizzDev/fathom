@@ -559,7 +559,7 @@ class ActionExecutor:
 
             # Drawing + disk write are CPU/IO bound; offload to a thread so
             # we don't block the event loop.
-            await asyncio.to_thread(
+            annotated_path = await asyncio.to_thread(
                 ImageAnnotator.trace,
                 coords=coords,
                 image_data=pre_capture.image,
@@ -568,6 +568,14 @@ class ActionExecutor:
                 label=step.action.to_description(),
                 bounds=bounds_px,
             )
+
+            # ImageAnnotator.trace returns None on failure (PIL decode error,
+            # font load failure, etc.) — it has already logged the cause and
+            # no file was written. Short-circuit so we don't raise a
+            # misleading FileNotFoundError from read_bytes() below and
+            # double-log the same underlying failure.
+            if annotated_path is None:
+                return None
 
             data = await asyncio.to_thread(Path(trace_path).read_bytes)
             uri = await self.__storage.save(
