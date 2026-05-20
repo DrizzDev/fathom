@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from fathom.core.prompts.localization import VisionLocalizationPrompt
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.localization import TargetLocalizerPort
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.localization import LocalizationProposal
 from fathom.schemas.observation import ScreenObservation
@@ -177,8 +177,8 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
             y=int(y_min),
             width=bound_width,
             height=bound_height,
-            coordinate_system="pixel",
-            source="model",
+            source=CoordinateSource.MODEL,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
         )
 
     @staticmethod

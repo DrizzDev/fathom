@@ -289,10 +289,13 @@ class AgentState:
         else:
             logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
 
+        last_effect = self.__runtime.effects.last_effect()
+
         self.__runtime.screen.detector.record(
             screen=screen,
             action_type=self.__last_action_type,
             action_description=self.__last_action_description,
+            effect_status=last_effect.status if last_effect is not None else None,
         )
         return is_new_screen
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from logging import getLogger
 from typing import Any, Dict
 
@@ -43,7 +44,26 @@ class CloudSink(ArtifactSinkPort):
     ) -> ArtifactReceipt:
         """
         Upload the artifact and report whether local cleanup is safe.
+
+        When the upload fails (exception or empty identifier returned by
+        the underlying composite storage) we set ``local_cleanup=False``
+        so the pipeline preserves the EFS copy for replay and the
+        operator sees the artifact route on the next run.
         """
+
+        started = time.monotonic()
+
+        upload_context = {
+            **self.__log_context(),
+            "payload.bytes": len(content),
+            "session.id": metadata.session_id,
+            "step.number": metadata.step_number,
+            "artifact.kind": metadata.kind.value,
+        }
+        logger.info(
+            "Cloud upload started",
+            extra={**upload_context, "event": ArtifactEvent.UPLOAD_STARTED},
+        )
 
         try:
             identifier = await self.__storage.save(
@@ -52,16 +72,25 @@ class CloudSink(ArtifactSinkPort):
             )
         except asyncio.CancelledError:
             raise
-        except Exception as exception:
-            logger.warning(
+        except Exception:
+            logger.exception(
                 "Cloud upload failed; leaving EFS copy for replay",
                 extra={
-                    **self.__log_context(),
+                    **upload_context,
                     "event": ArtifactEvent.UPLOAD_FAILED,
-                    "artifact.kind": metadata.kind.value,
-                    "session.id": metadata.session_id,
-                    "step.number": metadata.step_number,
-                    "error.message": str(exception),
+                    "duration.ms": int((time.monotonic() - started) * 1000),
+                },
+            )
+            return ArtifactReceipt(identifier="", local_cleanup=False)
+
+        if not identifier:
+            logger.error(
+                "Cloud upload returned empty identifier; storage backend silently dropped artifact",
+                extra={
+                    **upload_context,
+                    "reason": "None",
+                    "event": ArtifactEvent.UPLOAD_FAILED,
+                    "duration.ms": int((time.monotonic() - started) * 1000),
                 },
             )
             return ArtifactReceipt(identifier="", local_cleanup=False)
@@ -69,11 +98,9 @@ class CloudSink(ArtifactSinkPort):
         logger.info(
             "Cloud upload succeeded; local copy eligible for cleanup",
             extra={
-                **self.__log_context(),
+                **upload_context,
                 "event": ArtifactEvent.UPLOAD_SUCCEEDED,
-                "artifact.kind": metadata.kind.value,
-                "session.id": metadata.session_id,
-                "step.number": metadata.step_number,
+                "duration.ms": int((time.monotonic() - started) * 1000),
                 "artifact.identifier": identifier,
             },
         )

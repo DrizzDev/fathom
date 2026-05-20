@@ -1,60 +1,120 @@
 from __future__ import annotations
 
+from logging import getLogger
 from typing import Optional, Tuple
 
-from fathom.schemas.actions import Bounds, CoordinateSource, ExecutionRegion, GesturePath
+from fathom.schemas.actions import (
+    Bounds,
+    CoordinateSource,
+    ExecutionRegion,
+    GesturePath,
+)
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
+
+logger = getLogger(__name__)
 
 
 class CoordinateConverter:
     """
-    Converts normalized coordinates to device pixels.
+    Translate :class:`Bounds` from any coordinate system to logical dispatch coordinates.
     """
 
     def __init__(
         self,
-        screen_width: int,
-        screen_height: int,
+        *,
+        logical_width: int,
+        logical_height: int,
+        pixel_width: Optional[int] = None,
+        pixel_height: Optional[int] = None,
         configuration: Optional[DeviceRuntimeConfiguration] = None,
+        workflow_id: Optional[str] = None,
     ) -> None:
         """
-        Initialize converter.
+        Bind logical (dispatch-space) and pixel (screenshot-space) dimensions.
         """
 
-        self.__width = screen_width
-        self.__height = screen_height
+        self.__workflow_id = workflow_id
+        self.__logical_width = logical_width
+        self.__logical_height = logical_height
+        self.__pixel_width = pixel_width or logical_width
+        self.__pixel_height = pixel_height or logical_height
         self.__configuration = configuration or DeviceRuntimeConfiguration()
+
+        logger.info(
+            "CoordinateConverter initialised",
+            extra={
+                "workflow.id": workflow_id,
+                "component": "utils.coordinates",
+                "event": "converter.initialised",
+                "pixel.width": self.__pixel_width,
+                "pixel.height": self.__pixel_height,
+                "logical.width": self.__logical_width,
+                "logical.height": self.__logical_height,
+                "scale.x": round(self.__pixel_width / max(1, self.__logical_width), 4),
+                "scale.y": round(self.__pixel_height / max(1, self.__logical_height), 4),
+            },
+        )
+
+    @property
+    def logical_width(self) -> int:
+        """
+        Width of the dispatch (logical) coordinate space.
+        """
+
+        return self.__logical_width
+
+    @property
+    def logical_height(self) -> int:
+        """
+        Height of the dispatch (logical) coordinate space.
+        """
+
+        return self.__logical_height
 
     def to_pixels(self, bounds: Bounds) -> Tuple[int, int, int, int]:
         """
-        Convert bounding box to pixel coordinates.
+        Return ``bounds`` translated into logical dispatch coordinates.
+
+        Method name retained for call-site compatibility;
+        the returned coordinates are always in logical (appium-dispatch) space.
         """
 
-        return bounds.to_pixels(screen_width=self.__width, screen_height=self.__height)
+        return bounds.to_logical_dispatch(
+            pixel_width=self.__pixel_width,
+            pixel_height=self.__pixel_height,
+            logical_width=self.__logical_width,
+            logical_height=self.__logical_height,
+        )
 
     def center_to_pixels(self, bounds: Bounds) -> Tuple[int, int]:
         """
-        Get center point in pixel coordinates.
-
-        For normalized coordinates, this preserves the gold-standard ambiguity
-        handling when VLM outputs (x, y) as either top-left or center.
+        Return the bounds' center in logical dispatch coordinates.
         """
 
-        if bounds.system == "pixel" or not bounds.is_normalized:
-            x, y, width, height = bounds.to_pixels(
-                screen_width=self.__width, screen_height=self.__height
-            )
-            return x + width // 2, y + height // 2
+        x, y, width, height = self.to_pixels(bounds=bounds)
+        center_x, center_y = x + width // 2, y + height // 2
 
-        x_px, y_px, width_px, height_px = bounds.to_pixels(
-            screen_width=self.__width, screen_height=self.__height
+        logger.debug(
+            "CoordinateConverter.center_to_pixels",
+            extra={
+                "component": "utils.coordinates",
+                "workflow.id": self.__workflow_id,
+                "event": "converter.dispatch.center",
+                "source.system": bounds.system.value,
+                "source.bounds": {
+                    "x": bounds.x,
+                    "y": bounds.y,
+                    "width": bounds.width,
+                    "height": bounds.height,
+                },
+                "logical.dispatched": {
+                    "x": center_x,
+                    "y": center_y,
+                    "width": width,
+                    "height": height,
+                },
+            },
         )
-        # Clamp to the last on-screen pixel (0..width-1 / 0..height-1).
-        max_x = max(0, self.__width - 1)
-        max_y = max(0, self.__height - 1)
-        center_x = max(0, min(x_px + width_px // 2, max_x))
-        center_y = max(0, min(y_px + height_px // 2, max_y))
-
         return center_x, center_y
 
     def swipe_coordinates(
@@ -66,7 +126,7 @@ class CoordinateConverter:
         Return swipe coordinates derived from the bounds edges.
         """
 
-        region = self.region_from_bounds(bounds=bounds, source="model")
+        region = self.region_from_bounds(bounds=bounds, source=CoordinateSource.MODEL)
         return self.resolve_swipe_path(region=region, direction=direction).to_coordinates()
 
     def region_from_bounds(self, *, bounds: Bounds, source: CoordinateSource) -> ExecutionRegion:
@@ -79,15 +139,15 @@ class CoordinateConverter:
 
     def viewport_region(self) -> ExecutionRegion:
         """
-        Return the full screen as a viewport execution region.
+        Return the full screen as a viewport execution region in logical points.
         """
 
         return ExecutionRegion(
             x=0,
             y=0,
-            source="viewport",
-            width=self.__width,
-            height=self.__height,
+            width=self.__logical_width,
+            height=self.__logical_height,
+            source=CoordinateSource.VIEWPORT,
         )
 
     def resolve_swipe_path(self, *, region: ExecutionRegion, direction: str) -> GesturePath:

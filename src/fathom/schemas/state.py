@@ -7,6 +7,7 @@ from typing import Any, Deque, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from fathom.constants.runtime import DEFAULT_INERT_REPETITION_THRESHOLD
 from fathom.constants.screen import (
     DEFAULT_SAME_SCREEN_THRESHOLD,
     LOOP_ACTION_VELOCITY_INTERVAL_THRESHOLD_SECONDS,
@@ -22,6 +23,7 @@ from fathom.constants.screen import (
     SCREEN_PROGRESS_HAMMING_THRESHOLD,
 )
 from fathom.schemas.actions import Action
+from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.screens import ScreenState
 
 logger = getLogger(__name__)
@@ -41,6 +43,13 @@ class LoopDetectorState(BaseModel):
     )
 
     timestamps: List[float] = Field(default_factory=list, description="Record timestamps window")
+    effect_statuses: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Per-record action-effect status tokens window. Empty string means the status was not recorded for that slot "
+            "(legacy checkpoint or screen-only update). Kept as plain strings to keep the snapshot vendor-neutral."
+        ),
+    )
     recovery_attempts: int = Field(default=0, description="Autonomous recovery attempts taken")
 
     model_config = ConfigDict(frozen=True)
@@ -64,6 +73,15 @@ class LoopDetector(BaseModel):
     threshold: int = Field(
         default=LOOP_REPETITION_THRESHOLD, description="Window occurrences before classifying stuck"
     )
+    inert_repetition_threshold: int = Field(
+        ge=2,
+        default=DEFAULT_INERT_REPETITION_THRESHOLD,
+        description=(
+            "Identical-action + NO_PROGRESS effect streak length that trips the inert-repetition detector. "
+            "Intentionally smaller than ``threshold`` so the planner can pivot after one wasted action instead of three; "
+            "safe because the NO_PROGRESS classifier already requires every available no-progress metric to agree."
+        ),
+    )
 
     __recovery_attempts: int = PrivateAttr(default=0)
     __recent_types: Deque[str] = PrivateAttr(default_factory=deque)
@@ -71,6 +89,7 @@ class LoopDetector(BaseModel):
     __recent_actions: Deque[str] = PrivateAttr(default_factory=deque)
     __recent_timestamps: Deque[float] = PrivateAttr(default_factory=deque)
     __recent_screens: Deque[ScreenState] = PrivateAttr(default_factory=deque)
+    __recent_effect_statuses: Deque[str] = PrivateAttr(default_factory=deque)
 
     def model_post_init(self, _context: Any) -> None:
         """
@@ -83,6 +102,7 @@ class LoopDetector(BaseModel):
         self.__recent_actions = deque(maxlen=self.window_size)
         self.__recent_screens = deque(maxlen=self.window_size)
         self.__recent_timestamps = deque(maxlen=self.window_size)
+        self.__recent_effect_statuses = deque(maxlen=self.window_size)
 
     def to_state(self) -> LoopDetectorState:
         """
@@ -96,6 +116,7 @@ class LoopDetector(BaseModel):
             actions=list(self.__recent_actions),
             timestamps=list(self.__recent_timestamps),
             recovery_attempts=self.__recovery_attempts,
+            effect_statuses=list(self.__recent_effect_statuses),
         )
 
     def restore(self, *, state: LoopDetectorState) -> None:
@@ -109,15 +130,17 @@ class LoopDetector(BaseModel):
         self.__recent_screens = deque(state.screens, maxlen=self.window_size)
         self.__recent_actions = deque(state.actions, maxlen=self.window_size)
         self.__recent_timestamps = deque(state.timestamps, maxlen=self.window_size)
+        self.__recent_effect_statuses = deque(state.effect_statuses, maxlen=self.window_size)
 
     def record(
         self,
         screen: ScreenState,
         action_type: Optional[str] = None,
         action_description: Optional[str] = None,
+        effect_status: Optional[ActionEffectStatus] = None,
     ) -> None:
         """
-        Record state and action data for pattern analysis.
+        Record state, action, and effect data for pattern analysis.
         """
 
         self.__recent_screens.append(screen)
@@ -131,9 +154,22 @@ class LoopDetector(BaseModel):
         # Store raw types for velocity and scroll analysis
         self.__recent_types.append(str(action_type or "unknown").lower())
 
+        # Effect status decorates the action; empty string means "not
+        # recorded for this slot" (e.g. first turn before any effect).
+        self.__recent_effect_statuses.append(
+            effect_status.value if effect_status is not None else "",
+        )
+
         logger.debug(
-            f"LoopDetector.record: {screen.visual_hash[:8]} | "
-            f"action={identifier} | type={action_type}"
+            "LoopDetector recorded turn",
+            extra={
+                "component": "schemas.state.loop_detector",
+                "event": "loop_detector.record",
+                "screen.visual_hash": screen.visual_hash[:8],
+                "action.identifier": identifier,
+                "action.type": action_type,
+                "action.effect": effect_status.value if effect_status is not None else None,
+            },
         )
 
     def observe_screen(self, *, previous: Optional[ScreenState], current: ScreenState) -> None:
@@ -160,6 +196,12 @@ class LoopDetector(BaseModel):
         """
         Evaluate if current interaction sequence indicates a loop.
         """
+
+        # 0. Inert-action repetition fires at the tightest threshold so
+        # the planner can pivot after one wasted action — independent
+        # of how much screen / action history has accumulated.
+        if self.__detect_inert_repetition():
+            return True
 
         has_enough_screens = len(self.__recent_screens) >= self.threshold
         has_enough_actions = len(self.__recent_actions) >= self.threshold
@@ -197,6 +239,45 @@ class LoopDetector(BaseModel):
         # Action-based detection survives screen resets (advance).
         # Catches repeated actions across visually-different screens.
         return has_enough_actions and self.__detect_action_repetition()
+
+    def __detect_inert_repetition(self) -> bool:
+        """
+        Detect identical action descriptors paired with trailing NO_PROGRESS effects.
+
+        Fires when the last ``inert_repetition_threshold`` action
+        descriptors are identical AND the matching trailing effect
+        statuses are all ``NO_PROGRESS``. Both conditions must hold
+        so cosmetic same-action retries on a screen that *did* change
+        don't false-fire (the planner explores during real scrolling and that's not stuck).
+        """
+
+        if len(self.__recent_actions) < self.inert_repetition_threshold:
+            return False
+
+        if len(self.__recent_effect_statuses) < self.inert_repetition_threshold:
+            return False
+
+        trailing_actions = list(self.__recent_actions)[-self.inert_repetition_threshold :]
+        trailing_statuses = list(self.__recent_effect_statuses)[-self.inert_repetition_threshold :]
+
+        if len(set(trailing_actions)) > 1:
+            return False
+
+        if any(status != ActionEffectStatus.NO_PROGRESS.value for status in trailing_statuses):
+            return False
+
+        logger.warning(
+            "LoopDetector: stuck via inert action repetition '%s' (%dx)",
+            trailing_actions[-1],
+            self.inert_repetition_threshold,
+            extra={
+                "component": "loop.detector",
+                "action": trailing_actions[-1],
+                "event": "stuck.inert.repetition",
+                "count": self.inert_repetition_threshold,
+            },
+        )
+        return True
 
     def __detect_repetition(self) -> bool:
         """
@@ -692,6 +773,15 @@ class ActionHistory(BaseModel):
         """
 
         return list(self.__actions)
+
+    def recent_action_descriptors(self, *, count: int) -> List[str]:
+        """
+        Return the trailing ``count`` action descriptors in execution order.
+        """
+
+        if count <= 0:
+            return []
+        return [action["full_description"] for action in list(self.__actions)[-count:]]
 
     def get_activity_failures(self, current_activity: str) -> List[str]:
         """

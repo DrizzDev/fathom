@@ -20,6 +20,7 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
+from fathom.runtime.inspection import RuntimeConfigurationInspector
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.recovery import RecoveryPolicy
@@ -116,6 +117,41 @@ class FathomRunner:
 
         # Track current workflow for cancellation
         self.__current_strategy: Optional[object] = None
+
+        self.__log_configuration_summary()
+
+    def __log_configuration_summary(self) -> None:
+        """
+        Emit a single structured log line summarizing the wired configuration.
+        """
+
+        inspector = RuntimeConfigurationInspector()
+        snapshot = inspector.project(
+            ports={
+                "llm": self.__llm,
+                "signal": self.__signal,
+                "memory": self.__memory,
+                "device": self.__device,
+                "storage": self.__storage,
+                "knowledge": self.__knowledge,
+                "telemetry": self.__telemetry,
+                "summarizer": self.__summarizer,
+                "perception": self.__perception,
+            },
+            recovery=self.__recovery,
+            configuration=self.__config,
+            realignment=self.__realignment,
+            path_manager=self.__path_manager,
+        )
+        logger.info(
+            "Fathom runner configured",
+            extra={
+                **snapshot,
+                "component": "runtime.runner",
+                "event": "fathom.runner.configured",
+                "runtime_configuration_bound": self.__runtime_configuration is not None,
+            },
+        )
 
     @property
     def engine(self) -> ExecutionEngine:

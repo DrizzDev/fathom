@@ -12,7 +12,7 @@ from fathom.core.supervision.policies import (
     ScrollPolicy,
     TargetPolicy,
 )
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import (
     KeyboardObservation,
@@ -279,8 +279,8 @@ class OverlayPolicyTest(unittest.TestCase):
                         y=10,
                         width=20,
                         height=20,
-                        coordinate_system="pixel",
-                        source="model",
+                        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                        source=CoordinateSource.MODEL,
                     )
                 ),
             )
@@ -297,8 +297,8 @@ class OverlayPolicyTest(unittest.TestCase):
                 y=0,
                 width=100,
                 height=100,
-                coordinate_system="pixel",
-                source="model",
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                source=CoordinateSource.MODEL,
             ),
             visible=True,
             candidates=(),
@@ -313,8 +313,8 @@ class OverlayPolicyTest(unittest.TestCase):
                     y=500,
                     width=20,
                     height=20,
-                    coordinate_system="pixel",
-                    source="model",
+                    coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                    source=CoordinateSource.MODEL,
                 )
             ),
         )

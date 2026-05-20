@@ -83,10 +83,14 @@ class ArtifactEvent:
 
     EMIT_STAGED: Final[str] = "artifact.emit.staged"
     EMIT_REJECTED: Final[str] = "artifact.emit.rejected"
-    UPLOAD_SUCCEEDED: Final[str] = "artifact.upload.succeeded"
+
     UPLOAD_FAILED: Final[str] = "artifact.upload.failed"
+    UPLOAD_STARTED: Final[str] = "artifact.upload.started"
+    UPLOAD_SUCCEEDED: Final[str] = "artifact.upload.succeeded"
+
+    RENDER_FAILED: Final[str] = "artifact.render.failed"
     LOCAL_CLEANUP: Final[str] = "artifact.local.cleanup"
+
     DRAIN_STARTED: Final[str] = "artifact.drain.started"
     DRAIN_COMPLETED: Final[str] = "artifact.drain.completed"
     DRAIN_TIMED_OUT: Final[str] = "artifact.drain.timed_out"
-    RENDER_FAILED: Final[str] = "artifact.render.failed"

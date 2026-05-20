@@ -22,8 +22,6 @@ class IntentGraphBuilder(GraphBuilder):
     Constructs the LangGraph workflow for intent execution.
     """
 
-    __MAX_COMPLETE_DEFERRALS: int = 2
-
     def __init__(self, context: GraphContext) -> None:
         self.__context = context
 
@@ -158,43 +156,14 @@ class IntentGraphBuilder(GraphBuilder):
                 logger.info(f"[ROUTING] -> END (Fatal Error / Max Steps: {reason})")
                 return NodeName.END
 
-            # When sub-goals are defined, verification must wait until all sub-goals
-            # complete (handled in RECORD node). The planner's overall completion
-            # signal is treated as a soft hint — reset and continue working, but
-            # only up to ``__MAX_COMPLETE_DEFERRALS`` consecutive times. Beyond
-            # that the planner has stably claimed completion for the same screen
-            # state; honouring the claim avoids a budget-burning ground-loop and
-            # lets the verifier — not the planner — make the final call.
-            if (
-                self.__context.agent_state.has_sub_goals()
-                and not self.__context.agent_state.all_sub_goals_complete()
-            ):
-                deferrals = self.__context.agent_state.record_complete_deferral()
-                if deferrals <= self.__MAX_COMPLETE_DEFERRALS:
-                    logger.info(
-                        "[ROUTING] -> GROUND "
-                        f"(is_complete=True but sub-goals remain; deferral {deferrals}/"
-                        f"{self.__MAX_COMPLETE_DEFERRALS}, deferring verification)"
-                    )
-                    self.__context.agent_state.reset_completion()
-                    return NodeName.GROUND
-
-                logger.warning(
-                    "[ROUTING] -> VERIFY "
-                    f"(is_complete=True repeated {deferrals} times with sub-goals open; "
-                    "honouring planner verdict and letting VERIFY adjudicate)"
-                )
-                self.__context.agent_state.reset_complete_deferrals()
-                return NodeName.VERIFY
-
-            # Otherwise, it's a normal goal completion, proceed to verification
-            self.__context.agent_state.reset_complete_deferrals()
+            # Bounded-retry deferral when sub-goals remain is handled inside
+            # ANALYZE (so the increment is part of the checkpoint and survives
+            # the next ``persistence.restore()``). By the time we reach the
+            # router with ``is_complete=True``, either no sub-goals remain or
+            # the deferral budget has been exhausted — both cases route to
+            # VERIFY, which adjudicates the final outcome.
             logger.info("[ROUTING] -> VERIFY (is_complete=True)")
             return NodeName.VERIFY
-
-        # A non-complete ANALYZE outcome is forward progress; clear any
-        # stale complete-deferral streak from previous turns.
-        self.__context.agent_state.reset_complete_deferrals()
 
         # 3. Soft Retries (e.g. missing elements, LLM asked to retry)
         if should_retry:

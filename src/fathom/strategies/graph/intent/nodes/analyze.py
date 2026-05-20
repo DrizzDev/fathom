@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, Optional, cast
 
 from fathom.constants import FathomEvent
+from fathom.constants.runtime import DEFAULT_COMPLETE_DEFERRAL_BUDGET
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.recovery import (
     RecoveryTrigger,
@@ -239,6 +240,50 @@ class AnalyzeNode:
             completion_reason = (
                 plan.reason if plan.is_complete else state.get(CommonStateKey.COMPLETION_REASON)
             )
+            # Bounded-retry deferral when sub-goals are still open. Owned by
+            # ANALYZE (not the router) so the counter increment lands inside
+            # the persisted checkpoint below — a router-side mutation would
+            # be overwritten by the next ``persistence.restore()``.
+            effective_is_complete = plan.is_complete
+            effective_completion_reason = completion_reason
+            agent_state = self.__provider.context.agent_state
+
+            if (
+                plan.is_complete
+                and agent_state.has_sub_goals()
+                and not agent_state.all_sub_goals_complete()
+            ):
+                deferrals = agent_state.record_complete_deferral()
+                if deferrals <= DEFAULT_COMPLETE_DEFERRAL_BUDGET:
+                    logger.info(
+                        "Deferring planner completion; sub-goals remain",
+                        extra={
+                            "deferrals": deferrals,
+                            "component": "graph.intent.analyze",
+                            "event": "analyze.complete.deferred",
+                            "budget": DEFAULT_COMPLETE_DEFERRAL_BUDGET,
+                            "workflow.id": self.__provider.context.workflow_id,
+                        },
+                    )
+                    agent_state.reset_completion()
+                    effective_is_complete = False
+                    effective_completion_reason = None
+                else:
+                    logger.warning(
+                        "Complete-deferral budget exhausted; honouring planner verdict",
+                        extra={
+                            "deferrals": deferrals,
+                            "component": "graph.intent.analyze",
+                            "budget": DEFAULT_COMPLETE_DEFERRAL_BUDGET,
+                            "event": "analyze.complete.budget_exhausted",
+                            "workflow.id": self.__provider.context.workflow_id,
+                        },
+                    )
+                    agent_state.reset_complete_deferrals()
+            else:
+                # Either no sub-goals, all complete, or non-complete plan — clear any stale streak.
+                agent_state.reset_complete_deferrals()
+
             result = cast(
                 "IntentGraphState",
                 {
@@ -247,17 +292,27 @@ class AnalyzeNode:
                     IntentStateKey.INJECTED_CONTEXT: None,
                     IntentStateKey.PLANNED_STEP: plan.step,
                     CommonStateKey.ANALYSIS_DURATION: duration,
-                    CommonStateKey.IS_COMPLETE: plan.is_complete,
                     IntentStateKey.SHOULD_RETRY: plan.should_retry,
-                    CommonStateKey.COMPLETION_REASON: completion_reason,
+                    CommonStateKey.IS_COMPLETE: effective_is_complete,
+                    CommonStateKey.COMPLETION_REASON: effective_completion_reason,
                     CommonStateKey.SCREEN_OBSERVATION: state.get(CommonStateKey.SCREEN_OBSERVATION),
                 },
             )
 
             # Log what will happen next based on routing logic
-            if plan.is_complete:
+            if effective_is_complete:
                 logger.info(
                     "-> Will route to VERIFY (is_complete=True)",
+                    extra={
+                        "event": "analyze.log",
+                        "component": "graph.intent.analyze",
+                        "workflow.id": self.__provider.context.workflow_id,
+                    },
+                )
+
+            elif plan.is_complete:
+                logger.info(
+                    "-> Will route to GROUND (is_complete deferred; sub-goals remain)",
                     extra={
                         "event": "analyze.log",
                         "component": "graph.intent.analyze",

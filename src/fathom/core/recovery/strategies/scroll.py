@@ -11,7 +11,7 @@ from fathom.core.recovery.types import (
     RecoveryTrigger,
     TryActionOutcome,
 )
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSystem
 from fathom.schemas.observation import PerceivedElement
 from fathom.schemas.supervision import BlockReason
 
@@ -130,6 +130,6 @@ class ScrollBoundaryRecovery(RecoveryStrategy):
                 y=bounds.y,
                 width=bounds.width,
                 height=bounds.height,
-                coordinate_system="pixel",
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
             ),
         )

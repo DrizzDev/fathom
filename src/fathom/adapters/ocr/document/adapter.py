@@ -20,7 +20,6 @@ from tenacity import (
 )
 
 from fathom.adapters.ocr.document.mapper import DocumentAiMapper
-from fathom.core.exceptions import OcrError
 from fathom.interfaces.ocr import OcrPort
 from fathom.schemas.budgets import PerceptionBudget
 from fathom.schemas.ocr import DocumentAiConfiguration, OcrResult
@@ -55,10 +54,10 @@ class DocumentAiOcr(OcrPort):
         Initialize the adapter with configuration, mapper, optional client, and run context.
         """
 
+        self.__workflow_id = workflow_id
         self.__configuration = configuration
         self.__mapper = mapper if mapper is not None else DocumentAiMapper()
         self.__client = client if client is not None else self.__build_client()
-        self.__workflow_id = workflow_id
 
     async def extract(
         self,
@@ -67,10 +66,9 @@ class DocumentAiOcr(OcrPort):
         budget: PerceptionBudget,
     ) -> OcrResult:
         """
-        Submit one Document AI process request and return the mapped tokens.
+        Run one Document AI pass; degrade to an empty result on any failure.
         """
 
-        timeout = budget.ocr / 1000.0
         started = time.monotonic()
         log_context = self.__log_context(activity=capture.activity)
 
@@ -78,47 +76,61 @@ class DocumentAiOcr(OcrPort):
             "OCR request started",
             extra={
                 **log_context,
-                "event": "ocr.request.started",
                 "budget.ocr.ms": budget.ocr,
+                "event": "ocr.request.started",
                 "image.bytes": len(capture.image),
             },
         )
 
         try:
-            document = await asyncio.wait_for(
-                asyncio.to_thread(self.__process_document, capture.image),
-                timeout=timeout,
+            return await self.__extract_unsafe(
+                budget=budget,
+                capture=capture,
+                started=started,
+                context=log_context,
             )
-        except asyncio.TimeoutError as exception:
+        except asyncio.TimeoutError:
             logger.warning(
-                "OCR request timed out",
+                "OCR request timed out — degrading to empty result",
                 extra={
                     **log_context,
                     "event": "ocr.request.timeout",
                     "budget.ocr.ms": budget.ocr,
                 },
             )
-            raise OcrError(
-                f"Document AI exceeded the {budget.ocr} ms OCR budget.",
-                retryable=True,
-            ) from exception
-        except OcrError:
-            raise
-        except Exception as exception:
-            # quota etc.
-            logger.warning(
-                "OCR request failed",
+        except Exception:
+            logger.exception(
+                "OCR request failed — degrading to empty result",
                 extra={
                     **log_context,
                     "event": "ocr.request.failed",
-                    "error.message": str(exception),
-                    "error.type": type(exception).__name__,
+                    "budget.ocr.ms": budget.ocr,
                 },
             )
-            raise OcrError(
-                f"Document AI request failed: {type(exception).__name__}: {exception}",
-                retryable=False,
-            ) from exception
+
+        return OcrResult(
+            tokens=(),
+            duration=int((time.monotonic() - started) * 1000),
+        )
+
+    async def __extract_unsafe(
+        self,
+        *,
+        started: float,
+        capture: ScreenCapture,
+        budget: PerceptionBudget,
+        context: Dict[str, Any],
+    ) -> OcrResult:
+        """
+        Submit the Document AI request without the outer suppression net.
+        """
+
+        timeout = budget.ocr / 1000.0
+
+        document = await asyncio.wait_for(
+            asyncio.to_thread(self.__process_document, capture.image),
+            timeout=timeout,
+        )
 
         duration = int((time.monotonic() - started) * 1000)
         tokens = self.__mapper.map_document(
@@ -130,10 +142,10 @@ class DocumentAiOcr(OcrPort):
         logger.info(
             "OCR request completed",
             extra={
-                **log_context,
-                "event": "ocr.request.completed",
+                **context,
                 "duration.ms": duration,
                 "token.count": len(tokens),
+                "event": "ocr.request.completed",
             },
         )
         return OcrResult(tokens=tokens, duration=duration)
@@ -141,9 +153,9 @@ class DocumentAiOcr(OcrPort):
     @retry(  # type: ignore[untyped-decorator]
         reraise=True,
         stop=stop_after_attempt(3),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
         wait=wait_exponential(multiplier=0.05, min=0.05, max=0.4),
         retry=retry_if_exception_type(_TRANSIENT_GOOGLE_EXCEPTIONS),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
     )
     def __process_document(self, image: bytes) -> Any:
         """
@@ -154,7 +166,8 @@ class DocumentAiOcr(OcrPort):
         (50ms..400ms) so a momentary upstream hiccup does not blow the
         whole OCR budget. The outer ``asyncio.wait_for`` still bounds
         total wall time — a saturated upstream that keeps failing past
-        the budget will surface as a single :class:`OcrError`.
+        the budget surfaces as an empty :class:`OcrResult` (suppressed
+        and logged at the adapter boundary; see :meth:`extract`).
         """
 
         request = documentai_v1.ProcessRequest(

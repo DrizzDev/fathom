@@ -14,7 +14,7 @@ from fathom.constants.perception import (
     PIXEL_OVERLAY_MIN_AREA_RATIO,
 )
 from fathom.interfaces.overlay import OverlayDetectorPort
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import PerceptionBudget
 from fathom.schemas.screens import ScreenCapture
 
@@ -60,10 +60,34 @@ class PixelOverlayDetector(OverlayDetectorPort):
         timeout = max(0.001, budget.local / 1000.0)
         context = self.__log_context(activity=capture.activity)
 
-        bounds = await asyncio.wait_for(
-            asyncio.to_thread(self.__detect_sync, capture.image),
-            timeout=timeout,
-        )
+        try:
+            bounds = await asyncio.wait_for(
+                asyncio.to_thread(self.__detect_sync, capture.image),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Pixel overlay timed out — degrading to no overlay",
+                extra={
+                    **context,
+                    "event": "overlay.pixel.timeout",
+                    "budget.local.ms": budget.local,
+                },
+            )
+            return None
+        except Exception:
+            # Pixel overlay is an optional perception enrichment;
+            # cv2 / numpy / decode failures must not break the run.
+            logger.exception(
+                "Pixel overlay detection failed — degrading to no overlay",
+                extra={
+                    **context,
+                    "event": "overlay.pixel.failed",
+                    "budget.local.ms": budget.local,
+                },
+            )
+            return None
+
         duration = int((time.monotonic() - started) * 1000)
 
         if bounds is not None:
@@ -111,10 +135,10 @@ class PixelOverlayDetector(OverlayDetectorPort):
         return Bounds(
             x=int(x),
             y=int(y),
+            source=CoordinateSource.VIEWPORT,
             width=int(max(1, component_width)),
             height=int(max(1, component_height)),
-            coordinate_system="pixel",
-            source="viewport",
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
         )
 
     def __largest_dim_component(

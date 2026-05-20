@@ -1,0 +1,13 @@
+platform: ios
+description: |
+  HmrHD healing session, step 3 capture (post-back navigation). Production
+  Fathom emitted a non-spatial BACK action for this step (no Resolution
+  snap, no tap dispatched). The screen is included as a property-only
+  fixture: BoundsGenerator must produce a manifest and the current
+  CoordinateConverter must dispatch every parsed element inside its own
+  logical bbox. No pinned label is asserted because no production tap
+  coordinate exists for this step.
+screen:
+  logical:
+    width: 430
+    height: 932

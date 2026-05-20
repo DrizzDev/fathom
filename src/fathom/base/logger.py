@@ -37,15 +37,16 @@ class BaseLogger:
         json_format = settings.log_json
         level_name = settings.log_level.upper()
 
-        # Shared processors for both structlog and stdlib logging
+        # Shared processors for both structlog and stdlib logging.
         shared_processors = [
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.add_log_level,
-            structlog.stdlib.PositionalArgumentsFormatter(),
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
+            structlog.stdlib.ExtraAdder(),
             structlog.processors.UnicodeDecoder(),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.stdlib.PositionalArgumentsFormatter(),
         ]
 
         # Configure structlog

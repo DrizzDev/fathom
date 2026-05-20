@@ -4,7 +4,7 @@ import unittest
 
 from fathom.adapters.localization.document.layout import DocumentAiLayoutLocalizer
 from fathom.constants import ActionType
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.observation import (
     ElementRole,
@@ -33,7 +33,14 @@ class DocumentAiLayoutLocalizerTest(unittest.IsolatedAsyncioTestCase):
         arbitrary; only the bounds being non-empty matters.
         """
 
-        return Bounds(x=10, y=20, width=100, height=40, coordinate_system="pixel", source="ocr")
+        return Bounds(
+            x=10,
+            y=20,
+            width=100,
+            height=40,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            source=CoordinateSource.OCR,
+        )
 
     @staticmethod
     def __action(*, target: str) -> Action:

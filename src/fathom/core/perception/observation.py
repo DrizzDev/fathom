@@ -41,7 +41,7 @@ from fathom.core.exceptions import OcrError
 from fathom.interfaces.icon import IconDetectorPort
 from fathom.interfaces.ocr import OcrPort
 from fathom.interfaces.overlay import OverlayDetectorPort
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.artifact import (
     ArtifactRecord,
     CvPerceptionPayload,
@@ -490,8 +490,8 @@ class ScreenObservationService:
                 y=max(0, y),
                 width=max(1, candidate_width),
                 height=max(1, candidate_height),
-                coordinate_system="pixel",
-                source="viewport",
+                source=CoordinateSource.VIEWPORT,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
             )
             if not self.__viable_visual_control(
                 bounds=bounds,
@@ -666,9 +666,9 @@ class ScreenObservationService:
             x=0,
             y=top,
             width=width,
-            source="viewport",
             height=height - top,
-            coordinate_system="pixel",
+            source=CoordinateSource.VIEWPORT,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
         )
 
     def __overlays(
@@ -827,7 +827,14 @@ class ScreenObservationService:
         y = max(0, int(round(bounds.y1)))
         width = max(1, int(round(bounds.x2 - bounds.x1)))
         height = max(1, int(round(bounds.y2 - bounds.y1)))
-        return Bounds(x=x, y=y, width=width, height=height, coordinate_system="pixel")
+
+        return Bounds(
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
 
     def __text(self, *, attributes: Dict[str, object]) -> Optional[str]:
         """

@@ -5,7 +5,7 @@ from typing import Tuple
 
 from fathom.constants import ActionType
 from fathom.core.supervision import OutcomeClassifier
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSystem
 from fathom.schemas.observation import (
     KeyboardObservation,
     OverlayObservation,
@@ -70,7 +70,13 @@ class OutcomeClassifierTest(unittest.TestCase):
 
         return OverlayObservation(
             visible=True,
-            bounds=Bounds(x=0, y=0, width=100, height=100, coordinate_system="pixel"),
+            bounds=Bounds(
+                x=0,
+                y=0,
+                width=100,
+                height=100,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
             candidates=(),
         )
 

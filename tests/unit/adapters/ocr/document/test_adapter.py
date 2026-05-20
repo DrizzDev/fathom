@@ -6,7 +6,6 @@ from typing import Any
 from unittest import mock
 
 from fathom.adapters.ocr.document.adapter import DocumentAiOcr
-from fathom.core.exceptions import OcrError
 from fathom.schemas.budgets import PerceptionBudget
 from fathom.schemas.ocr import DocumentAiConfiguration
 from fathom.schemas.screens import ScreenCapture
@@ -48,14 +47,16 @@ class _StubClient:
 class _FailingClient:
     """
     Test double that raises on ``process_document``. Drives the
-    adapter's error-mapping path so a raw provider exception is
-    surfaced as a non-retryable :class:`OcrError`.
+    adapter's error-suppression path so a raw provider exception
+    surfaces as an empty :class:`OcrResult` rather than propagating.
     """
 
     def process_document(self, *, request: Any) -> Any:
         """
         Raise a deterministic :class:`RuntimeError`. The adapter must
-        catch this and translate it into a typed :class:`OcrError`.
+        catch this, log via ``logger.exception``, and return an empty
+        :class:`OcrResult` so OCR — an optional perception enrichment
+        — never breaks the surrounding run.
         """
 
         _ = request
@@ -64,13 +65,17 @@ class _FailingClient:
 
 class DocumentAiOcrAdapterTest(unittest.IsolatedAsyncioTestCase):
     """
-    Pins :class:`DocumentAiOcr` request, response, and error mapping.
+    Pins :class:`DocumentAiOcr` request, response, and graceful-failure.
 
     The adapter runs the Document AI ``process_document`` call on a
     worker thread inside ``asyncio.wait_for``, then hands the response
-    to :class:`DocumentAiMapper`. The tests cover: empty-document
-    happy path, dispatch counting, generic-exception → non-retryable
-    :class:`OcrError` mapping, timeout → retryable :class:`OcrError`,
+    to :class:`DocumentAiMapper`. OCR is an optional perception
+    enrichment: every failure mode (generic provider exception, budget
+    timeout) is suppressed at the adapter boundary and returned as an
+    empty :class:`OcrResult` so the caller can degrade gracefully.
+
+    The tests cover: empty-document happy path, dispatch counting,
+    provider-exception → empty result, budget timeout → empty result,
     and default-client construction (without a stub client, the adapter
     must instantiate the real Document AI client class).
     """
@@ -153,9 +158,11 @@ class DocumentAiOcrAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.calls, 1)
 
-    async def test_extract_wraps_provider_exception_as_ocr_error(self) -> None:
+    async def test_extract_returns_empty_result_on_provider_exception(self) -> None:
         """
-        A client exception is wrapped as a non-retryable OcrError.
+        A client exception must be suppressed at the adapter boundary
+        and surface as an empty :class:`OcrResult`. Optional perception
+        enrichments must never break the surrounding run.
         """
 
         adapter = DocumentAiOcr(
@@ -163,13 +170,15 @@ class DocumentAiOcrAdapterTest(unittest.IsolatedAsyncioTestCase):
             client=_FailingClient(),
         )
 
-        with self.assertRaises(OcrError) as caught:
-            await adapter.extract(capture=self.__capture(), budget=self.__budget())
-        self.assertFalse(caught.exception.retryable)
+        result = await adapter.extract(capture=self.__capture(), budget=self.__budget())
 
-    async def test_extract_wraps_timeout_as_retryable_ocr_error(self) -> None:
+        self.assertEqual(result.tokens, ())
+        self.assertGreaterEqual(result.duration, 0)
+
+    async def test_extract_returns_empty_result_on_budget_timeout(self) -> None:
         """
-        A client call that exceeds the OCR budget raises a retryable OcrError.
+        A client call that exceeds the OCR budget must surface as an
+        empty :class:`OcrResult` rather than propagating a TimeoutError.
         """
 
         class _BlockingClient:
@@ -194,9 +203,10 @@ class DocumentAiOcrAdapterTest(unittest.IsolatedAsyncioTestCase):
         )
         budget = PerceptionBudget(ocr=10, local=10, localization=10)
 
-        with self.assertRaises(OcrError) as caught:
-            await adapter.extract(capture=self.__capture(), budget=budget)
-        self.assertTrue(caught.exception.retryable)
+        result = await adapter.extract(capture=self.__capture(), budget=budget)
+
+        self.assertEqual(result.tokens, ())
+        self.assertGreaterEqual(result.duration, 0)
 
     def test_build_default_client_when_omitted(self) -> None:
         """

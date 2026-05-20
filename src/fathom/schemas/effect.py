@@ -18,6 +18,31 @@ from fathom.constants.screen import (
 from fathom.schemas.screens import ScreenDiff
 
 
+class ActionEffectSignalCounts(BaseModel):
+    """
+    Per-classifier signal tally that produced :class:`ActionEffectStatus`.
+    Diagnostic-only — not consumed by the agent prompt.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    progress: int = Field(
+        ge=0,
+        default=0,
+        description="Number of metrics whose value crossed a progress threshold.",
+    )
+    no_progress: int = Field(
+        ge=0,
+        default=0,
+        description="Number of metrics whose value satisfied a no-progress threshold.",
+    )
+    expected: int = Field(
+        ge=1,
+        default=1,
+        description="Number of signals available on the diff (pHash is always available).",
+    )
+
+
 class ActionEffectStatus(StrEnum):
     """
     Coarse classification of what an action did to the screen.
@@ -90,6 +115,14 @@ class ActionEffect(BaseModel):
         default=None,
         description="Estimated vertical translation in pixels; None when not detected.",
     )
+    signal_counts: ActionEffectSignalCounts = Field(
+        default_factory=ActionEffectSignalCounts,
+        description=(
+            "Diagnostic tally of progress vs no-progress signals that "
+            "produced ``status``. Lets observers reproduce the classifier "
+            "decision without re-deriving thresholds from raw metrics."
+        ),
+    )
 
     @classmethod
     def from_screen_diff(cls, *, diff: Optional[ScreenDiff]) -> "ActionEffect":
@@ -110,13 +143,20 @@ class ActionEffect(BaseModel):
         visual_progress = cls.__compute_visual_progress(diff=diff)
         scroll_dx = diff.scroll_translation.dx if diff.scroll_translation else None
         scroll_dy = diff.scroll_translation.dy if diff.scroll_translation else None
+
         status = cls.__classify(diff=diff)
+        signal_counts = ActionEffectSignalCounts(
+            progress=cls.__count_progress_signals(diff=diff),
+            no_progress=cls.__count_no_progress_signals(diff=diff),
+            expected=cls.__expected_no_progress_signals(diff=diff),
+        )
 
         return cls(
             status=status,
             scroll_dx=scroll_dx,
             scroll_dy=scroll_dy,
             ssim_score=diff.ssim_score,
+            signal_counts=signal_counts,
             visual_progress=visual_progress,
             phash_distance=diff.phash_distance,
             content_change=diff.content_pixel_diff_ratio,

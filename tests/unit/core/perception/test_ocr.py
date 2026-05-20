@@ -6,7 +6,7 @@ from typing import Tuple
 from fathom.core.exceptions import OcrError
 from fathom.core.perception.ocr import OcrEnsembleService
 from fathom.interfaces.ocr import OcrPort
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import PerceptionBudget
 from fathom.schemas.ocr import OcrConfidence, OcrResult, OcrToken
 from fathom.schemas.screens import ScreenCapture
@@ -100,7 +100,14 @@ class OcrEnsembleServiceTest(unittest.IsolatedAsyncioTestCase):
         overlap/disjoint dedup tests can place tokens deliberately.
         """
 
-        return Bounds(x=x, y=0, width=100, height=50, coordinate_system="pixel", source="ocr")
+        return Bounds(
+            x=x,
+            y=0,
+            width=100,
+            height=50,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            source=CoordinateSource.OCR,
+        )
 
     @staticmethod
     def __token(*, text: str, score: float, bounds: Bounds) -> OcrToken:

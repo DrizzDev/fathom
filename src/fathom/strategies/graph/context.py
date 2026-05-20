@@ -201,7 +201,10 @@ class GraphContext:
             pipeline=artifact_pipeline,
         )
         self.__trace = trace or TraceService(path_manager=path_manager)
-        self.__resolution = resolution or ReferenceResolutionService(ledger=memory)
+        self.__resolution = resolution or ReferenceResolutionService(
+            ledger=memory,
+            workflow_id=workflow_id,
+        )
 
         self.__ocr = ocr or NoopOcr()
         self.__icons = icons or NoopIconDetector()

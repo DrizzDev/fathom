@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fathom.constants import ActionType
 from fathom.core.runtime import RuntimeState
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSystem
 from fathom.schemas.healing import HealingDecision, HealingDecisionKind
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import KeyboardObservation, ScreenObservation
@@ -105,7 +105,13 @@ def _localization(
     return LocalizationResult(
         status=status,
         point=None,
-        bounds=Bounds(x=10, y=10, width=20, height=20, coordinate_system="pixel"),
+        bounds=Bounds(
+            x=10,
+            y=10,
+            width=20,
+            height=20,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        ),
         confidence=1.0,
     )
 

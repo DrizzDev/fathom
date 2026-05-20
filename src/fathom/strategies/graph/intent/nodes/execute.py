@@ -40,8 +40,8 @@ class ExecuteNode:
         logger.info(
             "Starting execution node",
             extra={
-                "component": "graph.intent.execute",
                 "event": "execute.log",
+                "component": "graph.intent.execute",
                 "workflow.id": self.__provider.context.workflow_id,
             },
         )
@@ -50,8 +50,8 @@ class ExecuteNode:
             logger.warning(
                 "Execution cancelled",
                 extra={
-                    "component": "graph.intent.execute",
                     "event": "execute.log",
+                    "component": "graph.intent.execute",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
@@ -72,8 +72,8 @@ class ExecuteNode:
             logger.info(
                 "Skipping execution: supervisor blocked the action",
                 extra={
-                    "component": "graph.intent.execute",
                     "event": "execute.log",
+                    "component": "graph.intent.execute",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
@@ -84,8 +84,8 @@ class ExecuteNode:
             logger.error(
                 "Missing ExecutionContext; supervise must run first",
                 extra={
-                    "component": "graph.intent.execute",
                     "event": "execute.log",
+                    "component": "graph.intent.execute",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
@@ -93,10 +93,10 @@ class ExecuteNode:
 
         step = context.step
         logger.info(
-            "Executing action: type=%s, target=%s, confidence=%.2f",
-            step.action.action_type.value,
+            "Executing action: target=%s, confidence=%.2f, type=%s",
             step.action.target,
             step.action.confidence,
+            step.action.action_type.value,
         )
 
         start_time = time.time()
@@ -105,8 +105,8 @@ class ExecuteNode:
             logger.info(
                 f"Processing memory updates: {step.action.memory_updates}",
                 extra={
-                    "component": "graph.intent.execute",
                     "event": "execute.log",
+                    "component": "graph.intent.execute",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
@@ -119,9 +119,15 @@ class ExecuteNode:
             logger.info(
                 f"Calling action executor for {step.action.action_type.value}",
                 extra={
-                    "component": "graph.intent.execute",
                     "event": "execute.log",
+                    "component": "graph.intent.execute",
+                    "action.target": step.action.target,
+                    "action.label_id": step.action.label_id,
+                    "action.type": step.action.action_type.value,
                     "workflow.id": self.__provider.context.workflow_id,
+                    "action.bounds": (
+                        step.action.bounds.model_dump() if step.action.bounds else None
+                    ),
                 },
             )
             execution_result = await self.__provider.context.action_executor.act(

@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from fathom.constants import ActionType
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.services.normalizer import Normalizer
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.decisions import (
     ActDecision,
     AskUserDecision,
@@ -441,10 +441,12 @@ class ToolResponseParser:
                 bounds = Bounds(
                     x=data.bbox.x,
                     y=data.bbox.y,
-                    source="model",
                     width=data.bbox.width,
                     height=data.bbox.height,
-                    coordinate_system=data.bbox.coordinate_system,
+                    source=CoordinateSource.MODEL,
+                    coordinate_system=CoordinateSystem.from_legacy(
+                        data.bbox.coordinate_system,
+                    ),
                 )
             except Exception:
                 logger.warning("Ignoring malformed bbox payload from GeminiBBox: %s", data.bbox)
@@ -521,6 +523,30 @@ class ToolResponseParser:
             target_element_type=data.target_element_type,
             validation_subject=data.validation_subject,
             validation_pattern=data.validation_pattern,
+        )
+
+        logger.info(
+            "Planner tool call parsed",
+            extra={
+                "component": "core.services.parsing",
+                "event": "planner.tool_call.parsed",
+                "action.type": action_type.value,
+                "action.label_id": data.label_id,
+                "action.target": resolved_target_name,
+                "action.has_bounds": bounds is not None,
+                "action.confidence": float(data.confidence),
+                "action.bounds": (
+                    {
+                        "x": bounds.x,
+                        "y": bounds.y,
+                        "width": bounds.width,
+                        "height": bounds.height,
+                        "system": bounds.system.value,
+                    }
+                    if bounds is not None
+                    else None
+                ),
+            },
         )
 
         alternatives: List[Action] = []

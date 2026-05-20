@@ -65,6 +65,9 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     ("fathom.schemas.actions", "Action"),
     ("fathom.schemas.actions", "Bounds"),
     ("fathom.schemas.actions", "InputContext"),
+    ("fathom.schemas.actions", "CoordinateSystem"),
+    ("fathom.schemas.actions", "CoordinateSource"),
+    ("fathom.schemas.actions", "InputContextSource"),
     # ── Artifacts (StepResult.artifacts) ─────────────────────────────────
     ("fathom.schemas.artifacts", "ScreenArtifact"),
     ("fathom.schemas.artifacts", "ScreenArtifactBundle"),
@@ -77,6 +80,8 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     ("fathom.schemas.decisions", "UnactionableDecision"),
     # ── Delta (AnalysisResult.delta) ─────────────────────────────────────
     ("fathom.schemas.delta", "DeltaSignal"),
+    # ── Effect (ActionEffect.signal_counts diagnostic tally) ─────────────
+    ("fathom.schemas.effect", "ActionEffectSignalCounts"),
     # ── Escape (AnalysisResult.escape_report) ────────────────────────────
     ("fathom.schemas.escape", "EscapeCategory"),
     ("fathom.schemas.escape", "EscapeReport"),

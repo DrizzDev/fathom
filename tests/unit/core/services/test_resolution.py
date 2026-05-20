@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 from fathom.constants import ActionType
 from fathom.core.services.resolution import ReferenceResolutionService
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.resolution import ResolveStatus
 
 
@@ -42,7 +42,13 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
             rationale="test",
             label_id=label_id,
             action_type=action_type,
-            bounds=Bounds(x=0, y=0, width=100, height=100, coordinate_system="normalized"),
+            bounds=Bounds(
+                x=0,
+                y=0,
+                width=100,
+                height=100,
+                coordinate_system=CoordinateSystem.NORMALIZED,
+            ),
         )
 
     @staticmethod
@@ -171,7 +177,14 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
         """
 
         service = self.__build_service()
-        bounds = Bounds(x=10, y=20, width=100, height=40, coordinate_system="pixel", source="model")
+        bounds = Bounds(
+            x=10,
+            y=20,
+            width=100,
+            height=40,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            source=CoordinateSource.MODEL,
+        )
         action = Action(
             bounds=bounds,
             rationale="tap visible button",
@@ -193,7 +206,12 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         service = self.__build_service()
         bounds = Bounds(
-            x=429, y=543, width=348, height=120, coordinate_system="pixel", source="model"
+            x=429,
+            y=543,
+            width=348,
+            height=120,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            source=CoordinateSource.MODEL,
         )
         action = Action(
             bounds=bounds,
@@ -218,7 +236,12 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         service = self.__build_service()
         bounds = Bounds(
-            x=429, y=522, width=348, height=120, coordinate_system="pixel", source="model"
+            x=429,
+            y=522,
+            width=348,
+            height=120,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            source=CoordinateSource.MODEL,
         )
         action = Action(
             bounds=bounds,
@@ -244,7 +267,12 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         service = self.__build_service()
         model_bounds = Bounds(
-            x=429, y=522, width=348, height=120, coordinate_system="pixel", source="model"
+            x=429,
+            y=522,
+            width=348,
+            height=120,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            source=CoordinateSource.MODEL,
         )
         action = Action(
             bounds=model_bounds,
@@ -274,7 +302,12 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         service = self.__build_service()
         model_bounds = Bounds(
-            x=429, y=543, width=348, height=120, coordinate_system="normalized", source="model"
+            x=429,
+            y=543,
+            width=348,
+            height=120,
+            coordinate_system=CoordinateSystem.NORMALIZED,
+            source=CoordinateSource.MODEL,
         )
         action = Action(
             bounds=model_bounds,

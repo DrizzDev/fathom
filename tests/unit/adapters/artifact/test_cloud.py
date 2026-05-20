@@ -96,3 +96,20 @@ class CloudSinkTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(receipt.local_cleanup)
         self.assertEqual(receipt.identifier, "")
+
+    async def test_empty_identifier_is_treated_as_silent_failure(self) -> None:
+        """
+        When the underlying storage returns an empty identifier (the
+        composite-storage signal for "all backends failed"), the sink
+        treats it as a failure and preserves the EFS copy. This guards
+        against the historical bug where a cloud backend was configured
+        but artifacts silently went missing.
+        """
+
+        storage = _RecordingStorage(identifier="")
+        sink = CloudSink(storage=storage, workflow_id="run-test")
+
+        receipt = await sink.persist(metadata=self.__metadata(), content=b"PNG")
+
+        self.assertFalse(receipt.local_cleanup)
+        self.assertEqual(receipt.identifier, "")

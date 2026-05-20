@@ -4,7 +4,7 @@ import unittest
 
 from fathom.constants import ActionType
 from fathom.core.healing.orchestrator import HealingOrchestrator
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import Bounds, CoordinateSystem
 from fathom.schemas.budgets import HealingBudget
 from fathom.schemas.healing import HealingDecisionKind, HealingRequest
 from fathom.schemas.observation import (
@@ -54,7 +54,13 @@ class HealingOrchestratorTest(unittest.IsolatedAsyncioTestCase):
 
         return PerceivedElement(
             identifier=identifier,
-            bounds=Bounds(x=100, y=400, width=200, height=80, coordinate_system="pixel"),
+            bounds=Bounds(
+                x=100,
+                y=400,
+                width=200,
+                height=80,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
             source=ElementSource.VISION,
             role=ElementRole.BUTTON,
             confidence=0.9,

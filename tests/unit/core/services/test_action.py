@@ -8,7 +8,13 @@ from fathom.constants import ActionType
 from fathom.constants.interaction import SwipeSpeed
 from fathom.core.services.action import ActionExecutor
 from fathom.interfaces.device import DevicePort
-from fathom.schemas.actions import Action, Bounds, InputContext
+from fathom.schemas.actions import (
+    Action,
+    Bounds,
+    CoordinateSystem,
+    InputContext,
+    InputContextSource,
+)
 from fathom.schemas.configuration import (
     DeviceRuntimeConfiguration,
     InteractionPolicyConfiguration,
@@ -202,7 +208,14 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
             label_id=label_id,
             input_context=input_context,
             action_type=ActionType.TYPE,
-            bounds=bounds or Bounds(x=100, y=200, width=400, height=100, coordinate_system="pixel"),
+            bounds=bounds
+            or Bounds(
+                x=100,
+                y=200,
+                width=400,
+                height=100,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
         )
 
     @staticmethod
@@ -258,7 +271,10 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
 
         action = self.__build_action(
             text="chennai adyar",
-            input_context=InputContext(locator="com.app:id/searchField", source="xml"),
+            input_context=InputContext(
+                locator="com.app:id/searchField",
+                source=InputContextSource.XML,
+            ),
         )
 
         result = await executor.act(
@@ -410,7 +426,13 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
 
         action = self.__build_action(
             text="tap first",
-            bounds=Bounds(x=100, y=200, width=400, height=100, coordinate_system="pixel"),
+            bounds=Bounds(
+                x=100,
+                y=200,
+                width=400,
+                height=100,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
         )
 
         await executor.act(

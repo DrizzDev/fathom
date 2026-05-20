@@ -7,7 +7,14 @@ from typing import Any, Dict, Optional, Pattern
 
 from fathom.constants import GESTURE_ACTION_TYPES, SPATIAL_ACTION_TYPES, ActionType
 from fathom.interfaces.memory import MemoryPort
-from fathom.schemas.actions import Action, Bounds, InputContext
+from fathom.schemas.actions import (
+    Action,
+    Bounds,
+    CoordinateSource,
+    CoordinateSystem,
+    InputContext,
+    InputContextSource,
+)
 from fathom.schemas.resolution import ResolveResult
 
 logger = getLogger(__name__)
@@ -19,12 +26,13 @@ class ReferenceResolutionService:
     Also resolves UI Element Label IDs to ground-truth pixel coordinates.
     """
 
-    def __init__(self, ledger: MemoryPort) -> None:
+    def __init__(self, ledger: MemoryPort, *, workflow_id: Optional[str] = None) -> None:
         """
-        Initialize with memory ledger for lookups.
+        Initialize with memory ledger for lookups and optional workflow context.
         """
 
         self.__ledger = ledger
+        self.__workflow_id = workflow_id
 
         # Regex for variable substitution: $source.key
         self.__ref_pattern: Pattern[str] = re.compile(r"\$(memory|env)\.([a-zA-Z0-9_]+)")
@@ -160,7 +168,7 @@ class ReferenceResolutionService:
 
         if (
             action.bounds is not None
-            and action.bounds.source == "model"
+            and action.bounds.source is CoordinateSource.MODEL
             and str(info.get("source", "")).lower() != "cv"
             and not self.__element_has_semantic_descriptor(element=info)
             and action.action_type in {ActionType.TAP, ActionType.LONG_PRESS}
@@ -234,6 +242,7 @@ class ReferenceResolutionService:
                     "component": "resolution",
                     "raw_bounds": bounds_str,
                     "label_id": action.label_id,
+                    "workflow.id": self.__workflow_id,
                     "clamped": raw_x1 < 0 or raw_y1 < 0 or raw_x2 < 0 or raw_y2 < 0,
                 },
             )
@@ -242,10 +251,10 @@ class ReferenceResolutionService:
                 "bounds": Bounds(
                     x=x1,
                     y=y1,
-                    source="xml",
                     width=width,
                     height=height,
-                    coordinate_system="pixel",
+                    source=CoordinateSource.XML,
+                    coordinate_system=CoordinateSystem.DEVICE_PIXEL,
                 ),
             }
 
@@ -315,7 +324,11 @@ class ReferenceResolutionService:
         if not locator and len(prefilled) == 0:
             return None
 
-        return InputContext(locator=locator, prefilled=prefilled, source="xml")
+        return InputContext(
+            locator=locator,
+            prefilled=prefilled,
+            source=InputContextSource.XML,
+        )
 
     @staticmethod
     def __prefilled_text_from_element(*, element: Dict[str, Any]) -> str:

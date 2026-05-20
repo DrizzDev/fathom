@@ -148,13 +148,16 @@ class PostAction:
             extra={
                 **self.__log_context(),
                 "event": "observe.screen.diff",
-                "phash.distance": screen_diff.phash_distance,
                 "ssim.score": screen_diff.ssim_score,
-                "content.diff.ratio": screen_diff.content_pixel_diff_ratio,
+                "phash.distance": screen_diff.phash_distance,
                 "changed.regions": len(screen_diff.changed_regions),
                 "scroll.translation": str(screen_diff.scroll_translation),
+                "content.diff.ratio": screen_diff.content_pixel_diff_ratio,
                 "effect.status": action_effect.status.value,
                 "effect.visual_progress": action_effect.visual_progress,
+                "effect.signal.expected": action_effect.signal_counts.expected,
+                "effect.signal.progress": action_effect.signal_counts.progress,
+                "effect.signal.no_progress": action_effect.signal_counts.no_progress,
             },
         )
 

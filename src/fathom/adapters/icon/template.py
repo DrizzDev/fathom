@@ -13,7 +13,7 @@ from fathom.constants.perception import (
     ICON_NON_MAX_SUPPRESSION_IOU,
 )
 from fathom.interfaces.icon import IconDetectorPort
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import PerceptionBudget
 from fathom.schemas.icon import IconDetectionResult, IconKind, IconMatch, IconTemplate
 from fathom.schemas.screens import ScreenCapture
@@ -47,7 +47,7 @@ class TemplateIconDetector(IconDetectorPort):
         self, *, capture: ScreenCapture, budget: PerceptionBudget
     ) -> IconDetectionResult:
         """
-        Run template matching on the screen capture and return surviving matches.
+        Run template matching; degrade to an empty result on any failure.
         """
 
         if not self.__compiled or not capture.image:
@@ -57,10 +57,40 @@ class TemplateIconDetector(IconDetectorPort):
         timeout = budget.local / 1000.0
         context = self.__log_context(activity=capture.activity)
 
-        matches = await asyncio.wait_for(
-            asyncio.to_thread(self.__match_all, capture.image),
-            timeout=timeout,
-        )
+        try:
+            matches = await asyncio.wait_for(
+                asyncio.to_thread(self.__match_all, capture.image),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Icon detector timed out — degrading to no matches",
+                extra={
+                    **context,
+                    "event": "icon.detect.timeout",
+                    "budget.local.ms": budget.local,
+                },
+            )
+            return IconDetectionResult(
+                matches=(),
+                duration=int((time.monotonic() - started) * 1000),
+            )
+        except Exception:
+            # Icon template matching is an optional perception
+            # enrichment; cv2 / numpy failures must not break the run.
+            logger.exception(
+                "Icon detector failed — degrading to no matches",
+                extra={
+                    **context,
+                    "event": "icon.detect.failed",
+                    "budget.local.ms": budget.local,
+                },
+            )
+            return IconDetectionResult(
+                matches=(),
+                duration=int((time.monotonic() - started) * 1000),
+            )
+
         duration = int((time.monotonic() - started) * 1000)
 
         logger.info(
@@ -119,10 +149,10 @@ class TemplateIconDetector(IconDetectorPort):
             bounds = Bounds(
                 x=x,
                 y=y,
-                source="viewport",
                 width=int(width),
                 height=int(height),
-                coordinate_system="pixel",
+                source=CoordinateSource.VIEWPORT,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
             )
             matches.append(IconMatch(kind=kind, bounds=bounds, confidence=score))
         return matches

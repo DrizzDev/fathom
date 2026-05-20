@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 
 from fathom.core.localization.ensemble import EnsembleLocalizerService
 from fathom.interfaces.localization import TargetLocalizerPort
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.localization import LocalizationProposal
 from fathom.schemas.observation import KeyboardObservation, ScreenObservation
@@ -88,7 +88,12 @@ class EnsembleLocalizerServiceTest(unittest.IsolatedAsyncioTestCase):
         """
 
         return Bounds(
-            x=x, y=y, width=width, height=height, coordinate_system="pixel", source="model"
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            source=CoordinateSource.MODEL,
         )
 
     @staticmethod

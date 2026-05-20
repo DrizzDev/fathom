@@ -13,7 +13,7 @@ from fathom.core.artifact.renderer import (
     TraceRenderer,
     VerificationRenderer,
 )
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSystem
 from fathom.schemas.artifact import (
     AnnotatedPayload,
     ArtifactKind,
@@ -202,7 +202,13 @@ class PerceptionRendererTest(unittest.TestCase):
             elements=(
                 self.__element(
                     source=ElementSource.OCR,
-                    bounds=Bounds(x=5, y=5, width=20, height=10, coordinate_system="pixel"),
+                    bounds=Bounds(
+                        x=5,
+                        y=5,
+                        width=20,
+                        height=10,
+                        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                    ),
                 ),
             ),
             hashes=_Fixtures.hashes(),
@@ -233,7 +239,13 @@ class PerceptionRendererTest(unittest.TestCase):
             overlays=(
                 OverlayObservation(
                     visible=True,
-                    bounds=Bounds(x=0, y=0, width=30, height=30, coordinate_system="pixel"),
+                    bounds=Bounds(
+                        x=0,
+                        y=0,
+                        width=30,
+                        height=30,
+                        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                    ),
                     candidates=(),
                 ),
             ),

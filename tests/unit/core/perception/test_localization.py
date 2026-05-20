@@ -4,7 +4,7 @@ import unittest
 
 from fathom.constants import ActionType
 from fathom.core.perception.localization import TargetLocalizationService
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.localization import LocalizationStatus
 from fathom.schemas.observation import (
@@ -72,7 +72,13 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         service = TargetLocalizationService()
         element = self.__element(
             identifier="cv_1",
-            bounds=Bounds(x=100, y=200, width=120, height=60, coordinate_system="pixel"),
+            bounds=Bounds(
+                x=100,
+                y=200,
+                width=120,
+                height=60,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
         )
         action = Action(
             action_type=ActionType.TAP,
@@ -100,7 +106,13 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         service = TargetLocalizationService()
         element = self.__element(
             identifier="cv_1",
-            bounds=Bounds(x=300, y=300, width=100, height=50, coordinate_system="pixel"),
+            bounds=Bounds(
+                x=300,
+                y=300,
+                width=100,
+                height=50,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
         )
         action = Action(
             action_type=ActionType.TAP,
@@ -112,8 +124,8 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
                 y=10,
                 width=100,
                 height=50,
-                coordinate_system="pixel",
-                source="model",
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                source=CoordinateSource.MODEL,
             ),
         )
 

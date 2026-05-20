@@ -6,7 +6,7 @@ from fathom.constants.perception import (
     OCR_CONFIDENCE_HIGH_FLOOR,
     OCR_CONFIDENCE_MEDIUM_FLOOR,
 )
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.ocr import OcrConfidence, OcrToken
 
 
@@ -20,16 +20,17 @@ class DocumentAiMapper:
         Convert every Document AI page token into a typed :class:`OcrToken`.
         """
 
-        document_text = getattr(document, "text", "") or ""
         tokens: List[OcrToken] = []
+        document_text = getattr(document, "text", "") or ""
+
         for page in document.pages:
             for raw_token in page.tokens:
                 if (
                     mapped := self.__map_token(
-                        token=raw_token,
-                        document_text=document_text,
                         width=width,
                         height=height,
+                        token=raw_token,
+                        document_text=document_text,
                     )
                 ) is not None:
                     tokens.append(mapped)
@@ -39,9 +40,9 @@ class DocumentAiMapper:
         self,
         *,
         token: Any,
-        document_text: str,
         width: int,
         height: int,
+        document_text: str,
     ) -> Optional[OcrToken]:
         """
         Map one Document AI page token into a typed OCR token.
@@ -56,11 +57,12 @@ class DocumentAiMapper:
             return None
 
         raw_score = float(getattr(token.layout, "confidence", 0.0) or 0.0)
+
         return OcrToken(
             text=snippet,
             bounds=bounds,
-            confidence=self.__resolve_band(raw_score=raw_score),
             raw_score=raw_score,
+            confidence=self.__resolve_band(raw_score=raw_score),
         )
 
     def __resolve_text(self, *, layout: Any, document_text: str) -> str:
@@ -75,10 +77,12 @@ class DocumentAiMapper:
             return ""
 
         parts: List[str] = []
+
         for segment in segments:
             start = int(getattr(segment, "start_index", 0) or 0)
             end = int(getattr(segment, "end_index", 0) or 0)
             parts.append(document_text[start:end])
+
         return "".join(parts).strip()
 
     def __resolve_bounds(self, *, layout: Any, width: int, height: int) -> Optional[Bounds]:
@@ -118,8 +122,8 @@ class DocumentAiMapper:
             y=int(y_min),
             width=bound_width,
             height=bound_height,
-            coordinate_system="pixel",
-            source="ocr",
+            source=CoordinateSource.OCR,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
         )
 
     def __resolve_band(self, *, raw_score: float) -> OcrConfidence:
@@ -129,6 +133,8 @@ class DocumentAiMapper:
 
         if raw_score >= OCR_CONFIDENCE_HIGH_FLOOR:
             return OcrConfidence.HIGH
+
         if raw_score >= OCR_CONFIDENCE_MEDIUM_FLOOR:
             return OcrConfidence.MEDIUM
+
         return OcrConfidence.LOW

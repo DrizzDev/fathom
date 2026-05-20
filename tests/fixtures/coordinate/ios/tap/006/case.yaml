@@ -1,0 +1,14 @@
+platform: ios
+description: |
+  HmrHD healing session, step 4 capture. Production grounding crashed
+  with TimeoutError before any planner action was emitted (no Resolution
+  snap, no tap dispatched). Carried as a property-only fixture: every
+  element BoundsGenerator extracts from this XML must dispatch inside
+  its own logical bbox under the current CoordinateConverter. Exists to
+  exercise the manifest pipeline on a screen the production run never
+  managed to act on, ensuring the converter holds across crash-adjacent
+  captures too.
+screen:
+  logical:
+    width: 430
+    height: 932

@@ -5,7 +5,7 @@ from typing import Tuple
 
 from fathom.core.perception.icon import IconEnsembleService
 from fathom.interfaces.icon import IconDetectorPort
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import PerceptionBudget
 from fathom.schemas.icon import IconDetectionResult, IconKind, IconMatch
 from fathom.schemas.screens import ScreenCapture
@@ -97,7 +97,14 @@ class IconEnsembleServiceTest(unittest.IsolatedAsyncioTestCase):
         overlap and disjoint tests can place icons deterministically.
         """
 
-        return Bounds(x=x, y=0, width=48, height=48, coordinate_system="pixel", source="viewport")
+        return Bounds(
+            x=x,
+            y=0,
+            width=48,
+            height=48,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            source=CoordinateSource.VIEWPORT,
+        )
 
     @staticmethod
     def __match(*, kind: IconKind, confidence: float, bounds: Bounds) -> IconMatch:

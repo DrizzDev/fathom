@@ -9,7 +9,7 @@ from fathom.constants.perception import (
     ENSEMBLE_MIN_AGREEING_MEMBERS,
 )
 from fathom.interfaces.localization import TargetLocalizerPort
-from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.localization import LocalizationProposal
 from fathom.schemas.observation import ScreenObservation
@@ -163,9 +163,9 @@ class EnsembleLocalizerService:
             return await asyncio.wait_for(
                 member.locate(
                     action=action,
-                    observation=observation,
-                    capture=capture,
                     budget=budget,
+                    capture=capture,
+                    observation=observation,
                 ),
                 timeout=timeout,
             )
@@ -174,20 +174,21 @@ class EnsembleLocalizerService:
                 "Ensemble member timed out",
                 extra={
                     **context,
-                    "event": "ensemble.member.timeout",
                     "member": member.name,
                     "timeout.seconds": timeout,
+                    "event": "ensemble.member.timeout",
                 },
             )
             return None
-        except Exception as exception:
-            logger.warning(
-                "Ensemble member raised",
+        except Exception:
+            # Localization is an optional, fail-soft enrichment;
+            # log the full traceback and let other members vote.
+            logger.exception(
+                "Ensemble member raised — degrading to no proposal",
                 extra={
                     **context,
-                    "event": "ensemble.member.error",
                     "member": member.name,
-                    "error.message": str(exception),
+                    "event": "ensemble.member.error",
                 },
             )
             return None
@@ -269,10 +270,10 @@ class EnsembleLocalizerService:
         return Bounds(
             x=x_total // count,
             y=y_total // count,
+            source=CoordinateSource.MODEL,
             width=max(1, width_total // count),
             height=max(1, height_total // count),
-            coordinate_system="pixel",
-            source="model",
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
         )
 
     @staticmethod
@@ -283,6 +284,7 @@ class EnsembleLocalizerService:
 
         mean = sum(proposal.confidence for proposal in cluster) / len(cluster)
         coverage = len(cluster) / max(1, total)
+
         return float(min(1.0, mean * coverage))
 
     @staticmethod
@@ -295,6 +297,7 @@ class EnsembleLocalizerService:
         top = max(first.y, second.y)
         right = min(first.x + first.width, second.x + second.width)
         bottom = min(first.y + first.height, second.y + second.height)
+
         if right <= left or bottom <= top:
             return 0.0
 
@@ -302,8 +305,10 @@ class EnsembleLocalizerService:
         first_area = first.width * first.height
         second_area = second.width * second.height
         union = first_area + second_area - intersection
+
         if union <= 0:
             return 0.0
+
         return float(intersection / union)
 
     def __log_context(self, *, activity: str, target: str) -> Dict[str, Any]:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import time
 from logging import getLogger
 from typing import Awaitable, Callable, Dict, Optional, Set, Tuple
+
+from PIL import Image
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import (
@@ -19,7 +22,14 @@ from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
-from fathom.schemas.actions import Action, ExecutionRegion, GesturePath, InputContext
+from fathom.schemas.actions import (
+    Action,
+    CoordinateSource,
+    CoordinateSystem,
+    ExecutionRegion,
+    GesturePath,
+    InputContext,
+)
 from fathom.schemas.artifact import ArtifactRecord, TracePayload
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult, ExecutionResult
@@ -69,7 +79,11 @@ class ActionExecutor:
         last_error: Optional[str] = None
         for attempt in range(self.__max_retries + 1):
             try:
-                result, coords = await self.__execute_primitive(step=step)
+                result, coords = await self.__execute_primitive(
+                    step=step,
+                    session_id=session_id,
+                    pre_capture=pre_capture,
+                )
 
                 if result.success and coords:
                     await self.__emit_trace_artifact(
@@ -111,7 +125,11 @@ class ActionExecutor:
         )
 
     async def __execute_primitive(
-        self, step: Step
+        self,
+        *,
+        step: Step,
+        session_id: str,
+        pre_capture: ScreenCapture,
     ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
         """
         Execute specific device primitive.
@@ -124,9 +142,20 @@ class ActionExecutor:
             self.__cached_dimensions = await self.__device.get_dimensions()
         width, height = self.__cached_dimensions
 
+        pixel_width, pixel_height = self.__resolve_pixel_dimensions(
+            capture=pre_capture,
+            logical_width=width,
+            logical_height=height,
+        )
+
         configuration = self.__device.configuration or DeviceRuntimeConfiguration()
         converter = CoordinateConverter(
-            screen_width=width, screen_height=height, configuration=configuration
+            logical_width=width,
+            logical_height=height,
+            workflow_id=session_id,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
+            configuration=configuration,
         )
 
         if self.__is_non_interactive_action(action=action):
@@ -166,6 +195,43 @@ class ActionExecutor:
                 None,
             )
 
+    @staticmethod
+    def __resolve_pixel_dimensions(
+        *,
+        logical_width: int,
+        logical_height: int,
+        capture: ScreenCapture,
+    ) -> Tuple[int, int]:
+        """
+        Read the screenshot's actual pixel dimensions.
+
+        :class:`ScreenCapture.width` / ``height`` carry the platform's
+        logical dimensions (e.g., 430x932 on iPhone 15 Pro Max). The PNG
+        bytes inside ``image`` are at the device-pixel resolution (e.g.,
+        1290x2796 at 3x retina). This method decodes the PNG header to
+        recover that pixel resolution so the
+        :class:`CoordinateConverter` can correctly translate
+        ``DEVICE_PIXEL`` bounds to logical dispatch coordinates.
+        """
+
+        if not capture.image:
+            return logical_width, logical_height
+
+        try:
+            with Image.open(io.BytesIO(capture.image)) as image:
+                return image.width, image.height
+        except Exception:
+            logger.exception(
+                "Failed to decode pixel dimensions from capture; falling back to logical",
+                extra={
+                    "logical.width": logical_width,
+                    "logical.height": logical_height,
+                    "component": "core.services.action",
+                    "event": "executor.pixel_dimensions.failed",
+                },
+            )
+            return logical_width, logical_height
+
     def __apply_tap_bias(
         self, x: int, y: int, action: Action, converter: CoordinateConverter
     ) -> Tuple[int, int]:
@@ -177,8 +243,10 @@ class ActionExecutor:
         if not action.bounds:
             return x, y
 
-        # Label-snapped pixel bounds are already grounded to exact device coordinates
-        is_label_snapped_pixel = bool(action.label_id) and action.bounds.system.lower() == "pixel"
+        # Label-snapped device-pixel bounds are already grounded to exact device coordinates.
+        is_label_snapped_pixel = (
+            bool(action.label_id) and action.bounds.system is CoordinateSystem.DEVICE_PIXEL
+        )
 
         if is_label_snapped_pixel:
             return x, y
@@ -401,7 +469,7 @@ class ActionExecutor:
         if action.bounds:
             region = converter.region_from_bounds(
                 bounds=action.bounds,
-                source=action.bounds.source or "model",
+                source=action.bounds.source or CoordinateSource.MODEL,
             )
         else:
             region = converter.viewport_region()
