@@ -43,7 +43,7 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """
-        Retry once in-execute and shift away from the original lane when the first attempt stalls.
+        Retry once in-execute and shift away from the original lane and sticky footer band.
         """
 
         before = self.__capture(name="before.png")
@@ -106,7 +106,8 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.success)
         self.assertFalse(outcome.success)
         self.assertEqual(len(device.swipes), 2)
-        self.assertGreater(device.swipes[0][1], 1881)
+        self.assertLess(device.swipes[0][1], 1881)
+        self.assertLess(device.swipes[1][1], 1881)
         self.assertEqual(device.swipes[0][5], SwipeSpeed.SLOW)
         self.assertNotEqual(device.swipes[0][:4], device.swipes[1][:4])
 
