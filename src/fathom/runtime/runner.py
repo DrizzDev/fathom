@@ -28,6 +28,7 @@ from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
+from fathom.version import VersionInfo
 
 logger = getLogger(__name__)
 
@@ -148,6 +149,7 @@ class FathomRunner:
             extra={
                 **snapshot,
                 "component": "runtime.runner",
+                "package": VersionInfo.payload(),
                 "event": "fathom.runner.configured",
                 "runtime_configuration_bound": self.__runtime_configuration is not None,
             },
