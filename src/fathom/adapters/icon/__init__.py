@@ -1,6 +1,8 @@
-from __future__ import annotations
+"""
+Icon adapters package.
+"""
 
-from fathom.adapters.icon.noop import NoopIconDetector
-from fathom.adapters.icon.template import TemplateIconDetector
-
-__all__ = ["NoopIconDetector", "TemplateIconDetector"]
+__all__ = [
+    "NoopIconDetector",
+    "TemplateIconDetector",
+]

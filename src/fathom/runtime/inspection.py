@@ -52,12 +52,20 @@ class RuntimeConfigurationInspector:
         Return one redacted dict carrying every config value worth logging.
         """
 
+        port_configuration = self.__describe_port_configuration(ports=ports)
+        configuration_payload = self.__redact(value=self.__as_dict(model=configuration))
+        configuration_payload = self.__with_effective_device_configuration(
+            configuration=configuration_payload,
+            port_configuration=port_configuration,
+        )
+
         return {
+            "configuration": configuration_payload,
+            "port_configuration": port_configuration,
             "ports": self.__describe_ports(ports=ports),
             "paths": self.__describe_paths(path_manager=path_manager),
             "recovery": self.__redact(value=self.__as_dict(model=recovery)),
             "realignment": self.__redact(value=self.__as_dict(model=realignment)),
-            "configuration": self.__redact(value=self.__as_dict(model=configuration)),
         }
 
     def __describe_ports(self, *, ports: Dict[str, Any]) -> Dict[str, str]:
@@ -66,6 +74,20 @@ class RuntimeConfigurationInspector:
         """
 
         return {name: self.__qualified_class_name(value=value) for name, value in ports.items()}
+
+    def __describe_port_configuration(self, *, ports: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Surface effective port runtime configuration when the port exposes it.
+        """
+
+        projected: Dict[str, Any] = {}
+
+        for name, value in ports.items():
+            configuration = getattr(value, "configuration", None)
+            if isinstance(configuration, BaseModel):
+                projected[name] = self.__redact(value=self.__as_dict(model=configuration))
+
+        return projected
 
     def __describe_paths(self, *, path_manager: Any) -> Dict[str, Optional[str]]:
         """
@@ -85,6 +107,25 @@ class RuntimeConfigurationInspector:
         return {
             name: self.__safe_str(value=getattr(path_manager, name, None)) for name in attributes
         }
+
+    @staticmethod
+    def __with_effective_device_configuration(
+        *,
+        configuration: Dict[str, Any],
+        port_configuration: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Overlay the effective wired device configuration onto the generic payload.
+        """
+
+        effective_device = port_configuration.get("device")
+
+        if not isinstance(effective_device, dict):
+            return configuration
+
+        merged = dict(configuration)
+        merged["device"] = effective_device
+        return merged
 
     @staticmethod
     def __as_dict(*, model: Optional[BaseModel]) -> Dict[str, Any]:

@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 from datetime import datetime, timezone
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Set, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,6 +17,7 @@ from fathom.schemas.artifact import (
     ArtifactMetadata,
     ArtifactRecord,
     PipelineConfig,
+    TracePayload,
 )
 
 logger = getLogger(__name__)
@@ -92,11 +93,7 @@ class ArtifactPipeline:
             return None
 
         metadata = record.metadata()
-        payload_path = await asyncio.to_thread(
-            self.__stage_to_efs,
-            metadata=metadata,
-            content=content,
-        )
+        payload_path = await asyncio.to_thread(self.__stage_to_efs, record=record, content=content)
         logger.debug(
             "Artifact staged on EFS",
             extra={
@@ -156,14 +153,15 @@ class ArtifactPipeline:
     def __stage_to_efs(
         self,
         *,
-        metadata: ArtifactMetadata,
+        record: ArtifactRecord,
         content: bytes,
     ) -> Path:
         """
         Synchronously write the payload bytes to EFS and return the path.
         """
 
-        filename = self.__filename(metadata=metadata)
+        metadata = record.metadata()
+        filename = self.__filename(record=record, metadata=metadata)
         payload_path = self.__path_manager.get_artifact_path(
             kind=metadata.kind,
             session_id=metadata.session_id,
@@ -225,11 +223,11 @@ class ArtifactPipeline:
             payload_path.unlink()
 
     @staticmethod
-    def __filename(*, metadata: ArtifactMetadata) -> str:
+    def __filename(*, record: ArtifactRecord, metadata: ArtifactMetadata) -> str:
         """
         Build a stable filename in the canonical artifact grammar.
 
-        Pattern: ``step-NNN__<kind>__<iso-timestamp-utc>.<ext>``.
+        Pattern: ``step-NNN__<kind>[__attempt-N]__<iso-timestamp-utc>.<ext>``.
         Zero-padded step ensures directory listings sort by step.
         ISO timestamp with hyphenated time (``T18-33-40Z``) keeps the
         value filesystem-safe across platforms.
@@ -240,8 +238,17 @@ class ArtifactPipeline:
         timestamp = datetime.fromtimestamp(metadata.created / 1000.0, tz=timezone.utc).strftime(
             ArtifactFilename.TIMESTAMP_FORMAT
         )
+        milliseconds = metadata.created % 1000
         separator = ArtifactFilename.SEPARATOR
-        return f"step-{step}{separator}{metadata.kind.value}{separator}{timestamp}.{extension}"
+        attempt_suffix = ""
+        if metadata.kind is ArtifactKind.TRACE:
+            trace_payload = cast("TracePayload", record.payload)
+            if trace_payload.attempt is not None:
+                attempt_suffix = f"{separator}attempt-{trace_payload.attempt.index}"
+        return (
+            f"step-{step}{separator}{metadata.kind.value}{attempt_suffix}{separator}"
+            f"{timestamp}-{milliseconds:03d}.{extension}"
+        )
 
     @staticmethod
     def __extension_for(*, kind: ArtifactKind) -> str:

@@ -16,13 +16,13 @@ deterministic — fixtures must never depend on `logs/` at test time.
 
 Mapping from raw log to fixture directory:
 
-| Raw log                | Fixture directory                          | Scenario pinned                              |
-|------------------------|--------------------------------------------|----------------------------------------------|
-| `logs/healing.txt`     | `tests/fixtures/healing/cosmetic_replan/`  | Cosmetic-replan counter loss on scroll task (Swiggy search log)  |
-| `logs/healing__1.txt`  | `tests/fixtures/healing/overlay_thrash/`   | Overlay-dismiss thrash before heart-tap (Swiggy favourites log)  |
-| `logs/healing__2.txt`  | `tests/fixtures/healing/overlay_scrim/`    | Pixel-scrim overlay with no manifest dialog  |
-| `logs/3.txt`           | `tests/fixtures/healing/scroll_loop/`      | Scroll loop crossing per-task attempt budget |
-| n/a (synthetic)        | `tests/fixtures/healing/coachmark/`        | yVKnb-style coachmark two-screen oscillation |
+| Fixture id | Raw log             | Scenario pinned                              |
+|------------|---------------------|----------------------------------------------|
+| `001`      | n/a (synthetic)     | yVKnb-style coachmark two-screen oscillation |
+| `002`      | `logs/healing.txt`  | Cosmetic-replan counter loss on scroll task (Swiggy search log) |
+| `003`      | `logs/healing__2.txt` | Pixel-scrim overlay with no manifest dialog |
+| `004`      | `logs/healing__1.txt` | Overlay-dismiss thrash before heart-tap (Swiggy favourites log) |
+| `005`      | `logs/3.txt`        | Scroll loop crossing per-task attempt budget |
 
 The yVKnb scenario has no log dump; it is reproduced from the
 oscillation pattern already pinned in
@@ -34,7 +34,7 @@ Every scenario directory uses the same file layout so the replay loader
 is one implementation, not five:
 
 ```text
-tests/fixtures/healing/<scenario>/
+tests/fixtures/healing/<fixture-id>/
     intent.txt          Single-line natural-language intent (the run goal).
     steps.json          Ordered list of replayed steps (schema below).
     frames/             PNG screenshot per step (`step_<index>.png`).

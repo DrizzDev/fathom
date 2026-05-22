@@ -182,6 +182,15 @@ class IOSParser(PlatformParser):
                     continue
 
                 metadata = {key: node.get(key, "") for key in node.attrib}
+                metadata.update(
+                    self.__scroll_metadata(
+                        width=width,
+                        height=height,
+                        screen_width=screen_width,
+                        screen_height=screen_height,
+                        metadata=metadata,
+                    )
+                )
 
                 hidden_icon_candidate = self.__is_hidden_tappable_icon_candidate(
                     x=x,
@@ -233,6 +242,36 @@ class IOSParser(PlatformParser):
                 continue
 
         return detected
+
+    def __scroll_metadata(
+        self,
+        *,
+        width: int,
+        height: int,
+        screen_width: int,
+        screen_height: int,
+        metadata: Dict[str, Any],
+    ) -> Dict[str, str]:
+        """
+        Attach normalized scroll metadata for downstream scope resolution.
+        """
+
+        element_type = str(metadata.get("type", ""))
+        if element_type not in self.__SCROLLABLE_TYPES:
+            return {}
+
+        fills_viewport = width >= int(screen_width * 0.75) and height >= int(screen_height * 0.40)
+        is_horizontal_strip = width > max(height * 2, 1) and height <= int(screen_height * 0.30)
+        axis = "horizontal" if is_horizontal_strip and not fills_viewport else "vertical"
+        scope_kind = (
+            "viewport" if fills_viewport else ("carousel" if axis == "horizontal" else "list")
+        )
+
+        return {
+            "axis": axis,
+            "kind": scope_kind,
+            "scrollable": "true",
+        }
 
     @staticmethod
     def __clamp(value: int, minimum: int, maximum: int) -> int:

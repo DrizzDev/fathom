@@ -10,7 +10,7 @@ from fathom.schemas.escape import EscapeReport
 from fathom.schemas.localization import LocalizationCandidate
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
-from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.subgoal import ExecutionContract, SubGoal
 from fathom.schemas.supervision import BlockReason
 
 
@@ -67,6 +67,14 @@ class RecoveryRequest(BaseModel):
     pending_sub_goals: List[str] = Field(description="Remaining unfinished sub-goal descriptions")
     stuck_sub_goal: str = Field(
         description="Description of the sub-goal the agent failed to complete"
+    )
+    strict_mode: bool = Field(
+        default=False,
+        description="Whether strict execution constraints are active for this run.",
+    )
+    execution_contract: ExecutionContract = Field(
+        default_factory=ExecutionContract,
+        description="Structured execution constraints carried by the active sub-goal.",
     )
 
     recent_actions: List[str] = Field(

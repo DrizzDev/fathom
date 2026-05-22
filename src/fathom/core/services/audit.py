@@ -4,11 +4,6 @@ import time
 from collections import deque
 from typing import Any, Dict, List, Optional
 
-from rich.console import Console
-from rich.markup import escape
-from rich.panel import Panel
-from rich.table import Table
-
 from fathom.core.context.manager import ContextManager
 from fathom.schemas.results import PlanResult
 from fathom.schemas.screens import ScreenState
@@ -20,12 +15,12 @@ class AuditService:
     Handles logging and console visualization of agent execution.
     """
 
-    def __init__(self, *, console: Optional[Console] = None) -> None:
+    def __init__(self, *, console: Optional[Any] = None) -> None:
         """
         Initialize auditor with injected or default console.
         """
 
-        self.__console = console or Console()
+        self.__console = console or self.__build_console()
         self.__memory_audit_trail: deque[Dict[str, Any]] = deque(maxlen=1000)
 
     def log_context(self, manager: ContextManager) -> None:
@@ -34,6 +29,7 @@ class AuditService:
         """
 
         full_context = manager.get_full_context()
+        Panel, Table, escape = self.__rich_types()
 
         # 1. Build Roadmap Table
         roadmap = full_context.get("roadmap")
@@ -89,6 +85,7 @@ class AuditService:
         """
 
         sanitized_payload = self.__sanitize_recursive(data=payload)
+        Panel, Table, escape = self.__rich_types()
 
         prompt_table = Table.grid(padding=(0, 1))
         prompt_table.add_column(style="cyan", no_wrap=True)
@@ -137,6 +134,7 @@ class AuditService:
 
         _ = analysis_duration
         _ = execution_duration
+        Panel, Table, escape = self.__rich_types()
 
         audit_grid = Table.grid(padding=(0, 2))
 
@@ -245,3 +243,29 @@ class AuditService:
             return [self.__sanitize_recursive(data=item) for item in data]
 
         return data
+
+    @staticmethod
+    def __build_console() -> Any:
+        """
+        Build the Rich console dependency for audit rendering.
+        """
+
+        try:
+            from rich.console import Console
+        except ModuleNotFoundError as exception:
+            raise RuntimeError("Rich is required to instantiate AuditService.") from exception
+        return Console()
+
+    @staticmethod
+    def __rich_types() -> tuple[Any, Any, Any]:
+        """
+        Resolve Rich rendering helpers lazily.
+        """
+
+        try:
+            from rich.markup import escape
+            from rich.panel import Panel
+            from rich.table import Table
+        except ModuleNotFoundError as exception:
+            raise RuntimeError("Rich is required to use AuditService rendering.") from exception
+        return Panel, Table, escape

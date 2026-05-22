@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import MagicMock
 
+from fathom.constants.command import CommandExecutionMode
+from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.core.recovery import BoundedFailureOutcome, ReplanOutcome
 from fathom.schemas.escape import EscapeCategory, EscapeReport
-from fathom.strategies.graph.intent.nodes.recovery import RecoveryDispatcher
+from fathom.schemas.subgoal import ExecutionContract, RequiredActionFamily, ScrollAxis, SubGoal
+from fathom.strategies.graph.intent.nodes.recovery import (
+    RecoveryDispatcher,
+    RecoveryOutcomeApplier,
+)
 
 
 class RecoveryDispatcherExtractEscapeReportTest(unittest.TestCase):
@@ -197,3 +205,201 @@ class RecoveryDispatcherDescriptorsFromTraceTest(unittest.TestCase):
 
         self.assertEqual(len(descriptors), 2)
         self.assertEqual(descriptors[1], "raw-string-entry")
+
+
+class RecoveryOutcomeApplierStrictExecutionContractTest(unittest.TestCase):
+    """
+    Pins the strict-mode semantic mission guard on recovery replans.
+    """
+
+    def test_strict_scroll_mission_rejects_search_workflow_replan(self) -> None:
+        """
+        Strict scroll discovery must not be rewritten into tap/type search steps.
+        """
+
+        context = MagicMock(name="GraphContext")
+        context.workflow_id = "run-test"
+        context.configuration.intent.command_mode = CommandExecutionMode.STRICT
+        context.agent_state.get_current_sub_goal.return_value = SubGoal(
+            index=0,
+            description="Scroll vertically until you find Asha Tiffin on the screen",
+            execution_contract=ExecutionContract(
+                required_action_family=RequiredActionFamily.SCROLL,
+                scroll_axis=ScrollAxis.VERTICAL,
+            ),
+        )
+        context.agent_state.mark_complete = MagicMock()
+        builder = MagicMock(name="RecoveryRequestBuilder")
+        persistence = MagicMock(name="GraphStatePersistence")
+
+        applier = RecoveryOutcomeApplier(
+            context=context,
+            builder=builder,
+            persistence=persistence,
+        )
+
+        result = applier.apply(
+            outcome=ReplanOutcome(
+                summary="Switch to search workflow.",
+                new_sub_goals=[
+                    SubGoal(
+                        index=0,
+                        description="Tap the Search button at the bottom of the screen",
+                        execution_contract=ExecutionContract(
+                            required_action_family=RequiredActionFamily.TAP,
+                        ),
+                    ),
+                    SubGoal(
+                        index=1,
+                        description="Search for Asha Tiffin in the restaurant list",
+                        execution_contract=ExecutionContract(
+                            required_action_family=RequiredActionFamily.INPUT,
+                        ),
+                    ),
+                    SubGoal(
+                        index=2,
+                        description="Select Asha Tiffin from the search results",
+                        execution_contract=ExecutionContract(
+                            required_action_family=RequiredActionFamily.TAP,
+                        ),
+                    ),
+                ],
+            )
+        )
+
+        assert result is not None
+        self.assertFalse(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+        self.assertEqual(result.get(IntentStateKey.LAST_BLOCK_REASON), "strict_replan_mismatch")
+        context.agent_state.replan_pending_sub_goals.assert_not_called()
+
+    def test_strict_replan_rejects_surface_drift(self) -> None:
+        """
+        Strict replans must preserve the declared surface contract.
+        """
+
+        context = MagicMock(name="GraphContext")
+        context.workflow_id = "run-test"
+        context.configuration.intent.command_mode = CommandExecutionMode.STRICT
+        context.agent_state.get_current_sub_goal.return_value = SubGoal(
+            index=0,
+            description="Scroll horizontally below Fast Delivery until Millet Express is visible",
+            execution_contract=ExecutionContract(
+                required_action_family=RequiredActionFamily.SCROLL,
+                scroll_axis=ScrollAxis.HORIZONTAL,
+                surface="below Fast Delivery section",
+            ),
+        )
+        builder = MagicMock(name="RecoveryRequestBuilder")
+        persistence = MagicMock(name="GraphStatePersistence")
+
+        applier = RecoveryOutcomeApplier(
+            context=context,
+            builder=builder,
+            persistence=persistence,
+        )
+
+        result = applier.apply(
+            outcome=ReplanOutcome(
+                summary="Keep scrolling in another row.",
+                new_sub_goals=[
+                    SubGoal(
+                        index=0,
+                        description="Scroll horizontally below Top Rated until Millet Express is visible",
+                        execution_contract=ExecutionContract(
+                            required_action_family=RequiredActionFamily.SCROLL,
+                            scroll_axis=ScrollAxis.HORIZONTAL,
+                            surface="below Top Rated section",
+                        ),
+                    )
+                ],
+            )
+        )
+
+        assert result is not None
+        self.assertFalse(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+        self.assertEqual(result.get(IntentStateKey.LAST_BLOCK_REASON), "strict_replan_mismatch")
+
+    def test_strict_scroll_mission_rejects_validate_only_replan(self) -> None:
+        """
+        Strict scroll recovery must not degrade into validation-only churn.
+        """
+
+        context = MagicMock(name="GraphContext")
+        context.workflow_id = "run-test"
+        context.configuration.intent.command_mode = CommandExecutionMode.STRICT
+        context.agent_state.get_current_sub_goal.return_value = SubGoal(
+            index=0,
+            description="Scroll horizontally below Fast Delivery until Millet Express is visible",
+            execution_contract=ExecutionContract(
+                required_action_family=RequiredActionFamily.SCROLL,
+                scroll_axis=ScrollAxis.HORIZONTAL,
+                surface="below Fast Delivery section",
+            ),
+        )
+        builder = MagicMock(name="RecoveryRequestBuilder")
+        persistence = MagicMock(name="GraphStatePersistence")
+
+        applier = RecoveryOutcomeApplier(
+            context=context,
+            builder=builder,
+            persistence=persistence,
+        )
+
+        result = applier.apply(
+            outcome=ReplanOutcome(
+                summary="Just validate whether Millet Express is already visible.",
+                new_sub_goals=[
+                    SubGoal(
+                        index=0,
+                        description="Validate Millet Express is visible below Fast Delivery",
+                        execution_contract=ExecutionContract(
+                            required_action_family=RequiredActionFamily.VALIDATE,
+                            surface="below Fast Delivery section",
+                        ),
+                    )
+                ],
+            )
+        )
+
+        assert result is not None
+        self.assertFalse(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+        self.assertEqual(result.get(IntentStateKey.LAST_BLOCK_REASON), "strict_replan_mismatch")
+
+    def test_bounded_failure_marks_failed_and_preserves_diagnostic(self) -> None:
+        """
+        Bounded failure must terminate as FAILED, not as a faux-success completion.
+        """
+
+        context = MagicMock(name="GraphContext")
+        context.workflow_id = "run-test"
+        context.agent_state.mark_complete = MagicMock()
+        builder = MagicMock(name="RecoveryRequestBuilder")
+        persistence = MagicMock(name="GraphStatePersistence")
+
+        applier = RecoveryOutcomeApplier(
+            context=context,
+            builder=builder,
+            persistence=persistence,
+        )
+
+        result = applier.apply(
+            outcome=BoundedFailureOutcome(
+                summary="stop",
+                diagnostic="sub-goal exhausted step budget",
+            )
+        )
+
+        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertEqual(
+            result.get(CommonStateKey.COMPLETION_REASON), CompletionReason.FAILED.value
+        )
+        self.assertEqual(
+            result.get(CommonStateKey.FAILURE_DIAGNOSTIC),
+            "sub-goal exhausted step budget",
+        )
+        context.agent_state.mark_complete.assert_called_once_with(
+            reason=CompletionReason.FAILED.value
+        )

@@ -14,7 +14,12 @@ from fathom.core.prompts.factory import PromptFactory
 from fathom.interfaces.llm import LLMPort, PromptPart
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.decomposition import DecomposedTask, DecompositionSchema
-from fathom.schemas.subgoal import SubGoal, SubGoalStatus
+from fathom.schemas.subgoal import (
+    ExecutionContract,
+    SubGoal,
+    SubGoalStatus,
+    default_max_steps_for_execution_contract,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -198,9 +203,20 @@ class IntentDecomposer:
                 confidence=confidence,
                 criterion=entry.criterion,
                 description=entry.description,
+                execution_contract=entry.execution_contract,
+                max_steps=default_max_steps_for_execution_contract(
+                    contract=entry.execution_contract
+                ),
             )
 
-        return SubGoal(index=index, description=str(entry), confidence=confidence)
+        fallback_contract = ExecutionContract()
+        return SubGoal(
+            index=index,
+            description=str(entry),
+            confidence=confidence,
+            execution_contract=fallback_contract,
+            max_steps=default_max_steps_for_execution_contract(contract=fallback_contract),
+        )
 
     @staticmethod
     def __fallback(*, intent: str) -> List[SubGoal]:
@@ -209,4 +225,14 @@ class IntentDecomposer:
         """
 
         logger.info("[Decomposer] Using fallback single-step decomposition")
-        return [SubGoal(index=0, description=intent, status=SubGoalStatus.PENDING, confidence=0.5)]
+        fallback_contract = ExecutionContract()
+        return [
+            SubGoal(
+                index=0,
+                description=intent,
+                status=SubGoalStatus.PENDING,
+                confidence=0.5,
+                execution_contract=fallback_contract,
+                max_steps=default_max_steps_for_execution_contract(contract=fallback_contract),
+            )
+        ]

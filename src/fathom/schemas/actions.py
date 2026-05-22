@@ -5,7 +5,7 @@ from typing import Any, Dict, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from fathom.constants import ActionType
+from fathom.constants import CONTROL_ACTION_TYPES, ActionExecutionKind, ActionType
 
 
 class CoordinateSource(StrEnum):
@@ -151,6 +151,25 @@ class Bounds(BaseModel):
         """
 
         return self.system is CoordinateSystem.NORMALIZED
+
+    def has_normalized_extent_violation(self) -> bool:
+        """
+        Return whether normalized coordinates exceed the 0-1000 extent contract.
+        """
+
+        if self.system is not CoordinateSystem.NORMALIZED:
+            return False
+
+        return any(
+            (
+                self.x > 1000,
+                self.y > 1000,
+                self.width > 1000,
+                self.height > 1000,
+                self.x + self.width > 1000,
+                self.y + self.height > 1000,
+            )
+        )
 
     @property
     def center_x(self) -> int:
@@ -352,6 +371,10 @@ class Action(BaseModel):
         default=None,
         description="When target_type is positional or dynamic, the exact phrase for script export (e.g. 'the first search result', 'the promotional banner'). Omit for stable.",
     )
+    surface: Optional[str] = Field(
+        default=None,
+        description="Specific section, container, or on-screen area the action belongs to.",
+    )
 
     # Launch semantics (optional; used to disambiguate launcher icon taps from regular taps)
     is_app_launcher: bool = Field(
@@ -399,6 +422,16 @@ class Action(BaseModel):
         description="For wait actions: the wait category - ad (ad to finish), splash (app splash screen), load (content loading), search (search results), or generic.",
     )
 
+    @property
+    def execution_kind(self) -> ActionExecutionKind:
+        """
+        Return whether this action executes on the device or through control flow.
+        """
+
+        if self.action_type in CONTROL_ACTION_TYPES:
+            return ActionExecutionKind.CONTROL
+        return ActionExecutionKind.DEVICE
+
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
     def to_description(self) -> str:
@@ -441,10 +474,10 @@ class Action(BaseModel):
                 if "_" in self.action_type.value
                 else "content"
             )
-            return f"Swipe {direction} on {name}"
+            return f"Swipe {direction} on {self.surface or name}"
 
         if self.action_type == ActionType.SCROLL:
-            return f"Scroll until you see {name}"
+            return f"Scroll {self.surface or name}"
 
         if self.action_type == ActionType.LONG_PRESS:
             return f"Long press on {name}"

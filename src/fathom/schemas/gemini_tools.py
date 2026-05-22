@@ -302,45 +302,116 @@ class ExecuteAction(BaseModel):
     Single low-level UI action emitted by execute_ui.
     """
 
-    bbox: Optional[GeminiBBox] = None
+    bbox: Optional[GeminiBBox] = Field(
+        default=None,
+        description="Optional target bounds emitted by the planner.",
+    )
     action_type: str = Field(
-        "wait",
+        default="wait",
         description="Low-level action type; mapped to internal ActionType.",
     )
-    target_name: Optional[str] = None
-    element_name: Optional[str] = None
-    text: Optional[str] = None
-    text_to_type: Optional[str] = None
-    wait_duration: Optional[float] = None
-    validation_reason: Optional[str] = None
+    target_name: Optional[str] = Field(default=None, description="Primary human-readable target.")
+    element_name: Optional[str] = Field(
+        default=None,
+        description="Secondary target name from older prompt variants.",
+    )
+    text: Optional[str] = Field(default=None, description="Text payload for type actions.")
+    text_to_type: Optional[str] = Field(
+        default=None,
+        description="Legacy alias for text payloads used by older prompts.",
+    )
+    wait_duration: Optional[float] = Field(
+        default=None,
+        description="Requested wait duration in seconds.",
+    )
+    validation_reason: Optional[str] = Field(
+        default=None,
+        description="Structured validation rationale for validate-like actions.",
+    )
 
-    condition: Optional[str] = None
-    is_conditional: bool = False
-    conditional_type: Optional[ConditionalType] = None
-    overlay_detected: bool = False
+    condition: Optional[str] = Field(
+        default=None,
+        description="Guard condition text for conditional actions.",
+    )
+    is_conditional: bool = Field(
+        default=False,
+        description="Whether the action is gated by a condition.",
+    )
+    conditional_type: Optional[ConditionalType] = Field(
+        default=None,
+        description="Classification of the action guard when conditional.",
+    )
+    overlay_detected: bool = Field(
+        default=False,
+        description="Whether the model explicitly observed an overlay.",
+    )
 
-    target_type: Optional[TargetType] = None
-    script_target: Optional[str] = None
+    target_type: Optional[TargetType] = Field(
+        default=None,
+        description="Planner hint describing target stability.",
+    )
+    script_target: Optional[str] = Field(
+        default=None,
+        description="Structured script-friendly target string when available.",
+    )
+    surface: Optional[str] = Field(
+        default=None,
+        description="Specific section, container, or on-screen area this action belongs to.",
+    )
 
     # Structured export signals — authoritative; no heuristic fallback.
-    export_target: Optional[str] = None
-    scroll_target: Optional[str] = None
-    wait_subject: Optional[str] = None
-    wait_pattern: Optional[WaitPattern] = None
-    is_app_launcher: bool = False
-    target_is_generic: Optional[bool] = None
-    target_element_type: Optional[TargetElementType] = None
-    validation_subject: Optional[str] = None
-    validation_pattern: Optional[ValidationPattern] = None
+    export_target: Optional[str] = Field(
+        default=None,
+        description="Specific export target name when script generation needs one.",
+    )
+    scroll_target: Optional[str] = Field(
+        default=None,
+        description="Specific target or section the scroll action is trying to reach.",
+    )
+    wait_subject: Optional[str] = Field(
+        default=None,
+        description="Object or condition the wait action is waiting on.",
+    )
+    wait_pattern: Optional[WaitPattern] = Field(
+        default=None,
+        description="Structured wait pattern classification.",
+    )
+    is_app_launcher: bool = Field(
+        default=False,
+        description="Whether the target launches an app from a launcher surface.",
+    )
+    target_is_generic: Optional[bool] = Field(
+        default=None,
+        description="Whether the planner considers the target name generic.",
+    )
+    target_element_type: Optional[TargetElementType] = Field(
+        default=None,
+        description="Structured target element type emitted by the planner.",
+    )
+    validation_subject: Optional[str] = Field(
+        default=None,
+        description="Primary subject of a validate action.",
+    )
+    validation_pattern: Optional[ValidationPattern] = Field(
+        default=None,
+        description="Structured validation pattern emitted by the planner.",
+    )
 
-    rationale: Optional[str] = None
-    is_valid: bool = True
-    confidence: float = 0.5  # Conservative default; VLM should provide explicit confidence
-    label_id: Optional[str] = None
+    rationale: Optional[str] = Field(default=None, description="Planner rationale for the action.")
+    is_valid: bool = Field(
+        default=True, description="Whether the planner considered the action valid."
+    )
+    confidence: float = Field(
+        description="Required planner confidence in [0, 1].",
+    )
+    label_id: Optional[str] = Field(
+        default=None,
+        description="Resolved manifest label identifier when the planner grounded to one.",
+    )
 
     @field_validator("wait_duration", mode="before")
     @classmethod
-    def _parse_wait_duration(cls, value: Any) -> Optional[float]:
+    def __parse_wait_duration(cls, value: Any) -> Optional[float]:
         if value is None:
             return None
         try:
@@ -348,16 +419,33 @@ class ExecuteAction(BaseModel):
         except (TypeError, ValueError):
             return None
 
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def __parse_confidence(cls, value: Any) -> float:
+        """
+        Parse planner confidence into a bounded float.
+        """
+
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError) as exception:
+            raise ValueError("confidence must be a numeric value in [0, 1].") from exception
+
+        if confidence < 0.0 or confidence > 1.0:
+            raise ValueError("confidence must be in [0, 1].")
+
+        return confidence
+
     @field_validator("label_id", mode="before")
     @classmethod
-    def _to_str_label(cls, value: Any) -> Optional[str]:
+    def __to_str_label(cls, value: Any) -> Optional[str]:
         if value is None:
             return None
         return str(value)
 
     @field_validator("export_target", mode="before")
     @classmethod
-    def _reject_generic_export_target(cls, value: Any) -> Optional[str]:
+    def __reject_generic_export_target(cls, value: Any) -> Optional[str]:
         if value is None:
             return None
         text = str(value).strip()
@@ -371,7 +459,7 @@ class ExecuteAction(BaseModel):
         return text
 
     @model_validator(mode="after")
-    def _enforce_structured_signals(self) -> "ExecuteAction":
+    def __enforce_structured_signals(self) -> "ExecuteAction":
         at = (self.action_type or "").strip().lower()
 
         # scroll_target is required for swipe/scroll actions.
@@ -379,6 +467,11 @@ class ExecuteAction(BaseModel):
             raise ValueError(
                 f"scroll_target is required for action_type='{at}'. "
                 "Provide the element or section being scrolled to find."
+            )
+        if at in _SWIPE_SCROLL_TYPES and not (self.label_id or self.bbox):
+            raise ValueError(
+                f"label_id or bbox is required for action_type='{at}'. "
+                "Ground every scroll action to a manifest container or an explicit visible region."
             )
 
         # wait_subject is required for wait actions.
@@ -391,7 +484,7 @@ class ExecuteAction(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _normalize_conditionals(self) -> "ExecuteAction":
+    def __normalize_conditionals(self) -> "ExecuteAction":
         condition = (self.condition or "").strip() or None
         conditional_type = self.conditional_type
         is_conditional = self.is_conditional or bool(self.overlay_detected)
@@ -436,7 +529,7 @@ class ExecuteUIArgs(GeminiCompletionFlags, GeminiDeltaTelemetry):
     memory_updates: Optional[Dict[str, str]] = None
 
     @model_validator(mode="after")
-    def _normalize_single_action(self) -> "ExecuteUIArgs":
+    def __normalize_single_action(self) -> "ExecuteUIArgs":
         """
         Normalize the temporary legacy actions list into the singular action contract.
         """

@@ -12,8 +12,20 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fathom.constants.subgoal import DEFAULT_SUB_GOAL_MAX_STEPS
-from fathom.schemas.subgoal import SubGoal, SubGoalStatus
+from fathom.constants.subgoal import (
+    DEFAULT_SUB_GOAL_MAX_STEPS,
+    INPUT_SUB_GOAL_MAX_STEPS,
+    SCROLL_SUB_GOAL_MAX_STEPS,
+    TAP_SUB_GOAL_MAX_STEPS,
+)
+from fathom.schemas.subgoal import (
+    ExecutionContract,
+    RequiredActionFamily,
+    ScrollAxis,
+    SubGoal,
+    SubGoalStatus,
+    default_max_steps_for_execution_contract,
+)
 
 
 class TestSubGoalBudget:
@@ -55,3 +67,58 @@ class TestSubGoalBudget:
 
         sub_goal = SubGoal(index=0, description="x")
         assert sub_goal.status == SubGoalStatus.PENDING
+
+    def test_scroll_contract_uses_scroll_budget(self) -> None:
+        """
+        Scroll-family contracts receive the larger action budget.
+        """
+
+        assert (
+            default_max_steps_for_execution_contract(
+                contract=ExecutionContract(
+                    required_action_family=RequiredActionFamily.SCROLL,
+                )
+            )
+            == SCROLL_SUB_GOAL_MAX_STEPS
+        )
+
+    def test_tap_contract_uses_tap_budget(self) -> None:
+        """
+        Tap-family contracts receive the smaller interaction budget.
+        """
+
+        assert (
+            default_max_steps_for_execution_contract(
+                contract=ExecutionContract(
+                    required_action_family=RequiredActionFamily.TAP,
+                )
+            )
+            == TAP_SUB_GOAL_MAX_STEPS
+        )
+
+    def test_input_contract_uses_input_budget(self) -> None:
+        """
+        Input-family contracts receive the typing/search budget.
+        """
+
+        assert (
+            default_max_steps_for_execution_contract(
+                contract=ExecutionContract(
+                    required_action_family=RequiredActionFamily.INPUT,
+                )
+            )
+            == INPUT_SUB_GOAL_MAX_STEPS
+        )
+
+    def test_surface_is_preserved_on_execution_contract(self) -> None:
+        """
+        Structured surface context must round-trip without any parsing heuristics.
+        """
+
+        contract = ExecutionContract(
+            required_action_family=RequiredActionFamily.SCROLL,
+            scroll_axis=ScrollAxis.HORIZONTAL,
+            surface="below Fast Delivery section",
+        )
+
+        assert contract.surface == "below Fast Delivery section"

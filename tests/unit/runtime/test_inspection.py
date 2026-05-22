@@ -58,6 +58,9 @@ class _StubConfiguration(BaseModel):
     tokens: Tuple[str, ...] = Field(default=("aaa-bearer", "bbb-bearer"))
 
 
+_StubDevice.configuration = _StubConfiguration()
+
+
 class RuntimeConfigurationInspectorTest(unittest.TestCase):
     """
     Pins the inspector's redaction + structural projection.
@@ -161,3 +164,43 @@ class RuntimeConfigurationInspectorTest(unittest.TestCase):
         self.assertEqual(snapshot["paths"]["base_path"], "/tmp/fathom")
         self.assertEqual(snapshot["paths"]["memory_path"], "/tmp/fathom/memory")
         self.assertEqual(snapshot["paths"]["output_path"], "/tmp/fathom/output")
+
+    def test_port_configuration_is_projected_and_redacted(self) -> None:
+        """
+        Port runtime configuration is logged separately from port identity.
+        """
+
+        snapshot = RuntimeConfigurationInspector().project(
+            ports={"device": _StubDevice()},
+            configuration=None,
+            recovery=None,
+            realignment=None,
+            path_manager=None,
+        )
+
+        self.assertIn("device", snapshot["port_configuration"])
+        device = snapshot["port_configuration"]["device"]
+        self.assertEqual(device["project_id"], "vision-478905")
+        self.assertEqual(device["api_key"], "[REDACTED]")
+
+    def test_effective_device_configuration_overrides_default_device_snapshot(self) -> None:
+        """
+        Logged configuration.device reflects the wired device configuration, not schema defaults.
+        """
+
+        snapshot = RuntimeConfigurationInspector().project(
+            ports={"device": _StubDevice()},
+            configuration=_StubConfiguration(),
+            recovery=None,
+            realignment=None,
+            path_manager=None,
+        )
+
+        self.assertEqual(
+            snapshot["configuration"]["device"]["project_id"],
+            "vision-478905",
+        )
+        self.assertEqual(
+            snapshot["configuration"]["device"]["api_key"],
+            "[REDACTED]",
+        )

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, cast
 from pydantic import ValidationError
 
 from fathom.constants import ActionType
+from fathom.constants.command import CommandExecutionMode
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.state import (
     CommonStateKey,
@@ -23,16 +24,122 @@ from fathom.core.recovery import (
     ReplanOutcome,
     TryActionOutcome,
 )
+from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.actions import Action
 from fathom.schemas.escape import EscapeReport
 from fathom.schemas.results import PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
+from fathom.schemas.subgoal import RequiredActionFamily, ScrollAxis, SubGoal
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.nodes.persistence import GraphStatePersistence
 from fathom.strategies.graph.state import IntentGraphState
 
 logger = getLogger(__name__)
+
+
+class StrictExecutionContractGuard:
+    """
+    Validates strict-mode replans against structured execution contracts.
+    """
+
+    @classmethod
+    def violation(
+        cls,
+        *,
+        command_mode: CommandExecutionMode,
+        current_sub_goal: Optional[SubGoal],
+        replacement_sub_goals: List[SubGoal],
+    ) -> Optional[str]:
+        """
+        Return a strict-mode violation when a replan changes the active execution contract.
+        """
+
+        if command_mode is not CommandExecutionMode.STRICT or current_sub_goal is None:
+            return None
+
+        contract = current_sub_goal.execution_contract
+        if contract.required_action_family is RequiredActionFamily.UNSPECIFIED:
+            return None
+
+        allowed_families = cls.__allowed_families(
+            required_action_family=contract.required_action_family
+        )
+        for replacement in replacement_sub_goals:
+            replacement_family = replacement.execution_contract.required_action_family
+            if replacement_family not in allowed_families:
+                return (
+                    "strict_replan_mismatch: active sub-goal requires "
+                    f"{contract.required_action_family.value}-family recovery but replan proposed "
+                    f"{replacement_family.value}-family step '{replacement.description}'"
+                )
+
+            if contract.surface and not cls.__same_surface(
+                expected=contract.surface,
+                observed=replacement.execution_contract.surface,
+            ):
+                return (
+                    "strict_replan_mismatch: active sub-goal requires surface "
+                    f"'{contract.surface}' but replan proposed surface "
+                    f"'{replacement.execution_contract.surface or '(none)'}' in "
+                    f"step '{replacement.description}'"
+                )
+
+            if contract.required_action_family is not RequiredActionFamily.SCROLL:
+                continue
+
+            if replacement_family is not RequiredActionFamily.SCROLL:
+                continue
+
+            replacement_axis = replacement.execution_contract.scroll_axis
+            if contract.scroll_axis in {ScrollAxis.UNSPECIFIED, replacement_axis}:
+                continue
+
+            if replacement_axis is ScrollAxis.UNSPECIFIED:
+                return (
+                    "strict_replan_mismatch: active sub-goal requires "
+                    f"{contract.scroll_axis.value} scroll recovery but replan omitted that axis in "
+                    f"step '{replacement.description}'"
+                )
+
+            return (
+                "strict_replan_mismatch: active sub-goal requires "
+                f"{contract.scroll_axis.value} scroll recovery but replan proposed "
+                f"{replacement_axis.value} scroll step '{replacement.description}'"
+            )
+
+        return None
+
+    @staticmethod
+    def __allowed_families(
+        *, required_action_family: RequiredActionFamily
+    ) -> set[RequiredActionFamily]:
+        """
+        Return the strict-mode family set allowed for one active contract.
+        """
+
+        if required_action_family is RequiredActionFamily.SCROLL:
+            return {RequiredActionFamily.SCROLL}
+        if required_action_family is RequiredActionFamily.TAP:
+            return {RequiredActionFamily.TAP}
+        if required_action_family is RequiredActionFamily.INPUT:
+            return {RequiredActionFamily.INPUT, RequiredActionFamily.TAP}
+        if required_action_family is RequiredActionFamily.WAIT:
+            return {RequiredActionFamily.WAIT}
+        if required_action_family is RequiredActionFamily.VALIDATE:
+            return {RequiredActionFamily.VALIDATE}
+        return {required_action_family}
+
+    @staticmethod
+    def __same_surface(*, expected: str, observed: Optional[str]) -> bool:
+        """
+        Compare structured surfaces using the repo's canonical normalization.
+        """
+
+        if not observed:
+            return False
+
+        return Normalizer.clean(text=expected).lower() == Normalizer.clean(text=observed).lower()
 
 
 class EscapeReportDecoder:
@@ -156,6 +263,10 @@ class RecoveryRequestBuilder:
             capture=capture,
             escape_report=escape_report,
             stuck_sub_goal=current.description,
+            strict_mode=(
+                self.__context.configuration.intent.command_mode is CommandExecutionMode.STRICT
+            ),
+            execution_contract=current.execution_contract,
             recent_actions=self.recent_action_descriptors(),
             # Mechanical strategies (overlay/keyboard/scroll) need the
             # current ScreenObservation to decide. Without this the
@@ -272,6 +383,34 @@ class RecoveryOutcomeApplier:
         """
         Replace the pending sub-goal tail and route back to GROUND.
         """
+
+        if (
+            violation := StrictExecutionContractGuard.violation(
+                command_mode=self.__context.configuration.intent.command_mode,
+                current_sub_goal=self.__context.agent_state.get_current_sub_goal(),
+                replacement_sub_goals=outcome.new_sub_goals,
+            )
+        ) is not None:
+            logger.warning(
+                "Recovery replan rejected by strict-mode mission guard",
+                extra={
+                    **self.__log_context(),
+                    "event": "recovery.replan.rejected",
+                    "summary": outcome.summary,
+                    "reason": violation,
+                },
+            )
+            result = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: False,
+                    IntentStateKey.SHOULD_RETRY: True,
+                    IntentStateKey.LAST_BLOCK_REASON: "strict_replan_mismatch",
+                    IntentStateKey.LAST_BLOCK_MESSAGE: violation,
+                },
+            )
+            self.__persistence.persist(result=result)
+            return result
 
         self.__context.agent_state.replan_pending_sub_goals(new_sub_goals=outcome.new_sub_goals)
         self.__context.agent_state.reset_completion()
@@ -393,12 +532,13 @@ class RecoveryOutcomeApplier:
                 "diagnostic": outcome.diagnostic,
             },
         )
-        self.__context.agent_state.mark_complete(reason=outcome.diagnostic)
+        self.__context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
         result = cast(
             "IntentGraphState",
             {
                 CommonStateKey.IS_COMPLETE: True,
-                CommonStateKey.COMPLETION_REASON: outcome.diagnostic,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                CommonStateKey.FAILURE_DIAGNOSTIC: outcome.diagnostic,
             },
         )
         self.__persistence.persist(result=result)

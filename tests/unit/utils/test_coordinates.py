@@ -56,7 +56,7 @@ class CoordinateConverterTest(unittest.TestCase):
         """
 
         width, height = self.__screen_dimensions(
-            PROJECT_ROOT / "tests/fixtures/leadbeam/7e1dae80/20260414_191321.dimensions"
+            PROJECT_ROOT / "tests/fixtures/coordinate/android/swipe/001/dimensions.txt"
         )
         converter = CoordinateConverter(logical_width=width, logical_height=height)
 
@@ -97,6 +97,24 @@ class CoordinateConverterTest(unittest.TestCase):
         self.assertEqual(path.distance, 210)
         self.assertEqual(path.to_coordinates(), (64, 2041, 274, 2041))
 
+    def test_capture_bounds_scale_logical_region_to_retina_pixels(self) -> None:
+        """
+        Translate a logical viewport region into capture-space pixel bounds.
+        """
+
+        converter = CoordinateConverter(
+            logical_width=430,
+            logical_height=932,
+            pixel_width=1290,
+            pixel_height=2796,
+        )
+
+        region = converter.viewport_region()
+        bounds = converter.capture_bounds(region=region)
+
+        self.assertEqual(bounds.system, CoordinateSystem.DEVICE_PIXEL)
+        self.assertEqual((bounds.x, bounds.y, bounds.width, bounds.height), (0, 0, 1290, 2796))
+
     @staticmethod
     def __screen_dimensions(path: Path) -> tuple[int, int]:
         """
@@ -115,10 +133,10 @@ class CoordinateConverterTest(unittest.TestCase):
     @staticmethod
     def __rolodex_knob_bounds() -> Bounds:
         """
-        Return the real Rolodex knob bounds from workflow 7e1dae80.
+        Return the real Rolodex knob bounds from coordinate fixture 001.
         """
 
-        path = PROJECT_ROOT / "tests/fixtures/leadbeam/7e1dae80" / "20260414_191321.xml"
+        path = PROJECT_ROOT / "tests/fixtures/coordinate/android/swipe/001/hierarchy.xml"
         root = ElementTree.parse(path).getroot()
 
         for node in root.iter("node"):
@@ -142,10 +160,10 @@ class CoordinateConverterTest(unittest.TestCase):
     @staticmethod
     def __save_to_draft_bounds() -> Bounds:
         """
-        Return the real Save to draft button bounds from workflow 52a0bb73.
+        Return the real Save to draft button bounds from coordinate fixture 002.
         """
 
-        path = PROJECT_ROOT / "tests/fixtures/leadbeam/52a0bb73" / "20260414_190109.xml"
+        path = PROJECT_ROOT / "tests/fixtures/coordinate/android/swipe/002/hierarchy.xml"
         root = ElementTree.parse(path).getroot()
 
         for node in root.iter("node"):

@@ -106,3 +106,16 @@ class TestProgressSafetyRule:
         assert "PROGRESS SAFETY (MANDATORY)" in system_prompt
         for category in EscapeCategory:
             assert category.value in system_prompt
+
+    def test_gemini_system_prompt_does_not_require_label_id_when_manifest_lacks_target(
+        self,
+    ) -> None:
+        """
+        The top-level system prompt must stay consistent with bbox fallback:
+        manifest grounding is preferred, but not an unconditional requirement.
+        """
+
+        system_prompt = GeminiPromptBuilder().build()
+
+        assert "MUST include 'label_id' from manifest for every interaction" not in system_prompt
+        assert "Otherwise ground the action visually via bbox" in system_prompt

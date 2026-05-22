@@ -9,11 +9,15 @@ unresolvable-target cascade observed in the healing.txt runs.
 
 from __future__ import annotations
 
+from fathom.constants import ActionType
 from fathom.constants.screen import NO_PROGRESS_RECOVERY_THRESHOLD
 from fathom.core.agent.state import AgentState
+from fathom.schemas.actions import Action
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
+from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenDiff
-from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.subgoal import SubGoal, SubGoalStatus
 
 
 def _effect(status: ActionEffectStatus, *, visual_progress: float = 0.0) -> ActionEffect:
@@ -135,6 +139,58 @@ class TestActionEffectTrajectory:
         last = restored.get_last_action_effect()
         assert last is not None
         assert last.status == ActionEffectStatus.NO_PROGRESS
+
+    def test_control_step_does_not_replace_last_device_action_type(self) -> None:
+        """
+        ASK_USER steps must not become the latest device action for loop bookkeeping.
+        """
+
+        state = AgentState(intent="x")
+        state.record_step(
+            result=StepResult(
+                step=Step(
+                    action=Action(
+                        action_type=ActionType.TAP,
+                        target="Continue",
+                        rationale="tap",
+                        confidence=1.0,
+                    ),
+                    event_type="action",
+                    condition=None,
+                    screen_hash="0" * 16,
+                    step_number=0,
+                ),
+                success=True,
+                pre_hash="0" * 16,
+                post_hash="1" * 16,
+                screen_changed=True,
+                duration=1,
+            )
+        )
+
+        state.record_step(
+            result=StepResult(
+                step=Step(
+                    action=Action(
+                        action_type=ActionType.ASK_USER,
+                        target="Need help",
+                        rationale="escalate",
+                        confidence=1.0,
+                    ),
+                    event_type="action",
+                    condition=None,
+                    screen_hash="1" * 16,
+                    step_number=1,
+                ),
+                success=True,
+                pre_hash="1" * 16,
+                post_hash="1" * 16,
+                screen_changed=False,
+                duration=1,
+            )
+        )
+
+        assert state.last_action_type is None
 
 
 class TestReplanBudgetPreservation:
@@ -342,3 +398,44 @@ class TestCompleteDeferralCounter:
         )
 
         assert state.consecutive_complete_deferrals == 0
+
+
+class TestSubGoalReopen:
+    """
+    Pins the final-sub-goal reopen path after verifier rejection.
+    """
+
+    def test_reopen_last_completed_sub_goal_restores_active_mission(self) -> None:
+        """
+        VERIFY rejection after local completion must restore the terminal sub-goal
+        as active so recovery keeps the same mission and strict contract.
+        """
+
+        state = AgentState(intent="find millet express")
+        state.set_sub_goals(
+            [SubGoal(index=0, description="Scroll until Millet Express is visible")]
+        )
+        state.mark_current_sub_goal_complete(
+            completion_signal=SubGoalCompletionSignal(
+                trace_verified=False,
+                evidence="planner flagged complete",
+                keyword_match=False,
+                llm_confidence=1.0,
+                action_executed=True,
+                flagged_complete=True,
+                rationale_verified=True,
+            ),
+        )
+
+        assert state.get_current_sub_goal() is None
+        assert state.all_sub_goals_complete()
+
+        reopened = state.reopen_last_completed_sub_goal()
+
+        assert reopened is True
+        current = state.get_current_sub_goal()
+        assert current is not None
+        assert current.index == 0
+        assert current.status is SubGoalStatus.IN_PROGRESS
+        assert current.flagged_complete is False
+        assert current.rationale_verified is False

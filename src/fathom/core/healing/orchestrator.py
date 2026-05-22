@@ -14,8 +14,10 @@ from fathom.core.runtime.failures import FailureMemory
 from fathom.interfaces.healing import HealingAgentPort
 from fathom.schemas.actions import Action
 from fathom.schemas.budgets import HealingBudget
+from fathom.schemas.configuration import IntentConfiguration
 from fathom.schemas.healing import HealingDecision, HealingDecisionKind, HealingRequest
 from fathom.schemas.observation import PerceivedElement
+from fathom.schemas.perception import PerceptionConfiguration
 from fathom.schemas.supervision import BlockReason
 
 logger = getLogger(__name__)
@@ -29,8 +31,10 @@ class HealingOrchestrator:
     def __init__(
         self,
         *,
-        agent: Optional[HealingAgentPort] = None,
         workflow_id: Optional[str] = None,
+        agent: Optional[HealingAgentPort] = None,
+        perception_configuration: Optional[PerceptionConfiguration] = None,
+        runtime_policy: Optional[IntentConfiguration.RuntimePolicyConfiguration] = None,
     ) -> None:
         """
         Initialize the orchestrator with an optional agentic healer and run context.
@@ -38,14 +42,16 @@ class HealingOrchestrator:
 
         self.__agent = agent
         self.__workflow_id = workflow_id
+        self.__perception_configuration = perception_configuration or PerceptionConfiguration()
+        self.__runtime_policy = runtime_policy or IntentConfiguration.RuntimePolicyConfiguration()
 
     async def decide(
         self,
         *,
-        request: HealingRequest,
-        budget: HealingBudget,
-        task_used: int,
         run_used: int,
+        task_used: int,
+        budget: HealingBudget,
+        request: HealingRequest,
         failures: Optional[FailureMemory] = None,
     ) -> HealingDecision:
         """
@@ -59,11 +65,11 @@ class HealingOrchestrator:
                 "Healing budget exhausted",
                 extra={
                     **context,
-                    "event": "healing.budget.exhausted",
-                    "task.used": task_used,
-                    "task.budget": budget.task,
                     "run.used": run_used,
+                    "task.used": task_used,
                     "run.budget": budget.run,
+                    "task.budget": budget.task,
+                    "event": "healing.budget.exhausted",
                 },
             )
             return HealingDecision(
@@ -108,20 +114,26 @@ class HealingOrchestrator:
         Return a deterministic healing decision when one is obvious and unblocked.
         """
 
-        if request.reason == BlockReason.KEYBOARD_OCCLUDING:
+        if (
+            self.__perception_configuration.keyboard.enabled
+            and self.__runtime_policy.keyboard.allow_recovery
+            and request.reason == BlockReason.KEYBOARD_OCCLUDING
+        ):
             action = Action(
-                action_type=ActionType.HIDE_KEYBOARD,
-                target=KEYBOARD_DISMISS_TARGET,
-                natural_language_target=KEYBOARD_DISMISS_TARGET,
-                rationale=KEYBOARD_DISMISS_RATIONALE,
                 confidence=1.0,
+                target=KEYBOARD_DISMISS_TARGET,
+                action_type=ActionType.HIDE_KEYBOARD,
+                rationale=KEYBOARD_DISMISS_RATIONALE,
+                natural_language_target=KEYBOARD_DISMISS_TARGET,
             )
+
             if self.__blocked(action=action, failures=failures):
                 return None
+
             return HealingDecision(
-                kind=HealingDecisionKind.TRY_ACTION,
                 action=action,
                 reason=KEYBOARD_DISMISS_RATIONALE,
+                kind=HealingDecisionKind.TRY_ACTION,
             )
 
         if (
@@ -142,8 +154,8 @@ class HealingOrchestrator:
             request.reason == BlockReason.TARGET_UNRESOLVED
             and (candidate := self.__single_visible_action(request=request)) is not None
             and not self.__blocked(
-                action=self.__candidate_action(candidate=candidate),
                 failures=failures,
+                action=self.__candidate_action(candidate=candidate),
             )
         ):
             return self.__tap_candidate(
@@ -151,23 +163,11 @@ class HealingOrchestrator:
                 reason=VISIBLE_ACTION_RATIONALE,
             )
 
-        if (
-            request.reason
-            in {
-                BlockReason.NON_SCROLLABLE_SURFACE,
-                BlockReason.REPEATED_NO_EFFECT,
-            }
-            and (
-                candidate := self.__first_unblocked_visible_action(
-                    request=request, failures=failures
-                )
-            )
-            is not None
-        ):
-            return self.__tap_candidate(
-                candidate=candidate,
-                reason=VISIBLE_ACTION_RATIONALE,
-            )
+        if request.reason in {
+            BlockReason.REPEATED_NO_EFFECT,
+            BlockReason.NON_SCROLLABLE_SURFACE,
+        }:
+            return None
 
         return None
 
@@ -178,6 +178,7 @@ class HealingOrchestrator:
 
         if failures is None:
             return False
+
         return failures.is_blocked(action=action)
 
     def __single_visible_action(self, *, request: HealingRequest) -> Optional[PerceivedElement]:
@@ -203,11 +204,13 @@ class HealingOrchestrator:
         for overlay in request.screen.overlays:
             for candidate in overlay.candidates:
                 if self.__blocked(
-                    action=self.__candidate_action(candidate=candidate),
                     failures=failures,
+                    action=self.__candidate_action(candidate=candidate),
                 ):
                     continue
+
                 return candidate
+
         return None
 
     def __first_unblocked_visible_action(
@@ -222,11 +225,13 @@ class HealingOrchestrator:
 
         for candidate in request.screen.calls_to_action:
             if self.__blocked(
-                action=self.__candidate_action(candidate=candidate),
                 failures=failures,
+                action=self.__candidate_action(candidate=candidate),
             ):
                 continue
+
             return candidate
+
         return None
 
     def __tap_candidate(self, *, candidate: PerceivedElement, reason: str) -> HealingDecision:
@@ -235,9 +240,9 @@ class HealingOrchestrator:
         """
 
         return HealingDecision(
+            reason=reason,
             kind=HealingDecisionKind.TRY_ACTION,
             action=self.__candidate_action(candidate=candidate, reason=reason),
-            reason=reason,
         )
 
     @staticmethod
@@ -251,13 +256,14 @@ class HealingOrchestrator:
         """
 
         target = candidate.text or candidate.identifier
+
         return Action(
-            action_type=ActionType.TAP,
             target=target,
-            natural_language_target=target,
-            bounds=candidate.bounds,
-            label_id=candidate.identifier,
             rationale=reason,
+            bounds=candidate.bounds,
+            action_type=ActionType.TAP,
+            label_id=candidate.identifier,
+            natural_language_target=target,
             confidence=candidate.confidence,
         )
 
@@ -267,9 +273,9 @@ class HealingOrchestrator:
         """
 
         return {
-            "component": "core.healing.orchestrator",
             "workflow.id": self.__workflow_id,
             "activity": request.screen.activity,
-            "block.reason": request.reason.value if request.reason is not None else None,
+            "component": "core.healing.orchestrator",
             "task.id": request.task.identifier if request.task is not None else None,
+            "block.reason": request.reason.value if request.reason is not None else None,
         }

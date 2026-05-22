@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, Optional, cast
 
 from fathom.constants import FathomEvent
+from fathom.constants.command import CommandExecutionMode
 from fathom.constants.runtime import DEFAULT_COMPLETE_DEFERRAL_BUDGET
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.recovery import (
@@ -149,6 +150,10 @@ class AnalyzeNode:
                 screen_height=height,
                 interactive_mode=is_interactive,
                 prompt_if_stuck=prompt_if_stuck,
+                strict_mode=(
+                    self.__provider.context.configuration.intent.command_mode
+                    is CommandExecutionMode.STRICT
+                ),
                 use_xml=self.__provider.context.use_xml,
                 reasoner=self.__provider.context.reasoner,
                 state=self.__provider.context.agent_state,

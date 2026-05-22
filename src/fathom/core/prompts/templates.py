@@ -7,7 +7,8 @@ COORD_RULES = (
     "COORDINATE SYSTEM (CRITICAL):\n"
     "- GROUNDING: IF the target exists in the Element Manifest, you MUST include its 'label_id' (e.g., label_id='4').\n"
     "- BBOX SHAPE: x,y are TOP-LEFT; width,height extend right/down.\n"
-    "- DEFAULT: Use normalized coordinates (0-1000) for bbox.\n"
+    "- DEFAULT: Use normalized coordinates (0-1000) only for visually estimated regions.\n"
+    "- MANIFEST REGIONS: If you are copying bounds from the manifest or from the screenshot resolution, you MUST set coordinate_system='pixel'.\n"
     "- PIXEL MODE: Use raw pixels ONLY when you explicitly set coordinate_system='pixel'.\n"
     "- COORD_SYSTEM CONSISTENCY: coordinate_system must match the numbers you provide."
 )
@@ -27,6 +28,8 @@ PRECISION_RULES = MappingProxyType(_PRECISION_RULES_RAW)
 _ACTION_RULES_RAW = {
     "scroll": (
         "SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
+        "If a manifest-backed scrollable container exists, ground the swipe to that container via label_id first. "
+        "Use bbox only when no manifest container matches the intended scroll surface. "
         "Bbox wraps scrollable region only (exclude fixed headers/footers). "
         "Do NOT use 'scroll' as an action_type; always use the appropriate swipe_* variant."
     ),
@@ -109,6 +112,7 @@ TOOL SELECTION & VALIDATION:
   * Always provide condition text when visible; if omitted, conditional_type is used for default guard text.
   * For overlay/popup dismissal: if the screenshot shows a scrim, dialog, sheet, or banner over the main UI, set overlay_detected=true and condition to describe the overlay (e.g., 'Cookie consent banner visible').
   * Evaluate is_valid and validation_reason for EVERY action.
+  * confidence is REQUIRED for EVERY action.
   * If action is risky/ambiguous, set is_valid=False and explain.
   * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
     DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
@@ -124,7 +128,13 @@ TOOL SELECTION & VALIDATION:
 - request_replan: Use this tool when you cannot make safe forward progress on the active sub-goal. Provide a typed category and a one-sentence detail; the system will either replan against the current screen or escalate to the human depending on category.
 
 PROGRESS SAFETY (MANDATORY):
-- Every UI action MUST be grounded by at least one of: (a) a 'label_id' from the element manifest whose text/affordance matches your named target, OR (b) a 'bbox' you have visually identified on the current screenshot. The manifest is a hint, not a precondition — when an element is rendered outside the manifest (Canvas / RCTView / custom overlays / video / web), a visually-grounded bbox is the correct path.
+- Respect the active sub-goal command family. If the current task is a scroll/swipe task, stay within scroll-family actions unless the system explicitly asks you to replan.
+- Respect the requested scroll axis exactly. If the task says horizontal, stay horizontal; if it says vertical, stay vertical.
+- Every UI action MUST be grounded by at least one of: (a) a 'label_id' from the element manifest whose text/affordance matches your named target, OR (b) a 'bbox' you have visually identified on the current screenshot. The manifest is the preferred source whenever it already exposes the relevant element or scroll container.
+- The manifest is a hint, not a precondition: when the intended target is visible on screen but absent from the element manifest, ground it via bbox instead of inventing a label_id.
+- For scroll/swipe actions, when the manifest exposes a matching scrollable container, you MUST use that container's label_id and describe the intended content in scroll_target. Do not invent a broad bbox when the manifest already gives you the container.
+- Observation scroll-region hints are NOT manifest label_ids. Never copy observation_hint values into label_id.
+- When repeating the same scroll objective, reuse the same container if it is still valid instead of switching to a broader region.
 - Before emitting the action, confirm the current screen is the one the active sub-goal expects.
 - If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), you MUST call request_replan instead of guessing. Pick the category that best describes what you observe:
   * 'target_not_available': the named target is neither in the manifest nor visible on screen.

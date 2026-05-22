@@ -16,6 +16,7 @@ from fathom.core.services.decomposer import DecompositionAugmentation, IntentDec
 from fathom.core.services.normalizer import Normalizer
 from fathom.interfaces.llm import LLMPort, PromptPart
 from fathom.schemas.escape import EscapeCategory
+from fathom.schemas.subgoal import ExecutionContract
 
 if TYPE_CHECKING:
     from fathom.core.recovery.factory import RecoveryContext
@@ -39,6 +40,8 @@ class _ReplanAugmentation(DecompositionAugmentation):
         trigger: RecoveryTrigger,
         builder: DecompositionPromptBuilder,
         suggested_next_action: Optional[str],
+        strict_mode: bool,
+        execution_contract: ExecutionContract,
         escape_category: Optional[EscapeCategory] = None,
     ) -> None:
         self.__builder = builder
@@ -49,6 +52,8 @@ class _ReplanAugmentation(DecompositionAugmentation):
         self.__recent_actions = recent_actions
         self.__escape_category = escape_category
         self.__suggested_next_action = suggested_next_action
+        self.__strict_mode = strict_mode
+        self.__execution_contract = execution_contract
 
     def system_addendum(self) -> str:
         """
@@ -56,7 +61,10 @@ class _ReplanAugmentation(DecompositionAugmentation):
         attached screenshot and treat failure context as paths to avoid.
         """
 
-        return self.__builder.build_replan_system_note()
+        return self.__builder.build_replan_system_note(
+            strict_mode=self.__strict_mode,
+            execution_contract=self.__execution_contract,
+        )
 
     def user_preamble(self) -> str:
         """
@@ -73,6 +81,8 @@ class _ReplanAugmentation(DecompositionAugmentation):
             recent_actions=self.__recent_actions,
             escape_category=self.__escape_category,
             suggested_next_action=self.__suggested_next_action,
+            strict_mode=self.__strict_mode,
+            execution_contract=self.__execution_contract,
         )
 
     def extra_prompt_parts(self) -> Sequence[PromptPart]:
@@ -161,6 +171,8 @@ class ReplanRecovery(RecoveryStrategy):
             suggested_next_action=request.hint,
             stuck_sub_goal=request.stuck_sub_goal,
             recent_actions=list(request.recent_actions),
+            strict_mode=request.strict_mode,
+            execution_contract=request.execution_contract,
         )
 
         logger.info(

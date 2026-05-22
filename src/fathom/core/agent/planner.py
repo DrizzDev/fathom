@@ -50,6 +50,7 @@ class StepPlanner:
         use_xml: bool = True,
         prompt_if_stuck: bool = False,
         interactive_mode: bool = False,
+        strict_mode: bool = False,
         elements: Optional[Dict[str, Any]] = None,
         screen_observation: Optional[ScreenObservation] = None,
         last_block_reason: Optional[str] = None,
@@ -124,6 +125,12 @@ class StepPlanner:
                 "index": current_idx,
                 "total": total,
                 "description": current_sub_goal.description,
+                "strict_mode": strict_mode,
+                "required_action_family": (
+                    current_sub_goal.execution_contract.required_action_family.value
+                ),
+                "scroll_axis": current_sub_goal.execution_contract.scroll_axis.value,
+                "surface": current_sub_goal.execution_contract.surface or "",
             }
 
         analysis = await self.__vision.analyze(
@@ -256,12 +263,19 @@ class StepPlanner:
         }:
             state.record_sub_goal_action()
 
+        step_metadata: Dict[str, Any] = {}
+        if action.action_type is ActionType.VALIDATE and (
+            analysis.is_sub_goal_complete or analysis.is_goal_complete
+        ):
+            step_metadata["terminal_validation_candidate"] = True
+
         return self.__build_plan_result(
             action=action,
             capture=capture,
             metrics=analysis.metrics,
             memories=analysis.memories,
             step_number=state.step_count,
+            step_metadata=step_metadata,
             metadata={
                 **(analysis.metadata or {}),
                 PlanMetadataKey.OBSERVATION.value: analysis.screen_description,
@@ -367,6 +381,7 @@ class StepPlanner:
         memories: int = 0,
         is_recovery: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
+        step_metadata: Optional[Dict[str, Any]] = None,
         metrics: Optional[Dict[str, float]] = None,
     ) -> PlanResult:
         """
@@ -379,6 +394,7 @@ class StepPlanner:
             is_recovery=is_recovery,
             step_number=step_number,
             event_type=(metadata or {}).get("event_type"),
+            metadata=step_metadata,
         )
 
         return PlanResult(
@@ -399,6 +415,7 @@ class StepPlanner:
         capture: ScreenCapture,
         is_recovery: bool = False,
         event_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Step:
         """
         Helper to construct a Step object.
@@ -421,6 +438,7 @@ class StepPlanner:
             is_conditional=is_recovery,
             event_type=validated_event_type,
             condition="recovery" if is_recovery else None,
+            metadata=metadata or {},
         )
 
     def __compute_simple_hash(self, *, capture: ScreenCapture) -> str:

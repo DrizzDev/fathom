@@ -15,7 +15,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.graph import NodeName
-from fathom.constants.state import CompletionReason, IntentStateKey
+from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.config import RuntimeConfigLoader
 from fathom.core.services.decomposer import IntentDecomposer
 from fathom.interfaces.device import DevicePort
@@ -60,10 +60,18 @@ logger = getLogger(name=__name__)
 CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     # ── Constants / enums ────────────────────────────────────────────────
     ("fathom.constants", "ActionType"),
+    ("fathom.constants.command", "CommandScopeKind"),
+    ("fathom.constants.scroll", "ScrollDirection"),
+    ("fathom.constants.scroll", "ScrollEvidenceSource"),
+    ("fathom.constants.scroll", "ScrollStage"),
+    ("fathom.constants.scroll", "ScrollVerdictKind"),
+    ("fathom.constants.scroll", "SurfaceKind"),
     ("fathom.constants.storage", "StorageBackend"),
     # ── Actions ──────────────────────────────────────────────────────────
     ("fathom.schemas.actions", "Action"),
     ("fathom.schemas.actions", "Bounds"),
+    ("fathom.schemas.actions", "ExecutionRegion"),
+    ("fathom.schemas.actions", "GesturePath"),
     ("fathom.schemas.actions", "InputContext"),
     ("fathom.schemas.actions", "CoordinateSystem"),
     ("fathom.schemas.actions", "CoordinateSource"),
@@ -106,6 +114,8 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     # ── Results (planner / analysis / execution) ─────────────────────────
     ("fathom.schemas.results", "AnalysisOutcome"),
     ("fathom.schemas.results", "AnalysisResult"),
+    ("fathom.schemas.results", "ActionTraceAttempt"),
+    ("fathom.schemas.results", "ActionTraceEvent"),
     ("fathom.schemas.results", "ExecutionResult"),
     ("fathom.schemas.results", "PlanResult"),
     # ── Screens (capture / state / diff / hashes) ────────────────────────
@@ -115,6 +125,13 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     ("fathom.schemas.screens", "ScreenHashBundle"),
     ("fathom.schemas.screens", "ScreenScrollTranslation"),
     ("fathom.schemas.screens", "ScreenState"),
+    # ── Scroll supervision / diagnostics ────────────────────────────────
+    ("fathom.schemas.scroll", "ScrollAttempt"),
+    ("fathom.schemas.scroll", "ScrollLock"),
+    ("fathom.schemas.scroll", "ScrollOutcome"),
+    ("fathom.schemas.scroll", "ScrollScope"),
+    ("fathom.schemas.scroll", "ScrollSurface"),
+    ("fathom.schemas.scroll", "ScrollVerdict"),
     # ── Steps ────────────────────────────────────────────────────────────
     ("fathom.schemas.steps", "Step"),
     ("fathom.schemas.steps", "StepResult"),
@@ -289,6 +306,7 @@ class IntentStrategy:
 
             is_cancelled = self.__graph_context.is_cancelled
             completion_reason = final_state.values.get("completion_reason")
+            failure_diagnostic = final_state.values.get(CommonStateKey.FAILURE_DIAGNOSTIC.value)
             self.__step_results = list(final_state.values.get(IntentStateKey.STEP_RESULTS) or [])
 
             if completion_reason is None:
@@ -301,7 +319,13 @@ class IntentStrategy:
                 completion_reason=completion_reason,
             )
 
-            error = completion_reason if not success else None
+            error = (
+                str(failure_diagnostic)
+                if not success and failure_diagnostic
+                else completion_reason
+                if not success
+                else None
+            )
             duration = int((time.time() - start_time) * 1000)
 
             return ExecutionResult(
@@ -395,6 +419,7 @@ class IntentStrategy:
             CompletionReason.MAX_STEPS.value,
             CompletionReason.STUCK.value,
             CompletionReason.INTERVENTION_REQUIRED.value,
+            CompletionReason.USER_DIRECTIVE.value,
         }
 
     @property

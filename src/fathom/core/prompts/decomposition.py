@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from fathom.schemas.escape import EscapeCategory
+from fathom.schemas.subgoal import ExecutionContract
 
 if TYPE_CHECKING:
     from fathom.core.recovery.types import RecoveryTrigger
@@ -31,7 +32,12 @@ class DecompositionPromptBuilder(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def build_replan_system_note(self) -> str:
+    def build_replan_system_note(
+        self,
+        *,
+        strict_mode: bool,
+        execution_contract: Optional[ExecutionContract],
+    ) -> str:
         """
         Build the system-instruction addendum used when re-decomposing from a stuck state.
         """
@@ -47,6 +53,8 @@ class DecompositionPromptBuilder(ABC):
         trigger: RecoveryTrigger,
         recent_actions: List[str],
         suggested_next_action: Optional[str],
+        strict_mode: bool,
+        execution_contract: Optional[ExecutionContract],
         escape_category: Optional[EscapeCategory] = None,
     ) -> str:
         """
@@ -132,9 +140,11 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
         )
 
     def build_user_prompt(self, *, intent: str) -> str:
-        return (
-            "You are an expert at breaking down user intents into executable micro-tasks.\n\n"
-            f"INTENT: {intent}\n\n"
+        parts = [
+            "You are an expert at breaking down user intents into executable micro-tasks.\n\n",
+            "INTENT: ",
+            intent,
+            "\n\n",
             "INSTRUCTIONS:\n"
             "1. Break down the intent into sequential, non-skippable steps\n"
             "2. Each step must be atomic and testable\n"
@@ -168,28 +178,74 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             '- Task description names WHAT the agent does ("Tap on Continue").\n'
             '- Task criterion names WHAT THE SCREEN SHOWS afterwards ("Cart screen with items list visible").\n'
             "Without an observable criterion the runtime cannot tell the difference between a wrong tap that happened to change the screen and a correct tap that achieved the goal.\n\n"
+            "EXECUTION CONTRACT (MANDATORY):\n"
+            "Every task must also declare a structured execution_contract object.\n"
+            '- required_action_family must be one of: "scroll", "tap", "input", "wait", "validate", "unspecified"\n'
+            '- scroll_axis must be one of: "vertical", "horizontal", "unspecified"\n'
+            '- surface must either be null or the exact section/container wording when the user names a specific area (for example "below Fast Delivery section").\n'
+            "- Use scroll_axis='unspecified' unless the user or task text EXPLICITLY constrains the axis.\n"
+            "- Do NOT guess horizontal or vertical from your own assumptions.\n"
+            "- When the task names a specific section, rail, list, card row, or on-screen area, copy that exact wording into execution_contract.surface.\n"
+            "- If the task is primarily a scroll/swipe task, required_action_family must be 'scroll'.\n"
+            "- If the task is primarily a tap/press task, required_action_family must be 'tap'.\n"
+            "- If the task is primarily a text-entry/search-entry task, required_action_family must be 'input'.\n"
+            "- If the task is purely observational, required_action_family must be 'validate'.\n"
+            "- If the task is only waiting for UI state, required_action_family must be 'wait'.\n\n"
             "Return ONLY a valid JSON with this structure:\n"
             "{\n"
             '  "sub_goals": [\n'
-            '    {"description": "step 1", "criterion": "what the screen looks like after step 1"},\n'
-            '    {"description": "step 2", "criterion": "what the screen looks like after step 2"}\n'
+            "    {\n"
+            '      "description": "step 1",\n'
+            '      "criterion": "what the screen looks like after step 1",\n'
+            '      "execution_contract": {\n'
+            '        "required_action_family": "scroll",\n'
+            '        "scroll_axis": "vertical",\n'
+            '        "surface": "below Fast Delivery section"\n'
+            "      }\n"
+            "    },\n"
+            "    {\n"
+            '      "description": "step 2",\n'
+            '      "criterion": "what the screen looks like after step 2",\n'
+            '      "execution_contract": {\n'
+            '        "required_action_family": "tap",\n'
+            '        "scroll_axis": "unspecified",\n'
+            '        "surface": null\n'
+            "      }\n"
+            "    }\n"
             "  ],\n"
             '  "confidence": 0.9\n'
-            "}\n"
-        )
+            "}\n",
+        ]
+        return "".join(parts)
 
-    def build_replan_system_note(self) -> str:
+    def build_replan_system_note(
+        self,
+        *,
+        strict_mode: bool,
+        execution_contract: Optional[ExecutionContract],
+    ) -> str:
         """
         System-instruction addendum appended when decomposing in replan
         mode: tells the model a screenshot is attached and that failure
         evidence describes paths to avoid, not retry.
         """
-
-        return (
+        note = (
             "\n\nA screenshot of the agent's current screen is attached. Plan sub-goals "
             "starting from this screen. Do NOT include steps to reach this screen — the "
             "agent is already here. Treat the supplied failure reason and recent actions "
             "as evidence of paths to avoid, not paths to retry."
+        )
+        if not strict_mode or execution_contract is None:
+            return note
+
+        return (
+            f"{note}\n"
+            "STRICT MODE IS ACTIVE.\n"
+            "You MUST preserve the active sub-goal's execution contract exactly.\n"
+            f"- required_action_family: {execution_contract.required_action_family.value}\n"
+            f"- scroll_axis: {execution_contract.scroll_axis.value}\n"
+            f"- surface: {execution_contract.surface or '(none)'}\n"
+            "Do NOT change the task into a different workflow shape."
         )
 
     def build_replan_user_preamble(
@@ -200,6 +256,8 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
         failure_reason: str,
         recent_actions: List[str],
         suggested_next_action: Optional[str],
+        strict_mode: bool,
+        execution_contract: Optional[ExecutionContract],
         escape_category: Optional[EscapeCategory] = None,
     ) -> str:
         """
@@ -219,6 +277,16 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             "The prior plan failed; reconsider the remaining work against the current screen.",
         )
         recent = "\n".join(f"- {entry}" for entry in recent_actions) or "- (none)"
+        strict_block = ""
+        if strict_mode and execution_contract is not None:
+            strict_block = (
+                "STRICT EXECUTION CONTRACT:\n"
+                f"- required_action_family: {execution_contract.required_action_family.value}\n"
+                f"- scroll_axis: {execution_contract.scroll_axis.value}\n"
+                f"- surface: {execution_contract.surface or '(none)'}\n"
+                "- Preserve this contract exactly while replanning.\n\n"
+            )
+
         return (
             "REPLAN CONTEXT (the previous decomposition got stuck):\n"
             f"- Trigger: {trigger.value}\n"
@@ -228,4 +296,5 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             f"- Failure reason: {failure_reason}\n"
             f"- Suggested next action: {suggested_next_action or '(none)'}\n"
             f"- Recent actions (most recent last):\n{recent}\n\n"
+            f"{strict_block}"
         )

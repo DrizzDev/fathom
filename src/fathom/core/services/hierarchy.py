@@ -26,6 +26,7 @@ from fathom.schemas.hierarchy import (
     HierarchyProcessingResult,
     ResolvedHierarchyScreenshot,
 )
+from fathom.schemas.perception import PerceptionConfiguration
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
 
@@ -41,20 +42,21 @@ class HierarchyService:
         self,
         storage: Optional[StoragePort] = None,
         *,
+        configuration: Optional[PerceptionConfiguration] = None,
         pipeline: Optional[ArtifactPipeline] = None,
-        cv_enabled: bool = False,
     ) -> None:
         """
         Initialize hierarchy service.
 
-        ``cv_enabled`` toggles whether the OpenCV visual-control labeler
-        appends fallback boxes onto the XML manifest. Off by default so
-        the original XML+LLM flow boots without an extra detector pass.
+        ``configuration.cv.enabled`` toggles whether the OpenCV
+        visual-control labeler appends fallback boxes onto the XML
+        manifest. Off by default so the original XML+LLM flow boots
+        without an extra detector pass.
         """
 
         self.__storage = storage
         self.__pipeline = pipeline
-        self.__cv_enabled = cv_enabled
+        self.__configuration = configuration or PerceptionConfiguration()
         self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
     def __fire_and_forget(self, coroutine: Any) -> None:
@@ -378,7 +380,7 @@ class HierarchyService:
             root=root,
             image_path=str(image_path),
             action=action or ActionType.TAP,
-            cv_enabled=self.__cv_enabled,
+            cv_enabled=self.__configuration.cv.enabled,
         )
         return HierarchyElementExtraction(label_map=label_map, labeled_elements=elements)
 

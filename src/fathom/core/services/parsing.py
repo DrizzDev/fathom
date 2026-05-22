@@ -448,6 +448,14 @@ class ToolResponseParser:
                         data.bbox.coordinate_system,
                     ),
                 )
+                if bounds.has_normalized_extent_violation():
+                    logger.warning(
+                        "Coercing malformed normalized bbox to logical coordinates: %s",
+                        data.bbox,
+                    )
+                    bounds = bounds.model_copy(
+                        update={"system": CoordinateSystem.LOGICAL},
+                    )
             except Exception:
                 logger.warning("Ignoring malformed bbox payload from GeminiBBox: %s", data.bbox)
 
@@ -473,8 +481,15 @@ class ToolResponseParser:
         resolved_target_name: Optional[str] = raw_target_name
         if Normalizer.is_generic_target_name(resolved_target_name):
             structured_fallback = None
-            if script_target and not Normalizer.is_generic_target_name(script_target):
-                structured_fallback = script_target
+            for candidate in (
+                script_target,
+                data.wait_subject,
+                data.validation_subject,
+                data.export_target,
+            ):
+                if candidate and not Normalizer.is_generic_target_name(candidate):
+                    structured_fallback = candidate
+                    break
 
             if structured_fallback:
                 logger.info(
@@ -484,8 +499,38 @@ class ToolResponseParser:
                 )
                 resolved_target_name = structured_fallback
             else:
-                # Do not synthesize label- or bounds-based tags; keep a simple fallback.
-                resolved_target_name = raw_target_name or "element"
+                resolved_target_name = raw_target_name
+
+        scroll_action_types = {
+            ActionType.SWIPE_UP,
+            ActionType.SWIPE_DOWN,
+            ActionType.SWIPE_LEFT,
+            ActionType.SWIPE_RIGHT,
+            ActionType.SCROLL,
+        }
+        rendered_target = resolved_target_name
+        if (
+            action_type in scroll_action_types
+            and data.scroll_target
+            and rendered_target == data.scroll_target
+        ):
+            rendered_target = None
+
+        if not rendered_target and action_type in {
+            ActionType.SWIPE_UP,
+            ActionType.SWIPE_DOWN,
+            ActionType.SWIPE_LEFT,
+            ActionType.SWIPE_RIGHT,
+            ActionType.SCROLL,
+        }:
+            rendered_target = "main scrollable area"
+
+        if not rendered_target:
+            rendered_target = data.wait_subject or "unknown_target"
+
+        surface = data.surface
+        if not surface and action_type in scroll_action_types:
+            surface = rendered_target
 
         condition = data.condition
         is_conditional = data.is_conditional
@@ -496,7 +541,7 @@ class ToolResponseParser:
 
         action = Action(
             bounds=bounds,
-            target=resolved_target_name or "element",
+            target=rendered_target,
             condition=condition,
             is_conditional=is_conditional,
             conditional_type=conditional_type,
@@ -504,13 +549,14 @@ class ToolResponseParser:
             action_type=action_type,
             target_type=target_type,
             script_target=script_target,
+            surface=surface,
             wait_duration=wait_duration,
             text=str(text) if text else None,
             validation_reason=validation_reason,
-            natural_language_target=resolved_target_name or "element",
+            natural_language_target=rendered_target,
             rationale=str(data.rationale or ""),
             is_valid=bool(data.is_valid),
-            confidence=float(data.confidence),
+            confidence=data.confidence,
             memory_updates=args.memory_updates,
             label_id=data.label_id,
             # Structured export signals (VLM-provided, authoritative).
@@ -534,7 +580,7 @@ class ToolResponseParser:
                 "action.label_id": data.label_id,
                 "action.target": resolved_target_name,
                 "action.has_bounds": bounds is not None,
-                "action.confidence": float(data.confidence),
+                "action.confidence": data.confidence,
                 "action.bounds": (
                     {
                         "x": bounds.x,

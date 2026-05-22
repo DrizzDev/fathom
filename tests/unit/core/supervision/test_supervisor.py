@@ -6,9 +6,11 @@ from fathom.constants import ActionType
 from fathom.core.runtime import RuntimeState
 from fathom.core.supervision import RuntimeSupervisor
 from fathom.schemas.actions import Action
+from fathom.schemas.configuration import IntentConfiguration
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import KeyboardObservation, ScreenObservation
+from fathom.schemas.perception import KeyboardConfiguration, PerceptionConfiguration
 from fathom.schemas.screens import ScreenHashBundle
 from fathom.schemas.supervision import BlockReason, VerdictKind
 
@@ -56,12 +58,34 @@ class RuntimeSupervisorTest(unittest.TestCase):
             confidence=1.0,
         )
 
-    def test_keyboard_blocks_scroll(self) -> None:
+    def test_keyboard_is_ignored_by_default(self) -> None:
         """
-        Scroll/swipe actions are blocked while keyboard is visible.
+        Keyboard gating is disabled by default while scroll stability is prioritized.
         """
 
         verdict = RuntimeSupervisor.create().supervise(
+            action=self.__action(),
+            localization=self.__resolved(),
+            observation=self.__screen(keyboard_visible=True),
+            runtime=RuntimeState.create(),
+        )
+
+        self.assertEqual(verdict.kind, VerdictKind.ALLOW)
+        self.assertIsNone(verdict.reason)
+
+    def test_keyboard_blocks_scroll_when_explicitly_enabled(self) -> None:
+        """
+        Keyboard gating can still be enabled explicitly for targeted runs.
+        """
+
+        verdict = RuntimeSupervisor.create(
+            perception_configuration=PerceptionConfiguration(
+                keyboard=KeyboardConfiguration(enabled=True)
+            ),
+            runtime_policy=IntentConfiguration.RuntimePolicyConfiguration(
+                keyboard=IntentConfiguration.KeyboardRuntimeConfiguration(block_actions=True)
+            ),
+        ).supervise(
             action=self.__action(),
             localization=self.__resolved(),
             observation=self.__screen(keyboard_visible=True),
@@ -164,13 +188,20 @@ class RuntimeSupervisorTest(unittest.TestCase):
         self.assertEqual(verdict.reason, BlockReason.TARGET_AMBIGUOUS)
         self.assertEqual(len(runtime.failures.records()), 0)
 
-    def test_keyboard_block_records_failure(self) -> None:
+    def test_keyboard_block_records_failure_when_enabled(self) -> None:
         """
         Recorded reasons (KEYBOARD_OCCLUDING) must be captured in failure memory.
         """
 
         runtime = RuntimeState.create()
-        RuntimeSupervisor.create().supervise(
+        RuntimeSupervisor.create(
+            perception_configuration=PerceptionConfiguration(
+                keyboard=KeyboardConfiguration(enabled=True)
+            ),
+            runtime_policy=IntentConfiguration.RuntimePolicyConfiguration(
+                keyboard=IntentConfiguration.KeyboardRuntimeConfiguration(block_actions=True)
+            ),
+        ).supervise(
             action=self.__action(),
             localization=self.__resolved(),
             observation=self.__screen(keyboard_visible=True),

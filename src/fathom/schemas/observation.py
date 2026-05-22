@@ -5,6 +5,8 @@ from typing import List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.constants.command import CommandScopeKind
+from fathom.constants.scroll import ScrollEvidenceSource
 from fathom.schemas.actions import Bounds
 from fathom.schemas.artifacts import StepArtifacts
 from fathom.schemas.screens import ScreenDiff, ScreenHashBundle
@@ -141,6 +143,18 @@ class PerceivedElement(BaseModel):
             "numeric anchor (``[N]``) the planner sees in the manifest."
         ),
     )
+    scrollable: bool = Field(
+        default=False,
+        description="Whether the element represents a scrollable container candidate.",
+    )
+    axis: Optional[str] = Field(
+        default=None,
+        description="Primary movement axis when the element is scrollable.",
+    )
+    kind: Optional[str] = Field(
+        default=None,
+        description="Optional coarse structural kind for the element.",
+    )
 
 
 class KeyboardObservation(BaseModel):
@@ -180,11 +194,32 @@ class ScrollRegion(BaseModel):
     Scrollable region candidate detected on the screen.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     bounds: Bounds = Field(description="Region bounds.")
     direction: str = Field(description="Supported scroll direction.")
     confidence: float = Field(ge=0.0, le=1.0, description="Provider confidence.")
+    identifier: Optional[str] = Field(
+        default=None, description="Stable region identifier when known."
+    )
+    manifest_label_id: Optional[str] = Field(
+        alias="label_id",
+        default=None,
+        description="Shared manifest annotation label when known.",
+    )
+    observation_region_id: Optional[str] = Field(
+        default=None,
+        description="Observation-only region identifier when no manifest label exists.",
+    )
+    axis: str = Field(default="vertical", description="Primary movement axis of the region.")
+    kind: CommandScopeKind = Field(
+        default=CommandScopeKind.UNKNOWN,
+        description="Coarse structural kind of the region.",
+    )
+    source: Optional[ScrollEvidenceSource] = Field(
+        default=None,
+        description="Evidence source that surfaced this region.",
+    )
 
 
 class ScreenObservation(BaseModel):

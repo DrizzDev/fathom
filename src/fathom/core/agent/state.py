@@ -3,7 +3,7 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, cast
 
-from fathom.constants import ActionType
+from fathom.constants import ActionExecutionKind, ActionType
 from fathom.constants.runtime import (
     DEFAULT_CONTEXT_WINDOW,
     DEFAULT_LOOP_THRESHOLD,
@@ -291,11 +291,16 @@ class AgentState:
 
         last_effect = self.__runtime.effects.last_effect()
 
+        effect_status = (
+            last_effect.status
+            if self.__last_action_type is not None and last_effect is not None
+            else None
+        )
         self.__runtime.screen.detector.record(
             screen=screen,
             action_type=self.__last_action_type,
             action_description=self.__last_action_description,
-            effect_status=last_effect.status if last_effect is not None else None,
+            effect_status=effect_status,
         )
         return is_new_screen
 
@@ -337,10 +342,14 @@ class AgentState:
         self.__action_history.record_action(
             action=result.step.action, success=result.success, activity=activity
         )
-        self.__interaction_tracker.record(action_type=result.step.action.action_type.value)
 
-        self.__last_action_type = result.step.action.action_type.value
-        self.__last_action_description = result.step.action.to_description()
+        if result.step.action.execution_kind is ActionExecutionKind.DEVICE:
+            self.__interaction_tracker.record(action_type=result.step.action.action_type.value)
+            self.__last_action_type = result.step.action.action_type.value
+            self.__last_action_description = result.step.action.to_description()
+        else:
+            self.__last_action_type = None
+            self.__last_action_description = None
 
         if result.step.action.action_type == ActionType.COMPLETE and result.success:
             self.mark_complete(reason=CompletionReason.SUCCESS.value)
@@ -549,6 +558,51 @@ class AgentState:
         else:
             logger.info("[AgentState] All sub-goals complete")
             return False
+
+    def reopen_last_completed_sub_goal(self) -> bool:
+        """
+        Re-activate the most recently completed sub-goal after a verifier rejection.
+
+        Returns ``True`` when a completed terminal sub-goal was restored as the active
+        mission, otherwise ``False``.
+        """
+
+        if self.get_current_sub_goal() is not None or not self.__sub_goals:
+            return False
+
+        last_index = len(self.__sub_goals) - 1
+        if last_index < 0:
+            return False
+
+        candidate = self.__sub_goals[last_index]
+        if not candidate.is_complete():
+            return False
+
+        candidate.status = SubGoalStatus.IN_PROGRESS
+        candidate.flagged_complete = False
+        candidate.trace_verified = False
+        candidate.rationale_verified = False
+        candidate.completion_verified = False
+        self.__current_sub_goal_index = last_index
+        self.__is_complete = False
+        self.__completion_reason = None
+
+        self.__runtime.tasks.load(
+            tasks=ExecutionTaskAdapter().from_sub_goals(sub_goals=self.__sub_goals),
+        )
+        for _ in range(self.__current_sub_goal_index):
+            self.__runtime.tasks.advance()
+
+        logger.info(
+            "[AgentState] Reopened last completed sub-goal after verifier rejection",
+            extra={
+                "component": "agent_state",
+                "event": "subgoal_reopened",
+                "sub_goal_index": candidate.index,
+                "sub_goal_description": candidate.description[:80],
+            },
+        )
+        return True
 
     def record_sub_goal_action(self) -> None:
         """

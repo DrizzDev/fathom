@@ -14,8 +14,9 @@ a half-formed escape signal (engineering standards §17, §19).
 from __future__ import annotations
 
 import unittest
-from dataclasses import dataclass
 from typing import Any, Dict, List
+
+from pydantic import BaseModel, Field
 
 from fathom.constants import ActionType
 from fathom.core.exceptions import ToolValidationError
@@ -24,15 +25,14 @@ from fathom.schemas.escape import EscapeCategory
 from fathom.schemas.results import AnalysisOutcome, GenerateResult
 
 
-@dataclass
-class _Call:
+class _Call(BaseModel):
     """
     Minimal stand-in for the adapter's tool-call object — duck-typed
     by attribute access (``name`` / ``args``) in the parser.
     """
 
-    name: str
-    args: Dict[str, Any]
+    name: str = Field(description="Tool name")
+    args: Dict[str, Any] = Field(description="Tool arguments")
 
 
 class ToolResponseParserRequestReplanTest(unittest.TestCase):

@@ -27,7 +27,7 @@ from fathom.core.context.manager import ContextManager
 from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisOutcome, AnalysisResult
 from fathom.schemas.screens import ScreenCapture
-from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.subgoal import ExecutionContract, RequiredActionFamily, ScrollAxis, SubGoal
 
 
 def _capture() -> ScreenCapture:
@@ -62,6 +62,25 @@ def _analysis(*, outcome: AnalysisOutcome = AnalysisOutcome.ACT) -> AnalysisResu
             confidence=0.9,
             action_type=ActionType.TAP,
             rationale="tap the visible CTA",
+        ),
+    )
+
+
+def _validation_completion_analysis() -> AnalysisResult:
+    """
+    Build an analysis result that uses VALIDATE as a terminal completion claim.
+    """
+
+    return AnalysisResult(
+        outcome=AnalysisOutcome.ACT,
+        reasoning="The target is visible; validate it one last time before completion.",
+        screen_description="target card is visible",
+        is_sub_goal_complete=True,
+        action=Action(
+            target="Jars & Containers visibility",
+            confidence=1.0,
+            action_type=ActionType.VALIDATE,
+            rationale="Validate the visible target before completion.",
         ),
     )
 
@@ -103,6 +122,49 @@ class TestPlannerUseOnceGuidance:
         await context_manager.shutdown()
 
     @pytest.mark.asyncio
+    async def test_surface_contract_is_forwarded_to_vision(self, memory_port_stub: Any) -> None:
+        """
+        Structured surface context must reach the vision layer unchanged so strict
+        scroll plans keep targeting the requested area.
+        """
+
+        context_manager = ContextManager(memory=memory_port_stub, workflow_id="t3")
+        state = AgentState(intent="find Millet Express")
+        state.set_sub_goals(
+            [
+                SubGoal(
+                    index=0,
+                    description="Scroll horizontally below Fast Delivery until Millet Express is visible",
+                    execution_contract=ExecutionContract(
+                        required_action_family=RequiredActionFamily.SCROLL,
+                        scroll_axis=ScrollAxis.HORIZONTAL,
+                        surface="below Fast Delivery section",
+                    ),
+                )
+            ]
+        )
+
+        vision = AsyncMock()
+        vision.analyze.return_value = _analysis()
+
+        planner = StepPlanner(vision_tool=vision)
+        await planner.plan_step(
+            state=state,
+            capture=_capture(),
+            reasoner=Reasoner(intent="find Millet Express"),
+            screen_width=1206,
+            screen_height=2622,
+            context_manager=context_manager,
+            strict_mode=True,
+        )
+
+        analyze_call = vision.analyze.await_args
+        assert analyze_call is not None
+        sub_goal_info = analyze_call.kwargs["sub_goal_info"]
+        assert sub_goal_info["surface"] == "below Fast Delivery section"
+        await context_manager.shutdown()
+
+    @pytest.mark.asyncio
     async def test_clear_is_noop_when_no_guidance_present(self, memory_port_stub: Any) -> None:
         """
         Calling ``plan_step`` without any injected guidance must not
@@ -127,4 +189,47 @@ class TestPlannerUseOnceGuidance:
         )
 
         assert context_manager.get_user_guidance() == []
+        await context_manager.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_terminal_validation_candidate_is_tagged_on_step(
+        self, memory_port_stub: Any
+    ) -> None:
+        """
+        Planner must tag completion-claim validation steps so strict supervision can
+        distinguish them from ordinary validation churn.
+        """
+
+        context_manager = ContextManager(memory=memory_port_stub, workflow_id="t4")
+        state = AgentState(intent="find jars & containers")
+        state.set_sub_goals(
+            [
+                SubGoal(
+                    index=0,
+                    description="Scroll down until you find Jars & containers on the screen",
+                    execution_contract=ExecutionContract(
+                        required_action_family=RequiredActionFamily.SCROLL,
+                        scroll_axis=ScrollAxis.VERTICAL,
+                    ),
+                )
+            ]
+        )
+
+        vision = AsyncMock()
+        vision.analyze.return_value = _validation_completion_analysis()
+
+        planner = StepPlanner(vision_tool=vision)
+        plan = await planner.plan_step(
+            state=state,
+            capture=_capture(),
+            reasoner=Reasoner(intent="find jars & containers"),
+            screen_width=1206,
+            screen_height=2622,
+            context_manager=context_manager,
+            strict_mode=True,
+        )
+
+        assert plan.step is not None
+        assert plan.step.action.action_type is ActionType.VALIDATE
+        assert plan.step.metadata["terminal_validation_candidate"] is True
         await context_manager.shutdown()

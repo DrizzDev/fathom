@@ -289,6 +289,15 @@ class AndroidParser(PlatformParser):
 
                 w, h = x2 - x1, y2 - y1
                 metadata = {key: node.get(key, "") for key in node.attrib}
+                metadata.update(
+                    self.__scroll_metadata(
+                        metadata=metadata,
+                        width=x2 - x1,
+                        height=y2 - y1,
+                        screen_width=width,
+                        screen_height=height,
+                    )
+                )
 
                 if w <= 0 or h <= 0:
                     skips["invalid_size"] += 1
@@ -333,6 +342,65 @@ class AndroidParser(PlatformParser):
 
         logger.info(f"Found {len(detected)} valid elements. Skips: {skips}")
         return detected
+
+    def __scroll_metadata(
+        self,
+        *,
+        metadata: Dict[str, Any],
+        width: int,
+        height: int,
+        screen_width: int,
+        screen_height: int,
+    ) -> Dict[str, str]:
+        """
+        Attach normalized scroll metadata for downstream scope resolution.
+        """
+
+        kind = str(metadata.get("class", ""))
+        explicitly_scrollable = str(metadata.get("scrollable", "false")).lower() == "true"
+        scrollable = explicitly_scrollable or kind in self.__SCROLLABLE_CLASSES
+        if not scrollable:
+            return {}
+
+        if kind == "android.widget.HorizontalScrollView":
+            axis = "horizontal"
+            scope_kind = "carousel"
+        elif kind in {
+            "androidx.viewpager.widget.ViewPager",
+            "androidx.viewpager2.widget.ViewPager2",
+        }:
+            fills_viewport = width >= int(screen_width * 0.80) and height >= int(
+                screen_height * 0.55
+            )
+            axis = "vertical" if fills_viewport else "horizontal"
+            scope_kind = "viewport" if fills_viewport else "carousel"
+        elif (
+            explicitly_scrollable
+            and width >= int(screen_width * 0.80)
+            and height >= int(screen_height * 0.55)
+        ):
+            axis = "vertical"
+            scope_kind = (
+                "list"
+                if kind
+                in {
+                    "android.widget.ListView",
+                    "android.widget.GridView",
+                    "android.widget.ScrollView",
+                    "android.widget.ExpandableListView",
+                    "androidx.core.widget.NestedScrollView",
+                    "androidx.recyclerview.widget.RecyclerView",
+                }
+                else "viewport"
+            )
+        else:
+            axis = "vertical"
+            scope_kind = "list"
+        return {
+            "scrollable": "true",
+            "axis": axis,
+            "kind": scope_kind,
+        }
 
     def filter_and_deduplicate(
         self,

@@ -4,6 +4,7 @@ import unittest
 from typing import Tuple
 
 from fathom.constants import ActionType
+from fathom.constants.scroll import ScrollEvidenceSource, ScrollVerdictKind
 from fathom.core.supervision import OutcomeClassifier
 from fathom.schemas.actions import Action, Bounds, CoordinateSystem
 from fathom.schemas.observation import (
@@ -13,6 +14,7 @@ from fathom.schemas.observation import (
 )
 from fathom.schemas.outcomes import OutcomeStatus
 from fathom.schemas.screens import ScreenDiff, ScreenHashBundle
+from fathom.schemas.scroll import ScrollOutcome, ScrollVerdict
 
 
 class OutcomeClassifierTest(unittest.TestCase):
@@ -125,11 +127,9 @@ class OutcomeClassifierTest(unittest.TestCase):
             activity_changed=False,
         )
 
-    def test_failed_execution_returns_blocked_outcome(self) -> None:
+    def test_failed_execution_without_post_action_evidence_returns_blocked_outcome(self) -> None:
         """
-        ``success=False`` short-circuits to BLOCKED regardless of any
-        UI evidence — the device command never landed, so observations
-        cannot be trusted.
+        ``success=False`` with no post-action evidence remains BLOCKED.
         """
 
         outcome = OutcomeClassifier().classify(
@@ -141,6 +141,34 @@ class OutcomeClassifierTest(unittest.TestCase):
         )
 
         self.assertEqual(outcome.status, OutcomeStatus.BLOCKED)
+
+    def test_failed_scroll_with_strong_visual_progress_is_effective(self) -> None:
+        """
+        Failed execution must still classify EFFECTIVE when the diff proves a real scroll landed.
+        """
+
+        outcome = OutcomeClassifier().classify(
+            success=False,
+            action=self.__action(action_type=ActionType.SWIPE_UP),
+            before=self.__observation(),
+            diff=self.__diff(
+                action_had_effect=True,
+                is_genuinely_different_state=True,
+            ),
+            after=self.__observation(),
+            scroll_outcome=ScrollOutcome(
+                success=False,
+                final=ScrollVerdict(
+                    kind=ScrollVerdictKind.AMBIGUOUS,
+                    source=ScrollEvidenceSource.CORRELATION,
+                    confidence=0.55,
+                    distance=0,
+                    detail="translation_in_uncertain_band",
+                ),
+            ),
+        )
+
+        self.assertEqual(outcome.status, OutcomeStatus.EFFECTIVE)
 
     def test_missing_after_observation_returns_unknown(self) -> None:
         """
@@ -247,6 +275,81 @@ class OutcomeClassifierTest(unittest.TestCase):
 
         self.assertEqual(outcome.status, OutcomeStatus.NO_EFFECT)
 
+    def test_scroll_supervisor_progressed_is_advisory_when_diff_shows_no_effect(self) -> None:
+        """
+        Scroll diagnostics are advisory; the unified diff pipeline owns the final status.
+        """
+
+        outcome = OutcomeClassifier().classify(
+            success=True,
+            action=self.__action(action_type=ActionType.SWIPE_UP),
+            before=self.__observation(),
+            diff=self.__diff(action_had_effect=False),
+            after=self.__observation(),
+            scroll_outcome=ScrollOutcome(
+                success=True,
+                final=ScrollVerdict(
+                    kind=ScrollVerdictKind.PROGRESSED,
+                    source=ScrollEvidenceSource.CORRELATION,
+                    confidence=0.99,
+                    distance=320,
+                ),
+            ),
+        )
+
+        self.assertEqual(outcome.status, OutcomeStatus.NO_EFFECT)
+
+    def test_scroll_supervisor_wrong_axis_does_not_override_visible_progress(self) -> None:
+        """
+        Strong visual progress remains effective even when the scroll diagnostic disagrees.
+        """
+
+        outcome = OutcomeClassifier().classify(
+            success=True,
+            action=self.__action(action_type=ActionType.SWIPE_UP),
+            before=self.__observation(),
+            diff=self.__diff(
+                action_had_effect=True,
+                is_genuinely_different_state=True,
+            ),
+            after=self.__observation(),
+            scroll_outcome=ScrollOutcome(
+                success=False,
+                final=ScrollVerdict(
+                    kind=ScrollVerdictKind.WRONG_AXIS,
+                    source=ScrollEvidenceSource.CORRELATION,
+                    confidence=0.98,
+                    distance=280,
+                ),
+            ),
+        )
+
+        self.assertEqual(outcome.status, OutcomeStatus.EFFECTIVE)
+
+    def test_scroll_supervisor_ambiguous_keeps_diff_owned_effective_status(self) -> None:
+        """
+        Ambiguous scroll diagnostics must not downgrade a clearly effective visual diff.
+        """
+
+        outcome = OutcomeClassifier().classify(
+            success=True,
+            action=self.__action(action_type=ActionType.SWIPE_UP),
+            before=self.__observation(),
+            diff=self.__diff(action_had_effect=True),
+            after=self.__observation(),
+            scroll_outcome=ScrollOutcome(
+                success=False,
+                final=ScrollVerdict(
+                    kind=ScrollVerdictKind.AMBIGUOUS,
+                    source=ScrollEvidenceSource.CORRELATION,
+                    confidence=0.55,
+                    distance=0,
+                ),
+            ),
+        )
+
+        self.assertEqual(outcome.status, OutcomeStatus.EFFECTIVE)
+
     def test_scroll_with_genuinely_different_state_is_effective(self) -> None:
         """
         Scroll classifies EFFECTIVE only on the stronger
@@ -301,3 +404,18 @@ class OutcomeClassifierTest(unittest.TestCase):
         )
 
         self.assertEqual(outcome.status, OutcomeStatus.EFFECTIVE)
+
+    def test_control_action_returns_unknown_without_participating_in_ui_effect_rules(self) -> None:
+        """
+        ASK_USER is a control-flow action, not a device-effect classification target.
+        """
+
+        outcome = OutcomeClassifier().classify(
+            success=True,
+            action=self.__action(action_type=ActionType.ASK_USER),
+            before=self.__observation(),
+            diff=self.__diff(action_had_effect=True),
+            after=self.__observation(),
+        )
+
+        self.assertEqual(outcome.status, OutcomeStatus.UNKNOWN)

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
@@ -15,9 +15,11 @@ from fathom.schemas.artifact import ArtifactRecord, VerificationPayload
 from fathom.schemas.completion import CompletionVerdict
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.tasks import ExecutionTaskState
-from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 from fathom.strategies.graph.state import IntentGraphState
 from fathom.utils.parsing import strip_code_fences
+
+if TYPE_CHECKING:
+    from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +83,6 @@ class VerifyNode:
             self.__provider.persistence.persist(result=result)
             return result
 
-        # When all sub-goals are definitively complete, force closure after
-        # the first validation pass.  The VERIFY LLM still runs (so we log
-        # its assessment), but its verdict cannot reject completion — the
-        # sub-goal chain is the source of truth.
         all_sub_goals_done = (
             self.__provider.context.agent_state.has_sub_goals()
             and self.__provider.context.agent_state.all_sub_goals_complete()
@@ -202,16 +200,7 @@ class VerifyNode:
             reason=reason,
         )
 
-        if is_truly_complete or all_sub_goals_done:
-            # When all sub-goals are done, the first validation pass forces
-            # closure regardless of the LLM's verdict.
-            if all_sub_goals_done and not is_truly_complete:
-                logger.warning(
-                    f"LLM rejected completion but all sub-goals are done — "
-                    f"forcing closure. LLM reason: {reason}"
-                )
-                reason = f"All sub-goals completed (LLM disagreed: {reason})"
-
+        if is_truly_complete:
             self.__provider.context.agent_state.mark_complete(reason=reason)
             result = cast(
                 "IntentGraphState",
@@ -222,44 +211,54 @@ class VerifyNode:
             )
             self.__provider.persistence.persist(result=result)
             return result
-        else:
-            # Signal the rejection to the recovery coordinator; fall through
-            # to the standard rejection path if no strategy commits.
-            recovered = await self.__provider.recovery.try_recover(
-                reason=reason,
-                capture=capture,
-                trigger=RecoveryTrigger.VERIFY_REJECTED,
-            )
-            if recovered is not None:
-                return recovered
 
-            feedback = f"Verification failed: {reason}"
+        if all_sub_goals_done:
             logger.warning(
-                f"{feedback}",
-                extra={
-                    "component": "graph.intent.verify",
-                    "event": "verify.log",
-                    "workflow.id": self.__provider.context.workflow_id,
-                },
+                f"LLM rejected completion after local completion gate passed. "
+                f"Keeping workflow open. LLM reason: {reason}"
             )
-            self.__provider.context.agent_state.reset_completion()
+            # Final intent verification owns completion. When it rejects after the
+            # last sub-goal was locally marked complete, restore that sub-goal as
+            # the active mission so recovery/replanning keep the same contract.
+            self.__provider.context.agent_state.reopen_last_completed_sub_goal()
 
-            # Route verifier rejection through the typed verifier-feedback
-            # channel so the next planner iteration sees it as system feedback
-            # — distinct from real user instructions.
-            await self.__provider.context.context_manager.inject_verifier_feedback(
-                feedback=feedback, step=self.__provider.context.agent_state.step_count
-            )
+        # Signal the rejection to the recovery coordinator; fall through
+        # to the standard rejection path if no strategy commits.
+        recovered = await self.__provider.recovery.try_recover(
+            reason=reason,
+            capture=capture,
+            trigger=RecoveryTrigger.VERIFY_REJECTED,
+        )
+        if recovered is not None:
+            return recovered
 
-            result = cast(
-                "IntentGraphState",
-                {
-                    CommonStateKey.IS_COMPLETE: False,
-                    IntentStateKey.SHOULD_RETRY: True,
-                },
-            )
-            self.__provider.persistence.persist(result=result)
-            return result
+        feedback = f"Verification failed: {reason}"
+        logger.warning(
+            f"{feedback}",
+            extra={
+                "component": "graph.intent.verify",
+                "event": "verify.log",
+                "workflow.id": self.__provider.context.workflow_id,
+            },
+        )
+        self.__provider.context.agent_state.reset_completion()
+
+        # Route verifier rejection through the typed verifier-feedback
+        # channel so the next planner iteration sees it as system feedback
+        # — distinct from real user instructions.
+        await self.__provider.context.context_manager.inject_verifier_feedback(
+            feedback=feedback, step=self.__provider.context.agent_state.step_count
+        )
+
+        result = cast(
+            "IntentGraphState",
+            {
+                CommonStateKey.IS_COMPLETE: False,
+                IntentStateKey.SHOULD_RETRY: True,
+            },
+        )
+        self.__provider.persistence.persist(result=result)
+        return result
 
     async def __emit_verification_artifact(
         self,

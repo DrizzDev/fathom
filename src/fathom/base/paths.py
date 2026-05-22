@@ -4,10 +4,9 @@ from datetime import datetime
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING
 
-from fathom.settings.env import FathomSettings
-
 if TYPE_CHECKING:
     from fathom.schemas.artifact import ArtifactKind
+    from fathom.settings.env import FathomSettings
 
 
 class SharedPathManager:
@@ -16,7 +15,7 @@ class SharedPathManager:
     Enforces structure: assets/{category}/{date}/{package}/{session}/
     """
 
-    def __init__(self, settings: FathomSettings) -> None:
+    def __init__(self, settings: "FathomSettings") -> None:
         """
         Initialize path manager with settings.
         """

@@ -12,8 +12,10 @@ from fathom.core.supervision.policies import (
     TargetPolicy,
 )
 from fathom.schemas.actions import Action
+from fathom.schemas.configuration import IntentConfiguration
 from fathom.schemas.localization import LocalizationResult
 from fathom.schemas.observation import ScreenObservation
+from fathom.schemas.perception import PerceptionConfiguration
 from fathom.schemas.supervision import BlockReason, SupervisionVerdict, VerdictKind
 
 
@@ -61,17 +63,27 @@ class RuntimeSupervisor:
         self.__repetition = repetition
 
     @classmethod
-    def create(cls) -> "RuntimeSupervisor":
+    def create(
+        cls,
+        *,
+        perception_configuration: Optional[PerceptionConfiguration] = None,
+        runtime_policy: Optional[IntentConfiguration.RuntimePolicyConfiguration] = None,
+    ) -> "RuntimeSupervisor":
         """
         Create a supervisor with default runtime policies.
         """
 
+        resolved_perception = perception_configuration or PerceptionConfiguration()
+        resolved_runtime_policy = runtime_policy or IntentConfiguration.RuntimePolicyConfiguration()
         return cls(
             target=TargetPolicy(),
             scroll=ScrollPolicy(),
             budget=BudgetPolicy(),
             overlay=OverlayPolicy(),
-            keyboard=KeyboardPolicy(),
+            keyboard=KeyboardPolicy(
+                detection_configuration=resolved_perception.keyboard,
+                runtime_configuration=resolved_runtime_policy.keyboard,
+            ),
             repetition=RepetitionPolicy(),
         )
 

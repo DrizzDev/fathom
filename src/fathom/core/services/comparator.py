@@ -4,7 +4,10 @@ import time
 from logging import getLogger
 from typing import List, Optional, Tuple, TypeAlias, cast
 
-import cv2
+try:
+    import cv2
+except ModuleNotFoundError:  # pragma: no cover - dependency enforced at runtime
+    cv2 = None
 import numpy
 from numpy.typing import NDArray
 
@@ -53,6 +56,9 @@ class ScreenComparator:
         """
         Compare two captures and return a rich diff object.
         """
+
+        if cv2 is None:
+            raise RuntimeError("OpenCV is required to compare screen captures.")
 
         compare_start = time.time()
 

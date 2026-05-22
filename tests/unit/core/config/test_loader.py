@@ -37,28 +37,29 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
     members must raise rather than silently being dropped.
     """
 
-    def test_perception_defaults_enable_every_fallback_subsystem(self) -> None:
+    def test_perception_defaults_keep_cv_disabled(self) -> None:
         """
-        Bring-up defaults: OCR, CV, icon, and overlay run by default so
-        the perception cascade has every contributor available. Journal
-        stays off — it is operator-opt-in for local-only diagnostics.
-        Document AI credentials must still be configured explicitly, so
-        ``ocr.document_ai`` is ``None`` even though OCR is enabled.
+        Production defaults keep CV disabled while OCR, icon, and overlay
+        remain enabled. Journal stays off — it is operator-opt-in for
+        local-only diagnostics. Document AI credentials must still be
+        configured explicitly, so ``ocr.document_ai`` is ``None`` even
+        though OCR is enabled.
         """
 
         config = RuntimeConfigLoader(settings=_settings()).perception()
 
         self.assertTrue(config.ocr.enabled)
         self.assertIsNone(config.ocr.document_ai)
-        self.assertTrue(config.cv.enabled)
+        self.assertFalse(config.cv.enabled)
         self.assertTrue(config.icon.enabled)
         self.assertTrue(config.overlay.enabled)
+        self.assertFalse(config.keyboard.enabled)
         self.assertFalse(config.journal.local_enabled)
 
     def test_perception_subsystem_can_be_flipped_off_via_env(self) -> None:
         """
         Operators can disable any individual subsystem by setting its
-        env flag — the default-on stance does not lock the runtime in.
+        env flag.
         """
 
         config = RuntimeConfigLoader(
@@ -67,6 +68,7 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
                 observation_cv_enabled=False,
                 observation_icon_enabled=False,
                 observation_overlay_enabled=False,
+                observation_keyboard_enabled=False,
             ),
         ).perception()
 
@@ -74,6 +76,7 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
         self.assertFalse(config.cv.enabled)
         self.assertFalse(config.icon.enabled)
         self.assertFalse(config.overlay.enabled)
+        self.assertFalse(config.keyboard.enabled)
 
     def test_perception_enables_ocr_only_with_full_credentials(self) -> None:
         """
@@ -176,7 +179,7 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
         assert config.ocr.document_ai is not None
         self.assertEqual(config.ocr.document_ai.credentials, payload)
 
-    def test_perception_cv_icon_overlay_flags_route_through(self) -> None:
+    def test_perception_cv_icon_overlay_keyboard_flags_route_through(self) -> None:
         """
         Each perception subsystem flag round-trips into its nested config.
         """
@@ -186,12 +189,14 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
                 observation_cv_enabled=True,
                 observation_icon_enabled=True,
                 observation_overlay_enabled=True,
+                observation_keyboard_enabled=True,
             ),
         ).perception()
 
         self.assertTrue(config.cv.enabled)
         self.assertTrue(config.icon.enabled)
         self.assertTrue(config.overlay.enabled)
+        self.assertTrue(config.keyboard.enabled)
 
     def test_journal_local_flag_routes_through(self) -> None:
         """

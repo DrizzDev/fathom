@@ -13,6 +13,7 @@ from rich.table import Table
 
 from fathom.adapters.telemetry.console import ConsoleTelemetryAdapter
 from fathom.base.paths import SharedPathManager
+from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.exceptions import FathomError
 from fathom.interfaces.factory import (
     DeviceFactoryPort,
@@ -163,6 +164,7 @@ class CommandExecutor:
             .with_signal(port=signal_adapter)
             .with_telemetry(port=telemetry_adapter)
             .with_perception(port=perception_adapter)
+            .with_runtime_configuration(loader=RuntimeConfigLoader(settings=self.__settings))
             .build()
         )
 

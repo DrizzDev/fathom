@@ -96,11 +96,11 @@ class ToolRegistry:
                             },
                             "label_id": {
                                 "type": "STRING",
-                                "description": "The ID of the element from the manifest (e.g. '4'). REQUIRED if the element is in the manifest.",
+                                "description": "The ID of the element from the manifest (e.g. '4'). REQUIRED when the target or scroll container exists in the manifest.",
                             },
                             "bbox": {
                                 "type": "OBJECT",
-                                "description": "Bounding box for the action target. x,y are TOP-LEFT and width,height extend right/down. Use normalized values (0-1000) by default; use pixel values only with coordinate_system='pixel'.",
+                                "description": "Bounding box for the action target. x,y are TOP-LEFT and width,height extend right/down. Use normalized values (0-1000) only for visually estimated regions; use coordinate_system='pixel' when copying manifest or screenshot-space bounds.",
                                 "properties": {
                                     "x": {"type": "INTEGER"},
                                     "y": {"type": "INTEGER"},
@@ -135,7 +135,7 @@ class ToolRegistry:
                             # --- Execution signals ---
                             "confidence": {
                                 "type": "NUMBER",
-                                "description": "Confidence level (0.0-1.0) for this action.",
+                                "description": "Required confidence level (0.0-1.0) for this action.",
                             },
                             "is_valid": {
                                 "type": "BOOLEAN",
@@ -211,6 +211,8 @@ class ToolRegistry:
                                     "REQUIRED for all scroll/swipe actions. The element or section being "
                                     "scrolled to find (e.g., 'Vitamins and supplements', 'Lab tests and "
                                     "packages'). Use the exact phrase from the UI when possible. "
+                                    "When the manifest exposes the scrollable container, ground the action with that "
+                                    "container's label_id and use scroll_target only for the intended content. "
                                     "Must not be empty for swipe_up, swipe_down, swipe_left, swipe_right, or scroll."
                                 ),
                             },
@@ -264,7 +266,7 @@ class ToolRegistry:
                                 ),
                             },
                         },
-                        "required": ["action_type", "rationale", "is_valid"],
+                        "required": ["action_type", "rationale", "is_valid", "confidence"],
                     },
                     "goal_completed": {
                         "type": "BOOLEAN",

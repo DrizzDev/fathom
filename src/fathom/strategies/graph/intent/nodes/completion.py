@@ -130,6 +130,7 @@ class SubGoalEvaluator:
         signal = self.__context.reasoner.analyze_subgoal_completion(
             analysis=analysis,
             sub_goal_description=current.description,
+            outcome=outcome,
             delta_score=agent_state.last_delta_score,
             screen_changed=step_result.screen_changed or kind == SubGoalKind.VALIDATION,
             screen_description=step_result.observation or step_result.step.action.target or "",

@@ -13,12 +13,14 @@ from fathom.core.supervision.policies import (
     TargetPolicy,
 )
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
+from fathom.schemas.configuration import IntentConfiguration
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import (
     KeyboardObservation,
     OverlayObservation,
     ScreenObservation,
 )
+from fathom.schemas.perception import KeyboardConfiguration
 from fathom.schemas.screens import ScreenHashBundle
 from fathom.schemas.supervision import BlockReason
 from fathom.schemas.tasks import (
@@ -62,11 +64,33 @@ def _observation(
     )
 
 
+def _bounds(
+    *,
+    x: int = 0,
+    y: int = 0,
+    width: int = 100,
+    height: int = 100,
+) -> Bounds:
+    """
+    Build pixel bounds for policy fixtures.
+    """
+
+    return Bounds(
+        x=x,
+        y=y,
+        width=width,
+        height=height,
+        source=CoordinateSource.VIEWPORT,
+        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+    )
+
+
 def _action(
     *,
     action_type: ActionType = ActionType.TAP,
     target: str = "Continue",
     rationale: str = "fixture action",
+    bounds: Bounds = None,
 ) -> Action:
     """
     Build a minimal Action for policy fixtures.
@@ -77,6 +101,7 @@ def _action(
         target=target,
         rationale=rationale,
         confidence=0.9,
+        bounds=bounds,
     )
 
 
@@ -181,23 +206,78 @@ class KeyboardPolicyTest(unittest.TestCase):
         """
 
         self.assertIsNone(
-            KeyboardPolicy().evaluate(
+            KeyboardPolicy(
+                detection_configuration=KeyboardConfiguration(enabled=True),
+                runtime_configuration=IntentConfiguration.KeyboardRuntimeConfiguration(
+                    block_actions=True
+                ),
+            ).evaluate(
                 action=_action(action_type=ActionType.SWIPE_UP),
                 observation=_observation(keyboard_visible=False),
             )
         )
 
-    def test_keyboard_visible_blocks_swipe(self) -> None:
+    def test_keyboard_visible_blocks_swipe_when_bounds_intersect(self) -> None:
         """
-        Swipe with keyboard visible must surface KEYBOARD_OCCLUDING.
+        Swipe with keyboard overlap must surface KEYBOARD_OCCLUDING.
         """
 
         self.assertEqual(
-            KeyboardPolicy().evaluate(
-                action=_action(action_type=ActionType.SWIPE_UP),
-                observation=_observation(keyboard_visible=True),
+            KeyboardPolicy(
+                detection_configuration=KeyboardConfiguration(enabled=True),
+                runtime_configuration=IntentConfiguration.KeyboardRuntimeConfiguration(
+                    block_actions=True
+                ),
+            ).evaluate(
+                action=_action(
+                    action_type=ActionType.SWIPE_UP,
+                    bounds=_bounds(x=100, y=1850, width=400, height=300),
+                ),
+                observation=ScreenObservation(
+                    activity="screen",
+                    hashes=_hashes(),
+                    elements=(),
+                    keyboard=KeyboardObservation(
+                        visible=True,
+                        bounds=_bounds(x=0, y=1700, width=1080, height=620),
+                    ),
+                    overlays=(),
+                    scroll=(),
+                    calls_to_action=(),
+                ),
             ),
             BlockReason.KEYBOARD_OCCLUDING,
+        )
+
+    def test_keyboard_visible_allows_swipe_when_bounds_do_not_intersect(self) -> None:
+        """
+        Swipe outside keyboard bounds must remain executable.
+        """
+
+        self.assertIsNone(
+            KeyboardPolicy(
+                detection_configuration=KeyboardConfiguration(enabled=True),
+                runtime_configuration=IntentConfiguration.KeyboardRuntimeConfiguration(
+                    block_actions=True
+                ),
+            ).evaluate(
+                action=_action(
+                    action_type=ActionType.SWIPE_UP,
+                    bounds=_bounds(x=100, y=400, width=400, height=300),
+                ),
+                observation=ScreenObservation(
+                    activity="screen",
+                    hashes=_hashes(),
+                    elements=(),
+                    keyboard=KeyboardObservation(
+                        visible=True,
+                        bounds=_bounds(x=0, y=1700, width=1080, height=620),
+                    ),
+                    overlays=(),
+                    scroll=(),
+                    calls_to_action=(),
+                ),
+            )
         )
 
     def test_keyboard_visible_allows_tap(self) -> None:
@@ -206,7 +286,12 @@ class KeyboardPolicyTest(unittest.TestCase):
         """
 
         self.assertIsNone(
-            KeyboardPolicy().evaluate(
+            KeyboardPolicy(
+                detection_configuration=KeyboardConfiguration(enabled=True),
+                runtime_configuration=IntentConfiguration.KeyboardRuntimeConfiguration(
+                    block_actions=True
+                ),
+            ).evaluate(
                 action=_action(action_type=ActionType.TAP),
                 observation=_observation(keyboard_visible=True),
             )
@@ -215,7 +300,7 @@ class KeyboardPolicyTest(unittest.TestCase):
 
 class ScrollPolicyTest(unittest.TestCase):
     """
-    Pins for ScrollPolicy blind-scroll detection.
+    Pins for ScrollPolicy's no-op behavior before post-scroll observation.
     """
 
     def test_non_swipe_returns_none(self) -> None:
@@ -231,18 +316,17 @@ class ScrollPolicyTest(unittest.TestCase):
             )
         )
 
-    def test_blind_swipe_blocks_when_no_scroll_evidence(self) -> None:
+    def test_blind_swipe_is_not_preblocked_without_scroll_evidence(self) -> None:
         """
-        Swipes with no scroll evidence and prior no-progress are blocked.
+        Swipes are validated after execution, not blocked on coarse pre-checks.
         """
 
-        self.assertEqual(
+        self.assertIsNone(
             ScrollPolicy().evaluate(
                 action=_action(action_type=ActionType.SWIPE_UP),
                 observation=_observation(),
                 no_progress=1,
-            ),
-            BlockReason.NON_SCROLLABLE_SURFACE,
+            )
         )
 
     def test_first_swipe_returns_none(self) -> None:

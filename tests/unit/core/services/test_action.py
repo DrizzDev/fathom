@@ -19,10 +19,13 @@ from fathom.schemas.configuration import (
     DeviceRuntimeConfiguration,
     InteractionPolicyConfiguration,
     InteractionRuntimeConfiguration,
+    ScrollInteractionPolicy,
     TypeInteractionPolicy,
 )
-from fathom.schemas.results import ActionResult
-from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.observation import KeyboardObservation, ScreenObservation
+from fathom.schemas.results import ActionResult, ActionTraceEvent
+from fathom.schemas.screens import ScreenCapture, ScreenHashBundle
+from fathom.schemas.scroll import ScrollOutcome, ScrollVerdict
 from fathom.schemas.steps import Step
 
 # Use a near-zero focus delay for fast tests.
@@ -32,6 +35,23 @@ FAST_TYPE_POLICY = DeviceRuntimeConfiguration(
             type=TypeInteractionPolicy(delay=10),
         ),
     ),
+)
+
+ADAPTIVE_SCROLL_POLICY = DeviceRuntimeConfiguration(
+    interaction=InteractionRuntimeConfiguration(
+        policy=InteractionPolicyConfiguration(
+            type=TypeInteractionPolicy(delay=10),
+            scroll=ScrollInteractionPolicy(
+                adaptive=ScrollInteractionPolicy.AdaptivePolicy(enabled=True),
+            ),
+        ),
+    ),
+)
+
+MINIMAL_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00"
+    b"\x00\x04\x00\x01\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
 
@@ -45,6 +65,7 @@ class FakeDevice(DevicePort):
         *,
         dimensions: Tuple[int, int] = (1080, 2340),
         type_results: Optional[List[ActionResult]] = None,
+        swipe_results: Optional[List[ActionResult]] = None,
         device_configuration: Optional[DeviceRuntimeConfiguration] = None,
     ) -> None:
         """
@@ -53,10 +74,12 @@ class FakeDevice(DevicePort):
 
         self.__tap_calls: List[Tuple[int, int]] = []
         self.__type_calls: List[Dict[str, Any]] = []
+        self.__swipe_calls: List[Dict[str, Any]] = []
 
         self.__dimensions = dimensions
         self.__configuration = device_configuration or FAST_TYPE_POLICY
         self.__type_results = list(type_results or [ActionResult(success=True, duration=1)])
+        self.__swipe_results = list(swipe_results or [ActionResult(success=True, duration=1)])
 
     @property
     def tap_calls(self) -> List[Tuple[int, int]]:
@@ -73,6 +96,14 @@ class FakeDevice(DevicePort):
         """
 
         return self.__type_calls
+
+    @property
+    def swipe_calls(self) -> List[Dict[str, Any]]:
+        """
+        Recorded swipe call parameters.
+        """
+
+        return self.__swipe_calls
 
     @property
     def configuration(self) -> Optional[DeviceRuntimeConfiguration]:
@@ -125,7 +156,21 @@ class FakeDevice(DevicePort):
         Return success for swipe actions.
         """
 
-        return ActionResult(success=True, duration=1)
+        self.__swipe_calls.append(
+            {
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+                "duration": duration,
+                "speed": speed,
+            }
+        )
+        return (
+            self.__swipe_results.pop(0)
+            if self.__swipe_results
+            else ActionResult(success=True, duration=1)
+        )
 
     async def back(self) -> ActionResult:
         """
@@ -153,7 +198,7 @@ class FakeDevice(DevicePort):
         Return minimal PNG bytes.
         """
 
-        return b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+        return MINIMAL_PNG
 
     async def dump_hierarchy(self) -> Optional[str]:
         """
@@ -235,7 +280,11 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
         )
 
     @staticmethod
-    def __build_executor(device: FakeDevice) -> ActionExecutor:
+    def __build_executor(
+        device: FakeDevice,
+        *,
+        pipeline: Optional[Mock] = None,
+    ) -> ActionExecutor:
         """
         Build an ActionExecutor with minimal dependencies.
         """
@@ -245,6 +294,7 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
             device=device,
             telemetry=Mock(),
             path_manager=Mock(),
+            pipeline=pipeline,
         )
 
     @staticmethod
@@ -257,7 +307,7 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
             width=1080,
             height=2340,
             timestamp=0,
-            image=b"fake",
+            image=b"",
             activity="com.test.app",
         )
 
@@ -470,6 +520,69 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(device.tap_calls), 1)
         self.assertEqual(len(device.type_calls), 1)
 
+    async def test_non_coordinate_action_emits_no_trace_record(self) -> None:
+        """
+        Non-gesture actions must not emit synthetic trace artifacts.
+        """
+
+        device = FakeDevice()
+        pipeline = Mock()
+        pipeline.emit = AsyncMock()
+        executor = self.__build_executor(device, pipeline=pipeline)
+
+        action = Action(
+            action_type=ActionType.HIDE_KEYBOARD,
+            target="keyboard",
+            rationale="dismiss keyboard",
+            confidence=1.0,
+        )
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertTrue(result.success)
+        pipeline.emit.assert_not_awaited()
+
+    async def test_tap_emits_trace_record_with_real_coordinates(self) -> None:
+        """
+        Coordinate-backed device taps should emit one real trace artifact.
+        """
+
+        device = FakeDevice()
+        pipeline = Mock()
+        pipeline.emit = AsyncMock()
+        executor = self.__build_executor(device, pipeline=pipeline)
+
+        action = Action(
+            action_type=ActionType.TAP,
+            target="search box",
+            rationale="focus input",
+            confidence=1.0,
+            bounds=Bounds(
+                x=100,
+                y=200,
+                width=300,
+                height=120,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+        )
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertTrue(result.success)
+        pipeline.emit.assert_awaited_once()
+        record = pipeline.emit.await_args.kwargs["record"]
+        self.assertNotEqual(record.payload.coords, ())
+
     @patch("fathom.core.services.action.asyncio.sleep", new_callable=AsyncMock)
     async def test_type_retry_waits_twice(self, mock_sleep: AsyncMock) -> None:
         """
@@ -496,3 +609,508 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_sleep.await_count, 2)
         self.assertEqual(len(device.tap_calls), 2)
         self.assertEqual(len(device.type_calls), 2)
+
+
+class ActionExecutorScrollRetryTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pin scroll-specific retry behavior in :class:`ActionExecutor`.
+    """
+
+    @staticmethod
+    def __build_action() -> Action:
+        """
+        Build a minimal swipe action for executor tests.
+        """
+
+        return Action(
+            action_type=ActionType.SWIPE_UP,
+            target="Scroll list",
+            rationale="test swipe",
+            confidence=1.0,
+            bounds=Bounds(
+                x=120,
+                y=600,
+                width=600,
+                height=1200,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+        )
+
+    @classmethod
+    def __build_step(cls) -> Step:
+        """
+        Wrap the swipe action in a step fixture.
+        """
+
+        return Step(
+            metadata={},
+            action=cls.__build_action(),
+            step_number=1,
+            condition=None,
+            event_type="action",
+            screen_hash="scroll123",
+            is_conditional=False,
+        )
+
+    @staticmethod
+    def __build_capture() -> ScreenCapture:
+        """
+        Build a minimal capture fixture.
+        """
+
+        return ScreenCapture(
+            width=1080,
+            height=2340,
+            timestamp=0,
+            image=MINIMAL_PNG,
+            activity="com.test.app",
+        )
+
+    async def test_swipe_failure_does_not_use_outer_retry_loop(self) -> None:
+        """
+        Swipe actions must not be retried by the outer executor loop.
+        """
+
+        device = FakeDevice(
+            swipe_results=[
+                ActionResult(
+                    success=False,
+                    error="gesture blocked",
+                    duration=1,
+                ),
+                ActionResult(success=True, duration=1),
+            ],
+            device_configuration=ADAPTIVE_SCROLL_POLICY,
+        )
+        executor = ActionExecutor(
+            max_retries=2,
+            device=device,
+            telemetry=Mock(),
+            path_manager=Mock(),
+        )
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(),
+            pre_capture=self.__build_capture(),
+            observation=ScreenObservation(
+                activity="com.test.app",
+                elements=(),
+                hashes=ScreenHashBundle(
+                    visual_hash="0" * 16,
+                    xml_hash="a" * 16,
+                    interaction_hash="b" * 16,
+                ),
+                keyboard=KeyboardObservation(visible=False),
+                overlays=(),
+                scroll=(),
+                calls_to_action=(),
+            ),
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(len(device.swipe_calls), 1)
+
+
+class ActionExecutorAdaptiveScrollTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Covers adaptive scroll delegation for scroll-like actions.
+    """
+
+    async def test_scroll_uses_adaptive_supervisor_when_enabled(self) -> None:
+        """
+        Delegate viewport scroll execution to the injected adaptive supervisor.
+        """
+
+        device = FakeDevice(device_configuration=ADAPTIVE_SCROLL_POLICY)
+        scroll_outcome = ScrollOutcome(
+            success=True,
+            attempts=(),
+            final=ScrollVerdict(
+                kind="progressed",
+                source="correlation",
+                confidence=1.0,
+                distance=300,
+                detail="ok",
+            ),
+        )
+        supervisor = Mock()
+        supervisor.execute = AsyncMock(
+            return_value=(ActionResult(success=True, duration=5), scroll_outcome, ())
+        )
+        executor = ActionExecutor(
+            max_retries=0,
+            device=device,
+            telemetry=Mock(),
+            path_manager=Mock(),
+            scroll_supervisor=supervisor,
+        )
+
+        action = Action(
+            rationale="scroll",
+            action_type=ActionType.SCROLL,
+        )
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=Step(
+                metadata={},
+                action=action,
+                step_number=1,
+                condition=None,
+                event_type="action",
+                screen_hash="abc123",
+                is_conditional=False,
+            ),
+            pre_capture=ScreenCapture(
+                width=1080,
+                height=2340,
+                timestamp=0,
+                image=b"",
+                activity="com.test.app",
+            ),
+            observation=self.__observation(),
+        )
+
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.scroll_outcome)
+        supervisor.execute.assert_awaited_once()
+
+    async def test_supervised_scroll_without_attempts_emits_no_fake_swipe_trace(self) -> None:
+        """
+        Planned swipe traces must not be emitted when the supervisor dispatched no actual attempts.
+        """
+
+        device = FakeDevice(device_configuration=ADAPTIVE_SCROLL_POLICY)
+        pipeline = Mock()
+        pipeline.emit = AsyncMock()
+        scroll_outcome = ScrollOutcome(
+            success=False,
+            attempts=(),
+            final=ScrollVerdict(
+                kind="ambiguous",
+                source="surface",
+                confidence=0.0,
+                distance=0,
+                detail="no_attempt_executed",
+            ),
+        )
+        supervisor = Mock()
+        supervisor.execute = AsyncMock(
+            return_value=(
+                ActionResult(success=False, duration=0, error="scroll_not_executed"),
+                scroll_outcome,
+                (),
+            )
+        )
+        executor = ActionExecutor(
+            max_retries=0,
+            device=device,
+            telemetry=Mock(),
+            path_manager=Mock(),
+            pipeline=pipeline,
+            scroll_supervisor=supervisor,
+        )
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=Step(
+                metadata={},
+                action=Action(
+                    rationale="scroll",
+                    action_type=ActionType.SCROLL,
+                ),
+                step_number=1,
+                condition=None,
+                event_type="action",
+                screen_hash="abc123",
+                is_conditional=False,
+            ),
+            pre_capture=ScreenCapture(
+                width=1080,
+                height=2340,
+                timestamp=0,
+                image=MINIMAL_PNG,
+                activity="com.test.app",
+            ),
+            observation=self.__observation(),
+        )
+
+        self.assertFalse(result.success)
+        pipeline.emit.assert_not_awaited()
+
+    async def test_supervised_swipe_emits_trace_for_each_actual_attempt(self) -> None:
+        """
+        Trace artifacts must reflect the actual supervised attempts, not only the original plan.
+        """
+
+        device = FakeDevice(device_configuration=ADAPTIVE_SCROLL_POLICY)
+        pipeline = Mock()
+        pipeline.emit = AsyncMock()
+        capture_one = ScreenCapture(
+            width=1080,
+            height=2340,
+            timestamp=11,
+            image=MINIMAL_PNG,
+            activity="com.test.app",
+        )
+        capture_two = ScreenCapture(
+            width=1080,
+            height=2340,
+            timestamp=22,
+            image=MINIMAL_PNG,
+            activity="com.test.app",
+        )
+        scroll_outcome = ScrollOutcome(
+            success=False,
+            attempts=(
+                self.__attempt(start_y=2100, end_y=900),
+                self.__attempt(start_y=1700, end_y=450),
+            ),
+            final=ScrollVerdict(
+                kind="no_progress",
+                source="correlation",
+                confidence=1.0,
+                distance=0,
+                detail="region_stable",
+            ),
+        )
+        trace_events = (
+            ActionTraceEvent(capture=capture_one, coords=(540, 2100, 540, 900)),
+            ActionTraceEvent(capture=capture_two, coords=(540, 1700, 540, 450)),
+        )
+
+        async def __execute_supervised_scroll(
+            *,
+            before,
+            observation,
+            context,
+            current,
+            converter,
+            policy,
+            trace_recorder=None,
+        ):
+            _ = before, observation, context, current, converter, policy
+            if trace_recorder is not None:
+                for event in trace_events:
+                    await trace_recorder(event)
+            return (
+                ActionResult(success=False, duration=5, error="region_stable"),
+                scroll_outcome,
+                trace_events,
+            )
+
+        supervisor = Mock()
+        supervisor.execute = AsyncMock(side_effect=__execute_supervised_scroll)
+        executor = ActionExecutor(
+            max_retries=0,
+            device=device,
+            telemetry=Mock(),
+            path_manager=Mock(),
+            pipeline=pipeline,
+            scroll_supervisor=supervisor,
+        )
+
+        action = Action(
+            rationale="scroll",
+            action_type=ActionType.SCROLL,
+        )
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=Step(
+                metadata={},
+                action=action,
+                step_number=1,
+                condition=None,
+                event_type="action",
+                screen_hash="abc123",
+                is_conditional=False,
+            ),
+            pre_capture=ScreenCapture(
+                width=1080,
+                height=2340,
+                timestamp=0,
+                image=MINIMAL_PNG,
+                activity="com.test.app",
+            ),
+            observation=self.__observation(),
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(pipeline.emit.await_count, 2)
+        first_record = pipeline.emit.await_args_list[0].kwargs["record"]
+        second_record = pipeline.emit.await_args_list[1].kwargs["record"]
+        self.assertEqual(first_record.payload.capture.timestamp, 11)
+        self.assertEqual(first_record.payload.coords, (540, 2100, 540, 900))
+        self.assertEqual(second_record.payload.capture.timestamp, 22)
+        self.assertEqual(second_record.payload.coords, (540, 1700, 540, 450))
+
+    async def test_swipe_up_supervises_with_content_down_direction(self) -> None:
+        """
+        Swipe-up actions should supervise using content-down semantics.
+        """
+
+        device = FakeDevice(device_configuration=ADAPTIVE_SCROLL_POLICY)
+        supervisor = CapturingSupervisor()
+        executor = ActionExecutor(
+            max_retries=0,
+            device=device,
+            telemetry=Mock(),
+            path_manager=Mock(),
+            scroll_supervisor=supervisor,
+        )
+
+        action = Action(
+            rationale="scroll",
+            action_type=ActionType.SWIPE_UP,
+            target="list",
+        )
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=Step(
+                metadata={},
+                action=action,
+                step_number=1,
+                condition=None,
+                event_type="action",
+                screen_hash="abc123",
+                is_conditional=False,
+            ),
+            pre_capture=ScreenCapture(
+                width=1080,
+                height=2340,
+                timestamp=0,
+                image=MINIMAL_PNG,
+                activity="com.test.app",
+            ),
+            observation=self.__observation(),
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(supervisor.direction, "down")
+
+    @staticmethod
+    def __observation() -> ScreenObservation:
+        """
+        Build a minimal observation for supervised scroll.
+        """
+
+        from fathom.schemas.screens import ScreenHashBundle
+
+        return ScreenObservation(
+            activity="com.test.app",
+            elements=(),
+            hashes=ScreenHashBundle(visual_hash="a", xml_hash="b", interaction_hash="c"),
+            overlays=(),
+            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=()),
+            scroll=(),
+            calls_to_action=(),
+            focused=None,
+        )
+
+    @staticmethod
+    def __attempt(*, start_y: int, end_y: int):
+        """
+        Build one traced supervised attempt.
+        """
+
+        from fathom.constants.command import CommandScopeKind
+        from fathom.constants.scroll import ScrollEvidenceSource, ScrollStage
+        from fathom.schemas.actions import CoordinateSource, ExecutionRegion, GesturePath
+        from fathom.schemas.scroll import ScrollAttempt, ScrollScope
+
+        return ScrollAttempt(
+            stage=ScrollStage.CURRENT,
+            path=GesturePath(
+                start_x=540,
+                start_y=start_y,
+                end_x=540,
+                end_y=end_y,
+                duration=300,
+            ),
+            region=ExecutionRegion(
+                x=0,
+                y=0,
+                width=1080,
+                height=2340,
+                source=CoordinateSource.VIEWPORT,
+            ),
+            scope=ScrollScope(
+                identifier="scope",
+                kind=CommandScopeKind.VIEWPORT,
+                bounds=Bounds(
+                    x=0,
+                    y=0,
+                    width=1080,
+                    height=2340,
+                    coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                ),
+                region=ExecutionRegion(
+                    x=0,
+                    y=0,
+                    width=1080,
+                    height=2340,
+                    source=CoordinateSource.VIEWPORT,
+                ),
+                axis="vertical",
+                confidence=1.0,
+                source=ScrollEvidenceSource.SURFACE,
+            ),
+            capture_region=Bounds(
+                x=0,
+                y=0,
+                width=1080,
+                height=2340,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+            avoided=(),
+            verdict=ScrollVerdict(
+                kind="no_progress",
+                source=ScrollEvidenceSource.CORRELATION,
+                confidence=1.0,
+                distance=0,
+                detail="region_stable",
+            ),
+        )
+
+
+class CapturingSupervisor:
+    """
+    Supervisor double that records the content direction it received.
+    """
+
+    def __init__(self) -> None:
+        self.direction = None
+
+    async def execute(
+        self,
+        *,
+        before,
+        observation,
+        context,
+        current,
+        converter,
+        policy,
+        trace_recorder=None,
+    ):
+        _ = before, observation, current, converter, policy, trace_recorder
+        self.direction = context.direction.value
+        return (
+            ActionResult(success=True, duration=1),
+            ScrollOutcome(
+                success=True,
+                attempts=(),
+                final=ScrollVerdict(
+                    kind="progressed",
+                    source="correlation",
+                    confidence=1.0,
+                    distance=100,
+                    detail="ok",
+                ),
+            ),
+            (),
+        )

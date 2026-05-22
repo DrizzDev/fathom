@@ -4,7 +4,12 @@ from difflib import SequenceMatcher
 from logging import getLogger
 from typing import List, Optional, Set
 
-from fathom.constants import ACTION_EXECUTED_TYPES, NEXT_PHASE_ACTION_TYPES, ActionType
+from fathom.constants import (
+    ACTION_EXECUTED_TYPES,
+    NEXT_PHASE_ACTION_TYPES,
+    ActionExecutionKind,
+    ActionType,
+)
 from fathom.constants.reasoning import (
     ACTION_MIN_CONFIDENCE,
     ACTION_NEXT_PHASE_CONFIDENCE,
@@ -17,6 +22,7 @@ from fathom.constants.reasoning import (
     RATIONALE_MIN_SIMILARITY_FLOOR,
 )
 from fathom.schemas.actions import Action
+from fathom.schemas.outcomes import ActionOutcome, OutcomeStatus
 from fathom.schemas.reasoning import CompletionSignal, SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult
 
@@ -152,6 +158,7 @@ class Reasoner:
         analysis: AnalysisResult,
         sub_goal_description: str,
         *,
+        outcome: Optional[ActionOutcome] = None,
         screen_changed: bool = False,
         delta_score: Optional[float] = None,
         screen_description: Optional[str] = None,
@@ -186,13 +193,20 @@ class Reasoner:
             evidence.append(rationale_evidence)
 
         # Flag 3: an action that actually ran (planning-only actions excluded).
-        if action_executed := analysis.action.action_type in ACTION_EXECUTED_TYPES:
+        if outcome is not None:
+            action_executed = outcome.action.execution_kind is ActionExecutionKind.DEVICE
+        else:
+            action_executed = analysis.action.action_type in ACTION_EXECUTED_TYPES
+
+        if action_executed:
             evidence.append(f"Action executed: {analysis.action.action_type.value}")
 
         # Flag 4: post-action screen change exceeded the meaningful-delta floor.
         # Magnitude path rejects animation noise; boolean path is the fallback.
         screen_verified, screen_evidence = self.__verify_screen_change(
-            delta_score=delta_score, screen_changed=screen_changed
+            delta_score=delta_score,
+            screen_changed=screen_changed,
+            outcome=outcome,
         )
         if screen_verified:
             evidence.append(screen_evidence)
@@ -289,12 +303,22 @@ class Reasoner:
 
     @staticmethod
     def __verify_screen_change(
-        *, delta_score: Optional[float], screen_changed: bool
+        *,
+        delta_score: Optional[float],
+        screen_changed: bool,
+        outcome: Optional[ActionOutcome],
     ) -> tuple[bool, str]:
         """
         Decide screen verification. Returns ``(verified, evidence)``.
         Magnitude path takes precedence; boolean is the fallback.
         """
+
+        if outcome is not None:
+            if outcome.status is OutcomeStatus.EFFECTIVE:
+                return True, "Observed outcome classified the action as effective"
+
+            if outcome.status in {OutcomeStatus.NO_EFFECT, OutcomeStatus.BLOCKED}:
+                return False, "Observed outcome classified the action as ineffective"
 
         if delta_score is not None:
             if delta_score >= MEANINGFUL_SCREEN_DELTA_FLOOR:

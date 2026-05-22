@@ -29,6 +29,7 @@ class CommonStateKey(StrEnum):
     STEP_NUMBER = "STEP_NUMBER"
     IS_COMPLETE = "IS_COMPLETE"
     COMPLETION_REASON = "COMPLETION_REASON"
+    FAILURE_DIAGNOSTIC = "FAILURE_DIAGNOSTIC"
 
     # Artifacts
     CAPTURE = "CAPTURE"
@@ -73,6 +74,7 @@ class IntentStateKey(StrEnum):
     # Execution coordination across SUPERVISE / EXECUTE / OBSERVE
     EXECUTION_CONTEXT = "EXECUTION_CONTEXT"
     EXECUTION_BLOCKED = "EXECUTION_BLOCKED"
+    ACTIVE_SCROLL_LOCK = "ACTIVE_SCROLL_LOCK"
 
     # Supervisor feedback to the next planner turn. When supervise blocks
     # an action, LAST_BLOCK_REASON carries the BlockReason and

@@ -359,6 +359,30 @@ class SubGoalEvaluatorEvaluateTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         self.assertEqual(ctx.advance_calls, 0)
 
+    async def test_reasoner_receives_canonical_outcome(self) -> None:
+        """
+        Canonical action outcome must flow into sub-goal reasoning.
+        """
+
+        sub_goals = [SubGoal(index=0, description="Scroll until restaurant is visible")]
+        ctx = _StubContext(
+            sub_goals=sub_goals,
+            verdict=_verdict(complete=False),
+        )
+        evaluator = SubGoalEvaluator(context=ctx, recovery=self.__dispatcher())  # type: ignore[arg-type]
+        outcome = _outcome(status=OutcomeStatus.EFFECTIVE)
+
+        result = await evaluator.evaluate(
+            plan=_plan(analysis=_analysis(task_status=TaskStatus.MET)),
+            step_result=_step_result(),
+            accumulated=[],
+            outcome=outcome,
+        )
+
+        self.assertIsNone(result)
+        _, kwargs = ctx.reasoner.analyze_subgoal_completion.call_args
+        self.assertIs(kwargs["outcome"], outcome)
+
     async def test_floor_clears_with_more_sub_goals_routes_to_retry(self) -> None:
         """
         Floor clears, has-more is true → patch flips ``SHOULD_RETRY``

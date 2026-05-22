@@ -15,6 +15,7 @@ from fathom.core.prompts.decomposition import (
 )
 from fathom.core.recovery.types import RecoveryTrigger
 from fathom.schemas.escape import REPLAN_ESCAPE_CATEGORIES, EscapeCategory
+from fathom.schemas.subgoal import ExecutionContract
 
 
 class TestDecompositionEscapeFraming:
@@ -55,6 +56,8 @@ class TestDecompositionEscapeFraming:
             recent_actions=["Type 'dosa' in search bar"],
             suggested_next_action=None,
             escape_category=EscapeCategory.TARGET_NOT_AVAILABLE,
+            strict_mode=False,
+            execution_contract=ExecutionContract(),
         )
 
         category_framing = _ESCAPE_CATEGORY_FRAMING[EscapeCategory.TARGET_NOT_AVAILABLE.value]
@@ -75,6 +78,8 @@ class TestDecompositionEscapeFraming:
             failure_reason="2-screen oscillation",
             recent_actions=["tap label 11", "tap label 12"],
             suggested_next_action=None,
+            strict_mode=False,
+            execution_contract=ExecutionContract(),
         )
 
         assert "Trigger: LOOP_DETECTED" in preamble

@@ -72,6 +72,22 @@ class ActionType(StrEnum):
     ASK_USER = "ask_user"
 
 
+class ActionExecutionKind(StrEnum):
+    """
+    High-level execution channel for one planned action.
+    """
+
+    DEVICE = "device"
+    CONTROL = "control"
+
+
+CONTROL_ACTION_TYPES: FrozenSet[ActionType] = frozenset({ActionType.ASK_USER})
+
+DEVICE_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
+    action_type for action_type in ActionType if action_type not in CONTROL_ACTION_TYPES
+)
+
+
 # Action types that operate on a specific UI element at a pixel location.
 # Only spatial actions warrant label-ID snapping to ground-truth coordinates.
 # Non-spatial actions (wait, validate, complete, etc.) carry no meaningful target bounds.
@@ -164,6 +180,7 @@ class StrategyStatus(StrEnum):
 __all__ = [
     "FlowType",
     "ActionType",
+    "ActionExecutionKind",
     "SignalType",
     "TargetKind",
     "FathomEvent",
@@ -181,6 +198,8 @@ __all__ = [
     "VISUAL_HASH_LENGTH",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_RETRY_DELAY",
+    "CONTROL_ACTION_TYPES",
+    "DEVICE_ACTION_TYPES",
     "SPATIAL_ACTION_TYPES",
     "GESTURE_ACTION_TYPES",
     "DeviceConnectionType",

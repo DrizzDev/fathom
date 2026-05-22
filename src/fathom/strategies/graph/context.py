@@ -16,7 +16,8 @@ from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.context.manager import ContextManager
 from fathom.core.healing import HealingOrchestrator
 from fathom.core.localization import EnsembleLocalizerService
-from fathom.core.perception import ScreenObservationService, TargetLocalizationService
+from fathom.core.perception.localization import TargetLocalizationService
+from fathom.core.perception.observation import ScreenObservationService
 from fathom.core.runtime import CompletionService, RuntimeEventEmitter
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.audit import AuditService
@@ -187,8 +188,8 @@ class GraphContext:
         self.__comparator = comparator or ScreenComparator()
         self.__hierarchy = hierarchy or HierarchyService(
             storage=storage,
+            configuration=perception_configuration,
             pipeline=artifact_pipeline,
-            cv_enabled=perception_configuration.cv.enabled,
         )
         self.__planner = planner or StepPlanner(vision_tool=self.__vision)
 
@@ -212,6 +213,7 @@ class GraphContext:
         self.__ensemble = ensemble or EnsembleLocalizerService(workflow_id=workflow_id)
 
         self.__screen_observer = screen_observer or ScreenObservationService(
+            configuration=perception_configuration,
             ocr=self.__ocr,
             icons=self.__icons,
             workflow_id=workflow_id,
@@ -224,9 +226,14 @@ class GraphContext:
         )
 
         self.__outcome_classifier = outcome_classifier or OutcomeClassifier()
-        self.__runtime_supervisor = runtime_supervisor or RuntimeSupervisor.create()
+        self.__runtime_supervisor = runtime_supervisor or RuntimeSupervisor.create(
+            perception_configuration=perception_configuration,
+            runtime_policy=configuration.intent.runtime_policy,
+        )
         self.__healing_orchestrator = healing_orchestrator or HealingOrchestrator(
             workflow_id=workflow_id,
+            perception_configuration=perception_configuration,
+            runtime_policy=configuration.intent.runtime_policy,
         )
 
         self.__completion_service = completion_service or CompletionService()

@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 from fathom.schemas.actions import (
     Bounds,
     CoordinateSource,
+    CoordinateSystem,
     ExecutionRegion,
     GesturePath,
 )
@@ -149,6 +150,40 @@ class CoordinateConverter:
             height=self.__logical_height,
             source=CoordinateSource.VIEWPORT,
         )
+
+    def capture_bounds(self, *, region: ExecutionRegion) -> Bounds:
+        """
+        Translate one logical execution region into capture-space bounds.
+        """
+
+        scale_x = self.__pixel_width / max(1, self.__logical_width)
+        scale_y = self.__pixel_height / max(1, self.__logical_height)
+
+        x = max(0, min(int(region.x * scale_x), self.__pixel_width - 1))
+        y = max(0, min(int(region.y * scale_y), self.__pixel_height - 1))
+        width = max(1, min(int(region.width * scale_x), self.__pixel_width - x))
+        height = max(1, min(int(region.height * scale_y), self.__pixel_height - y))
+
+        return Bounds(
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            source=region.source,
+        )
+
+    def capture_point(self, *, x: int, y: int) -> tuple[int, int]:
+        """
+        Translate one logical dispatch point into capture-space coordinates.
+        """
+
+        scale_x = self.__pixel_width / max(1, self.__logical_width)
+        scale_y = self.__pixel_height / max(1, self.__logical_height)
+
+        capture_x = max(0, min(int(x * scale_x), self.__pixel_width - 1))
+        capture_y = max(0, min(int(y * scale_y), self.__pixel_height - 1))
+        return capture_x, capture_y
 
     def resolve_swipe_path(self, *, region: ExecutionRegion, direction: str) -> GesturePath:
         """

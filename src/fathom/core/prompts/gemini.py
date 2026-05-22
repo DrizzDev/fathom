@@ -32,7 +32,12 @@ class GeminiPromptBuilder(PromptBuilder):
                 "OUTPUT REQUIREMENTS:\n"
                 f"- {COORD_RULES}\n"
                 f"- {CONFIDENCE_RULES}\n"
-                "- REQUIRED: You MUST include 'label_id' from manifest for every interaction.\n"
+                "- REQUIRED: When the manifest already exposes the intended target or scroll container, include its 'label_id'. Otherwise ground the action visually via bbox and keep coordinate_system consistent with the numbers you provide.\n"
+                "- REQUIRED: For swipe/scroll actions, if the manifest exposes a scrollable container, use that container's label_id and describe the intended content in scroll_target.\n"
+                "- REQUIRED: For swipe/scroll actions, target_name must name the surface being swiped (for example 'restaurant list' or 'main scrollable area'). Do NOT put the sought item from scroll_target into target_name.\n"
+                "- REQUIRED: When the task is constrained to a specific section/container/area, fill 'surface' with that exact wording. 'surface' names WHERE the action belongs; 'target_name' names WHAT is being acted on.\n"
+                "- REQUIRED: Never place observation_hint values into 'label_id'; those hints are not manifest ids.\n"
+                "- REQUIRED: Preserve the requested scroll axis exactly and reuse the same container for repeated scroll attempts when it is still valid.\n"
                 "- REQUIRED: For EVERY UI action you MUST fill 'target_name' with a concrete, "
                 "user-facing label (e.g., 'Search box', 'Add to cart button') and/or "
                 "'script_target' with a natural-language phrase (e.g., 'the first search result'). "
@@ -79,6 +84,12 @@ class GeminiPromptBuilder(PromptBuilder):
             index = sub_goal_info.get("index")
             total = sub_goal_info.get("total", 0)
             description = sub_goal_info.get("description")
+            strict_mode = bool(sub_goal_info.get("strict_mode"))
+            required_action_family = str(
+                sub_goal_info.get("required_action_family") or "unspecified"
+            )
+            scroll_axis = str(sub_goal_info.get("scroll_axis") or "unspecified")
+            surface = str(sub_goal_info.get("surface") or "").strip()
 
             if index is not None and total > 1:
                 progress_text = f"[{index + 1}/{total}]"
@@ -99,6 +110,21 @@ class GeminiPromptBuilder(PromptBuilder):
                 logger.debug(
                     f"[H3] Single Sub-goal Focus | step={index + 1}/{total} | "
                     f"task={(description or '')[:50]}"
+                )
+
+            if strict_mode:
+                strict_surface = surface or "(none)"
+                parts.append(
+                    "<STRICT_EXECUTION_CONTRACT>\n"
+                    f"required_action_family: {required_action_family}\n"
+                    f"scroll_axis: {scroll_axis}\n"
+                    f"surface: {strict_surface}\n"
+                    "When strict mode is active, preserve this contract exactly.\n"
+                    "If a specific surface is named, keep targeting that same surface.\n"
+                    "Do not broaden it into a generic list, rail, or section.\n"
+                    "Fill the action.surface field with that same surface wording whenever an action belongs to it.\n"
+                    "Do not change the task into a different workflow shape.\n"
+                    "</STRICT_EXECUTION_CONTRACT>"
                 )
 
         # 1a-bis. App Launch Semantics (when package is known)
@@ -202,8 +228,8 @@ class GeminiPromptBuilder(PromptBuilder):
         return (
             "You are a Mobile UI expert agent.\n"
             "COORDINATE MODE: NORMALIZED by default.\n"
-            "Use normalized coordinates (0-1000) in 'bbox' unless you explicitly set "
-            "coordinate_system='pixel'.\n"
+            "Use normalized coordinates (0-1000) in 'bbox' only for visually estimated regions. "
+            "When copying manifest or screenshot-space bounds, you must set coordinate_system='pixel'.\n"
             "When using bbox, x/y are TOP-LEFT and width/height extend right/down."
         )
 

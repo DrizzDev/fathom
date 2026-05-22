@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple
 
-import cv2
 import numpy
+
+try:
+    import cv2
+except ModuleNotFoundError:  # pragma: no cover - dependency optional when CV is disabled
+    cv2 = None
 
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.ocr.noop import NoopOcr
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
+from fathom.constants.command import CommandScopeKind
 from fathom.constants.perception import (
     BUTTON_CLASS_HINTS,
     CALL_TO_ACTION_MINIMUM_AREA,
@@ -19,8 +25,6 @@ from fathom.constants.perception import (
     KEYBOARD_CLASS_HINTS,
     KEYBOARD_EDGE_DENSITY_THRESHOLD,
     KEYBOARD_MINIMUM_CONTOUR_COUNT,
-    KEYBOARD_MINIMUM_HEIGHT_RATIO,
-    KEYBOARD_MINIMUM_TOP_RATIO,
     OCR_MAXIMUM_TOKEN_LENGTH,
     OCR_TRIGGER_MANIFEST_TEXT_COVERAGE,
     OVERLAY_MINIMUM_COVERAGE_RATIO,
@@ -36,6 +40,7 @@ from fathom.constants.perception import (
     VISUAL_CONTROL_MINIMUM_VALUE,
     VISUAL_CONTROL_MINIMUM_WIDTH,
 )
+from fathom.constants.scroll import ScrollEvidenceSource
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.exceptions import OcrError
 from fathom.interfaces.icon import IconDetectorPort
@@ -63,6 +68,7 @@ from fathom.schemas.observation import (
     ScrollRegion,
 )
 from fathom.schemas.ocr import OcrToken
+from fathom.schemas.perception import PerceptionConfiguration
 from fathom.schemas.screens import ScreenCapture, ScreenHashBundle
 from fathom.schemas.ui import LabeledElement, UIBounds
 
@@ -77,16 +83,18 @@ class ScreenObservationService:
     def __init__(
         self,
         *,
+        workflow_id: Optional[str] = None,
         ocr: Optional[OcrPort] = None,
         icons: Optional[IconDetectorPort] = None,
-        pixel_overlay: Optional[OverlayDetectorPort] = None,
         pipeline: Optional[ArtifactPipeline] = None,
-        workflow_id: Optional[str] = None,
+        pixel_overlay: Optional[OverlayDetectorPort] = None,
+        configuration: Optional[PerceptionConfiguration] = None,
     ) -> None:
         """
         Initialize the observation service with optional providers and run context.
         """
 
+        self.__configuration = configuration or PerceptionConfiguration()
         self.__ocr = ocr if ocr is not None else NoopOcr()
         self.__icons = icons if icons is not None else NoopIconDetector()
         self.__pixel_overlay = pixel_overlay if pixel_overlay is not None else NoopOverlayDetector()
@@ -112,29 +120,20 @@ class ScreenObservationService:
             for index, element in enumerate(manifest, start=1)
         )
 
-        visual_elements = self.__visual_controls(
-            capture=capture,
-            existing=elements,
-            start=len(elements) + 1,
-        )
-        elements = (*elements, *visual_elements)
-
-        if self.__manifest_text_coverage(elements=elements) < OCR_TRIGGER_MANIFEST_TEXT_COVERAGE:
-            ocr_elements = await self.__ocr_elements(
+        if self.__configuration.cv.enabled:
+            if cv2 is None:
+                raise RuntimeError("OpenCV is required when perception.cv.enabled is true.")
+            visual_elements = self.__visual_controls(
                 capture=capture,
-                budget=budget,
                 existing=elements,
                 start=len(elements) + 1,
             )
-            elements = (*elements, *ocr_elements)
-
-        icon_elements = await self.__icon_elements(
+            elements = (*elements, *visual_elements)
+        elements = await self.__merge_async_enrichment(
             capture=capture,
             budget=budget,
-            existing=elements,
-            start=len(elements) + 1,
+            elements=elements,
         )
-        elements = (*elements, *icon_elements)
 
         keyboard = self.__keyboard(elements=elements, capture=capture)
         overlays = self.__overlays(elements=elements, capture=capture)
@@ -148,7 +147,7 @@ class ScreenObservationService:
         ) is not None:
             overlays = (*overlays, pixel_overlay)
 
-        scroll = self.__scroll_regions(elements=elements)
+        scroll = self.__scroll_regions(elements=elements, capture=capture)
         calls_to_action = self.__calls_to_action(elements=elements)
 
         observation = ScreenObservation(
@@ -169,6 +168,45 @@ class ScreenObservationService:
         )
         return observation
 
+    async def __merge_async_enrichment(
+        self,
+        *,
+        capture: ScreenCapture,
+        budget: PerceptionBudget,
+        elements: Tuple[PerceivedElement, ...],
+    ) -> Tuple[PerceivedElement, ...]:
+        """
+        Merge optional OCR and icon enrichers without serializing their wall time.
+        """
+
+        base = elements
+        ocr_task = None
+        if self.__manifest_text_coverage(elements=base) < OCR_TRIGGER_MANIFEST_TEXT_COVERAGE:
+            ocr_task = asyncio.create_task(
+                self.__ocr_elements(
+                    capture=capture,
+                    budget=budget,
+                    existing=base,
+                    start=len(base) + 1,
+                )
+            )
+
+        icon_task = asyncio.create_task(
+            self.__icon_elements(
+                capture=capture,
+                budget=budget,
+                existing=base,
+                start=len(base) + 1,
+            )
+        )
+
+        if ocr_task is None:
+            icon_elements = await icon_task
+            return (*base, *icon_elements)
+
+        ocr_elements, icon_elements = await asyncio.gather(ocr_task, icon_task)
+        return (*base, *ocr_elements, *icon_elements)
+
     async def __emit_perception_artifact(
         self,
         *,
@@ -181,12 +219,10 @@ class ScreenObservationService:
         Hand perception evidence to the artifact pipeline, but only the
         artifacts whose source actually contributed elements.
 
-        Saving an OCR-only image when OCR did not run produces a useless
-        blank-overlay file that pollutes the asset directory. We gate
-        each per-source artifact behind the presence of at least one
-        element from that source. The merged-hybrid artifact is only
-        emitted when at least one non-XML element exists — XML boxes
-        are already on the manifest-annotated image.
+        Saving a merged perception image when observation contains only
+        manifest/accessibility elements produces a second copy of the
+        annotated hierarchy with no additional signal. We emit the
+        merged artifact only when a true enrichment source contributed.
         """
 
         if self.__pipeline is None:
@@ -194,8 +230,14 @@ class ScreenObservationService:
 
         created = int(time.time() * 1000)
         sources = {element.source for element in observation.elements}
+        enrichment_sources = {
+            ElementSource.OCR,
+            ElementSource.CV,
+            ElementSource.ICON,
+            ElementSource.VISION,
+        }
 
-        if any(source is not ElementSource.XML for source in sources):
+        if any(source in enrichment_sources for source in sources):
             await self.__pipeline.emit(
                 record=ArtifactRecord(
                     session_id=session_id,
@@ -450,6 +492,9 @@ class ScreenObservationService:
             identifier=identifier,
             label_id=identifier,
             tappable=self.__is_tappable(role=role, attributes=attributes),
+            scrollable=self.__scrollable(attributes=attributes, role=role),
+            axis=self.__axis(attributes=attributes),
+            kind=self.__element_kind(attributes=attributes, role=role),
         )
 
     def __visual_controls(
@@ -464,6 +509,9 @@ class ScreenObservationService:
         """
 
         if not capture.image:
+            return ()
+
+        if cv2 is None:
             return ()
 
         image_array = numpy.frombuffer(capture.image, dtype=numpy.uint8)
@@ -611,33 +659,31 @@ class ScreenObservationService:
         Detect visible keyboard state from perceived elements.
         """
 
+        if not self.__configuration.keyboard.enabled:
+            return KeyboardObservation(visible=False)
+
         candidates = tuple(element for element in elements if element.role == ElementRole.KEYBOARD)
         if candidates:
             return KeyboardObservation(visible=True, bounds=candidates[0].bounds, dismiss=())
 
-        lower_bound = int(capture.height * KEYBOARD_MINIMUM_TOP_RATIO)
-        minimum_height = int(capture.height * KEYBOARD_MINIMUM_HEIGHT_RATIO)
+        visual_keyboard = self.__visual_keyboard(capture=capture)
+        if visual_keyboard is not None:
+            return KeyboardObservation(visible=True, bounds=visual_keyboard, dismiss=())
 
-        bottom_controls = tuple(
-            element
-            for element in elements
-            if element.bounds.y >= lower_bound and element.bounds.height >= minimum_height
-        )
-        if not bottom_controls:
-            visual_keyboard = self.__visual_keyboard(capture=capture)
-            if visual_keyboard is not None:
-                return KeyboardObservation(visible=True, bounds=visual_keyboard, dismiss=())
-
-            return KeyboardObservation(visible=False)
-
-        return KeyboardObservation(visible=True, bounds=bottom_controls[0].bounds, dismiss=())
+        return KeyboardObservation(visible=False)
 
     def __visual_keyboard(self, *, capture: ScreenCapture) -> Optional[Bounds]:
         """
         Detect a keyboard-like bottom grid from screenshot pixels.
         """
 
+        if self.__uses_ios_hierarchy(capture=capture):
+            return None
+
         if not capture.image:
+            return None
+
+        if cv2 is None:
             return None
 
         image_array = numpy.frombuffer(capture.image, dtype=numpy.uint8)
@@ -670,6 +716,15 @@ class ScreenObservationService:
             source=CoordinateSource.VIEWPORT,
             coordinate_system=CoordinateSystem.DEVICE_PIXEL,
         )
+
+    @staticmethod
+    def __uses_ios_hierarchy(*, capture: ScreenCapture) -> bool:
+        """
+        Return whether the capture was produced from an iOS hierarchy dump.
+        """
+
+        xml_content = capture.xml_content or ""
+        return "XCUIElementType" in xml_content
 
     def __overlays(
         self,
@@ -748,20 +803,247 @@ class ScreenObservationService:
         self,
         *,
         elements: Tuple[PerceivedElement, ...],
+        capture: ScreenCapture,
     ) -> Tuple[ScrollRegion, ...]:
         """
         Return scrollable region candidates.
         """
 
-        return tuple(
+        explicit = tuple(
             ScrollRegion(
                 bounds=element.bounds,
-                direction="vertical",
+                direction="vertical"
+                if (element.axis or "vertical") == "vertical"
+                else "horizontal",
                 confidence=element.confidence,
+                identifier=element.identifier,
+                label_id=element.label_id,
+                observation_region_id=None,
+                axis=element.axis or "vertical",
+                kind=self.__scope_kind(kind=element.kind, axis=element.axis),
+                source=ScrollEvidenceSource.SURFACE,
             )
             for element in elements
             if element.role == ElementRole.SCROLL_REGION
+            or element.scrollable
+            or self.__is_manifest_scroll_surface_candidate(
+                element=element,
+                capture=capture,
+            )
         )
+        explicit = self.__prune_nested_scroll_regions(regions=explicit)
+        if explicit:
+            large_vertical = tuple(
+                region for region in explicit if region.bounds.height >= int(capture.height * 0.35)
+            )
+            if large_vertical:
+                return large_vertical
+            if any((region.axis or "vertical") == "horizontal" for region in explicit):
+                return explicit
+
+        inferred = self.__page_scroll_region(elements=elements, capture=capture)
+        if inferred is None:
+            return explicit
+
+        return (*explicit, inferred) if explicit else (inferred,)
+
+    def __page_scroll_region(
+        self,
+        *,
+        elements: Tuple[PerceivedElement, ...],
+        capture: ScreenCapture,
+    ) -> Optional[ScrollRegion]:
+        """
+        Infer a page-level vertical scroll lane when XML exposes only nested strips.
+        """
+
+        top = self.__page_top_boundary(elements=elements, capture=capture)
+        bottom = self.__page_bottom_boundary(elements=elements, capture=capture)
+        height = bottom - top
+        if height < int(capture.height * 0.30):
+            return None
+
+        return ScrollRegion(
+            bounds=Bounds(
+                x=0,
+                y=max(0, top),
+                width=capture.width,
+                height=min(capture.height - max(0, top), height),
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                source=CoordinateSource.VIEWPORT,
+            ),
+            direction="vertical",
+            confidence=0.72,
+            identifier="page_scroll_region",
+            label_id=None,
+            observation_region_id="page_scroll_region",
+            axis="vertical",
+            kind=CommandScopeKind.VIEWPORT,
+            source=ScrollEvidenceSource.SURFACE,
+        )
+
+    def __prune_nested_scroll_regions(
+        self,
+        *,
+        regions: Tuple[ScrollRegion, ...],
+    ) -> Tuple[ScrollRegion, ...]:
+        """
+        Drop smaller overlapping fragments when a larger same-axis region already contains them.
+        """
+
+        kept: List[ScrollRegion] = []
+        for candidate in sorted(
+            regions,
+            key=lambda region: region.bounds.width * region.bounds.height,
+            reverse=True,
+        ):
+            if any(
+                self.__same_axis(first=candidate, second=existing)
+                and self.__contains(first=existing.bounds, second=candidate.bounds)
+                for existing in kept
+            ):
+                continue
+            kept.append(candidate)
+        return tuple(kept)
+
+    @staticmethod
+    def __is_manifest_scroll_surface_candidate(
+        *,
+        element: PerceivedElement,
+        capture: ScreenCapture,
+    ) -> bool:
+        """
+        Return whether one manifest-backed container is a plausible scroll surface.
+        """
+
+        if element.label_id is None:
+            return False
+        if element.source not in {ElementSource.XML, ElementSource.ACCESSIBILITY}:
+            return False
+        if element.tappable:
+            return False
+
+        structural_kind = (element.kind or "").lower()
+        if element.role not in {
+            ElementRole.CONTAINER,
+            ElementRole.UNKNOWN,
+        } and structural_kind not in {"cell", "container", "list", "other"}:
+            return False
+
+        return element.bounds.width >= int(capture.width * 0.80) and element.bounds.height >= int(
+            capture.height * 0.30
+        )
+
+    @staticmethod
+    def __same_axis(*, first: ScrollRegion, second: ScrollRegion) -> bool:
+        """
+        Return whether two regions describe the same movement axis.
+        """
+
+        return (first.axis or "vertical") == (second.axis or "vertical")
+
+    @staticmethod
+    def __contains(*, first: Bounds, second: Bounds) -> bool:
+        """
+        Return whether the first bounds fully contain the second.
+        """
+
+        return (
+            first.x <= second.x
+            and first.y <= second.y
+            and first.x + first.width >= second.x + second.width
+            and first.y + first.height >= second.y + second.height
+        )
+
+    def __page_top_boundary(
+        self,
+        *,
+        elements: Tuple[PerceivedElement, ...],
+        capture: ScreenCapture,
+    ) -> int:
+        """
+        Return the safe top boundary for a feed-like page scroll.
+        """
+
+        default_top = int(capture.height * 0.15)
+        inputs = [
+            element
+            for element in elements
+            if element.role == ElementRole.INPUT
+            and element.bounds.y + element.bounds.height <= int(capture.height * 0.45)
+        ]
+        if not inputs:
+            return default_top
+
+        return max(
+            default_top,
+            max(element.bounds.y + element.bounds.height for element in inputs) + 24,
+        )
+
+    @staticmethod
+    def __scrollable(*, attributes: Dict[str, object], role: ElementRole) -> bool:
+        """
+        Return whether one manifest element explicitly represents a scrollable candidate.
+        """
+
+        raw = str(attributes.get("scrollable", "")).lower()
+        return raw == "true" or role == ElementRole.SCROLL_REGION
+
+    @staticmethod
+    def __axis(*, attributes: Dict[str, object]) -> Optional[str]:
+        """
+        Return the declared movement axis when available.
+        """
+
+        axis = str(attributes.get("axis", "")).strip().lower()
+        return axis or None
+
+    @staticmethod
+    def __element_kind(*, attributes: Dict[str, object], role: ElementRole) -> Optional[str]:
+        """
+        Return the declared structural kind when available.
+        """
+
+        kind = str(attributes.get("kind", "")).strip().lower()
+        if kind:
+            return kind
+        if role == ElementRole.SCROLL_REGION:
+            return "container"
+        return None
+
+    @staticmethod
+    def __scope_kind(*, kind: Optional[str], axis: Optional[str]) -> CommandScopeKind:
+        """
+        Map element metadata onto one command scope kind.
+        """
+
+        normalized = (kind or "").lower()
+        if normalized == "carousel":
+            return CommandScopeKind.CAROUSEL
+        if normalized == "sheet":
+            return CommandScopeKind.SHEET
+        if normalized == "list":
+            return CommandScopeKind.LIST
+        if normalized == "viewport":
+            return CommandScopeKind.VIEWPORT
+        if normalized == "container":
+            return CommandScopeKind.CONTAINER
+        if axis == "horizontal":
+            return CommandScopeKind.CAROUSEL
+        return CommandScopeKind.CONTAINER
+
+    def __page_bottom_boundary(
+        self,
+        *,
+        elements: Tuple[PerceivedElement, ...],
+        capture: ScreenCapture,
+    ) -> int:
+        """
+        Return the safe bottom boundary for a feed-like page scroll.
+        """
+
+        _ = elements
+        return int(capture.height * 0.86)
 
     def __calls_to_action(
         self,

@@ -7,6 +7,7 @@ from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.outcomes import ActionOutcome
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.scroll import ScrollLock
 from fathom.schemas.steps import Step, StepResult
 
 
@@ -23,6 +24,7 @@ class IntentGraphState(TypedDict, total=False):
     SHOULD_RETRY: bool
     INJECTED_CONTEXT: Optional[str]
     COMPLETION_REASON: Optional[str]
+    FAILURE_DIAGNOSTIC: Optional[str]
 
     IS_NEW_SCREEN: bool
     CAPTURE: Optional[ScreenCapture]
@@ -57,6 +59,7 @@ class IntentGraphState(TypedDict, total=False):
 
     # Post-action activity captured in EXECUTE, consumed in RECORD
     POST_ACTIVITY: Optional[str]
+    ACTIVE_SCROLL_LOCK: Optional[ScrollLock]
 
     # Sub-goal state (for global propagation across graph nodes)
     CURRENT_SUB_GOAL_INDEX: int

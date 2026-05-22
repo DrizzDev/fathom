@@ -9,6 +9,7 @@ from fathom.constants.artifact import ArtifactDirectory, ArtifactQueue
 from fathom.schemas.actions import Action
 from fathom.schemas.completion import CompletionVerdict
 from fathom.schemas.observation import ScreenObservation
+from fathom.schemas.results import ActionTraceAttempt
 from fathom.schemas.screens import ScreenCapture
 
 
@@ -17,44 +18,41 @@ class ArtifactKind(StrEnum):
     Categories of persistable artifacts produced during a run.
     """
 
-    SCREENSHOT = "screenshot"
+    TRACE = "trace"
+    SCRIPT = "script"
     ANNOTATED = "annotated"
     PERCEPTION = "perception"
-    OCR_PERCEPTION = "ocr_perception"
+    SCREENSHOT = "screenshot"
+    VERIFICATION = "verification"
+    HIERARCHY_XML = "hierarchy_xml"
     CV_PERCEPTION = "cv_perception"
+    OCR_PERCEPTION = "ocr_perception"
     ICON_PERCEPTION = "icon_perception"
     VISION_PERCEPTION = "vision_perception"
     OVERLAY_PERCEPTION = "overlay_perception"
-    TRACE = "trace"
-    VERIFICATION = "verification"
-    HIERARCHY_XML = "hierarchy_xml"
-    SCRIPT = "script"
 
 
 class ArtifactCategory:
     """
-    Single source of truth mapping :class:`ArtifactKind` onto one of the
-    five canonical asset directories.
+    Single source of truth mapping :class:`ArtifactKind` onto one of the five canonical asset directories.
 
-    Used by :class:`SharedPathManager` for EFS path resolution and by
-    :class:`CloudSink` for the storage category metadata so cloud and
-    local writers cannot drift apart and corrupt files (e.g. routing
-    XML bytes through the screenshot directory).
+    Used by :class:`SharedPathManager` for EFS path resolution and by :class:`CloudSink` for the storage category metadata
+    so cloud and local writers cannot drift apart and corrupt files (e.g. routing XML bytes through the screenshot directory).
     """
 
     __MAPPING: Final[Mapping[ArtifactKind, str]] = {
-        ArtifactKind.SCREENSHOT: ArtifactDirectory.SCREENSHOT,
+        ArtifactKind.TRACE: ArtifactDirectory.TRACES,
+        ArtifactKind.SCRIPT: ArtifactDirectory.HISTORY,
+        ArtifactKind.HIERARCHY_XML: ArtifactDirectory.XMLS,
+        ArtifactKind.VERIFICATION: ArtifactDirectory.TRACES,
         ArtifactKind.ANNOTATED: ArtifactDirectory.ANNOTATED,
         ArtifactKind.PERCEPTION: ArtifactDirectory.ANNOTATED,
-        ArtifactKind.OCR_PERCEPTION: ArtifactDirectory.ANNOTATED,
+        ArtifactKind.SCREENSHOT: ArtifactDirectory.SCREENSHOT,
         ArtifactKind.CV_PERCEPTION: ArtifactDirectory.ANNOTATED,
+        ArtifactKind.OCR_PERCEPTION: ArtifactDirectory.ANNOTATED,
         ArtifactKind.ICON_PERCEPTION: ArtifactDirectory.ANNOTATED,
         ArtifactKind.VISION_PERCEPTION: ArtifactDirectory.ANNOTATED,
         ArtifactKind.OVERLAY_PERCEPTION: ArtifactDirectory.ANNOTATED,
-        ArtifactKind.TRACE: ArtifactDirectory.TRACES,
-        ArtifactKind.VERIFICATION: ArtifactDirectory.TRACES,
-        ArtifactKind.HIERARCHY_XML: ArtifactDirectory.XMLS,
-        ArtifactKind.SCRIPT: ArtifactDirectory.HISTORY,
     }
 
     @classmethod
@@ -74,13 +72,13 @@ class QueueConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     capacity: int = Field(
-        default=ArtifactQueue.CAPACITY,
         gt=0,
+        default=ArtifactQueue.CAPACITY,
         description="Maximum in-flight background uploads before back-pressure.",
     )
     drain_timeout: float = Field(
-        default=ArtifactQueue.DRAIN_TIMEOUT_SECONDS,
         gt=0.0,
+        default=ArtifactQueue.DRAIN_TIMEOUT_SECONDS,
         description="Seconds the pipeline waits at shutdown before giving up.",
     )
 
@@ -146,11 +144,9 @@ class PerceptionPayload(BaseModel):
 class OcrPerceptionPayload(BaseModel):
     """
     OCR-only debug image — same shape as :class:`PerceptionPayload`
-    but routed to a renderer that filters the observation to elements
-    whose ``source`` is :attr:`ElementSource.OCR`.
+    but routed to a renderer that filters the observation to elements whose ``source`` is :attr:`ElementSource.OCR`.
 
-    Kept as a distinct payload (rather than a flag on PerceptionPayload)
-    so the renderer registry stays a flat strategy map keyed by kind.
+    Kept as a distinct payload (rather than a flag on PerceptionPayload) so the renderer registry stays a flat strategy map keyed by kind.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -249,6 +245,10 @@ class TracePayload(BaseModel):
     )
     coords: Tuple[int, ...] = Field(description="Action coordinates drawn onto the trace image.")
     action: Action = Field(description="Action whose execution this trace records.")
+    attempt: ActionTraceAttempt | None = Field(
+        default=None,
+        description="Attempt metadata when this trace belongs to a multi-attempt device action.",
+    )
 
 
 class VerificationPayload(BaseModel):
@@ -296,18 +296,18 @@ class ScriptPayload(BaseModel):
 
 ArtifactPayload = Annotated[
     Union[
-        ScreenshotPayload,
+        TracePayload,
+        ScriptPayload,
         AnnotatedPayload,
         PerceptionPayload,
-        OcrPerceptionPayload,
+        ScreenshotPayload,
+        VerificationPayload,
+        HierarchyXmlPayload,
         CvPerceptionPayload,
+        OcrPerceptionPayload,
         IconPerceptionPayload,
         VisionPerceptionPayload,
         OverlayPerceptionPayload,
-        TracePayload,
-        VerificationPayload,
-        HierarchyXmlPayload,
-        ScriptPayload,
     ],
     Field(discriminator="kind", description="Discriminated union over every artifact payload."),
 ]
@@ -320,10 +320,12 @@ class ArtifactMetadata(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    kind: ArtifactKind = Field(description="Artifact category routing the record to its sink path.")
     session_id: str = Field(min_length=1, description="Workflow / session identifier.")
-    package_name: str = Field(min_length=1, description="Active package the record belongs to.")
+    kind: ArtifactKind = Field(description="Artifact category routing the record to its sink path.")
+
     step_number: int = Field(ge=0, description="Zero-based step index inside the run.")
+    package_name: str = Field(min_length=1, description="Active package the record belongs to.")
+
     created: int = Field(ge=0, description="Epoch milliseconds at emit time.")
 
 
@@ -331,17 +333,16 @@ class ArtifactRecord(BaseModel):
     """
     Emit-time record carrying the typed payload the renderer consumes.
 
-    Producers build this at the lifecycle seam. The pipeline derives an
-    :class:`ArtifactMetadata` slice from it for sink persistence and
-    sidecar storage; bytes-heavy payload fields never travel to disk
-    twice.
+    Producers build this at the lifecycle seam. The pipeline derives an :class:`ArtifactMetadata` slice from it for sink persistence
+    and sidecar storage; bytes-heavy payload fields never travel to disk twice.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     session_id: str = Field(min_length=1, description="Workflow / session identifier.")
-    package_name: str = Field(min_length=1, description="Active package the record belongs to.")
     step_number: int = Field(ge=0, description="Zero-based step index inside the run.")
+    package_name: str = Field(min_length=1, description="Active package the record belongs to.")
+
     created: int = Field(ge=0, description="Epoch milliseconds at emit time.")
     payload: ArtifactPayload = Field(description="Typed payload describing the artifact contents.")
 
@@ -351,11 +352,11 @@ class ArtifactRecord(BaseModel):
         """
 
         return ArtifactMetadata(
+            created=self.created,
             kind=self.payload.kind,
             session_id=self.session_id,
-            package_name=self.package_name,
             step_number=self.step_number,
-            created=self.created,
+            package_name=self.package_name,
         )
 
 

@@ -73,6 +73,12 @@ class ADBDevice(DevicePort):
                         maximum_edge_margin=(
                             self.__configuration.interaction.policy.scroll.maximum_edge_margin
                         ),
+                        adaptive=ScrollInteractionPolicy.AdaptivePolicy(
+                            enabled=self.__configuration.interaction.policy.scroll.adaptive.enabled,
+                            maximum_attempts=self.__configuration.interaction.policy.scroll.adaptive.maximum_attempts,
+                            verify=self.__configuration.interaction.policy.scroll.adaptive.verify,
+                            suspicious_bottom_ratio=self.__configuration.interaction.policy.scroll.adaptive.suspicious_bottom_ratio,
+                        ),
                     ),
                 )
             ),

@@ -14,11 +14,11 @@ class HealingFixtureLoaderTest(unittest.TestCase):
     # specific app traces these were derived from live in
     # `tests/fixtures/healing/README.md`.
     __EXPECTED_SCENARIOS = (
-        "coachmark",
-        "cosmetic_replan",
-        "overlay_scrim",
-        "overlay_thrash",
-        "scroll_loop",
+        "001",
+        "002",
+        "003",
+        "004",
+        "005",
     )
 
     def test_all_expected_scenarios_present(self) -> None:
@@ -35,7 +35,7 @@ class HealingFixtureLoaderTest(unittest.TestCase):
 
         for name in self.__EXPECTED_SCENARIOS:
             with self.subTest(scenario=name):
-                trace = FixtureLoader.load(name=name)
+                trace = FixtureLoader.load(identifier=name)
                 self.assertTrue(trace.intent)
                 self.assertGreaterEqual(len(trace.steps), 1)
                 self.assertGreater(trace.expected.max_step_count, 0)
@@ -48,7 +48,7 @@ class HealingFixtureLoaderTest(unittest.TestCase):
 
         for name in self.__EXPECTED_SCENARIOS:
             with self.subTest(scenario=name):
-                trace = FixtureLoader.load(name=name)
+                trace = FixtureLoader.load(identifier=name)
                 for step in trace.steps:
                     frame_path = trace.directory / step.frame
                     manifest_path = trace.directory / step.manifest
@@ -63,9 +63,9 @@ class HealingFixtureLoaderTest(unittest.TestCase):
 
     def test_missing_scenario_raises_file_not_found(self) -> None:
         """
-        Asking for a scenario that does not exist raises FileNotFoundError with the name embedded.
+        Asking for an identifier that does not exist raises FileNotFoundError with it embedded.
         """
 
         with self.assertRaises(FileNotFoundError) as caught:
-            FixtureLoader.load(name="does_not_exist")
-        self.assertIn("does_not_exist", str(caught.exception))
+            FixtureLoader.load(identifier="999")
+        self.assertIn("999", str(caught.exception))

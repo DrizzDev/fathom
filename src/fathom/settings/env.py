@@ -66,14 +66,17 @@ class FathomSettings(BaseSettings):
     # Assets path
     assets_path: Path = Field(default=PROJECT_ROOT / "assets", alias="FATHOM_ASSETS_PATH")
 
-    # Perception subsystem toggles. Defaults are True so every fallback
-    # contributor runs alongside the XML+LLM primary path during the
-    # current bring-up phase. Operators can flip any flag off in .env
-    # without code changes once the cascade is fully proven.
+    # Perception subsystem toggles. CV stays off by default because its
+    # anonymous visual-control boxes are still too noisy for production
+    # grounding and can pollute both prompts and debug artifacts.
     observation_ocr_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OCR")
-    observation_cv_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_CV")
+    observation_cv_enabled: bool = Field(default=False, alias="FATHOM_OBSERVATION_CV")
     observation_icon_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_ICON")
     observation_overlay_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OVERLAY")
+    observation_keyboard_enabled: bool = Field(
+        default=False,
+        alias="FATHOM_OBSERVATION_KEYBOARD",
+    )
 
     # Ensemble vision-localizer (Gemini-vision + DocumentAI-layout)
     # toggles. Enabled with both members so the supervise cascade can

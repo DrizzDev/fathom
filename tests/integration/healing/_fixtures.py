@@ -113,6 +113,13 @@ class FixtureLoader:
     """
 
     __FIXTURES_ROOT = Path(__file__).resolve().parents[2] / "fixtures" / "healing"
+    __SCENARIOS = {
+        "001": "coachmark",
+        "002": "cosmetic_replan",
+        "003": "overlay_scrim",
+        "004": "overlay_thrash",
+        "005": "scroll_loop",
+    }
 
     @classmethod
     def root(cls) -> Path:
@@ -125,22 +132,34 @@ class FixtureLoader:
     @classmethod
     def scenarios(cls) -> Tuple[str, ...]:
         """
-        Return the alphabetically-sorted list of available scenario names.
+        Return the stable scenario identifiers in fixture order.
         """
 
-        return tuple(
-            sorted(entry.name for entry in cls.__FIXTURES_ROOT.iterdir() if entry.is_dir()),
-        )
+        return tuple(cls.__SCENARIOS.keys())
 
     @classmethod
-    def load(cls, *, name: str) -> FixtureTrace:
+    def scenario_name(cls, *, identifier: str) -> str:
         """
-        Load and validate one named replay fixture into a typed FixtureTrace.
+        Return the human-readable semantic label for one fixture identifier.
         """
 
-        directory = cls.__FIXTURES_ROOT / name
+        if identifier not in cls.__SCENARIOS:
+            raise FileNotFoundError(
+                f"Healing fixture '{identifier}' not found under {cls.__FIXTURES_ROOT!s}",
+            )
+        return cls.__SCENARIOS[identifier]
+
+    @classmethod
+    def load(cls, *, identifier: str) -> FixtureTrace:
+        """
+        Load and validate one replay fixture into a typed FixtureTrace.
+        """
+
+        directory = cls.__FIXTURES_ROOT / identifier
         if not directory.is_dir():
-            raise FileNotFoundError(f"Healing fixture '{name}' not found at {directory!s}")
+            raise FileNotFoundError(
+                f"Healing fixture '{identifier}' not found at {directory!s}",
+            )
 
         intent = (directory / "intent.txt").read_text(encoding="utf-8").strip()
         raw_steps = json.loads((directory / "steps.json").read_text(encoding="utf-8"))
@@ -150,7 +169,7 @@ class FixtureLoader:
         expectation = FixtureExpectation.model_validate(raw_expected)
 
         return FixtureTrace(
-            name=name,
+            name=cls.scenario_name(identifier=identifier),
             intent=intent,
             steps=tuple(steps),
             expected=expectation,

@@ -4,11 +4,13 @@ from typing import Any, Dict, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, Field
 
+from fathom.constants.command import CommandExecutionMode
 from fathom.constants.platform import (
     DeviceConnectionType,
     DevicePlatform,
     IOSAutomationBackend,
 )
+from fathom.constants.scroll import DEFAULT_SCROLL_ATTEMPT_BUDGET
 from fathom.constants.storage import StorageBackend
 
 
@@ -140,6 +142,36 @@ class ScrollInteractionPolicy(BaseModel):
     Runtime policy for scroll interactions.
     """
 
+    class AdaptivePolicy(BaseModel):
+        """
+        Runtime policy for adaptive scroll supervision.
+        """
+
+        enabled: bool = Field(
+            default=True,
+            description="Whether adaptive scroll supervision is enabled.",
+        )
+        maximum_attempts: int = Field(
+            ge=1,
+            default=3,
+            description="Maximum attempts within one supervised scroll run.",
+        )
+        verify: bool = Field(
+            default=False,
+            description="Whether ambiguous deterministic observations may escalate to the verifier.",
+        )
+        budget: int = Field(
+            ge=1,
+            default=DEFAULT_SCROLL_ATTEMPT_BUDGET,
+            description="Maximum wall time allowed for one supervised scroll run in milliseconds.",
+        )
+        suspicious_bottom_ratio: float = Field(
+            ge=0.0,
+            le=1.0,
+            default=0.78,
+            description="Bottom-of-screen ratio above which a current-path start is considered suspicious.",
+        )
+
     edge_margin_ratio: float = Field(
         ge=0.0,
         lt=0.5,
@@ -155,6 +187,10 @@ class ScrollInteractionPolicy(BaseModel):
         ge=0,
         default=160,
         description="Largest safe edge margin in screen pixels.",
+    )
+    adaptive: AdaptivePolicy = Field(
+        default_factory=AdaptivePolicy,
+        description="Adaptive scroll supervision policy.",
     )
 
 
@@ -328,11 +364,46 @@ class IntentConfiguration(BaseModel):
     Configuration for intent-based execution strategy.
     """
 
+    class KeyboardRuntimeConfiguration(BaseModel):
+        """
+        Runtime behavior for keyboard-aware supervision and healing.
+        """
+
+        block_actions: bool = Field(
+            default=False,
+            description="Whether runtime supervision may block actions when the keyboard occludes the target.",
+        )
+        allow_recovery: bool = Field(
+            default=False,
+            description="Whether healing may synthesize keyboard-dismissal actions.",
+        )
+
+    class RuntimePolicyConfiguration(BaseModel):
+        """
+        Runtime policy knobs for intent execution.
+        """
+
+        keyboard: "IntentConfiguration.KeyboardRuntimeConfiguration" = Field(
+            default_factory=lambda: IntentConfiguration.KeyboardRuntimeConfiguration(),
+            description="Runtime keyboard policy.",
+        )
+
     max_steps: int = Field(default=100, description="Step limit for goal achievement")
     use_xml_grounding: bool = Field(default=False, description="Enable structured XML analysis")
     prompt_user_if_stuck: bool = Field(
         default=True,
         description="If True and in interactive mode, prompt the user for help when the agent detects a loop.",
+    )
+    command_mode: CommandExecutionMode = Field(
+        default=CommandExecutionMode.STRICT,
+        description=(
+            "Whether execution must stay within the active sub-goal command family. "
+            "STRICT prevents silent drift such as changing a scroll step into tap/type."
+        ),
+    )
+    runtime_policy: "IntentConfiguration.RuntimePolicyConfiguration" = Field(
+        default_factory=lambda: IntentConfiguration.RuntimePolicyConfiguration(),
+        description="Runtime supervision and healing policy for intent execution.",
     )
 
 

@@ -81,6 +81,12 @@ class IOSDevice(DevicePort):
                         maximum_edge_margin=(
                             self.__configuration.interaction.policy.scroll.maximum_edge_margin
                         ),
+                        adaptive=ScrollInteractionPolicy.AdaptivePolicy(
+                            enabled=self.__configuration.interaction.policy.scroll.adaptive.enabled,
+                            maximum_attempts=self.__configuration.interaction.policy.scroll.adaptive.maximum_attempts,
+                            verify=self.__configuration.interaction.policy.scroll.adaptive.verify,
+                            suspicious_bottom_ratio=self.__configuration.interaction.policy.scroll.adaptive.suspicious_bottom_ratio,
+                        ),
                     ),
                 )
             ),
@@ -198,9 +204,6 @@ class IOSDevice(DevicePort):
         requested_speed = speed
         resolved_duration = duration or (self.__configuration.interaction.policy.swipe.duration)
 
-        if requested_speed is not None:
-            logger.debug("Ignoring swipe speed for iOS simctl adapter: %s", requested_speed)
-
         try:
             if self.__should_route_interactions_via_automation_gateway():
                 start_x, start_y = await self.__to_automation_coordinates(x=x1, y=y1)
@@ -214,6 +217,9 @@ class IOSDevice(DevicePort):
                     duration=resolved_duration,
                 )
             else:
+                if requested_speed is not None:
+                    logger.debug("Ignoring swipe speed for iOS simctl adapter: %s", requested_speed)
+
                 device_identifier = await self.__resolve_device_identifier()
                 await self.__run_simctl(
                     parts=[

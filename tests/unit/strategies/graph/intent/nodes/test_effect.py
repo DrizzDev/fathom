@@ -222,3 +222,12 @@ class PostActionEffectFromTest(unittest.TestCase):
         effect = PostAction.effect_from(status=OutcomeStatus.EFFECTIVE, diff=self.__diff())
 
         self.assertEqual(effect.status, ActionEffectStatus.PROGRESS)
+
+    def test_unknown_outcome_remains_uncertain(self) -> None:
+        """
+        OutcomeStatus.UNKNOWN must not be collapsed into NO_PROGRESS.
+        """
+
+        effect = PostAction.effect_from(status=OutcomeStatus.UNKNOWN, diff=self.__diff())
+
+        self.assertEqual(effect.status, ActionEffectStatus.UNCERTAIN)

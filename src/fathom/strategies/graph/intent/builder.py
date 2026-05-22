@@ -11,7 +11,7 @@ from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.interfaces.graph import GraphBuilder
 from fathom.strategies.graph.context import GraphContext
-from fathom.strategies.graph.intent.nodes import IntentGraphFactory
+from fathom.strategies.graph.intent.nodes.factory import IntentGraphFactory
 from fathom.strategies.graph.state import IntentGraphState
 
 logger = logging.getLogger(__name__)
@@ -197,8 +197,11 @@ class IntentGraphBuilder(GraphBuilder):
             return NodeName.GROUND
 
         if state.get(cast("str", IntentStateKey.EXECUTION_BLOCKED)):
-            logger.info("[ROUTING] After SUPERVISE -> RECORD (blocked)")
-            return NodeName.RECORD
+            if state.get(cast("str", CommonStateKey.STEP_RESULT)) is not None:
+                logger.info("[ROUTING] After SUPERVISE -> RECORD (blocked with step result)")
+                return NodeName.RECORD
+            logger.info("[ROUTING] After SUPERVISE -> GROUND (blocked without step result)")
+            return NodeName.GROUND
 
         logger.info("[ROUTING] After SUPERVISE -> EXECUTE")
         return NodeName.EXECUTE
@@ -209,6 +212,7 @@ class IntentGraphBuilder(GraphBuilder):
         """
 
         is_complete = state.get(cast("str", CommonStateKey.IS_COMPLETE))
+        reason = state.get(cast("str", CommonStateKey.COMPLETION_REASON))
 
         logger.info(f"[ROUTING] After VERIFY: is_complete={is_complete}")
 
@@ -217,6 +221,13 @@ class IntentGraphBuilder(GraphBuilder):
             return NodeName.END
 
         if is_complete:
+            if reason in {
+                CompletionReason.FAILED.value,
+                CompletionReason.MAX_STEPS.value,
+                CompletionReason.CANCELLED.value,
+            }:
+                logger.info(f"[ROUTING] -> END (verification terminal reason: {reason})")
+                return NodeName.END
             logger.info("[ROUTING] -> END (verification passed)")
             return NodeName.END
 
@@ -236,8 +247,12 @@ class IntentGraphBuilder(GraphBuilder):
 
             # Check if completion was due to Max Steps - if so, fail/end instead of verifying
             reason = state.get(cast("str", CommonStateKey.COMPLETION_REASON))
-            if reason == CompletionReason.MAX_STEPS.value:
-                logger.info("[ROUTING] -> END (Max steps reached)")
+            if reason in {
+                CompletionReason.FAILED.value,
+                CompletionReason.MAX_STEPS.value,
+                CompletionReason.CANCELLED.value,
+            }:
+                logger.info(f"[ROUTING] -> END (terminal reason: {reason})")
                 return NodeName.END
 
             logger.info("[ROUTING] -> VERIFY (is_complete=True from RECORD)")

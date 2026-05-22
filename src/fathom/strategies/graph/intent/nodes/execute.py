@@ -7,6 +7,7 @@ from typing import Any, Dict, cast
 from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.schemas.execution import ExecutionContext
+from fathom.schemas.observation import ScreenObservation
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 from fathom.strategies.graph.state import IntentGraphState
 
@@ -116,6 +117,10 @@ class ExecuteNode:
         if step.action.action_type == ActionType.ASK_USER:
             execution_result = await self.__provider.hitl.ask(step=step, start_time=start_time)
         else:
+            observation = state.get(CommonStateKey.SCREEN_OBSERVATION)
+            resolved_observation = (
+                observation if isinstance(observation, ScreenObservation) else None
+            )
             logger.info(
                 f"Calling action executor for {step.action.action_type.value}",
                 extra={
@@ -135,6 +140,7 @@ class ExecuteNode:
                 pre_capture=context.capture,
                 package_name=context.package,
                 session_id=self.__provider.context.workflow_id,
+                observation=resolved_observation,
             )
 
         logger.info(

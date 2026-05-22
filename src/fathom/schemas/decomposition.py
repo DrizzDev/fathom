@@ -6,6 +6,8 @@ from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from fathom.schemas.subgoal import ExecutionContract
+
 
 class DecomposedTask(BaseModel):
     """
@@ -18,6 +20,10 @@ class DecomposedTask(BaseModel):
     criterion: str = Field(
         min_length=1,
         description="Observable screen state criterion satisfied when the task is complete.",
+    )
+    execution_contract: ExecutionContract = Field(
+        default_factory=ExecutionContract,
+        description="Structured execution constraints preserved by strict mode.",
     )
 
 

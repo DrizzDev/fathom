@@ -21,7 +21,7 @@ class HealingFixtureContractTest(unittest.TestCase):
         overlay_scrim fixture must pin the overlay-still-present block + overlay strategy.
         """
 
-        trace = FixtureLoader.load(name="overlay_scrim")
+        trace = FixtureLoader.load(identifier="003")
         self.assertIn("overlay_still_present", trace.expected.block_reasons)
         self.assertIn("overlay", trace.expected.recoveries_invoked)
 
@@ -30,7 +30,7 @@ class HealingFixtureContractTest(unittest.TestCase):
         overlay_thrash fixture must terminate BOUNDED_FAILURE within the per-task budget.
         """
 
-        trace = FixtureLoader.load(name="overlay_thrash")
+        trace = FixtureLoader.load(identifier="004")
         self.assertEqual(trace.expected.terminal_status.value, "BOUNDED_FAILURE")
         self.assertLessEqual(trace.expected.max_repeated_no_effect, 5)
 
@@ -39,7 +39,7 @@ class HealingFixtureContractTest(unittest.TestCase):
         scroll_loop fixture must pin REPEATED_NO_EFFECT block + scroll recovery.
         """
 
-        trace = FixtureLoader.load(name="scroll_loop")
+        trace = FixtureLoader.load(identifier="005")
         self.assertIn("repeated_no_effect", trace.expected.block_reasons)
         self.assertIn("scroll", trace.expected.recoveries_invoked)
 
@@ -48,7 +48,7 @@ class HealingFixtureContractTest(unittest.TestCase):
         scroll_loop must not terminate SUCCEEDED; verifier rejection blocks force-close.
         """
 
-        trace = FixtureLoader.load(name="scroll_loop")
+        trace = FixtureLoader.load(identifier="005")
         self.assertNotEqual(trace.expected.terminal_status.value, "SUCCEEDED")
 
     def test_coachmark_pins_escalation_path(self) -> None:
@@ -56,7 +56,7 @@ class HealingFixtureContractTest(unittest.TestCase):
         coachmark fixture must pin the escalation recovery and ESCALATED terminal.
         """
 
-        trace = FixtureLoader.load(name="coachmark")
+        trace = FixtureLoader.load(identifier="001")
         self.assertIn("escalation", trace.expected.recoveries_invoked)
         self.assertEqual(trace.expected.terminal_status.value, "ESCALATED")
 
@@ -65,7 +65,7 @@ class HealingFixtureContractTest(unittest.TestCase):
         cosmetic_replan must succeed within the bounded step budget via replan.
         """
 
-        trace = FixtureLoader.load(name="cosmetic_replan")
+        trace = FixtureLoader.load(identifier="002")
         self.assertEqual(trace.expected.terminal_status.value, "SUCCEEDED")
         self.assertIn("replan", trace.expected.recoveries_invoked)
 
@@ -75,14 +75,14 @@ class HealingFixtureContractTest(unittest.TestCase):
         """
 
         for name in (
-            "coachmark",
-            "cosmetic_replan",
-            "overlay_scrim",
-            "overlay_thrash",
-            "scroll_loop",
+            "001",
+            "002",
+            "003",
+            "004",
+            "005",
         ):
             with self.subTest(scenario=name):
-                trace = FixtureLoader.load(name=name)
+                trace = FixtureLoader.load(identifier=name)
                 self.assertEqual(trace.expected.raw_llm_coordinates_executed, 0)
 
 

@@ -1591,7 +1591,7 @@ Validate the homepage with the updated location is visible.
 2026-05-20T09:03:29.822274Z [info     ] [TIMING] history.flush_pending_operations completed in 0.00ms [fathom.core.services.history]
 2026-05-20T09:03:29.828752Z [info     ] Workflow execution finalized   [fathom] duration=169.87694311141968 steps_taken=5 success=True type=WORKFLOW_COMPLETED
 Workflow execution finalized
-                                                                                           Execution Summary                                                                                            
+                                                                                           Execution Summary
 ┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ Metric      ┃ Value                                                                                                                                                                                  ┃
 ┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -1601,7 +1601,7 @@ Workflow execution finalized
 │             │ waiting for this secondary confirmation.)                                                                                                                                              │
 │ Steps Taken │ 5                                                                                                                                                                                      │
 └─────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-                      Timing Audit                      
+                      Timing Audit
 ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
 ┃ Operation            ┃ Total Time (s) ┃ Avg/Step (s) ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
@@ -1611,7 +1611,7 @@ Workflow execution finalized
 │ Action               │         10.62s │        2.12s │
 │ Analysis             │         82.33s │       16.47s │
 └──────────────────────┴────────────────┴──────────────┘
-   Resource Usage (Tokens)    
+   Resource Usage (Tokens)
 ┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
 ┃ Metric            ┃  Value ┃
 ┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
@@ -1620,7 +1620,7 @@ Workflow execution finalized
 │ Cached Tokens     │ 25,670 │
 │ Total Tokens      │ 43,653 │
 └───────────────────┴────────┘
-                                                       Agent Knowledge Graph (Brain)                                                        
+                                                       Agent Knowledge Graph (Brain)
 ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ Screen Hash  ┃ Activity                ┃ Agent Description                                                                               ┃
 ┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩

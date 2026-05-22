@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from fathom.adapters.ios.gateway import IOSAutomationGateway
 from fathom.constants.platform import IOSClearStrategy
+from fathom.core.exceptions import DeviceError
 from fathom.schemas.configuration import IOSConfiguration
 
 
@@ -21,8 +22,8 @@ class IOSAutomationGatewayClearTest(unittest.IsolatedAsyncioTestCase):
 
         return IOSAutomationGateway(
             configuration=IOSConfiguration(
-                bundle_id="com.test.app",
-                wda_url="http://localhost:8100",
+                bundle_identifier="com.test.app",
+                web_driver_agent_url="http://localhost:8100",
             )
         )
 
@@ -98,3 +99,36 @@ class IOSAutomationGatewayClearTest(unittest.IsolatedAsyncioTestCase):
 
         mock_session.assert_not_awaited()
         mock_request.assert_not_awaited()
+
+    async def test_swipe_ignores_missing_actions_release(self) -> None:
+        """
+        Swipe treats a missing actions-release endpoint as a benign cleanup no-op.
+        """
+
+        gateway = self.__build_gateway()
+        request_mock = AsyncMock(
+            side_effect=[
+                {},
+                DeviceError(
+                    "iOS automation gateway DELETE session/sess-1/actions failed with HTTP 404"
+                ),
+            ]
+        )
+
+        with (
+            patch.object(
+                gateway,
+                "_IOSAutomationGateway__create_session",
+                new_callable=AsyncMock,
+                return_value="sess-1",
+            ),
+            patch.object(gateway, "_IOSAutomationGateway__delete_session", new_callable=AsyncMock),
+            patch.object(gateway, "_IOSAutomationGateway__request", request_mock),
+        ):
+            await gateway.swipe(
+                start_x=10.0,
+                start_y=20.0,
+                end_x=30.0,
+                end_y=40.0,
+                duration=250,
+            )

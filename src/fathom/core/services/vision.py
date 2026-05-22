@@ -37,6 +37,10 @@ class SubGoalContext(TypedDict):
     index: int
     total: int
     description: str
+    strict_mode: bool
+    required_action_family: str
+    scroll_axis: str
+    surface: str
 
 
 class VisionService:
@@ -758,10 +762,19 @@ class VisionService:
             )
 
         scroll_regions = []
-        for index, region in enumerate(observation.scroll[:3], start=1):
+        for region in observation.scroll[:3]:
+            if region.manifest_label_id:
+                scroll_regions.append(
+                    f"  - manifest_label={region.manifest_label_id} x={region.bounds.x} y={region.bounds.y} "
+                    f"w={region.bounds.width} h={region.bounds.height} axis={region.axis}"
+                )
+                continue
+
+            hint = region.observation_region_id or region.identifier or "observation_scroll_region"
             scroll_regions.append(
-                f"  - region_{index}: x={region.bounds.x} y={region.bounds.y} "
-                f"w={region.bounds.width} h={region.bounds.height}"
+                f"  - observation_hint={hint} x={region.bounds.x} y={region.bounds.y} "
+                f"w={region.bounds.width} h={region.bounds.height} axis={region.axis} "
+                "(hint only; NOT a manifest label_id)"
             )
 
         overlay_lines = []

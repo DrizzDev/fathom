@@ -7,3 +7,8 @@ from typing import Final
 # with SUBGOAL_BUDGET_EXCEEDED. Hard cap regardless of whether the loop detector
 # or no-progress classifier has fired.
 DEFAULT_SUB_GOAL_MAX_STEPS: Final[int] = 8
+SCROLL_SUB_GOAL_MAX_STEPS: Final[int] = 25
+TAP_SUB_GOAL_MAX_STEPS: Final[int] = 3
+INPUT_SUB_GOAL_MAX_STEPS: Final[int] = 5
+WAIT_SUB_GOAL_MAX_STEPS: Final[int] = 3
+VALIDATE_SUB_GOAL_MAX_STEPS: Final[int] = 3

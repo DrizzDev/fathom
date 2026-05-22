@@ -4,13 +4,18 @@ import logging
 import time
 from typing import Any, Dict, Optional, cast
 
+from fathom.constants import ActionType
+from fathom.constants.command import CommandExecutionMode
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import ElementSource
 from fathom.schemas.resolution import ResolveStatus
 from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.scroll import ScrollLock
 from fathom.schemas.steps import Step
+from fathom.schemas.subgoal import RequiredActionFamily, ScrollAxis
 from fathom.schemas.supervision import VerdictKind
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 from fathom.strategies.graph.state import IntentGraphState
@@ -99,7 +104,29 @@ class SuperviseNode:
         observation = await self.__provider.observer.fallback_observation(
             state=state, capture=screen_capture
         )
+        planned_step = self.__apply_scroll_lock(step=planned_step, state=state)
         elements = self.__elements_from_state(state=state)
+        if (strict_violation := self.__command_mode_violation(step=planned_step)) is not None:
+            return self.__strict_mode_blocked_patch(
+                capture=screen_capture,
+                reason=strict_violation,
+                state=state,
+                step=planned_step,
+            )
+
+        if planned_step.action.action_type == ActionType.ASK_USER:
+            return self.__allow_non_spatial_step(
+                state=state,
+                step=planned_step,
+                capture=screen_capture,
+                localization=LocalizationResult(
+                    status=LocalizationStatus.UNRESOLVED,
+                    bounds=None,
+                    source=None,
+                    confidence=0.0,
+                    reason="ask_user_bypass",
+                ),
+            )
 
         resolve_result = await self.__provider.context.resolution.resolve(
             action=planned_step.action,
@@ -217,35 +244,167 @@ class SuperviseNode:
             )
             step = healed_step
 
-        package_name = self.__provider.context.package_name or "unknown"
-        current_screen_state = state.get(CommonStateKey.SCREEN_STATE)
-        if package_name == "unknown" and isinstance(current_screen_state, ScreenState):
-            package_name = current_screen_state.activity or "unknown"
-
-        execution_context = ExecutionContext(
+        return self.__allow_non_spatial_step(
+            state=state,
             step=step,
             capture=screen_capture,
-            pre_screen=(
-                current_screen_state if isinstance(current_screen_state, ScreenState) else None
-            ),
             localization=localization,
-            package=package_name,
         )
 
-        result = cast(
+    def __command_mode_violation(self, *, step: Step) -> Optional[str]:
+        """
+        Return a rejection reason when the planned step drifts outside the active sub-goal command family.
+        """
+
+        if (
+            self.__provider.context.configuration.intent.command_mode
+            is not CommandExecutionMode.STRICT
+        ):
+            return None
+
+        current = self.__provider.context.agent_state.get_current_sub_goal()
+        if current is None:
+            return None
+
+        contract = current.execution_contract
+        required_action_family = contract.required_action_family
+        if required_action_family is RequiredActionFamily.UNSPECIFIED:
+            return None
+
+        action_type = step.action.action_type
+
+        if self.__is_terminal_validation_candidate(step=step):
+            return None
+
+        allowed = self.__allowed_action_types(
+            required_action_family=required_action_family,
+            scroll_axis=contract.scroll_axis,
+        )
+        if action_type not in allowed:
+            return (
+                "strict_command_mismatch: active sub-goal requires "
+                f"{required_action_family.value}-family actions but planner proposed "
+                f"'{action_type.value}'"
+            )
+
+        if contract.surface and not self.__surface_matches_contract(
+            expected=contract.surface,
+            observed=step.action.surface,
+            action_type=action_type,
+        ):
+            return (
+                "strict_command_mismatch: active sub-goal requires surface "
+                f"'{contract.surface}' but planner proposed "
+                f"surface '{step.action.surface or '(none)'}'"
+            )
+
+        return None
+
+    @staticmethod
+    def __allowed_action_types(
+        *,
+        required_action_family: RequiredActionFamily,
+        scroll_axis: ScrollAxis,
+    ) -> set[ActionType]:
+        """
+        Return the action-type set allowed by one structured strict-mode contract.
+        """
+
+        if required_action_family is RequiredActionFamily.SCROLL:
+            scroll_actions = {ActionType.SCROLL}
+            if scroll_axis in {ScrollAxis.UNSPECIFIED, ScrollAxis.VERTICAL}:
+                scroll_actions.update({ActionType.SWIPE_UP, ActionType.SWIPE_DOWN})
+            if scroll_axis in {ScrollAxis.UNSPECIFIED, ScrollAxis.HORIZONTAL}:
+                scroll_actions.update({ActionType.SWIPE_LEFT, ActionType.SWIPE_RIGHT})
+            return scroll_actions | {ActionType.ASK_USER}
+
+        if required_action_family is RequiredActionFamily.TAP:
+            return {
+                ActionType.TAP,
+                ActionType.LONG_PRESS,
+                ActionType.ASK_USER,
+            }
+
+        if required_action_family is RequiredActionFamily.INPUT:
+            return {
+                ActionType.TAP,
+                ActionType.TYPE,
+                ActionType.ASK_USER,
+            }
+
+        if required_action_family is RequiredActionFamily.WAIT:
+            return {
+                ActionType.WAIT,
+                ActionType.ASK_USER,
+            }
+
+        if required_action_family is RequiredActionFamily.VALIDATE:
+            return {
+                ActionType.VALIDATE,
+                ActionType.ASK_USER,
+            }
+
+        return set(ActionType)
+
+    @staticmethod
+    def __surface_matches_contract(
+        *,
+        expected: str,
+        observed: Optional[str],
+        action_type: ActionType,
+    ) -> bool:
+        """
+        Enforce one explicit surface contract when the planner surfaced one on the action.
+        """
+
+        if action_type is ActionType.ASK_USER:
+            return True
+        if not observed:
+            return False
+        return Normalizer.clean(text=expected).lower() == Normalizer.clean(text=observed).lower()
+
+    @staticmethod
+    def __is_terminal_validation_candidate(*, step: Step) -> bool:
+        """
+        Allow one validate action through strict mode when the planner is using it
+        only as a terminal completion claim for the active mission.
+        """
+
+        if step.action.action_type is not ActionType.VALIDATE:
+            return False
+
+        return bool(step.metadata.get("terminal_validation_candidate"))
+
+    def __strict_mode_blocked_patch(
+        self,
+        *,
+        capture: ScreenCapture,
+        reason: str,
+        state: IntentGraphState,
+        step: Step,
+    ) -> IntentGraphState:
+        """
+        Build the blocked patch for one strict command-family violation.
+        """
+
+        blocked = self.__provider.gate.blocked_execute_result(
+            step=step,
+            capture=capture,
+            start_time=time.time(),
+            reason=reason,
+            state=state,
+        )
+        blocked_patch = cast(
             "IntentGraphState",
             {
-                IntentStateKey.EXECUTION_CONTEXT: execution_context,
-                CommonStateKey.SCREEN_OBSERVATION: observation,
-                IntentStateKey.PLANNED_STEP: step,
-                # Successful allow path: clear any block memo so the
-                # next planner turn does not see a stale block hint.
-                IntentStateKey.LAST_BLOCK_REASON: None,
-                IntentStateKey.LAST_BLOCK_MESSAGE: None,
+                **blocked,
+                IntentStateKey.EXECUTION_BLOCKED: True,
+                IntentStateKey.LAST_BLOCK_REASON: "strict_command_mismatch",
+                IntentStateKey.LAST_BLOCK_MESSAGE: reason,
             },
         )
-        self.__provider.persistence.persist(result=result)
-        return result
+        self.__provider.persistence.persist(result=blocked_patch)
+        return blocked_patch
 
     @staticmethod
     def __elements_from_state(*, state: IntentGraphState) -> Optional[Dict[str, Any]]:
@@ -279,3 +438,125 @@ class SuperviseNode:
             source=ElementSource.XML,
             confidence=1.0,
         )
+
+    def __allow_non_spatial_step(
+        self,
+        *,
+        state: IntentGraphState,
+        step: Step,
+        capture: ScreenCapture,
+        localization: LocalizationResult,
+    ) -> IntentGraphState:
+        """
+        Build execution context for a step that should bypass normal gating.
+        """
+
+        package_name = self.__provider.context.package_name or "unknown"
+        current_screen_state = state.get(CommonStateKey.SCREEN_STATE)
+        if package_name == "unknown" and isinstance(current_screen_state, ScreenState):
+            package_name = current_screen_state.activity or "unknown"
+
+        execution_context = ExecutionContext(
+            step=step,
+            capture=capture,
+            pre_screen=(
+                current_screen_state if isinstance(current_screen_state, ScreenState) else None
+            ),
+            localization=localization,
+            package=package_name,
+        )
+
+        observation = state.get(CommonStateKey.SCREEN_OBSERVATION)
+        result = cast(
+            "IntentGraphState",
+            {
+                IntentStateKey.EXECUTION_CONTEXT: execution_context,
+                CommonStateKey.SCREEN_OBSERVATION: observation,
+                IntentStateKey.PLANNED_STEP: step,
+                IntentStateKey.LAST_BLOCK_REASON: None,
+                IntentStateKey.LAST_BLOCK_MESSAGE: None,
+                IntentStateKey.EXECUTION_BLOCKED: False,
+            },
+        )
+        self.__provider.persistence.persist(result=result)
+        return result
+
+    def __apply_scroll_lock(self, *, step: Step, state: IntentGraphState) -> Step:
+        """
+        Reuse the previously resolved scroll container for the same active scroll objective.
+        """
+
+        action_type = step.action.action_type.value.lower()
+        if not action_type.startswith("swipe_"):
+            return step
+
+        raw_lock = state.get(IntentStateKey.ACTIVE_SCROLL_LOCK)
+        if not isinstance(raw_lock, ScrollLock):
+            return step
+
+        locked_target = Normalizer.clean(text=raw_lock.target).lower()
+        current_target = Normalizer.clean(
+            text=step.action.scroll_target
+            or step.action.natural_language_target
+            or step.action.target
+        ).lower()
+        if not self.__targets_match(locked_target=locked_target, current_target=current_target):
+            return step
+
+        if not self.__axis_matches_lock(action_type=action_type, lock=raw_lock):
+            return step
+
+        logger.info(
+            "Reusing locked scroll container for repeated objective",
+            extra={
+                "component": "graph.intent.supervise",
+                "event": "supervise.scroll.lock.applied",
+                "target": current_target,
+                "scope.identifier": raw_lock.scope.identifier,
+            },
+        )
+        return step.model_copy(
+            update={
+                "action": step.action.model_copy(
+                    update={
+                        "bounds": raw_lock.scope.bounds,
+                        "label_id": None,
+                    }
+                )
+            }
+        )
+
+    @staticmethod
+    def __axis_matches_lock(*, action_type: str, lock: ScrollLock) -> bool:
+        """
+        Return whether the proposed swipe action preserves the locked axis and direction family.
+        """
+
+        direction = lock.direction.value.lower()
+        if direction in {"up", "down"}:
+            return action_type.endswith("_up") or action_type.endswith("_down")
+
+        return action_type.endswith("_left") or action_type.endswith("_right")
+
+    @staticmethod
+    def __targets_match(*, locked_target: str, current_target: str) -> bool:
+        """
+        Return whether two scroll target phrases are semantically close enough to reuse the lock.
+        """
+
+        if not locked_target or not current_target:
+            return False
+
+        if locked_target == current_target:
+            return True
+
+        if locked_target in current_target or current_target in locked_target:
+            return True
+
+        locked_tokens = set(locked_target.split())
+        current_tokens = set(current_target.split())
+        if not locked_tokens or not current_tokens:
+            return False
+
+        overlap = len(locked_tokens & current_tokens)
+        return overlap >= max(1, min(len(locked_tokens), len(current_tokens)) // 2)

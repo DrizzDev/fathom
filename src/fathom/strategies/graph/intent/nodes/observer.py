@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.runtime import (
@@ -14,8 +14,10 @@ from fathom.schemas.budgets import PerceptionBudget
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture, ScreenHashBundle, ScreenState
 from fathom.schemas.ui import LabeledElement
-from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
+
+if TYPE_CHECKING:
+    from fathom.strategies.graph.context import GraphContext
 
 
 class ScreenObserver:

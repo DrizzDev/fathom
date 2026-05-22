@@ -9,6 +9,7 @@ from fathom.schemas.perception import (
     DocumentAiCredentials,
     IconConfiguration,
     JournalConfiguration,
+    KeyboardConfiguration,
     LocalizationEnsembleConfiguration,
     OcrConfiguration,
     OverlayConfiguration,
@@ -49,6 +50,9 @@ class RuntimeConfigLoader:
             cv=CvConfiguration(enabled=self.__settings.observation_cv_enabled),
             icon=IconConfiguration(enabled=self.__settings.observation_icon_enabled),
             overlay=OverlayConfiguration(enabled=self.__settings.observation_overlay_enabled),
+            keyboard=KeyboardConfiguration(
+                enabled=self.__settings.observation_keyboard_enabled,
+            ),
             journal=JournalConfiguration(local_enabled=self.__settings.journal_local_enabled),
         )
 

@@ -100,6 +100,22 @@ class OverlayConfiguration(BaseModel):
     )
 
 
+class KeyboardConfiguration(BaseModel):
+    """
+    Boot-time configuration for keyboard detection.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether keyboard detection contributes to perception output for this run. "
+            "Execution policy decisions belong to runtime configuration, not perception."
+        ),
+    )
+
+
 class JournalConfiguration(BaseModel):
     """
     Boot-time configuration for the runtime-journal adapter.
@@ -142,6 +158,10 @@ class PerceptionConfiguration(BaseModel):
     overlay: OverlayConfiguration = Field(
         default_factory=OverlayConfiguration,
         description="Pixel-overlay detector configuration.",
+    )
+    keyboard: KeyboardConfiguration = Field(
+        default_factory=KeyboardConfiguration,
+        description="Keyboard detection configuration.",
     )
     journal: JournalConfiguration = Field(
         default_factory=JournalConfiguration,

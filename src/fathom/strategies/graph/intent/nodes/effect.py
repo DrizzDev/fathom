@@ -3,13 +3,12 @@ from __future__ import annotations
 import asyncio
 import time
 from logging import getLogger
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from fathom.constants import ActionType
 from fathom.constants.screen import ZERO_HASH
 from fathom.constants.state import IntentStateKey, PlanMetadataKey
 from fathom.constants.storage import StorageBackend
-from fathom.core.services.comparator import ScreenComparator
 from fathom.schemas.artifacts import ScreenArtifact, ScreenArtifactBundle, StepArtifacts
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.execution import ExecutionContext
@@ -18,10 +17,13 @@ from fathom.schemas.outcomes import OutcomeStatus
 from fathom.schemas.results import PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenDiff, ScreenState
 from fathom.schemas.ui import LabeledElement
-from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.nodes.observer import ScreenObserver
 from fathom.strategies.graph.state import IntentGraphState
 from fathom.utils.wait import stability_wait
+
+if TYPE_CHECKING:
+    from fathom.core.services.comparator import ScreenComparator
+    from fathom.strategies.graph.context import GraphContext
 
 logger = getLogger(__name__)
 
@@ -110,6 +112,9 @@ class PostAction:
 
         if status == OutcomeStatus.EFFECTIVE:
             return effect.model_copy(update={"status": ActionEffectStatus.PROGRESS})
+
+        if status in {OutcomeStatus.BLOCKED, OutcomeStatus.UNKNOWN, OutcomeStatus.PARTIAL}:
+            return effect.model_copy(update={"status": ActionEffectStatus.UNCERTAIN})
 
         return effect
 

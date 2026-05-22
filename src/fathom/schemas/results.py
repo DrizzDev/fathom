@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,6 +10,8 @@ from fathom.schemas.actions import Action
 from fathom.schemas.decisions import ActDecision, Decision
 from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.escape import EscapeReport
+from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.scroll import ScrollOutcome
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.tasks import TaskStatus
 
@@ -246,6 +248,35 @@ class ActionResult(BaseModel):
     output: Optional[str] = Field(default=None, description="Command output")
 
 
+class ActionTraceAttempt(BaseModel):
+    """
+    Attempt metadata for one dispatched trace event.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    index: int = Field(ge=0, description="Zero-based attempt index within one logical step.")
+
+
+class ActionTraceEvent(BaseModel):
+    """
+    One concrete action trace captured during execution.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    capture: ScreenCapture = Field(
+        description="Pre-action capture the trace should be rendered on.",
+    )
+    coords: Tuple[int, ...] = Field(
+        description="Action coordinates to render for this trace event.",
+    )
+    attempt: Optional[ActionTraceAttempt] = Field(
+        default=None,
+        description="Attempt metadata when the action dispatched multiple device commands.",
+    )
+
+
 class ExecutionResult(BaseModel):
     """
     Result of step execution attempt.
@@ -262,6 +293,14 @@ class ExecutionResult(BaseModel):
     error: Optional[str] = Field(default=None, description="Error message if failed")
     screen_changed: bool = Field(default=False, description="Whether the screen changed")
     is_cancelled: bool = Field(default=False, description="Whether the execution was cancelled")
+    scroll_outcome: Optional[ScrollOutcome] = Field(
+        default=None,
+        description="Adaptive scroll outcome when available.",
+    )
+    trace_events: Tuple[ActionTraceEvent, ...] = Field(
+        default_factory=tuple,
+        description="Concrete trace events captured during execution.",
+    )
 
 
 class PlanResult(BaseModel):

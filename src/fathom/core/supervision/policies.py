@@ -6,8 +6,10 @@ from fathom.constants import SWIPE_ACTIONS, ActionType
 from fathom.constants.safety import UNSAFE_ACTION_KEYWORDS
 from fathom.constants.screen import NO_PROGRESS_RECOVERY_THRESHOLD
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.configuration import IntentConfiguration
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import OverlayObservation, ScreenObservation
+from fathom.schemas.perception import KeyboardConfiguration
 from fathom.schemas.supervision import BlockReason
 from fathom.schemas.tasks import ExecutionTask, TaskAttemptState
 
@@ -52,23 +54,67 @@ class KeyboardPolicy:
     Blocks scroll gestures while the software keyboard is visible.
     """
 
+    def __init__(
+        self,
+        *,
+        detection_configuration: KeyboardConfiguration,
+        runtime_configuration: IntentConfiguration.KeyboardRuntimeConfiguration,
+    ) -> None:
+        """
+        Bind whether keyboard-based blocking is active for this run.
+        """
+
+        self.__detection_configuration = detection_configuration
+        self.__runtime_configuration = runtime_configuration
+
     def evaluate(self, *, action: Action, observation: ScreenObservation) -> Optional[BlockReason]:
         """
         Return a block reason when keyboard state makes the action invalid.
         """
 
+        if (
+            not self.__detection_configuration.enabled
+            or not self.__runtime_configuration.block_actions
+        ):
+            return None
+
         if not observation.keyboard.visible:
             return None
 
-        if action.action_type.value in SWIPE_ACTIONS:
+        if action.action_type.value in SWIPE_ACTIONS and self.__is_occluding(
+            action=action,
+            observation=observation,
+        ):
             return BlockReason.KEYBOARD_OCCLUDING
 
         return None
 
+    @staticmethod
+    def __is_occluding(*, action: Action, observation: ScreenObservation) -> bool:
+        """
+        Return whether the keyboard overlaps the requested action region.
+        """
+
+        if observation.keyboard.bounds is None:
+            return True
+
+        if action.bounds is None:
+            return True
+
+        keyboard = observation.keyboard.bounds
+        target = action.bounds
+
+        top = max(target.y, keyboard.y)
+        left = max(target.x, keyboard.x)
+        right = min(target.x + target.width, keyboard.x + keyboard.width)
+        bottom = min(target.y + target.height, keyboard.y + keyboard.height)
+
+        return right > left and bottom > top
+
 
 class ScrollPolicy:
     """
-    Blocks blind scrolling when screen evidence says scrolling is not useful.
+    Scroll actions are observed after execution, not pre-blocked on coarse heuristics.
     """
 
     def evaluate(
@@ -79,17 +125,8 @@ class ScrollPolicy:
         observation: ScreenObservation,
     ) -> Optional[BlockReason]:
         """
-        Return a block reason when scrolling should not execute.
+        Return no pre-execution block; adaptive scroll validation owns this decision.
         """
-
-        if action.action_type.value not in SWIPE_ACTIONS:
-            return None
-
-        if observation.calls_to_action and no_progress > 0:
-            return BlockReason.NON_SCROLLABLE_SURFACE
-
-        if not observation.scroll and no_progress > 0:
-            return BlockReason.NON_SCROLLABLE_SURFACE
 
         return None
 

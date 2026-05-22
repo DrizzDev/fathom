@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fathom.constants import SWIPE_ACTIONS, ActionType
+from fathom.constants import SWIPE_ACTIONS, ActionExecutionKind, ActionType
 from fathom.constants.screen import (
     ACTION_EFFECT_CONTENT_DIFF_RATIO_THRESHOLD,
     ACTION_EFFECT_SCROLL_DISTANCE_THRESHOLD_PX,
@@ -12,6 +12,7 @@ from fathom.schemas.actions import Action
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.outcomes import ActionOutcome, OutcomeStatus
 from fathom.schemas.screens import ScreenDiff
+from fathom.schemas.scroll import ScrollOutcome
 
 
 class OutcomeClassifier:
@@ -27,22 +28,32 @@ class OutcomeClassifier:
         before: ScreenObservation,
         diff: Optional[ScreenDiff],
         after: Optional[ScreenObservation],
+        scroll_outcome: Optional[ScrollOutcome] = None,
     ) -> ActionOutcome:
         """
         Classify one attempted action outcome.
         """
 
-        if not success:
+        if action.execution_kind is ActionExecutionKind.CONTROL:
             return self.__outcome(
                 diff=diff,
                 after=after,
                 before=before,
                 action=action,
-                status=OutcomeStatus.BLOCKED,
-                reason="Device command failed before UI effect could be verified.",
+                status=OutcomeStatus.UNKNOWN,
+                reason="Control-flow action completed outside device effect classification.",
             )
 
         if after is None or diff is None:
+            if not success:
+                return self.__outcome(
+                    diff=diff,
+                    after=after,
+                    before=before,
+                    action=action,
+                    status=OutcomeStatus.BLOCKED,
+                    reason="Device command failed and no post-action observation was available.",
+                )
             return self.__outcome(
                 diff=diff,
                 after=after,
@@ -52,12 +63,45 @@ class OutcomeClassifier:
                 reason="Post-action observation was unavailable.",
             )
 
+        outcome = self.__classify_device_action(
+            action=action,
+            before=before,
+            after=after,
+            diff=diff,
+            scroll_outcome=scroll_outcome,
+        )
+
+        if success:
+            return outcome
+
+        return self.__reconcile_failed_execution(
+            action=action,
+            before=before,
+            after=after,
+            diff=diff,
+            outcome=outcome,
+        )
+
+    def __classify_device_action(
+        self,
+        *,
+        action: Action,
+        before: ScreenObservation,
+        after: ScreenObservation,
+        diff: ScreenDiff,
+        scroll_outcome: Optional[ScrollOutcome],
+    ) -> ActionOutcome:
+        """
+        Classify one device action using post-action evidence.
+        """
+
         if action.action_type.value in SWIPE_ACTIONS:
             return self.__classify_scroll(
                 diff=diff,
                 after=after,
                 action=action,
                 before=before,
+                scroll_outcome=scroll_outcome,
             )
 
         if action.action_type == ActionType.TYPE:
@@ -89,6 +133,54 @@ class OutcomeClassifier:
             after=after,
             action=action,
             before=before,
+        )
+
+    def __reconcile_failed_execution(
+        self,
+        *,
+        action: Action,
+        before: ScreenObservation,
+        after: ScreenObservation,
+        diff: ScreenDiff,
+        outcome: ActionOutcome,
+    ) -> ActionOutcome:
+        """
+        Reconcile raw device failure with post-action UI evidence.
+        """
+
+        if outcome.status is OutcomeStatus.EFFECTIVE:
+            return self.__outcome(
+                diff=diff,
+                after=after,
+                before=before,
+                action=action,
+                status=OutcomeStatus.EFFECTIVE,
+                reason=(
+                    "Device command reported failure, but post-action evidence showed "
+                    f"a visible UI effect. {outcome.reason}"
+                ),
+            )
+
+        if outcome.status is OutcomeStatus.NO_EFFECT:
+            return self.__outcome(
+                diff=diff,
+                after=after,
+                before=before,
+                action=action,
+                status=OutcomeStatus.BLOCKED,
+                reason="Device command failed and no visible UI effect was detected.",
+            )
+
+        return self.__outcome(
+            diff=diff,
+            after=after,
+            before=before,
+            action=action,
+            status=OutcomeStatus.UNKNOWN,
+            reason=(
+                "Device command reported failure and post-action evidence was inconclusive. "
+                f"{outcome.reason}"
+            ),
         )
 
     def __classify_tap(
@@ -150,10 +242,28 @@ class OutcomeClassifier:
         diff: ScreenDiff,
         after: ScreenObservation,
         before: ScreenObservation,
+        scroll_outcome: Optional[ScrollOutcome],
     ) -> ActionOutcome:
         """
         Classify a scroll or swipe action outcome.
         """
+
+        if scroll_outcome is not None:
+            verdict = scroll_outcome.final.kind
+            diagnostic = scroll_outcome.final.detail or verdict.value
+            base_outcome = self.__from_diff(action=action, before=before, after=after, diff=diff)
+            if base_outcome.status is OutcomeStatus.EFFECTIVE:
+                return base_outcome.model_copy(
+                    update={
+                        "reason": (
+                            "Scroll produced a visible viewport change. "
+                            f"Scroll diagnostic: {diagnostic}."
+                        )
+                    }
+                )
+            return base_outcome.model_copy(
+                update={"reason": f"Scroll diagnostic: {diagnostic}. {base_outcome.reason}"}
+            )
 
         if before.keyboard.visible:
             return self.__no_effect(
