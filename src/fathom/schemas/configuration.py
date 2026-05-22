@@ -10,6 +10,7 @@ from fathom.constants.platform import (
     DevicePlatform,
     IOSAutomationBackend,
 )
+from fathom.constants.storage import StorageBackend
 
 
 class LLMConfiguration(BaseModel):
@@ -65,8 +66,9 @@ class StorageConfiguration(BaseModel):
     Configuration for artifact storage.
     """
 
-    backends: Set[Literal["LOCAL", "CLOUD"]] = Field(
-        default={"LOCAL"}, description="Storage backends to enable"
+    backends: Set[StorageBackend] = Field(
+        default={StorageBackend.LOCAL},
+        description="Storage backends to enable",
     )
     storage_bucket: Optional[str] = Field(
         default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"

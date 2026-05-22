@@ -20,6 +20,7 @@ from fathom.constants.execution import (
 from fathom.constants.graph import NodeName
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.storage import StorageBackend
 from fathom.core.exceptions import FathomError
 from fathom.core.prompts.verification import (
     SUBGOAL_VERIFICATION_SYSTEM,
@@ -29,6 +30,11 @@ from fathom.core.prompts.verification import (
 )
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.hitl import HITLService
+from fathom.schemas.artifacts import (
+    ScreenArtifact,
+    ScreenArtifactBundle,
+    StepArtifacts,
+)
 from fathom.schemas.hierarchy import HierarchyProcessingResult
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
@@ -130,25 +136,31 @@ class IntentNodeProvider:
     async def __capture_post_action_screen(
         self,
         *,
+        package_name: str,
         before_capture: ScreenCapture,
         before_state: Optional[ScreenState],
     ) -> PostActionScreenComparison:
         """
-        Capture the post-action screen and compare it to the pre-action state.
+        Capture the post-action screen, diff it against the pre-action state, and persist both artifacts.
         """
+
+        before_visual_hash = before_state.visual_hash if before_state is not None else None
+        before_artifact = self.__build_screen_artifact_from_capture(
+            capture=before_capture, visual_hash=before_visual_hash
+        )
 
         capture_start = time.time()
         post_capture = await self.__context.perception_port.capture()
-        capture_duration = time.time() - capture_start
-
         logger.info(
             "[NODE: EXECUTE] Post-action capture completed in %.2fs (image=%d bytes)",
-            capture_duration,
+            time.time() - capture_start,
             len(post_capture.image) if post_capture.image else 0,
         )
 
         if not post_capture.image:
-            return PostActionScreenComparison()
+            return PostActionScreenComparison(
+                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+            )
 
         elements_start = time.time()
         post_elements = self.__build_post_action_elements(capture=post_capture)
@@ -159,10 +171,7 @@ class IntentNodeProvider:
         )
 
         hash_start = time.time()
-        post_hashes = self.__resolve_capture_hashes(
-            capture=post_capture,
-            elements=post_elements,
-        )
+        post_hashes = self.__resolve_capture_hashes(capture=post_capture, elements=post_elements)
         logger.info(
             "[NODE: EXECUTE] Post-action hashes computed in %.3fs", time.time() - hash_start
         )
@@ -187,10 +196,107 @@ class IntentNodeProvider:
             time.time() - diff_start,
         )
 
+        after_artifact = await self.__persist_screen_artifact(
+            phase="post_action",
+            capture=post_capture,
+            package_name=package_name,
+            visual_hash=post_hashes.visual_hash,
+        )
+
         return PostActionScreenComparison(
             screen_diff=screen_diff,
             post_visual_hash=post_hashes.visual_hash,
+            artifacts=self.__compose_step_artifacts(before=before_artifact, after=after_artifact),
         )
+
+    def __build_screen_artifact_from_capture(
+        self,
+        *,
+        capture: ScreenCapture,
+        visual_hash: Optional[str] = None,
+    ) -> Optional[ScreenArtifact]:
+        """
+        Wrap an already-persisted capture into a `ScreenArtifact`, or `None` if no storage id is set.
+        """
+
+        if not (storage_id := (capture.metadata or {}).get("storage_id")):
+            return None
+
+        return ScreenArtifact(
+            uri=str(storage_id),
+            width=capture.width,
+            height=capture.height,
+            visual_hash=visual_hash,
+            captured_at=capture.timestamp,
+            storage_backend=self.__resolve_storage_backend(),
+        )
+
+    async def __persist_screen_artifact(
+        self,
+        *,
+        phase: str,
+        package_name: str,
+        capture: ScreenCapture,
+        visual_hash: Optional[str],
+    ) -> Optional[ScreenArtifact]:
+        """
+        Persist a screen capture via `StoragePort` and return a `ScreenArtifact`, or `None` on failure.
+        """
+
+        try:
+            storage_id = await self.__context.storage.save(
+                data=capture.image,
+                metadata={
+                    "phase": phase,
+                    "type": "screenshot",
+                    "timestamp": time.time(),
+                    "package_name": package_name,
+                    "activity_name": capture.activity,
+                    "session_id": self.__context.workflow_id,
+                },
+            )
+        except Exception as exception:
+            logger.warning(
+                "[NODE: EXECUTE] Failed to persist %s screen artifact: %s", phase, exception
+            )
+            return None
+
+        return ScreenArtifact(
+            uri=str(storage_id),
+            width=capture.width,
+            height=capture.height,
+            visual_hash=visual_hash,
+            captured_at=capture.timestamp,
+            storage_backend=self.__resolve_storage_backend(),
+        )
+
+    def __compose_step_artifacts(
+        self,
+        *,
+        after: Optional[ScreenArtifact],
+        before: Optional[ScreenArtifact],
+    ) -> Optional[StepArtifacts]:
+        """
+        Build the `StepArtifacts` envelope for a step, or `None` when both sides are missing.
+        """
+
+        if before is None and after is None:
+            return None
+
+        return StepArtifacts(screen=ScreenArtifactBundle(before=before, after=after))
+
+    def __resolve_storage_backend(self) -> StorageBackend:
+        """
+        Read the adapter's declared `backend` attribute, falling back to `LOCAL`.
+        """
+
+        storage = self.__context.storage
+        backend = getattr(storage, "backend", None)
+
+        if isinstance(backend, StorageBackend):
+            return backend
+
+        return StorageBackend.LOCAL
 
     async def __is_cancelled(self) -> bool:
         """
@@ -1137,8 +1243,9 @@ class IntentNodeProvider:
             else ZERO_HASH
         )
 
-        screen_diff: Optional[ScreenDiff] = None
         post_activity = package_name
+        screen_diff: Optional[ScreenDiff] = None
+        step_artifacts: Optional[StepArtifacts] = None
 
         try:
             current_state = (
@@ -1147,18 +1254,17 @@ class IntentNodeProvider:
             post_action_comparison = await self.__capture_post_action_screen(
                 before_capture=capture,
                 before_state=current_state,
+                package_name=package_name,
             )
-            post_hash = post_action_comparison.post_visual_hash
             screen_diff = post_action_comparison.screen_diff
+            step_artifacts = post_action_comparison.artifacts
+            post_hash = post_action_comparison.post_visual_hash or pre_hash
 
             # Capture post-action package for RECORD node (avoids extra device call)
             try:
                 post_activity = await self.__context.device.get_current_package() or package_name
             except Exception:
                 post_activity = package_name
-
-            if post_hash is None:
-                post_hash = pre_hash
 
         except Exception as exception:
             await self.__context.telemetry.warning(
@@ -1214,6 +1320,7 @@ class IntentNodeProvider:
             pre_hash=pre_hash,
             post_hash=post_hash,
             observation=observation,
+            artifacts=step_artifacts,
             duration=int(duration * 1000),
             error=execution_result.error,
             screen_changed=screen_changed,
@@ -1360,23 +1467,30 @@ class IntentNodeProvider:
             if isinstance(plan_raw, PlanResult):
                 plan_metrics = dict(plan_raw.metrics or {})
 
+            artifacts = (
+                step_result.artifacts.model_dump(mode="json")
+                if step_result.artifacts is not None
+                else None
+            )
+
             await self.__context.telemetry.info(
                 f"Step {step_result.step.step_number} completed",
-                type=FathomEvent.STEP_COMPLETED,
+                artifacts=artifacts,
                 success=record.success,
                 duration=total_duration,
                 rationale=record.rationale,
                 observation=record.observation,
                 action_type=record.action_type,
+                type=FathomEvent.STEP_COMPLETED,
                 step=step_result.step.step_number + 1,
                 action_description=record.action_description,
                 target=record.natural_language_target or record.target,
-                analysis_llm_ms=float(plan_metrics.get("llm_analysis_ms", 0.0) or 0.0),
                 analysis_parse_ms=float(plan_metrics.get("parse_ms", 0.0) or 0.0),
+                analysis_total_ms=float(plan_metrics.get("analyze_ms", 0.0) or 0.0),
                 analysis_payload_ms=float(plan_metrics.get("payload_ms", 0.0) or 0.0),
+                analysis_llm_ms=float(plan_metrics.get("llm_analysis_ms", 0.0) or 0.0),
                 analysis_manifest_ms=float(plan_metrics.get("manifest_ms", 0.0) or 0.0),
                 analysis_tool_scope_ms=float(plan_metrics.get("tool_scope_ms", 0.0) or 0.0),
-                analysis_total_ms=float(plan_metrics.get("analyze_ms", 0.0) or 0.0),
             )
 
             # Console audit logging for rich step visualization
@@ -1393,8 +1507,8 @@ class IntentNodeProvider:
                     plan=execution_plan,
                     state=current_screen,
                     hierarchy_duration=0.0,
-                    is_new_screen=is_new_screen_state,
                     result=step_result.to_record(),
+                    is_new_screen=is_new_screen_state,
                     analysis_duration=analysis_duration,
                     execution_duration=execution_duration,
                     grounding_duration=grounding_duration,

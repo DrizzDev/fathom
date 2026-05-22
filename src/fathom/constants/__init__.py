@@ -22,6 +22,7 @@ from fathom.constants.execution import (
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform, IOSAutomationBackend
 from fathom.constants.run import ExecutionMode, SignalAdapterType, TargetKind
 from fathom.constants.scope import ContextScope
+from fathom.constants.storage import StorageBackend
 
 SWIPE_ACTIONS = frozenset({"swipe_up", "swipe_down", "swipe_left", "swipe_right", "scroll"})
 
@@ -172,7 +173,10 @@ __all__ = [
     "ContextScope",
     "ExecutionMode",
     "DRAIN_TIMEOUT",
+    "SWIPE_ACTIONS",
+    "VALIDATE_PREFIX",
     "WorkflowStatus",
+    "StorageBackend",
     "StrategyStatus",
     "ExecutionPhase",
     "DevicePlatform",
@@ -180,9 +184,6 @@ __all__ = [
     "VISUAL_HASH_LENGTH",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_RETRY_DELAY",
-    "SWIPE_ACTIONS",
-    "EXECUTABLE_ACTION_PREFIXES",
-    "VALIDATE_PREFIX",
     "SPATIAL_ACTION_TYPES",
     "DeviceConnectionType",
     "IOSAutomationBackend",
@@ -194,4 +195,5 @@ __all__ = [
     "NEXT_PHASE_ACTION_TYPES",
     "DEFAULT_SCROLL_DISTANCE",
     "SIGNAL_HEARTBEAT_INTERVAL",
+    "EXECUTABLE_ACTION_PREFIXES",
 ]

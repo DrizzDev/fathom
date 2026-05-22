@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.artifacts import (
+    ScreenArtifact,
+    ScreenArtifactBundle,
+    StepArtifacts,
+)
 from fathom.schemas.cli import LocalCommandInput, RunCommandInput
 from fathom.schemas.configuration import (
     ADBConfiguration,
@@ -99,10 +104,13 @@ __all__ = [
     "RunnerConfig",
     "RunnerResult",
     "RuntimeConfiguration",
+    "ScreenArtifact",
+    "ScreenArtifactBundle",
     "ScreenCapture",
     "ScreenNode",
     "ScreenState",
     "Step",
+    "StepArtifacts",
     "StepContext",
     "StepRecord",
     "StepResult",
