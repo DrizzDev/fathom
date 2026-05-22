@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+from logging import getLogger
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from fathom.schemas.artifact import ArtifactKind
     from fathom.settings.env import FathomSettings
+
+logger = getLogger(__name__)
 
 
 class SharedPathManager:
@@ -22,6 +25,16 @@ class SharedPathManager:
 
         self.__base_path = settings.assets_path
         self.__base_path.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            "Fathom asset paths resolved",
+            extra={
+                "component": "base.paths",
+                "event": "fathom.paths.resolved",
+                "base_path": str(self.__base_path),
+                "memory_path": str(self.__base_path / "memory"),
+            },
+        )
 
     def __get_category_root(self, category: str, package_name: str, session_id: str) -> Path:
         """

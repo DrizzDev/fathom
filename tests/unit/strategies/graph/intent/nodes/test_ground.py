@@ -90,6 +90,7 @@ class GroundNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
             result.get(CommonStateKey.COMPLETION_REASON),
             CompletionReason.MAX_STEPS.value,
         )
+        provider.context.perception.perceive.assert_not_awaited()
 
     async def test_empty_capture_terminates_with_failed_reason(self) -> None:
         """

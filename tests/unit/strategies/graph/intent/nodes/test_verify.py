@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.schemas.state import VerificationLoopPhase, VerificationLoopState
 from fathom.strategies.graph.intent.nodes.verify import VerifyNode
 
 
@@ -34,6 +35,16 @@ class VerifyNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
         provider.context.workflow_id = "run-test"
         provider.persistence.persist = MagicMock()
         provider.persistence.restore = MagicMock()
+        provider.context.max_steps = 10
+        provider.context.recovery.verify_threshold = 3
+        provider.context.agent_state.current_screen = None
+        provider.context.agent_state.record_verify_rejection.return_value = VerificationLoopState(
+            recorded_step_count=0,
+            activity="app",
+            screen=None,
+            consecutive_rejections=1,
+        )
+        provider.context.agent_state.mark_verify_recovery_attempted = MagicMock()
         provider.context.perception.perceive = AsyncMock(
             return_value=MagicMock(image=image, width=100, height=100, activity="app"),
         )
@@ -150,3 +161,123 @@ class VerifyNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.get(CommonStateKey.IS_COMPLETE))
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
         provider.context.agent_state.mark_complete.assert_not_called()
+
+    async def test_verifier_rejection_terminates_when_max_steps_already_reached(self) -> None:
+        """
+        A rejected verification must not reopen the loop once the
+        outer intent step budget has already been exhausted.
+        """
+
+        provider = self.__provider(cancelled=False, image=b"PNG")
+        provider.context.intent = "Tap sign in"
+        provider.context.max_steps = 5
+        provider.context.agent_state.step_count = 5
+        provider.context.agent_state.has_sub_goals.return_value = False
+        provider.context.agent_state.all_sub_goals_complete.return_value = False
+        provider.context.agent_state.reset_completion = MagicMock()
+        provider.context.context_manager.get_user_guidance.return_value = []
+        provider.context.context_manager.inject_verifier_feedback = AsyncMock()
+        provider.context.llm.generate = AsyncMock(
+            return_value=MagicMock(
+                content='{"is_complete": false, "reason": "Sign in still not visible."}'
+            )
+        )
+        provider.context.artifact_pipeline = None
+        provider.recovery.try_recover = AsyncMock(return_value=None)
+
+        node = VerifyNode(provider=provider)
+        result: Any = await node(state={})  # type: ignore[arg-type]
+
+        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertEqual(
+            result.get(CommonStateKey.COMPLETION_REASON),
+            CompletionReason.MAX_STEPS.value,
+        )
+        provider.context.agent_state.mark_complete.assert_called_once_with(
+            reason=CompletionReason.MAX_STEPS.value
+        )
+        provider.context.context_manager.inject_verifier_feedback.assert_not_awaited()
+
+    async def test_verifier_rejection_dispatches_recovery_at_threshold(self) -> None:
+        """
+        VERIFY rejection at the configured threshold should give recovery its shot.
+        """
+
+        provider = self.__provider(cancelled=False, image=b"PNG")
+        provider.context.intent = "Tap sign in"
+        provider.context.max_steps = 10
+        provider.context.recovery.verify_threshold = 2
+        provider.context.agent_state.step_count = 4
+        provider.context.agent_state.has_sub_goals.return_value = False
+        provider.context.agent_state.all_sub_goals_complete.return_value = False
+        provider.context.agent_state.reset_completion = MagicMock()
+        provider.context.agent_state.current_screen = None
+        provider.context.agent_state.record_verify_rejection.return_value = VerificationLoopState(
+            recorded_step_count=4,
+            activity="app",
+            screen=None,
+            consecutive_rejections=2,
+        )
+        provider.context.agent_state.mark_verify_recovery_attempted = MagicMock()
+        provider.context.context_manager.get_user_guidance.return_value = []
+        provider.context.context_manager.inject_verifier_feedback = AsyncMock()
+        provider.context.llm.generate = AsyncMock(
+            return_value=MagicMock(
+                content='{"is_complete": false, "reason": "Sign in still not visible."}'
+            )
+        )
+        provider.context.artifact_pipeline = None
+        provider.recovery.try_recover = AsyncMock(return_value={"patched": True})
+
+        node = VerifyNode(provider=provider)
+        result: Any = await node(state={})  # type: ignore[arg-type]
+
+        self.assertEqual(result, {"patched": True})
+        provider.context.agent_state.mark_verify_recovery_attempted.assert_called_once()
+        provider.recovery.try_recover.assert_awaited_once()
+        provider.context.context_manager.inject_verifier_feedback.assert_not_awaited()
+
+    async def test_verifier_rejection_terminates_after_recovery_already_ran(self) -> None:
+        """
+        Returning to VERIFY on the same no-progress streak after recovery had
+        its chance must terminate as a bounded stuck outcome.
+        """
+
+        provider = self.__provider(cancelled=False, image=b"PNG")
+        provider.context.intent = "Tap sign in"
+        provider.context.max_steps = 10
+        provider.context.recovery.verify_threshold = 2
+        provider.context.agent_state.step_count = 4
+        provider.context.agent_state.has_sub_goals.return_value = False
+        provider.context.agent_state.all_sub_goals_complete.return_value = False
+        provider.context.agent_state.reset_completion = MagicMock()
+        provider.context.agent_state.current_screen = None
+        provider.context.agent_state.record_verify_rejection.return_value = VerificationLoopState(
+            recorded_step_count=4,
+            activity="app",
+            screen=None,
+            consecutive_rejections=2,
+            phase=VerificationLoopPhase.RECOVERY_ATTEMPTED,
+        )
+        provider.context.agent_state.mark_verify_recovery_attempted = MagicMock()
+        provider.context.context_manager.get_user_guidance.return_value = []
+        provider.context.context_manager.inject_verifier_feedback = AsyncMock()
+        provider.context.llm.generate = AsyncMock(
+            return_value=MagicMock(
+                content='{"is_complete": false, "reason": "Sign in still not visible."}'
+            )
+        )
+        provider.context.artifact_pipeline = None
+        provider.recovery.try_recover = AsyncMock(return_value=None)
+
+        node = VerifyNode(provider=provider)
+        result: Any = await node(state={})  # type: ignore[arg-type]
+
+        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertEqual(
+            result.get(CommonStateKey.COMPLETION_REASON),
+            CompletionReason.STUCK.value,
+        )
+        provider.recovery.try_recover.assert_not_awaited()
+        provider.context.agent_state.mark_verify_recovery_attempted.assert_not_called()
+        provider.context.context_manager.inject_verifier_feedback.assert_not_awaited()

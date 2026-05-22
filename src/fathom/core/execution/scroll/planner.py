@@ -71,11 +71,11 @@ class ScrollPlanner(ScrollPlanPort):
         ):
             shifted_path = self.__refine_path(
                 current=self.__shift_path(
-                path=base_path,
-                scope=scope,
-                converter=converter,
-                delta_ratio=ratio,
-                sign=1 if index == 1 else -1,
+                    path=base_path,
+                    scope=scope,
+                    converter=converter,
+                    delta_ratio=ratio,
+                    sign=1 if index == 1 else -1,
                 ),
                 scope=scope,
                 converter=converter,
@@ -461,10 +461,14 @@ class ScrollPlanner(ScrollPlanPort):
             if surface_top <= preferred_y <= surface_bottom:
                 if preferred_y >= (region_top + scope.region.height / 2):
                     lower_limit = min(lower_limit, surface_top - 1)
-                    affected_surfaces.append(self.__surface_detail(surface=surface, effect="lower_limit"))
+                    affected_surfaces.append(
+                        self.__surface_detail(surface=surface, effect="lower_limit")
+                    )
                 else:
                     upper_limit = max(upper_limit, surface_bottom + 1)
-                    affected_surfaces.append(self.__surface_detail(surface=surface, effect="upper_limit"))
+                    affected_surfaces.append(
+                        self.__surface_detail(surface=surface, effect="upper_limit")
+                    )
             elif surface_top >= preferred_y:
                 lower_limit = min(lower_limit, surface_top - 1)
             else:

@@ -16,7 +16,13 @@ from fathom.core.execution.scroll import AdaptiveScrollSupervisor
 from fathom.core.execution.scroll import ScrollPlanner as AdaptiveScrollPlanner
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.scroll import ScrollDetectPort, ScrollSurfacePort
-from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem, GesturePath
+from fathom.schemas.actions import (
+    Bounds,
+    CoordinateSource,
+    CoordinateSystem,
+    ExecutionRegion,
+    GesturePath,
+)
 from fathom.schemas.command import CommandScopeKind
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.observation import (
@@ -146,7 +152,7 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
         supervisor = AdaptiveScrollSupervisor(
             device=device,
             detector=detector,
-            surface=FakeSurface(hints=tuple()),
+            surface=FakeSurface(hints=()),
         )
         converter = CoordinateConverter(logical_width=1080, logical_height=2340)
         region = converter.viewport_region()
@@ -198,7 +204,7 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
         supervisor = AdaptiveScrollSupervisor(
             device=device,
             detector=detector,
-            surface=FakeSurface(hints=tuple()),
+            surface=FakeSurface(hints=()),
         )
         converter = CoordinateConverter(logical_width=1080, logical_height=2340)
         region = converter.viewport_region()
@@ -239,7 +245,7 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
         supervisor = AdaptiveScrollSupervisor(
             device=device,
             detector=detector,
-            surface=FakeSurface(hints=tuple()),
+            surface=FakeSurface(hints=()),
         )
         converter = CoordinateConverter(logical_width=1080, logical_height=2340)
         region = converter.region_from_bounds(
@@ -295,7 +301,7 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
         supervisor = AdaptiveScrollSupervisor(
             device=device,
             detector=detector,
-            surface=FakeSurface(hints=tuple()),
+            surface=FakeSurface(hints=()),
         )
         converter = CoordinateConverter(logical_width=1080, logical_height=2340)
         region = converter.region_from_bounds(
@@ -346,68 +352,11 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
             source=CoordinateSource.MODEL,
         )
         current = converter.resolve_scroll_path(region=region, direction="down")
-        observation = ScreenObservation(
-            activity="com.test.app",
-            hashes=ScreenHashBundle(visual_hash="a", xml_hash="b", interaction_hash="c"),
-            elements=(
-                PerceivedElement(
-                    identifier="left_block",
-                    bounds=Bounds(
-                        x=0,
-                        y=700,
-                        width=420,
-                        height=1400,
-                        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
-                    ),
-                    source=ElementSource.XML,
-                    role=ElementRole.BUTTON,
-                    confidence=1.0,
-                    text="Left card column",
-                    tappable=True,
-                ),
-                PerceivedElement(
-                    identifier="center_block",
-                    bounds=Bounds(
-                        x=420,
-                        y=700,
-                        width=366,
-                        height=1400,
-                        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
-                    ),
-                    source=ElementSource.XML,
-                    role=ElementRole.BUTTON,
-                    confidence=1.0,
-                    text="Center card column",
-                    tappable=True,
-                ),
-                PerceivedElement(
-                    identifier="right_block",
-                    bounds=Bounds(
-                        x=786,
-                        y=700,
-                        width=294,
-                        height=1400,
-                        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
-                    ),
-                    source=ElementSource.XML,
-                    role=ElementRole.BUTTON,
-                    confidence=1.0,
-                    text="Right card column",
-                    tappable=True,
-                ),
-            ),
-            overlays=tuple(),
-            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=tuple()),
-            scroll=tuple(),
-            calls_to_action=tuple(),
-            focused=None,
-        )
-
         attempts = planner.plan(
             context=ScrollContext(direction=ScrollDirection.DOWN, region=region),
             current=current,
             scope=self.__scope(region=region),
-            surfaces=tuple(),
+            surfaces=(),
             converter=converter,
             policy=DeviceRuntimeConfiguration().interaction.policy.scroll.adaptive.model_copy(
                 update={"enabled": True, "maximum_attempts": 3, "suspicious_bottom_ratio": 1.0}
@@ -435,53 +384,11 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
             source=CoordinateSource.MODEL,
         )
         current = converter.resolve_scroll_path(region=region, direction="down")
-        observation = ScreenObservation(
-            activity="com.test.app",
-            hashes=ScreenHashBundle(visual_hash="a", xml_hash="b", interaction_hash="c"),
-            elements=(
-                PerceivedElement(
-                    identifier="top_card",
-                    bounds=Bounds(
-                        x=0,
-                        y=1450,
-                        width=1080,
-                        height=260,
-                        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
-                    ),
-                    source=ElementSource.XML,
-                    role=ElementRole.TEXT,
-                    confidence=1.0,
-                    text="Food hero card",
-                    tappable=False,
-                ),
-                PerceivedElement(
-                    identifier="bottom_card",
-                    bounds=Bounds(
-                        x=0,
-                        y=430,
-                        width=1080,
-                        height=260,
-                        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
-                    ),
-                    source=ElementSource.XML,
-                    role=ElementRole.TEXT,
-                    confidence=1.0,
-                    text="Secondary food card",
-                    tappable=False,
-                ),
-            ),
-            overlays=tuple(),
-            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=tuple()),
-            scroll=tuple(),
-            calls_to_action=tuple(),
-            focused=None,
-        )
-
         attempts = planner.plan(
             context=ScrollContext(direction=ScrollDirection.DOWN, region=region),
             current=current,
             scope=self.__scope(region=region),
-            surfaces=tuple(),
+            surfaces=(),
             converter=converter,
             policy=DeviceRuntimeConfiguration().interaction.policy.scroll.adaptive.model_copy(
                 update={"enabled": True, "maximum_attempts": 3, "suspicious_bottom_ratio": 1.0}
@@ -527,7 +434,7 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
         supervisor = AdaptiveScrollSupervisor(
             device=device,
             detector=detector,
-            surface=FakeSurface(hints=tuple()),
+            surface=FakeSurface(hints=()),
         )
         converter = CoordinateConverter(logical_width=1080, logical_height=2340)
         region = converter.viewport_region()
@@ -593,15 +500,15 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
                     tappable=True,
                 ),
             ),
-            overlays=tuple(),
-            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=tuple()),
-            scroll=tuple(),
-            calls_to_action=tuple(),
+            overlays=(),
+            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=()),
+            scroll=(),
+            calls_to_action=(),
             focused=None,
         )
 
     @staticmethod
-    def __scope(*, region: "ExecutionRegion") -> ScrollScope:
+    def __scope(*, region: ExecutionRegion) -> ScrollScope:
         """
         Build a resolved scroll scope for planner-only tests.
         """
@@ -633,10 +540,10 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
             activity="com.test.app",
             hashes=ScreenHashBundle(visual_hash="a", xml_hash="b", interaction_hash="c"),
             elements=(),
-            overlays=tuple(),
-            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=tuple()),
-            scroll=tuple(),
-            calls_to_action=tuple(),
+            overlays=(),
+            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=()),
+            scroll=(),
+            calls_to_action=(),
             focused=None,
         )
 
@@ -666,10 +573,10 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
                     tappable=True,
                 ),
             ),
-            overlays=tuple(),
-            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=tuple()),
-            scroll=tuple(),
-            calls_to_action=tuple(),
+            overlays=(),
+            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=()),
+            scroll=(),
+            calls_to_action=(),
             focused=None,
         )
 
@@ -749,7 +656,7 @@ class FakeDevice(DevicePort):
         self,
         *,
         after: bytes | None = None,
-        after_sequence: Tuple[bytes, ...] = tuple(),
+        after_sequence: Tuple[bytes, ...] = (),
     ) -> None:
         self.swipes = []
         self.__after = after or b"after"

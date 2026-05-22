@@ -15,7 +15,8 @@ from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.reasoning import SubGoalCompletionSignal
-from fathom.schemas.screens import ScreenDiff
+from fathom.schemas.screens import ScreenDiff, ScreenState
+from fathom.schemas.state import VerificationLoopPhase
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.subgoal import SubGoal, SubGoalStatus
 
@@ -439,3 +440,107 @@ class TestSubGoalReopen:
         assert current.status is SubGoalStatus.IN_PROGRESS
         assert current.flagged_complete is False
         assert current.rationale_verified is False
+
+
+class TestVerificationLoopState:
+    """
+    Pins the dedicated VERIFY rejection loop bookkeeping.
+    """
+
+    @staticmethod
+    def __screen(*, visual_hash: str, activity: str = "app") -> ScreenState:
+        """
+        Build a minimal :class:`ScreenState` for verification-loop tests.
+        """
+
+        return ScreenState(
+            activity=activity,
+            timestamp=1,
+            activity_hash=activity,
+            visual_hash=visual_hash,
+        )
+
+    def test_record_verify_rejection_increments_same_screen_same_step_streak(self) -> None:
+        """
+        Repeating VERIFY rejection on the same screen and step increments the streak.
+        """
+
+        state = AgentState(intent="find sign in")
+        screen = self.__screen(visual_hash="0" * 16)
+
+        first = state.record_verify_rejection(screen=screen, activity="app")
+        second = state.record_verify_rejection(screen=screen, activity="app")
+
+        assert first.consecutive_rejections == 1
+        assert second.consecutive_rejections == 2
+        assert state.verification_loop is not None
+        assert state.verification_loop.consecutive_rejections == 2
+        assert state.verification_loop.phase is VerificationLoopPhase.RETRYING
+
+    def test_record_verify_rejection_resets_on_new_recorded_step_epoch(self) -> None:
+        """
+        A new recorded step starts a fresh verification epoch.
+        """
+
+        state = AgentState(intent="find sign in")
+        screen = self.__screen(visual_hash="0" * 16)
+        state.record_verify_rejection(screen=screen, activity="app")
+        state.record_step(
+            result=StepResult(
+                step=Step(
+                    action=Action(
+                        action_type=ActionType.TAP,
+                        target="Continue",
+                        rationale="tap continue",
+                        confidence=1.0,
+                    ),
+                    event_type="action",
+                    condition=None,
+                    screen_hash="0" * 16,
+                    step_number=0,
+                ),
+                success=False,
+                pre_hash="0" * 16,
+                post_hash="0" * 16,
+                screen_changed=False,
+                duration=1,
+            ),
+        )
+
+        next_loop = state.record_verify_rejection(screen=screen, activity="app")
+
+        assert next_loop.recorded_step_count == 1
+        assert next_loop.consecutive_rejections == 1
+
+    def test_mark_verify_recovery_attempted_updates_phase(self) -> None:
+        """
+        Recovery attempt marks the active verification loop phase explicitly.
+        """
+
+        state = AgentState(intent="find sign in")
+        screen = self.__screen(visual_hash="0" * 16)
+        state.record_verify_rejection(screen=screen, activity="app")
+
+        updated = state.mark_verify_recovery_attempted()
+
+        assert updated is not None
+        assert updated.phase is VerificationLoopPhase.RECOVERY_ATTEMPTED
+        assert state.verification_loop is not None
+        assert state.verification_loop.phase is VerificationLoopPhase.RECOVERY_ATTEMPTED
+
+    def test_verify_rejection_streak_survives_checkpoint_round_trip(self) -> None:
+        """
+        Checkpoint persistence must preserve the verifier-rejection streak.
+        """
+
+        state = AgentState(intent="find sign in")
+        screen = self.__screen(visual_hash="0" * 16)
+        state.record_verify_rejection(screen=screen, activity="app")
+        state.record_verify_rejection(screen=screen, activity="app")
+        state.mark_verify_recovery_attempted()
+
+        restored = AgentState.from_checkpoint(state.to_checkpoint())
+
+        assert restored.verification_loop is not None
+        assert restored.verification_loop.consecutive_rejections == 2
+        assert restored.verification_loop.phase is VerificationLoopPhase.RECOVERY_ATTEMPTED

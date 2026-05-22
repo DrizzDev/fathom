@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from enum import StrEnum
 from logging import getLogger
 from typing import Any, Deque, Dict, List, Optional
 
@@ -27,6 +28,94 @@ from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.screens import ScreenState
 
 logger = getLogger(__name__)
+
+
+class VerificationLoopPhase(StrEnum):
+    """
+    Lifecycle phase for repeated VERIFY rejection on one no-progress streak.
+    """
+
+    RETRYING = "retrying"
+    RECOVERY_ATTEMPTED = "recovery_attempted"
+
+
+class VerificationLoopState(BaseModel):
+    """
+    Serializable verifier-loop state for one same-screen, same-step rejection streak.
+    """
+
+    recorded_step_count: int = Field(
+        ge=0,
+        description="Recorded action-step count at which the rejection streak began.",
+    )
+    activity: str = Field(description="Foreground activity observed during verification.")
+    screen: Optional[ScreenState] = Field(
+        default=None,
+        description="Best-known screen state for the rejection streak, when available.",
+    )
+    consecutive_rejections: int = Field(
+        ge=1,
+        default=1,
+        description="Number of consecutive verifier rejections in this streak.",
+    )
+    phase: VerificationLoopPhase = Field(
+        default=VerificationLoopPhase.RETRYING,
+        description="Whether recovery already had a chance on this streak.",
+    )
+
+    model_config = ConfigDict(frozen=True)
+
+    def matches(
+        self,
+        *,
+        activity: str,
+        recorded_step_count: int,
+        screen: Optional[ScreenState],
+    ) -> bool:
+        """
+        Return whether a new verifier rejection belongs to this streak.
+        """
+
+        if recorded_step_count != self.recorded_step_count:
+            return False
+
+        if self.screen is not None and screen is not None:
+            return self.screen.is_same_screen(other=screen)
+
+        return self.activity == activity
+
+    def next_rejection(
+        self,
+        *,
+        activity: str,
+        recorded_step_count: int,
+        screen: Optional[ScreenState],
+    ) -> "VerificationLoopState":
+        """
+        Return the next verifier-loop state after observing one rejection.
+        """
+
+        if not self.matches(
+            screen=screen,
+            activity=activity,
+            recorded_step_count=recorded_step_count,
+        ):
+            return VerificationLoopState(
+                screen=screen,
+                activity=activity,
+                recorded_step_count=recorded_step_count,
+            )
+
+        return self.model_copy(
+            update={"consecutive_rejections": self.consecutive_rejections + 1},
+        )
+
+    def mark_recovery_attempted(self) -> "VerificationLoopState":
+        """
+        Return a copy that records recovery already had its chance on this streak.
+        """
+
+        return self.model_copy(update={"phase": VerificationLoopPhase.RECOVERY_ATTEMPTED})
 
 
 class LoopDetectorState(BaseModel):

@@ -82,6 +82,30 @@ class AnalyzeNode:
             self.__provider.persistence.persist(result=result)
             return result
 
+        if self.__provider.context.agent_state.step_count >= self.__provider.context.max_steps:
+            logger.warning(
+                "Analysis reached max steps before planning; terminating workflow",
+                extra={
+                    "component": "graph.intent.analyze",
+                    "event": "analyze.max.steps.terminated",
+                    "max_steps": self.__provider.context.max_steps,
+                    "workflow.id": self.__provider.context.workflow_id,
+                    "step_count": self.__provider.context.agent_state.step_count,
+                },
+            )
+            self.__provider.context.agent_state.mark_complete(
+                reason=CompletionReason.MAX_STEPS.value
+            )
+            result = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.MAX_STEPS.value,
+                },
+            )
+            self.__provider.persistence.persist(result=result)
+            return result
+
         # Use type guard to satisfy MyPy
         screen_capture = state.get(CommonStateKey.CAPTURE)
 

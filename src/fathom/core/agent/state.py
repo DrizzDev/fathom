@@ -29,6 +29,7 @@ from fathom.schemas.state import (
     ActionHistory,
     InteractionTracker,
     LoopDetectorState,
+    VerificationLoopState,
 )
 from fathom.schemas.steps import StepResult
 from fathom.schemas.subgoal import SubGoal, SubGoalStatus
@@ -121,6 +122,10 @@ class AgentState:
         # router deferred to GROUND. Bounded retry prevents the planner
         # from looping on a "complete" verdict the runtime cannot honour.
         self.__consecutive_complete_deferrals: int = 0
+
+        # VERIFY does not emit recorded steps. Persist one explicit
+        # no-progress verification streak so repeated rejection on the same recorded-step epoch can be bounded cleanly.
+        self.__verification_loop: Optional[VerificationLoopState] = None
 
     @property
     def intent(self) -> str:
@@ -406,6 +411,57 @@ class AgentState:
         """
 
         self.__consecutive_complete_deferrals = 0
+
+    @property
+    def verification_loop(self) -> Optional[VerificationLoopState]:
+        """
+        Current same-screen verifier-rejection streak, when one is active.
+        """
+
+        return self.__verification_loop
+
+    def record_verify_rejection(
+        self,
+        *,
+        activity: str,
+        screen: Optional[ScreenState],
+    ) -> VerificationLoopState:
+        """
+        Advance and return the active verifier-rejection streak.
+        """
+
+        if self.__verification_loop is None:
+            self.__verification_loop = VerificationLoopState(
+                screen=screen,
+                activity=activity,
+                recorded_step_count=self.__step_count,
+            )
+            return self.__verification_loop
+
+        self.__verification_loop = self.__verification_loop.next_rejection(
+            screen=screen,
+            activity=activity,
+            recorded_step_count=self.__step_count,
+        )
+        return self.__verification_loop
+
+    def mark_verify_recovery_attempted(self) -> Optional[VerificationLoopState]:
+        """
+        Mark the active verifier loop as having already attempted recovery.
+        """
+
+        if self.__verification_loop is None:
+            return None
+
+        self.__verification_loop = self.__verification_loop.mark_recovery_attempted()
+        return self.__verification_loop
+
+    def clear_verification_loop(self) -> None:
+        """
+        Clear the active verifier-rejection streak.
+        """
+
+        self.__verification_loop = None
 
     def set_sub_goals(self, sub_goals: List[SubGoal]) -> None:
         """
@@ -1007,6 +1063,11 @@ class AgentState:
             "current_sub_goal_index": self.__current_sub_goal_index,
             "sub_goal_action_count": self.__sub_goal_action_count,
             "consecutive_complete_deferrals": self.__consecutive_complete_deferrals,
+            "verification_loop": (
+                self.__verification_loop.model_dump(mode="json")
+                if self.__verification_loop is not None
+                else None
+            ),
             "recent_effects": [
                 effect.model_dump(mode="json") for effect in self.get_recent_effects()
             ],
@@ -1035,6 +1096,7 @@ class AgentState:
         recent_effects: Optional[List[Dict[str, Any]]] = None,
         sub_goal_action_count: int = 0,
         consecutive_complete_deferrals: int = 0,
+        verification_loop: Optional[VerificationLoopState] = None,
         realignment_state: Optional[Dict[str, Any]] = None,
         healing_state: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -1046,6 +1108,7 @@ class AgentState:
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
         self.__consecutive_complete_deferrals = max(0, consecutive_complete_deferrals)
+        self.__verification_loop = verification_loop
 
         if realignment_state is not None:
             self.__runtime.realignment.load_state(state=realignment_state)
@@ -1170,6 +1233,11 @@ class AgentState:
             else 0
         )
 
+        verification_loop = None
+        verification_loop_raw = data.get("verification_loop")
+        if isinstance(verification_loop_raw, dict):
+            verification_loop = VerificationLoopState.model_validate(verification_loop_raw)
+
         recent_effects: List[Dict[str, Any]] = []
         recent_effects_value = data.get("recent_effects")
         if isinstance(recent_effects_value, list):
@@ -1206,6 +1274,7 @@ class AgentState:
             recent_effects=recent_effects,
             sub_goal_action_count=sub_goal_action_count,
             consecutive_complete_deferrals=consecutive_complete_deferrals,
+            verification_loop=verification_loop,
         )
 
         return state

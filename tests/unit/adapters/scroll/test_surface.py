@@ -27,10 +27,10 @@ class ScrollSurfaceInspectorTest(unittest.IsolatedAsyncioTestCase):
             activity="com.aranoah.healthkart.plus",
             hashes=ScreenHashBundle(visual_hash="a", xml_hash="b", interaction_hash="c"),
             elements=self.__bottom_navigation(),
-            overlays=tuple(),
-            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=tuple()),
-            scroll=tuple(),
-            calls_to_action=tuple(),
+            overlays=(),
+            keyboard=KeyboardObservation(visible=False, bounds=None, dismiss=()),
+            scroll=(),
+            calls_to_action=(),
             focused=None,
         )
 

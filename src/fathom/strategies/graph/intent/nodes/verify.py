@@ -14,6 +14,7 @@ from fathom.core.recovery import (
 from fathom.schemas.artifact import ArtifactRecord, VerificationPayload
 from fathom.schemas.completion import CompletionVerdict
 from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.state import VerificationLoopPhase
 from fathom.schemas.tasks import ExecutionTaskState
 from fathom.strategies.graph.state import IntentGraphState
 from fathom.utils.parsing import strip_code_fences
@@ -201,12 +202,37 @@ class VerifyNode:
         )
 
         if is_truly_complete:
+            self.__provider.context.agent_state.clear_verification_loop()
             self.__provider.context.agent_state.mark_complete(reason=reason)
             result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: True,
                     CommonStateKey.COMPLETION_REASON: reason,
+                },
+            )
+            self.__provider.persistence.persist(result=result)
+            return result
+
+        if self.__provider.context.agent_state.step_count >= self.__provider.context.max_steps:
+            logger.warning(
+                "Verification rejected after max steps reached; terminating workflow",
+                extra={
+                    "component": "graph.intent.verify",
+                    "event": "verify.max.steps.terminated",
+                    "max_steps": self.__provider.context.max_steps,
+                    "workflow.id": self.__provider.context.workflow_id,
+                    "step_count": self.__provider.context.agent_state.step_count,
+                },
+            )
+            self.__provider.context.agent_state.mark_complete(
+                reason=CompletionReason.MAX_STEPS.value
+            )
+            result = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.MAX_STEPS.value,
                 },
             )
             self.__provider.persistence.persist(result=result)
@@ -222,15 +248,50 @@ class VerifyNode:
             # the active mission so recovery/replanning keep the same contract.
             self.__provider.context.agent_state.reopen_last_completed_sub_goal()
 
-        # Signal the rejection to the recovery coordinator; fall through
-        # to the standard rejection path if no strategy commits.
-        recovered = await self.__provider.recovery.try_recover(
-            reason=reason,
-            capture=capture,
-            trigger=RecoveryTrigger.VERIFY_REJECTED,
+        self.__provider.context.agent_state.reset_completion()
+        verification_loop = self.__provider.context.agent_state.record_verify_rejection(
+            screen=self.__provider.context.agent_state.current_screen,
+            activity=capture.activity,
         )
-        if recovered is not None:
-            return recovered
+
+        if (
+            verification_loop.phase is VerificationLoopPhase.RECOVERY_ATTEMPTED
+            and verification_loop.consecutive_rejections
+            >= self.__provider.context.recovery.verify_threshold
+        ):
+            diagnostic = (
+                "Verification kept rejecting without recorded progress after recovery already ran: "
+                f"count={verification_loop.consecutive_rejections}, "
+                f"step_count={self.__provider.context.agent_state.step_count}, "
+                f"activity={capture.activity!r}, reason={reason}"
+            )
+            self.__provider.context.agent_state.mark_complete(reason=CompletionReason.STUCK.value)
+            result = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.FAILURE_DIAGNOSTIC: diagnostic,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.STUCK.value,
+                },
+            )
+            self.__provider.persistence.persist(result=result)
+            return result
+
+        if (
+            verification_loop.consecutive_rejections
+            >= self.__provider.context.recovery.verify_threshold
+        ):
+            self.__provider.context.agent_state.mark_verify_recovery_attempted()
+
+            # Signal the rejection to the recovery coordinator; fall through
+            # to the standard rejection path if no strategy commits.
+            recovered = await self.__provider.recovery.try_recover(
+                reason=reason,
+                capture=capture,
+                trigger=RecoveryTrigger.VERIFY_REJECTED,
+            )
+            if recovered is not None:
+                return recovered
 
         feedback = f"Verification failed: {reason}"
         logger.warning(
@@ -241,7 +302,6 @@ class VerifyNode:
                 "workflow.id": self.__provider.context.workflow_id,
             },
         )
-        self.__provider.context.agent_state.reset_completion()
 
         # Route verifier rejection through the typed verifier-feedback
         # channel so the next planner iteration sees it as system feedback

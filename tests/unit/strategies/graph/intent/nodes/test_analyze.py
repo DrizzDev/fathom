@@ -4,7 +4,11 @@ import unittest
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from fathom.constants.command import CommandExecutionMode
+from fathom.constants.runtime import DEFAULT_COMPLETE_DEFERRAL_BUDGET
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.schemas.results import PlanResult
+from fathom.schemas.screens import ScreenCapture
 from fathom.strategies.graph.intent.nodes.analyze import AnalyzeNode
 
 
@@ -31,6 +35,10 @@ class AnalyzeNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
         provider = MagicMock(name="IntentNodeProvider")
         provider.is_cancelled = AsyncMock(return_value=cancelled)
         provider.context.workflow_id = "run-test"
+        provider.hitl.prompt = AsyncMock()
+        provider.context.telemetry.error = AsyncMock()
+        provider.context.max_steps = 10
+        provider.context.agent_state.step_count = 0
         provider.persistence.persist = MagicMock()
         provider.persistence.restore = MagicMock()
         return provider
@@ -67,3 +75,112 @@ class AnalyzeNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
         result: Any = await node(state={CommonStateKey.CAPTURE: None})  # type: ignore[arg-type]
 
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+
+    async def test_max_steps_terminates_before_planning(self) -> None:
+        """
+        ANALYZE must not plan step 11 when the recorded step ceiling is already reached.
+        """
+
+        provider = self.__provider(cancelled=False)
+        provider.context.max_steps = 5
+        provider.context.agent_state.step_count = 5
+        node = AnalyzeNode(provider=provider)
+
+        result: Any = await node(state={CommonStateKey.CAPTURE: None})  # type: ignore[arg-type]
+
+        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertEqual(
+            result.get(CommonStateKey.COMPLETION_REASON),
+            CompletionReason.MAX_STEPS.value,
+        )
+        provider.context.agent_state.mark_complete.assert_called_once_with(
+            reason=CompletionReason.MAX_STEPS.value
+        )
+        provider.hitl.prompt.assert_not_awaited()
+
+    async def test_complete_verdict_is_deferred_while_sub_goals_remain(self) -> None:
+        """
+        ANALYZE must defer an ``is_complete`` planner verdict when sub-goals
+        are still open and the local deferral budget is not exhausted.
+        """
+
+        provider = self.__provider(cancelled=False)
+        provider.context.agent_state.step_count = 4
+        provider.context.agent_state.has_sub_goals.return_value = True
+        provider.context.agent_state.all_sub_goals_complete.return_value = False
+        provider.context.agent_state.record_complete_deferral.return_value = 1
+        provider.context.agent_state.reset_completion = MagicMock()
+        provider.context.agent_state.reset_complete_deferrals = MagicMock()
+        provider.context.device.get_dimensions = AsyncMock(return_value=(1080, 1920))
+        provider.context.signal.supports_interruption.return_value = False
+        provider.context.configuration.intent.prompt_user_if_stuck = False
+        provider.context.configuration.intent.command_mode = CommandExecutionMode.STRICT
+        provider.context.context_manager.get_user_guidance.return_value = []
+        provider.context.metrics.record = MagicMock()
+        provider.context.planner.plan_step = AsyncMock(
+            return_value=PlanResult(
+                reason="planner claims done",
+                is_complete=True,
+                step=None,
+            )
+        )
+
+        node = AnalyzeNode(provider=provider)
+        capture = ScreenCapture(
+            width=1080,
+            height=1920,
+            activity="app",
+            image=b"PNG",
+            timestamp=1,
+        )
+
+        result: Any = await node(state={CommonStateKey.CAPTURE: capture})  # type: ignore[arg-type]
+
+        self.assertFalse(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertIsNone(result.get(CommonStateKey.COMPLETION_REASON))
+        provider.context.agent_state.reset_completion.assert_called_once()
+        provider.context.agent_state.reset_complete_deferrals.assert_not_called()
+
+    async def test_complete_verdict_is_honoured_after_deferral_budget_exhausts(self) -> None:
+        """
+        Once the complete-deferral streak exceeds its budget, ANALYZE must
+        stop bouncing back to GROUND and let VERIFY adjudicate the run.
+        """
+
+        provider = self.__provider(cancelled=False)
+        provider.context.agent_state.step_count = 4
+        provider.context.agent_state.has_sub_goals.return_value = True
+        provider.context.agent_state.all_sub_goals_complete.return_value = False
+        provider.context.agent_state.record_complete_deferral.return_value = (
+            DEFAULT_COMPLETE_DEFERRAL_BUDGET + 1
+        )
+        provider.context.agent_state.reset_completion = MagicMock()
+        provider.context.agent_state.reset_complete_deferrals = MagicMock()
+        provider.context.device.get_dimensions = AsyncMock(return_value=(1080, 1920))
+        provider.context.signal.supports_interruption.return_value = False
+        provider.context.configuration.intent.prompt_user_if_stuck = False
+        provider.context.configuration.intent.command_mode = CommandExecutionMode.STRICT
+        provider.context.context_manager.get_user_guidance.return_value = []
+        provider.context.metrics.record = MagicMock()
+        provider.context.planner.plan_step = AsyncMock(
+            return_value=PlanResult(
+                reason="planner claims done",
+                is_complete=True,
+                step=None,
+            )
+        )
+
+        node = AnalyzeNode(provider=provider)
+        capture = ScreenCapture(
+            width=1080,
+            height=1920,
+            activity="app",
+            image=b"PNG",
+            timestamp=1,
+        )
+
+        result: Any = await node(state={CommonStateKey.CAPTURE: capture})  # type: ignore[arg-type]
+
+        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertEqual(result.get(CommonStateKey.COMPLETION_REASON), "planner claims done")
+        provider.context.agent_state.reset_complete_deferrals.assert_called_once()
