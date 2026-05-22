@@ -158,7 +158,9 @@ class ScrollScopeResolver(CommandScopeResolvePort):
                 ),
                 None,
             )
-            if element is not None and self.__contains(first=candidate.bounds, second=element.bounds):
+            if element is not None and self.__contains(
+                first=candidate.bounds, second=element.bounds
+            ):
                 score += 150
         if anchor.target:
             lowered = anchor.target.lower()

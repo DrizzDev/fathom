@@ -23,8 +23,12 @@ class CommandAnchor(BaseModel):
         default=None,
         description="Resolved observation-only region identifier when present.",
     )
-    target: Optional[str] = Field(default=None, description="Human-readable target phrase when present.")
-    bounds: Optional[Bounds] = Field(default=None, description="Planner-provided target bounds when present.")
+    target: Optional[str] = Field(
+        default=None, description="Human-readable target phrase when present."
+    )
+    bounds: Optional[Bounds] = Field(
+        default=None, description="Planner-provided target bounds when present."
+    )
 
 
 class CommandScope(BaseModel):
@@ -49,5 +53,9 @@ class CommandPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    attempts: int = Field(ge=1, description="Maximum attempts allowed for one supervised command run.")
-    budget: int = Field(ge=1, description="Maximum wall time allowed for one supervised command run.")
+    attempts: int = Field(
+        ge=1, description="Maximum attempts allowed for one supervised command run."
+    )
+    budget: int = Field(
+        ge=1, description="Maximum wall time allowed for one supervised command run."
+    )

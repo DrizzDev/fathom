@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from io import BytesIO
 from logging import getLogger
-from typing import Optional, cast, Tuple
+from typing import Optional, Tuple, cast
 
 from PIL import Image
 
@@ -15,17 +15,23 @@ from fathom.interfaces.scroll import (
     ScrollPlanPort,
     ScrollRuntimePolicyPort,
     ScrollSurfacePort,
-    TraceRecorder,
     ScrollVerifyPort,
+    TraceRecorder,
 )
+from fathom.schemas.actions import GesturePath
 from fathom.schemas.command import CommandPolicy
 from fathom.schemas.configuration import ScrollInteractionPolicy
 from fathom.schemas.execution import ScopedCommandExecution
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.results import ActionResult, ActionTraceAttempt, ActionTraceEvent
 from fathom.schemas.screens import ScreenCapture
-from fathom.schemas.scroll import ScrollAttempt, ScrollContext, ScrollOutcome, ScrollScope, ScrollVerdict
-from fathom.schemas.actions import GesturePath
+from fathom.schemas.scroll import (
+    ScrollAttempt,
+    ScrollContext,
+    ScrollOutcome,
+    ScrollScope,
+    ScrollVerdict,
+)
 from fathom.utils.coordinates import CoordinateConverter
 
 logger = getLogger(__name__)
@@ -115,7 +121,7 @@ class CommandSupervisor:
             converter=converter,
         )
         return cast(
-            ScrollScope,
+            "ScrollScope",
             await self.__resolver.resolve(
                 fallback=requested_scope,
                 converter=converter,

@@ -105,7 +105,7 @@ class ScrollRuntimePolicy(ScrollRuntimePolicyPort):
         Return the maximum number of in-execute attempts for one scroll action.
         """
 
-        return 1
+        return policy.attempts
 
     @staticmethod
     def __ambiguous_verdict(*, detail: str) -> ScrollVerdict:

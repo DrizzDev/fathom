@@ -22,7 +22,9 @@ class AndroidParserTest(unittest.TestCase):
         </hierarchy>
         """
         root = ET.fromstring(xml)
-        elements = AndroidParser().find_all_elements(root=root, screenshot_width=1080, screenshot_height=2340)
+        elements = AndroidParser().find_all_elements(
+            root=root, screenshot_width=1080, screenshot_height=2340
+        )
 
         self.assertEqual(len(elements), 1)
         self.assertEqual(elements[0].attributes.get("scrollable"), "true")

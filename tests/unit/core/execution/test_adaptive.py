@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
 from pathlib import Path
 from typing import Optional, Tuple
+from unittest.mock import patch
 
 from fathom.constants.interaction import SwipeSpeed
 from fathom.constants.scroll import (
@@ -12,12 +12,13 @@ from fathom.constants.scroll import (
     ScrollVerdictKind,
     SurfaceKind,
 )
-from fathom.core.execution.scroll import AdaptiveScrollSupervisor, ScrollPlanner as AdaptiveScrollPlanner
+from fathom.core.execution.scroll import AdaptiveScrollSupervisor
+from fathom.core.execution.scroll import ScrollPlanner as AdaptiveScrollPlanner
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.scroll import ScrollDetectPort, ScrollSurfacePort
 from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem, GesturePath
-from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.command import CommandScopeKind
+from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.observation import (
     ElementRole,
     ElementSource,
@@ -38,11 +39,11 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
     Covers bounded adaptation away from the real promo-band geometry.
     """
 
-    async def test_no_progress_returns_after_first_attempt_when_footer_blocks_current_start(
+    async def test_no_progress_uses_bounded_second_attempt_when_footer_blocks_current_start(
         self,
     ) -> None:
         """
-        Preserve the first attempt and return control to the graph instead of retrying in-execute.
+        Retry once in-execute and shift away from the original lane when the first attempt stalls.
         """
 
         before = self.__capture(name="before.png")
@@ -55,6 +56,13 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
                     confidence=0.99,
                     distance=0,
                     detail="stuck_on_promo",
+                ),
+                ScrollVerdict(
+                    kind=ScrollVerdictKind.NO_PROGRESS,
+                    source=ScrollEvidenceSource.CORRELATION,
+                    confidence=0.99,
+                    distance=0,
+                    detail="stuck_on_promo_retry",
                 ),
             )
         )
@@ -97,9 +105,10 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.success)
         self.assertFalse(outcome.success)
-        self.assertEqual(len(device.swipes), 1)
+        self.assertEqual(len(device.swipes), 2)
         self.assertGreater(device.swipes[0][1], 1881)
         self.assertEqual(device.swipes[0][5], SwipeSpeed.SLOW)
+        self.assertNotEqual(device.swipes[0][:4], device.swipes[1][:4])
 
     async def test_evaluates_single_attempt_against_its_pre_attempt_screen(self) -> None:
         """
@@ -113,7 +122,7 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
             image=b"before",
             timestamp=1,
         )
-        device = FakeDevice(after_sequence=(b"after_one",))
+        device = FakeDevice(after_sequence=(b"after_one", b"after_two"))
         detector = RecordingDetect(
             verdicts=(
                 ScrollVerdict(
@@ -122,6 +131,13 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
                     confidence=0.99,
                     distance=0,
                     detail="no_move",
+                ),
+                ScrollVerdict(
+                    kind=ScrollVerdictKind.NO_PROGRESS,
+                    source=ScrollEvidenceSource.CORRELATION,
+                    confidence=0.99,
+                    distance=0,
+                    detail="no_move_retry",
                 ),
             )
         )
@@ -147,9 +163,10 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(result.success)
-        self.assertEqual(len(outcome.attempts), 1)
-        self.assertEqual(detector.before_images, [b"before"])
+        self.assertEqual(len(outcome.attempts), 2)
+        self.assertEqual(detector.before_images, [b"before", b"after_one"])
         self.assertEqual(trace_events[0].capture.image, b"before")
+        self.assertEqual(trace_events[1].capture.image, b"after_one")
 
     async def test_refreshes_post_attempt_capture_metadata_from_device_snapshot(self) -> None:
         """
@@ -525,8 +542,7 @@ class AdaptiveScrollSupervisorTest(unittest.IsolatedAsyncioTestCase):
                 context=ScrollContext(direction=ScrollDirection.DOWN, region=region),
                 current=current,
                 converter=converter,
-                policy=DeviceRuntimeConfiguration()
-                .interaction.policy.scroll.adaptive.model_copy(
+                policy=DeviceRuntimeConfiguration().interaction.policy.scroll.adaptive.model_copy(
                     update={"enabled": True, "maximum_attempts": 3, "budget": 10}
                 ),
             )

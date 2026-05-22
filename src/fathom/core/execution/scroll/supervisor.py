@@ -7,7 +7,12 @@ from fathom.core.execution.scroll.planner import ScrollPlanner
 from fathom.core.execution.scroll.resolver import ScrollScopeResolver
 from fathom.core.execution.scroll.runtime.policy import ScrollRuntimePolicy
 from fathom.interfaces.device import DevicePort
-from fathom.interfaces.scroll import ScrollDetectPort, ScrollSurfacePort, ScrollVerifyPort, TraceRecorder
+from fathom.interfaces.scroll import (
+    ScrollDetectPort,
+    ScrollSurfacePort,
+    ScrollVerifyPort,
+    TraceRecorder,
+)
 from fathom.schemas.actions import GesturePath
 from fathom.schemas.configuration import ScrollInteractionPolicy
 from fathom.schemas.observation import ScreenObservation

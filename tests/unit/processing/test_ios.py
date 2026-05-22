@@ -24,7 +24,9 @@ class IOSParserTest(unittest.TestCase):
         </AppiumAUT>
         """
         root = ET.fromstring(xml)
-        elements = IOSParser().find_all_elements(root=root, screenshot_width=1206, screenshot_height=2622)
+        elements = IOSParser().find_all_elements(
+            root=root, screenshot_width=1206, screenshot_height=2622
+        )
 
         self.assertEqual(len(elements), 1)
         self.assertEqual(elements[0].attributes.get("scrollable"), "true")
