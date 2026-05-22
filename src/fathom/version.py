@@ -44,3 +44,7 @@ class VersionInfo:
                 payload["requested.revision"] = vcs_info.get("requested_revision")
 
         return payload
+
+
+if __name__ == "__main__":
+    print(json.dumps(VersionInfo.payload(), indent=2, sort_keys=True))
