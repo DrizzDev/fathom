@@ -21,8 +21,8 @@ class VersionInfo:
 
         payload: Dict[str, Any] = {
             "name": "fathom",
-            "version": __version__,
-            "module_path": str(Path(__file__).resolve().parent),
+            "source.version": __version__,
+            "module.path": str(Path(__file__).resolve().parent),
         }
 
         try:
@@ -30,17 +30,17 @@ class VersionInfo:
         except metadata.PackageNotFoundError:
             return payload
 
-        payload["version"] = distribution.version
+        payload["distribution.version"] = distribution.version
 
         if direct_url_text := distribution.read_text("direct_url.json"):
             try:
                 direct_url = json.loads(direct_url_text)
             except json.JSONDecodeError:
-                payload["direct_url"] = direct_url_text
+                payload["direct.url"] = direct_url_text
             else:
-                payload["direct_url"] = direct_url.get("url")
+                payload["direct.url"] = direct_url.get("url")
                 vcs_info = direct_url.get("vcs_info") or {}
-                payload["git_commit"] = vcs_info.get("commit_id")
-                payload["requested_revision"] = vcs_info.get("requested_revision")
+                payload["git.commit"] = vcs_info.get("commit_id")
+                payload["requested.revision"] = vcs_info.get("requested_revision")
 
         return payload
