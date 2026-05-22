@@ -15,7 +15,7 @@ from fathom.constants import (
     DRAIN_TIMEOUT,
     ActionType,
 )
-from fathom.constants.execution import MAX_ACTION_WAIT_MS
+from fathom.constants.execution import MAX_ACTION_WAIT_MS, TRACE_UPLOAD_TIMEOUT
 from fathom.constants.storage import StorageBackend
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.interfaces.device import DevicePort
@@ -578,14 +578,17 @@ class ActionExecutor:
                 return None
 
             data = await asyncio.to_thread(Path(trace_path).read_bytes)
-            uri = await self.__storage.save(
-                data=data,
-                metadata={
-                    "category": "traces",
-                    "filename": Path(trace_path).name,
-                    "session_id": session_id,
-                    "package_name": package_name,
-                },
+            uri = await asyncio.wait_for(
+                self.__storage.save(
+                    data=data,
+                    metadata={
+                        "category": "traces",
+                        "filename": Path(trace_path).name,
+                        "session_id": session_id,
+                        "package_name": package_name,
+                    },
+                ),
+                timeout=TRACE_UPLOAD_TIMEOUT,
             )
 
             return ScreenArtifact(
@@ -595,6 +598,14 @@ class ActionExecutor:
                 mime_type="image/png",
             )
 
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Trace upload exceeded %.1fs (step=%s, session_id=%s) — dropping trace_artifact and continuing",
+                TRACE_UPLOAD_TIMEOUT,
+                step.step_number,
+                session_id,
+            )
+            return None
         except Exception as exception:
             logger.exception(f"Tracing failed: {exception}", stack_info=True)
             return None

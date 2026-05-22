@@ -50,6 +50,11 @@ REMOTE_DEVICE_REQUEST_TIMEOUT_SECONDS = 60.0
 # Maximum time (seconds) to wait for background tasks during shutdown
 DRAIN_TIMEOUT = 30.0
 
+# Maximum time (seconds) to wait for a single trace upload to storage.
+# Bounded so a pathologically slow upload can't stall the action loop —
+# on timeout the trace is dropped (trace_artifact=None) and execution continues.
+TRACE_UPLOAD_TIMEOUT = 10.0
+
 
 class SignalType(StrEnum):
     """
