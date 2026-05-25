@@ -133,7 +133,9 @@ class SwipeRetryPlanner:
         paths: List[GesturePath] = []
         for sign in signs:
             shifted = self.__apply_shift(
-                original=original, axis=axis, delta=sign * shift_distance,
+                original=original,
+                axis=axis,
+                delta=sign * shift_distance,
             )
             paths.append(shifted)
         return tuple(paths)
@@ -175,7 +177,8 @@ class SwipeRetryPlanner:
         if SwipeRetryPlanner.__travel(path=path) < minimum_travel:
             return AbortReason.MINIMUM_TRAVEL_VIOLATED
         if keyboard_bounds is not None and SwipeRetryPlanner.__intersects(
-            path=path, region=keyboard_bounds,
+            path=path,
+            region=keyboard_bounds,
         ):
             return AbortReason.KEYBOARD_BLOCKED
         return None
@@ -222,16 +225,27 @@ class SwipeRetryPlanner:
         """
 
         return SwipeRetryPlanner.__segment_rect_intersect(
-            x1=path.start_x, y1=path.start_y,
-            x2=path.end_x, y2=path.end_y,
-            rx=region.x, ry=region.y,
-            rw=region.width, rh=region.height,
+            x1=path.start_x,
+            y1=path.start_y,
+            x2=path.end_x,
+            y2=path.end_y,
+            rx=region.x,
+            ry=region.y,
+            rw=region.width,
+            rh=region.height,
         )
 
     @staticmethod
     def __segment_rect_intersect(
-        *, x1: int, y1: int, x2: int, y2: int,
-        rx: int, ry: int, rw: int, rh: int,
+        *,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        rx: int,
+        ry: int,
+        rw: int,
+        rh: int,
     ) -> bool:
         """
         Liang-Barsky line-rectangle intersection test in integer pixel space.
@@ -249,8 +263,14 @@ class SwipeRetryPlanner:
             (rx, y_bottom, x_right, y_bottom),
         ):
             if SwipeRetryPlanner.__segments_intersect(
-                a1x=x1, a1y=y1, a2x=x2, a2y=y2,
-                b1x=edge[0], b1y=edge[1], b2x=edge[2], b2y=edge[3],
+                a1x=x1,
+                a1y=y1,
+                a2x=x2,
+                a2y=y2,
+                b1x=edge[0],
+                b1y=edge[1],
+                b2x=edge[2],
+                b2y=edge[3],
             ):
                 return True
         return False
@@ -265,8 +285,15 @@ class SwipeRetryPlanner:
 
     @staticmethod
     def __segments_intersect(
-        *, a1x: int, a1y: int, a2x: int, a2y: int,
-        b1x: int, b1y: int, b2x: int, b2y: int,
+        *,
+        a1x: int,
+        a1y: int,
+        a2x: int,
+        a2y: int,
+        b1x: int,
+        b1y: int,
+        b2x: int,
+        b2y: int,
     ) -> bool:
         """
         Whether two line segments share a point, using orientation tests.

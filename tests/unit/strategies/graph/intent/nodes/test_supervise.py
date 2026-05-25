@@ -4,11 +4,11 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from fathom.constants import ActionType
+from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.state import CommonStateKey, IntentStateKey
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import KeyboardObservation, ScreenObservation
-from fathom.constants.observation import KeyboardVisibility
 from fathom.schemas.resolution import ResolveResult
 from fathom.schemas.screens import ScreenCapture, ScreenHashBundle
 from fathom.schemas.steps import Step

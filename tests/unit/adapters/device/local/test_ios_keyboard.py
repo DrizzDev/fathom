@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, patch
 from fathom.adapters.device.local.ios import IOSDevice
 from fathom.constants.observation import KeyboardVisibility
 
-
 _HIERARCHY_VISIBLE_KEYBOARD = (
     '<?xml version="1.0" encoding="UTF-8"?>'
     '<XCUIElementTypeApplication name="App" x="0" y="0" width="430" height="932">'
@@ -38,11 +37,19 @@ class IOSDeviceDetectKeyboardTest(unittest.IsolatedAsyncioTestCase):
         """
 
         device = self.__device()
-        with patch.object(
-            device, "dump_hierarchy", new_callable=AsyncMock,
-            return_value=_HIERARCHY_VISIBLE_KEYBOARD,
-        ), patch.object(
-            device, "get_dimensions", new_callable=AsyncMock, return_value=(1290, 2796),
+        with (
+            patch.object(
+                device,
+                "dump_hierarchy",
+                new_callable=AsyncMock,
+                return_value=_HIERARCHY_VISIBLE_KEYBOARD,
+            ),
+            patch.object(
+                device,
+                "get_dimensions",
+                new_callable=AsyncMock,
+                return_value=(1290, 2796),
+            ),
         ):
             observation = await device.detect_keyboard()
 
@@ -59,11 +66,19 @@ class IOSDeviceDetectKeyboardTest(unittest.IsolatedAsyncioTestCase):
         """
 
         device = self.__device()
-        with patch.object(
-            device, "dump_hierarchy", new_callable=AsyncMock,
-            return_value=_HIERARCHY_NO_KEYBOARD,
-        ), patch.object(
-            device, "get_dimensions", new_callable=AsyncMock, return_value=(1290, 2796),
+        with (
+            patch.object(
+                device,
+                "dump_hierarchy",
+                new_callable=AsyncMock,
+                return_value=_HIERARCHY_NO_KEYBOARD,
+            ),
+            patch.object(
+                device,
+                "get_dimensions",
+                new_callable=AsyncMock,
+                return_value=(1290, 2796),
+            ),
         ):
             observation = await device.detect_keyboard()
 
@@ -77,7 +92,10 @@ class IOSDeviceDetectKeyboardTest(unittest.IsolatedAsyncioTestCase):
 
         device = self.__device()
         with patch.object(
-            device, "dump_hierarchy", new_callable=AsyncMock, return_value=None,
+            device,
+            "dump_hierarchy",
+            new_callable=AsyncMock,
+            return_value=None,
         ):
             observation = await device.detect_keyboard()
 
@@ -89,10 +107,19 @@ class IOSDeviceDetectKeyboardTest(unittest.IsolatedAsyncioTestCase):
         """
 
         device = self.__device()
-        with patch.object(
-            device, "dump_hierarchy", new_callable=AsyncMock, return_value="<not xml",
-        ), patch.object(
-            device, "get_dimensions", new_callable=AsyncMock, return_value=(1290, 2796),
+        with (
+            patch.object(
+                device,
+                "dump_hierarchy",
+                new_callable=AsyncMock,
+                return_value="<not xml",
+            ),
+            patch.object(
+                device,
+                "get_dimensions",
+                new_callable=AsyncMock,
+                return_value=(1290, 2796),
+            ),
         ):
             observation = await device.detect_keyboard()
 

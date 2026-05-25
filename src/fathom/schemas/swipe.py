@@ -68,7 +68,9 @@ class DeviceOutcome(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     succeeded: bool = Field(description="Device adapter reported success for the swipe primitive.")
-    error: Optional[str] = Field(default=None, description="Device error message when succeeded is False.")
+    error: Optional[str] = Field(
+        default=None, description="Device error message when succeeded is False."
+    )
 
 
 class VisualOutcome(BaseModel):
@@ -78,9 +80,13 @@ class VisualOutcome(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    changed: bool = Field(description="After hash is present AND differs from the original before hash.")
+    changed: bool = Field(
+        description="After hash is present AND differs from the original before hash."
+    )
     before: str = Field(description="Visual hash of the original pre-action capture.")
-    after: Optional[str] = Field(default=None, description="Visual hash post-attempt; None on capture failure.")
+    after: Optional[str] = Field(
+        default=None, description="Visual hash post-attempt; None on capture failure."
+    )
 
 
 class SwipeAttempt(BaseModel):

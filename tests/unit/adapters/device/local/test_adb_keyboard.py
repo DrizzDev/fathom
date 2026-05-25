@@ -36,7 +36,10 @@ class ADBDeviceDetectKeyboardTest(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch.object(
-            device, "_ADBDevice__shell", new_callable=AsyncMock, side_effect=responses,
+            device,
+            "_ADBDevice__shell",
+            new_callable=AsyncMock,
+            side_effect=responses,
         ):
             observation = await device.detect_keyboard()
 
@@ -92,7 +95,10 @@ class ADBDeviceDetectKeyboardTest(unittest.IsolatedAsyncioTestCase):
             ActionResult(success=True, duration=1, output="(no SkRegion here)"),
         ]
         with patch.object(
-            device, "_ADBDevice__shell", new_callable=AsyncMock, side_effect=responses,
+            device,
+            "_ADBDevice__shell",
+            new_callable=AsyncMock,
+            side_effect=responses,
         ):
             observation = await device.detect_keyboard()
 

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import unittest
-from typing import List, Optional, Tuple
 from unittest.mock import AsyncMock
 
 from fathom.adapters.swipe import DeviceSwipeDispatcher
 from fathom.interfaces.vision import VisualHasher
 from fathom.schemas.actions import GesturePath
-from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.results import ActionResult
 
 
