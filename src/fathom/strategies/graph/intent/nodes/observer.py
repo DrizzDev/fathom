@@ -80,7 +80,7 @@ class ScreenObserver:
         elements: List[LabeledElement],
     ) -> ScreenObservation:
         """
-        Build the runtime screen observation for localization and healing.
+        Build the runtime screen observation for localization and verification.
         """
 
         return await self.__context.screen_observer.observe(

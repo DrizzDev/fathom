@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from fathom.constants.observation import KeyboardVisibility
 from fathom.core.runtime.screen import ScreenRuntimeState
 from fathom.schemas.observation import KeyboardObservation, ScreenObservation
 from fathom.schemas.screens import ScreenHashBundle, ScreenState
@@ -35,7 +36,7 @@ def _observation(*, activity: str = "screen") -> ScreenObservation:
             interaction_hash="b" * 16,
         ),
         elements=(),
-        keyboard=KeyboardObservation(visible=False),
+        keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
     )
 
 

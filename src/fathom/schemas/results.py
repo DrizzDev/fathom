@@ -7,31 +7,24 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
-from fathom.schemas.decisions import ActDecision, Decision
 from fathom.schemas.delta import DeltaSignal
-from fathom.schemas.escape import EscapeReport
 from fathom.schemas.screens import ScreenCapture
-from fathom.schemas.scroll import ScrollOutcome
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.tasks import TaskStatus
+from fathom.schemas.swipe import SwipeExecution
 
 
 class AnalysisOutcome(StrEnum):
     """
     What the agent decided to do this ANALYZE turn.
 
-    Three values, each routes through a distinct planner path:
+    Values route through distinct planner paths:
 
     - ``ACT``: the agent committed to a concrete action; ``action`` is load-bearing and EXECUTE consumes it.
     - ``ASK_USER``: the agent wants the human to clarify the next move (existing HITL path; planner emits an ``ASK_USER`` action).
-    - ``REQUEST_REPLAN``: the agent emitted a structured :class:`EscapeReport` because it cannot make safe forward progress on the active sub-goal.
-    The category drives routing — replan against the current screen, or escalate to the human — without synthesizing an uncertain action.
     """
 
     ACT = "act"
     ASK_USER = "ask_user"
-    REQUEST_REPLAN = "request_replan"
-    REPORT_UNACTIONABLE = "report_unactionable"
 
 
 class AnalysisResult(BaseModel):
@@ -40,12 +33,7 @@ class AnalysisResult(BaseModel):
     """
 
     action: Action = Field(
-        description=(
-            "Legacy primary recommended action. New consumers must read "
-            "`decision` (typed `Decision` union) instead; this field is "
-            "kept only for backwards-compatibility and is no longer the "
-            "authoritative carrier when `decision` is present."
-        ),
+        description="Primary recommended action.",
     )
     alternatives: List[Action] = Field(
         default_factory=list, description="Alternative actions considered"
@@ -91,44 +79,10 @@ class AnalysisResult(BaseModel):
         default=AnalysisOutcome.ACT,
         description=(
             "What the agent decided this turn. ``ACT`` is the default and "
-            "consumes ``action``. ``ASK_USER`` and ``REQUEST_REPLAN`` "
-            "are structured alternatives that route through HITL and the "
-            "recovery coordinator respectively without inventing a synthetic "
-            "action."
+            "consumes ``action``. ``ASK_USER`` routes through HITL without "
+            "inventing a synthetic UI action."
         ),
     )
-    escape_report: Optional[EscapeReport] = Field(
-        default=None,
-        description=(
-            "Structured escape signal populated when ``outcome`` is "
-            "``REQUEST_REPLAN``. Carries the typed category (drives "
-            "routing) and a one-sentence detail (surfaced to the "
-            "decomposer or to the human depending on category)."
-        ),
-    )
-    decision: Optional[Decision] = Field(
-        default=None,
-        description="Structured decision envelope for the new runtime contract.",
-    )
-    task_status: Optional[TaskStatus] = Field(
-        default=None,
-        description=(
-            "Model-reported status for the active execution task. Carries "
-            "MET / PARTIAL / NOT_MET / BLOCKED so the CompletionService can "
-            "fuse the agent's verdict with deterministic outcome evidence instead of trusting the legacy boolean flag alone."
-        ),
-    )
-
-    @property
-    def recommended_action(self) -> Action:
-        """
-        Return the canonical action: from ``decision`` when present, else legacy ``action``.
-        """
-
-        if isinstance(self.decision, ActDecision):
-            return self.decision.action
-
-        return self.action
 
 
 class ToolErrorFeedback(BaseModel):
@@ -293,9 +247,9 @@ class ExecutionResult(BaseModel):
     error: Optional[str] = Field(default=None, description="Error message if failed")
     screen_changed: bool = Field(default=False, description="Whether the screen changed")
     is_cancelled: bool = Field(default=False, description="Whether the execution was cancelled")
-    scroll_outcome: Optional[ScrollOutcome] = Field(
+    swipe_execution: Optional[SwipeExecution] = Field(
         default=None,
-        description="Adaptive scroll outcome when available.",
+        description="Bounded swipe execution outcome (attempts, rejections, abort reason) when available.",
     )
     trace_events: Tuple[ActionTraceEvent, ...] = Field(
         default_factory=tuple,

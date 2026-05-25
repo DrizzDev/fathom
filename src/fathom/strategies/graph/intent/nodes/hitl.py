@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import time
 from logging import getLogger
 from typing import Any, Dict
 
 from fathom.constants.messages import HITL_DEFAULT_PROMPT
+from fathom.core.exceptions import WorkflowCancelledError
 from fathom.core.services.hitl import HITLService
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.steps import Step
@@ -45,7 +48,7 @@ class Hitl:
                 "step.index": step,
             },
         )
-        await hitl.wait_for_resume()
+        await self.__wait_for_resume_with_cancellation(hitl=hitl)
         await self.__drain_context(hitl=hitl)
 
     async def ask(self, *, step: Step, start_time: float) -> ExecutionResult:
@@ -65,7 +68,7 @@ class Hitl:
             },
         )
 
-        response = await self.__context.hitl.ask(
+        response = await self.__ask_with_cancellation(
             prompt=question,
             step=current_step + 1,
         )
@@ -86,6 +89,52 @@ class Hitl:
             success=True,
             duration=int((time.time() - start_time) * 1000),
         )
+
+    async def __wait_for_resume_with_cancellation(self, *, hitl: HITLService) -> None:
+        """
+        Wait for pause/resume input while honoring graph-level cancellation.
+        """
+
+        resume_task = asyncio.create_task(hitl.wait_for_resume())
+        try:
+            while not resume_task.done():
+                if self.__context.is_cancelled:
+                    resume_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await resume_task
+                    raise WorkflowCancelledError(workflow_id=self.__context.workflow_id)
+
+                await asyncio.sleep(0.1)
+
+            await resume_task
+        finally:
+            if not resume_task.done():
+                resume_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await resume_task
+
+    async def __ask_with_cancellation(self, *, prompt: str, step: int) -> str:
+        """
+        Wait for an ASK_USER response while honoring graph-level cancellation.
+        """
+
+        ask_task = asyncio.create_task(self.__context.hitl.ask(prompt=prompt, step=step))
+        try:
+            while not ask_task.done():
+                if self.__context.is_cancelled:
+                    ask_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await ask_task
+                    raise WorkflowCancelledError(workflow_id=self.__context.workflow_id)
+
+                await asyncio.sleep(0.1)
+
+            return await ask_task
+        finally:
+            if not ask_task.done():
+                ask_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await ask_task
 
     async def __drain_context(self, *, hitl: HITLService) -> None:
         """

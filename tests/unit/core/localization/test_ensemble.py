@@ -4,6 +4,7 @@ import asyncio
 import unittest
 from typing import Optional, Tuple
 
+from fathom.constants.observation import KeyboardVisibility
 from fathom.core.localization.ensemble import EnsembleLocalizerService
 from fathom.interfaces.localization import TargetLocalizerPort
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
@@ -150,7 +151,7 @@ class EnsembleLocalizerServiceTest(unittest.IsolatedAsyncioTestCase):
                 interaction_hash="b" * 16,
             ),
             elements=(),
-            keyboard=KeyboardObservation(visible=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
         )
 
     @staticmethod
@@ -312,9 +313,11 @@ class EnsembleLocalizerServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
-    async def test_below_minimum_agreeing_yields_no_consensus(self) -> None:
+    async def test_single_high_confidence_proposal_is_accepted_when_others_are_silent(
+        self,
+    ) -> None:
         """
-        Even a single high-confidence proposal cannot meet a 2-member quorum.
+        A lone high-confidence proposal is executable when no other member contradicts it.
         """
 
         good = self.__bounds(x=10, y=10, width=20, height=20)
@@ -323,6 +326,34 @@ class EnsembleLocalizerServiceTest(unittest.IsolatedAsyncioTestCase):
                 _FakeLocalizer(
                     name="a",
                     proposal=self.__proposal(source="a", bounds=good, confidence=0.99),
+                ),
+                _FakeLocalizer(name="silent", proposal=None),
+            ),
+            minimum_agreeing=2,
+        )
+
+        result = await service.locate(
+            action=self.__action(),
+            observation=self.__observation(),
+            capture=self.__capture(),
+            budget=self.__budget(),
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.source, "a")
+
+    async def test_single_low_confidence_proposal_yields_no_consensus(self) -> None:
+        """
+        A lone proposal below the single-proposal confidence floor is rejected.
+        """
+
+        good = self.__bounds(x=10, y=10, width=20, height=20)
+        service = EnsembleLocalizerService(
+            members=self.__members(
+                _FakeLocalizer(
+                    name="a",
+                    proposal=self.__proposal(source="a", bounds=good, confidence=0.7),
                 ),
                 _FakeLocalizer(name="silent", proposal=None),
             ),

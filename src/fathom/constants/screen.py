@@ -29,8 +29,7 @@ ACTION_EFFECT_CONTENT_DIFF_RATIO_THRESHOLD: float = 0.005
 # combined with negligible content-pixel diff), :func:`cv2.phaseCorrelate`
 # can still return a small non-zero shift from DC-noise. We gate the
 # scroll computation behind these thresholds so the comparator returns
-# a clean zero translation instead, preventing the OutcomeClassifier
-# from promoting no-op actions to EFFECTIVE on bogus scroll evidence.
+# a clean zero translation instead of bogus scroll evidence.
 SCROLL_IDENTICAL_FRAME_SSIM_THRESHOLD: float = 0.999
 SCROLL_IDENTICAL_FRAME_CONTENT_DIFF_RATIO_THRESHOLD: float = 0.001
 
@@ -71,8 +70,8 @@ LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD: int = 4
 # :meth:`LoopDetector.observe_screen` — distinct from the near-duplicate
 # threshold used by the visual-only stuck detector.
 #
-# Placeholder: pin against 3.txt scroll-loop pHashes + yVKnb coachmark
-# pHashes (see ``tests/unit/schemas/test_loop_detector_fixtures.py``).
+# Chosen from scroll-loop and coachmark-loop fixture coverage; keep this
+# threshold high enough that cosmetic pHash jitter does not clear loop evidence.
 SCREEN_PROGRESS_HAMMING_THRESHOLD: int = 16
 
 # Maximum hamming distance for two hashes to be considered members of
@@ -90,18 +89,12 @@ LOOP_REPETITION_THRESHOLD: int = 3
 # Size of the sliding window the loop detector inspects for pattern analysis.
 LOOP_DETECTOR_WINDOW_SIZE: int = 15
 
-# Maximum autonomous recovery attempts (BACK / SCROLL / HOME) before the loop
-# detector declines further recovery and the agent terminates as STUCK.
+# Maximum native loop-ladder attempts (BACK / SCROLL / HOME) before the
+# detector declines further actions and the agent terminates as STUCK.
 LOOP_MAX_AUTONOMOUS_RECOVERIES: int = 3
 
 # Action-effect classifier thresholds. Map raw ScreenDiff metrics onto a
 # coarse ``ActionEffectStatus`` (progress | no_progress | uncertain).
-#
-# IMPORTANT: these starting values are placeholders. Phase 1B fixture
-# tests (see ``tests/unit/schemas/test_action_effect.py``) replay pHash /
-# SSIM sequences from the 3.txt scroll loop and the yVKnb 41-step
-# coachmark loop and pin the thresholds against those traces. Do not
-# treat these defaults as load-bearing without verifying the fixtures.
 #
 # ``progress`` requires either a noticeable pHash jump, low SSIM, large
 # content_diff, OR a meaningful scroll translation.
@@ -122,12 +115,6 @@ ACTION_EFFECT_NO_PROGRESS_SCROLL_DISTANCE_PX_BELOW_OR_EQ: float = 5.0
 # agent's own trajectory observation.
 ACTION_EFFECT_TRAJECTORY_WINDOW: int = 5
 
-# Number of trailing NO_PROGRESS classifications that constitutes a
-# "no progress" stuck signal worth escalating via the recovery
-# coordinator. Kept conservative so the agent gets one or two free
-# tries on a tough screen before recovery dispatches.
-NO_PROGRESS_RECOVERY_THRESHOLD: int = 3
-
 # Minimum number of repeated action occurrences in the recent window
 # before a :class:`LoopObservation` is worth surfacing to the agent.
 # A single repetition is not yet a loop; two is the smallest evidence
@@ -135,9 +122,7 @@ NO_PROGRESS_RECOVERY_THRESHOLD: int = 3
 MIN_LOOP_OBSERVATION_REPETITIONS: int = 2
 
 # Number of trailing NO_PROGRESS classifications that crosses from
-# "ambiguous outcome" into "worth flagging in the prompt". Lower than
-# :data:`NO_PROGRESS_RECOVERY_THRESHOLD` because the observation is
-# informational and fires before the harder recovery dispatch.
+# "ambiguous outcome" into "worth flagging in the prompt".
 MIN_NO_PROGRESS_FOR_OBSERVATION: int = 2
 
 # Minimum number of recent screens required before the screen-relation

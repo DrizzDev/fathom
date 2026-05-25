@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fathom.schemas.escape import EscapeCategory
-
 
 class ToolRegistry:
     """
@@ -24,8 +22,6 @@ class ToolRegistry:
                 cls.__store_memory(),
                 cls.__recall_memory(),
                 cls.__validate_state(),
-                cls.__request_replan(),
-                cls.__report_unactionable(),
             ]
         }
 
@@ -284,17 +280,6 @@ class ToolRegistry:
                         "type": "STRING",
                         "description": "Explicit reason why the sub-goal is complete (e.g., 'Item added to cart', 'User authenticated'). Required when sub_goal_completed=true.",
                     },
-                    "task_status": {
-                        "type": "STRING",
-                        "enum": ["met", "partial", "not_met", "blocked"],
-                        "description": (
-                            "Typed verdict on the active execution task: 'met' when the task criterion is observably satisfied, "
-                            "'partial' when the action makes progress but the criterion is not yet satisfied, "
-                            "'not_met' when neither, 'blocked' when the task cannot proceed from the current screen. "
-                            "Required for action turns; the system fuses this with deterministic outcome evidence so "
-                            "sub-goal advancement never relies on the boolean flags alone."
-                        ),
-                    },
                     "completion_criteria_met": {
                         "type": "ARRAY",
                         "description": "List of criteria/conditions that triggered completion (e.g., ['payment_processed', 'order_confirmed']). Use for multi-condition completions.",
@@ -535,83 +520,6 @@ class ToolRegistry:
                     },
                 },
                 "required": ["question", "goal_completed", "sub_goal_completed"],
-            },
-        }
-
-    @staticmethod
-    def __request_replan() -> Dict[str, Any]:
-        """
-        Definition for the ``request_replan`` tool.
-
-        The agent invokes this when it cannot make safe forward progress on the active sub-goal.
-        The ``category`` parameter is a typed taxonomy (see :class:`fathom.schemas.escape.EscapeCategory`)
-        and drives whether the system replans against the current screen or escalates to the human.
-        The ``detail`` parameter carries a one-sentence justification surfaced to either the decomposer preamble or the HITL prompt depending on the category.
-        """
-
-        return {
-            "name": "request_replan",
-            "description": (
-                "Use this when you cannot make safe forward progress on the active sub-goal. "
-                "Pick the category that best describes what you observe; the system will either replan against the current screen or escalate to the human depending on the category. "
-                "Prefer this over snapping to a semantically wrong label or emitting a bbox for a region where you cannot see the target. "
-                "When an element is rendered outside the manifest but is visible on screen, ground it via bbox instead — request_replan is for cases where neither path works."
-            ),
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "category": {
-                        "type": "STRING",
-                        "enum": [category.value for category in EscapeCategory],
-                        "description": (
-                            "Typed reason. "
-                            "'target_not_available': the named target is neither in the manifest nor visible on the current screenshot. "
-                            "'wrong_screen': the current screen does not correspond to the sub-goal's expected screen. "
-                            "'precondition_not_met': the sub-goal assumes prior state that has not been reached. "
-                            "'ambiguous_target': multiple candidates plausibly match and no safe disambiguation is possible. "
-                            "'unsafe_action': proceeding would be irreversible or destructive."
-                        ),
-                    },
-                    "detail": {
-                        "type": "STRING",
-                        "description": (
-                            "One-sentence justification used as the decomposer preamble (replan path) or as the human prompt body (HITL path)."
-                        ),
-                    },
-                },
-                "required": ["category", "detail"],
-            },
-        }
-
-    @staticmethod
-    def __report_unactionable() -> Dict[str, Any]:
-        """
-        Definition for the report_unactionable tool.
-        """
-
-        return {
-            "name": "report_unactionable",
-            "description": (
-                "Use this when the active task cannot be acted on from the current screen. "
-                "The runtime will decide whether to heal, replan, ask the user, or fail bounded."
-            ),
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "reason": {
-                        "type": "STRING",
-                        "description": "One concise sentence explaining why the current screen cannot satisfy the active task.",
-                    },
-                    "goal_completed": {
-                        "type": "BOOLEAN",
-                        "description": "Must be false unless the overall goal is complete.",
-                    },
-                    "sub_goal_completed": {
-                        "type": "BOOLEAN",
-                        "description": "Must be false unless the current task is complete.",
-                    },
-                },
-                "required": ["reason", "goal_completed", "sub_goal_completed"],
             },
         }
 

@@ -10,6 +10,7 @@ from typing import AsyncGenerator
 
 import pytest
 
+from fathom.constants.reasoning import USER_GUIDANCE_ANALYZE_TTL
 from fathom.core.context.manager import ContextManager
 from fathom.schemas.feedback import UserGuidance, VerifierFeedback
 
@@ -73,7 +74,9 @@ class TestContextManagerChannels:
         await manager.inject_verifier_feedback(feedback="not on the SRP yet")
 
         context = manager.get_full_context()
-        assert context["guidance"] == ["use the search bar"]
+        assert context["guidance"] == [
+            f"[active, remaining_analyze_turns={USER_GUIDANCE_ANALYZE_TTL}] use the search bar"
+        ]
         assert context["verifier_feedback"] == ["not on the SRP yet"]
 
     @pytest.mark.asyncio
@@ -123,3 +126,41 @@ class TestContextManagerChannels:
 
         assert user_entries[0].step_number == 3
         assert verifier_entries[0].step_number == 7
+
+    @pytest.mark.asyncio
+    async def test_user_guidance_survives_one_analyze_then_expires_after_ttl(
+        self, manager: ContextManager
+    ) -> None:
+        """
+        HITL guidance must not disappear after one ignored planner turn,
+        but it must expire before becoming stale prompt pressure.
+        """
+
+        await manager.inject_user_guidance(guidance="tap Continue", step=4)
+
+        manager.consume_user_guidance()
+        entries = manager.get_user_guidance()
+        assert len(entries) == 1
+        assert entries[0].remaining_analyses == USER_GUIDANCE_ANALYZE_TTL - 1
+
+        for _ in range(USER_GUIDANCE_ANALYZE_TTL - 1):
+            manager.consume_user_guidance()
+
+        assert manager.get_user_guidance() == []
+        assert manager.get_full_context()["guidance"] == []
+
+    @pytest.mark.asyncio
+    async def test_multiple_user_guidance_entries_preserve_order(
+        self, manager: ContextManager
+    ) -> None:
+        """
+        Multiple HITL instructions should remain independent and ordered.
+        """
+
+        await manager.inject_user_guidance(guidance="use test login", step=1)
+        await manager.inject_user_guidance(guidance="skip marketing permissions", step=2)
+
+        assert [entry.content for entry in manager.get_user_guidance()] == [
+            "use test login",
+            "skip marketing permissions",
+        ]

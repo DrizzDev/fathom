@@ -27,17 +27,6 @@ class TaskKind(StrEnum):
     VALIDATION = "validation"
 
 
-class TaskStatus(StrEnum):
-    """
-    Model-reported status for the active execution task.
-    """
-
-    MET = "met"
-    PARTIAL = "partial"
-    NOT_MET = "not_met"
-    BLOCKED = "blocked"
-
-
 class TaskAttemptState(BaseModel):
     """
     Attempt accounting for one execution task.

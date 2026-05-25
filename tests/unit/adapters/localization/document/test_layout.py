@@ -4,6 +4,7 @@ import unittest
 
 from fathom.adapters.localization.document.layout import DocumentAiLayoutLocalizer
 from fathom.constants import ActionType
+from fathom.constants.observation import KeyboardVisibility
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.observation import (
@@ -112,7 +113,7 @@ class DocumentAiLayoutLocalizerTest(unittest.IsolatedAsyncioTestCase):
                     tappable=False,
                 ),
             ),
-            keyboard=KeyboardObservation(visible=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
         )
 
     async def test_matching_ocr_token_produces_proposal(self) -> None:

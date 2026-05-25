@@ -1,4 +1,25 @@
 from enum import StrEnum
+from typing import Final, FrozenSet
+
+LOOP_BACK_CONFIDENCE: Final[float] = 0.9
+LOOP_SCROLL_CONFIDENCE: Final[float] = 0.8
+LOOP_HOME_CONFIDENCE: Final[float] = 0.7
+
+LOOP_BACK_RATIONALE: Final[str] = "Loop detected (screen repeating). Forcing BACK to break context."
+LOOP_SCROLL_RATIONALE: Final[str] = (
+    "Loop detected (screen repeating). Forcing SCROLL to reveal new state."
+)
+LOOP_HOME_RATIONALE: Final[str] = "Loop detected (screen repeating). Forcing HOME to reset agent."
+LOOP_SCROLL_ACTION_TYPES: Final[FrozenSet[str]] = frozenset(
+    {
+        "scroll",
+        "swipe",
+        "swipe_up",
+        "swipe_down",
+        "swipe_left",
+        "swipe_right",
+    }
+)
 
 
 class CompletionReason(StrEnum):
@@ -10,11 +31,10 @@ class CompletionReason(StrEnum):
     CANCELLED = "Cancelled"
     MAX_STEPS = "Max steps reached"
     SUCCESS = "Completed successfully"
-    STUCK = "Stuck: Recovery exhausted"
+    STUCK = "Stuck: No progress"
     INTERVENTION_REQUIRED = "Human intervention required"
     USER_DIRECTIVE = "Marked complete via user directive"
     ACTION_BLOCKED = "Action blocked: repeated without progress"
-    REQUEST_REPLAN = "Agent requested replan via structured escape report"
 
 
 class CommonStateKey(StrEnum):
@@ -35,7 +55,6 @@ class CommonStateKey(StrEnum):
     CAPTURE = "CAPTURE"
     SCREEN_STATE = "SCREEN_STATE"
     IS_NEW_SCREEN = "IS_NEW_SCREEN"
-    ACTION_OUTCOME = "ACTION_OUTCOME"
     SCREEN_OBSERVATION = "SCREEN_OBSERVATION"
 
     # Analysis
@@ -73,16 +92,6 @@ class IntentStateKey(StrEnum):
 
     # Execution coordination across SUPERVISE / EXECUTE / OBSERVE
     EXECUTION_CONTEXT = "EXECUTION_CONTEXT"
-    EXECUTION_BLOCKED = "EXECUTION_BLOCKED"
-    ACTIVE_SCROLL_LOCK = "ACTIVE_SCROLL_LOCK"
-
-    # Supervisor feedback to the next planner turn. When supervise blocks
-    # an action, LAST_BLOCK_REASON carries the BlockReason and
-    # LAST_BLOCK_MESSAGE the operator-facing text. ANALYZE reads these
-    # and renders them into the LLM prompt so the planner knows why its
-    # previous action was rejected.
-    LAST_BLOCK_REASON = "LAST_BLOCK_REASON"
-    LAST_BLOCK_MESSAGE = "LAST_BLOCK_MESSAGE"
 
     # Sub-goal state propagation (for global checkpoint persistence)
     CURRENT_SUB_GOAL_INDEX = "CURRENT_SUB_GOAL_INDEX"
@@ -101,9 +110,7 @@ class PlanMetadataKey(StrEnum):
     """
 
     ANALYSIS = "analysis_result"
-    ESCAPE_REPORT = "escape_report"
     OBSERVATION = "observation"
-    BLOCKED_ACTION = "blocked_action"
 
 
 class ExplorationStateKey(StrEnum):

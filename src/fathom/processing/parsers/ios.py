@@ -228,12 +228,24 @@ class IOSParser(PlatformParser):
                 ):
                     continue
 
+                clipped_x1 = self.__clamp(x, 0, screen_width)
+                clipped_y1 = self.__clamp(y, 0, screen_height)
+                clipped_x2 = self.__clamp(x + width, 0, screen_width)
+                clipped_y2 = self.__clamp(y + height, 0, screen_height)
+                if clipped_x2 <= clipped_x1 or clipped_y2 <= clipped_y1:
+                    continue
+
                 detected.append(
                     LabeledElement(
                         label="",
                         color="",
                         attributes=metadata,
-                        bounds=UIBounds(x1=x, y1=y, x2=x + width, y2=y + height),
+                        bounds=UIBounds(
+                            x1=clipped_x1,
+                            y1=clipped_y1,
+                            x2=clipped_x2,
+                            y2=clipped_y2,
+                        ),
                     )
                 )
 

@@ -7,6 +7,7 @@ from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
+from fathom.schemas.observation import KeyboardObservation
 from fathom.schemas.screens import ScreenCapture
 
 
@@ -69,3 +70,13 @@ class AndroidPerceptionAdapter(PerceptionPort):
                 ),
             },
         )
+
+    async def detect_keyboard(
+        self, *, capture: Optional[ScreenCapture] = None
+    ) -> KeyboardObservation:
+        """
+        Delegate keyboard detection to the underlying device adapter (dumpsys for local ADB).
+        """
+
+        _ = capture
+        return await self.__device.detect_keyboard()

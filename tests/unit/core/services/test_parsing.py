@@ -182,3 +182,32 @@ class ToolResponseParserExecuteUiTest(unittest.TestCase):
 
         self.assertEqual(result.action.target, "main scrollable area")
         self.assertEqual(result.action.scroll_target, "Asha Tiffin")
+
+    def test_parses_enter_action_without_wait_fallback(self) -> None:
+        """
+        The prompt schema exposes enter, so the parser must preserve it.
+        """
+
+        parser = ToolResponseParser()
+        response = self.__response(
+            calls=[
+                _Call(
+                    name="execute_ui",
+                    args={
+                        "assistant_message": "submit search",
+                        "goal_completed": False,
+                        "sub_goal_completed": False,
+                        "action": {
+                            "action_type": "enter",
+                            "target_name": "Search button on keyboard",
+                            "confidence": 0.84,
+                        },
+                    },
+                )
+            ]
+        )
+
+        result = parser.parse(response=response)
+
+        self.assertEqual(result.action.action_type, ActionType.ENTER)
+        self.assertEqual(result.action.target, "Search button on keyboard")

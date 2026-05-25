@@ -1,5 +1,0 @@
-<hierarchy>
-  <node class="android.widget.FrameLayout" bounds="[0,0][1206,2622]">
-    <node class="android.widget.ImageButton" label="L5" bounds="[1080,420][1170,510]" clickable="true" content-desc="Add to favourites"/>
-  </node>
-</hierarchy>

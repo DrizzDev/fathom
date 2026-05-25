@@ -24,6 +24,15 @@ MINIMUM_DECOMPOSITION_CONFIDENCE: float = 0.6
 # Delta score below which a step counts as low-progress for streak tracking.
 LOW_DELTA_PROGRESS_THRESHOLD: float = 0.3
 
+# Independent positive signals required before a sub-goal enters screenshot verification.
+SUB_GOAL_COMPLETION_REQUIRED_SIGNALS: int = 2
+
+# Number of ANALYZE turns a human instruction may remain active after
+# injection. This keeps HITL guidance from disappearing after one ignored
+# model turn while still preventing stale instructions from becoming a
+# permanent imperative on later screens.
+USER_GUIDANCE_ANALYZE_TTL: int = 3
+
 # Action confidence floor; below this the action is rejected outright.
 ACTION_MIN_CONFIDENCE: float = 0.40
 

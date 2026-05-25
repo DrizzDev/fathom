@@ -1,6 +1,6 @@
 platform: ios
 description: |
-  HmrHD healing session, step 4 capture. Production grounding crashed
+  HmrHD execution session, step 4 capture. Production grounding crashed
   with TimeoutError before any planner action was emitted (no Resolution
   snap, no tap dispatched). Carried as a property-only fixture: every
   element BoundsGenerator extracts from this XML must dispatch inside

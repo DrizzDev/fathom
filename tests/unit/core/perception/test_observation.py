@@ -5,13 +5,48 @@ from pathlib import Path
 from typing import Tuple
 from unittest.mock import AsyncMock, Mock
 
+from fathom.constants.observation import KeyboardVisibility
 from fathom.core.perception.observation import ScreenObservationService
-from fathom.schemas.artifact import OverlayPerceptionPayload
+from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
+from fathom.schemas.artifact import OcrPerceptionPayload, OcrRawPayload, OverlayPerceptionPayload
 from fathom.schemas.budgets import PerceptionBudget
 from fathom.schemas.observation import ElementSource, OverlayObservation
+from fathom.schemas.ocr import OcrConfidence, OcrResult, OcrToken
 from fathom.schemas.perception import KeyboardConfiguration, PerceptionConfiguration
 from fathom.schemas.screens import ScreenCapture, ScreenHashBundle
 from fathom.schemas.ui import LabeledElement, UIBounds
+
+
+class _StaticOcr:
+    """
+    Test OCR port returning one stable token and raw provider JSON.
+    """
+
+    async def extract(self, *, capture: ScreenCapture, budget: PerceptionBudget) -> OcrResult:
+        """
+        Return a Swiggy OCR token regardless of capture contents.
+        """
+
+        _ = capture, budget
+        return OcrResult(
+            duration=12,
+            raw_response='{"text": "Swiggy"}',
+            tokens=(
+                OcrToken(
+                    text="Swiggy",
+                    bounds=Bounds(
+                        x=284,
+                        y=383,
+                        width=108,
+                        height=31,
+                        source=CoordinateSource.OCR,
+                        coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                    ),
+                    raw_score=0.96,
+                    confidence=OcrConfidence.HIGH,
+                ),
+            ),
+        )
 
 
 class ScreenObservationServiceOverlayDedupTest(unittest.IsolatedAsyncioTestCase):
@@ -161,6 +196,75 @@ class ScreenObservationServiceOverlayDedupTest(unittest.IsolatedAsyncioTestCase)
             "CV-tagged labeled elements must not be rewritten to ElementSource.VISION.",
         )
 
+    async def test_oversized_manifest_bounds_are_clamped_before_schema_conversion(self) -> None:
+        """
+        Malformed provider bounds must be clipped to the visible viewport.
+        """
+
+        manifest = (
+            LabeledElement(
+                label="L1",
+                bounds=UIBounds(x1=114, y1=888, x2=1092, y2=26643),
+                attributes={
+                    "type": "XCUIElementTypeTextView",
+                    "value": "Privacy text",
+                    "visible": "true",
+                    "enabled": "true",
+                    "scrollable": "true",
+                    "axis": "vertical",
+                    "kind": "viewport",
+                },
+            ),
+        )
+
+        observation = await ScreenObservationService().observe(
+            capture=self.__capture(),
+            hashes=self.__hashes(),
+            budget=self.__budget(),
+            manifest=manifest,
+            session_id="run-test",
+            step_number=0,
+        )
+
+        self.assertEqual(len(observation.elements), 1)
+        self.assertLessEqual(
+            observation.elements[0].bounds.x + observation.elements[0].bounds.width,
+            self.__capture().width,
+        )
+        self.assertLessEqual(
+            observation.elements[0].bounds.y + observation.elements[0].bounds.height,
+            self.__capture().height,
+        )
+
+    async def test_manifest_bounds_outside_viewport_are_dropped(self) -> None:
+        """
+        Elements fully outside the viewport must not enter observations.
+        """
+
+        manifest = (
+            LabeledElement(
+                label="L1",
+                bounds=UIBounds(x1=1300, y1=3000, x2=1500, y2=3300),
+                attributes={
+                    "type": "XCUIElementTypeButton",
+                    "value": "Invisible",
+                    "visible": "true",
+                    "enabled": "true",
+                },
+            ),
+        )
+
+        observation = await ScreenObservationService().observe(
+            capture=self.__capture(),
+            hashes=self.__hashes(),
+            budget=self.__budget(),
+            manifest=manifest,
+            session_id="run-test",
+            step_number=0,
+        )
+
+        self.assertEqual(observation.elements, ())
+
     async def test_visual_controls_are_not_injected_when_cv_is_disabled(self) -> None:
         """
         CV-derived visual controls must stay out of observations when the
@@ -237,33 +341,7 @@ class ScreenObservationServiceOverlayDedupTest(unittest.IsolatedAsyncioTestCase)
             step_number=0,
         )
 
-        self.assertFalse(observation.keyboard.visible)
-
-    async def test_ios_hierarchy_disables_visual_keyboard_fallback(self) -> None:
-        """
-        iOS hierarchy-backed captures must not hallucinate a keyboard from bottom-screen texture.
-        """
-
-        capture = self.__capture().model_copy(
-            update={
-                "xml_content": (
-                    "<XCUIElementTypeApplication>"
-                    "<XCUIElementTypeSearchField visible='true'/>"
-                    "</XCUIElementTypeApplication>"
-                )
-            }
-        )
-
-        observation = await ScreenObservationService().observe(
-            capture=capture,
-            hashes=self.__hashes(),
-            budget=self.__budget(),
-            manifest=(),
-            session_id="run-test",
-            step_number=0,
-        )
-
-        self.assertFalse(observation.keyboard.visible)
+        self.assertFalse(observation.keyboard.visibility is KeyboardVisibility.VISIBLE)
 
     async def test_keyboard_detection_stays_off_when_disabled(self) -> None:
         """
@@ -291,7 +369,7 @@ class ScreenObservationServiceOverlayDedupTest(unittest.IsolatedAsyncioTestCase)
             step_number=0,
         )
 
-        self.assertFalse(observation.keyboard.visible)
+        self.assertFalse(observation.keyboard.visibility is KeyboardVisibility.VISIBLE)
 
     async def test_page_scroll_region_is_inferred_when_only_nested_strip_scrollview_exists(
         self,
@@ -479,3 +557,143 @@ class ScreenObservationServiceOverlayDedupTest(unittest.IsolatedAsyncioTestCase)
             type(call.kwargs["record"].payload) for call in pipeline.emit.await_args_list
         ]
         self.assertEqual(payload_types, [OverlayPerceptionPayload])
+
+    async def test_ocr_raw_and_annotated_artifacts_emit_when_ocr_contributes(self) -> None:
+        """
+        OCR enrichment must persist both raw provider JSON and OCR-only annotation.
+        """
+
+        pipeline = Mock()
+        pipeline.emit = AsyncMock()
+
+        observation = await ScreenObservationService(
+            ocr=_StaticOcr(),
+            pipeline=pipeline,
+        ).observe(
+            capture=self.__capture(),
+            hashes=self.__hashes(),
+            budget=self.__budget(),
+            manifest=(),
+            session_id="run-test",
+            step_number=0,
+        )
+
+        self.assertEqual(observation.elements[0].text, "Swiggy")
+        payloads = [call.kwargs["record"].payload for call in pipeline.emit.await_args_list]
+        self.assertTrue(any(isinstance(payload, OcrRawPayload) for payload in payloads))
+        self.assertTrue(any(isinstance(payload, OcrPerceptionPayload) for payload in payloads))
+        raw_payloads = [payload for payload in payloads if isinstance(payload, OcrRawPayload)]
+        self.assertEqual(raw_payloads[0].content, '{"text": "Swiggy"}')
+
+
+class ScreenObservationServiceKeyboardProbeTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pin the device-backed fallback for keyboard detection in vision-only mode.
+    """
+
+    __FRAMES = Path(__file__).resolve().parents[3] / "fixtures" / "perception" / "frames"
+    __IMAGE = __FRAMES / "home.png"
+
+    @classmethod
+    def __capture(cls) -> ScreenCapture:
+        """
+        Build one capture fixture from the on-disk Swiggy frame.
+        """
+
+        return ScreenCapture(
+            width=1206,
+            height=2622,
+            activity="app",
+            image=cls.__IMAGE.read_bytes(),
+            timestamp=0,
+        )
+
+    @staticmethod
+    def __hashes() -> ScreenHashBundle:
+        """
+        Stable triple-hash fixture for the keyboard-probe tests.
+        """
+
+        return ScreenHashBundle(
+            visual_hash="v" * 16,
+            xml_hash="x" * 16,
+            interaction_hash="i" * 16,
+        )
+
+    @staticmethod
+    def __budget() -> PerceptionBudget:
+        """
+        Zero-budget so OCR/icon/overlay providers stay inert.
+        """
+
+        return PerceptionBudget(ocr=0, local=0, localization=0)
+
+    async def test_device_probe_invoked_when_no_keyboard_element_present(self) -> None:
+        """
+        With no KEYBOARD-class manifest element, the service must consult the device adapter.
+        """
+
+        from fathom.schemas.observation import KeyboardObservation
+
+        device = Mock()
+        device.detect_keyboard = AsyncMock(
+            return_value=KeyboardObservation(
+                visibility=KeyboardVisibility.VISIBLE,
+                bounds=Bounds(
+                    x=0,
+                    y=1507,
+                    width=1080,
+                    height=701,
+                    coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                ),
+            )
+        )
+
+        observation = await ScreenObservationService(device=device).observe(
+            capture=self.__capture(),
+            hashes=self.__hashes(),
+            budget=self.__budget(),
+            manifest=(),
+            session_id="run-test",
+            step_number=0,
+        )
+
+        device.detect_keyboard.assert_awaited_once()
+        self.assertIs(observation.keyboard.visibility, KeyboardVisibility.VISIBLE)
+        self.assertIsNotNone(observation.keyboard.bounds)
+
+    async def test_unknown_when_no_device_and_no_manifest_keyboard(self) -> None:
+        """
+        Without a device adapter, the service preserves the UNKNOWN sentinel.
+        """
+
+        observation = await ScreenObservationService().observe(
+            capture=self.__capture(),
+            hashes=self.__hashes(),
+            budget=self.__budget(),
+            manifest=(),
+            session_id="run-test",
+            step_number=0,
+        )
+
+        self.assertIs(observation.keyboard.visibility, KeyboardVisibility.UNKNOWN)
+
+    async def test_device_probe_exception_degrades_to_unknown(self) -> None:
+        """
+        A throwing keyboard probe must not crash the observation pipeline; UNKNOWN is the fallback.
+        """
+
+        device = Mock()
+        device.detect_keyboard = AsyncMock(side_effect=RuntimeError("transport closed"))
+
+        observation = await ScreenObservationService(device=device).observe(
+            capture=self.__capture(),
+            hashes=self.__hashes(),
+            budget=self.__budget(),
+            manifest=(),
+            session_id="run-test",
+            step_number=0,
+        )
+
+        device.detect_keyboard.assert_awaited_once()
+        self.assertIs(observation.keyboard.visibility, KeyboardVisibility.UNKNOWN)

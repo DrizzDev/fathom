@@ -19,14 +19,14 @@ def get_event_type(step: Union[StepResult, Dict[str, Any]]) -> str:
             )
         return val or "action"
 
-    return str(object=step.get("event_type", "action") or "action")
+    return str(step.get("event_type", "action") or "action")
 
 
 def get_action_type(step: Union[StepResult, Dict[str, Any]]) -> str:
     if isinstance(step, StepResult):
         return step.step.action.action_type.value
 
-    return str(object=step.get("action_type", "unknown"))
+    return str(step.get("action_type", "unknown"))
 
 
 def swipe_direction_label(action_type: str) -> str:
@@ -44,7 +44,7 @@ def get_activity(step: Union[StepResult, Dict[str, Any]]) -> str:
     if isinstance(step, dict):
         # Prefer execution_activity (pre-action screen) for launcher detection;
         # fall back to activity (post-action screen) for general use.
-        return str(object=step.get("execution_activity") or step.get("activity") or "")
+        return str(step.get("execution_activity") or step.get("activity") or "")
 
     # StepResult: activity is only available if passed via metadata.
     if isinstance(step, StepResult):

@@ -1,8 +1,0 @@
-{
-  "terminal_status": "ESCALATED",
-  "max_step_count": 10,
-  "max_repeated_no_effect": 2,
-  "block_reasons": [],
-  "recoveries_invoked": ["escalation"],
-  "raw_llm_coordinates_executed": 0
-}

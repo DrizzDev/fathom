@@ -30,6 +30,14 @@ class IOSNativePerceptionAdapter(PerceptionPort):
 
         return self.__device.configuration
 
+    async def detect_keyboard(self, *, capture: Optional[ScreenCapture] = None):
+        """
+        Delegate keyboard detection to the underlying iOS device adapter (XCUITest XML walk).
+        """
+
+        _ = capture
+        return await self.__device.detect_keyboard()
+
     async def capture(self) -> ScreenCapture:
         """
         Capture iOS screenshot without hierarchy enhancement.
@@ -75,6 +83,14 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
         """
 
         return self.__device.configuration
+
+    async def detect_keyboard(self, *, capture: Optional[ScreenCapture] = None):
+        """
+        Delegate keyboard detection to the underlying iOS device adapter (XCUITest XML walk).
+        """
+
+        _ = capture
+        return await self.__device.detect_keyboard()
 
     async def capture(self) -> ScreenCapture:
         """

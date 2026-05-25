@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from enum import StrEnum
 from logging import getLogger
 from typing import Any, Deque, Dict, List, Optional
 
@@ -30,15 +29,6 @@ from fathom.schemas.screens import ScreenState
 logger = getLogger(__name__)
 
 
-class VerificationLoopPhase(StrEnum):
-    """
-    Lifecycle phase for repeated VERIFY rejection on one no-progress streak.
-    """
-
-    RETRYING = "retrying"
-    RECOVERY_ATTEMPTED = "recovery_attempted"
-
-
 class VerificationLoopState(BaseModel):
     """
     Serializable verifier-loop state for one same-screen, same-step rejection streak.
@@ -57,10 +47,6 @@ class VerificationLoopState(BaseModel):
         ge=1,
         default=1,
         description="Number of consecutive verifier rejections in this streak.",
-    )
-    phase: VerificationLoopPhase = Field(
-        default=VerificationLoopPhase.RETRYING,
-        description="Whether recovery already had a chance on this streak.",
     )
 
     model_config = ConfigDict(frozen=True)
@@ -109,13 +95,6 @@ class VerificationLoopState(BaseModel):
         return self.model_copy(
             update={"consecutive_rejections": self.consecutive_rejections + 1},
         )
-
-    def mark_recovery_attempted(self) -> "VerificationLoopState":
-        """
-        Return a copy that records recovery already had its chance on this streak.
-        """
-
-        return self.model_copy(update={"phase": VerificationLoopPhase.RECOVERY_ATTEMPTED})
 
 
 class LoopDetectorState(BaseModel):
@@ -699,6 +678,17 @@ class LoopDetector(BaseModel):
         """
 
         return self.__recovery_attempts < self.max_recovery
+
+    @property
+    def last_action_type(self) -> Optional[str]:
+        """
+        Return the most recent recorded action type.
+        """
+
+        if not self.__recent_types:
+            return None
+
+        return self.__recent_types[-1]
 
     def record_recovery_attempt(self) -> int:
         """

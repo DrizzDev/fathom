@@ -32,8 +32,8 @@ class IntentSafetyClassifier:
     before the LangGraph workflow starts.
 
     Sits at the outer boundary so destructive intents never enter the
-    runtime path; the per-step :class:`fathom.core.supervision.policies.SafetyPolicy`
-    is intentionally not consulted during execution.
+    runtime path; per-step safety scanning is intentionally not consulted
+    during execution.
     """
 
     def classify(self, *, intent: str) -> IntentSafetyVerdict:

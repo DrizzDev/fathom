@@ -8,6 +8,7 @@ from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
+from fathom.schemas.results import ExecutionResult
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 from fathom.strategies.graph.state import IntentGraphState
 
@@ -69,28 +70,29 @@ class ExecuteNode:
             self.__provider.persistence.persist(result=result)
             return result
 
-        if state.get(IntentStateKey.EXECUTION_BLOCKED):
-            logger.info(
-                "Skipping execution: supervisor blocked the action",
-                extra={
-                    "event": "execute.log",
-                    "component": "graph.intent.execute",
-                    "workflow.id": self.__provider.context.workflow_id,
-                },
-            )
-            return cast("IntentGraphState", {})
-
         context = state.get(IntentStateKey.EXECUTION_CONTEXT)
         if not isinstance(context, ExecutionContext):
+            message = "Execution failed: missing ExecutionContext; SUPERVISE did not commit."
             logger.error(
-                "Missing ExecutionContext; supervise must run first",
+                message,
                 extra={
                     "event": "execute.log",
                     "component": "graph.intent.execute",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
-            return cast("IntentGraphState", {})
+            self.__provider.context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
+            result = cast(
+                "IntentGraphState",
+                {
+                    IntentStateKey.SHOULD_RETRY: False,
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                    CommonStateKey.FAILURE_DIAGNOSTIC: message,
+                },
+            )
+            self.__provider.persistence.persist(result=result)
+            return result
 
         step = context.step
         logger.info(
@@ -141,6 +143,7 @@ class ExecuteNode:
                 package_name=context.package,
                 session_id=self.__provider.context.workflow_id,
                 observation=resolved_observation,
+                is_cancelled=self.__provider.is_cancelled,
             )
 
         logger.info(
@@ -157,6 +160,27 @@ class ExecuteNode:
             }
         )
         result_dict: Dict[Any, Any] = {IntentStateKey.EXECUTION_CONTEXT: updated_context}
+
+        diagnostic = self.__swipe_abort_diagnostic(execution_result=execution_result)
+        if diagnostic is not None:
+            result_dict[IntentStateKey.INJECTED_CONTEXT] = diagnostic
+
         self.__provider.persistence.persist(result=result_dict)
 
-        return result_dict  # type: ignore[return-value]
+        return cast("IntentGraphState", result_dict)
+
+    @staticmethod
+    def __swipe_abort_diagnostic(*, execution_result: ExecutionResult) -> str | None:
+        """
+        Build one analyzer-facing hint when the swipe coordinator aborted with a typed reason.
+        """
+
+        execution = execution_result.swipe_execution
+        if execution is None or execution.aborted_for is None or execution.effective:
+            return None
+
+        return (
+            f"Last swipe aborted ({execution.aborted_for.value}); "
+            f"rejected={len(execution.rejections)} attempts={len(execution.attempts)}. "
+            "Reconsider gesture origin or dismiss any blocking surface before retrying."
+        )

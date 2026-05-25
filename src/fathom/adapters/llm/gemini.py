@@ -144,9 +144,9 @@ class GeminiLLM(LLMPort):
         configured_resolution = str(self.__configuration.media_resolution).lower()
 
         thinking_level_map = {
-            "minimal": types.ThinkingLevel.MINIMAL,
+            "minimal": getattr(types.ThinkingLevel, "MINIMAL", types.ThinkingLevel.LOW),
             "low": types.ThinkingLevel.LOW,
-            "medium": types.ThinkingLevel.MEDIUM,
+            "medium": getattr(types.ThinkingLevel, "MEDIUM", types.ThinkingLevel.HIGH),
             "high": types.ThinkingLevel.HIGH,
         }
         configured_thinking = getattr(self.__configuration, "thinking_level", "low")

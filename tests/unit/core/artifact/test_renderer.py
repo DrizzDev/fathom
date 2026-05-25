@@ -7,6 +7,7 @@ from typing import Tuple
 from PIL import Image
 
 from fathom.constants import ActionType
+from fathom.constants.observation import KeyboardVisibility
 from fathom.core.artifact.renderer import (
     PassthroughRenderer,
     PerceptionRenderer,
@@ -19,6 +20,7 @@ from fathom.schemas.artifact import (
     ArtifactKind,
     ArtifactRecord,
     HierarchyXmlPayload,
+    OcrRawPayload,
     PerceptionPayload,
     ScreenshotPayload,
     ScriptPayload,
@@ -157,6 +159,18 @@ class PassthroughRendererTest(unittest.TestCase):
 
         self.assertEqual(rendered, b"<hierarchy/>")
 
+    def test_ocr_raw_encodes_content_as_utf8(self) -> None:
+        """
+        Raw OCR JSON payloads are encoded to UTF-8 bytes.
+        """
+
+        renderer = PassthroughRenderer(kind=ArtifactKind.OCR_RAW)
+        rendered = renderer.render(
+            record=_Fixtures.record(payload=OcrRawPayload(content='{"text": "Swiggy"}')),
+        )
+
+        self.assertEqual(rendered, b'{"text": "Swiggy"}')
+
     def test_script_encodes_content_as_utf8(self) -> None:
         """
         Script payloads are encoded to UTF-8 bytes.
@@ -212,7 +226,7 @@ class PerceptionRendererTest(unittest.TestCase):
                 ),
             ),
             hashes=_Fixtures.hashes(),
-            keyboard=KeyboardObservation(visible=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
         )
 
         rendered = PerceptionRenderer().render(
@@ -249,7 +263,7 @@ class PerceptionRendererTest(unittest.TestCase):
                     candidates=(),
                 ),
             ),
-            keyboard=KeyboardObservation(visible=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
         )
 
         rendered = PerceptionRenderer().render(

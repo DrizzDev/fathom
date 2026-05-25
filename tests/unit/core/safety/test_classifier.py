@@ -9,8 +9,8 @@ class IntentSafetyClassifierTest(unittest.TestCase):
     """
     Pins the pre-execution intent-safety classifier behaviour.
 
-    The classifier replaces the previous per-step ``SafetyPolicy`` scan
-    that ran inside :class:`RuntimeSupervisor`. Per-step scanning
+    The classifier replaces the previous per-step safety scan.
+    Per-step scanning
     matched ``"wipe"`` inside ``"swipe"`` and blocked every scroll
     gesture; intent-level screening only runs once on the user's stated
     goal so legitimate swipe / type / tap actions cannot be blocked by

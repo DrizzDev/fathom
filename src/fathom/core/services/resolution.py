@@ -110,8 +110,9 @@ class ReferenceResolutionService:
         typed :class:`ResolveResult` carrying the outcome.
 
         Non-spatial actions and successful snaps return ``RESOLVED``.
-        Any other path (missing ``label_id``, label not in manifest, empty / unparsable bounds, snap exception) returns
-        ``UNRESOLVED`` with a short mechanical reason the planner can hand to the recovery coordinator.
+        Any other path (missing ``label_id``, label not in manifest, empty /
+        unparsable bounds, snap exception) returns ``UNRESOLVED`` with a short
+        mechanical reason for the next planner turn.
         """
 
         if action.action_type not in SPATIAL_ACTION_TYPES:
@@ -253,7 +254,7 @@ class ReferenceResolutionService:
                     y=y1,
                     width=width,
                     height=height,
-                    source=CoordinateSource.XML,
+                    source=self.__coordinate_source(element=info),
                     coordinate_system=CoordinateSystem.DEVICE_PIXEL,
                 ),
             }
@@ -308,6 +309,19 @@ class ReferenceResolutionService:
                 return True
 
         return False
+
+    @staticmethod
+    def __coordinate_source(*, element: Dict[str, Any]) -> CoordinateSource:
+        """
+        Preserve the source that contributed the snapped manifest entry.
+        """
+
+        source = str(element.get("source", "")).strip().lower()
+        if source == CoordinateSource.OCR.value:
+            return CoordinateSource.OCR
+        if source in {CoordinateSource.VIEWPORT.value, "cv", "icon", "vision"}:
+            return CoordinateSource.VIEWPORT
+        return CoordinateSource.XML
 
     @staticmethod
     def __build_input_context(*, element: Dict[str, Any]) -> Optional[InputContext]:

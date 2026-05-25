@@ -102,7 +102,6 @@ class RunCommandInput(LocalCommandInput):
     max_steps: int = Field(default=50, ge=1)
     interactive: bool = Field(default=False)
 
-    recovery: bool = Field(default=True)
     realignment_budget: int = Field(default=3, ge=0)
     immediate_realignment: bool = Field(default=True)
 

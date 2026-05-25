@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Literal, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from fathom.schemas.tasks import TaskStatus
 from fathom.schemas.validators import enforce_validate_prefix
 
 CoordSystem = Literal["normalized", "pixel"]
@@ -229,16 +228,6 @@ class GeminiCompletionFlags(BaseModel):
     subgoal_completion_reason: Optional[str] = None
     completion_criteria_met: Optional[Any] = None
     content_exhausted: bool = False
-    task_status: Optional[TaskStatus] = Field(
-        default=None,
-        description=(
-            "Typed verdict on the active execution task — MET when the "
-            "criterion is observably satisfied, PARTIAL when progress was "
-            "made but the criterion is unmet, NOT_MET when neither, "
-            "BLOCKED when the task cannot proceed from the current screen. "
-            "Consumed by CompletionService alongside outcome evidence."
-        ),
-    )
 
 
 class VerifyGoalArgs(GeminiCompletionFlags):
@@ -585,16 +574,4 @@ class AskUserArgs(GeminiCompletionFlags):
     context: str = Field(
         "",
         description="Optional context to help the user answer.",
-    )
-
-
-class ReportUnactionableArgs(GeminiCompletionFlags):
-    """
-    Schema for the report_unactionable tool.
-    """
-
-    reason: str = Field(
-        ...,
-        min_length=1,
-        description="Reason the current screen cannot satisfy the active task.",
     )

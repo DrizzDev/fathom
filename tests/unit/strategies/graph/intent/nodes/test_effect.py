@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 from fathom.constants import ActionType
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
 from fathom.constants.state import IntentStateKey, PlanMetadataKey
 from fathom.schemas.actions import Action
 from fathom.schemas.effect import ActionEffectStatus
-from fathom.schemas.outcomes import OutcomeStatus
+from fathom.schemas.execution import ExecutionContext
+from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.results import PlanResult
-from fathom.schemas.screens import ScreenDiff
+from fathom.schemas.screens import ScreenCapture, ScreenDiff
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.effect import PostAction
 
@@ -183,11 +186,8 @@ class PostActionEffectFromTest(unittest.TestCase):
     """
     Pins :meth:`PostAction.effect_from`.
 
-    The translator maps the action-aware :class:`OutcomeStatus` onto
-    :class:`ActionEffectStatus`. NO_EFFECT and EFFECTIVE must override
-    the diff classification so the prompt-side telemetry matches the
-    supervisor's verdict; any other outcome falls through to the diff-
-    derived effect.
+    The translator now derives effect status from screen diff only; no
+    outcome classifier or supervisor verdict is allowed to rewrite it.
     """
 
     @staticmethod
@@ -205,29 +205,90 @@ class PostActionEffectFromTest(unittest.TestCase):
             activity_changed=False,
         )
 
-    def test_no_effect_outcome_forces_no_progress(self) -> None:
+    def test_effect_is_derived_from_diff_only(self) -> None:
         """
-        OutcomeStatus.NO_EFFECT overrides the diff classification to NO_PROGRESS.
-        """
-
-        effect = PostAction.effect_from(status=OutcomeStatus.NO_EFFECT, diff=self.__diff())
-
-        self.assertEqual(effect.status, ActionEffectStatus.NO_PROGRESS)
-
-    def test_effective_outcome_forces_progress(self) -> None:
-        """
-        OutcomeStatus.EFFECTIVE overrides the diff classification to PROGRESS.
+        A benign diff stays uncertain.
         """
 
-        effect = PostAction.effect_from(status=OutcomeStatus.EFFECTIVE, diff=self.__diff())
-
-        self.assertEqual(effect.status, ActionEffectStatus.PROGRESS)
-
-    def test_unknown_outcome_remains_uncertain(self) -> None:
-        """
-        OutcomeStatus.UNKNOWN must not be collapsed into NO_PROGRESS.
-        """
-
-        effect = PostAction.effect_from(status=OutcomeStatus.UNKNOWN, diff=self.__diff())
+        effect = PostAction.effect_from(diff=self.__diff())
 
         self.assertEqual(effect.status, ActionEffectStatus.UNCERTAIN)
+
+
+class PostActionCancellationTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins cancellation behavior during post-action observation.
+    """
+
+    @staticmethod
+    def __capture(*, image: bytes = b"png") -> ScreenCapture:
+        """
+        Build a screen capture fixture.
+        """
+
+        return ScreenCapture(
+            width=100,
+            height=200,
+            activity="app",
+            image=image,
+            timestamp=1,
+        )
+
+    @staticmethod
+    def __execution_context() -> ExecutionContext:
+        """
+        Build the execution context consumed by :class:`PostAction`.
+        """
+
+        action = Action(
+            action_type=ActionType.TAP,
+            target="Search bar",
+            rationale="Tap search.",
+            confidence=1.0,
+        )
+        step = Step(
+            action=action,
+            screen_hash="0" * 16,
+            step_number=1,
+        )
+        return ExecutionContext(
+            step=step,
+            capture=PostActionCancellationTest.__capture(),
+            localization=LocalizationResult(
+                status=LocalizationStatus.UNRESOLVED,
+                confidence=0.0,
+            ),
+            package="app",
+        )
+
+    async def test_cancellation_after_capture_skips_diff_and_observation(self) -> None:
+        """
+        Once cancellation is visible after capture, expensive perception stages are skipped.
+        """
+
+        context = SimpleNamespace(
+            configuration=SimpleNamespace(engine=SimpleNamespace(stability_wait=0)),
+            perception_port=SimpleNamespace(capture=AsyncMock(return_value=self.__capture())),
+            use_xml=True,
+            is_cancelled=True,
+            workflow_id="wf",
+        )
+        observer = Mock()
+        comparator = Mock()
+        post_action = PostAction(
+            context=context,
+            observer=observer,
+            comparator=comparator,
+        )
+
+        observation, screen_diff, post_hash, post_activity, artifacts = await post_action.observe(
+            context=self.__execution_context(),
+        )
+
+        self.assertIsNone(observation)
+        self.assertIsNone(screen_diff)
+        self.assertEqual(post_hash, "0000000000000000")
+        self.assertEqual(post_activity, "app")
+        self.assertIsNone(artifacts)
+        comparator.compare.assert_not_called()
+        observer.observe.assert_not_called()

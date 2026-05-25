@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple
 
 from fathom.constants.perception import (
     ENSEMBLE_IOU_AGREEMENT_FLOOR,
     ENSEMBLE_MIN_AGREEING_MEMBERS,
+    ENSEMBLE_SINGLE_PROPOSAL_CONFIDENCE_FLOOR,
 )
 from fathom.interfaces.localization import TargetLocalizerPort
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
@@ -16,6 +18,26 @@ from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 
 logger = getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _MemberOutcome:
+    """
+    Result of invoking one localization member.
+    """
+
+    proposal: Optional[LocalizationProposal]
+    failed: bool = False
+
+
+@dataclass(frozen=True)
+class _ProposalCollection:
+    """
+    Aggregated localizer proposals and member health.
+    """
+
+    proposals: List[LocalizationProposal]
+    failed_members: int = 0
 
 
 class EnsembleLocalizerService:
@@ -76,13 +98,30 @@ class EnsembleLocalizerService:
             },
         )
 
-        proposals = await self.__collect_proposals(
+        collection = await self.__collect_proposals(
             action=action,
             observation=observation,
             capture=capture,
             budget=budget,
         )
+        proposals = collection.proposals
         if len(proposals) < self.__minimum_agreeing:
+            if single := self.__single_confident_proposal(
+                proposals=proposals,
+                failed_members=collection.failed_members,
+                budget=budget,
+            ):
+                logger.info(
+                    "Ensemble accepted single high-confidence proposal",
+                    extra={
+                        **context,
+                        "event": "ensemble.locate.single_confident",
+                        "proposal.source": single.source,
+                        "proposal.confidence": single.confidence,
+                    },
+                )
+                return single
+
             self.__log_disagreement(
                 context=context,
                 proposals=proposals,
@@ -126,9 +165,9 @@ class EnsembleLocalizerService:
         observation: ScreenObservation,
         capture: ScreenCapture,
         budget: LocalizationBudget,
-    ) -> List[LocalizationProposal]:
+    ) -> _ProposalCollection:
         """
-        Invoke every member concurrently, drop timeouts and exceptions.
+        Invoke every member concurrently and retain member failure state.
         """
 
         coroutines = [
@@ -142,7 +181,31 @@ class EnsembleLocalizerService:
             for member in self.__members
         ]
         outcomes = await asyncio.gather(*coroutines, return_exceptions=False)
-        return [outcome for outcome in outcomes if outcome is not None]
+        return _ProposalCollection(
+            proposals=[outcome.proposal for outcome in outcomes if outcome.proposal is not None],
+            failed_members=sum(1 for outcome in outcomes if outcome.failed),
+        )
+
+    @staticmethod
+    def __single_confident_proposal(
+        *,
+        proposals: List[LocalizationProposal],
+        failed_members: int,
+        budget: LocalizationBudget,
+    ) -> Optional[LocalizationProposal]:
+        """
+        Return a lone proposal only when it is above the high-confidence floor.
+        """
+
+        if len(proposals) != 1 or failed_members > 0:
+            return None
+
+        proposal = proposals[0]
+        floor = max(budget.threshold, ENSEMBLE_SINGLE_PROPOSAL_CONFIDENCE_FLOOR)
+        if proposal.confidence < floor:
+            return None
+
+        return proposal
 
     async def __invoke_member(
         self,
@@ -152,7 +215,7 @@ class EnsembleLocalizerService:
         observation: ScreenObservation,
         capture: ScreenCapture,
         budget: LocalizationBudget,
-    ) -> Optional[LocalizationProposal]:
+    ) -> _MemberOutcome:
         """
         Call one member with its own wait_for window, isolating its failures.
         """
@@ -160,7 +223,7 @@ class EnsembleLocalizerService:
         timeout = max(0.001, budget.local / 1000.0)
         context = self.__log_context(activity=capture.activity, target="")
         try:
-            return await asyncio.wait_for(
+            proposal = await asyncio.wait_for(
                 member.locate(
                     action=action,
                     budget=budget,
@@ -169,6 +232,7 @@ class EnsembleLocalizerService:
                 ),
                 timeout=timeout,
             )
+            return _MemberOutcome(proposal=proposal)
         except asyncio.TimeoutError:
             logger.warning(
                 "Ensemble member timed out",
@@ -179,7 +243,7 @@ class EnsembleLocalizerService:
                     "event": "ensemble.member.timeout",
                 },
             )
-            return None
+            return _MemberOutcome(proposal=None, failed=True)
         except Exception:
             # Localization is an optional, fail-soft enrichment;
             # log the full traceback and let other members vote.
@@ -191,7 +255,7 @@ class EnsembleLocalizerService:
                     "event": "ensemble.member.error",
                 },
             )
-            return None
+            return _MemberOutcome(proposal=None, failed=True)
 
     def __strongest_cluster(
         self,

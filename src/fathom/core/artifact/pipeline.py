@@ -258,6 +258,8 @@ class ArtifactPipeline:
 
         if kind == ArtifactKind.HIERARCHY_XML:
             return "xml"
+        if kind == ArtifactKind.OCR_RAW:
+            return "json"
         if kind == ArtifactKind.SCRIPT:
             return "txt"
         return "png"

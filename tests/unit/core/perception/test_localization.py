@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from fathom.constants import ActionType
+from fathom.constants.observation import KeyboardVisibility
 from fathom.core.perception.localization import TargetLocalizationService
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
@@ -61,7 +62,7 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
                 interaction_hash="0" * 16,
             ),
             elements=elements,
-            keyboard=KeyboardObservation(visible=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
         )
 
     async def test_runtime_identifier_resolves(self) -> None:

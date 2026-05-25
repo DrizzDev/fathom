@@ -6,16 +6,11 @@ import time
 from typing import Any, Dict, Optional, cast
 
 from fathom.constants import FathomEvent
-from fathom.constants.command import CommandExecutionMode
 from fathom.constants.runtime import DEFAULT_COMPLETE_DEFERRAL_BUDGET
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
-from fathom.core.recovery import (
-    RecoveryTrigger,
-)
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
-from fathom.strategies.graph.intent.nodes.recovery import RecoveryDispatcher
 from fathom.strategies.graph.state import IntentGraphState
 
 logger = logging.getLogger(__name__)
@@ -162,8 +157,6 @@ class AnalyzeNode:
             )
             observation = state.get(CommonStateKey.SCREEN_OBSERVATION)
 
-            last_block_reason = state.get(IntentStateKey.LAST_BLOCK_REASON)
-            last_block_message = state.get(IntentStateKey.LAST_BLOCK_MESSAGE)
             plan = await self.__provider.context.planner.plan_step(
                 capture=capture,
                 elements=elements,
@@ -174,20 +167,10 @@ class AnalyzeNode:
                 screen_height=height,
                 interactive_mode=is_interactive,
                 prompt_if_stuck=prompt_if_stuck,
-                strict_mode=(
-                    self.__provider.context.configuration.intent.command_mode
-                    is CommandExecutionMode.STRICT
-                ),
                 use_xml=self.__provider.context.use_xml,
                 reasoner=self.__provider.context.reasoner,
                 state=self.__provider.context.agent_state,
                 context_manager=self.__provider.context.context_manager,
-                last_block_reason=(
-                    last_block_reason if isinstance(last_block_reason, str) else None
-                ),
-                last_block_message=(
-                    last_block_message if isinstance(last_block_message, str) else None
-                ),
             )
 
             duration = time.time() - start_time
@@ -226,39 +209,6 @@ class AnalyzeNode:
                     f"No step planned: is_complete={plan.is_complete}, "
                     f"should_retry={plan.should_retry}, reason={plan.reason}"
                 )
-
-            # ACTION_BLOCKED: planner already set rejection_history (the LLM
-            # sees its own rejected tool call on the next vision turn). Just
-            # signal the recovery coordinator — the coordinator owns
-            # thresholds and dispatch.
-            blocked_action = (plan.metadata or {}).get("blocked_action")
-
-            if plan.reason == CompletionReason.ACTION_BLOCKED.value:
-                recovered = await self.__provider.recovery.try_recover(
-                    capture=capture,
-                    trigger=RecoveryTrigger.ACTION_BLOCKED,
-                    hint=blocked_action if isinstance(blocked_action, str) else None,
-                    reason="Planner emitted ACTION_BLOCKED; previously-planned approach unreachable from current screen.",
-                )
-                if recovered is not None:
-                    return recovered
-
-            # REQUEST_REPLAN: agent emitted a typed escape report against the active sub-goal.
-            # The replan-categorized reports route here; human-categorized reports are surfaced as ASK_USER
-            # steps in the planner and never reach this branch. The escape_report is forwarded so the decomposer preamble can vary per category.
-            if plan.reason == CompletionReason.REQUEST_REPLAN.value:
-                escape_report = RecoveryDispatcher.extract_escape_report(metadata=plan.metadata)
-
-                if escape_report is not None:
-                    recovered = await self.__provider.recovery.try_recover(
-                        hint=None,
-                        capture=capture,
-                        escape_report=escape_report,
-                        reason=escape_report.detail,
-                        trigger=RecoveryTrigger.REQUEST_REPLAN,
-                    )
-                    if recovered is not None:
-                        return recovered
 
             logger.info(
                 f"Analysis completed in {duration:.2f}s: "
@@ -401,13 +351,16 @@ class AnalyzeNode:
                 f"Analysis failed: {exception}",
                 step=self.__provider.context.agent_state.step_count + 1,
             )
-            # Return retry state to attempt recovery
+            self.__provider.context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
             result = cast(
                 "IntentGraphState",
                 {
-                    IntentStateKey.SHOULD_RETRY: True,
+                    IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.ANALYSIS_DURATION: 0.0,
                     IntentStateKey.INJECTED_CONTEXT: None,
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                    CommonStateKey.FAILURE_DIAGNOSTIC: f"Analysis failed: {exception}",
                 },
             )
             self.__provider.persistence.persist(result=result)

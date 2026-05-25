@@ -204,6 +204,7 @@ class AdapterAssembly:
             ArtifactKind.SCREENSHOT: PassthroughRenderer(kind=ArtifactKind.SCREENSHOT),
             ArtifactKind.ANNOTATED: PassthroughRenderer(kind=ArtifactKind.ANNOTATED),
             ArtifactKind.HIERARCHY_XML: PassthroughRenderer(kind=ArtifactKind.HIERARCHY_XML),
+            ArtifactKind.OCR_RAW: PassthroughRenderer(kind=ArtifactKind.OCR_RAW),
             ArtifactKind.SCRIPT: PassthroughRenderer(kind=ArtifactKind.SCRIPT),
             ArtifactKind.PERCEPTION: PerceptionRenderer(drawer=drawer),
             ArtifactKind.OCR_PERCEPTION: SourceFilteredPerceptionRenderer(

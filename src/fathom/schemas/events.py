@@ -17,12 +17,9 @@ class RuntimeEventKind(StrEnum):
     ACTION_EXECUTED = "action.executed"
     ACTION_SUPERVISED = "action.supervised"
 
-    HEALING_DECIDED = "healing.decided"
     OUTCOME_OBSERVED = "outcome.observed"
-    HEALING_REQUESTED = "healing.requested"
 
     TASK_UPDATED = "task.updated"
-    RECOVERY_DISPATCHED = "recovery.dispatched"
     VERIFICATION_COMPLETED = "verification.completed"
 
 

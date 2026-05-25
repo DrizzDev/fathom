@@ -17,8 +17,8 @@ from fathom.constants.screen import (
     MIN_SCREENS_FOR_NEAR_DUPLICATE,
 )
 from fathom.constants.state import CompletionReason
-from fathom.core.recovery.ladder import RecoveryActionLadder
-from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState, TargetIdentity
+from fathom.core.agent.ladder import LoopActionLadder
+from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState
 from fathom.schemas.actions import Action
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.effect import ActionEffect
@@ -84,7 +84,7 @@ class AgentState:
             loop_window=context_window,
             realignment_budget=realignment_budget,
         )
-        self.__recovery_ladder = RecoveryActionLadder()
+        self.__loop_action_ladder = LoopActionLadder()
 
         self.__is_complete = False
         self.__completion_reason: Optional[str] = None
@@ -223,21 +223,24 @@ class AgentState:
         Whether the agent can continue execution.
         """
 
+        return self.can_continue_with(interactive_mode=False)
+
+    def can_continue_with(self, *, interactive_mode: bool) -> bool:
+        """
+        Return whether execution can continue under the active interaction mode.
+        """
+
         if self.__is_complete:
             return False
 
         if self.__step_count >= self.__max_steps:
             return False
 
-        # If stuck, evaluate based on recovery mode
         if self.is_stuck:
-            # We fail if BOTH budgets are exhausted or relevant budget is exhausted.
-            # In interactive mode, we only care about realignment budget.
-            if self.__runtime.realignment.count >= self.__runtime.realignment.budget:
-                return False
+            if interactive_mode:
+                return not self.__runtime.realignment.exhausted()
 
-            # Autonomous budget (used in non-interactive mode)
-            return bool(self.__runtime.screen.detector.can_recover())
+            return self.__runtime.screen.detector.can_recover()
 
         return True
 
@@ -443,17 +446,6 @@ class AgentState:
             activity=activity,
             recorded_step_count=self.__step_count,
         )
-        return self.__verification_loop
-
-    def mark_verify_recovery_attempted(self) -> Optional[VerificationLoopState]:
-        """
-        Mark the active verifier loop as having already attempted recovery.
-        """
-
-        if self.__verification_loop is None:
-            return None
-
-        self.__verification_loop = self.__verification_loop.mark_recovery_attempted()
         return self.__verification_loop
 
     def clear_verification_loop(self) -> None:
@@ -673,7 +665,7 @@ class AgentState:
     def current_sub_goal_action_count(self) -> int:
         """
         Number of actions executed against the active sub-goal.
-        Reset to zero on sub-goal advance and on replan.
+        Reset to zero on sub-goal advance.
         """
 
         return self.__sub_goal_action_count
@@ -694,59 +686,6 @@ class AgentState:
             return False
 
         return self.__sub_goal_action_count >= current.max_steps
-
-    def replan_pending_sub_goals(self, *, new_sub_goals: List[SubGoal]) -> None:
-        """
-        Replace every unfinished sub-goal with ``new_sub_goals``
-        (preserving completed work) and mark the first new sub-goal IN_PROGRESS.
-
-        Preserves the per-sub-goal action counter when the new first sub-goal names the same target as the previously active sub-goal.
-        A cosmetic replan that does not change the imperative the agent is attempting. The counter must accumulate across cosmetic replans
-        so ``SUBGOAL_BUDGET_EXCEEDED`` can fire when the same target is retried repeatedly under ``TARGET_UNRESOLVED`` (or any other repeat-triggering signal).
-        """
-
-        previous_active = self.get_current_sub_goal()
-        completed = [goal for goal in self.__sub_goals if goal.is_complete()]
-
-        reindexed = [
-            goal.model_copy(update={"index": len(completed) + offset})
-            for offset, goal in enumerate(new_sub_goals)
-        ]
-
-        self.__sub_goals = completed + reindexed
-        self.__current_sub_goal_index = len(completed)
-        self.__runtime.tasks.load(
-            tasks=ExecutionTaskAdapter().from_sub_goals(sub_goals=self.__sub_goals),
-        )
-        for _ in range(self.__current_sub_goal_index):
-            self.__runtime.tasks.advance()
-
-        same_target = (
-            bool(reindexed)
-            and previous_active is not None
-            and TargetIdentity.describes_same_target(
-                previous=previous_active.description,
-                replacement=reindexed[0].description,
-            )
-        )
-        if not same_target:
-            self.__sub_goal_action_count = 0
-
-        if self.__current_sub_goal_index < len(self.__sub_goals):
-            current = self.__sub_goals[self.__current_sub_goal_index]
-            current.mark_in_progress()
-            logger.info(
-                "[AgentState] Replanned",
-                extra={
-                    "event": "replanned",
-                    "kept": len(completed),
-                    "component": "agent.state",
-                    "replaced": len(reindexed),
-                    "counter_preserved": same_target,
-                    "current": current.description[:60],
-                    "sub_goal_action_count": self.__sub_goal_action_count,
-                },
-            )
 
     def all_sub_goals_complete(self) -> bool:
         """
@@ -799,7 +738,7 @@ class AgentState:
         Get the next mechanical recovery action when the agent is stuck.
         """
 
-        return self.__recovery_ladder.next(detector=self.__runtime.screen.detector)
+        return self.__loop_action_ladder.next(detector=self.__runtime.screen.detector)
 
     def record_recovery_attempt(self) -> int:
         """
@@ -1018,10 +957,31 @@ class AgentState:
             "without progress. Try a different approach to achieve the same goal."
         )
 
+    def record_blocked_action(
+        self,
+        *,
+        action: Action,
+        reason: str,
+        block_reason: BlockReason,
+    ) -> None:
+        """
+        Record a deterministically blocked action as failure context.
+        """
+
+        activity = (
+            self.__runtime.screen.current.activity if self.__runtime.screen.current else "unknown"
+        )
+        self.__action_history.record_action(action=action, success=False, activity=activity)
+        self.__runtime.failures.record(
+            action=action,
+            reason=block_reason,
+            detail=reason,
+        )
+        self.set_last_error(reason)
+
     def is_action_repeating_on_screen(self, action: Action) -> bool:
         """
         Check if a tap/type action has been executed 3+ times on the current screen.
-        Triggers replanning to break out of ineffective action loops.
 
         Args:
             action: Proposed action.
@@ -1055,7 +1015,6 @@ class AgentState:
             "completion_reason": self.__completion_reason,
             "realignment_budget": self.__runtime.realignment.budget,
             "realignment_state": self.__runtime.realignment.to_state(),
-            "healing_state": self.__runtime.healing.to_state(),
             "last_delta_score": self.__last_delta_score,
             "low_delta_streak": self.__low_delta_streak,
             "seen_screens": [screen.model_dump() for screen in self.__runtime.screen.seen],
@@ -1098,7 +1057,6 @@ class AgentState:
         consecutive_complete_deferrals: int = 0,
         verification_loop: Optional[VerificationLoopState] = None,
         realignment_state: Optional[Dict[str, Any]] = None,
-        healing_state: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -1115,9 +1073,6 @@ class AgentState:
         else:
             for _ in range(max(0, realignment_count - self.__runtime.realignment.count)):
                 self.__runtime.realignment.record()
-
-        if healing_state is not None:
-            self.__runtime.healing.load_state(state=healing_state)
 
         self.__last_delta_score = last_delta_score
         self.__low_delta_streak = max(0, low_delta_streak)
@@ -1255,9 +1210,6 @@ class AgentState:
             dict(realignment_state_raw) if isinstance(realignment_state_raw, dict) else None
         )
 
-        healing_state_raw = data.get("healing_state")
-        healing_state = dict(healing_state_raw) if isinstance(healing_state_raw, dict) else None
-
         state.__restore_from_data(
             sub_goals=sub_goals,
             step_count=step_count,
@@ -1268,7 +1220,6 @@ class AgentState:
             completion_reason=completion_reason,
             realignment_count=realignment_count,
             realignment_state=realignment_state,
-            healing_state=healing_state,
             current_sub_goal_index=current_sub_goal_index,
             loop_detector_state=loop_detector_state,
             recent_effects=recent_effects,

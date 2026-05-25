@@ -24,6 +24,7 @@ from fathom.schemas.artifact import (
     ArtifactMetadata,
     ArtifactReceipt,
     ArtifactRecord,
+    OcrRawPayload,
     PipelineConfig,
     ScreenshotPayload,
 )
@@ -193,6 +194,39 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
             payloads = list(screenshot_dir.rglob("step-000__screenshot__*.png"))
             self.assertEqual(len(payloads), 1)
             self.assertTrue(payloads[0].read_bytes())
+
+    async def test_emit_writes_ocr_raw_json_to_xmls_directory(self) -> None:
+        """
+        Raw OCR artifacts share the hierarchy/XML directory and use .json.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sink = _RecordingSink(cleanup=False)
+            pipeline = ArtifactPipeline(
+                config=PipelineConfig(),
+                renderers={
+                    ArtifactKind.OCR_RAW: PassthroughRenderer(kind=ArtifactKind.OCR_RAW),
+                },
+                sink=sink,
+                path_manager=_path_manager(tmp=tmp_path),
+                workflow_id="run-test",
+            )
+
+            await pipeline.emit(
+                record=ArtifactRecord(
+                    session_id="run-test",
+                    package_name="app",
+                    step_number=0,
+                    created=1_700_000_000_000,
+                    payload=OcrRawPayload(content='{"text": "Swiggy"}'),
+                )
+            )
+            await pipeline.drain()
+
+            payloads = list(tmp_path.rglob("xmls/**/step-000__ocr_raw__*.json"))
+            self.assertEqual(len(payloads), 1)
+            self.assertEqual(payloads[0].read_text(), '{"text": "Swiggy"}')
 
     async def test_emit_drops_record_when_kind_has_no_renderer(self) -> None:
         """

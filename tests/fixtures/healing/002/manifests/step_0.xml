@@ -1,5 +1,0 @@
-<hierarchy>
-  <node class="android.widget.FrameLayout" bounds="[0,0][1206,2622]">
-    <node class="android.widget.EditText" label="L3" bounds="[36,180][1170,300]" clickable="true" text="Search for restaurants and food"/>
-  </node>
-</hierarchy>

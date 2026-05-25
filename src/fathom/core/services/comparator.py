@@ -83,9 +83,8 @@ class ScreenComparator:
         scroll: Optional[ScreenScrollTranslation]
         if self.__frames_effectively_identical(ssim_score=ssim_score, pixel_diff=pixel_diff):
             # Phase correlation on near-identical frames returns small
-            # DC-noise shifts (~0.5 px) that the OutcomeClassifier mis-reads
-            # as a real scroll. Short-circuit to zero translation so no-op
-            # actions cannot be promoted to EFFECTIVE on bogus evidence.
+            # DC-noise shifts (~0.5 px). Short-circuit to zero translation
+            # so no-op actions do not produce bogus scroll evidence.
             scroll = ScreenScrollTranslation(dx=0.0, dy=0.0)
         else:
             scroll = self.__compute_scroll_translation(after=after.image, before=before.image)

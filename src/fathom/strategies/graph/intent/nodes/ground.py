@@ -239,33 +239,29 @@ class GroundNode:
                 hashes=capture_hashes,
                 elements=hierarchy_result.labeled_elements,
             )
-            if elements is not None:
-                # Append text-bearing perception elements (OCR / icon /
-                # vision) onto the manifest so the planner can bind a
-                # label_id against any visible text the XML missed.
-                merge_result = ManifestMerger.merge(
-                    label_map=elements,
-                    observation=screen_observation,
-                )
-                elements = merge_result.label_map
+            # Append text-bearing perception elements (OCR / icon / vision)
+            # onto the planner manifest. This must run even when XML is
+            # unavailable: OCR exists specifically to provide label anchors in
+            # that failure mode.
+            merge_result = ManifestMerger.merge(
+                label_map=elements or {},
+                observation=screen_observation,
+            )
+            elements = merge_result.label_map
 
-                # Whenever the merger actually appended perception entries
-                # (XML grounding wasn't enough on its own), overlay those
-                # boxes onto the LLM-facing annotated image so every
-                # ``label_id`` in the manifest corresponds to a visible
-                # box. Without this overlay the LLM saw labels in the
-                # manifest text that had no anchor in the screenshot —
-                # the classic vision/text mismatch that drives label_id
-                # hallucinations.
-                if merge_result.appended and screen.annotated_image:
-                    overlaid_bytes = ImageAnnotator.overlay_perception_boxes(
-                        image_bytes=screen.annotated_image,
-                        entries=list(merge_result.appended),
+            # Whenever the merger actually appended perception entries, draw
+            # the same numeric labels onto the LLM-facing image. If XML did not
+            # produce an annotated image, start from the raw screenshot.
+            if merge_result.appended:
+                base_image = screen.annotated_image or screen.image
+                overlaid_bytes = ImageAnnotator.overlay_perception_boxes(
+                    image_bytes=base_image,
+                    entries=list(merge_result.appended),
+                )
+                if overlaid_bytes and overlaid_bytes is not screen.annotated_image:
+                    screen = screen.model_copy(
+                        update={"annotated_image": overlaid_bytes},
                     )
-                    if overlaid_bytes and overlaid_bytes is not screen.annotated_image:
-                        screen = screen.model_copy(
-                            update={"annotated_image": overlaid_bytes},
-                        )
             screen = screen.model_copy(update={"state": screen_state})
 
             is_new_screen = self.__provider.context.agent_state.update_screen(screen=screen_state)

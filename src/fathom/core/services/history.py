@@ -473,9 +473,9 @@ class HistoryService:
             lines.append(f"  center: {step.get('center')}")
 
             meta = step["metadata"]
-            rationale = str(object=meta.get("rationale", "")).replace('"', '\\"')
+            rationale = str(meta.get("rationale", "")).replace('"', '\\"')
             lines.append("  metadata:")
-            lines.append(f"    success: {str(object=meta.get('success')).lower()}")
+            lines.append(f"    success: {str(meta.get('success')).lower()}")
             lines.append(f"    duration: {meta.get('duration')}")
             lines.append(f"    timestamp: {meta.get('timestamp')}")
             lines.append(f'    rationale: "{rationale}"')

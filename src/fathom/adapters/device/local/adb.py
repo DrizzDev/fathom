@@ -6,9 +6,21 @@ from logging import getLogger
 from typing import List, Optional, Tuple
 
 from fathom.constants.interaction import SwipeSpeed
-from fathom.constants.platform import AndroidClearStrategy, AndroidKeycode, DevicePlatform
+from fathom.constants.observation import KeyboardVisibility
+from fathom.constants.platform import (
+    ANDROID_UIAUTOMATION_ACTIVE_MARKER,
+    ANDROID_UIAUTOMATION_DUMP_PATH,
+    ANDROID_UIAUTOMATION_INSTRUMENTATION_MARKER,
+    ANDROID_UIAUTOMATION_PROCESS_NAME,
+    ANDROID_UIAUTOMATION_TIMEOUT_MARKER,
+    ANDROID_UIAUTOMATION_UIAUTOMATOR_MARKER,
+    AndroidClearStrategy,
+    AndroidKeycode,
+    DevicePlatform,
+)
 from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
+from fathom.schemas.actions import Bounds, CoordinateSystem
 from fathom.schemas.configuration import (
     ADBConfiguration,
     DeviceRuntimeConfiguration,
@@ -17,6 +29,7 @@ from fathom.schemas.configuration import (
     ScrollInteractionPolicy,
     SwipeInteractionPolicy,
 )
+from fathom.schemas.observation import KeyboardObservation
 from fathom.schemas.results import ActionResult
 
 logger = getLogger(__name__)
@@ -73,18 +86,13 @@ class ADBDevice(DevicePort):
                         maximum_edge_margin=(
                             self.__configuration.interaction.policy.scroll.maximum_edge_margin
                         ),
-                        adaptive=ScrollInteractionPolicy.AdaptivePolicy(
-                            enabled=self.__configuration.interaction.policy.scroll.adaptive.enabled,
-                            maximum_attempts=self.__configuration.interaction.policy.scroll.adaptive.maximum_attempts,
-                            verify=self.__configuration.interaction.policy.scroll.adaptive.verify,
-                            suspicious_bottom_ratio=self.__configuration.interaction.policy.scroll.adaptive.suspicious_bottom_ratio,
-                        ),
                     ),
                 )
             ),
             metadata={"executable_path": self.__configuration.executable_path},
         )
         self.__cached_size: Optional[Tuple[int, int]] = None
+        self.__hierarchy_lock = asyncio.Lock()
 
     @property
     def configuration(self) -> DeviceRuntimeConfiguration:
@@ -99,7 +107,7 @@ class ADBDevice(DevicePort):
         Execute tap at coordinates.
         """
 
-        return await self.__shell(command=f"input tap {x} {y}")
+        return await self.__shell(command=f"input touchscreen tap {x} {y}")
 
     async def type(
         self,
@@ -214,7 +222,7 @@ class ADBDevice(DevicePort):
             self.__configuration.interaction.policy.swipe.duration if self.__configuration else 300
         )
 
-        return await self.__shell(command=f"input swipe {x1} {y1} {x2} {y2} {duration}")
+        return await self.__shell(command=f"input touchscreen swipe {x1} {y1} {x2} {y2} {duration}")
 
     async def back(self) -> ActionResult:
         """
@@ -229,6 +237,13 @@ class ADBDevice(DevicePort):
         """
 
         return await self.__keyevent(keycode=3)
+
+    async def enter(self) -> ActionResult:
+        """
+        Press the Android enter/search keyboard key.
+        """
+
+        return await self.__keyevent(keycode=AndroidKeycode.ENTER)
 
     async def __run_safe_subprocess(
         self,
@@ -382,32 +397,100 @@ class ADBDevice(DevicePort):
         except Exception:
             return False
 
+    async def detect_keyboard(self) -> KeyboardObservation:
+        """
+        Detect soft-keyboard state via ``dumpsys`` and parse the touch-absorbing rectangle.
+        """
+
+        try:
+            shown = await self.__keyboard_shown()
+            if shown is None:
+                return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
+            if not shown:
+                return KeyboardObservation(visibility=KeyboardVisibility.HIDDEN)
+            bounds = await self.__keyboard_bounds()
+            return KeyboardObservation(visibility=KeyboardVisibility.VISIBLE, bounds=bounds)
+        except Exception as exception:
+            logger.warning(f"ADB detect_keyboard failed: {exception}")
+            return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
+
+    async def __keyboard_shown(self) -> Optional[bool]:
+        """
+        Parse ``mInputShown=`` from ``dumpsys input_method``; None when the command fails.
+        """
+
+        result = await self.__shell(command="dumpsys input_method", capture_output=True)
+        if not result.success or not result.output:
+            return None
+        match = re.search(r"mInputShown=(true|false)", result.output)
+        if match is None:
+            return None
+        return match.group(1) == "true"
+
+    async def __keyboard_bounds(self) -> Optional[Bounds]:
+        """
+        Parse the touch-absorbing rectangle from ``dumpsys window InputMethod``.
+        """
+
+        result = await self.__shell(command="dumpsys window InputMethod", capture_output=True)
+        if not result.success or not result.output:
+            return None
+        match = re.search(
+            r"touchable region=SkRegion\(\((\d+),(\d+),(\d+),(\d+)\)\)",
+            result.output,
+        )
+        if match is None:
+            return None
+        left, top, right, bottom = (int(group) for group in match.groups())
+        width = max(0, right - left)
+        height = max(0, bottom - top)
+        if width == 0 or height == 0:
+            return None
+        return Bounds(
+            x=left,
+            y=top,
+            width=width,
+            height=height,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
+
     async def dump_hierarchy(self) -> Optional[str]:
         """
         Dump UI hierarchy to XML string.
         Attempts compressed dump first, with fallback to uncompressed and process cleanup.
         """
 
-        path = "/data/local/tmp/window_dump.xml"
+        async with self.__hierarchy_lock:
+            return await self.__dump_hierarchy_locked()
+
+    async def __dump_hierarchy_locked(self) -> Optional[str]:
+        """
+        Dump UI hierarchy while holding the per-adapter UiAutomation lock.
+        """
+
+        path = ANDROID_UIAUTOMATION_DUMP_PATH
+
+        await self.__recover_stale_ui_automation(reason="pre_dump")
 
         # Ensure we don't read a stale file
         await self.__shell(command=f"rm -f {path}")
 
-        dump_command = f"uiautomator dump --compressed {path}"
-        dump_result = await self.__shell(command=dump_command)
+        dump_result = await self.__run_uiautomator_dump(path=path, compressed=True)
 
         if not dump_result.success:
+            if self.__uiautomator_timed_out(result=dump_result):
+                raise DeviceError(
+                    f"Dump hierarchy: compressed UI automation dump timed out: {dump_result.error or 'Unknown error'}"
+                )
+
             logger.warning(
                 f"Compressed dump failed: {dump_result.error}. Attempting recovery and fallback."
             )
-            # Device-side recovery: forcefully kill hung uiautomator service
-            await self.__shell(command="pkill -9 uiautomator")
-
-            # Fallback to uncompressed dump
-            fallback_command = f"uiautomator dump {path}"
-            dump_result = await self.__shell(command=fallback_command)
+            await self.__recover_stale_ui_automation(reason="compressed_dump_failed")
+            dump_result = await self.__run_uiautomator_dump(path=path, compressed=False)
 
             if not dump_result.success:
+                await self.__recover_stale_ui_automation(reason="fallback_dump_failed")
                 raise DeviceError(
                     f"Dump hierarchy: UI automation dump failed on device after fallback: {dump_result.error or 'Unknown error'}"
                 )
@@ -437,6 +520,81 @@ class ADBDevice(DevicePort):
             raise DeviceError(
                 f"Dump hierarchy: Unexpected error during XML retrieval: {exception}"
             ) from exception
+
+    async def __run_uiautomator_dump(self, *, path: str, compressed: bool) -> ActionResult:
+        """
+        Run one uiautomator dump attempt.
+        """
+
+        compression = " --compressed" if compressed else ""
+        return await self.__shell(command=f"uiautomator dump{compression} {path}")
+
+    @staticmethod
+    def __uiautomator_timed_out(*, result: ActionResult) -> bool:
+        """
+        Return whether a dump result failed because the device command timed out.
+        """
+
+        return bool(result.error and ANDROID_UIAUTOMATION_TIMEOUT_MARKER in result.error.lower())
+
+    async def __recover_stale_ui_automation(self, *, reason: str) -> None:
+        """
+        Release stale UiAutomation holders left by shell instrumentation or failed dumps.
+
+        Android exposes only one UiAutomation registration at a time. A
+        previous ``am instrument`` process can hold that slot forever,
+        causing every later ``uiautomator dump`` to crash with
+        "UiAutomationService ... already registered". Kill only shell
+        ``app_process`` commands that are known UiAutomation holders.
+        """
+
+        state = await self.__shell(command="dumpsys accessibility", capture_output=True)
+        if (
+            not state.success
+            or not state.output
+            or ANDROID_UIAUTOMATION_ACTIVE_MARKER not in state.output
+        ):
+            return
+
+        logger.warning(
+            "Active UiAutomation registration detected before hierarchy dump; recovering.",
+            extra={
+                "component": "adapter.device.local.adb",
+                "event": "adb.uiautomation.recovery.started",
+                "reason": reason,
+            },
+        )
+
+        cleanup = await self.__shell(command=self.__ui_automation_cleanup_command())
+        if not cleanup.success:
+            logger.warning(
+                "UiAutomation recovery command failed: %s",
+                cleanup.error,
+                extra={
+                    "component": "adapter.device.local.adb",
+                    "event": "adb.uiautomation.recovery.failed",
+                    "reason": reason,
+                },
+            )
+
+        await asyncio.sleep(0.2)
+
+    @staticmethod
+    def __ui_automation_cleanup_command() -> str:
+        """
+        Return a shell command that kills only known stale UiAutomation holders.
+        """
+
+        return (
+            f"for pid in $(pidof {ANDROID_UIAUTOMATION_PROCESS_NAME}); do "
+            'cmdline=$(tr "\\0" " " < /proc/$pid/cmdline 2>/dev/null); '
+            f'case "$cmdline" in '
+            f'*"{ANDROID_UIAUTOMATION_INSTRUMENTATION_MARKER}"*|'
+            f'*"{ANDROID_UIAUTOMATION_UIAUTOMATOR_MARKER}"*) '
+            'kill -9 "$pid";; '
+            "esac; "
+            "done"
+        )
 
     async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """
@@ -484,7 +642,11 @@ class ADBDevice(DevicePort):
             duration = int((asyncio.get_event_loop().time() - start_time) * 1000)
 
             if returncode != 0:
-                error_message = stderr.decode().strip() if stderr else "Failed"
+                error_message = (
+                    stderr.decode().strip()
+                    if stderr
+                    else f"ADB shell command exited with code {returncode}"
+                )
                 return ActionResult(success=False, error=error_message, duration=duration)
 
             return ActionResult(

@@ -14,11 +14,10 @@ from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.context.manager import ContextManager
-from fathom.core.healing import HealingOrchestrator
 from fathom.core.localization import EnsembleLocalizerService
 from fathom.core.perception.localization import TargetLocalizationService
 from fathom.core.perception.observation import ScreenObservationService
-from fathom.core.runtime import CompletionService, RuntimeEventEmitter
+from fathom.core.runtime import RuntimeEventEmitter
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.audit import AuditService
 from fathom.core.services.comparator import ScreenComparator
@@ -30,7 +29,6 @@ from fathom.core.services.perception import PerceptionService
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
-from fathom.core.supervision import OutcomeClassifier, RuntimeSupervisor
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.icon import IconDetectorPort
 from fathom.interfaces.journal import RuntimeJournalPort
@@ -49,7 +47,6 @@ from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.perception import PerceptionConfiguration  # noqa: TC001
-from fathom.schemas.recovery import RecoveryPolicy
 from fathom.schemas.run import RealignmentPolicy
 
 logger = logging.getLogger(__name__)
@@ -89,7 +86,6 @@ class GraphContext:
         icons: Optional[IconDetectorPort] = None,
         agent_state: Optional[AgentState] = None,
         history: Optional[HistoryService] = None,
-        recovery: Optional[RecoveryPolicy] = None,
         knowledge: Optional[KnowledgePort] = None,
         metrics: Optional[ExecutionMetrics] = None,
         cancel_event: Optional[asyncio.Event] = None,
@@ -103,12 +99,8 @@ class GraphContext:
         pixel_overlay: Optional[OverlayDetectorPort] = None,
         ensemble: Optional[EnsembleLocalizerService] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
-        runtime_supervisor: Optional[RuntimeSupervisor] = None,
-        outcome_classifier: Optional[OutcomeClassifier] = None,
-        completion_service: Optional[CompletionService] = None,
         perception_service: Optional[PerceptionService] = None,
         resolution: Optional[ReferenceResolutionService] = None,
-        healing_orchestrator: Optional[HealingOrchestrator] = None,
         screen_observer: Optional[ScreenObservationService] = None,
         target_localizer: Optional[TargetLocalizationService] = None,
         artifact_pipeline: Optional[ArtifactPipeline] = None,
@@ -134,7 +126,6 @@ class GraphContext:
         self.__configuration = configuration
         self.__perception_configuration = perception_configuration
 
-        self.__recovery = recovery or RecoveryPolicy()
         self.__cancel_event = cancel_event or asyncio.Event()
         self.__realignment = realignment or RealignmentPolicy()
 
@@ -216,6 +207,7 @@ class GraphContext:
             configuration=perception_configuration,
             ocr=self.__ocr,
             icons=self.__icons,
+            device=device,
             workflow_id=workflow_id,
             pixel_overlay=self.__pixel_overlay,
             pipeline=artifact_pipeline,
@@ -225,18 +217,6 @@ class GraphContext:
             ensemble=self.__ensemble,
         )
 
-        self.__outcome_classifier = outcome_classifier or OutcomeClassifier()
-        self.__runtime_supervisor = runtime_supervisor or RuntimeSupervisor.create(
-            perception_configuration=perception_configuration,
-            runtime_policy=configuration.intent.runtime_policy,
-        )
-        self.__healing_orchestrator = healing_orchestrator or HealingOrchestrator(
-            workflow_id=workflow_id,
-            perception_configuration=perception_configuration,
-            runtime_policy=configuration.intent.runtime_policy,
-        )
-
-        self.__completion_service = completion_service or CompletionService()
         self.__journal = journal if journal is not None else NoopRuntimeJournal()
 
         self.__event_emitter = RuntimeEventEmitter(
@@ -382,14 +362,6 @@ class GraphContext:
         """
 
         return self.__realignment
-
-    @property
-    def recovery(self) -> RecoveryPolicy:
-        """
-        Returns the RecoveryPolicy instance used to construct the recovery coordinator at the composition root.
-        """
-
-        return self.__recovery
 
     @property
     def configuration(self) -> FathomConfiguration:
@@ -586,39 +558,6 @@ class GraphContext:
 
         return self.__target_localizer
 
-    @property
-    def runtime_supervisor(self) -> RuntimeSupervisor:
-        """
-        Returns the runtime supervision service.
-        """
-
-        return self.__runtime_supervisor
-
-    @property
-    def outcome_classifier(self) -> OutcomeClassifier:
-        """
-        Returns the post-action outcome classifier.
-        """
-
-        return self.__outcome_classifier
-
-    @property
-    def healing_orchestrator(self) -> HealingOrchestrator:
-        """
-        Returns the healing orchestration service.
-        """
-
-        return self.__healing_orchestrator
-
-    @property
-    def completion_service(self) -> CompletionService:
-        """
-        Returns the runtime completion-service used to decide task advancement.
-        """
-
-        return self.__completion_service
-
-    @property
     def journal(self) -> RuntimeJournalPort:
         """
         Returns the injected runtime journal port.

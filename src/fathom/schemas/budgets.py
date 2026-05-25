@@ -31,14 +31,3 @@ class LocalizationBudget(BaseModel):
         le=1.0,
         description="Minimum confidence required for local execution.",
     )
-
-
-class HealingBudget(BaseModel):
-    """
-    Runtime budget for bounded healing decisions.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    run: int = Field(ge=0, description="Maximum healing decisions for one run.")
-    task: int = Field(ge=0, description="Maximum healing decisions for one execution task.")

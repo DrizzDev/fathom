@@ -38,7 +38,7 @@ class AuditService:
         roadmap_table.add_column()
 
         intent = getattr(roadmap, "intent", "Unknown")
-        roadmap_table.add_row("Intent:", escape(str(object=intent)))
+        roadmap_table.add_row("Intent:", escape(str(intent)))
 
         # 2. Build Guidance Block
         if guidance := manager.get_user_guidance():
@@ -206,17 +206,13 @@ class AuditService:
         action_info.add_column()
 
         # Use NLP description for the action
-        action_info.add_row(
-            "Action:", escape(str(object=result.action_description or result.action_type))
-        )
-        action_info.add_row(
-            "Target:", escape(str(object=result.natural_language_target or result.target))
-        )
+        action_info.add_row("Action:", escape(str(result.action_description or result.action_type)))
+        action_info.add_row("Target:", escape(str(result.natural_language_target or result.target)))
 
         if result.observation:
-            action_info.add_row("Observation:", escape(str(object=result.observation)))
+            action_info.add_row("Observation:", escape(str(result.observation)))
 
-        action_info.add_row("Rationale:", escape(str(object=result.rationale or "N/A")))
+        action_info.add_row("Rationale:", escape(str(result.rationale or "N/A")))
 
         self.__console.print(Panel(action_info, title="Brain Reasoning", border_style="yellow"))
 

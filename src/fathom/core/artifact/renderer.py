@@ -15,6 +15,7 @@ from fathom.schemas.artifact import (
     HierarchyXmlPayload,
     IconPerceptionPayload,
     OcrPerceptionPayload,
+    OcrRawPayload,
     OverlayPerceptionPayload,
     PerceptionPayload,
     ScreenshotPayload,
@@ -62,7 +63,7 @@ class PassthroughRenderer(ArtifactRendererPort):
             return payload.capture.image
         if isinstance(payload, HierarchyXmlPayload):
             return payload.content.encode("utf-8")
-        if isinstance(payload, ScriptPayload):
+        if isinstance(payload, (ScriptPayload, OcrRawPayload)):
             return payload.content.encode("utf-8")
         return self.__resolve_annotated_image(record=record)
 

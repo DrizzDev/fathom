@@ -9,8 +9,8 @@ from typing import Awaitable, Callable, Dict, Optional, Set, Tuple
 
 from PIL import Image
 
-from fathom.adapters.scroll.correlation import PhaseCorrelationScrollDetector
-from fathom.adapters.scroll.surface import ScrollSurfaceInspector
+from fathom.adapters.swipe import DeviceSwipeDispatcher
+from fathom.adapters.vision import PhashVisualHasher
 from fathom.base.paths import SharedPathManager
 from fathom.constants import (
     DEFAULT_MAX_RETRIES,
@@ -19,15 +19,17 @@ from fathom.constants import (
     ActionType,
 )
 from fathom.constants.execution import MAX_ACTION_WAIT_MS
-from fathom.constants.scroll import ScrollDirection
+from fathom.constants.observation import KeyboardVisibility
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
-from fathom.core.execution.scroll import ScrollCommandSupervisor
+from fathom.core.swipe import SwipeRetryCoordinator, SwipeRetryPlanner
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.actions import (
     Action,
+    Bounds,
     CoordinateSource,
     CoordinateSystem,
     ExecutionRegion,
@@ -35,19 +37,20 @@ from fathom.schemas.actions import (
     InputContext,
 )
 from fathom.schemas.artifact import ArtifactRecord, TracePayload
-from fathom.schemas.command import CommandAnchor
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.execution import PrimitiveExecution
-from fathom.schemas.observation import ScreenObservation
+from fathom.schemas.observation import KeyboardObservation, ScreenObservation
 from fathom.schemas.results import (
     ActionResult,
     ActionTraceEvent,
     ExecutionResult,
 )
 from fathom.schemas.screens import ScreenCapture
-from fathom.schemas.scroll import ScrollContext
 from fathom.schemas.steps import Step
+from fathom.schemas.swipe import SwipeExecution
 from fathom.utils.coordinates import CoordinateConverter
+
+CancelCheck = Callable[[], Awaitable[bool]]
 
 logger = getLogger(__name__)
 
@@ -66,7 +69,8 @@ class ActionExecutor:
         max_retries: int = DEFAULT_MAX_RETRIES,
         *,
         pipeline: Optional[ArtifactPipeline] = None,
-        scroll_supervisor: Optional[ScrollCommandSupervisor] = None,
+        perception: Optional[PerceptionPort] = None,
+        swipe_coordinator: Optional[SwipeRetryCoordinator] = None,
     ) -> None:
         self.__device = device
         self.__telemetry = telemetry
@@ -75,11 +79,12 @@ class ActionExecutor:
         self.__storage = storage
         self.__path_manager = path_manager
         self.__pipeline = pipeline
-        self.__scroll_supervisor = scroll_supervisor or ScrollCommandSupervisor(
-            device=device,
-            detector=PhaseCorrelationScrollDetector(),
-            surface=ScrollSurfaceInspector(),
+        self.__perception = perception
+        self.__swipe_coordinator = swipe_coordinator or SwipeRetryCoordinator(
+            planner=SwipeRetryPlanner(),
+            dispatcher=DeviceSwipeDispatcher(device=device, hasher=PhashVisualHasher()),
         )
+        self.__visual_hasher = PhashVisualHasher()
         self.__background_tasks: Set[asyncio.Task[None]] = set()
         self.__cached_dimensions: Optional[Tuple[int, int]] = None
 
@@ -90,6 +95,7 @@ class ActionExecutor:
         package_name: str,
         pre_capture: ScreenCapture,
         observation: Optional[ScreenObservation] = None,
+        is_cancelled: CancelCheck | None = None,
     ) -> ExecutionResult:
         """
         Execute device action with retry logic and tracing.
@@ -104,6 +110,7 @@ class ActionExecutor:
                     package_name=package_name,
                     pre_capture=pre_capture,
                     observation=observation,
+                    is_cancelled=is_cancelled,
                 )
 
                 if result.success:
@@ -162,6 +169,7 @@ class ActionExecutor:
         package_name: str,
         pre_capture: ScreenCapture,
         observation: Optional[ScreenObservation],
+        is_cancelled: CancelCheck | None,
     ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
         """
         Execute specific device primitive.
@@ -201,6 +209,7 @@ class ActionExecutor:
                 height=height,
                 pre_capture=pre_capture,
                 observation=observation,
+                is_cancelled=is_cancelled,
                 step=step,
                 session_id=session_id,
                 package_name=package_name,
@@ -221,7 +230,7 @@ class ActionExecutor:
                     duration=duration,
                     error=primitive.action.error,
                     success=primitive.action.success,
-                    scroll_outcome=primitive.scroll_outcome,
+                    swipe_execution=primitive.swipe_execution,
                     trace_events=primitive.trace_events,
                 ),
                 primitive.coords,
@@ -356,6 +365,7 @@ class ActionExecutor:
         converter: CoordinateConverter,
         pre_capture: ScreenCapture,
         observation: Optional[ScreenObservation],
+        is_cancelled: CancelCheck | None,
         step: Step,
         session_id: str,
         package_name: str,
@@ -370,6 +380,7 @@ class ActionExecutor:
                 converter=converter,
                 pre_capture=pre_capture,
                 observation=observation,
+                is_cancelled=is_cancelled,
                 step=step,
                 session_id=session_id,
                 package_name=package_name,
@@ -407,6 +418,7 @@ class ActionExecutor:
                 converter=converter,
                 pre_capture=pre_capture,
                 observation=observation,
+                is_cancelled=is_cancelled,
                 step=step,
                 session_id=session_id,
                 package_name=package_name,
@@ -423,12 +435,13 @@ class ActionExecutor:
             ),
             ActionType.BACK: self.__execute_back,
             ActionType.HOME: self.__execute_home,
+            ActionType.ENTER: self.__execute_enter,
             ActionType.HIDE_KEYBOARD: self.__execute_hide_keyboard,
         }
 
         handler = action_handlers.get(action.action_type)
         if handler is None:
-            return PrimitiveExecution(action=None, coords=None, scroll_outcome=None)
+            return PrimitiveExecution(action=None, coords=None, swipe_execution=None)
 
         return await handler()
 
@@ -442,7 +455,7 @@ class ActionExecutor:
         return PrimitiveExecution(
             action=await self.__device.back(),
             coords=None,
-            scroll_outcome=None,
+            swipe_execution=None,
         )
 
     async def __execute_home(
@@ -455,7 +468,31 @@ class ActionExecutor:
         return PrimitiveExecution(
             action=await self.__device.home(),
             coords=None,
-            scroll_outcome=None,
+            swipe_execution=None,
+        )
+
+    async def __execute_enter(
+        self,
+    ) -> PrimitiveExecution:
+        """
+        Execute the keyboard enter/search primitive when the provider supports it.
+        """
+
+        if not hasattr(self.__device, "enter"):
+            return PrimitiveExecution(
+                action=ActionResult(
+                    success=False,
+                    duration=0,
+                    error="Device does not support enter action",
+                ),
+                coords=None,
+                swipe_execution=None,
+            )
+
+        return PrimitiveExecution(
+            action=await self.__device.enter(),
+            coords=None,
+            swipe_execution=None,
         )
 
     async def __execute_hide_keyboard(
@@ -469,13 +506,13 @@ class ActionExecutor:
             return PrimitiveExecution(
                 action=await self.__device.hide_keyboard(),
                 coords=None,
-                scroll_outcome=None,
+                swipe_execution=None,
             )
 
         return PrimitiveExecution(
             action=await self.__device.back(),
             coords=None,
-            scroll_outcome=None,
+            swipe_execution=None,
         )
 
     async def __execute_tap(
@@ -513,7 +550,7 @@ class ActionExecutor:
         return PrimitiveExecution(
             action=result,
             coords=coords,
-            scroll_outcome=None,
+            swipe_execution=None,
             trace_events=(trace_event,),
         )
 
@@ -575,7 +612,7 @@ class ActionExecutor:
         return PrimitiveExecution(
             action=result,
             coords=coords,
-            scroll_outcome=None,
+            swipe_execution=None,
             trace_events=(trace_event,),
         )
 
@@ -606,30 +643,29 @@ class ActionExecutor:
         converter: CoordinateConverter,
         pre_capture: ScreenCapture,
         observation: Optional[ScreenObservation],
+        is_cancelled: CancelCheck | None,
         step: Step,
         session_id: str,
         package_name: str,
     ) -> PrimitiveExecution:
         """
-        Helper Method To Execute `SWIPE` Command
+        Dispatch one logical swipe through the keyboard-aware retry coordinator.
         """
 
-        if "_" in action.action_type.value:
-            direction = action.action_type.value.split("_")[-1]
-        else:
-            direction = "up"
+        _ = is_cancelled
 
-        if action.bounds:
-            region = converter.region_from_bounds(
+        direction = (
+            action.action_type.value.split("_")[-1] if "_" in action.action_type.value else "up"
+        )
+        region = (
+            converter.region_from_bounds(
                 bounds=action.bounds,
                 source=action.bounds.source or CoordinateSource.MODEL,
             )
-        else:
-            region = converter.viewport_region()
-
+            if action.bounds
+            else converter.viewport_region()
+        )
         path = converter.resolve_swipe_path(region=region, direction=direction)
-        coords = path.to_coordinates()
-
         self.__log_gesture_path(
             path=path,
             kind="swipe",
@@ -638,55 +674,15 @@ class ActionExecutor:
             direction=direction,
         )
 
-        if self.__should_supervise_swipe(action=action, region=region, observation=observation):
-            direction_name = self.__scroll_direction_from_action(action=action)
-            if direction_name is not None and observation is not None:
-                result, scroll_outcome, trace_events = await self.__scroll_supervisor.execute(
-                    before=pre_capture,
-                    observation=observation,
-                    context=ScrollContext(
-                        direction=direction_name,
-                        region=region,
-                        anchor=self.__scroll_anchor(action=action),
-                    ),
-                    current=path,
-                    converter=converter,
-                    policy=self.__device_configuration().interaction.policy.scroll.adaptive,
-                    trace_recorder=lambda event: self.__emit_trace_event(
-                        step=step,
-                        event=event,
-                        session_id=session_id,
-                        package_name=package_name,
-                        action=action,
-                    ),
-                )
-                return PrimitiveExecution(
-                    action=result,
-                    coords=coords,
-                    scroll_outcome=scroll_outcome,
-                    trace_events=trace_events,
-                )
-
-        result = await self.__device.swipe(
-            x1=path.start_x,
-            y1=path.start_y,
-            x2=path.end_x,
-            y2=path.end_y,
-            duration=path.duration,
-        )
-        trace_event = ActionTraceEvent(capture=pre_capture, coords=coords)
-        await self.__emit_trace_event(
+        return await self.__coordinate_and_emit(
+            action=action,
+            path=path,
+            region=region,
+            pre_capture=pre_capture,
+            observation=observation,
             step=step,
-            event=trace_event,
             session_id=session_id,
             package_name=package_name,
-            action=action,
-        )
-        return PrimitiveExecution(
-            action=result,
-            coords=coords,
-            scroll_outcome=None,
-            trace_events=(trace_event,),
         )
 
     async def __execute_scroll(
@@ -696,18 +692,19 @@ class ActionExecutor:
         converter: CoordinateConverter,
         pre_capture: ScreenCapture,
         observation: Optional[ScreenObservation],
+        is_cancelled: CancelCheck | None,
         step: Step,
         session_id: str,
         package_name: str,
     ) -> PrimitiveExecution:
         """
-        Helper Method To Execute `SCROLL` Command (Default Scroll Down)
+        Dispatch the default downward scroll through the keyboard-aware retry coordinator.
         """
+
+        _ = is_cancelled
 
         region = converter.viewport_region()
         path = converter.resolve_scroll_path(region=region, direction="down")
-
-        coords = path.to_coordinates()
         self.__log_gesture_path(
             path=path,
             action=None,
@@ -715,62 +712,161 @@ class ActionExecutor:
             region=region,
             direction="down",
         )
-        if (
-            observation is not None
-            and self.__device_configuration().interaction.policy.scroll.adaptive.enabled
-        ):
-            result, scroll_outcome, trace_events = await self.__scroll_supervisor.execute(
-                before=pre_capture,
-                observation=observation,
-                context=ScrollContext(
-                    direction=ScrollDirection.DOWN,
-                    region=region,
-                    anchor=CommandAnchor(
-                        manifest_label_id=None,
-                        observation_region_id=None,
-                        target="viewport",
-                        bounds=None,
-                    ),
-                ),
-                current=path,
-                converter=converter,
-                policy=self.__device_configuration().interaction.policy.scroll.adaptive,
-                trace_recorder=lambda event: self.__emit_trace_event(
-                    step=step,
-                    event=event,
-                    session_id=session_id,
-                    package_name=package_name,
-                    action=action,
-                ),
-            )
-            return PrimitiveExecution(
-                action=result,
-                coords=coords,
-                scroll_outcome=scroll_outcome,
-                trace_events=trace_events,
-            )
 
-        result = await self.__device.swipe(
-            x1=path.start_x,
-            y1=path.start_y,
-            x2=path.end_x,
-            y2=path.end_y,
-            duration=path.duration,
-        )
-        trace_event = ActionTraceEvent(capture=pre_capture, coords=coords)
-        await self.__emit_trace_event(
+        return await self.__coordinate_and_emit(
+            action=action,
+            path=path,
+            region=region,
+            pre_capture=pre_capture,
+            observation=observation,
             step=step,
-            event=trace_event,
+            session_id=session_id,
+            package_name=package_name,
+        )
+
+    async def __coordinate_and_emit(
+        self,
+        *,
+        action: Action,
+        path: GesturePath,
+        region: ExecutionRegion,
+        pre_capture: ScreenCapture,
+        observation: Optional[ScreenObservation],
+        step: Step,
+        session_id: str,
+        package_name: str,
+    ) -> PrimitiveExecution:
+        """
+        Run the swipe coordinator and emit one trace event per dispatched attempt.
+        """
+
+        original_before = self.__hash_capture(capture=pre_capture)
+        keyboard = self.__keyboard_observation(observation=observation)
+        viewport_bounds = self.__viewport_bounds(region=region, capture=pre_capture)
+        policy = self.__device_configuration().interaction.policy.swipe.retry
+
+        execution = await self.__swipe_coordinator.execute(
+            original=path,
+            bounds=viewport_bounds,
+            policy=policy,
+            keyboard=keyboard,
+            original_before=original_before,
+        )
+
+        trace_events = await self.__emit_attempt_traces(
+            execution=execution,
+            pre_capture=pre_capture,
+            step=step,
             session_id=session_id,
             package_name=package_name,
             action=action,
         )
+
+        final_path = execution.final or path
+        coords = final_path.to_coordinates()
+        action_result = self.__action_result_from_execution(execution=execution)
+
         return PrimitiveExecution(
-            action=result,
+            action=action_result,
             coords=coords,
-            scroll_outcome=None,
-            trace_events=(trace_event,),
+            swipe_execution=execution,
+            trace_events=trace_events,
         )
+
+    def __hash_capture(self, *, capture: ScreenCapture) -> str:
+        """
+        Compute the visual hash of the original pre-action capture for retry comparison.
+        """
+
+        try:
+            return self.__visual_hasher.hash(image=capture.image or b"")
+        except Exception as exception:
+            logger.warning(
+                f"ActionExecutor: pre-action hash failed ({exception}); using empty marker."
+            )
+            return ""
+
+    @staticmethod
+    def __keyboard_observation(*, observation: Optional[ScreenObservation]) -> KeyboardObservation:
+        """
+        Return the keyboard observation carried by the supervisor, or an UNKNOWN sentinel.
+        """
+
+        if observation is not None and observation.keyboard is not None:
+            return observation.keyboard
+        return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
+
+    @staticmethod
+    def __viewport_bounds(*, region: ExecutionRegion, capture: ScreenCapture) -> Bounds:
+        """
+        Build a viewport rectangle that covers the entire capture in the gesture's pixel space.
+        """
+
+        pixel_width, pixel_height = ActionExecutor.__resolve_pixel_dimensions(
+            logical_width=region.x + region.width,
+            logical_height=region.y + region.height,
+            capture=capture,
+        )
+        width = max(1, max(pixel_width, region.x + region.width))
+        height = max(1, max(pixel_height, region.y + region.height))
+        return Bounds(x=0, y=0, width=width, height=height)
+
+    @staticmethod
+    def __action_result_from_execution(*, execution: SwipeExecution) -> ActionResult:
+        """
+        Reduce the bounded swipe execution to one device-level ActionResult.
+        """
+
+        if execution.effective:
+            last = execution.attempts[-1]
+            duration = last.path.duration
+            return ActionResult(success=True, duration=duration)
+
+        if execution.attempts:
+            last = execution.attempts[-1]
+            error = last.device.error or (
+                execution.aborted_for.value
+                if execution.aborted_for
+                else "swipe produced no visual change"
+            )
+            return ActionResult(success=False, duration=last.path.duration, error=error)
+
+        error = (
+            execution.aborted_for.value
+            if execution.aborted_for
+            else "swipe execution produced no attempts"
+        )
+        return ActionResult(success=False, duration=0, error=error)
+
+    async def __emit_attempt_traces(
+        self,
+        *,
+        execution: SwipeExecution,
+        pre_capture: ScreenCapture,
+        step: Step,
+        session_id: str,
+        package_name: str,
+        action: Action,
+    ) -> Tuple[ActionTraceEvent, ...]:
+        """
+        Emit one ArtifactRecord trace event per dispatched attempt and return them in order.
+        """
+
+        events: list[ActionTraceEvent] = []
+        for attempt in execution.attempts:
+            event = ActionTraceEvent(
+                capture=pre_capture,
+                coords=attempt.path.to_coordinates(),
+            )
+            await self.__emit_trace_event(
+                step=step,
+                event=event,
+                session_id=session_id,
+                package_name=package_name,
+                action=action,
+            )
+            events.append(event)
+        return tuple(events)
 
     @staticmethod
     def __log_gesture_path(
@@ -813,85 +909,6 @@ class ActionExecutor:
 
         return self.__device.configuration or DeviceRuntimeConfiguration()
 
-    def __should_supervise_swipe(
-        self,
-        *,
-        action: Action,
-        region: ExecutionRegion,
-        observation: Optional[ScreenObservation],
-    ) -> bool:
-        """
-        Decide whether a swipe should reuse adaptive scroll supervision.
-        """
-
-        if observation is None:
-            return False
-
-        configuration = self.__device_configuration()
-        if not configuration.interaction.policy.scroll.adaptive.enabled:
-            return False
-
-        direction = self.__scroll_direction_from_action(action=action)
-        if direction is None:
-            return False
-
-        if action.bounds is None:
-            return True
-
-        return (
-            region.height >= int(self.__cached_dimensions[1] * 0.45)
-            if self.__cached_dimensions
-            else False
-        )
-
-    @staticmethod
-    def __scroll_direction_from_action(*, action: Action) -> Optional[ScrollDirection]:
-        """
-        Map one swipe-like action to content-movement direction.
-        """
-
-        value = action.action_type.value.lower()
-        if value.endswith("up"):
-            return ScrollDirection.DOWN
-        if value.endswith("down"):
-            return ScrollDirection.UP
-        if value.endswith("left"):
-            return ScrollDirection.RIGHT
-        if value.endswith("right"):
-            return ScrollDirection.LEFT
-        return None
-
-    @staticmethod
-    def __scroll_anchor(*, action: Action) -> CommandAnchor:
-        """
-        Build one stable scroll anchor from the planned action.
-        """
-
-        manifest_label_id, observation_region_id = ActionExecutor.__split_scroll_label_id(
-            label_id=action.label_id
-        )
-        return CommandAnchor(
-            bounds=action.bounds,
-            manifest_label_id=manifest_label_id,
-            observation_region_id=observation_region_id,
-            target=action.scroll_target or action.natural_language_target or action.target,
-        )
-
-    @staticmethod
-    def __split_scroll_label_id(*, label_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-        """
-        Separate manifest label ids from observation-only scroll-region hints.
-        """
-
-        if not label_id:
-            return None, None
-
-        normalized = str(label_id).strip()
-        if normalized.startswith("region_") or normalized.startswith("page_scroll_region"):
-            return None, normalized
-
-        return normalized, None
-
     async def __execute_long_press(
         self,
         action: Action,
@@ -927,7 +944,7 @@ class ActionExecutor:
         return PrimitiveExecution(
             action=long_press_result,
             coords=coords,
-            scroll_outcome=None,
+            swipe_execution=None,
             trace_events=(trace_event,),
         )
 

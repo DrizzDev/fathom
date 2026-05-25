@@ -125,23 +125,14 @@ TOOL SELECTION & VALIDATION:
 - recall_memory: Check what you've already done to avoid repeating actions.
 - ask_user: Use this tool to ask the user for help or clarification when you are stuck or confused.
 
-- request_replan: Use this tool when you cannot make safe forward progress on the active sub-goal. Provide a typed category and a one-sentence detail; the system will either replan against the current screen or escalate to the human depending on category.
-
 PROGRESS SAFETY (MANDATORY):
-- Respect the active sub-goal command family. If the current task is a scroll/swipe task, stay within scroll-family actions unless the system explicitly asks you to replan.
-- Respect the requested scroll axis exactly. If the task says horizontal, stay horizontal; if it says vertical, stay vertical.
 - Every UI action MUST be grounded by at least one of: (a) a 'label_id' from the element manifest whose text/affordance matches your named target, OR (b) a 'bbox' you have visually identified on the current screenshot. The manifest is the preferred source whenever it already exposes the relevant element or scroll container.
 - The manifest is a hint, not a precondition: when the intended target is visible on screen but absent from the element manifest, ground it via bbox instead of inventing a label_id.
 - For scroll/swipe actions, when the manifest exposes a matching scrollable container, you MUST use that container's label_id and describe the intended content in scroll_target. Do not invent a broad bbox when the manifest already gives you the container.
 - Observation scroll-region hints are NOT manifest label_ids. Never copy observation_hint values into label_id.
 - When repeating the same scroll objective, reuse the same container if it is still valid instead of switching to a broader region.
 - Before emitting the action, confirm the current screen is the one the active sub-goal expects.
-- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), you MUST call request_replan instead of guessing. Pick the category that best describes what you observe:
-  * 'target_not_available': the named target is neither in the manifest nor visible on screen.
-  * 'wrong_screen': the current screen is not the one the sub-goal expects (e.g., a debug overlay, a permissions sheet, a different app).
-  * 'precondition_not_met': the sub-goal assumes prior state that has not been reached (e.g., checkout before items in cart).
-  * 'ambiguous_target': multiple candidates plausibly match and no safe disambiguation exists.
-  * 'unsafe_action': proceeding would be irreversible or destructive.
+- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), ask the user instead of guessing.
 - Do NOT snap to a visually similar but semantically unrelated label (picking the wrong manifest entry just because it looks like a button). Do NOT emit a bbox for a region where you cannot see the target. Do NOT proceed when the screen contradicts the sub-goal.
 
 MEMORY STRATEGY:
@@ -200,6 +191,41 @@ VERIFICATION_USER_TEMPLATE = """User Intent: {intent}
 {guidance_section}
 Task: Analyze the provided screenshot. Has the user's intent been fully and definitively achieved according to the verification framework?"""
 
+# Sub-goal verification (lighter than full intent verification)
+SUBGOAL_VERIFICATION_SYSTEM = """You are verifying whether a single step in a multi-step mobile automation task is complete.
+
+You will receive:
+- The step description (may contain multiple chained actions like "do X, then Y, then Z")
+- A list of actions already performed for this step
+- A screenshot of the current screen
+
+CRITICAL - HOW TO JUDGE:
+The step description often describes a sequence of actions. Verify only the final outcome: the last meaningful state described in the step. Earlier actions are means to that end.
+
+Examples:
+- "scroll up, find section X, add 3rd item, return to cart" -> only check whether the cart is visible with items.
+- "open app and navigate to settings" -> only check whether the settings screen is visible.
+- "tap filter, select option, verify filter applied" -> only check whether the filter is applied.
+- "search for X and select first result" -> only check whether the selected result's destination page is visible.
+
+RULES:
+1. Identify the last action or state in the step description; that is what you verify.
+2. Ignore intermediate navigation/tap/scroll actions; the action trace confirms what was already attempted.
+3. For "select", "tap on", "open", or "click" an item, the expected outcome is usually the destination page, not the original list page.
+4. Be lenient when the screen plausibly shows the step's end state. Reject only when it clearly contradicts or is still transitional.
+5. Loading screens, spinners, or transient states are incomplete.
+
+OUTPUT SCHEMA:
+Return ONLY a valid JSON object matching this schema. Do not include markdown formatting or explanations outside the JSON.
+{
+  "is_complete": boolean,
+  "reason": "string"
+}"""
+
+SUBGOAL_VERIFICATION_USER_TEMPLATE = """Step: {intent}
+{guidance_section}
+Task: Analyze the provided screenshot. Does the screen show the final outcome of this step?"""
+
 # Validation subject extraction prompt templates
 VALIDATION_SUBJECT_EXTRACTION_SYSTEM = (
     "You are an expert at parsing user intents for mobile UI automation. "
@@ -216,3 +242,85 @@ VALIDATION_SUBJECT_EXTRACTION_USER = (
     "Return ONLY valid JSON list of strings, no other text.\n\n"
     "Intent: {intent}"
 )
+
+
+def _format_trace_action(entry: object) -> str:
+    """
+    Render one context trace entry as a compact action line for verification.
+    """
+
+    if not isinstance(entry, dict):
+        return f"- {entry}"
+
+    action = entry.get("action")
+    if isinstance(action, dict):
+        action_type = action.get("action_type") or action.get("type") or "action"
+        target = (
+            action.get("natural_language_target")
+            or action.get("target")
+            or action.get("script_target")
+            or ""
+        )
+        return f"- {action_type}: {target}".strip()
+
+    return f"- {entry}"
+
+
+def build_verification_guidance_section(
+    *,
+    user_guidance: list[str] | tuple[str, ...] = (),
+    actions_performed: list[str] | tuple[str, ...] = (),
+) -> str:
+    """
+    Render the optional verification guidance block.
+    """
+
+    parts: list[str] = []
+    if user_guidance:
+        parts.append("\nUser Guidance:\n" + "\n".join(f"- {item}" for item in user_guidance))
+    if actions_performed:
+        parts.append("\nActions already performed for this step:\n" + "\n".join(actions_performed))
+    if not parts:
+        return ""
+    return "".join(parts) + "\n"
+
+
+def build_intent_verification_user_prompt(
+    *,
+    intent: str,
+    user_guidance: list[str] | tuple[str, ...] = (),
+) -> str:
+    """
+    Render the final intent verification prompt.
+    """
+
+    return VERIFICATION_USER_TEMPLATE.format(
+        intent=intent,
+        guidance_section=build_verification_guidance_section(user_guidance=user_guidance),
+    )
+
+
+def build_subgoal_verification_user_prompt(
+    *,
+    intent: str,
+    user_guidance: list[str] | tuple[str, ...] = (),
+    recent_trace: list[dict[str, object]] | tuple[dict[str, object], ...] = (),
+    max_actions: int = 10,
+) -> str:
+    """
+    Render the sub-goal verification prompt with recent action trace.
+    """
+
+    actions_performed: tuple[str, ...] = ()
+    if recent_trace:
+        actions_performed = tuple(
+            _format_trace_action(entry) for entry in list(recent_trace)[-max_actions:]
+        )
+
+    return SUBGOAL_VERIFICATION_USER_TEMPLATE.format(
+        intent=intent,
+        guidance_section=build_verification_guidance_section(
+            user_guidance=user_guidance,
+            actions_performed=actions_performed,
+        ),
+    )

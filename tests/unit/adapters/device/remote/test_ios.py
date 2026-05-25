@@ -46,6 +46,7 @@ class FakeADBRemoteDeviceAdapter:
 
         self.configuration = DeviceRuntimeConfiguration(platform=DevicePlatform.IOS)
         self.tap_calls: List[Tuple[int, int]] = []
+        self.enter_calls = 0
         self.swipe_calls: List[Tuple[int, int, int, int, Optional[int], Optional[SwipeSpeed]]] = []
         self.screenshot = build_png(
             width=screenshot_dimensions[0],
@@ -59,6 +60,14 @@ class FakeADBRemoteDeviceAdapter:
         """
 
         self.tap_calls.append((x, y))
+        return ActionResult(success=True, duration=1)
+
+    async def enter(self) -> ActionResult:
+        """
+        Record enter delegation.
+        """
+
+        self.enter_calls += 1
         return ActionResult(success=True, duration=1)
 
     async def type(
@@ -216,3 +225,26 @@ class IOSRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
         await adapter.tap(x=585, y=1266)
 
         self.assertEqual(delegate.tap_calls, [(195, 422)])
+
+    async def test_enter_delegates_without_coordinate_conversion(self) -> None:
+        """
+        Keyboard enter/search is not spatial, so remote iOS should delegate it directly.
+        """
+
+        delegate = FakeADBRemoteDeviceAdapter(
+            automation_dimensions=(393, 852),
+            screenshot_dimensions=(1179, 2556),
+        )
+        adapter = IOSRemoteDeviceAdapter(
+            configuration=DeviceConfiguration(
+                type=DeviceConnectionType.REMOTE,
+                platform=DevicePlatform.IOS,
+            ),
+            delegate=cast("ADBRemoteDeviceAdapter", delegate),
+        )
+
+        result = await adapter.enter()
+
+        self.assertTrue(result.success)
+        self.assertEqual(delegate.enter_calls, 1)
+        self.assertEqual(delegate.tap_calls, [])

@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
+from fathom.constants.interaction import InteractionAction
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform
 from fathom.core.exceptions import DeviceConnectionClosedError
 from fathom.schemas.configuration import DeviceConfiguration, RemoteDeviceConfiguration
@@ -104,3 +105,26 @@ class ADBRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
         client_factory.assert_called_once()
         self.assertEqual(client_factory.call_args.kwargs["timeout"], 60.0)
         client.request.assert_awaited_once_with("POST", "snapshot", params={})
+
+    async def test_enter_sends_explicit_remote_enter_action(self) -> None:
+        """
+        ENTER should use a first-class remote action, not a tap fallback.
+        """
+
+        response = Mock()
+        response.json.return_value = {"status": "OK"}
+        response.raise_for_status = Mock()
+
+        client = Mock()
+        client.is_closed = False
+        client.request = AsyncMock(return_value=response)
+
+        with patch("fathom.adapters.device.remote.adb.httpx.AsyncClient", return_value=client):
+            adapter = ADBRemoteDeviceAdapter(configuration=self.__build_configuration())
+
+        result = await adapter.enter()
+
+        self.assertTrue(result.success)
+        client.request.assert_awaited_once()
+        payload = client.request.await_args.kwargs["json"]
+        self.assertEqual(payload["action"], InteractionAction.ENTER.value)

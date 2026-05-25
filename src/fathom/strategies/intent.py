@@ -28,7 +28,6 @@ from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.metrics import ExecutionMetrics
-from fathom.schemas.recovery import RecoveryPolicy
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.schemas.steps import StepResult
@@ -61,12 +60,10 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     # ── Constants / enums ────────────────────────────────────────────────
     ("fathom.constants", "ActionType"),
     ("fathom.constants.command", "CommandScopeKind"),
-    ("fathom.constants.scroll", "ScrollDirection"),
+    ("fathom.constants.observation", "KeyboardVisibility"),
     ("fathom.constants.scroll", "ScrollEvidenceSource"),
-    ("fathom.constants.scroll", "ScrollStage"),
-    ("fathom.constants.scroll", "ScrollVerdictKind"),
-    ("fathom.constants.scroll", "SurfaceKind"),
     ("fathom.constants.storage", "StorageBackend"),
+    ("fathom.constants.swipe", "AbortReason"),
     # ── Actions ──────────────────────────────────────────────────────────
     ("fathom.schemas.actions", "Action"),
     ("fathom.schemas.actions", "Bounds"),
@@ -80,19 +77,10 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     ("fathom.schemas.artifacts", "ScreenArtifact"),
     ("fathom.schemas.artifacts", "ScreenArtifactBundle"),
     ("fathom.schemas.artifacts", "StepArtifacts"),
-    # ── Decisions (AnalysisResult.decision discriminated union) ──────────
-    ("fathom.schemas.decisions", "ActDecision"),
-    ("fathom.schemas.decisions", "AskUserDecision"),
-    ("fathom.schemas.decisions", "DoneDecision"),
-    ("fathom.schemas.decisions", "ReplanDecision"),
-    ("fathom.schemas.decisions", "UnactionableDecision"),
     # ── Delta (AnalysisResult.delta) ─────────────────────────────────────
     ("fathom.schemas.delta", "DeltaSignal"),
     # ── Effect (ActionEffect.signal_counts diagnostic tally) ─────────────
     ("fathom.schemas.effect", "ActionEffectSignalCounts"),
-    # ── Escape (AnalysisResult.escape_report) ────────────────────────────
-    ("fathom.schemas.escape", "EscapeCategory"),
-    ("fathom.schemas.escape", "EscapeReport"),
     # ── Execution context (SUPERVISE → EXECUTE handoff) ──────────────────
     ("fathom.schemas.execution", "ExecutionContext"),
     # ── Localization (Stage-2 vision-localizer; on ExecutionContext) ─────
@@ -108,9 +96,6 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     ("fathom.schemas.observation", "PerceivedElement"),
     ("fathom.schemas.observation", "ScreenObservation"),
     ("fathom.schemas.observation", "ScrollRegion"),
-    # ── Outcomes (post-action classification) ────────────────────────────
-    ("fathom.schemas.outcomes", "ActionOutcome"),
-    ("fathom.schemas.outcomes", "OutcomeStatus"),
     # ── Results (planner / analysis / execution) ─────────────────────────
     ("fathom.schemas.results", "AnalysisOutcome"),
     ("fathom.schemas.results", "AnalysisResult"),
@@ -125,18 +110,16 @@ CHECKPOINT_ALLOWED_JSON_MODULES: Tuple[Tuple[str, ...], ...] = (
     ("fathom.schemas.screens", "ScreenHashBundle"),
     ("fathom.schemas.screens", "ScreenScrollTranslation"),
     ("fathom.schemas.screens", "ScreenState"),
-    # ── Scroll supervision / diagnostics ────────────────────────────────
-    ("fathom.schemas.scroll", "ScrollAttempt"),
-    ("fathom.schemas.scroll", "ScrollLock"),
-    ("fathom.schemas.scroll", "ScrollOutcome"),
-    ("fathom.schemas.scroll", "ScrollScope"),
-    ("fathom.schemas.scroll", "ScrollSurface"),
-    ("fathom.schemas.scroll", "ScrollVerdict"),
+    # ── Swipe coordinator output (attempts, rejections, abort reason) ────
+    ("fathom.schemas.swipe", "CandidateSequence"),
+    ("fathom.schemas.swipe", "DeviceOutcome"),
+    ("fathom.schemas.swipe", "SwipeAttempt"),
+    ("fathom.schemas.swipe", "SwipeExecution"),
+    ("fathom.schemas.swipe", "SwipeRejection"),
+    ("fathom.schemas.swipe", "VisualOutcome"),
     # ── Steps ────────────────────────────────────────────────────────────
     ("fathom.schemas.steps", "Step"),
     ("fathom.schemas.steps", "StepResult"),
-    # ── Tasks (AnalysisResult.task_status) ───────────────────────────────
-    ("fathom.schemas.tasks", "TaskStatus"),
 )
 CHECKPOINT_ALLOWED_MSGPACK_MODULES: Tuple[Tuple[str, ...], ...] = CHECKPOINT_ALLOWED_JSON_MODULES
 
@@ -164,7 +147,6 @@ class IntentStrategy:
         max_steps: int,
         workflow_id: str,
         package_name: str,
-        recovery: Optional[RecoveryPolicy] = None,
         realignment: Optional[RealignmentPolicy] = None,
         runtime_configuration: Optional[RuntimeConfigLoader] = None,
     ) -> None:
@@ -205,7 +187,6 @@ class IntentStrategy:
             signal=signal,
             use_xml=use_xml,
             storage=storage,
-            recovery=recovery,
             telemetry=telemetry,
             max_steps=max_steps,
             summarizer=summarizer,

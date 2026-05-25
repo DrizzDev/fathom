@@ -44,7 +44,6 @@ class RuntimeConfigurationInspector:
         *,
         ports: Dict[str, Any],
         path_manager: Optional[Any],
-        recovery: Optional[BaseModel],
         realignment: Optional[BaseModel],
         configuration: Optional[BaseModel],
     ) -> Dict[str, Any]:
@@ -64,7 +63,6 @@ class RuntimeConfigurationInspector:
             "port_configuration": port_configuration,
             "ports": self.__describe_ports(ports=ports),
             "paths": self.__describe_paths(path_manager=path_manager),
-            "recovery": self.__redact(value=self.__as_dict(model=recovery)),
             "realignment": self.__redact(value=self.__as_dict(model=realignment)),
         }
 

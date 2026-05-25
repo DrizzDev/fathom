@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import logging
 
-from fathom.core.recovery import (
-    RecoveryCoordinator,
-)
 from fathom.core.services.comparator import ScreenComparator
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.nodes.completion import SubGoalEvaluator
@@ -13,7 +10,6 @@ from fathom.strategies.graph.intent.nodes.gate import ActionGate
 from fathom.strategies.graph.intent.nodes.hitl import Hitl
 from fathom.strategies.graph.intent.nodes.observer import ScreenObserver
 from fathom.strategies.graph.intent.nodes.persistence import GraphStatePersistence
-from fathom.strategies.graph.intent.nodes.recovery import RecoveryDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -28,24 +24,17 @@ class IntentNodeProvider:
         self,
         *,
         context: GraphContext,
-        recovery: RecoveryCoordinator,
         screen_comparator: ScreenComparator,
     ) -> None:
         """
-        Initialize provider with shared context and the recovery coordinator injected by the composition root.
+        Initialize provider with shared context.
         """
 
         self.__context = context
-        self.__recovery = recovery
         self.__screen_comparator = screen_comparator
         self.__persistence = GraphStatePersistence(context=context)
-        self.__recovery_dispatcher = RecoveryDispatcher(
-            context=context,
-            coordinator=recovery,
-            persistence=self.__persistence,
-        )
         self.__observer = ScreenObserver(context=context)
-        self.__gate = ActionGate(context=context, persistence=self.__persistence)
+        self.__gate = ActionGate(context=context)
         self.__effects = PostAction(
             context=context,
             observer=self.__observer,
@@ -54,7 +43,6 @@ class IntentNodeProvider:
         self.__hitl = Hitl(context=context)
         self.__completion = SubGoalEvaluator(
             context=context,
-            recovery=self.__recovery_dispatcher,
         )
 
     @property
@@ -68,7 +56,7 @@ class IntentNodeProvider:
     @property
     def gate(self) -> ActionGate:
         """
-        Return the action gate (localization + supervision + healing + blocked builders).
+        Return the action gate (localization helper).
         """
 
         return self.__gate
@@ -114,14 +102,6 @@ class IntentNodeProvider:
         return self.__persistence
 
     @property
-    def recovery(self) -> RecoveryDispatcher:
-        """
-        Return the recovery dispatcher.
-        """
-
-        return self.__recovery_dispatcher
-
-    @property
     def screen_comparator(self) -> ScreenComparator:
         """
         Return the screen comparator service.
@@ -138,4 +118,8 @@ class IntentNodeProvider:
             return True
 
         signal = await self.__context.hitl.check_signal()
-        return signal == "CANCELLED"
+        if signal == "CANCELLED":
+            self.__context.cancel()
+            return True
+
+        return False

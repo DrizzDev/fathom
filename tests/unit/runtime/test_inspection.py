@@ -74,7 +74,6 @@ class RuntimeConfigurationInspectorTest(unittest.TestCase):
         snapshot = RuntimeConfigurationInspector().project(
             ports={"llm": _StubLLM(), "device": _StubDevice()},
             configuration=None,
-            recovery=None,
             realignment=None,
             path_manager=None,
         )
@@ -96,7 +95,6 @@ class RuntimeConfigurationInspectorTest(unittest.TestCase):
         snapshot = RuntimeConfigurationInspector().project(
             ports={},
             configuration=_StubConfiguration(),
-            recovery=None,
             realignment=None,
             path_manager=None,
         )
@@ -116,7 +114,6 @@ class RuntimeConfigurationInspectorTest(unittest.TestCase):
         snapshot = RuntimeConfigurationInspector().project(
             ports={},
             configuration=_StubConfiguration(),
-            recovery=None,
             realignment=None,
             path_manager=None,
         )
@@ -139,7 +136,6 @@ class RuntimeConfigurationInspectorTest(unittest.TestCase):
                     "max_steps": 5,
                 },
             ),
-            recovery=None,
             realignment=None,
             path_manager=None,
         )
@@ -156,7 +152,6 @@ class RuntimeConfigurationInspectorTest(unittest.TestCase):
         snapshot = RuntimeConfigurationInspector().project(
             ports={},
             configuration=None,
-            recovery=None,
             realignment=None,
             path_manager=_StubPathManager(),
         )
@@ -173,7 +168,6 @@ class RuntimeConfigurationInspectorTest(unittest.TestCase):
         snapshot = RuntimeConfigurationInspector().project(
             ports={"device": _StubDevice()},
             configuration=None,
-            recovery=None,
             realignment=None,
             path_manager=None,
         )
@@ -191,7 +185,6 @@ class RuntimeConfigurationInspectorTest(unittest.TestCase):
         snapshot = RuntimeConfigurationInspector().project(
             ports={"device": _StubDevice()},
             configuration=_StubConfiguration(),
-            recovery=None,
             realignment=None,
             path_manager=None,
         )

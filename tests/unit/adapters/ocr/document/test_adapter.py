@@ -145,6 +145,8 @@ class DocumentAiOcrAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.tokens, ())
         self.assertGreaterEqual(result.duration, 0)
+        self.assertIsNotNone(result.raw_response)
+        self.assertIn('"text": ""', result.raw_response or "")
 
     async def test_extract_invokes_client_with_processor_path(self) -> None:
         """

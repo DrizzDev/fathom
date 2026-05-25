@@ -10,10 +10,9 @@ from fathom.constants.screen import ZERO_HASH
 from fathom.constants.state import IntentStateKey, PlanMetadataKey
 from fathom.constants.storage import StorageBackend
 from fathom.schemas.artifacts import ScreenArtifact, ScreenArtifactBundle, StepArtifacts
-from fathom.schemas.effect import ActionEffect, ActionEffectStatus
+from fathom.schemas.effect import ActionEffect
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import PostActionObservation, ScreenObservation
-from fathom.schemas.outcomes import OutcomeStatus
 from fathom.schemas.results import PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenDiff, ScreenState
 from fathom.schemas.ui import LabeledElement
@@ -96,27 +95,13 @@ class PostAction:
     @staticmethod
     def effect_from(
         *,
-        status: OutcomeStatus,
         diff: Optional[ScreenDiff],
     ) -> ActionEffect:
         """
-        Map an OutcomeStatus onto the ActionEffect status so prompt telemetry
-        agrees with the action-aware outcome contract even when the screen
-        diff alone is ambiguous.
+        Build diagnostic post-action effect data from the screen diff only.
         """
 
-        effect = ActionEffect.from_screen_diff(diff=diff)
-
-        if status == OutcomeStatus.NO_EFFECT:
-            return effect.model_copy(update={"status": ActionEffectStatus.NO_PROGRESS})
-
-        if status == OutcomeStatus.EFFECTIVE:
-            return effect.model_copy(update={"status": ActionEffectStatus.PROGRESS})
-
-        if status in {OutcomeStatus.BLOCKED, OutcomeStatus.UNKNOWN, OutcomeStatus.PARTIAL}:
-            return effect.model_copy(update={"status": ActionEffectStatus.UNCERTAIN})
-
-        return effect
+        return ActionEffect.from_screen_diff(diff=diff)
 
     @staticmethod
     def changed(
@@ -213,6 +198,11 @@ class PostAction:
             },
         )
 
+        if self.__context.is_cancelled:
+            return PostActionObservation(
+                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+            )
+
         if not post_capture.image:
             return PostActionObservation(
                 artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
@@ -230,6 +220,11 @@ class PostAction:
             },
         )
 
+        if self.__context.is_cancelled:
+            return PostActionObservation(
+                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+            )
+
         hash_start = time.time()
         post_hashes = self.__observer.resolve_capture_hashes(
             capture=post_capture,
@@ -243,6 +238,12 @@ class PostAction:
                 "duration.ms": int((time.time() - hash_start) * 1000),
             },
         )
+
+        if self.__context.is_cancelled:
+            return PostActionObservation(
+                post_visual_hash=post_hashes.visual_hash,
+                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+            )
 
         after_state = self.__observer.build_screen_state(
             capture=post_capture,
@@ -268,11 +269,25 @@ class PostAction:
             },
         )
 
+        if self.__context.is_cancelled:
+            return PostActionObservation(
+                screen_diff=screen_diff,
+                post_visual_hash=post_hashes.visual_hash,
+                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+            )
+
         post_observation = await self.__observer.observe(
             capture=post_capture,
             hashes=post_hashes,
             elements=post_elements,
         )
+
+        if self.__context.is_cancelled:
+            return PostActionObservation(
+                screen_diff=screen_diff,
+                post_visual_hash=post_hashes.visual_hash,
+                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+            )
 
         after_artifact = await self.__persist_screen_artifact(
             phase="post_action",

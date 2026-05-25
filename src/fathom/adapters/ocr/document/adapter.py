@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+import json
 import logging
 import time
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional, cast
 
 from google.api_core import exceptions as google_exceptions
 from google.api_core.client_options import ClientOptions
-from google.cloud import documentai_v1
 from google.oauth2 import service_account
 from tenacity import (
     before_sleep_log,
@@ -26,6 +27,43 @@ from fathom.schemas.ocr import DocumentAiConfiguration, OcrResult
 from fathom.schemas.screens import ScreenCapture
 
 logger = getLogger(__name__)
+
+try:
+    documentai_v1: Any = importlib.import_module("google.cloud.documentai_v1")
+except ImportError:  # pragma: no cover - exercised when optional dependency is absent
+
+    class _MissingDocumentAi:
+        """
+        Minimal stand-in so the module remains importable without Document AI installed.
+        """
+
+        class RawDocument:
+            def __init__(self, *, content: bytes, mime_type: str) -> None:
+                self.content = content
+                self.mime_type = mime_type
+
+        class ProcessRequest:
+            def __init__(
+                self, *, name: str, raw_document: "_MissingDocumentAi.RawDocument"
+            ) -> None:
+                self.name = name
+                self.raw_document = raw_document
+
+        class DocumentProcessorServiceClient:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                _ = args, kwargs
+                raise ImportError("google-cloud-documentai is required to construct DocumentAiOcr")
+
+    documentai_v1 = _MissingDocumentAi()
+
+try:
+    _json_format = importlib.import_module("google.protobuf.json_format")
+    MessageToJson: Optional[Callable[..., str]] = cast(
+        "Callable[..., str]",
+        _json_format.MessageToJson,
+    )
+except ImportError:  # pragma: no cover - exercised when optional dependency is absent
+    MessageToJson = None
 
 
 _TRANSIENT_GOOGLE_EXCEPTIONS = (
@@ -138,6 +176,7 @@ class DocumentAiOcr(OcrPort):
             width=capture.width,
             height=capture.height,
         )
+        raw_response = self.__serialize_document(document=document)
 
         logger.info(
             "OCR request completed",
@@ -148,7 +187,7 @@ class DocumentAiOcr(OcrPort):
                 "event": "ocr.request.completed",
             },
         )
-        return OcrResult(tokens=tokens, duration=duration)
+        return OcrResult(tokens=tokens, duration=duration, raw_response=raw_response)
 
     @retry(  # type: ignore[untyped-decorator]
         reraise=True,
@@ -176,6 +215,74 @@ class DocumentAiOcr(OcrPort):
         )
         response = self.__client.process_document(request=request)
         return response.document
+
+    @staticmethod
+    def __serialize_document(*, document: Any) -> Optional[str]:
+        """
+        Serialize the provider document for raw OCR debugging artifacts.
+        """
+
+        if MessageToJson is not None:
+            try:
+                message = getattr(document, "_pb", document)
+                return MessageToJson(
+                    message,
+                    preserving_proto_field_name=True,
+                    indent=2,
+                )
+            except Exception:
+                logger.debug(
+                    "Document AI protobuf JSON serialization failed; falling back to plain JSON",
+                    exc_info=True,
+                    extra={
+                        "component": "adapter.ocr.document",
+                        "event": "ocr.raw.serialize.protobuf_failed",
+                    },
+                )
+
+        try:
+            return json.dumps(
+                DocumentAiOcr.__plain_value(value=document),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        except Exception:
+            logger.debug(
+                "Document AI raw response serialization failed",
+                exc_info=True,
+                extra={
+                    "component": "adapter.ocr.document",
+                    "event": "ocr.raw.serialize.failed",
+                },
+            )
+            return None
+
+    @staticmethod
+    def __plain_value(*, value: Any) -> Any:
+        """
+        Convert simple test doubles into JSON-serializable structures.
+        """
+
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+
+        if isinstance(value, (list, tuple)):
+            return [DocumentAiOcr.__plain_value(value=item) for item in value]
+
+        if isinstance(value, dict):
+            return {
+                str(key): DocumentAiOcr.__plain_value(value=item) for key, item in value.items()
+            }
+
+        if hasattr(value, "__dict__"):
+            return {
+                key: DocumentAiOcr.__plain_value(value=item)
+                for key, item in vars(value).items()
+                if not key.startswith("_")
+            }
+
+        return str(value)
 
     def __build_client(self) -> Any:
         """
@@ -211,9 +318,12 @@ class DocumentAiOcr(OcrPort):
         scopes = ["https://www.googleapis.com/auth/cloud-platform"]
 
         if isinstance(material, dict):
-            return service_account.Credentials.from_service_account_info(
-                info=material,
-                scopes=scopes,
+            return cast(
+                "service_account.Credentials",
+                service_account.Credentials.from_service_account_info(
+                    info=material,
+                    scopes=scopes,
+                ),
             )
 
         if isinstance(material, str):
@@ -228,9 +338,12 @@ class DocumentAiOcr(OcrPort):
                     },
                 )
                 return None
-            return service_account.Credentials.from_service_account_file(
-                filename=str(path),
-                scopes=scopes,
+            return cast(
+                "service_account.Credentials",
+                service_account.Credentials.from_service_account_file(
+                    filename=str(path),
+                    scopes=scopes,
+                ),
             )
 
         return None

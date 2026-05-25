@@ -25,6 +25,7 @@ class ArtifactKind(StrEnum):
     SCREENSHOT = "screenshot"
     VERIFICATION = "verification"
     HIERARCHY_XML = "hierarchy_xml"
+    OCR_RAW = "ocr_raw"
     CV_PERCEPTION = "cv_perception"
     OCR_PERCEPTION = "ocr_perception"
     ICON_PERCEPTION = "icon_perception"
@@ -44,6 +45,7 @@ class ArtifactCategory:
         ArtifactKind.TRACE: ArtifactDirectory.TRACES,
         ArtifactKind.SCRIPT: ArtifactDirectory.HISTORY,
         ArtifactKind.HIERARCHY_XML: ArtifactDirectory.XMLS,
+        ArtifactKind.OCR_RAW: ArtifactDirectory.XMLS,
         ArtifactKind.VERIFICATION: ArtifactDirectory.TRACES,
         ArtifactKind.ANNOTATED: ArtifactDirectory.ANNOTATED,
         ArtifactKind.PERCEPTION: ArtifactDirectory.ANNOTATED,
@@ -280,6 +282,20 @@ class HierarchyXmlPayload(BaseModel):
     content: str = Field(min_length=1, description="Raw XML hierarchy text.")
 
 
+class OcrRawPayload(BaseModel):
+    """
+    Raw OCR provider response — UTF-8 JSON written verbatim.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal[ArtifactKind.OCR_RAW] = Field(
+        default=ArtifactKind.OCR_RAW,
+        description="Discriminator value routing the record to the passthrough renderer.",
+    )
+    content: str = Field(min_length=1, description="Raw OCR provider response JSON.")
+
+
 class ScriptPayload(BaseModel):
     """
     Generated automation script — UTF-8 text written verbatim.
@@ -303,6 +319,7 @@ ArtifactPayload = Annotated[
         ScreenshotPayload,
         VerificationPayload,
         HierarchyXmlPayload,
+        OcrRawPayload,
         CvPerceptionPayload,
         OcrPerceptionPayload,
         IconPerceptionPayload,

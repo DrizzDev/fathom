@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 import aiosqlite
 
+from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
@@ -93,11 +94,14 @@ class SQLiteMemoryProvider(IMemoryProvider):
         async with aiosqlite.connect(self.__path) as db:
             # 1. Get screen description
             async with db.execute(
-                "SELECT description FROM screens WHERE visual_hash = ?", (visual_hash,)
+                "SELECT activity, description FROM screens WHERE visual_hash = ?", (visual_hash,)
             ) as cursor:
                 row = await cursor.fetchone()
                 if row:
-                    knowledge["description"] = row[0]
+                    activity = str(row[0] or "")
+                    if activity.split("/")[0] in LAUNCHER_PACKAGES:
+                        return knowledge
+                    knowledge["description"] = row[1]
 
             # 2. Get recent experiences (last 5)
             async with db.execute(

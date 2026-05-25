@@ -15,7 +15,6 @@ from fathom.schemas.configuration import (
     LLMConfiguration,
     StorageConfiguration,
 )
-from fathom.schemas.recovery import RecoveryPolicy
 
 
 class RealignmentPolicy(BaseModel):
@@ -25,7 +24,7 @@ class RealignmentPolicy(BaseModel):
 
     budget: int = Field(
         default=3,
-        description="Maximum allowed consecutive re-plans before the run is considered exhausted",
+        description="Maximum allowed human course-corrections before the run is considered exhausted",
     )
     immediate: bool = Field(
         default=True,
@@ -165,10 +164,6 @@ class InteractionConfiguration(BaseModel):
     realignment: RealignmentPolicy = Field(
         default_factory=RealignmentPolicy,
         description="Course-correction policy",
-    )
-    recovery: RecoveryPolicy = Field(
-        default_factory=RecoveryPolicy,
-        description="Stuck-loop recovery policy (toggle + strategy selection + thresholds)",
     )
     intent_configuration: IntentConfiguration = Field(
         default_factory=IntentConfiguration,

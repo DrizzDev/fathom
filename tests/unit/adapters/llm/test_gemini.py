@@ -3,7 +3,10 @@ from __future__ import annotations
 import unittest
 from typing import Dict, Optional
 
+from google.genai import types
+
 from fathom.adapters.llm.gemini import GeminiLLM
+from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.llm import GeminiExceptionKind
 
 
@@ -154,3 +157,19 @@ class GeminiLLMTest(unittest.TestCase):
         )
 
         self.assertTrue(result)
+
+    def test_generation_config_maps_unavailable_thinking_levels(self) -> None:
+        """
+        Build Gemini 3 thinking config with SDKs that expose only LOW and HIGH.
+        """
+
+        gemini = object.__new__(GeminiLLM)
+        gemini._GeminiLLM__configuration = LLMConfiguration(
+            model="gemini-3-flash-preview",
+            thinking_level="minimal",
+        )
+
+        config = gemini._GeminiLLM__get_generation_configuration()
+
+        self.assertIsNotNone(config.thinking_config)
+        self.assertEqual(config.thinking_config.thinking_level, types.ThinkingLevel.LOW)

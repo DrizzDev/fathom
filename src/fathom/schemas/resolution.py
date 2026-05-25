@@ -20,9 +20,8 @@ class ResolveStatus(StrEnum):
       :class:`InputContext`.
     - ``UNRESOLVED``: no labeled element matched and no fallback located
       the target. The planner surfaces this as a tool-result so the
-      next ANALYZE turn can call ``request_replan`` with category
-      ``target_not_available`` or choose a different target. Maps to
-      ``TARGET_UNRESOLVED`` recovery trigger when escalated.
+      next ANALYZE turn can choose a different target or ask the user.
+      Maps to ``TARGET_UNRESOLVED`` recovery trigger when escalated.
     - ``AMBIGUOUS``: more than one candidate matched the named target
       with comparable confidence. ``candidates`` carries the top-K
       options so the next ANALYZE turn can disambiguate by label_id.
@@ -69,8 +68,8 @@ class ResolveResult(BaseModel):
     EXECUTE node branch deterministically:
 
     - ``RESOLVED`` → execute ``action``.
-    - ``UNRESOLVED`` → emit a structured failed step that the recovery
-      coordinator maps to ``RecoveryTrigger.TARGET_UNRESOLVED``.
+    - ``UNRESOLVED`` → emit a structured failed step that routes back
+      through the normal planner loop.
     - ``AMBIGUOUS`` → emit a structured failed step that propagates
       ``candidates`` back to the agent for disambiguation on the next
       ANALYZE turn.
@@ -113,8 +112,7 @@ class ResolveResult(BaseModel):
         """
         Build an UNRESOLVED outcome with the original action preserved.
 
-        ``reason`` is short, mechanical text suitable for the
-        ``RecoveryRequest.reason`` field — e.g. "no manifest element
+        ``reason`` is short, mechanical text, e.g. "no manifest element
         matched target 'Alright, got it button'".
         """
 

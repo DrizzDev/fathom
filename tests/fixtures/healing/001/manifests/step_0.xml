@@ -1,5 +1,0 @@
-<hierarchy>
-  <node class="android.widget.FrameLayout" bounds="[0,0][1206,2622]">
-    <node class="android.widget.Button" label="L4" bounds="[400,1500][800,1620]" clickable="true" text="Got it"/>
-  </node>
-</hierarchy>

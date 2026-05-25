@@ -5,12 +5,11 @@ from typing import Deque, List, Optional
 
 from fathom.constants.screen import ACTION_EFFECT_TRAJECTORY_WINDOW
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
-from fathom.schemas.outcomes import ActionOutcome, OutcomeStatus
 
 
 class EffectHistory:
     """
-    Maintains bounded action-effect and action-outcome history.
+    Maintains bounded action-effect history.
     """
 
     def __init__(self, *, window: int = ACTION_EFFECT_TRAJECTORY_WINDOW) -> None:
@@ -19,7 +18,6 @@ class EffectHistory:
         """
 
         self.__effects: Deque[ActionEffect] = deque(maxlen=window)
-        self.__outcomes: Deque[ActionOutcome] = deque(maxlen=window)
 
     def record_effect(self, *, effect: ActionEffect) -> None:
         """
@@ -27,13 +25,6 @@ class EffectHistory:
         """
 
         self.__effects.append(effect)
-
-    def record_outcome(self, *, outcome: ActionOutcome) -> None:
-        """
-        Append one action-aware outcome.
-        """
-
-        self.__outcomes.append(outcome)
 
     def load_effects(self, *, effects: List[ActionEffect]) -> None:
         """
@@ -45,11 +36,10 @@ class EffectHistory:
 
     def clear(self) -> None:
         """
-        Clear effect and outcome history.
+        Clear effect history.
         """
 
         self.__effects.clear()
-        self.__outcomes.clear()
 
     def recent_effects(self) -> List[ActionEffect]:
         """
@@ -57,13 +47,6 @@ class EffectHistory:
         """
 
         return list(self.__effects)
-
-    def recent_outcomes(self) -> List[ActionOutcome]:
-        """
-        Return recent action outcomes oldest first.
-        """
-
-        return list(self.__outcomes)
 
     def last_effect(self) -> Optional[ActionEffect]:
         """
@@ -75,16 +58,6 @@ class EffectHistory:
 
         return self.__effects[-1]
 
-    def last_outcome(self) -> Optional[ActionOutcome]:
-        """
-        Return the latest action outcome when available.
-        """
-
-        if not self.__outcomes:
-            return None
-
-        return self.__outcomes[-1]
-
     def consecutive_no_progress(self) -> int:
         """
         Count trailing no-progress action effects.
@@ -94,21 +67,6 @@ class EffectHistory:
         for effect in reversed(self.__effects):
             if effect.status != ActionEffectStatus.NO_PROGRESS:
                 break
-            count += 1
-
-        return count
-
-    def consecutive_no_effect(self) -> int:
-        """
-        Count trailing no-effect action outcomes.
-        """
-
-        count = 0
-
-        for outcome in reversed(self.__outcomes):
-            if outcome.status != OutcomeStatus.NO_EFFECT:
-                break
-
             count += 1
 
         return count

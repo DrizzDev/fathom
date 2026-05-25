@@ -23,7 +23,6 @@ from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
 from fathom.runtime.inspection import RuntimeConfigurationInspector
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
-from fathom.schemas.recovery import RecoveryPolicy
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
@@ -60,7 +59,6 @@ class FathomRunner:
         telemetry: TelemetryPort,
         summarizer: SummarizationPort,
         path_manager: SharedPathManager,
-        recovery: Optional[RecoveryPolicy] = None,
         config: Optional[FathomConfiguration] = None,
         realignment: Optional[RealignmentPolicy] = None,
         runtime_configuration: Optional[RuntimeConfigLoader] = None,
@@ -70,7 +68,7 @@ class FathomRunner:
 
         ``runtime_configuration`` is the application-layer translator that the
         caller pre-bound to its own :class:`FathomSettings` (in the
-        Temporal worker registry, the healing bridge, the CLI, …).
+        Temporal worker registry, service bridges, the CLI, ...).
         It is propagated to :class:`IntentStrategy` and
         :class:`ExplorationStrategy` so :class:`AdapterAssembly`
         observes the same settings the caller built — not a fresh
@@ -99,7 +97,6 @@ class FathomRunner:
         self.__summarizer = summarizer
         self.__runtime_configuration = runtime_configuration
         self.__path_manager = path_manager
-        self.__recovery = recovery or RecoveryPolicy()
         self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
 
@@ -139,7 +136,6 @@ class FathomRunner:
                 "summarizer": self.__summarizer,
                 "perception": self.__perception,
             },
-            recovery=self.__recovery,
             configuration=self.__config,
             realignment=self.__realignment,
             path_manager=self.__path_manager,
@@ -195,7 +191,6 @@ class FathomRunner:
         request_id: Optional[str] = None,
         package_name: Optional[str] = None,
         conversation_id: Optional[str] = None,
-        recovery: Optional[RecoveryPolicy] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_scope: ContextScope = ContextScope.EXECUTION,
     ) -> IntentResult:
@@ -257,7 +252,6 @@ class FathomRunner:
             summarizer=self.__summarizer,
             perception=self.__perception,
             path_manager=self.__path_manager,
-            recovery=recovery or self.__recovery,
             realignment=realignment or self.__realignment,
             max_steps=max_steps or self.__config.intent.max_steps,
             runtime_configuration=self.__runtime_configuration,

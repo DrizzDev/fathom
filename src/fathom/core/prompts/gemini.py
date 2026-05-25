@@ -84,12 +84,6 @@ class GeminiPromptBuilder(PromptBuilder):
             index = sub_goal_info.get("index")
             total = sub_goal_info.get("total", 0)
             description = sub_goal_info.get("description")
-            strict_mode = bool(sub_goal_info.get("strict_mode"))
-            required_action_family = str(
-                sub_goal_info.get("required_action_family") or "unspecified"
-            )
-            scroll_axis = str(sub_goal_info.get("scroll_axis") or "unspecified")
-            surface = str(sub_goal_info.get("surface") or "").strip()
 
             if index is not None and total > 1:
                 progress_text = f"[{index + 1}/{total}]"
@@ -110,21 +104,6 @@ class GeminiPromptBuilder(PromptBuilder):
                 logger.debug(
                     f"[H3] Single Sub-goal Focus | step={index + 1}/{total} | "
                     f"task={(description or '')[:50]}"
-                )
-
-            if strict_mode:
-                strict_surface = surface or "(none)"
-                parts.append(
-                    "<STRICT_EXECUTION_CONTRACT>\n"
-                    f"required_action_family: {required_action_family}\n"
-                    f"scroll_axis: {scroll_axis}\n"
-                    f"surface: {strict_surface}\n"
-                    "When strict mode is active, preserve this contract exactly.\n"
-                    "If a specific surface is named, keep targeting that same surface.\n"
-                    "Do not broaden it into a generic list, rail, or section.\n"
-                    "Fill the action.surface field with that same surface wording whenever an action belongs to it.\n"
-                    "Do not change the task into a different workflow shape.\n"
-                    "</STRICT_EXECUTION_CONTRACT>"
                 )
 
         # 1a-bis. App Launch Semantics (when package is known)
@@ -201,13 +180,13 @@ class GeminiPromptBuilder(PromptBuilder):
                 "</USER_OVERRIDE>"
             )
 
-        # 5. Verifier Feedback (system-internal rejection — re-plan against it)
+        # 5. Verifier Feedback (system-internal rejection — adjust the next action)
         if verifier_feedback := context.get("verifier_feedback", []):
             entries = [f"- {item}" for item in verifier_feedback]
             parts.append(
                 "<VERIFIER_FEEDBACK>\n"
                 "Your previous completion claim was rejected by the verifier. "
-                "Re-plan to address these issues, then attempt completion again only when resolved.\n"
+                "Address these issues with the next concrete UI action, then attempt completion again only when resolved.\n"
                 + "\n".join(entries)
                 + "\n"
                 "</VERIFIER_FEEDBACK>"

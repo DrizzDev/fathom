@@ -1,14 +1,9 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from fathom.constants.subgoal import (
     DEFAULT_SUB_GOAL_MAX_STEPS,
-    INPUT_SUB_GOAL_MAX_STEPS,
-    SCROLL_SUB_GOAL_MAX_STEPS,
-    TAP_SUB_GOAL_MAX_STEPS,
-    VALIDATE_SUB_GOAL_MAX_STEPS,
-    WAIT_SUB_GOAL_MAX_STEPS,
 )
 
 
@@ -32,72 +27,6 @@ class SubGoalKind(StrEnum):
     VALIDATION = "validation"
 
 
-class RequiredActionFamily(StrEnum):
-    """
-    Structured action-family contract carried by one sub-goal.
-    """
-
-    UNSPECIFIED = "unspecified"
-    SCROLL = "scroll"
-    TAP = "tap"
-    INPUT = "input"
-    WAIT = "wait"
-    VALIDATE = "validate"
-
-
-class ScrollAxis(StrEnum):
-    """
-    Explicit scroll axis declared by the planner when one is known.
-    """
-
-    UNSPECIFIED = "unspecified"
-    VERTICAL = "vertical"
-    HORIZONTAL = "horizontal"
-
-
-class ExecutionContract(BaseModel):
-    """
-    Structured execution constraints that strict mode must preserve.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    required_action_family: RequiredActionFamily = Field(
-        default=RequiredActionFamily.UNSPECIFIED,
-        description="Primary action family the planner must preserve for this sub-goal.",
-    )
-    scroll_axis: ScrollAxis = Field(
-        default=ScrollAxis.UNSPECIFIED,
-        description="Explicit scroll axis when the task truly constrains one.",
-    )
-    surface: str | None = Field(
-        default=None,
-        description=(
-            "Specific section, container, or on-screen area that the planner must preserve "
-            "for this sub-goal when the user names one."
-        ),
-    )
-
-
-def default_max_steps_for_execution_contract(*, contract: ExecutionContract) -> int:
-    """
-    Return the default step budget for one execution contract.
-    """
-
-    family = contract.required_action_family
-    if family is RequiredActionFamily.SCROLL:
-        return SCROLL_SUB_GOAL_MAX_STEPS
-    if family is RequiredActionFamily.TAP:
-        return TAP_SUB_GOAL_MAX_STEPS
-    if family is RequiredActionFamily.INPUT:
-        return INPUT_SUB_GOAL_MAX_STEPS
-    if family is RequiredActionFamily.WAIT:
-        return WAIT_SUB_GOAL_MAX_STEPS
-    if family is RequiredActionFamily.VALIDATE:
-        return VALIDATE_SUB_GOAL_MAX_STEPS
-    return DEFAULT_SUB_GOAL_MAX_STEPS
-
-
 class SubGoal(BaseModel):
     """
     Represents a single sub-goal in a decomposed intent.
@@ -110,10 +39,6 @@ class SubGoal(BaseModel):
     criterion: str | None = Field(
         default=None,
         description="Observable terminal state criterion for compatibility with execution tasks.",
-    )
-    execution_contract: ExecutionContract = Field(
-        default_factory=ExecutionContract,
-        description="Structured execution constraints preserved by strict mode.",
     )
     status: SubGoalStatus = Field(
         default=SubGoalStatus.PENDING, description="Current lifecycle status"
@@ -138,10 +63,7 @@ class SubGoal(BaseModel):
     max_steps: int = Field(
         default=DEFAULT_SUB_GOAL_MAX_STEPS,
         ge=1,
-        description=(
-            "Maximum graph iterations (ANALYZE → EXECUTE → RECORD) the agent may spend on this sub-goal before the recovery "
-            "coordinator is dispatched with SUBGOAL_BUDGET_EXCEEDED. Decomposers may override per-sub-goal; default keeps popup-heavy flows comfortable."
-        ),
+        description="Maximum graph iterations the agent may spend on this sub-goal.",
     )
 
     def mark_in_progress(self) -> None:

@@ -47,6 +47,10 @@ class OcrResult(BaseModel):
 
     tokens: Tuple[OcrToken, ...] = Field(description="Detected tokens in reading order.")
     duration: int = Field(ge=0, description="Provider call duration in milliseconds.")
+    raw_response: Optional[str] = Field(
+        default=None,
+        description="Provider raw response serialized as JSON for debugging artifacts.",
+    )
 
 
 class DocumentAiConfiguration(BaseModel):

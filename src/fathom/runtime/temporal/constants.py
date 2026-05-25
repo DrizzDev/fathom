@@ -22,7 +22,6 @@ __FATHOM_MODULES = {
     "fathom.state.context",
     "fathom.domain.request",
     "fathom.schemas.results",
-    "fathom.schemas.decision",
     "fathom.domain.configuration",
 }
 

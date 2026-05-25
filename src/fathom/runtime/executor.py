@@ -43,7 +43,6 @@ class GraphExecutor:
         self.__has_interrupts = has_interrupts
         self.__invalidate_on_injection = invalidate_on_injection
 
-        self.__replan_count = 0
         self.__config: RunnableConfig = {"configurable": {"thread_id": self.__thread_id}}
 
         self.__active_tasks: Set[asyncio.Task[None]] = set()
@@ -192,6 +191,18 @@ class GraphExecutor:
 
         logger.info("Executor: Pause signal received during execution")
 
+        signal_type = await self.__context.hitl.check_signal()
+        if signal_type == SignalType.CANCELLED.value:
+            logger.info("Executor: Cancellation signal received while waiting for pause")
+            self.__context.cancel()
+            stream_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stream_task
+            await self.__context.telemetry.info(
+                "Workflow execution cancelled", type=FathomEvent.WORKFLOW_CANCELLED
+            )
+            return False
+
         # Do not cancel in-flight graph execution. Let current stream cycle
         # finish and handle pause at a safe graph boundary.
         if not stream_task.done():
@@ -337,11 +348,12 @@ class GraphExecutor:
 
         if self.__invalidate_on_injection:
             # Immediate realignment: Force complete re-evaluation
-            self.__replan_count += 1
-            remaining = self.__context.realignment.budget - self.__replan_count
+            used = self.__context.agent_state.runtime.realignment.count
+            budget = self.__context.agent_state.runtime.realignment.budget
+            remaining = budget - used
             logger.info(
-                f"Executor: Re-planning triggered. Budget used: {self.__replan_count}/"
-                f"{self.__context.realignment.budget} (Remaining: {remaining})"
+                f"Executor: Realignment triggered. Budget used: {used}/"
+                f"{budget} (Remaining: {remaining})"
             )
             if remaining < 0:
                 logger.warning("Executor: Realignment budget exceeded! Proceeding with caution.")

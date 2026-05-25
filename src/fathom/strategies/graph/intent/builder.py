@@ -73,7 +73,6 @@ class IntentGraphBuilder(GraphBuilder):
             {
                 NodeName.END: NodeName.END,
                 NodeName.GROUND: NodeName.GROUND,
-                NodeName.RECORD: NodeName.RECORD,
                 NodeName.EXECUTE: NodeName.EXECUTE,
             },
         )
@@ -152,7 +151,11 @@ class IntentGraphBuilder(GraphBuilder):
             reason = state.get(cast("str", CommonStateKey.COMPLETION_REASON), "")
 
             # If it completed due to a fatal error or max steps, do not verify, just end
-            if reason in {CompletionReason.FAILED.value, CompletionReason.MAX_STEPS.value}:
+            if reason in {
+                CompletionReason.FAILED.value,
+                CompletionReason.MAX_STEPS.value,
+                CompletionReason.CANCELLED.value,
+            }:
                 logger.info(f"[ROUTING] -> END (Fatal Error / Max Steps: {reason})")
                 return NodeName.END
 
@@ -180,7 +183,7 @@ class IntentGraphBuilder(GraphBuilder):
 
     def __route_after_supervise(self, state: IntentGraphState) -> str:
         """
-        Route after supervise based on whether the supervisor blocked the action.
+        Route after supervise based on whether localization produced an executable context.
         """
 
         if self.__context.is_cancelled:
@@ -194,13 +197,6 @@ class IntentGraphBuilder(GraphBuilder):
             # cascade that would otherwise end with the misleading
             # ``record.missing.step_result`` Sentry alert.
             logger.info("[ROUTING] After SUPERVISE -> GROUND (should_retry=True)")
-            return NodeName.GROUND
-
-        if state.get(cast("str", IntentStateKey.EXECUTION_BLOCKED)):
-            if state.get(cast("str", CommonStateKey.STEP_RESULT)) is not None:
-                logger.info("[ROUTING] After SUPERVISE -> RECORD (blocked with step result)")
-                return NodeName.RECORD
-            logger.info("[ROUTING] After SUPERVISE -> GROUND (blocked without step result)")
             return NodeName.GROUND
 
         logger.info("[ROUTING] After SUPERVISE -> EXECUTE")

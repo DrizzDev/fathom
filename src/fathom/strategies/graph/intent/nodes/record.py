@@ -5,16 +5,13 @@ import logging
 from typing import Any, Dict, List, Optional, cast
 
 from fathom.constants import FathomEvent
+from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.constants.gcc import GCC_BRANCHING_ACTIVE_COUNT
 from fathom.constants.messages import RECORDING_FAILURE_MESSAGE
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.exceptions import FathomError
-from fathom.core.recovery import (
-    RecoveryTrigger,
-)
-from fathom.schemas.outcomes import ActionOutcome
 from fathom.schemas.results import AnalysisResult, PlanResult
-from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import StepResult
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 from fathom.strategies.graph.state import IntentGraphState
@@ -80,15 +77,29 @@ class RecordNode:
 
         recorded_step = state.get(CommonStateKey.STEP_RESULT)
         if not isinstance(recorded_step, StepResult):
+            message = (
+                "Recording failed: missing StepResult; OBSERVE did not stage a recordable step."
+            )
             logger.error(
-                "Record node received no valid step result",
+                message,
                 extra={
                     "component": "graph.intent.record",
                     "event": "record.missing.step_result",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
-            return cast("IntentGraphState", {})
+            self.__provider.context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
+            result = cast(
+                "IntentGraphState",
+                {
+                    IntentStateKey.SHOULD_RETRY: False,
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                    CommonStateKey.FAILURE_DIAGNOSTIC: message,
+                },
+            )
+            self.__provider.persistence.persist(result=result)
+            return result
 
         step_result: StepResult = recorded_step
 
@@ -238,11 +249,12 @@ class RecordNode:
             # SCRIPT_GENERATED is emitted only when the run completes (intent strategy),
             # not on every step, to avoid sending stale script content to the client.
 
-            await self.__provider.context.memory.store_experience(
-                success=step_result.success,
-                action=step_result.step.action,
-                visual_hash=step_result.pre_hash,
-            )
+            if execution_package_base not in LAUNCHER_PACKAGES:
+                await self.__provider.context.memory.store_experience(
+                    success=step_result.success,
+                    action=step_result.step.action,
+                    visual_hash=step_result.pre_hash,
+                )
 
             logger.debug(
                 f"[H3] Committing to trace | thought={step_result.step.action.rationale[:50]}..."
@@ -304,46 +316,17 @@ class RecordNode:
                 self.__provider.persistence.persist(result=result)
                 return result
 
-            if (
-                not step_result.success
-                and step_result.error
-                and step_result.error.startswith("target_unresolved:")
-            ):
-                record_capture = state.get(CommonStateKey.CAPTURE)
-                if isinstance(record_capture, ScreenCapture):
-                    unresolved_recovery = await self.__provider.recovery.try_recover(
-                        reason=step_result.error,
-                        capture=record_capture,
-                        trigger=RecoveryTrigger.TARGET_UNRESOLVED,
-                        hint=step_result.step.action.target,
-                    )
-                    if unresolved_recovery is not None:
-                        self.__provider.persistence.persist(result=unresolved_recovery)
-                        return unresolved_recovery
-
             # ── Sub-goal completion check (post-execution) ──
             # Evaluated here — after the action has executed and been recorded —
             # so we never advance a sub-goal on an action that didn't run.
-            recorded_outcome = state.get(CommonStateKey.ACTION_OUTCOME)
             subgoal_result = await self.__provider.completion.evaluate(
                 plan=execution_plan,
                 step_result=step_result,
                 accumulated=accumulated_step_results,
-                outcome=(recorded_outcome if isinstance(recorded_outcome, ActionOutcome) else None),
             )
             if subgoal_result is not None:
                 self.__provider.persistence.persist(result=subgoal_result)
                 return subgoal_result
-
-            record_capture = state.get(CommonStateKey.CAPTURE)
-            if isinstance(record_capture, ScreenCapture):
-                stuck_result = await self.__provider.completion.recover_if_stuck(
-                    capture=record_capture,
-                    step_result=step_result,
-                )
-                if stuck_result is not None:
-                    self.__provider.persistence.persist(result=stuck_result)
-                    return stuck_result
 
             logger.info(
                 f"Step {self.__provider.context.agent_state.step_count} recorded successfully",

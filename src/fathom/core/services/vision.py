@@ -20,7 +20,6 @@ from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.conversation import ConversationTurn, TurnPart
-from fathom.schemas.effect import ActionEffect
 from fathom.schemas.observation import LoopObservation, ScreenObservation
 from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
@@ -37,10 +36,6 @@ class SubGoalContext(TypedDict):
     index: int
     total: int
     description: str
-    strict_mode: bool
-    required_action_family: str
-    scroll_axis: str
-    surface: str
 
 
 class VisionService:
@@ -115,8 +110,6 @@ class VisionService:
                     "function_declarations": [
                         by_name["ask_user"],
                         by_name["execute_ui"],
-                        by_name["request_replan"],
-                        by_name["report_unactionable"],
                     ]
                 },
             ]
@@ -141,11 +134,8 @@ class VisionService:
         elements: Optional[Dict[str, Any]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
         loop_observation: Optional[LoopObservation] = None,
-        recent_effects: Optional[List[ActionEffect]] = None,
         screen_observation: Optional[ScreenObservation] = None,
         prior_rejection_history: Optional[List[ConversationTurn]] = None,
-        last_block_reason: Optional[str] = None,
-        last_block_message: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Coordinates the analysis flow mirroring GeminiVisionTool strictly.
@@ -268,15 +258,6 @@ class VisionService:
                 f"\n\n<LAST_ACTION>\nMost recent action: {last_action}\n</LAST_ACTION>"
             )
 
-        if recent_effects:
-            dynamic_context += self.__render_action_effect_blocks(effects=recent_effects)
-
-        if last_block_reason or last_block_message:
-            dynamic_context += self.__render_last_action_block(
-                reason=last_block_reason,
-                message=last_block_message,
-            )
-
         if screen_observation is not None:
             dynamic_context += self.__render_screen_observation(observation=screen_observation)
 
@@ -394,8 +375,11 @@ class VisionService:
                     # correction instruction (the history already contains the original prompt).
                     payload = [
                         f"Your previous tool call was rejected: {message}\n"
-                        "You MUST call the tool again with a DIFFERENT action. "
-                        "Choose an alternative approach to achieve the same goal."
+                        "You MUST call the tool again with corrected fields that satisfy "
+                        "the schema. Keep the same intended UI action when it is still "
+                        "the right next step; choose a different action only if the "
+                        "current screen or validation feedback proves the original "
+                        "intent was wrong."
                     ]
                     continue
 
@@ -416,6 +400,12 @@ class VisionService:
             for item in original_payload
         ]
         analysis.metadata["system_instruction"] = instruction
+        analysis.metadata["current_workflow_screen_actions"] = (
+            self.__current_workflow_screen_actions(
+                trace=full_context.get("trace", []),
+                current_screen_hash=fingerprint[:8],
+            )
+        )
 
         analysis.memories = len(knowledge.get("previous_actions", []))
         analysis.metrics["llm_analysis"] = duration
@@ -442,6 +432,50 @@ class VisionService:
         )
 
         return analysis
+
+    @staticmethod
+    def __current_workflow_screen_actions(
+        *,
+        trace: Any,
+        current_screen_hash: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return successful actions from this workflow on the current screen.
+        """
+
+        if not isinstance(trace, list):
+            return []
+
+        actions: List[Dict[str, Any]] = []
+        for entry in trace:
+            if not isinstance(entry, dict):
+                continue
+            observation = str(entry.get("observation") or "")
+            if not observation.startswith("Screen: "):
+                continue
+            parts = observation.split(" ")
+            entry_hash = parts[1][:8] if len(parts) > 1 else ""
+            if entry_hash != current_screen_hash:
+                continue
+            action = entry.get("action")
+            if not isinstance(action, dict):
+                continue
+            target = (
+                action.get("natural_language_target")
+                or action.get("target")
+                or action.get("label_id")
+            )
+            if not target:
+                continue
+            actions.append(
+                {
+                    "success": True,
+                    "action": action.get("action_type"),
+                    "target": str(target),
+                }
+            )
+
+        return actions
 
     def build_rejection_history_from_analysis(
         self,
@@ -645,8 +679,8 @@ class VisionService:
         The block is deliberately framed as an observation, not as an
         instruction. The agent reads it, may consult it when choosing
         the next action, and is free to disagree if it has reason. The
-        runtime enforces nothing here — that contract lives in the
-        recovery coordinator, not in prompt text.
+        runtime enforces nothing here; loop-breaking remains a planner
+        concern, not a prompt contract.
         """
 
         progress = (
@@ -672,81 +706,8 @@ class VisionService:
             f"alternatives:{alternatives}{note_line}\n"
             "This is an observation from the runtime, not an instruction. "
             "Decide the next action yourself; consider whether the current "
-            "approach is working, whether to ask the user, or whether to "
-            "report the screen as unactionable.\n"
+            "approach is working or whether to ask the user.\n"
             "</SYSTEM_OBSERVATION>"
-        )
-
-    def __render_action_effect_blocks(self, *, effects: List[ActionEffect]) -> str:
-        """
-        Render structured ``<LAST_ACTION_EFFECT>`` and
-        ``<RECENT_TRAJECTORY>`` blocks into the prompt body.
-
-        ``status`` is the load-bearing signal — the raw numbers are
-        included as diagnostic context so the model can reason about
-        edge cases (e.g. SSIM 0.97 should not be claimed as "progress"
-        in the rationale), not so it has to learn thresholds from prompt
-        text.
-
-        Trajectory entries appear oldest-first so the model reads the
-        sequence in execution order.
-        """
-
-        last = effects[-1]
-        ssim_str = f"{last.ssim_score:.4f}" if last.ssim_score is not None else "N/A"
-        content_str = f"{last.content_change:.4f}" if last.content_change is not None else "N/A"
-        scroll_str = (
-            f"dx={last.scroll_dx:.1f} dy={last.scroll_dy:.1f}"
-            if last.scroll_dx is not None and last.scroll_dy is not None
-            else "N/A"
-        )
-
-        last_block = (
-            "\n\n<LAST_ACTION_EFFECT>\n"
-            f"status: {last.status.value}\n"
-            f"visual_progress: {last.visual_progress:.3f}\n"
-            f"phash_distance: {last.phash_distance}\n"
-            f"ssim: {ssim_str}\n"
-            f"content_change: {content_str}\n"
-            f"scroll: {scroll_str}\n"
-            "</LAST_ACTION_EFFECT>"
-        )
-
-        if len(effects) <= 1:
-            return last_block
-
-        lines = []
-        for index, effect in enumerate(effects, start=1):
-            lines.append(
-                f"  {index}. status={effect.status.value} "
-                f"visual_progress={effect.visual_progress:.3f}"
-            )
-
-        trajectory_block = "\n\n<RECENT_TRAJECTORY>\n" + "\n".join(lines) + "\n</RECENT_TRAJECTORY>"
-
-        return last_block + trajectory_block
-
-    @staticmethod
-    def __render_last_action_block(*, reason: Optional[str], message: Optional[str]) -> str:
-        """
-        Render the supervisor-block feedback channel for the next turn.
-
-        Surfaced as ``<LAST_ACTION_BLOCK>`` so the planner can see
-        *why* its previous action was rejected by the runtime
-        supervisor (target unresolved, non-scrollable surface, keyboard
-        occlusion, etc.) and choose a different action type or target
-        instead of re-proposing the blocked action verbatim.
-        """
-
-        reason_line = reason or "unspecified"
-        detail_line = message or "No additional detail provided."
-        return (
-            "\n\n<LAST_ACTION_BLOCK>\n"
-            f"reason: {reason_line}\n"
-            f"detail: {detail_line}\n"
-            "guidance: The previous action was rejected by the runtime supervisor. "
-            "Choose a different action type or target; do not re-propose the same action.\n"
-            "</LAST_ACTION_BLOCK>"
         )
 
     def __render_screen_observation(self, *, observation: ScreenObservation) -> str:
@@ -787,7 +748,7 @@ class VisionService:
 
         return (
             "\n\n<SCREEN_OBSERVATION>\n"
-            f"keyboard_visible: {str(observation.keyboard.visible).lower()}\n"
+            f"keyboard_visibility: {observation.keyboard.visibility.value.lower()}\n"
             f"overlay_count: {len(observation.overlays)}\n"
             "visible_calls_to_action:\n"
             f"{chr(10).join(calls_to_action) if calls_to_action else '  - none'}\n"
@@ -893,8 +854,6 @@ class VisionService:
             "ask_user",
             "execute_ui",
             "recall_memory",
-            "report_unactionable",
-            "request_replan",
             "store_memory",
         }
         if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):

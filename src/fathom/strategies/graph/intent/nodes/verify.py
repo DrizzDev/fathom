@@ -6,15 +6,18 @@ import logging
 import time
 from typing import TYPE_CHECKING, cast
 
+from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
-from fathom.core.prompts.templates import VERIFICATION_SYSTEM, VERIFICATION_USER_TEMPLATE
-from fathom.core.recovery import (
-    RecoveryTrigger,
+from fathom.core.prompts.templates import (
+    SUBGOAL_VERIFICATION_SYSTEM,
+    VERIFICATION_SYSTEM,
+    build_intent_verification_user_prompt,
+    build_subgoal_verification_user_prompt,
 )
 from fathom.schemas.artifact import ArtifactRecord, VerificationPayload
 from fathom.schemas.completion import CompletionVerdict
+from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenCapture
-from fathom.schemas.state import VerificationLoopPhase
 from fathom.schemas.tasks import ExecutionTaskState
 from fathom.strategies.graph.state import IntentGraphState
 from fathom.utils.parsing import strip_code_fences
@@ -84,9 +87,12 @@ class VerifyNode:
             self.__provider.persistence.persist(result=result)
             return result
 
-        all_sub_goals_done = (
-            self.__provider.context.agent_state.has_sub_goals()
-            and self.__provider.context.agent_state.all_sub_goals_complete()
+        agent_state = self.__provider.context.agent_state
+        current_sub_goal = agent_state.get_current_sub_goal()
+        is_subgoal_verify = (
+            current_sub_goal is not None
+            and agent_state.has_sub_goals()
+            and not agent_state.all_sub_goals_complete()
         )
 
         start_time = time.time()
@@ -111,13 +117,15 @@ class VerifyNode:
                     reason=CompletionReason.FAILED.value
                 )
 
-                return cast(
+                result = cast(
                     "IntentGraphState",
                     {
                         CommonStateKey.IS_COMPLETE: True,
                         CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
                     },
                 )
+                self.__provider.persistence.persist(result=result)
+                return result
         except asyncio.CancelledError:
             # Cooperative cancellation must propagate so the graph
             # unwinds; do not absorb it into a FAILED completion.
@@ -133,28 +141,44 @@ class VerifyNode:
             )
             self.__provider.context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
 
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: True,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
                 },
             )
+            self.__provider.persistence.persist(result=result)
+            return result
 
-        # 2. Construct binary validation prompt
-        intent = self.__provider.context.intent
-        system_prompt = VERIFICATION_SYSTEM
-
-        guidance_section = ""
-        user_guidance = self.__provider.context.context_manager.get_user_guidance()
-
-        if user_guidance:
-            guidance_text = "\n".join([f"- {guidance.content}" for guidance in user_guidance])
-            guidance_section = f"\nUser Guidance:\n{guidance_text}\n"
-
-        user_prompt = VERIFICATION_USER_TEMPLATE.format(
-            intent=intent, guidance_section=guidance_section
-        )
+        # 2. Construct binary validation prompt. When sub-goals are active,
+        # verify the current sub-goal before advancing; verify the full intent
+        # only once the sub-goal chain is complete.
+        user_guidance = [
+            guidance.content
+            for guidance in self.__provider.context.context_manager.get_user_guidance()
+        ]
+        if is_subgoal_verify and current_sub_goal is not None:
+            system_prompt = SUBGOAL_VERIFICATION_SYSTEM
+            recent_trace = self.__provider.context.context_manager.get_full_context().get(
+                "trace", []
+            )
+            user_prompt = build_subgoal_verification_user_prompt(
+                intent=current_sub_goal.description,
+                user_guidance=user_guidance,
+                recent_trace=(recent_trace if isinstance(recent_trace, (list, tuple)) else []),
+            )
+            logger.info(
+                "Verifying sub-goal %s: %s",
+                current_sub_goal.index,
+                current_sub_goal.description[:80],
+            )
+        else:
+            system_prompt = VERIFICATION_SYSTEM
+            user_prompt = build_intent_verification_user_prompt(
+                intent=self.__provider.context.intent,
+                user_guidance=user_guidance,
+            )
 
         # 3. Ask the LLM
         try:
@@ -201,6 +225,54 @@ class VerifyNode:
             reason=reason,
         )
 
+        if is_truly_complete and is_subgoal_verify and current_sub_goal is not None:
+            has_more = agent_state.mark_current_sub_goal_complete(
+                completion_signal=SubGoalCompletionSignal(
+                    evidence=f"Verified by screenshot: {reason}",
+                    flagged_complete=True,
+                    rationale_verified=False,
+                    action_executed=True,
+                    screen_verified=True,
+                    llm_confidence=1.0,
+                )
+            )
+            agent_state.clear_verification_loop()
+            agent_state.reset_completion()
+            self.__provider.context.context_manager.clear_verifier_feedback()
+
+            if has_more:
+                next_sub_goal = agent_state.get_current_sub_goal()
+                logger.info(
+                    "Sub-goal %s verified; advancing to sub-goal %s",
+                    current_sub_goal.index,
+                    next_sub_goal.index if next_sub_goal is not None else None,
+                )
+                result = cast(
+                    "IntentGraphState",
+                    {
+                        CommonStateKey.IS_COMPLETE: False,
+                        IntentStateKey.SHOULD_RETRY: True,
+                        IntentStateKey.PLAN: None,
+                        IntentStateKey.PLANNED_STEP: None,
+                        CommonStateKey.COMPLETION_REASON: None,
+                    },
+                )
+                self.__provider.persistence.persist(result=result)
+                return result
+
+            agent_state.mark_complete(reason="All sub-goals completed and verified sequentially")
+            result = cast(
+                "IntentGraphState",
+                {
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.COMPLETION_REASON: (
+                        "All sub-goals completed and verified sequentially"
+                    ),
+                },
+            )
+            self.__provider.persistence.persist(result=result)
+            return result
+
         if is_truly_complete:
             self.__provider.context.agent_state.clear_verification_loop()
             self.__provider.context.agent_state.mark_complete(reason=reason)
@@ -238,60 +310,36 @@ class VerifyNode:
             self.__provider.persistence.persist(result=result)
             return result
 
-        if all_sub_goals_done:
-            logger.warning(
-                f"LLM rejected completion after local completion gate passed. "
-                f"Keeping workflow open. LLM reason: {reason}"
-            )
-            # Final intent verification owns completion. When it rejects after the
-            # last sub-goal was locally marked complete, restore that sub-goal as
-            # the active mission so recovery/replanning keep the same contract.
-            self.__provider.context.agent_state.reopen_last_completed_sub_goal()
-
         self.__provider.context.agent_state.reset_completion()
-        verification_loop = self.__provider.context.agent_state.record_verify_rejection(
+        loop_state = self.__provider.context.agent_state.record_verify_rejection(
             screen=self.__provider.context.agent_state.current_screen,
             activity=capture.activity,
         )
-
-        if (
-            verification_loop.phase is VerificationLoopPhase.RECOVERY_ATTEMPTED
-            and verification_loop.consecutive_rejections
-            >= self.__provider.context.recovery.verify_threshold
-        ):
-            diagnostic = (
-                "Verification kept rejecting without recorded progress after recovery already ran: "
-                f"count={verification_loop.consecutive_rejections}, "
-                f"step_count={self.__provider.context.agent_state.step_count}, "
-                f"activity={capture.activity!r}, reason={reason}"
+        if loop_state.consecutive_rejections >= DEFAULT_VERIFICATION_REJECTION_LIMIT:
+            logger.warning(
+                "Verifier rejected completion repeatedly on the same step/screen; terminating",
+                extra={
+                    "component": "graph.intent.verify",
+                    "event": "verify.loop.terminated",
+                    "workflow.id": self.__provider.context.workflow_id,
+                    "consecutive.rejections": loop_state.consecutive_rejections,
+                    "limit": DEFAULT_VERIFICATION_REJECTION_LIMIT,
+                },
             )
             self.__provider.context.agent_state.mark_complete(reason=CompletionReason.STUCK.value)
             result = cast(
                 "IntentGraphState",
                 {
                     CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.FAILURE_DIAGNOSTIC: diagnostic,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.STUCK.value,
+                    CommonStateKey.FAILURE_DIAGNOSTIC: (
+                        f"Verification failed {loop_state.consecutive_rejections} times "
+                        "without a new recorded action."
+                    ),
                 },
             )
             self.__provider.persistence.persist(result=result)
             return result
-
-        if (
-            verification_loop.consecutive_rejections
-            >= self.__provider.context.recovery.verify_threshold
-        ):
-            self.__provider.context.agent_state.mark_verify_recovery_attempted()
-
-            # Signal the rejection to the recovery coordinator; fall through
-            # to the standard rejection path if no strategy commits.
-            recovered = await self.__provider.recovery.try_recover(
-                reason=reason,
-                capture=capture,
-                trigger=RecoveryTrigger.VERIFY_REJECTED,
-            )
-            if recovered is not None:
-                return recovered
 
         feedback = f"Verification failed: {reason}"
         logger.warning(
@@ -315,6 +363,9 @@ class VerifyNode:
             {
                 CommonStateKey.IS_COMPLETE: False,
                 IntentStateKey.SHOULD_RETRY: True,
+                IntentStateKey.PLAN: None,
+                IntentStateKey.PLANNED_STEP: None,
+                CommonStateKey.COMPLETION_REASON: None,
             },
         )
         self.__provider.persistence.persist(result=result)

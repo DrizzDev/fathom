@@ -1,23 +1,18 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, cast
 
-from fathom.constants.reasoning import VALIDATION_KEYWORDS
-from fathom.constants.screen import NO_PROGRESS_RECOVERY_THRESHOLD
+from fathom.constants.reasoning import (
+    SUB_GOAL_COMPLETION_REQUIRED_SIGNALS,
+    VALIDATION_KEYWORDS,
+)
 from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey
-from fathom.core.recovery import RecoveryTrigger
-from fathom.core.runtime.adapter import ExecutionTaskAdapter
-from fathom.schemas.completion import CompletionVerdict
-from fathom.schemas.events import RuntimeEventKind
-from fathom.schemas.outcomes import ActionOutcome, OutcomeStatus
+from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
-from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import StepResult
 from fathom.schemas.subgoal import SubGoalKind
-from fathom.schemas.tasks import TaskStatus
 from fathom.strategies.graph.context import GraphContext
-from fathom.strategies.graph.intent.nodes.recovery import RecoveryDispatcher
 from fathom.strategies.graph.state import IntentGraphState
 
 logger = getLogger(__name__)
@@ -25,21 +20,19 @@ logger = getLogger(__name__)
 
 class SubGoalEvaluator:
     """
-    Classifies sub-goals, applies the completion floor, and routes stuck recoveries.
+    Classifies sub-goals and applies the coords-style post-action completion signal gate.
     """
 
     def __init__(
         self,
         *,
         context: GraphContext,
-        recovery: RecoveryDispatcher,
     ) -> None:
         """
-        Initialize with the shared graph context and the recovery dispatcher.
+        Initialize with the shared graph context.
         """
 
         self.__context = context
-        self.__recovery = recovery
 
     @staticmethod
     def classify(
@@ -59,48 +52,15 @@ class SubGoalEvaluator:
 
         return SubGoalKind.ACTION
 
-    @staticmethod
-    def floor(
-        *,
-        kind: SubGoalKind,
-        analysis: AnalysisResult,
-        outcome: Optional[ActionOutcome],
-    ) -> Optional[str]:
-        """
-        Return a reason string when the completion floor blocks advancement.
-        """
-
-        if kind == SubGoalKind.VALIDATION:
-            return None
-
-        task_status = analysis.task_status
-
-        if task_status == TaskStatus.BLOCKED:
-            return "Model reported task BLOCKED; supervision and healing decide the next step."
-
-        if task_status == TaskStatus.NOT_MET:
-            return "Model reported task NOT_MET; refusing to advance on legacy gate alone."
-
-        if task_status == TaskStatus.MET:
-            if outcome is None or outcome.status != OutcomeStatus.EFFECTIVE:
-                return "Model reported task MET but observed outcome is not effective."
-            return None
-
-        if outcome is None or outcome.status == OutcomeStatus.NO_EFFECT:
-            return "Observed outcome reports no effect; refusing to advance on self-report alone."
-
-        return None
-
     async def evaluate(
         self,
         *,
         plan: Any,
         step_result: StepResult,
         accumulated: List[StepResult],
-        outcome: Optional[ActionOutcome] = None,
     ) -> Optional[IntentGraphState]:
         """
-        Apply the completion floor and emit a graph patch when a sub-goal advances.
+        Emit a graph patch when the executed action clears the completion signal gate.
         """
 
         agent_state = self.__context.agent_state
@@ -126,118 +86,49 @@ class SubGoalEvaluator:
             return None
 
         kind = self.classify(step_result=step_result, description=current.description)
-
         signal = self.__context.reasoner.analyze_subgoal_completion(
             analysis=analysis,
             sub_goal_description=current.description,
-            outcome=outcome,
             delta_score=agent_state.last_delta_score,
             screen_changed=step_result.screen_changed or kind == SubGoalKind.VALIDATION,
             screen_description=step_result.observation or step_result.step.action.target or "",
         )
 
-        task = ExecutionTaskAdapter().from_sub_goal(sub_goal=current, kind=kind)
-
-        verdict = self.__context.completion_service.evaluate(
-            task=task,
-            outcome=outcome,
-            status=TaskStatus.MET if signal.claim_verified else None,
-        )
-        if (reason := self.floor(kind=kind, analysis=analysis, outcome=outcome)) is not None:
-            verdict = verdict.model_copy(update={"complete": False, "reason": reason})
-
         index, total = agent_state.get_sub_goal_progress()
-
-        self.__log_verdict(
-            kind=kind,
-            signal=signal,
-            verdict=verdict,
-            current_index=current.index,
-            progress=(index + 1, total),
-            description=current.description,
-        )
-
-        if not verdict.complete:
+        if not self.__meets_threshold(signal=signal):
+            self.__log_incomplete(
+                kind=kind,
+                signal=signal,
+                current_index=current.index,
+                progress=(index + 1, total),
+                description=current.description,
+            )
             return None
 
-        has_more = agent_state.mark_current_sub_goal_complete(completion_signal=signal)
-        await self.__context.event_emitter.emit(
-            kind=RuntimeEventKind.TASK_UPDATED,
-            step=agent_state.step_count,
-            payload={
-                "task.has_more": has_more,
-                "task.kind": task.kind.value,
-                "task.complete": verdict.complete,
-                "task.identifier": task.identifier,
-                "task.criterion": task.criterion[:120],
-                "task.next_state": verdict.next_state.value,
+        logger.info(
+            "Sub-goal signals passed; routing to VERIFY before advancing",
+            extra={
+                **self.__log_context(),
+                "kind": kind.value,
+                "event": "subgoal.verify.pending",
+                "signal.count": self.__signal_count(signal=signal),
+                "sub_goal.index": current.index,
+                "sub_goal.description": current.description[:80],
             },
         )
-
-        if has_more:
-            return cast(
-                "IntentGraphState",
-                {
-                    IntentStateKey.SHOULD_RETRY: True,
-                    IntentStateKey.STEP_RESULTS: accumulated,
-                },
-            )
-
-        agent_state.mark_complete(reason="All sub-goals completed sequentially")
+        agent_state.mark_complete(
+            reason=f"Sub-goal '{current.description[:50]}' pending verification"
+        )
         return cast(
             "IntentGraphState",
             {
                 CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: (
+                    f"Sub-goal '{current.description[:50]}' pending verification"
+                ),
                 IntentStateKey.STEP_RESULTS: accumulated,
-                CommonStateKey.COMPLETION_REASON: "All sub-goals completed sequentially",
             },
         )
-
-    async def recover_if_stuck(
-        self,
-        *,
-        capture: ScreenCapture,
-        step_result: StepResult,
-    ) -> Optional[IntentGraphState]:
-        """
-        Dispatch recovery when the agent is stuck, making no progress, or over budget.
-        """
-
-        agent_state = self.__context.agent_state
-        hint = step_result.step.action.target
-
-        if agent_state.is_stuck:
-            return await self.__recovery.try_recover(
-                hint=hint,
-                capture=capture,
-                trigger=RecoveryTrigger.LOOP_DETECTED,
-                reason="loop detector observed repetition without progress",
-            )
-
-        if agent_state.consecutive_no_progress_count >= NO_PROGRESS_RECOVERY_THRESHOLD:
-            return await self.__recovery.try_recover(
-                hint=hint,
-                capture=capture,
-                trigger=RecoveryTrigger.NO_PROGRESS,
-                reason=(
-                    f"{agent_state.consecutive_no_progress_count} consecutive actions "
-                    "produced no measurable visual progress"
-                ),
-            )
-
-        if agent_state.current_sub_goal_over_budget:
-            return await self.__recovery.try_recover(
-                hint=hint,
-                capture=capture,
-                trigger=RecoveryTrigger.SUBGOAL_BUDGET_EXCEEDED,
-                reason=(
-                    f"sub-goal exhausted step budget "
-                    f"({agent_state.current_sub_goal_action_count} actions) "
-                    "without its success criterion being met"
-                ),
-            )
-
-        return None
 
     @staticmethod
     def __analysis_from(*, plan: Any) -> Optional[AnalysisResult]:
@@ -254,36 +145,34 @@ class SubGoalEvaluator:
 
         return raw if isinstance(raw, AnalysisResult) else AnalysisResult.model_validate(raw)
 
-    def __log_verdict(
+    def __log_incomplete(
         self,
         *,
-        signal: Any,
+        signal: SubGoalCompletionSignal,
         description: str,
         kind: SubGoalKind,
         current_index: int,
-        progress: Tuple[int, int],
-        verdict: CompletionVerdict,
+        progress: tuple[int, int],
     ) -> None:
         """
-        Emit a single structured verdict log for both success and skip paths.
+        Emit a single structured verdict log for incomplete sub-goal checks.
         """
 
         index, total = progress
         logger.info(
-            "Sub-goal verdict computed",
+            "Sub-goal completion check did not pass",
             extra={
                 **self.__log_context(),
                 "kind": kind.value,
                 "progress.total": total,
-                "reason": verdict.reason,
-                "event": "subgoal.verdict",
+                "event": "subgoal.incomplete",
                 "progress.current": index,
-                "complete": verdict.complete,
+                "signal.count": self.__signal_count(signal=signal),
+                "required.signals": SUB_GOAL_COMPLETION_REQUIRED_SIGNALS,
                 "sub_goal.index": current_index,
                 "sub_goal.description": description[:80],
-                "missing": [item.value for item in verdict.missing],
-                "signal.claim_verified": getattr(signal, "claim_verified", None),
-                "signal.action_effective": getattr(signal, "action_effective", None),
+                "signal.claim_verified": signal.claim_verified,
+                "signal.action_effective": signal.action_effective,
             },
         )
 
@@ -296,3 +185,26 @@ class SubGoalEvaluator:
             "component": "graph.intent.completion",
             "workflow.id": self.__context.workflow_id,
         }
+
+    @classmethod
+    def __meets_threshold(cls, *, signal: SubGoalCompletionSignal) -> bool:
+        """
+        Return whether enough independent sub-goal completion signals agree.
+        """
+
+        return cls.__signal_count(signal=signal) >= SUB_GOAL_COMPLETION_REQUIRED_SIGNALS
+
+    @staticmethod
+    def __signal_count(*, signal: SubGoalCompletionSignal) -> int:
+        """
+        Count independent positive completion signals.
+        """
+
+        return sum(
+            (
+                signal.claim_verified,
+                signal.action_effective,
+                signal.keyword_match,
+                signal.trace_verified,
+            )
+        )

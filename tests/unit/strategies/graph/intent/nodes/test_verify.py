@@ -1,283 +1,197 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from typing import Any, Dict, List
 
-from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
-from fathom.schemas.state import VerificationLoopPhase, VerificationLoopState
+from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
+from fathom.constants.state import CommonStateKey, IntentStateKey
+from fathom.core.agent.state import AgentState
+from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.verify import VerifyNode
 
 
-class VerifyNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
-    """
-    Pins the VERIFY node's cancellation and empty-capture branches and
-    the restore-before-work invariant.
+class _LLM:
+    def __init__(self, *, content: str) -> None:
+        self.content = content
+        self.prompts: List[str] = []
 
-    VERIFY is the final stage: it re-captures the screen and asks the LLM
-    whether the intent has truly been satisfied. The pins verify two
-    early-exit paths plus the load-order invariant — :class:`AgentState`
-    must be restored from the checkpoint *before* anything else, so the
-    cancellation check sees the latest run state, not the pre-resume one.
-    """
+    async def generate(self, **kwargs: object) -> SimpleNamespace:
+        prompt = kwargs.get("prompt")
+        if isinstance(prompt, list) and prompt:
+            self.prompts.append(str(prompt[0]))
+        return SimpleNamespace(content=self.content)
 
-    @staticmethod
-    def __provider(*, cancelled: bool = False, image: bytes = b"PNG") -> MagicMock:
-        """
-        Mocked :class:`IntentNodeProvider` exposing the cancellation
-        check, persistence hooks, and a capture-returning perception
-        port. The ``image`` parameter is overridable so the
-        empty-capture path can be driven by passing ``image=b""``.
-        """
 
-        provider = MagicMock(name="IntentNodeProvider")
-        provider.is_cancelled = AsyncMock(return_value=cancelled)
-        provider.context.workflow_id = "run-test"
-        provider.persistence.persist = MagicMock()
-        provider.persistence.restore = MagicMock()
-        provider.context.max_steps = 10
-        provider.context.recovery.verify_threshold = 3
-        provider.context.agent_state.current_screen = None
-        provider.context.agent_state.record_verify_rejection.return_value = VerificationLoopState(
-            recorded_step_count=0,
-            activity="app",
-            screen=None,
-            consecutive_rejections=1,
+class _Perception:
+    def __init__(self, *, image: bytes = b"png", raises: Exception | None = None) -> None:
+        self.__image = image
+        self.__raises = raises
+
+    async def perceive(self, **_: object) -> ScreenCapture:
+        if self.__raises is not None:
+            raise self.__raises
+
+        return ScreenCapture(
+            width=100,
+            height=200,
+            activity="com.test",
+            image=self.__image,
+            timestamp=1,
         )
-        provider.context.agent_state.mark_verify_recovery_attempted = MagicMock()
-        provider.context.perception.perceive = AsyncMock(
-            return_value=MagicMock(image=image, width=100, height=100, activity="app"),
+
+
+class _ContextManager:
+    def __init__(self) -> None:
+        self.feedback: List[str] = []
+        self.cleared = False
+
+    def get_user_guidance(self) -> list[object]:
+        return []
+
+    def get_full_context(self) -> Dict[str, object]:
+        return {"trace": [{"action": {"action_type": "tap", "target": "Continue"}}]}
+
+    async def inject_verifier_feedback(self, *, feedback: str, step: int | None = None) -> None:
+        _ = step
+        self.feedback.append(feedback)
+
+    def clear_verifier_feedback(self) -> None:
+        self.cleared = True
+
+
+class _Persistence:
+    def __init__(self) -> None:
+        self.last: Dict[Any, Any] = {}
+
+    def restore(self, *, state: Dict[Any, Any]) -> None:
+        _ = state
+
+    def persist(self, *, result: Dict[Any, Any]) -> None:
+        self.last = dict(result)
+
+
+class _Provider:
+    def __init__(
+        self,
+        *,
+        agent_state: AgentState,
+        llm_content: str,
+        capture_image: bytes = b"png",
+        capture_error: Exception | None = None,
+    ) -> None:
+        self.context = SimpleNamespace(
+            llm=_LLM(content=llm_content),
+            intent="finish onboarding",
+            max_steps=10,
+            workflow_id="run-test",
+            perception=_Perception(image=capture_image, raises=capture_error),
+            agent_state=agent_state,
+            artifact_pipeline=None,
+            context_manager=_ContextManager(),
         )
-        return provider
+        self.persistence = _Persistence()
 
-    async def test_cancellation_marks_complete(self) -> None:
-        """
-        A cancelled run must terminate with :attr:`CompletionReason.CANCELLED`
-        without consulting the verifier LLM.
-        """
+    async def is_cancelled(self) -> bool:
+        return False
 
-        provider = self.__provider(cancelled=True)
-        node = VerifyNode(provider=provider)
 
-        result: Any = await node(state={})  # type: ignore[arg-type]
+class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
+    def _agent_state(self) -> AgentState:
+        state = AgentState(intent="finish onboarding")
+        state.set_sub_goals(
+            [
+                SubGoal(index=0, description="Open the app"),
+                SubGoal(index=1, description="Reach the Home screen"),
+            ]
+        )
+        state.mark_complete(reason="Sub-goal pending verification")
+        return state
 
-        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+    async def test_subgoal_verification_advances_without_finishing_intent(self) -> None:
+        provider = _Provider(
+            agent_state=self._agent_state(),
+            llm_content='{"is_complete": true, "reason": "App is open"}',
+        )
+        node = VerifyNode(provider=provider)  # type: ignore[arg-type]
+
+        result = await node.run(state={})  # type: ignore[arg-type]
+
+        self.assertFalse(result[CommonStateKey.IS_COMPLETE])
+        self.assertTrue(result[IntentStateKey.SHOULD_RETRY])
+        self.assertIsNone(result[IntentStateKey.PLAN])
+        self.assertIsNone(result[IntentStateKey.PLANNED_STEP])
+        self.assertIsNone(result[CommonStateKey.COMPLETION_REASON])
+        self.assertEqual(provider.context.agent_state.current_sub_goal_index, 1)
+        self.assertFalse(provider.context.agent_state.is_complete)
+        self.assertIn("Step: Open the app", provider.context.llm.prompts[0])
+
+    async def test_subgoal_verification_failure_keeps_same_subgoal(self) -> None:
+        provider = _Provider(
+            agent_state=self._agent_state(),
+            llm_content='{"is_complete": false, "reason": "Still on login"}',
+        )
+        node = VerifyNode(provider=provider)  # type: ignore[arg-type]
+
+        result = await node.run(state={})  # type: ignore[arg-type]
+
+        self.assertFalse(result[CommonStateKey.IS_COMPLETE])
+        self.assertTrue(result[IntentStateKey.SHOULD_RETRY])
+        self.assertIsNone(result[IntentStateKey.PLAN])
+        self.assertIsNone(result[IntentStateKey.PLANNED_STEP])
+        self.assertIsNone(result[CommonStateKey.COMPLETION_REASON])
+        self.assertEqual(provider.context.agent_state.current_sub_goal_index, 0)
         self.assertEqual(
-            result.get(CommonStateKey.COMPLETION_REASON),
-            CompletionReason.CANCELLED.value,
+            provider.context.context_manager.feedback, ["Verification failed: Still on login"]
         )
 
-    async def test_empty_capture_terminates_with_failed_reason(self) -> None:
-        """
-        An empty post-execution capture means the device surface is gone
-        (lost screen, permission revoked, etc.). VERIFY must terminate
-        with :attr:`CompletionReason.FAILED` so the run is reported as
-        broken rather than silently passing the intent.
-        """
-
-        node = VerifyNode(provider=self.__provider(cancelled=False, image=b""))
-
-        result: Any = await node(state={})  # type: ignore[arg-type]
-
-        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
-        self.assertEqual(
-            result.get(CommonStateKey.COMPLETION_REASON),
-            CompletionReason.FAILED.value,
+    async def test_repeated_verification_failure_terminates_frozen_loop(self) -> None:
+        provider = _Provider(
+            agent_state=self._agent_state(),
+            llm_content='{"is_complete": false, "reason": "Still on login"}',
         )
+        node = VerifyNode(provider=provider)  # type: ignore[arg-type]
 
-    async def test_restore_called_before_any_other_work(self) -> None:
+        result: Dict[Any, Any] = {}
+        for _ in range(DEFAULT_VERIFICATION_REJECTION_LIMIT):
+            result = await node.run(state={})  # type: ignore[arg-type]
+
+        self.assertTrue(result[CommonStateKey.IS_COMPLETE])
+        self.assertEqual(provider.context.agent_state.completion_reason, "Stuck: No progress")
+
+    async def test_empty_capture_failure_is_persisted(self) -> None:
         """
-        The persistence ``restore`` must be invoked before the
-        cancellation check so the cancellation predicate reads the
-        latest restored AgentState — not the pre-resume snapshot.
-        This pin caught a real regression where a cancelled run would
-        continue if the checkpoint was older than the cancel signal.
-        """
-
-        provider = self.__provider(cancelled=True)
-        node = VerifyNode(provider=provider)
-
-        await node(state={})  # type: ignore[arg-type]
-
-        provider.persistence.restore.assert_called_once()
-
-    async def test_all_sub_goals_done_does_not_force_success_when_verifier_rejects(self) -> None:
-        """
-        Rejected verification must keep the workflow open unless user guidance
-        explicitly requested termination.
+        Empty verification captures must persist terminal checkpoint state.
         """
 
-        provider = self.__provider(cancelled=False, image=b"PNG")
-        provider.context.intent = "Find Ashsa Tiffin"
-        provider.context.agent_state.step_count = 4
-        provider.context.agent_state.has_sub_goals.return_value = True
-        provider.context.agent_state.all_sub_goals_complete.return_value = True
-        provider.context.agent_state.reset_completion = MagicMock()
-        provider.context.context_manager.get_user_guidance.return_value = []
-        provider.context.context_manager.inject_verifier_feedback = AsyncMock()
-        provider.context.llm.generate = AsyncMock(
-            return_value=MagicMock(
-                content='{"is_complete": false, "reason": "Target not visible on screen."}'
-            )
+        provider = _Provider(
+            agent_state=self._agent_state(),
+            llm_content='{"is_complete": true, "reason": "Done"}',
+            capture_image=b"",
         )
-        provider.context.artifact_pipeline = None
-        provider.recovery.try_recover = AsyncMock(return_value=None)
+        node = VerifyNode(provider=provider)  # type: ignore[arg-type]
 
-        node = VerifyNode(provider=provider)
-        result: Any = await node(state={})  # type: ignore[arg-type]
+        result = await node.run(state={})  # type: ignore[arg-type]
 
-        self.assertFalse(result.get(CommonStateKey.IS_COMPLETE))
-        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
-        provider.context.agent_state.mark_complete.assert_not_called()
-        provider.context.agent_state.reopen_last_completed_sub_goal.assert_called_once()
-        provider.context.context_manager.inject_verifier_feedback.assert_awaited_once()
+        self.assertTrue(result[CommonStateKey.IS_COMPLETE])
+        self.assertEqual(result[CommonStateKey.COMPLETION_REASON], "Failed")
+        self.assertEqual(provider.persistence.last[CommonStateKey.IS_COMPLETE], True)
 
-    async def test_user_guidance_does_not_override_verifier_rejection(self) -> None:
+    async def test_capture_exception_failure_is_persisted(self) -> None:
         """
-        HITL guidance must not convert a rejected verification into success.
+        Provider capture failures must persist terminal checkpoint state.
         """
 
-        provider = self.__provider(cancelled=False, image=b"PNG")
-        provider.context.intent = "Find Millet Express"
-        provider.context.agent_state.step_count = 4
-        provider.context.agent_state.has_sub_goals.return_value = True
-        provider.context.agent_state.all_sub_goals_complete.return_value = True
-        provider.context.agent_state.reset_completion = MagicMock()
-        provider.context.context_manager.get_user_guidance.return_value = [
-            MagicMock(content="Keep going in the same row")
-        ]
-        provider.context.context_manager.inject_verifier_feedback = AsyncMock()
-        provider.context.llm.generate = AsyncMock(
-            return_value=MagicMock(
-                content='{"is_complete": false, "reason": "Target not visible on screen."}'
-            )
+        provider = _Provider(
+            agent_state=self._agent_state(),
+            llm_content='{"is_complete": true, "reason": "Done"}',
+            capture_error=RuntimeError("device gone"),
         )
-        provider.context.artifact_pipeline = None
-        provider.recovery.try_recover = AsyncMock(return_value=None)
+        node = VerifyNode(provider=provider)  # type: ignore[arg-type]
 
-        node = VerifyNode(provider=provider)
-        result: Any = await node(state={})  # type: ignore[arg-type]
+        result = await node.run(state={})  # type: ignore[arg-type]
 
-        self.assertFalse(result.get(CommonStateKey.IS_COMPLETE))
-        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
-        provider.context.agent_state.mark_complete.assert_not_called()
-
-    async def test_verifier_rejection_terminates_when_max_steps_already_reached(self) -> None:
-        """
-        A rejected verification must not reopen the loop once the
-        outer intent step budget has already been exhausted.
-        """
-
-        provider = self.__provider(cancelled=False, image=b"PNG")
-        provider.context.intent = "Tap sign in"
-        provider.context.max_steps = 5
-        provider.context.agent_state.step_count = 5
-        provider.context.agent_state.has_sub_goals.return_value = False
-        provider.context.agent_state.all_sub_goals_complete.return_value = False
-        provider.context.agent_state.reset_completion = MagicMock()
-        provider.context.context_manager.get_user_guidance.return_value = []
-        provider.context.context_manager.inject_verifier_feedback = AsyncMock()
-        provider.context.llm.generate = AsyncMock(
-            return_value=MagicMock(
-                content='{"is_complete": false, "reason": "Sign in still not visible."}'
-            )
-        )
-        provider.context.artifact_pipeline = None
-        provider.recovery.try_recover = AsyncMock(return_value=None)
-
-        node = VerifyNode(provider=provider)
-        result: Any = await node(state={})  # type: ignore[arg-type]
-
-        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
-        self.assertEqual(
-            result.get(CommonStateKey.COMPLETION_REASON),
-            CompletionReason.MAX_STEPS.value,
-        )
-        provider.context.agent_state.mark_complete.assert_called_once_with(
-            reason=CompletionReason.MAX_STEPS.value
-        )
-        provider.context.context_manager.inject_verifier_feedback.assert_not_awaited()
-
-    async def test_verifier_rejection_dispatches_recovery_at_threshold(self) -> None:
-        """
-        VERIFY rejection at the configured threshold should give recovery its shot.
-        """
-
-        provider = self.__provider(cancelled=False, image=b"PNG")
-        provider.context.intent = "Tap sign in"
-        provider.context.max_steps = 10
-        provider.context.recovery.verify_threshold = 2
-        provider.context.agent_state.step_count = 4
-        provider.context.agent_state.has_sub_goals.return_value = False
-        provider.context.agent_state.all_sub_goals_complete.return_value = False
-        provider.context.agent_state.reset_completion = MagicMock()
-        provider.context.agent_state.current_screen = None
-        provider.context.agent_state.record_verify_rejection.return_value = VerificationLoopState(
-            recorded_step_count=4,
-            activity="app",
-            screen=None,
-            consecutive_rejections=2,
-        )
-        provider.context.agent_state.mark_verify_recovery_attempted = MagicMock()
-        provider.context.context_manager.get_user_guidance.return_value = []
-        provider.context.context_manager.inject_verifier_feedback = AsyncMock()
-        provider.context.llm.generate = AsyncMock(
-            return_value=MagicMock(
-                content='{"is_complete": false, "reason": "Sign in still not visible."}'
-            )
-        )
-        provider.context.artifact_pipeline = None
-        provider.recovery.try_recover = AsyncMock(return_value={"patched": True})
-
-        node = VerifyNode(provider=provider)
-        result: Any = await node(state={})  # type: ignore[arg-type]
-
-        self.assertEqual(result, {"patched": True})
-        provider.context.agent_state.mark_verify_recovery_attempted.assert_called_once()
-        provider.recovery.try_recover.assert_awaited_once()
-        provider.context.context_manager.inject_verifier_feedback.assert_not_awaited()
-
-    async def test_verifier_rejection_terminates_after_recovery_already_ran(self) -> None:
-        """
-        Returning to VERIFY on the same no-progress streak after recovery had
-        its chance must terminate as a bounded stuck outcome.
-        """
-
-        provider = self.__provider(cancelled=False, image=b"PNG")
-        provider.context.intent = "Tap sign in"
-        provider.context.max_steps = 10
-        provider.context.recovery.verify_threshold = 2
-        provider.context.agent_state.step_count = 4
-        provider.context.agent_state.has_sub_goals.return_value = False
-        provider.context.agent_state.all_sub_goals_complete.return_value = False
-        provider.context.agent_state.reset_completion = MagicMock()
-        provider.context.agent_state.current_screen = None
-        provider.context.agent_state.record_verify_rejection.return_value = VerificationLoopState(
-            recorded_step_count=4,
-            activity="app",
-            screen=None,
-            consecutive_rejections=2,
-            phase=VerificationLoopPhase.RECOVERY_ATTEMPTED,
-        )
-        provider.context.agent_state.mark_verify_recovery_attempted = MagicMock()
-        provider.context.context_manager.get_user_guidance.return_value = []
-        provider.context.context_manager.inject_verifier_feedback = AsyncMock()
-        provider.context.llm.generate = AsyncMock(
-            return_value=MagicMock(
-                content='{"is_complete": false, "reason": "Sign in still not visible."}'
-            )
-        )
-        provider.context.artifact_pipeline = None
-        provider.recovery.try_recover = AsyncMock(return_value=None)
-
-        node = VerifyNode(provider=provider)
-        result: Any = await node(state={})  # type: ignore[arg-type]
-
-        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
-        self.assertEqual(
-            result.get(CommonStateKey.COMPLETION_REASON),
-            CompletionReason.STUCK.value,
-        )
-        provider.recovery.try_recover.assert_not_awaited()
-        provider.context.agent_state.mark_verify_recovery_attempted.assert_not_called()
-        provider.context.context_manager.inject_verifier_feedback.assert_not_awaited()
+        self.assertTrue(result[CommonStateKey.IS_COMPLETE])
+        self.assertEqual(result[CommonStateKey.COMPLETION_REASON], "Failed")
+        self.assertEqual(provider.persistence.last[CommonStateKey.IS_COMPLETE], True)

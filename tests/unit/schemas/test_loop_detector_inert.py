@@ -169,7 +169,7 @@ class TestLoopDetectorInertRepetition:
         After ``restore``, the detector's inert-repetition history must
         reproduce the same verdict as the live detector — the new
         ``effect_statuses`` field on :class:`LoopDetectorState` is the
-        seam that keeps healing-resume aware of inert streaks.
+        field that keeps resumed runs aware of inert streaks.
         """
 
         live = LoopDetector()

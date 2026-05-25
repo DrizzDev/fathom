@@ -168,6 +168,9 @@ asyncio_mode = "auto"
 # adapter test_noop.py files at sibling paths) without forcing tests/
 # to become a real package.
 addopts = "-v --tb=short --import-mode=importlib"
+markers = [
+    "release: calls a real LLM provider for staging or production release gating",
+]
 
 [tool.coverage.run]
 source = ["src/fathom"]

@@ -19,7 +19,7 @@ class Normalizer:
         if not text:
             return ""
 
-        cleaned = Normalizer.__MULTISPACE_RE.sub(repl=" ", string=str(object=text)).strip()
+        cleaned = Normalizer.__MULTISPACE_RE.sub(repl=" ", string=str(text)).strip()
         cleaned = re.sub(pattern=r"\s+([,.;:!?])", repl=r"\1", string=cleaned)
         return cleaned
 

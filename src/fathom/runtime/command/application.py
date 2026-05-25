@@ -19,7 +19,6 @@ from fathom.runtime.command.resolver import (
 )
 from fathom.schemas.cli import ExploreCommandInput, LocalCommandInput, RunCommandInput
 from fathom.schemas.configuration import DeviceConfiguration
-from fathom.schemas.recovery import RecoveryPolicy
 from fathom.schemas.run import (
     ExplorationObjectiveConfiguration,
     ExplorationRunRequest,
@@ -170,22 +169,15 @@ class CommandApplication:
             "--realignment-budget",
             type=int,
             default=3,
-            help="Maximum allowed consecutive re-plans",
+            help="Maximum allowed consecutive HITL realignments",
         )
         run_parser.add_argument(
             "--no-realignment",
             action="store_false",
             dest="immediate_realignment",
-            help="Disable immediate re-planning on context injection",
+            help="Disable immediate realignment on context injection",
         )
         run_parser.set_defaults(immediate_realignment=True)
-        run_parser.add_argument(
-            "--no-recovery",
-            action="store_false",
-            dest="recovery",
-            help="Disable the stuck-loop recovery coordinator",
-        )
-        run_parser.set_defaults(recovery=True)
 
     def __configure_explore_parser(
         self,
@@ -296,8 +288,6 @@ class CommandApplication:
             budget=command_input.realignment_budget,
             immediate=command_input.immediate_realignment,
         )
-        recovery = RecoveryPolicy(enabled=command_input.recovery)
-
         device_configuration = self.__build_device_configuration(
             settings=settings,
             command_input=command_input,
@@ -323,7 +313,7 @@ class CommandApplication:
                 ],
                 language_model_configuration=ModelSelectionConfiguration(),
             ),
-            interaction=InteractionConfiguration(realignment=realignment, recovery=recovery),
+            interaction=InteractionConfiguration(realignment=realignment),
             metadata=RunMetadata(),
         )
 

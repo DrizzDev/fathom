@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 from typing import List, Optional
 from unittest.mock import AsyncMock
 
 from fathom.constants import ActionType
+from fathom.core.exceptions import WorkflowCancelledError
 from fathom.core.services.hitl import HITLService
 from fathom.schemas.actions import Action
 from fathom.schemas.steps import Step
@@ -104,6 +106,40 @@ class _FakeHitlService(HITLService):
         return ""
 
 
+class _BlockingHitlService(_FakeHitlService):
+    """
+    ASK_USER double that blocks until cancelled by the test subject.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(pause_requested=True)
+        self.ask_cancelled = False
+        self.resume_cancelled = False
+
+    async def ask(self, *, prompt: str, step: int) -> str:
+        """
+        Block forever unless the helper cancels the in-flight ask task.
+        """
+
+        _ = prompt, step
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.ask_cancelled = True
+            raise
+
+    async def wait_for_resume(self) -> None:
+        """
+        Block forever unless the helper cancels the in-flight resume task.
+        """
+
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.resume_cancelled = True
+            raise
+
+
 class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
     """
     Pins :meth:`Hitl.prompt` pause / resume / drain orchestration.
@@ -124,6 +160,7 @@ class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(
             hitl=hitl,
             workflow_id="run-test",
+            is_cancelled=False,
             agent_state=SimpleNamespace(
                 step_count=step_count,
                 record_hitl_intervention=lambda: None,
@@ -179,6 +216,7 @@ class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
         ctx = SimpleNamespace(
             hitl=fake,
             workflow_id="run-test",
+            is_cancelled=False,
             agent_state=agent_state,
             context_manager=context_manager,
         )
@@ -192,6 +230,27 @@ class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
         # Each consumed context records one HITL intervention so the
         # realignment budget tracks them.
         self.assertEqual(len(recorded_interventions), 2)
+
+    async def test_paused_run_stops_waiting_when_context_is_cancelled(self) -> None:
+        """
+        Ctrl-C cancellation must interrupt an in-flight pause/resume wait.
+        """
+
+        fake = _BlockingHitlService()
+        ctx = self.__context(hitl=fake)
+        helper = Hitl(context=ctx)  # type: ignore[arg-type]
+
+        async def _cancel_soon() -> None:
+            await asyncio.sleep(0.15)
+            ctx.is_cancelled = True
+
+        asyncio.create_task(_cancel_soon())
+
+        with self.assertRaises(WorkflowCancelledError):
+            await helper.prompt(step=0)
+
+        self.assertTrue(fake.resume_cancelled)
+        ctx.context_manager.inject_user_guidance.assert_not_awaited()
 
 
 class HitlAskTest(unittest.IsolatedAsyncioTestCase):
@@ -245,6 +304,7 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(
             hitl=hitl,
             workflow_id="run-test",
+            is_cancelled=False,
             agent_state=SimpleNamespace(
                 step_count=0,
                 record_hitl_intervention=lambda: interventions.append(True),
@@ -326,3 +386,27 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(ctx._interventions), 1)
+
+    async def test_ask_stops_waiting_when_context_is_cancelled(self) -> None:
+        """
+        Ctrl-C cancellation must interrupt an in-flight ASK_USER wait.
+        """
+
+        fake = _BlockingHitlService()
+        ctx = self.__context(hitl=fake)
+        helper = Hitl(context=ctx)  # type: ignore[arg-type]
+
+        async def _cancel_soon() -> None:
+            await asyncio.sleep(0.15)
+            ctx.is_cancelled = True
+
+        asyncio.create_task(_cancel_soon())
+
+        with self.assertRaises(WorkflowCancelledError):
+            await helper.ask(
+                step=self.__step(action=self.__action(text="How should I proceed?")),
+                start_time=0.0,
+            )
+
+        self.assertTrue(fake.ask_cancelled)
+        ctx.context_manager.inject_user_guidance.assert_not_awaited()

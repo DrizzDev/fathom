@@ -80,6 +80,14 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         )
 
         if (payload := self.__parse_payload(content=result.content, context=log_context)) is None:
+            logger.warning(
+                "Vision localizer payload unparseable",
+                extra={
+                    **log_context,
+                    "event": "localizer.vision.payload.unparseable",
+                    "response.preview": (result.content or "")[:512],
+                },
+            )
             return None
 
         if self.__is_refusal(payload=payload):
@@ -96,7 +104,11 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         ) is None:
             logger.warning(
                 "Vision localizer payload missing bounds",
-                extra={**log_context, "event": "localizer.vision.payload.invalid"},
+                extra={
+                    **log_context,
+                    "event": "localizer.vision.payload.invalid",
+                    "payload.raw": payload,
+                },
             )
             return None
 
@@ -107,6 +119,18 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
                 **log_context,
                 "event": "localizer.vision.completed",
                 "confidence": confidence,
+                "payload.raw": {
+                    "x": payload.get("x"),
+                    "y": payload.get("y"),
+                    "width": payload.get("width"),
+                    "height": payload.get("height"),
+                },
+                "bounds.resolved": {
+                    "x": bounds.x,
+                    "y": bounds.y,
+                    "width": bounds.width,
+                    "height": bounds.height,
+                },
             },
         )
 

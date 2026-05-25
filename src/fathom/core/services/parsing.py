@@ -9,20 +9,12 @@ from fathom.constants import ActionType
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
-from fathom.schemas.decisions import (
-    ActDecision,
-    AskUserDecision,
-    ReplanDecision,
-    UnactionableDecision,
-)
 from fathom.schemas.delta import DeltaSignal
-from fathom.schemas.escape import EscapeCategory, EscapeReport
 from fathom.schemas.gemini_tools import (
     AskUserArgs,
     ExecuteAction,
     ExecuteUIArgs,
     RecallMemoryArgs,
-    ReportUnactionableArgs,
     StoreMemoryArgs,
     ValidateStateArgs,
     VerifyGoalArgs,
@@ -49,8 +41,6 @@ class ToolResponseParser:
         "execute_ui",
         "verify_goal",
         "validate_state",
-        "request_replan",
-        "report_unactionable",
     }
 
     @staticmethod
@@ -179,12 +169,6 @@ class ToolResponseParser:
 
         elif name == "ask_user":
             return self.__parse_ask_user(arguments=arguments)
-
-        elif name == "request_replan":
-            return self.__parse_request_replan(arguments=arguments)
-
-        elif name == "report_unactionable":
-            return self.__parse_report_unactionable(arguments=arguments)
 
         else:
             raise VisionError(f"Unknown function call: {name}")
@@ -335,7 +319,6 @@ class ToolResponseParser:
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
-            task_status=getattr(args, "task_status", None),
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
@@ -392,7 +375,6 @@ class ToolResponseParser:
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
-            task_status=getattr(args, "task_status", None),
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
@@ -611,16 +593,11 @@ class ToolResponseParser:
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
-            task_status=getattr(args, "task_status", None),
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
             delta=parsed_delta,
             screen_description=message or action.rationale or "Analyzing screen...",
-            decision=ActDecision(
-                action=action,
-                rationale=message or action.rationale,
-            ),
         )
 
         # Normalize completion flags for terminal COMPLETE actions while preserving raw signals.
@@ -743,109 +720,11 @@ class ToolResponseParser:
             is_goal_complete=completed,
             goal_completion_reason=args.goal_completion_reason,
             is_sub_goal_complete=sub_completed,
-            task_status=getattr(args, "task_status", None),
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
             screen_description="User guidance requested",
             outcome=AnalysisOutcome.ASK_USER,
-            decision=AskUserDecision(
-                question=question or rationale,
-                reason=rationale,
-            ),
-        )
-
-    def __parse_request_replan(self, arguments: Any) -> AnalysisResult:
-        """
-        Parse the ``request_replan`` tool call into a typed
-        :class:`EscapeReport` payload on the :class:`AnalysisResult`.
-
-        Validates the typed contract at this boundary: ``category`` must
-        be a known :class:`EscapeCategory` value and ``detail`` must be
-        a non-empty string. Invalid arguments raise
-        :class:`ToolValidationError` so the planner never sees a
-        half-formed escape signal — :class:`EscapeReport` itself enforces
-        the same invariants via Pydantic, and this method maps any
-        validation error onto the structured tool-feedback path.
-
-        The placeholder action is a non-spatial WAIT so existing
-        downstream code that expects ``result.action`` to be valid keeps
-        working; the planner branches on ``outcome`` and on
-        ``escape_report.category``, not on the action itself.
-        """
-
-        raw = arguments or {}
-        try:
-            escape_report = EscapeReport(
-                detail=str(raw.get("detail", "")).strip(),
-                category=EscapeCategory(str(raw.get("category", "")).strip()),
-            )
-        except (ValueError, ValidationError) as error:
-            logger.exception("request_replan schema validation failed: %s", error)
-            raise ToolValidationError(
-                feedback=ToolErrorFeedback(
-                    tool_call_id=None,
-                    error_kind="validation",
-                    tool_name="request_replan",
-                    message=f"request_replan arguments validation failed: {error}",
-                )
-            ) from error
-
-        return AnalysisResult(
-            action=Action(
-                confidence=1.0,
-                target="request_replan",
-                action_type=ActionType.WAIT,
-                rationale=escape_report.detail,
-            ),
-            alternatives=[],
-            is_goal_complete=False,
-            is_sub_goal_complete=False,
-            escape_report=escape_report,
-            reasoning=escape_report.detail,
-            outcome=AnalysisOutcome.REQUEST_REPLAN,
-            screen_description=(f"Agent requested replan ({escape_report.category.value})"),
-            decision=ReplanDecision(reason=escape_report.detail),
-        )
-
-    def __parse_report_unactionable(self, arguments: Any) -> AnalysisResult:
-        """
-        Parses report_unactionable tool arguments.
-        """
-
-        try:
-            args = ReportUnactionableArgs.model_validate(arguments or {})
-        except ValidationError as error:
-            logger.exception("report_unactionable schema validation failed: %s", error)
-            feedback = ToolErrorFeedback(
-                tool_name="report_unactionable",
-                tool_call_id=None,
-                error_kind="validation",
-                message=f"report_unactionable arguments validation failed: {error}",
-            )
-            raise ToolValidationError(feedback) from error
-
-        reason = args.reason.strip()
-        escape_report = EscapeReport(
-            category=EscapeCategory.PRECONDITION_NOT_MET,
-            detail=reason,
-        )
-
-        return AnalysisResult(
-            action=Action(
-                confidence=1.0,
-                target="report_unactionable",
-                action_type=ActionType.WAIT,
-                rationale=reason,
-            ),
-            alternatives=[],
-            reasoning=reason,
-            is_goal_complete=bool(args.goal_completed),
-            is_sub_goal_complete=bool(args.sub_goal_completed),
-            escape_report=escape_report,
-            outcome=AnalysisOutcome.REPORT_UNACTIONABLE,
-            screen_description="Agent reported current screen as unactionable",
-            decision=UnactionableDecision(reason=reason),
         )
 
     def __create_fallback_result(self, message: str, completed: bool = False) -> AnalysisResult:

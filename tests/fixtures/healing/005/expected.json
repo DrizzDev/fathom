@@ -1,8 +1,0 @@
-{
-  "terminal_status": "BOUNDED_FAILURE",
-  "max_step_count": 6,
-  "max_repeated_no_effect": 3,
-  "block_reasons": ["repeated_no_effect"],
-  "recoveries_invoked": ["scroll"],
-  "raw_llm_coordinates_executed": 0
-}

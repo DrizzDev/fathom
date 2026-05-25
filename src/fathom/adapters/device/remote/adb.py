@@ -87,12 +87,6 @@ class ADBRemoteDeviceAdapter(DevicePort):
                         edge_margin_ratio=interaction.policy.scroll.edge_margin_ratio,
                         minimum_edge_margin=interaction.policy.scroll.minimum_edge_margin,
                         maximum_edge_margin=interaction.policy.scroll.maximum_edge_margin,
-                        adaptive=ScrollInteractionPolicy.AdaptivePolicy(
-                            enabled=interaction.policy.scroll.adaptive.enabled,
-                            maximum_attempts=interaction.policy.scroll.adaptive.maximum_attempts,
-                            verify=interaction.policy.scroll.adaptive.verify,
-                            suspicious_bottom_ratio=interaction.policy.scroll.adaptive.suspicious_bottom_ratio,
-                        ),
                     ),
                 )
             ),
@@ -241,6 +235,16 @@ class ADBRemoteDeviceAdapter(DevicePort):
             prefilled=prefilled,
             action=InteractionAction.TYPE,
             execution_id=self.__execution_id,
+        )
+        return await self.__send_command(request)
+
+    async def enter(self) -> ActionResult:
+        """
+        Execute remote keyboard enter/search.
+        """
+
+        request = RemoteInteractionRequest(
+            action=InteractionAction.ENTER, execution_id=self.__execution_id
         )
         return await self.__send_command(request)
 

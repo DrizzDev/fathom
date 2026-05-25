@@ -55,9 +55,9 @@ class ContextManager:
         # Tier 1: Immutable Roadmap
         self.__roadmap_intent: str = "unknown"
 
-        # User-sourced instructions
-        # (use-once, planner clears after a single ANALYZE consumption — same lifecycle as verifier feedback below).
-        # Persisting beyond one iteration causes the nudge to become a sticky imperative against later screens.
+        # User-sourced instructions. Each entry has a small ANALYZE-turn
+        # TTL so a human correction survives one ignored model turn but
+        # cannot become a permanent stale instruction.
         self.__user_guidance: List[UserGuidance] = []
 
         # System-sourced verifier rejection messages (use-once, planner clears after consuming for the next planning iteration)
@@ -305,7 +305,7 @@ class ContextManager:
             "trace": engine_context.get("trace", []),
             "milestones": engine_context.get("milestones", []),
             "active_count": engine_context.get("active_count", 0),
-            "guidance": [entry.content for entry in self.__user_guidance],
+            "guidance": [entry.render() for entry in self.__active_user_guidance()],
             "verifier_feedback": [entry.content for entry in self.__verifier_feedback],
         }
 
@@ -326,10 +326,19 @@ class ContextManager:
 
     def get_user_guidance(self) -> List[UserGuidance]:
         """
-        Return the current user-guidance entries (copy).
+        Return active user-guidance entries.
         """
 
-        return self.__user_guidance.copy()
+        return self.__active_user_guidance()
+
+    def consume_user_guidance(self) -> None:
+        """
+        Age active user guidance after one planner exposure.
+        """
+
+        self.__user_guidance = [
+            entry.consume() if entry.active else entry for entry in self.__user_guidance
+        ]
 
     def clear_user_guidance(self) -> None:
         """
@@ -337,6 +346,13 @@ class ContextManager:
         """
 
         self.__user_guidance.clear()
+
+    def __active_user_guidance(self) -> List[UserGuidance]:
+        """
+        Return active guidance entries in injection order.
+        """
+
+        return [entry for entry in self.__user_guidance if entry.active]
 
     async def inject_verifier_feedback(self, *, feedback: str, step: Optional[int] = None) -> None:
         """

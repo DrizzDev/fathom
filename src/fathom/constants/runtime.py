@@ -12,8 +12,6 @@ DEFAULT_LOCAL_PERCEPTION_BUDGET: Final[int] = 5000
 # Confidence floor for accepting a localization match. Dimensionless ratio in [0, 1]; not a timeout.
 DEFAULT_LOCALIZATION_CONFIDENCE_THRESHOLD: Final[float] = 0.72
 
-DEFAULT_HEALING_RUN_BUDGET: Final[int] = 5
-DEFAULT_HEALING_TASK_BUDGET: Final[int] = 2
 DEFAULT_PAID_LOCALIZATION_ATTEMPT_BUDGET: Final[int] = 0
 
 
@@ -32,3 +30,7 @@ DEFAULT_REALIGNMENT_BUDGET: Final[int] = 3
 # has stably claimed completion for the same screen state; honouring the
 # claim avoids a ground-loop and lets VERIFY adjudicate the final outcome.
 DEFAULT_COMPLETE_DEFERRAL_BUDGET: Final[int] = 2
+
+# VERIFY does not record an action step when it rejects completion, so
+# max_steps cannot bound a frozen VERIFY -> GROUND -> ANALYZE loop.
+DEFAULT_VERIFICATION_REJECTION_LIMIT: Final[int] = 3

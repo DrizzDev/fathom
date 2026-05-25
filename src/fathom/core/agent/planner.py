@@ -9,12 +9,14 @@ from fathom.constants.state import CompletionReason, PlanMetadataKey
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
+from fathom.core.runtime.identity import TargetIdentity
 from fathom.core.services.vision import SubGoalContext, VisionService
 from fathom.schemas.actions import Action
 from fathom.schemas.observation import ScreenObservation
-from fathom.schemas.results import AnalysisOutcome, AnalysisResult, PlanResult
+from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
+from fathom.schemas.supervision import BlockReason
 
 logger = getLogger(name=__name__)
 
@@ -50,17 +52,14 @@ class StepPlanner:
         use_xml: bool = True,
         prompt_if_stuck: bool = False,
         interactive_mode: bool = False,
-        strict_mode: bool = False,
         elements: Optional[Dict[str, Any]] = None,
         screen_observation: Optional[ScreenObservation] = None,
-        last_block_reason: Optional[str] = None,
-        last_block_message: Optional[str] = None,
     ) -> PlanResult:
         """
         Plan the next step based on current state.
         """
 
-        if not state.can_continue:
+        if not state.can_continue_with(interactive_mode=interactive_mode):
             if state.is_complete:
                 return PlanResult(
                     step=None, is_complete=True, reason=CompletionReason.SUCCESS.value
@@ -125,12 +124,6 @@ class StepPlanner:
                 "index": current_idx,
                 "total": total,
                 "description": current_sub_goal.description,
-                "strict_mode": strict_mode,
-                "required_action_family": (
-                    current_sub_goal.execution_contract.required_action_family.value
-                ),
-                "scroll_axis": current_sub_goal.execution_contract.scroll_axis.value,
-                "surface": current_sub_goal.execution_contract.surface or "",
             }
 
         analysis = await self.__vision.analyze(
@@ -145,38 +138,25 @@ class StepPlanner:
             context_manager=context_manager,
             last_action=state.last_action_type,
             tracking_note=current_tracking_note,
-            recent_effects=state.get_recent_effects(),
             loop_observation=state.build_loop_observation(),
             screen_observation=screen_observation,
             prior_rejection_history=state.rejection_history,
             visual_hash=self.__compute_simple_hash(capture=capture),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
-            last_block_reason=last_block_reason,
-            last_block_message=last_block_message,
         )
 
-        # Use-once signals: rejection history, verifier feedback, and
-        # user guidance are consumed by this ANALYZE iteration and then
-        # cleared so a single HITL nudge cannot become a sticky
-        # imperative across later iterations.
+        # Use-bounded signals: rejection history and verifier feedback
+        # are one-turn channels. Human guidance ages through a short TTL
+        # so a missed HITL instruction survives another planner turn
+        # without becoming a permanent stale imperative.
         state.clear_rejection_history()
-        context_manager.clear_user_guidance()
+        context_manager.consume_user_guidance()
         context_manager.clear_verifier_feedback()
 
         if analysis.content_exhausted:
             state.reset_loop_detector()
             # Do not mark_complete here: content_exhausted means "no more content on this list/feed",
             # not "task done". Marking complete would cause early exits; fall through and plan next.
-
-        if analysis.outcome in (
-            AnalysisOutcome.REQUEST_REPLAN,
-            AnalysisOutcome.REPORT_UNACTIONABLE,
-        ):
-            return self.__build_escape_plan_result(
-                capture=capture,
-                analysis=analysis,
-                step_number=state.step_count,
-            )
 
         action = self.__select_action(state=state, reasoner=reasoner, analysis=analysis)
 
@@ -191,12 +171,50 @@ class StepPlanner:
                 reason=CompletionReason.FAILED.value,
             )
 
+        current_screen_repeat = self.__current_screen_repeat_reason(
+            action=action,
+            analysis=analysis,
+        )
+        if current_screen_repeat is not None:
+            logger.warning(
+                "[Planner] Blocking repeated current-screen action: %s",
+                current_screen_repeat,
+            )
+            state.record_blocked_action(
+                action=action,
+                reason=current_screen_repeat,
+                block_reason=BlockReason.REPEATED_CURRENT_SCREEN_ACTION,
+            )
+            state.set_rejection_history(
+                self.__vision.build_rejection_history_from_analysis(
+                    analysis=analysis,
+                    rejection_reason=(
+                        f"REJECTED: {current_screen_repeat} Choose a different action "
+                        "that advances the active sub-goal on the current screen, or ask "
+                        "the user if the screen contradicts the sub-goal."
+                    ),
+                )
+            )
+            return PlanResult(
+                step=None,
+                is_complete=False,
+                should_retry=True,
+                metrics=analysis.metrics,
+                memories=analysis.memories,
+                reason=CompletionReason.ACTION_BLOCKED.value,
+                metadata={
+                    **(analysis.metadata or {}),
+                    "blocked_action": action.to_description(),
+                    "block_reason": BlockReason.REPEATED_CURRENT_SCREEN_ACTION.value,
+                },
+            )
+
         # Check if same tap/type action repeated 3+ times on the same screen.
         # Swipes/scrolls are excluded since they legitimately repeat.
         if state.is_action_repeating_on_screen(action=action):
             repeated_desc = action.to_description()
             logger.warning(
-                "[Planner] Action '%s' repeated 3+ times on same screen — forcing replan.",
+                "[Planner] Action '%s' repeated 3+ times on same screen — blocking repeat.",
                 repeated_desc[:60],
             )
             # Record as failure so it appears in relevant_failures context for the LLM,
@@ -304,72 +322,66 @@ class StepPlanner:
             failed_actions={str(failure) for failure in failures},
         )
 
-    def __build_escape_plan_result(
-        self,
+    @staticmethod
+    def __current_screen_repeat_reason(
         *,
-        step_number: int,
-        capture: ScreenCapture,
+        action: Action,
         analysis: AnalysisResult,
-    ) -> PlanResult:
+    ) -> Optional[str]:
         """
-        Translate a ``REQUEST_REPLAN`` analysis into a PlanResult routed
-        by the structured :class:`EscapeReport` category.
-
-        Replan categories surface as a step-less PlanResult with
-        ``reason=CompletionReason.REQUEST_REPLAN.value`` so the graph
-        node dispatches the recovery coordinator with the escape report
-        attached. Human categories surface as an ``ASK_USER`` step whose
-        ``text`` is the escape detail so EXECUTE escalates through the
-        existing HITL path. The placeholder WAIT action on the analysis
-        never reaches EXECUTE in either branch.
-
-        ``step_number`` is the caller's current ``AgentState.step_count``
-        and is threaded through to the ASK_USER ``Step`` so telemetry
-        and history attribute the human-escalation to the right step.
+        Return a block reason when the action repeats a successful current-screen action.
         """
 
-        if (escape_report := analysis.escape_report) is None:
-            raise ValueError(
-                "AnalysisResult.outcome=REQUEST_REPLAN requires a populated escape_report"
-            )
+        if action.action_type in {
+            ActionType.WAIT,
+            ActionType.ASK_USER,
+            ActionType.VALIDATE,
+            ActionType.COMPLETE,
+        }:
+            return None
 
-        if escape_report.routes_to_replan():
-            return PlanResult(
-                step=None,
-                is_complete=False,
-                should_retry=True,
-                metrics=analysis.metrics,
-                memories=analysis.memories,
-                reason=CompletionReason.REQUEST_REPLAN.value,
-                metadata={
-                    **(analysis.metadata or {}),
-                    PlanMetadataKey.ESCAPE_REPORT.value: escape_report.model_dump(mode="json"),
-                },
-            )
+        history = analysis.metadata.get("current_workflow_screen_actions")
+        if not isinstance(history, list):
+            return None
 
-        ask_user_action = Action(
-            confidence=1.0,
-            text=escape_report.detail,
-            rationale=escape_report.detail,
-            target="Request user assistance",
-            action_type=ActionType.ASK_USER,
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("success") is not True:
+                continue
+            previous_action_type = str(entry.get("action") or entry.get("type") or "").lower()
+            if previous_action_type and previous_action_type != action.action_type.value:
+                continue
+            previous_target = str(entry.get("target") or "")
+            if not previous_target:
+                continue
+            if StepPlanner.__describes_same_target(action=action, previous=previous_target):
+                return (
+                    f"Action {action.to_description()!r} already succeeded on the current "
+                    "screen during this workflow."
+                )
+
+        return None
+
+    @staticmethod
+    def __describes_same_target(*, action: Action, previous: str) -> bool:
+        """
+        Return whether a planned action points at a previously handled target.
+        """
+
+        candidates = (
+            action.natural_language_target,
+            action.target,
+            action.script_target,
+            action.export_target,
         )
-
-        return PlanResult(
-            step=self.__build_step(
-                capture=capture,
-                is_recovery=True,
-                action=ask_user_action,
-                step_number=step_number,
-            ),
-            is_complete=False,
-            metrics=analysis.metrics,
-            memories=analysis.memories,
-            reason=CompletionReason.INTERVENTION_REQUIRED.value,
-            metadata={
-                **(analysis.metadata or {}),
-                PlanMetadataKey.ESCAPE_REPORT.value: escape_report.model_dump(mode="json"),
-            },
+        return any(
+            candidate is not None
+            and TargetIdentity.describes_same_target(
+                previous=previous,
+                replacement=candidate,
+            )
+            for candidate in candidates
         )
 
     def __build_plan_result(

@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants.command import CommandScopeKind
+from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.scroll import ScrollEvidenceSource
 from fathom.schemas.actions import Bounds
 from fathom.schemas.artifacts import StepArtifacts
@@ -38,9 +39,8 @@ class LoopObservation(BaseModel):
 
     **Information, not control.** The observation is rendered into the
     prompt as a system note. The agent decides whether to try a
-    different target, call ``ask_user``, or call ``request_replan``
-    with a typed :class:`fathom.schemas.escape.EscapeCategory`. The
-    system does not override the agent's next action.
+    different target or call ``ask_user``. The system does not override
+    the agent's next action.
 
     The schema is intentionally minimal — only what the agent needs to
     reason about its trajectory. Raw timestamps, full screen hashes,
@@ -80,9 +80,8 @@ class LoopObservation(BaseModel):
     note: Optional[str] = Field(
         default=None,
         description=(
-            "Optional short, non-prescriptive note (e.g. 'consider "
-            "request_replan with category=target_not_available if no "
-            "alternative target makes sense'). Never an instruction."
+            "Optional short, non-prescriptive note (e.g. 'ask the user "
+            "if no alternative target makes sense'). Never an instruction."
         ),
     )
 
@@ -159,14 +158,18 @@ class PerceivedElement(BaseModel):
 
 class KeyboardObservation(BaseModel):
     """
-    Keyboard state detected on the screen.
+    Soft-keyboard state detected on the screen, with tri-state visibility.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    visible: bool = Field(description="Whether a software keyboard is visible.")
-    bounds: Optional[Bounds] = Field(default=None, description="Keyboard bounds when visible.")
-
+    visibility: KeyboardVisibility = Field(
+        description="Tri-state visibility: VISIBLE / HIDDEN / UNKNOWN.",
+    )
+    bounds: Optional[Bounds] = Field(
+        default=None,
+        description="Touch-absorbing keyboard bounds when visibility is VISIBLE and source could resolve them.",
+    )
     dismiss: Tuple[PerceivedElement, ...] = Field(
         default_factory=tuple,
         description="Known controls or safe actions that can dismiss the keyboard.",

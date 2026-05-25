@@ -258,6 +258,35 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved.status, ResolveStatus.UNRESOLVED)
         self.assertEqual(resolved.action.bounds, bounds)
 
+    async def test_ocr_manifest_label_snaps_with_ocr_coordinate_source(self) -> None:
+        """
+        OCR-backed manifest entries must resolve as trusted OCR coordinates.
+        """
+
+        service = self.__build_service()
+        action = Action(
+            label_id="1",
+            rationale="open app",
+            target="Swiggy app icon",
+            action_type=ActionType.TAP,
+            confidence=1.0,
+        )
+        elements = {
+            "1": {
+                "text": "Swiggy",
+                "source": "ocr",
+                "bounds": "[284,383][392,414]",
+            },
+        }
+
+        resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
+        self.assertIsNotNone(resolved.action.bounds)
+        self.assertEqual(resolved.action.bounds.source, CoordinateSource.OCR)
+        self.assertEqual(resolved.action.bounds.x, 284)
+        self.assertEqual(resolved.action.bounds.y, 383)
+
     async def test_semantic_label_still_beats_model_bbox(self) -> None:
         """
         Manifest snapping remains preferred when the chosen label has

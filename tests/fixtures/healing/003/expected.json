@@ -1,8 +1,0 @@
-{
-  "terminal_status": "SUCCEEDED",
-  "max_step_count": 8,
-  "max_repeated_no_effect": 1,
-  "block_reasons": ["overlay_still_present"],
-  "recoveries_invoked": ["overlay"],
-  "raw_llm_coordinates_executed": 0
-}

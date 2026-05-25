@@ -15,10 +15,8 @@ from fathom.interfaces.llm import LLMPort, PromptPart
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.decomposition import DecomposedTask, DecompositionSchema
 from fathom.schemas.subgoal import (
-    ExecutionContract,
     SubGoal,
     SubGoalStatus,
-    default_max_steps_for_execution_contract,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,12 +187,10 @@ class IntentDecomposer:
         """
         Build one :class:`SubGoal` from a normalized decomposition entry.
 
-        Legacy string entries produce sub-goals without a terminal
-        criterion (the value remains ``None`` and falls back to the
-        description in downstream consumers). Typed
-        :class:`DecomposedTask` entries thread the criterion through so
-        ``CompletionService`` can evaluate task completion against
-        observable state rather than self-report alone.
+        Legacy string entries produce sub-goals without a terminal criterion.
+        Typed :class:`DecomposedTask` entries preserve the criterion for
+        audit/export consumers; runtime completion still uses the coords-style
+        post-action signal gate and screenshot verification.
         """
 
         if isinstance(entry, DecomposedTask):
@@ -203,19 +199,12 @@ class IntentDecomposer:
                 confidence=confidence,
                 criterion=entry.criterion,
                 description=entry.description,
-                execution_contract=entry.execution_contract,
-                max_steps=default_max_steps_for_execution_contract(
-                    contract=entry.execution_contract
-                ),
             )
 
-        fallback_contract = ExecutionContract()
         return SubGoal(
             index=index,
             description=str(entry),
             confidence=confidence,
-            execution_contract=fallback_contract,
-            max_steps=default_max_steps_for_execution_contract(contract=fallback_contract),
         )
 
     @staticmethod
@@ -225,14 +214,11 @@ class IntentDecomposer:
         """
 
         logger.info("[Decomposer] Using fallback single-step decomposition")
-        fallback_contract = ExecutionContract()
         return [
             SubGoal(
                 index=0,
                 description=intent,
                 status=SubGoalStatus.PENDING,
                 confidence=0.5,
-                execution_contract=fallback_contract,
-                max_steps=default_max_steps_for_execution_contract(contract=fallback_contract),
             )
         ]

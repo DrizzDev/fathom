@@ -5,11 +5,13 @@ import unittest
 from pydantic import ValidationError
 
 from fathom.constants import ActionType
+from fathom.constants.observation import KeyboardVisibility
 from fathom.schemas.actions import Action
 from fathom.schemas.artifact import (
     ArtifactKind,
     ArtifactReceipt,
     ArtifactRecord,
+    OcrRawPayload,
     PerceptionPayload,
     ScreenshotPayload,
     TracePayload,
@@ -51,7 +53,7 @@ class ArtifactRecordValidationTest(unittest.TestCase):
                 xml_hash="a" * 16,
                 interaction_hash="b" * 16,
             ),
-            keyboard=KeyboardObservation(visible=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
         )
 
     @staticmethod
@@ -87,6 +89,15 @@ class ArtifactRecordValidationTest(unittest.TestCase):
         payload = ScreenshotPayload(capture=self.__capture())
 
         self.assertEqual(payload.kind, ArtifactKind.SCREENSHOT)
+
+    def test_ocr_raw_payload_kind_locked_to_ocr_raw(self) -> None:
+        """
+        Raw OCR JSON payloads route through the OCR raw artifact kind.
+        """
+
+        payload = OcrRawPayload(content='{"text": "Swiggy"}')
+
+        self.assertEqual(payload.kind, ArtifactKind.OCR_RAW)
 
     def test_record_round_trips_through_json(self) -> None:
         """

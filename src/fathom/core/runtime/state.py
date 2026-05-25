@@ -8,9 +8,7 @@ from fathom.constants.runtime import (
 from fathom.core.runtime.checkpoint import CheckpointCodec
 from fathom.core.runtime.effects import EffectHistory
 from fathom.core.runtime.failures import FailureMemory
-from fathom.core.runtime.healing import HealingUsage
 from fathom.core.runtime.realignment import RealignmentTracker
-from fathom.core.runtime.recovery import RecoveryRuntimeState
 from fathom.core.runtime.screen import ScreenRuntimeState
 from fathom.core.runtime.tasks import TaskRuntimeState
 
@@ -27,9 +25,7 @@ class RuntimeState:
         screen: ScreenRuntimeState,
         effects: EffectHistory,
         failures: FailureMemory,
-        recovery: RecoveryRuntimeState,
         checkpoint: CheckpointCodec,
-        healing: HealingUsage,
         realignment: RealignmentTracker,
     ) -> None:
         """
@@ -39,9 +35,7 @@ class RuntimeState:
         self.__tasks = tasks
         self.__screen = screen
         self.__effects = effects
-        self.__healing = healing
         self.__failures = failures
-        self.__recovery = recovery
         self.__checkpoint = checkpoint
         self.__realignment = realignment
 
@@ -58,7 +52,6 @@ class RuntimeState:
         """
 
         return cls(
-            healing=HealingUsage(),
             effects=EffectHistory(),
             failures=FailureMemory(),
             tasks=TaskRuntimeState(),
@@ -67,7 +60,6 @@ class RuntimeState:
                 loop_window=loop_window,
             ),
             checkpoint=CheckpointCodec(),
-            recovery=RecoveryRuntimeState(),
             realignment=RealignmentTracker(budget=realignment_budget),
         )
 
@@ -104,28 +96,12 @@ class RuntimeState:
         return self.__failures
 
     @property
-    def recovery(self) -> RecoveryRuntimeState:
-        """
-        Return recovery runtime state.
-        """
-
-        return self.__recovery
-
-    @property
     def checkpoint(self) -> CheckpointCodec:
         """
         Return checkpoint codec.
         """
 
         return self.__checkpoint
-
-    @property
-    def healing(self) -> HealingUsage:
-        """
-        Return healing-usage state.
-        """
-
-        return self.__healing
 
     @property
     def realignment(self) -> RealignmentTracker:

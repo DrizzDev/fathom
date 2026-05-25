@@ -10,7 +10,6 @@ from fathom.interfaces.factory import (
     SignalFactoryPort,
     TelemetryFactoryPort,
 )
-from fathom.interfaces.healing import HealingAgentPort
 from fathom.interfaces.icon import IconDetectorPort
 from fathom.interfaces.journal import RuntimeJournalPort
 from fathom.interfaces.knowledge import KnowledgePort
@@ -92,7 +91,6 @@ __all__ = [
     "IconDetectorPort",
     "KnowledgePort",
     "LLMPort",
-    "HealingAgentPort",
     "TargetLocalizerPort",
     "MemoryPort",
     "OcrPort",

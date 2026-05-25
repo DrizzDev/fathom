@@ -196,7 +196,6 @@ class CommandExecutor:
             use_xml=request.objective.use_xml,
             max_steps=request.objective.max_steps,
             request_id=request.runtime.session_id,
-            recovery=request.interaction.recovery,
             realignment=request.interaction.realignment,
         )
 

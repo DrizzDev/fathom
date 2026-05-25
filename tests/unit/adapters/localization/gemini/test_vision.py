@@ -5,6 +5,7 @@ import unittest
 from typing import Any, Dict, Optional
 
 from fathom.adapters.localization.gemini.vision import GeminiVisionLocalizer
+from fathom.constants.observation import KeyboardVisibility
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.actions import Action
 from fathom.schemas.budgets import LocalizationBudget
@@ -140,7 +141,7 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
                 interaction_hash="b" * 16,
             ),
             elements=(),
-            keyboard=KeyboardObservation(visible=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
         )
 
     async def test_valid_payload_renders_pixel_bounds(self) -> None:

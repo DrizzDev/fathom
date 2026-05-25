@@ -1,30 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import time
 from logging import getLogger
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy
-
-try:
-    import cv2
-except ModuleNotFoundError:  # pragma: no cover - dependency optional when CV is disabled
-    cv2 = None
 
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.ocr.noop import NoopOcr
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
 from fathom.constants.command import CommandScopeKind
+from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.perception import (
     BUTTON_CLASS_HINTS,
     CALL_TO_ACTION_MINIMUM_AREA,
     CALL_TO_ACTION_TEXT,
     INPUT_CLASS_HINTS,
-    KEYBOARD_BOTTOM_REGION_RATIO,
     KEYBOARD_CLASS_HINTS,
-    KEYBOARD_EDGE_DENSITY_THRESHOLD,
-    KEYBOARD_MINIMUM_CONTOUR_COUNT,
+    MAX_ACTION_BOUND,
     OCR_MAXIMUM_TOKEN_LENGTH,
     OCR_TRIGGER_MANIFEST_TEXT_COVERAGE,
     OVERLAY_MINIMUM_COVERAGE_RATIO,
@@ -43,6 +38,7 @@ from fathom.constants.perception import (
 from fathom.constants.scroll import ScrollEvidenceSource
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.exceptions import OcrError
+from fathom.interfaces.device import DevicePort
 from fathom.interfaces.icon import IconDetectorPort
 from fathom.interfaces.ocr import OcrPort
 from fathom.interfaces.overlay import OverlayDetectorPort
@@ -52,6 +48,7 @@ from fathom.schemas.artifact import (
     CvPerceptionPayload,
     IconPerceptionPayload,
     OcrPerceptionPayload,
+    OcrRawPayload,
     OverlayPerceptionPayload,
     PerceptionPayload,
     VisionPerceptionPayload,
@@ -72,6 +69,11 @@ from fathom.schemas.perception import PerceptionConfiguration
 from fathom.schemas.screens import ScreenCapture, ScreenHashBundle
 from fathom.schemas.ui import LabeledElement, UIBounds
 
+try:
+    cv2: Any = importlib.import_module("cv2")
+except ModuleNotFoundError:  # pragma: no cover - dependency optional when CV is disabled
+    cv2 = None
+
 logger = getLogger(__name__)
 
 
@@ -86,6 +88,7 @@ class ScreenObservationService:
         workflow_id: Optional[str] = None,
         ocr: Optional[OcrPort] = None,
         icons: Optional[IconDetectorPort] = None,
+        device: Optional[DevicePort] = None,
         pipeline: Optional[ArtifactPipeline] = None,
         pixel_overlay: Optional[OverlayDetectorPort] = None,
         configuration: Optional[PerceptionConfiguration] = None,
@@ -98,6 +101,7 @@ class ScreenObservationService:
         self.__ocr = ocr if ocr is not None else NoopOcr()
         self.__icons = icons if icons is not None else NoopIconDetector()
         self.__pixel_overlay = pixel_overlay if pixel_overlay is not None else NoopOverlayDetector()
+        self.__device = device
         self.__pipeline = pipeline
         self.__workflow_id = workflow_id
 
@@ -115,10 +119,17 @@ class ScreenObservationService:
         Build a normalized screen observation.
         """
 
-        elements = tuple(
-            self.__element_from_label(element=element, index=index)
-            for index, element in enumerate(manifest, start=1)
-        )
+        manifest_elements: List[PerceivedElement] = []
+        for index, label in enumerate(manifest, start=1):
+            element = self.__element_from_label(
+                element=label,
+                index=index,
+                capture=capture,
+            )
+            if element is not None:
+                manifest_elements.append(element)
+
+        elements = tuple(manifest_elements)
 
         if self.__configuration.cv.enabled:
             if cv2 is None:
@@ -133,9 +144,11 @@ class ScreenObservationService:
             capture=capture,
             budget=budget,
             elements=elements,
+            session_id=session_id,
+            step_number=step_number,
         )
 
-        keyboard = self.__keyboard(elements=elements, capture=capture)
+        keyboard = await self.__keyboard(elements=elements, capture=capture)
         overlays = self.__overlays(elements=elements, capture=capture)
         if (
             pixel_overlay := await self.__pixel_overlay_observation(
@@ -174,6 +187,8 @@ class ScreenObservationService:
         capture: ScreenCapture,
         budget: PerceptionBudget,
         elements: Tuple[PerceivedElement, ...],
+        session_id: str,
+        step_number: int,
     ) -> Tuple[PerceivedElement, ...]:
         """
         Merge optional OCR and icon enrichers without serializing their wall time.
@@ -187,6 +202,8 @@ class ScreenObservationService:
                     capture=capture,
                     budget=budget,
                     existing=base,
+                    session_id=session_id,
+                    step_number=step_number,
                     start=len(base) + 1,
                 )
             )
@@ -284,6 +301,8 @@ class ScreenObservationService:
         capture: ScreenCapture,
         budget: PerceptionBudget,
         existing: Tuple[PerceivedElement, ...],
+        session_id: str,
+        step_number: int,
         start: int,
     ) -> Tuple[PerceivedElement, ...]:
         """
@@ -303,6 +322,13 @@ class ScreenObservationService:
                 },
             )
             return ()
+
+        await self.__emit_ocr_raw_artifact(
+            capture=capture,
+            raw_response=result.raw_response,
+            session_id=session_id,
+            step_number=step_number,
+        )
 
         tokens = tuple(
             token for token in result.tokens if len(token.text) <= OCR_MAXIMUM_TOKEN_LENGTH
@@ -333,6 +359,31 @@ class ScreenObservationService:
             },
         )
         return tuple(merged)
+
+    async def __emit_ocr_raw_artifact(
+        self,
+        *,
+        capture: ScreenCapture,
+        raw_response: Optional[str],
+        session_id: str,
+        step_number: int,
+    ) -> None:
+        """
+        Persist raw OCR provider JSON next to XML hierarchy artifacts.
+        """
+
+        if self.__pipeline is None or not raw_response:
+            return
+
+        await self.__pipeline.emit(
+            record=ArtifactRecord(
+                session_id=session_id,
+                package_name=capture.activity,
+                step_number=step_number,
+                created=int(time.time() * 1000),
+                payload=OcrRawPayload(content=raw_response),
+            ),
+        )
 
     async def __pixel_overlay_observation(
         self,
@@ -468,7 +519,9 @@ class ScreenObservationService:
             tappable=True,
         )
 
-    def __element_from_label(self, *, element: LabeledElement, index: int) -> PerceivedElement:
+    def __element_from_label(
+        self, *, element: LabeledElement, index: int, capture: ScreenCapture
+    ) -> Optional[PerceivedElement]:
         """
         Convert a labeled element into a perceived element.
         """
@@ -476,7 +529,10 @@ class ScreenObservationService:
         attributes = element.attributes
 
         text = self.__text(attributes=attributes)
-        bounds = self.__bounds(bounds=element.bounds)
+        bounds = self.__bounds(bounds=element.bounds, capture=capture)
+        if bounds is None:
+            return None
+
         role = self.__role(attributes=attributes)
         confidence = self.__confidence(value=attributes.get("confidence"))
         source = self.__source(value=str(attributes.get("source", "")).strip())
@@ -526,8 +582,14 @@ class ScreenObservationService:
             & (hsv[:, :, 2] > VISUAL_CONTROL_MINIMUM_VALUE)
         ).astype(numpy.uint8) * 255
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        mask = cast(
+            "Any",
+            cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2),
+        )
+        mask = cast(
+            "Any",
+            cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1),
+        )
 
         count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
         controls: List[PerceivedElement] = []
@@ -649,82 +711,53 @@ class ScreenObservationService:
 
         return ElementRole.UNKNOWN
 
-    def __keyboard(
+    async def __keyboard(
         self,
         *,
         capture: ScreenCapture,
         elements: Tuple[PerceivedElement, ...],
     ) -> KeyboardObservation:
         """
-        Detect visible keyboard state from perceived elements.
+        Detect keyboard state from perceived elements, falling back to the device IME probe.
+
+        When the perception layer is disabled or vision-only mode emits no
+        KEYBOARD-class element, ask the device adapter (Android dumpsys, iOS
+        XCUITest XML walk) so the SwipeRetryPlanner can still apply its
+        keyboard filter and avoid Glide-Typing collisions.
+
+        Any failure in the device probe — unimplemented adapter, transport
+        timeout, malformed dumpsys output — degrades silently to UNKNOWN so
+        the observation pipeline keeps producing a screen.
         """
 
-        if not self.__configuration.keyboard.enabled:
-            return KeyboardObservation(visible=False)
+        _ = capture
 
-        candidates = tuple(element for element in elements if element.role == ElementRole.KEYBOARD)
-        if candidates:
-            return KeyboardObservation(visible=True, bounds=candidates[0].bounds, dismiss=())
+        if self.__configuration.keyboard.enabled:
+            candidates = tuple(
+                element for element in elements if element.role == ElementRole.KEYBOARD
+            )
+            if candidates:
+                return KeyboardObservation(
+                    visibility=KeyboardVisibility.VISIBLE,
+                    bounds=candidates[0].bounds,
+                    dismiss=(),
+                )
 
-        visual_keyboard = self.__visual_keyboard(capture=capture)
-        if visual_keyboard is not None:
-            return KeyboardObservation(visible=True, bounds=visual_keyboard, dismiss=())
+        if self.__device is None:
+            return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
 
-        return KeyboardObservation(visible=False)
-
-    def __visual_keyboard(self, *, capture: ScreenCapture) -> Optional[Bounds]:
-        """
-        Detect a keyboard-like bottom grid from screenshot pixels.
-        """
-
-        if self.__uses_ios_hierarchy(capture=capture):
-            return None
-
-        if not capture.image:
-            return None
-
-        if cv2 is None:
-            return None
-
-        image_array = numpy.frombuffer(capture.image, dtype=numpy.uint8)
-        image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
-        if image is None:
-            return None
-
-        height, width = image.shape[:2]
-        top = int(height * (1.0 - KEYBOARD_BOTTOM_REGION_RATIO))
-        crop = image[top:height, 0:width]
-
-        if crop.size == 0:
-            return None
-
-        edges = cv2.Canny(crop, 60, 160)
-        edge_density = float(numpy.count_nonzero(edges)) / float(max(1, edges.size))
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        if (
-            edge_density < KEYBOARD_EDGE_DENSITY_THRESHOLD
-            or len(contours) < KEYBOARD_MINIMUM_CONTOUR_COUNT
-        ):
-            return None
-
-        return Bounds(
-            x=0,
-            y=top,
-            width=width,
-            height=height - top,
-            source=CoordinateSource.VIEWPORT,
-            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
-        )
-
-    @staticmethod
-    def __uses_ios_hierarchy(*, capture: ScreenCapture) -> bool:
-        """
-        Return whether the capture was produced from an iOS hierarchy dump.
-        """
-
-        xml_content = capture.xml_content or ""
-        return "XCUIElementType" in xml_content
+        try:
+            return await self.__device.detect_keyboard()
+        except Exception as exception:
+            logger.warning(
+                "Device keyboard probe failed; treating as UNKNOWN",
+                extra={
+                    "component": "core.perception.observation",
+                    "event": "observation.keyboard.probe.failed",
+                    "error": str(exception),
+                },
+            )
+            return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
 
     def __overlays(
         self,
@@ -1100,21 +1133,38 @@ class ScreenObservationService:
 
         return role in {ElementRole.BUTTON, ElementRole.ICON, ElementRole.INPUT}
 
-    def __bounds(self, *, bounds: UIBounds) -> Bounds:
+    def __bounds(self, *, bounds: UIBounds, capture: ScreenCapture) -> Optional[Bounds]:
         """
-        Convert UI bounds into action bounds.
+        Convert UI bounds into viewport-clipped action bounds.
         """
 
-        x = max(0, int(round(bounds.x1)))
-        y = max(0, int(round(bounds.y1)))
-        width = max(1, int(round(bounds.x2 - bounds.x1)))
-        height = max(1, int(round(bounds.y2 - bounds.y1)))
+        viewport_width = max(1, min(MAX_ACTION_BOUND, int(capture.width)))
+        viewport_height = max(1, min(MAX_ACTION_BOUND, int(capture.height)))
+
+        x1 = max(0, min(viewport_width, int(round(bounds.x1))))
+        y1 = max(0, min(viewport_height, int(round(bounds.y1))))
+
+        x2 = max(0, min(viewport_width, int(round(bounds.x2))))
+        y2 = max(0, min(viewport_height, int(round(bounds.y2))))
+
+        if x2 <= x1 or y2 <= y1:
+            logger.debug(
+                "Dropping element outside viewport",
+                extra={
+                    "bounds": bounds.model_dump(),
+                    "viewport.width": viewport_width,
+                    "viewport.height": viewport_height,
+                    "event": "observation.bounds.dropped",
+                    **self.__log_context(activity=capture.activity),
+                },
+            )
+            return None
 
         return Bounds(
-            x=x,
-            y=y,
-            width=width,
-            height=height,
+            x=x1,
+            y=y1,
+            width=max(1, x2 - x1),
+            height=max(1, y2 - y1),
             coordinate_system=CoordinateSystem.DEVICE_PIXEL,
         )
 
@@ -1124,8 +1174,7 @@ class ScreenObservationService:
         """
 
         for key in ("text", "label", "name", "content-desc", "value"):
-            value = str(attributes.get(key, "")).strip()
-            if value:
+            if value := str(attributes.get(key, "")).strip():
                 return value
 
         return None

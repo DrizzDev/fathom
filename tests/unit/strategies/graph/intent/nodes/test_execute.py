@@ -10,12 +10,12 @@ from fathom.strategies.graph.intent.nodes.execute import ExecuteNode
 
 class ExecuteNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
     """
-    Pins the EXECUTE node's three early-exit branches.
+    Pins the EXECUTE node's early-exit branches.
 
     EXECUTE drives the device executor (or the HITL bridge for
-    ASK_USER actions). The pins verify three conditions where the node
-    must skip execution: cancellation, supervisor-set ``EXECUTION_BLOCKED``
-    flag, and missing :class:`ExecutionContext`. None of these branches
+    ASK_USER actions). The pins verify two conditions where the node
+    must skip execution: cancellation and missing :class:`ExecutionContext`.
+    None of these branches
     may call the action executor — otherwise the runtime would either
     waste an action or crash on a partial execution context.
     """
@@ -51,28 +51,11 @@ class ExecuteNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
             CompletionReason.CANCELLED.value,
         )
 
-    async def test_execution_blocked_skips_executor(self) -> None:
-        """
-        ``EXECUTION_BLOCKED=True`` is set by SUPERVISE when the gate or
-        healing path could not produce an allowed action. EXECUTE must
-        return an empty patch so the graph routes to OBSERVE/RECORD with
-        the pre-built blocked-step result already in state.
-        """
-
-        provider = self.__provider(cancelled=False)
-        node = ExecuteNode(provider=provider)
-
-        result: Any = await node(
-            state={IntentStateKey.EXECUTION_BLOCKED: True},  # type: ignore[arg-type]
-        )
-
-        self.assertEqual(result, {})
-
-    async def test_missing_execution_context_returns_empty_state(self) -> None:
+    async def test_missing_execution_context_fails_terminally(self) -> None:
         """
         An absent :class:`ExecutionContext` indicates SUPERVISE did not
-        run or did not commit. EXECUTE must return an empty patch rather
-        than synthesising a context — that would mask the upstream bug.
+        run or did not commit. EXECUTE must fail terminally rather than
+        returning an empty patch that lets downstream fixed edges loop.
         """
 
         provider = self.__provider(cancelled=False)
@@ -82,4 +65,13 @@ class ExecuteNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
             state={IntentStateKey.EXECUTION_CONTEXT: None},  # type: ignore[arg-type]
         )
 
-        self.assertEqual(result, {})
+        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertFalse(result.get(IntentStateKey.SHOULD_RETRY))
+        self.assertEqual(
+            result.get(CommonStateKey.COMPLETION_REASON),
+            CompletionReason.FAILED.value,
+        )
+        self.assertIn("missing ExecutionContext", result.get(CommonStateKey.FAILURE_DIAGNOSTIC))
+        provider.context.agent_state.mark_complete.assert_called_once_with(
+            reason=CompletionReason.FAILED.value
+        )
