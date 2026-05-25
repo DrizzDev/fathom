@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional, Set, Union
+from logging import getLogger
+from typing import Any, ClassVar, Dict, Literal, Optional, Set, Type, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants.platform import (
     DeviceConnectionType,
@@ -11,6 +12,8 @@ from fathom.constants.platform import (
 )
 from fathom.constants.storage import StorageBackend
 from fathom.schemas.swipe import SwipeRetryPolicy
+
+logger = getLogger(__name__)
 
 
 class LLMConfiguration(BaseModel):
@@ -140,10 +143,48 @@ class SwipeInteractionPolicy(BaseModel):
     )
 
 
+class _DeprecatedAdaptivePolicy(BaseModel):
+    """
+    Inert backwards-compatibility stub for the deleted adaptive-scroll subsystem.
+
+    The adaptive-scroll runtime was removed when the swipe coordinator replaced
+    it. Older host callers (enricher / healing bridge) still construct
+    ``ScrollInteractionPolicy.AdaptivePolicy(...)``; this stub accepts the
+    legacy kwargs without applying any behavior so those hosts continue to
+    boot while they migrate. Emit a deprecation warning per construction so
+    the migration is visible.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    enabled: bool = Field(default=False, description="Ignored; adaptive scroll was removed.")
+    maximum_attempts: int = Field(
+        default=0, description="Ignored; replaced by SwipeRetryPolicy.magnitudes.",
+    )
+    verify: bool = Field(default=False, description="Ignored; replaced by the validation service.")
+    budget: int = Field(default=0, description="Ignored; the swipe coordinator is unbounded by wall time.")
+    suspicious_bottom_ratio: float = Field(
+        default=0.0, description="Ignored; was an adaptive-scroll heuristic.",
+    )
+
+    def model_post_init(self, _context: object) -> None:
+        """
+        Emit a deprecation warning when the stub is instantiated.
+        """
+
+        logger.warning(
+            "ScrollInteractionPolicy.AdaptivePolicy is deprecated and has no effect. "
+            "Remove the 'adaptive=ScrollInteractionPolicy.AdaptivePolicy(...)' kwarg; "
+            "adaptive scroll was replaced by the swipe coordinator + SwipeRetryPolicy.",
+        )
+
+
 class ScrollInteractionPolicy(BaseModel):
     """
     Runtime policy for scroll interactions.
     """
+
+    AdaptivePolicy: ClassVar[Type[_DeprecatedAdaptivePolicy]] = _DeprecatedAdaptivePolicy
 
     edge_margin_ratio: float = Field(
         ge=0.0,
@@ -160,6 +201,13 @@ class ScrollInteractionPolicy(BaseModel):
         ge=0,
         default=160,
         description="Largest safe edge margin in screen pixels.",
+    )
+    adaptive: Optional[_DeprecatedAdaptivePolicy] = Field(
+        default=None,
+        description=(
+            "Deprecated: accepted only so older hosts do not crash on import. "
+            "Adaptive scroll behavior was replaced by the swipe coordinator."
+        ),
     )
 
 
