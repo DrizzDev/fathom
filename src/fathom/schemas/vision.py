@@ -129,9 +129,7 @@ class PastActionEntry(BaseModel):
 
         sub_goal_index_raw = entry.get("sub_goal_index")
         sub_goal_index = (
-            int(sub_goal_index_raw)
-            if isinstance(sub_goal_index_raw, (int, float))
-            else None
+            int(sub_goal_index_raw) if isinstance(sub_goal_index_raw, (int, float)) else None
         )
 
         return cls(

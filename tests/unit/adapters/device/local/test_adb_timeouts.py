@@ -55,10 +55,12 @@ class ADBSnapshotTimeoutTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(10)
             return ""
 
-        with patch.object(device, "capture_screen", new=AsyncMock(side_effect=__forever)):
-            with patch.object(device, "dump_hierarchy", new=AsyncMock(side_effect=__forever_str)):
-                with self.assertRaises(DeviceError) as context:
-                    await device.get_snapshot()
+        with (
+            patch.object(device, "capture_screen", new=AsyncMock(side_effect=__forever)),
+            patch.object(device, "dump_hierarchy", new=AsyncMock(side_effect=__forever_str)),
+            self.assertRaises(DeviceError) as context,
+        ):
+            await device.get_snapshot()
 
         self.assertIn("Snapshot timed out", str(context.exception))
 
@@ -70,11 +72,11 @@ class ADBSnapshotTimeoutTest(unittest.IsolatedAsyncioTestCase):
 
         device = self.__build_device(snapshot_timeout=1.0)
 
-        with patch.object(device, "capture_screen", new=AsyncMock(return_value=b"png-bytes")):
-            with patch.object(
-                device, "dump_hierarchy", new=AsyncMock(return_value="<xml/>")
-            ):
-                image, xml = await device.get_snapshot()
+        with (
+            patch.object(device, "capture_screen", new=AsyncMock(return_value=b"png-bytes")),
+            patch.object(device, "dump_hierarchy", new=AsyncMock(return_value="<xml/>")),
+        ):
+            image, xml = await device.get_snapshot()
 
         self.assertEqual(image, b"png-bytes")
         self.assertEqual(xml, "<xml/>")
@@ -150,13 +152,15 @@ class ADBHierarchyLockTimeoutTest(unittest.IsolatedAsyncioTestCase):
 
         device = self.__build_device(hierarchy_lock_timeout=1.0)
 
-        with patch.object(
-            device,
-            "_ADBDevice__dump_hierarchy_locked",
-            new=AsyncMock(side_effect=DeviceError("dump failed")),
+        with (
+            patch.object(
+                device,
+                "_ADBDevice__dump_hierarchy_locked",
+                new=AsyncMock(side_effect=DeviceError("dump failed")),
+            ),
+            self.assertRaises(DeviceError),
         ):
-            with self.assertRaises(DeviceError):
-                await device.dump_hierarchy()
+            await device.dump_hierarchy()
 
         self.assertFalse(device._ADBDevice__hierarchy_lock.locked())  # type: ignore[attr-defined]
 

@@ -206,9 +206,7 @@ class CriterionChecker:
         return decision
 
     @staticmethod
-    def __symbolic_check(
-        *, criterion: str, observation: ScreenObservation
-    ) -> CriterionDecision:
+    def __symbolic_check(*, criterion: str, observation: ScreenObservation) -> CriterionDecision:
         """
         Token-overlap check between criterion text and visible screen text.
         """
@@ -237,8 +235,7 @@ class CriterionChecker:
             # required floor yields exactly SYMBOLIC_BASE_CONFIDENCE.
             confidence = min(
                 1.0,
-                SYMBOLIC_BASE_CONFIDENCE
-                + 0.15 * (ratio - SYMBOLIC_REQUIRED_HIT_RATIO),
+                SYMBOLIC_BASE_CONFIDENCE + 0.15 * (ratio - SYMBOLIC_REQUIRED_HIT_RATIO),
             )
             return CriterionDecision(
                 verdict=CriterionVerdict.SATISFIED,

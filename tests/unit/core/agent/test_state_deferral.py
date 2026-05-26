@@ -94,9 +94,7 @@ class AgentStateDeferralTest(unittest.TestCase):
         state.record_deferral()
         state.record_deferral()
         state.record_step(
-            result=self.__step_result(
-                action_type=ActionType.TAP, success=True, screen_changed=True
-            )
+            result=self.__step_result(action_type=ActionType.TAP, success=True, screen_changed=True)
         )
         self.assertEqual(state.deferral_count, 0)
 

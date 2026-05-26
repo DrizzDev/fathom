@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from logging import getLogger
 from typing import Optional
 
 from fathom.core.agent.state import AgentState
 from fathom.schemas.escalation import StuckSource
-
-logger = getLogger(__name__)
 
 
 class StuckSourceResolver:

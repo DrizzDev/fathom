@@ -85,12 +85,8 @@ class EscalationDecision(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    allow: bool = Field(
-        description="True when escalation is permitted now, False when deferred."
-    )
-    reason: EscalationReason = Field(
-        description="Stable identifier explaining the decision."
-    )
+    allow: bool = Field(description="True when escalation is permitted now, False when deferred.")
+    reason: EscalationReason = Field(description="Stable identifier explaining the decision.")
     stuck_source: StuckSource = Field(
         description="Source that triggered the escalation evaluation."
     )

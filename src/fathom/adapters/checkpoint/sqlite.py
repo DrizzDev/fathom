@@ -14,8 +14,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from logging import getLogger
-from pathlib import Path
-from typing import Any, AsyncIterator, ClassVar, Final, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Final, List, Optional
 
 import aiosqlite
 
@@ -23,6 +22,8 @@ from fathom.core.exceptions import CheckpointStoreError
 from fathom.interfaces.checkpoint import LangGraphCheckpointer
 from fathom.schemas.checkpoint import SqliteCheckpointPolicy
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = getLogger(__name__)
 
@@ -32,8 +33,8 @@ class _WorkflowIdentifierSanitizer:
     Convert raw workflow identifiers into filesystem-safe stems.
     """
 
-    __PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"[^A-Za-z0-9_-]")
     __DEFAULT: Final[str] = "default"
+    __PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"[^A-Za-z0-9_-]")
 
     @classmethod
     def sanitize(cls, *, workflow_id: Optional[str]) -> str:
@@ -43,7 +44,9 @@ class _WorkflowIdentifierSanitizer:
 
         if workflow_id is None:
             return cls.__DEFAULT
+
         stripped = workflow_id.strip()
+
         if not stripped:
             return cls.__DEFAULT
 
@@ -55,8 +58,8 @@ class SqliteCheckpointSweeper:
     Throttled defensive backstop that deletes orphaned per-workflow checkpoint files.
     """
 
-    __FILENAME_PREFIX: ClassVar[str] = "checkpoints__"
     __FILENAME_SUFFIX: ClassVar[str] = ".db"
+    __FILENAME_PREFIX: ClassVar[str] = "checkpoints__"
     __LEGACY_SHARED_FILENAME: ClassVar[str] = "checkpoints.db"
     __SIDECAR_SUFFIXES: ClassVar[tuple[str, ...]] = (".db", ".db-wal", ".db-shm")
 
@@ -84,35 +87,41 @@ class SqliteCheckpointSweeper:
 
         now = time.time()
         elapsed_since_last = now - SqliteCheckpointSweeper.__last_swept_at
+
         if elapsed_since_last < self.__sweep_min_interval:
             logger.debug(
                 "checkpoint sweep skipped",
                 extra={
-                    "event": "fathom.checkpoint.sweep.skipped",
                     "reason": "throttled",
-                    "min_interval": self.__sweep_min_interval,
                     "elapsed": elapsed_since_last,
+                    "min_interval": self.__sweep_min_interval,
+                    "event": "fathom.checkpoint.sweep.skipped",
                 },
             )
             return []
+
         SqliteCheckpointSweeper.__last_swept_at = now
+
         if not self.__directory.exists():
             logger.info(
                 "checkpoint sweep completed; directory absent",
                 extra={
-                    "event": "fathom.checkpoint.sweep.completed",
                     "removed.count": 0,
                     "directory": str(self.__directory),
+                    "event": "fathom.checkpoint.sweep.completed",
                 },
             )
             return []
+
+        removed: List[str] = []
         threshold = now - self.__sweep_age
-        removed: list[str] = []
+
         for path in self.__directory.glob(
             f"{SqliteCheckpointSweeper.__FILENAME_PREFIX}*{SqliteCheckpointSweeper.__FILENAME_SUFFIX}"
         ):
             if path.name == SqliteCheckpointSweeper.__LEGACY_SHARED_FILENAME:
                 continue
+
             try:
                 if path.stat().st_mtime < threshold:
                     identifier = path.stem.removeprefix(SqliteCheckpointSweeper.__FILENAME_PREFIX)
@@ -124,21 +133,23 @@ class SqliteCheckpointSweeper:
                     path,
                     exception,
                     extra={
-                        "event": "fathom.checkpoint.sweep.failed",
-                        "checkpoint.identifier": path.stem,
                         "checkpoint.path": str(path),
-                        "exception.type": type(exception).__name__,
+                        "checkpoint.identifier": path.stem,
                         "exception.message": str(exception),
+                        "event": "fathom.checkpoint.sweep.failed",
+                        "exception.type": type(exception).__name__,
                     },
                 )
+
         logger.info(
             "checkpoint sweep completed",
             extra={
-                "event": "fathom.checkpoint.sweep.completed",
                 "removed.count": len(removed),
                 "directory": str(self.__directory),
+                "event": "fathom.checkpoint.sweep.completed",
             },
         )
+
         return removed
 
     def __remove_sidecars(self, *, stem: str) -> None:
@@ -155,8 +166,8 @@ class SqliteCheckpointStore:
     Per-workflow SQLite-backed LangGraph checkpoint store with fail-fast pragmas.
     """
 
-    __FILENAME_PREFIX: ClassVar[str] = "checkpoints__"
     __FILENAME_SUFFIX: ClassVar[str] = ".db"
+    __FILENAME_PREFIX: ClassVar[str] = "checkpoints__"
     __SIDECAR_SUFFIXES: ClassVar[tuple[str, ...]] = (".db", ".db-wal", ".db-shm")
 
     def __init__(
@@ -190,33 +201,35 @@ class SqliteCheckpointStore:
 
         identifier = _WorkflowIdentifierSanitizer.sanitize(workflow_id=workflow_id)
         path = self.__path_for(identifier=identifier)
+
         try:
             async with aiosqlite.connect(str(path)) as connection:
                 await self.__apply_pragmas(connection=connection)
                 logger.info(
                     "checkpoint store opened",
                     extra={
-                        "event": "fathom.checkpoint.opened",
                         "workflow.id": workflow_id,
+                        "checkpoint.path": str(path),
                         "checkpoint.backend": "sqlite",
                         "checkpoint.identifier": identifier,
-                        "checkpoint.path": str(path),
+                        "event": "fathom.checkpoint.opened",
                         "checkpoint.busy_timeout": self.__policy.busy_timeout,
                     },
                 )
                 yield self.__build_saver(saver_class=AsyncSqliteSaver, connection=connection)
+
         except Exception as exception:
             logger.error(
                 "checkpoint store open failed: %s",
                 exception,
                 exc_info=True,
                 extra={
-                    "event": "fathom.checkpoint.open.failed",
                     "workflow.id": workflow_id,
-                    "checkpoint.backend": "sqlite",
                     "checkpoint.path": str(path),
-                    "exception.type": type(exception).__name__,
+                    "checkpoint.backend": "sqlite",
                     "exception.message": str(exception),
+                    "event": "fathom.checkpoint.open.failed",
+                    "exception.type": type(exception).__name__,
                 },
             )
             raise CheckpointStoreError(
@@ -229,45 +242,50 @@ class SqliteCheckpointStore:
         """
 
         identifier = _WorkflowIdentifierSanitizer.sanitize(workflow_id=workflow_id)
+
         logger.info(
             "checkpoint discard started",
             extra={
-                "event": "fathom.checkpoint.discard.started",
                 "workflow.id": workflow_id,
                 "checkpoint.backend": "sqlite",
                 "checkpoint.identifier": identifier,
+                "event": "fathom.checkpoint.discard.started",
             },
         )
+
+        removed_paths: List[str] = []
         stem = f"{SqliteCheckpointStore.__FILENAME_PREFIX}{identifier}"
-        removed_paths: list[str] = []
+
         try:
             for suffix in SqliteCheckpointStore.__SIDECAR_SUFFIXES:
                 path = self.__directory / f"{stem}{suffix}"
                 if path.exists():
                     path.unlink(missing_ok=True)
                     removed_paths.append(str(path))
+
         except OSError as exception:
             logger.warning(
                 "checkpoint discard failed: %s",
                 exception,
                 extra={
-                    "event": "fathom.checkpoint.discard.failed",
                     "workflow.id": workflow_id,
                     "checkpoint.backend": "sqlite",
                     "checkpoint.identifier": identifier,
-                    "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
+                    "exception.type": type(exception).__name__,
+                    "event": "fathom.checkpoint.discard.failed",
                 },
             )
             return
+
         logger.info(
             "checkpoint discard completed",
             extra={
-                "event": "fathom.checkpoint.discard.completed",
                 "workflow.id": workflow_id,
                 "checkpoint.backend": "sqlite",
-                "checkpoint.identifier": identifier,
                 "removed.paths": removed_paths,
+                "checkpoint.identifier": identifier,
+                "event": "fathom.checkpoint.discard.completed",
             },
         )
 

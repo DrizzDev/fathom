@@ -23,7 +23,7 @@ class SqliteCheckpointSweeperTest(unittest.IsolatedAsyncioTestCase):
         Reset the throttle clock so each test sees a fresh sweeper window.
         """
 
-        setattr(SqliteCheckpointSweeper, "_SqliteCheckpointSweeper__last_swept_at", 0.0)
+        SqliteCheckpointSweeper._SqliteCheckpointSweeper__last_swept_at = 0.0
 
     async def test_sweep_removes_aged_per_workflow_files_and_sidecars(self) -> None:
         """

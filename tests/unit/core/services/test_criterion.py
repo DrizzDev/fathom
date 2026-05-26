@@ -85,9 +85,7 @@ def _observation(*, texts: Sequence[str], visual_hash: str = "h0") -> ScreenObse
     Build a :class:`ScreenObservation` whose elements carry the given texts.
     """
 
-    elements = tuple(
-        _element(identifier=f"e{idx}", text=text) for idx, text in enumerate(texts)
-    )
+    elements = tuple(_element(identifier=f"e{idx}", text=text) for idx, text in enumerate(texts))
     return ScreenObservation(
         activity="com.test.app",
         elements=elements,
@@ -276,12 +274,8 @@ class CriterionCheckerCacheTest(unittest.IsolatedAsyncioTestCase):
             criterion="Login half card is displayed on the screen.",
         )
 
-        first = await checker.check(
-            workflow_id="wf-1", sub_goal=sub_goal, observation=observation
-        )
-        second = await checker.check(
-            workflow_id="wf-1", sub_goal=sub_goal, observation=observation
-        )
+        first = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
+        second = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
 
         self.assertEqual(first.verdict, CriterionVerdict.UNSATISFIED)
         self.assertEqual(first.source, CriterionSource.LLM)

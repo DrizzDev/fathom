@@ -70,9 +70,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         """
 
         state = AgentState(intent="finish onboarding")
-        state.set_sub_goals(
-            [SubGoal(description="Validate something", index=0, max_steps=10)]
-        )
+        state.set_sub_goals([SubGoal(description="Validate something", index=0, max_steps=10)])
         detector = state.runtime.screen.detector
         for _ in range(detector.threshold):
             detector.record(
@@ -120,9 +118,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         context = self.__context_manager()
         vision = self.__vision_with_navigation_action()
         reasoner = Mock()
-        reasoner.select_best_action.return_value = (
-            vision.analyze.return_value.action
-        )
+        reasoner.select_best_action.return_value = vision.analyze.return_value.action
         planner = StepPlanner(vision_tool=vision)
 
         await planner.plan_step(

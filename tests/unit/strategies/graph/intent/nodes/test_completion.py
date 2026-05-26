@@ -444,9 +444,7 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
 
         result = await evaluator.evaluate(
             plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(
-                action_type=ActionType.VALIDATE, screen_changed=False
-            ),
+            step_result=self.__step_result(action_type=ActionType.VALIDATE, screen_changed=False),
             accumulated=[],
             observation=self.__observation(),
         )

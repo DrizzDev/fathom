@@ -137,9 +137,7 @@ class EscalationGateDecisionTest(unittest.TestCase):
         gate = self.__gate()
         decision = gate.decide(
             source=StuckSource.LOOP_DETECTOR,
-            evidence=self.__evidence(
-                *(self.__turn(ActionKind.VALIDATION) for _ in range(4))
-            ),
+            evidence=self.__evidence(*(self.__turn(ActionKind.VALIDATION) for _ in range(4))),
             deferrals=0,
         )
         self.assertTrue(decision.allow)

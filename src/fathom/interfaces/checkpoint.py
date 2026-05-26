@@ -4,8 +4,10 @@ Backend-neutral ports for LangGraph checkpoint storage.
 
 from __future__ import annotations
 
-from contextlib import AbstractAsyncContextManager
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
 
 
 @runtime_checkable

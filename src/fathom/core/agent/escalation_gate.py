@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from logging import getLogger
-
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.escalation import (
     EscalationDecision,
@@ -11,8 +9,6 @@ from fathom.schemas.escalation import (
 )
 from fathom.schemas.loop import LoopEvidence
 from fathom.schemas.vision import ActionKind
-
-logger = getLogger(__name__)
 
 
 class EscalationGate:

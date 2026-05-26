@@ -168,9 +168,7 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         """
 
         state = AgentState(intent="x")
-        state.set_sub_goals(
-            [SubGoal(description="Validate srp page", index=0, max_steps=10)]
-        )
+        state.set_sub_goals([SubGoal(description="Validate srp page", index=0, max_steps=10)])
         self.__seed_validate_only_loop(state=state)
         # Simulate two earlier deferrals on this sub-goal.
         state.record_deferral()
@@ -202,9 +200,7 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         """
 
         state = AgentState(intent="x")
-        state.set_sub_goals(
-            [SubGoal(description="Validate srp page", index=0, max_steps=10)]
-        )
+        state.set_sub_goals([SubGoal(description="Validate srp page", index=0, max_steps=10)])
         detector = state.runtime.screen.detector
         for _ in range(4):
             detector.record(
