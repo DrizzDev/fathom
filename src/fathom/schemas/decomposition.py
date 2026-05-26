@@ -6,10 +6,12 @@ from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from fathom.constants import ActionType
+
 
 class DecomposedTask(BaseModel):
     """
-    Decomposed task with an observable terminal criterion.
+    Decomposed task with an observable terminal criterion and the structured action directive.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -18,6 +20,15 @@ class DecomposedTask(BaseModel):
     criterion: str = Field(
         min_length=1,
         description="Observable screen state criterion satisfied when the task is complete.",
+    )
+    directive: ActionType = Field(
+        description=(
+            "Action type the planner must emit to satisfy this task. The "
+            "completion gate compares the planner-emitted action_type "
+            "against this directive; divergence prevents advancement and "
+            "guards against the LLM short-circuiting action sub-goals with "
+            "stray validate emits."
+        ),
     )
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from fathom.core.services.comparator import ScreenComparator
+from fathom.core.services.criterion import CriterionChecker
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.nodes.completion import SubGoalEvaluator
 from fathom.strategies.graph.intent.nodes.effect import PostAction
@@ -41,8 +42,10 @@ class IntentNodeProvider:
             comparator=screen_comparator,
         )
         self.__hitl = Hitl(context=context)
+        self.__criterion_checker = CriterionChecker(llm=context.llm)
         self.__completion = SubGoalEvaluator(
             context=context,
+            criterion_checker=self.__criterion_checker,
         )
 
     @property

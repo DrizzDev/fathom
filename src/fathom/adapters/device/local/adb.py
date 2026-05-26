@@ -285,13 +285,73 @@ class ADBDevice(DevicePort):
 
         finally:
             if process and process.returncode is None:
-                try:
-                    process.kill()
-                    await process.wait()
-                except ProcessLookupError:
-                    pass  # Process already dead
-                except Exception as cleanup_exception:
-                    logger.warning(f"Failed to cleanup subprocess: {cleanup_exception}")
+                await self.__abandon_unkillable_subprocess(process=process, arguments=arguments)
+
+    async def __abandon_unkillable_subprocess(
+        self,
+        *,
+        process: asyncio.subprocess.Process,
+        arguments: List[str],
+    ) -> None:
+        """
+        Bounded post-kill reap of a still-running subprocess.
+
+        ``__run_safe_subprocess`` enforces a wall-clock per-command timeout
+        via :func:`asyncio.wait_for`. Its ``finally`` block sends SIGKILL,
+        then awaits the process to reap. When the host has wedged IO
+        (emulator qcow2 backing exhausted, NFS hang, etc.) the kernel
+        cannot deliver SIGKILL because the process sits in an
+        uninterruptible-IO state; the await would block indefinitely and
+        the entire workflow would stall.
+
+        This helper caps that reap with ``subprocess_cleanup_timeout`` and
+        abandons the process (logging at WARNING) rather than waiting
+        forever. The leaked subprocess will be reaped by the OS once the
+        underlying IO unwedges.
+        """
+
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return
+        except Exception as exception:
+            logger.warning(
+                "Failed to send SIGKILL to subprocess",
+                extra={
+                    "component": "adapter.device.local.adb",
+                    "event": "adb.subprocess.kill.failed",
+                    "command": " ".join(arguments),
+                    "error.message": str(exception),
+                },
+            )
+            return
+
+        try:
+            await asyncio.wait_for(
+                process.wait(),
+                timeout=self.__configuration.subprocess_cleanup_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Subprocess cleanup wait timed out; abandoning process",
+                extra={
+                    "component": "adapter.device.local.adb",
+                    "event": "adb.subprocess.cleanup.abandoned",
+                    "command": " ".join(arguments),
+                    "cleanup.budget": self.__configuration.subprocess_cleanup_timeout,
+                    "process.pid": process.pid,
+                },
+            )
+        except Exception as exception:
+            logger.warning(
+                "Failed to cleanup subprocess after kill",
+                extra={
+                    "component": "adapter.device.local.adb",
+                    "event": "adb.subprocess.cleanup.failed",
+                    "command": " ".join(arguments),
+                    "error.message": str(exception),
+                },
+            )
 
     async def get_dimensions(self) -> Tuple[int, int]:
         """
@@ -457,11 +517,31 @@ class ADBDevice(DevicePort):
     async def dump_hierarchy(self) -> Optional[str]:
         """
         Dump UI hierarchy to XML string.
-        Attempts compressed dump first, with fallback to uncompressed and process cleanup.
+
+        Acquires the per-adapter UiAutomation lock with a bounded timeout. A
+        prior ``dump_hierarchy`` task that was cancelled before the
+        ``async with`` exit could leak the lock; treating the acquire as
+        timed converts that latent class of bugs into an explicit
+        :class:`DeviceError` instead of an indefinite await on the next call.
         """
 
-        async with self.__hierarchy_lock:
+        try:
+            await asyncio.wait_for(
+                self.__hierarchy_lock.acquire(),
+                timeout=self.__configuration.hierarchy_lock_timeout,
+            )
+        except asyncio.TimeoutError as exception:
+            raise DeviceError(
+                f"Dump hierarchy: lock acquire timed out after "
+                f"{self.__configuration.hierarchy_lock_timeout:.1f}s "
+                "(likely a leaked lock from a prior cancelled task)"
+            ) from exception
+
+        try:
             return await self.__dump_hierarchy_locked()
+
+        finally:
+            self.__hierarchy_lock.release()
 
     async def __dump_hierarchy_locked(self) -> Optional[str]:
         """
@@ -599,13 +679,29 @@ class ADBDevice(DevicePort):
     async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """
         Capture atomic snapshot (Screenshot + XML) in parallel.
+
+        Wrapped in an outer timeout (``snapshot_timeout``) so a wedged emulator
+        (e.g. qcow2 backing file exhausted) surfaces as a clean
+        :class:`DeviceError` instead of an indefinite await. The inner
+        per-subprocess timeout (``command_timeout``) is not sufficient on its
+        own because the subprocess-cleanup path can itself hang when the
+        kernel cannot deliver SIGKILL to a process stuck in uninterruptible IO.
         """
 
-        results = await asyncio.gather(
-            self.capture_screen(),
-            self.dump_hierarchy(),
-            return_exceptions=True,
-        )
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    self.capture_screen(),
+                    self.dump_hierarchy(),
+                    return_exceptions=True,
+                ),
+                timeout=self.__configuration.snapshot_timeout,
+            )
+        except asyncio.TimeoutError as exception:
+            raise DeviceError(
+                f"Snapshot timed out after {self.__configuration.snapshot_timeout:.1f}s "
+                "(emulator likely wedged on host IO; check disk and emulator health)"
+            ) from exception
 
         image_result = results[0]
         xml_result = results[1]

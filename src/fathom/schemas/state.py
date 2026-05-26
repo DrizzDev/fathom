@@ -24,7 +24,9 @@ from fathom.constants.screen import (
 )
 from fathom.schemas.actions import Action
 from fathom.schemas.effect import ActionEffectStatus
+from fathom.schemas.loop import LoopEvidence, LoopReason, LoopTurn
 from fathom.schemas.screens import ScreenState
+from fathom.schemas.vision import action_kind_from_token
 
 logger = getLogger(__name__)
 
@@ -742,6 +744,130 @@ class LoopDetector(BaseModel):
         """
 
         self.reset()
+
+    def evidence(self) -> LoopEvidence:
+        """
+        Typed read-only snapshot consumed by the escalation gate.
+
+        ``reason`` identifies which detection strategy classified the window as
+        stuck (or ``NOT_STUCK``). ``since_progress`` is the trailing slice of
+        turns starting after the most recent PROGRESS effect — that is the
+        only span the gate is allowed to consider, because older turns belong
+        to a prior recovery cycle and must not unlock escalation on their own.
+        """
+
+        reason = self.__classify_reason()
+        recent = self.__snapshot_recent()
+        since_progress = self.__compute_since_progress(recent=recent)
+
+        return LoopEvidence(
+            stuck=reason is not LoopReason.NOT_STUCK,
+            reason=reason,
+            recent=recent,
+            since_progress=since_progress,
+        )
+
+    def __classify_reason(self) -> LoopReason:
+        """
+        Return the first matching detection strategy, mirroring ``is_stuck`` order.
+        """
+
+        if self.__detect_inert_repetition():
+            return LoopReason.INERT_REPETITION
+
+        has_enough_screens = len(self.__recent_screens) >= self.threshold
+        has_enough_actions = len(self.__recent_actions) >= self.threshold
+
+        if has_enough_screens:
+            if self.__detect_repetition():
+                return LoopReason.SCREEN_REPETITION
+
+            if self.__detect_near_duplicate_visual_repetition():
+                return LoopReason.NEAR_DUPLICATE_VISUAL
+
+            if self.__detect_oscillation():
+                return LoopReason.STATE_OSCILLATION
+
+            if self.__detect_scroll_stall():
+                return LoopReason.SCROLL_STALL
+
+            if self.__detect_action_velocity_loop():
+                return LoopReason.ACTION_VELOCITY
+
+        if has_enough_actions and self.__detect_action_repetition():
+            return LoopReason.ACTION_REPETITION
+
+        return LoopReason.NOT_STUCK
+
+    def __snapshot_recent(self) -> tuple[LoopTurn, ...]:
+        """
+        Build the oldest-first turn snapshot aligned to the trailing deque slice.
+
+        :meth:`advance` clears screens and hashes but preserves actions, types,
+        and effect statuses so action-pattern detectors survive screen resets.
+        That leaves the deques temporally misaligned — actions accumulate
+        across advances while screens only cover the current window. The
+        snapshot must therefore align from the tail: the most recent ``size``
+        entries from each deque represent the same temporal slice.
+        """
+
+        types = list(self.__recent_types)
+        hashes = list(self.__recent_hashes)
+        effects = list(self.__recent_effect_statuses)
+
+        size = min(len(types), len(effects), len(hashes))
+        if size == 0:
+            return ()
+
+        types = types[-size:]
+        effects = effects[-size:]
+        hashes = hashes[-size:]
+
+        turns: list[LoopTurn] = []
+
+        for index in range(size):
+            action_token = types[index]
+            effect_token = effects[index]
+
+            try:
+                effect_status = (
+                    ActionEffectStatus(effect_token)
+                    if effect_token
+                    else ActionEffectStatus.UNCERTAIN
+                )
+
+            except ValueError:
+                effect_status = ActionEffectStatus.UNCERTAIN
+
+            turns.append(
+                LoopTurn(
+                    action_type=action_token,
+                    effect_status=effect_status,
+                    action_kind=action_kind_from_token(action_token),
+                    screen_hash_prefix=hashes[index][:8] if hashes[index] else "",
+                )
+            )
+
+        return tuple(turns)
+
+    @staticmethod
+    def __compute_since_progress(*, recent: tuple[LoopTurn, ...]) -> tuple[LoopTurn, ...]:
+        """
+        Trailing turns after the most recent PROGRESS effect.
+
+        Walks oldest-first to find the index of the last PROGRESS turn; the
+        slice ``since_progress`` is every turn that follows it. PROGRESS turns
+        themselves are excluded — they bound the live window. UNCERTAIN turns
+        are pass-through. When the window contains no PROGRESS turn the slice
+        is the entire window.
+        """
+
+        last_progress_index = -1
+        for index, turn in enumerate(recent):
+            if turn.effect_status is ActionEffectStatus.PROGRESS:
+                last_progress_index = index
+
+        return tuple(recent[last_progress_index + 1 :])
 
 
 class InteractionTracker(BaseModel):

@@ -24,14 +24,21 @@ MINIMUM_DECOMPOSITION_CONFIDENCE: float = 0.6
 # Delta score below which a step counts as low-progress for streak tracking.
 LOW_DELTA_PROGRESS_THRESHOLD: float = 0.3
 
-# Independent positive signals required before a sub-goal enters screenshot verification.
-SUB_GOAL_COMPLETION_REQUIRED_SIGNALS: int = 2
-
 # Number of ANALYZE turns a human instruction may remain active after
 # injection. This keeps HITL guidance from disappearing after one ignored
 # model turn while still preventing stale instructions from becoming a
 # permanent imperative on later screens.
 USER_GUIDANCE_ANALYZE_TTL: int = 3
+
+# Number of consecutive ``validate`` + ``flagged_complete`` emits the planner
+# may produce against a non-validate directive before the completion gate
+# accepts the divergence as an implicit-completion claim. Bridges the gap
+# between (a) the original validate-shortcut bug (one stray validate must NOT
+# bypass a tap directive) and (b) genuine app-flow variance where the app
+# skips an intermediate screen and the named action is no longer reachable.
+# Threshold of 2 means: first validate is rejected (keeps the LLM honest);
+# second consecutive validate is accepted (lets stale sub-goals resolve).
+IMPLICIT_COMPLETION_THRESHOLD: int = 2
 
 # Action confidence floor; below this the action is rejected outright.
 ACTION_MIN_CONFIDENCE: float = 0.40
@@ -41,18 +48,6 @@ ACTION_MIN_CONFIDENCE_AFTER_FAILURE: float = 0.80
 
 # Synthetic confidence assigned when a next-phase action is detected.
 ACTION_NEXT_PHASE_CONFIDENCE: float = 0.85
-
-# Sub-goal description tokens that classify the step as a validation
-# (observation-only) goal where the screen is not expected to change.
-VALIDATION_KEYWORDS: frozenset[str] = frozenset(
-    {
-        "verify",
-        "validate",
-        "confirm",
-        "check if",
-        "check that",
-    }
-)
 
 # Words in reasoning that signal a sub-goal or intent has been completed.
 COMPLETION_KEYWORDS: frozenset[str] = frozenset(

@@ -7,6 +7,7 @@ from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
+from fathom.schemas.observation import KeyboardObservation
 from fathom.schemas.screens import ScreenCapture
 
 
@@ -30,7 +31,9 @@ class IOSNativePerceptionAdapter(PerceptionPort):
 
         return self.__device.configuration
 
-    async def detect_keyboard(self, *, capture: Optional[ScreenCapture] = None):
+    async def detect_keyboard(
+        self, *, capture: Optional[ScreenCapture] = None
+    ) -> KeyboardObservation:
         """
         Delegate keyboard detection to the underlying iOS device adapter (XCUITest XML walk).
         """
@@ -84,7 +87,9 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
 
         return self.__device.configuration
 
-    async def detect_keyboard(self, *, capture: Optional[ScreenCapture] = None):
+    async def detect_keyboard(
+        self, *, capture: Optional[ScreenCapture] = None
+    ) -> KeyboardObservation:
         """
         Delegate keyboard detection to the underlying iOS device adapter (XCUITest XML walk).
         """

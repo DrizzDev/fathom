@@ -255,6 +255,10 @@ class ExecutionResult(BaseModel):
         default_factory=tuple,
         description="Concrete trace events captured during execution.",
     )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional finalization markers such as partial completion or the phase that timed out.",
+    )
 
 
 class PlanResult(BaseModel):

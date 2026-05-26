@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from fathom.schemas.results import ToolErrorFeedback
 
 
@@ -257,3 +259,28 @@ class ScriptExportError(FathomError):
     """
     Script export failed.
     """
+
+
+class FinalizationTimeoutError(FathomError):
+    """
+    Post-terminal finalization phase exceeded its allotted timeout.
+    """
+
+    def __init__(self, *, phase: str, timeout: float, workflow_id: Optional[str] = None) -> None:
+        suffix = "" if workflow_id is None else f" (workflow_id={workflow_id})"
+        super().__init__(
+            f"Finalization phase '{phase}' exceeded {timeout}s{suffix}", retryable=False
+        )
+
+        self.phase = phase
+        self.timeout = timeout
+        self.workflow_id = workflow_id
+
+
+class CheckpointStoreError(FathomError):
+    """
+    LangGraph checkpoint store could not complete a required operation.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, retryable=False)

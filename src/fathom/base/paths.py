@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path  # noqa: TC003
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from fathom.schemas.artifact import ArtifactKind
@@ -153,3 +153,22 @@ class SharedPathManager:
         """
 
         return self.memory_path / "ledger.db"
+
+    def get_checkpoint_directory(self) -> Path:
+        """
+        Directory containing all per-workflow LangGraph checkpoint database files.
+        """
+
+        path = self.memory_path / "checkpoints"
+        path.mkdir(parents=True, exist_ok=True)
+
+        return path
+
+    def get_checkpoint_path(self, *, workflow_id: Optional[str]) -> Path:
+        """
+        Per-workflow LangGraph checkpoint database path under the dedicated checkpoint directory.
+        """
+
+        identifier = workflow_id.strip() or "default" if workflow_id else "default"
+
+        return self.get_checkpoint_directory() / f"checkpoints__{identifier}.db"

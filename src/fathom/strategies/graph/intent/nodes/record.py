@@ -10,6 +10,7 @@ from fathom.constants.gcc import GCC_BRANCHING_ACTIVE_COUNT
 from fathom.constants.messages import RECORDING_FAILURE_MESSAGE
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.exceptions import FathomError
+from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import StepResult
@@ -319,10 +320,21 @@ class RecordNode:
             # ── Sub-goal completion check (post-execution) ──
             # Evaluated here — after the action has executed and been recorded —
             # so we never advance a sub-goal on an action that didn't run.
+            # The typed ScreenObservation (post-action capture written by the
+            # OBSERVE node) is the source of truth for criterion satisfaction;
+            # we pass it explicitly so the gate never falls back to the
+            # free-text observation field on StepResult.
+            screen_observation_raw = state.get(CommonStateKey.SCREEN_OBSERVATION)
+            screen_observation = (
+                screen_observation_raw
+                if isinstance(screen_observation_raw, ScreenObservation)
+                else None
+            )
             subgoal_result = await self.__provider.completion.evaluate(
                 plan=execution_plan,
                 step_result=step_result,
                 accumulated=accumulated_step_results,
+                observation=screen_observation,
             )
             if subgoal_result is not None:
                 self.__provider.persistence.persist(result=subgoal_result)

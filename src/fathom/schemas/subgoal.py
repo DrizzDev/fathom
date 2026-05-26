@@ -1,7 +1,9 @@
 from enum import StrEnum
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from fathom.constants import ActionType
 from fathom.constants.subgoal import (
     DEFAULT_SUB_GOAL_MAX_STEPS,
 )
@@ -40,6 +42,16 @@ class SubGoal(BaseModel):
         default=None,
         description="Observable terminal state criterion for compatibility with execution tasks.",
     )
+    directive: Optional[ActionType] = Field(
+        default=None,
+        description=(
+            "Structured action the planner must emit to satisfy this sub-goal. "
+            "The completion gate compares the planner-emitted action_type "
+            "against this value to detect divergence. Optional only for "
+            "backward compatibility with checkpoints written before the "
+            "directive contract existed; new decompositions always populate it."
+        ),
+    )
     status: SubGoalStatus = Field(
         default=SubGoalStatus.PENDING, description="Current lifecycle status"
     )
@@ -64,6 +76,31 @@ class SubGoal(BaseModel):
         default=DEFAULT_SUB_GOAL_MAX_STEPS,
         ge=1,
         description="Maximum graph iterations the agent may spend on this sub-goal.",
+    )
+
+    deferral_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Consecutive escalations deferred by the escalation gate while "
+            "this sub-goal was active. Resets on observable progress or is "
+            "implicitly reset by sub-goal advance (the next sub-goal starts "
+            "at 0). Bounded by the gate's deferral_limit so deferral cannot "
+            "hide a genuinely stuck flow indefinitely."
+        ),
+    )
+    completion_claim_streak: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Consecutive planner emits of ``validate`` + ``flagged_complete`` "
+            "against a non-validate directive while this sub-goal was active. "
+            "Counts the divergence pattern that arises when the app skips an "
+            "intermediate screen and the named action is no longer reachable "
+            "but the criterion is already satisfied. Bounded by "
+            "IMPLICIT_COMPLETION_THRESHOLD; on reach the completion gate "
+            "accepts the divergence as an implicit completion and advances."
+        ),
     )
 
     def mark_in_progress(self) -> None:

@@ -182,7 +182,10 @@ class GraphContext:
             configuration=perception_configuration,
             pipeline=artifact_pipeline,
         )
-        self.__planner = planner or StepPlanner(vision_tool=self.__vision)
+        self.__planner = planner or StepPlanner(
+            vision_tool=self.__vision,
+            escalation_policy=configuration.intent.escalation,
+        )
 
         self.__history = history or HistoryService(
             storage=storage,

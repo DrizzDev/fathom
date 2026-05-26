@@ -6,7 +6,9 @@ from logging import getLogger
 from typing import Any, Dict, Optional, cast
 
 from fathom.base.paths import SharedPathManager
+from fathom.base.phase import AbandonablePhase
 from fathom.constants import ContextScope, FathomEvent
+from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.state import CompletionReason
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
@@ -275,8 +277,14 @@ class FathomRunner:
             strategy_metrics = strategy.get_metrics()
             metrics = strategy_metrics.to_report_dict() if strategy_metrics else {}
 
-            # Get memory summary
-            memory_summary = await self.__get_memory_summary()
+            # Get memory summary under a bounded abandonable phase so a stuck SQLite read
+            # never gates result delivery.
+            raw_memory_summary = await AbandonablePhase(
+                phase=FinalizationPhase.MEMORY_SUMMARY,
+                timeout=self.__config.intent.finalization.runtime.memory_summary,
+                workflow_id=workflow_id,
+            ).execute(awaitable=self.__get_memory_summary())
+            memory_summary: Dict[str, Any] = raw_memory_summary if raw_memory_summary else {}
 
             # Build IntentResult
             duration = time.time() - start_time
@@ -493,42 +501,120 @@ class FathomRunner:
 
     async def cleanup(self) -> None:
         """
-        Cleanup all resources held by the runner and its ports.
+        Cleanup all runner resources via abandonable phases so a stuck step cannot wedge the host.
         """
 
-        # 1. Context manager — drain persist queue, cancel background tasks
-        if self.__context_manager is not None:
+        cleanup_budget = self.__config.intent.finalization.runtime.cleanup
+
+        async def __context_manager_shutdown() -> None:
+            """
+            Context manager shutdown wrapped for capture by AbandonablePhase.
+            """
+
+            if self.__context_manager is None:
+                return
             try:
                 await self.__context_manager.shutdown()
             except Exception as exception:
-                logger.warning(f"[FathomRunner] context_manager shutdown failed: {exception}")
+                logger.warning(
+                    "context_manager shutdown failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.context_manager.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
 
-        # 2. LLM — delete cached content, close clients
-        try:
-            await self.__llm.cleanup()
-        except Exception as exception:
-            logger.warning(f"[FathomRunner] llm cleanup failed: {exception}")
+        async def __llm_cleanup() -> None:
+            """
+            LLM port cleanup wrapped for capture by AbandonablePhase.
+            """
 
-        # 3. Device — close HTTP client (ADB remote, iOS remote)
-        if hasattr(self.__device, "close"):
+            try:
+                await self.__llm.cleanup()
+            except Exception as exception:
+                logger.warning(
+                    "llm cleanup failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.llm.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
+
+        async def __device_close() -> None:
+            """
+            Device port close wrapped for capture by AbandonablePhase.
+            """
+
+            if not hasattr(self.__device, "close"):
+                return
             try:
                 await self.__device.close()
             except Exception as exception:
-                logger.warning(f"[FathomRunner] device close failed: {exception}")
+                logger.warning(
+                    "device close failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.device.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
 
-        # 4. Telemetry — close Redis connection if applicable
-        if hasattr(self.__telemetry, "close"):
+        async def __telemetry_close() -> None:
+            """
+            Telemetry port close wrapped for capture by AbandonablePhase.
+            """
+
+            if not hasattr(self.__telemetry, "close"):
+                return
             try:
                 await self.__telemetry.close()
             except Exception as exception:
-                logger.warning(f"[FathomRunner] telemetry close failed: {exception}")
+                logger.warning(
+                    "telemetry close failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.telemetry.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
 
-        # 5. Storage — close any open handles
-        if hasattr(self.__storage, "close"):
+        async def __storage_close() -> None:
+            """
+            Storage port close wrapped for capture by AbandonablePhase.
+            """
+
+            if not hasattr(self.__storage, "close"):
+                return
             try:
                 await self.__storage.close()
             except Exception as exception:
-                logger.warning(f"[FathomRunner] storage close failed: {exception}")
+                logger.warning(
+                    "storage close failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.storage.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
+
+        for awaitable in (
+            __context_manager_shutdown(),
+            __llm_cleanup(),
+            __device_close(),
+            __telemetry_close(),
+            __storage_close(),
+        ):
+            await AbandonablePhase(
+                phase=FinalizationPhase.RUNNER_CLEANUP,
+                timeout=cleanup_budget,
+            ).execute(awaitable=awaitable)
 
         logger.info("[FathomRunner] cleanup completed")
 

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from pydantic import ValidationError
 
+from fathom.constants import ActionType
 from fathom.constants.reasoning import MINIMUM_DECOMPOSITION_CONFIDENCE
 from fathom.core.exceptions import ConfigurationError
 from fathom.core.prompts.factory import PromptFactory
@@ -159,10 +160,11 @@ class IntentDecomposer:
             )
             return self.__fallback(intent=intent)
 
-        sub_goals = [
+        raw_sub_goals = [
             self.__build_sub_goal(index=idx, entry=entry, confidence=schema.confidence or 0.9)
             for idx, entry in enumerate(schema.sub_goals)
         ]
+        sub_goals = self.__drop_terminal_markers(sub_goals=raw_sub_goals)
         logger.info(
             "[Decomposer] produced %d sub-goal(s) confidence=%s",
             len(sub_goals),
@@ -173,9 +175,44 @@ class IntentDecomposer:
                 "component": "decomposer",
                 "sub_goal_count": len(sub_goals),
                 "confidence": schema.confidence,
+                "sub_goals": self.__structured_dump(sub_goals=sub_goals),
             },
         )
+        self.__log_each_sub_goal(sub_goals=sub_goals, augmented=augmented)
         return sub_goals
+
+    @staticmethod
+    def __drop_terminal_markers(*, sub_goals: List[SubGoal]) -> List[SubGoal]:
+        """
+        Strip synthetic terminal-marker sub-goals (directive=complete) emitted
+        by the decomposer LLM. These add nothing actionable: VERIFY already
+        adjudicates overall intent completion, and a terminal marker just
+        forces an extra criterion check + LLM call on a synthetic criterion
+        that the verifier rubber-stamps.
+
+        Indices are reassigned so the surviving sub-goals stay 0-based and
+        contiguous for the agent-state machine.
+        """
+
+        kept: List[SubGoal] = []
+        for sub_goal in sub_goals:
+            if sub_goal.directive is ActionType.COMPLETE:
+                logger.info(
+                    "[Decomposer] dropping terminal-marker sub-goal",
+                    extra={
+                        "component": "decomposer",
+                        "event": "sub_goal.terminal_marker.dropped",
+                        "sub_goal.original_index": sub_goal.index,
+                        "sub_goal.description": sub_goal.description[:80],
+                    },
+                )
+                continue
+            kept.append(sub_goal)
+
+        if len(kept) == len(sub_goals):
+            return sub_goals
+
+        return [sub_goal.model_copy(update={"index": idx}) for idx, sub_goal in enumerate(kept)]
 
     @staticmethod
     def __build_sub_goal(
@@ -187,10 +224,11 @@ class IntentDecomposer:
         """
         Build one :class:`SubGoal` from a normalized decomposition entry.
 
-        Legacy string entries produce sub-goals without a terminal criterion.
-        Typed :class:`DecomposedTask` entries preserve the criterion for
-        audit/export consumers; runtime completion still uses the coords-style
-        post-action signal gate and screenshot verification.
+        Typed :class:`DecomposedTask` entries carry the structured ``directive``
+        contract consumed by the completion gate. Legacy string entries (older
+        prompt outputs without the directive schema) are still accepted with
+        ``directive=None``; the completion gate falls back to its legacy
+        signal evaluation for those.
         """
 
         if isinstance(entry, DecomposedTask):
@@ -198,6 +236,7 @@ class IntentDecomposer:
                 index=index,
                 confidence=confidence,
                 criterion=entry.criterion,
+                directive=entry.directive,
                 description=entry.description,
             )
 
@@ -206,6 +245,53 @@ class IntentDecomposer:
             description=str(entry),
             confidence=confidence,
         )
+
+    @staticmethod
+    def __structured_dump(*, sub_goals: List[SubGoal]) -> List[Dict[str, Any]]:
+        """
+        Compact per-sub-goal payload suitable for a single structured log field.
+        """
+
+        return [
+            {
+                "index": sub_goal.index,
+                "description": sub_goal.description,
+                "directive": (sub_goal.directive.value if sub_goal.directive is not None else None),
+                "criterion": sub_goal.criterion,
+                "max_steps": sub_goal.max_steps,
+            }
+            for sub_goal in sub_goals
+        ]
+
+    @staticmethod
+    def __log_each_sub_goal(*, sub_goals: List[SubGoal], augmented: bool) -> None:
+        """
+        Emit one structured log line per decomposed sub-goal for inspection.
+
+        Each line is keyed by ``event="sub_goal.decomposed"`` so log filters
+        can isolate the decomposition output without grepping the summary line.
+        """
+
+        for sub_goal in sub_goals:
+            logger.info(
+                "[Decomposer] sub-goal %d: %s -> %s",
+                sub_goal.index,
+                sub_goal.description[:80],
+                sub_goal.directive.value if sub_goal.directive is not None else "<none>",
+                extra={
+                    "augmented": augmented,
+                    "component": "decomposer",
+                    "event": "sub_goal.decomposed",
+                    "sub_goal.index": sub_goal.index,
+                    "sub_goal.description": sub_goal.description,
+                    "sub_goal.directive": (
+                        sub_goal.directive.value if sub_goal.directive is not None else None
+                    ),
+                    "sub_goal.criterion": sub_goal.criterion,
+                    "sub_goal.max_steps": sub_goal.max_steps,
+                    "sub_goal.confidence": sub_goal.confidence,
+                },
+            )
 
     @staticmethod
     def __fallback(*, intent: str) -> List[SubGoal]:

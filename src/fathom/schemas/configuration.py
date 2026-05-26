@@ -11,6 +11,12 @@ from fathom.constants.platform import (
     IOSAutomationBackend,
 )
 from fathom.constants.storage import StorageBackend
+from fathom.schemas.checkpoint import (
+    CheckpointConfiguration,
+    SqliteCheckpointConfiguration,
+)
+from fathom.schemas.escalation import EscalationPolicy
+from fathom.schemas.finalization import FinalizationBudgetPolicy
 from fathom.schemas.swipe import SwipeRetryPolicy
 
 logger = getLogger(__name__)
@@ -159,12 +165,16 @@ class _DeprecatedAdaptivePolicy(BaseModel):
 
     enabled: bool = Field(default=False, description="Ignored; adaptive scroll was removed.")
     maximum_attempts: int = Field(
-        default=0, description="Ignored; replaced by SwipeRetryPolicy.magnitudes.",
+        default=0,
+        description="Ignored; replaced by SwipeRetryPolicy.magnitudes.",
     )
     verify: bool = Field(default=False, description="Ignored; replaced by the validation service.")
-    budget: int = Field(default=0, description="Ignored; the swipe coordinator is unbounded by wall time.")
+    budget: int = Field(
+        default=0, description="Ignored; the swipe coordinator is unbounded by wall time."
+    )
     suspicious_bottom_ratio: float = Field(
-        default=0.0, description="Ignored; was an adaptive-scroll heuristic.",
+        default=0.0,
+        description="Ignored; was an adaptive-scroll heuristic.",
     )
 
     def model_post_init(self, _context: object) -> None:
@@ -240,6 +250,33 @@ class ADBConfiguration(BaseModel):
         default=None, description="Target Android device identifier"
     )
     command_timeout: float = Field(default=10.0, description="Shell command timeout in seconds")
+    snapshot_timeout: float = Field(
+        default=30.0,
+        description=(
+            "Maximum wall-clock seconds for a full screen + hierarchy snapshot "
+            "(``get_snapshot``). Caps the gather over screencap and uiautomator "
+            "dump so a wedged emulator (e.g. qcow2 backing file exhausted) "
+            "surfaces as a clean DeviceError instead of an infinite await."
+        ),
+    )
+    subprocess_cleanup_timeout: float = Field(
+        default=2.0,
+        description=(
+            "Maximum wall-clock seconds the adapter will wait for a killed "
+            "subprocess to reap before abandoning. Protects against "
+            "uninterruptible-IO situations where the kernel cannot deliver "
+            "SIGKILL to a process stuck waiting on a wedged emulator backing."
+        ),
+    )
+    hierarchy_lock_timeout: float = Field(
+        default=10.0,
+        description=(
+            "Maximum wall-clock seconds the adapter will wait to acquire the "
+            "UiAutomation hierarchy lock. Prevents a leaked lock from a prior "
+            "cancelled dump_hierarchy task from compounding into an indefinite "
+            "wait on subsequent snapshots."
+        ),
+    )
 
     interaction: InteractionRuntimeConfiguration = Field(
         default_factory=InteractionRuntimeConfiguration,
@@ -295,6 +332,17 @@ class RemoteDeviceConfiguration(BaseModel):
     provider_url: Optional[str] = Field(default=None, description="Remote provider endpoint")
     authentication_token: Optional[str] = Field(
         default=None, description="Access token for remote provider"
+    )
+    request_timeout: float = Field(
+        default=60.0,
+        description=(
+            "Maximum wall-clock seconds for a single HTTP request to the "
+            "remote device provider (screenshot, hierarchy dump, action "
+            "dispatch). Higher than the local subprocess timeout because "
+            "remote snapshots can include emulator-side capture, on-the-wire "
+            "transfer, and provider-side queueing; some traffic patterns "
+            "legitimately take up to ~60s end-to-end."
+        ),
     )
 
 
@@ -386,6 +434,19 @@ class IntentConfiguration(BaseModel):
     prompt_user_if_stuck: bool = Field(
         default=True,
         description="If True and in interactive mode, prompt the user for help when the agent detects a loop.",
+    )
+    finalization: FinalizationBudgetPolicy = Field(
+        default_factory=FinalizationBudgetPolicy,
+        description="Post-terminal finalization timeout policy applied to history flush, graph state read, checkpointer close, and runner cleanup phases.",
+    )
+    checkpoint: CheckpointConfiguration = Field(
+        default_factory=SqliteCheckpointConfiguration,
+        description="Backend-specific checkpoint store configuration; discriminated by `backend`.",
+        discriminator="backend",
+    )
+    escalation: EscalationPolicy = Field(
+        default_factory=EscalationPolicy,
+        description="Escalation gate policy controlling when HITL is permitted on stuck signals.",
     )
 
 

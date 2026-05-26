@@ -34,6 +34,7 @@ class SubGoalCompletionSignal(BaseModel):
         Weighted confidence score from all signals.
         """
 
+        effective_action = self.action_executed and self.screen_verified
         score = 0.0
 
         if self.llm_confidence >= 0.8:
@@ -45,7 +46,7 @@ class SubGoalCompletionSignal(BaseModel):
         if self.keyword_match:
             score += 0.3
 
-        if self.action_executed and self.screen_verified:
+        if effective_action:
             score += 0.15
 
         if self.flagged_complete:
@@ -59,23 +60,33 @@ class SubGoalCompletionSignal(BaseModel):
 
         return min(score, 1.0)
 
-    @property
-    def claim_verified(self) -> bool:
+    def count_signals(self) -> int:
         """
-        Both LLM-derived completion signals agree — the model raised the
-        completion flag AND its rationale text matches the sub-goal.
+        Count independent positive completion signals under the strict policy.
+
+        Policy mirrors the ``main``-branch gate: ``flagged_complete +
+        rationale_verified + effective_action``, where ``effective_action``
+        requires both an executed action and a verified post-action screen
+        change. ``trace_verified`` is intentionally excluded — it produced
+        false positives historically and is disabled at the agent_state
+        marking layer.
         """
 
-        return self.flagged_complete and self.rationale_verified
+        effective_action = self.action_executed and self.screen_verified
+        return sum(
+            (
+                self.flagged_complete,
+                self.rationale_verified,
+                effective_action,
+            )
+        )
 
-    @property
-    def action_effective(self) -> bool:
+    def meets_threshold(self, *, required: int) -> bool:
         """
-        The action actually landed — an action was executed AND the
-        post-action screen change exceeded the meaningful-delta floor.
+        Return True when enough independent positive signals agree to advance the sub-goal.
         """
 
-        return self.action_executed and self.screen_verified
+        return self.count_signals() >= required
 
 
 class CompletionSignal(BaseModel):

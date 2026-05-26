@@ -22,6 +22,7 @@ from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState
 from fathom.schemas.actions import Action
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.effect import ActionEffect
+from fathom.schemas.loop import LoopEvidence
 from fathom.schemas.observation import LoopObservation, ScreenRelation
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenState
@@ -182,6 +183,52 @@ class AgentState:
         """
 
         return self.__runtime.screen.detector.is_stuck()
+
+    def loop_evidence(self) -> LoopEvidence:
+        """
+        Typed read-only snapshot of the loop detector for the escalation gate.
+
+        Exposed on :class:`AgentState` so domain components do not reach into
+        the private runtime path. Returns the detector's :class:`LoopEvidence`
+        snapshot: stuck flag, reason, full recent window, and ``since_progress``.
+        """
+
+        return self.__runtime.screen.detector.evidence()
+
+    @property
+    def deferral_count(self) -> int:
+        """
+        Per-sub-goal consecutive escalation-deferral count.
+
+        Returns ``0`` when there is no active sub-goal. Read by the escalation
+        gate's escape-valve check.
+        """
+
+        current = self.get_current_sub_goal()
+        return current.deferral_count if current is not None else 0
+
+    def record_deferral(self) -> None:
+        """
+        Increment the active sub-goal's deferral count by one.
+
+        No-op when no sub-goal is active.
+        """
+
+        current = self.get_current_sub_goal()
+        if current is not None:
+            current.deferral_count += 1
+
+    def clear_deferrals(self) -> None:
+        """
+        Clear the active sub-goal's deferral count.
+
+        Called by :meth:`record_step` on observable progress, and by the
+        planner whenever an escalation is allowed.
+        """
+
+        current = self.get_current_sub_goal()
+        if current is not None and current.deferral_count != 0:
+            current.deferral_count = 0
 
     @property
     def last_delta_score(self) -> Optional[float]:
@@ -361,6 +408,19 @@ class AgentState:
 
         if result.step.action.action_type == ActionType.COMPLETE and result.success:
             self.mark_complete(reason=CompletionReason.SUCCESS.value)
+
+        # Observable-progress reset for the deferral count: a successful
+        # navigation/input action that actually changed the screen is the
+        # strongest local signal that the agent is no longer stuck. Validation,
+        # ask-user, and wait actions are deliberately excluded — they either
+        # don't change the screen by design or aren't progress-bearing.
+        if (
+            result.success
+            and result.screen_changed
+            and result.step.action.action_type
+            not in (ActionType.VALIDATE, ActionType.ASK_USER, ActionType.WAIT)
+        ):
+            self.clear_deferrals()
 
     def mark_complete(self, reason: str) -> None:
         """
@@ -579,9 +639,12 @@ class AgentState:
                 "sub_goal_index": current.index,
                 "evidence": updated_signal.evidence,
                 "sub_goal_description": current.description[:80],
-                "claim_verified": updated_signal.claim_verified,
+                "flagged_complete": updated_signal.flagged_complete,
+                "rationale_verified": updated_signal.rationale_verified,
+                "action_executed": updated_signal.action_executed,
+                "screen_verified": updated_signal.screen_verified,
                 "trace_verified": updated_signal.trace_verified,
-                "action_effective": updated_signal.action_effective,
+                "signal.count": updated_signal.count_signals(),
             },
         )
 

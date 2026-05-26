@@ -6,17 +6,34 @@ from typing import Any, Dict, List, Literal, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason, PlanMetadataKey
+from fathom.core.agent.escalation_gate import EscalationGate
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
+from fathom.core.agent.stuck_source import StuckSourceResolver
 from fathom.core.context.manager import ContextManager
 from fathom.core.runtime.identity import TargetIdentity
 from fathom.core.services.vision import SubGoalContext, VisionService
 from fathom.schemas.actions import Action
+from fathom.schemas.escalation import EscalationDecision, EscalationPolicy, StuckSource
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
 from fathom.schemas.supervision import BlockReason
+
+# Generic recovery hint injected when the escalation gate defers HITL. The
+# model is told what the graph observed and what behaviours are still safe;
+# we deliberately avoid any app-specific suggestions.
+ESCALATION_DEFERRED_GUIDANCE: str = (
+    "The graph detected a possible loop, but recent no-progress actions were "
+    "validation checks. Validation actions are expected not to change the screen. "
+    "Do not ask the user yet. Re-evaluate the active sub-goal against the current "
+    "screen. If the validation condition is visible, emit action_type='validate' "
+    "with sub_goal_completed=true. If the current screen already satisfies a "
+    "skipped or nonexistent action step, validate the resulting state and mark "
+    "the sub-goal complete. Only ask_user if required information is unavailable "
+    "or the screen contradicts the sub-goal and no safe action or validation is possible."
+)
 
 logger = getLogger(name=__name__)
 
@@ -29,8 +46,16 @@ class StepPlanner:
     def __init__(
         self,
         vision_tool: VisionService,
+        *,
+        escalation_policy: Optional[EscalationPolicy] = None,
+        escalation_gate: Optional[EscalationGate] = None,
+        stuck_source_resolver: Optional[StuckSourceResolver] = None,
     ) -> None:
         self.__vision = vision_tool
+        self.__escalation_gate = escalation_gate or EscalationGate(
+            policy=escalation_policy or EscalationPolicy(),
+        )
+        self.__stuck_source_resolver = stuck_source_resolver or StuckSourceResolver()
 
     @property
     def vision_tool(self) -> VisionService:
@@ -79,41 +104,113 @@ class StepPlanner:
         current_tracking_note = state.tracking_note
 
         # IMMEDIATE RECOVERY
-        if state.is_stuck:
-            # NATIVE INTERCEPT: Yield to HITL if enabled before attempting aggressive auto-recovery
-            if interactive_mode and prompt_if_stuck:
+        # NATIVE INTERCEPT: Yield to HITL if enabled before attempting aggressive auto-recovery.
+        # The HITL path widens the trigger to ``StuckSourceResolver`` so that sub-goal budget
+        # exhaustion can also reach the gate. The autonomous-recovery path below stays scoped
+        # to the original ``state.is_stuck`` signal to preserve existing non-interactive behaviour.
+        if interactive_mode and prompt_if_stuck:
+            escalation_source = self.__stuck_source_resolver.resolve(agent_state=state)
+
+            if escalation_source is not None:
                 # If we have guidance, proceed to analysis.
                 if context_manager.get_user_guidance():
                     # Pass through to analysis
                     pass
                 else:
-                    return PlanResult(
-                        step=self.__build_step(
-                            action=Action(
-                                confidence=1.0,
-                                target="Request user assistance",
-                                action_type=ActionType.ASK_USER,
-                                rationale="Loop detected (Screen repeating). Requesting human intervention.",
-                                text="I have detected a loop and I'm repeating the same screen state. How should I proceed to break this cycle?",
-                            ),
-                            capture=capture,
-                            is_recovery=True,
-                            step_number=state.step_count,
-                        ),
-                        is_complete=False,
-                        reason=CompletionReason.INTERVENTION_REQUIRED.value,
+                    evidence = state.loop_evidence()
+                    decision = self.__escalation_gate.decide(
+                        source=escalation_source,
+                        evidence=evidence,
+                        deferrals=state.deferral_count,
                     )
 
-            # Autonomous Recovery (ONLY for non-interactive mode)
-            else:
-                recovery_action = state.get_recovery_action()
-                if recovery_action:
-                    return self.__build_plan_result(
-                        capture=capture,
-                        is_recovery=True,
-                        action=recovery_action,
-                        step_number=state.step_count,
+                    self.__log_escalation_detected(
+                        path="planner_synthesized",
+                        state=state,
+                        evidence=evidence,
+                        source=escalation_source,
                     )
+
+                    if decision.allow:
+                        state.clear_deferrals()
+                        logger.info(
+                            "Escalation allowed by gate; emitting ASK_USER",
+                            extra={
+                                "component": "core.agent.planner",
+                                "event": "planner.escalation.allowed",
+                                "escalation.path": "planner_synthesized",
+                                "escalation.reason": decision.reason.value,
+                                "escalation.stuck_source": decision.stuck_source.value,
+                                "escalation.deferrals_before": decision.deferrals,
+                            },
+                        )
+                        logger.info(
+                            "ASK_USER materialized by planner",
+                            extra={
+                                "component": "core.agent.planner",
+                                "event": "planner.ask_user.emitted",
+                                "escalation.path": "planner_synthesized",
+                                "escalation.reason": decision.reason.value,
+                                "escalation.stuck_source": decision.stuck_source.value,
+                            },
+                        )
+                        return PlanResult(
+                            step=self.__build_step(
+                                action=Action(
+                                    confidence=1.0,
+                                    target="Request user assistance",
+                                    action_type=ActionType.ASK_USER,
+                                    rationale="Loop detected (Screen repeating). Requesting human intervention.",
+                                    text="I have detected a loop and I'm repeating the same screen state. How should I proceed to break this cycle?",
+                                ),
+                                capture=capture,
+                                is_recovery=True,
+                                step_number=state.step_count,
+                            ),
+                            is_complete=False,
+                            reason=CompletionReason.INTERVENTION_REQUIRED.value,
+                            metadata={
+                                "escalation.path": "planner_synthesized",
+                                "escalation.reason": decision.reason.value,
+                                "escalation.stuck_source": decision.stuck_source.value,
+                            },
+                        )
+
+                    # Defer escalation: record the deferral, inject generic
+                    # recovery guidance for the upcoming analysis, and fall
+                    # through so the model gets another chance to plan a
+                    # legitimate action this turn.
+                    state.record_deferral()
+                    await context_manager.inject_user_guidance(
+                        guidance=ESCALATION_DEFERRED_GUIDANCE,
+                        step=state.step_count,
+                    )
+                    logger.info(
+                        "Escalation deferred by gate; injecting recovery guidance",
+                        extra={
+                            "component": "core.agent.planner",
+                            "event": "planner.escalation.deferred",
+                            "escalation.reason": decision.reason.value,
+                            "escalation.stuck_source": decision.stuck_source.value,
+                            "escalation.deferrals_after": state.deferral_count,
+                            "sub_goal.index": (
+                                current_sub_goal.index
+                                if (current_sub_goal := state.get_current_sub_goal())
+                                else None
+                            ),
+                        },
+                    )
+
+        # Autonomous Recovery (non-interactive mode preserves original is_stuck trigger).
+        elif state.is_stuck:
+            recovery_action = state.get_recovery_action()
+            if recovery_action:
+                return self.__build_plan_result(
+                    capture=capture,
+                    is_recovery=True,
+                    action=recovery_action,
+                    step_number=state.step_count,
+                )
 
         # Build minimal sub-goal context for vision (avoid passing AgentState into VisionService)
         sub_goal_info: Optional[SubGoalContext] = None
@@ -159,6 +256,91 @@ class StepPlanner:
             # not "task done". Marking complete would cause early exits; fall through and plan next.
 
         action = self.__select_action(state=state, reasoner=reasoner, analysis=analysis)
+
+        # Gate LLM-emitted ASK_USER through the same escalation policy so the
+        # tool-call path cannot route around the deterministic-branch decision.
+        # When no escalation source is active the model is asking for legitimate
+        # external information (credentials, OTP, ambiguity) and is allowed
+        # through unchanged.
+        if action.action_type == ActionType.ASK_USER:
+            llm_source = self.__stuck_source_resolver.resolve(agent_state=state)
+            if llm_source is not None:
+                self.__log_escalation_detected(
+                    path="llm_tool",
+                    state=state,
+                    evidence=state.loop_evidence(),
+                    source=llm_source,
+                )
+
+            llm_decision = self.__decide_llm_emitted_ask_user(state=state)
+            if llm_decision is None:
+                logger.info(
+                    "LLM-emitted ask_user passed through (no stuck source)",
+                    extra={
+                        "component": "core.agent.planner",
+                        "event": "planner.ask_user.emitted",
+                        "escalation.path": "llm_tool",
+                        "escalation.gated": False,
+                    },
+                )
+            if llm_decision is not None and not llm_decision.allow:
+                state.record_deferral()
+                await context_manager.inject_user_guidance(
+                    guidance=ESCALATION_DEFERRED_GUIDANCE,
+                    step=state.step_count,
+                )
+                logger.info(
+                    "Escalation deferred on LLM-emitted ask_user; retrying after guidance",
+                    extra={
+                        "component": "core.agent.planner",
+                        "event": "planner.escalation.deferred",
+                        "escalation.path": "llm_tool",
+                        "escalation.reason": llm_decision.reason.value,
+                        "escalation.stuck_source": llm_decision.stuck_source.value,
+                        "escalation.deferrals_after": state.deferral_count,
+                        "route.next": "ground",
+                        "plan.should_retry": True,
+                    },
+                )
+                return PlanResult(
+                    step=None,
+                    is_complete=False,
+                    should_retry=True,
+                    metrics=analysis.metrics,
+                    memories=analysis.memories,
+                    reason=f"Escalation deferred: {llm_decision.reason.value}",
+                    metadata={
+                        **(analysis.metadata or {}),
+                        "escalation.path": "llm_tool",
+                        "escalation.suppressed": True,
+                        "escalation.reason": llm_decision.reason.value,
+                        "escalation.stuck_source": llm_decision.stuck_source.value,
+                    },
+                )
+            if llm_decision is not None and llm_decision.allow:
+                state.clear_deferrals()
+                logger.info(
+                    "LLM-emitted ask_user allowed by escalation gate",
+                    extra={
+                        "component": "core.agent.planner",
+                        "event": "planner.escalation.allowed",
+                        "escalation.path": "llm_tool",
+                        "escalation.reason": llm_decision.reason.value,
+                        "escalation.stuck_source": llm_decision.stuck_source.value,
+                        "escalation.deferrals_before": llm_decision.deferrals,
+                    },
+                )
+                logger.info(
+                    "ASK_USER materialized from LLM tool call",
+                    extra={
+                        "component": "core.agent.planner",
+                        "event": "planner.ask_user.emitted",
+                        "escalation.path": "llm_tool",
+                        "escalation.gated": True,
+                        "escalation.reason": llm_decision.reason.value,
+                        "escalation.stuck_source": llm_decision.stuck_source.value,
+                    },
+                )
 
         if state.should_avoid_action(action=action):
             return PlanResult(
@@ -320,6 +502,71 @@ class StepPlanner:
             primary=analysis.action,
             alternatives=analysis.alternatives,
             failed_actions={str(failure) for failure in failures},
+        )
+
+    def __log_escalation_detected(
+        self,
+        *,
+        path: str,
+        state: AgentState,
+        evidence: "Any",
+        source: StuckSource,
+    ) -> None:
+        """
+        Emit a structured ``planner.escalation.detected`` event with the
+        full field set the escalation gate is about to evaluate against.
+        """
+
+        current = state.get_current_sub_goal()
+        recent_effects = [turn.effect_status.value for turn in evidence.since_progress]
+
+        logger.info(
+            "Escalation evaluation entered",
+            extra={
+                "component": "core.agent.planner",
+                "event": "planner.escalation.detected",
+                "escalation.path": path,
+                "escalation.stuck_source": source.value,
+                "escalation.deferrals_before": state.deferral_count,
+                "loop.stuck": evidence.stuck,
+                "loop.reason": evidence.reason.value,
+                "loop.since_progress.count": len(evidence.since_progress),
+                "loop.since_progress.effects": recent_effects,
+                "loop.recent.count": len(evidence.recent),
+                "sub_goal.index": current.index if current else None,
+                "sub_goal.action_count": state.current_sub_goal_action_count,
+                "sub_goal.max_steps": current.max_steps if current else None,
+            },
+        )
+
+    def __decide_llm_emitted_ask_user(
+        self,
+        *,
+        state: AgentState,
+    ) -> Optional[EscalationDecision]:
+        """
+        Gate an LLM-emitted ``ASK_USER`` action through the escalation policy.
+
+        Returns the gate's decision when a stuck source is active, signalling
+        the caller to either allow (clear deferrals, keep the action) or
+        defer (record the deferral, inject guidance, and request a re-plan).
+
+        Returns ``None`` when no source is active — the model is asking for
+        legitimate external information (credentials, OTP, ambiguity) and the
+        request is unrelated to the loop/budget pattern this gate protects.
+        """
+
+        escalation_source: Optional[StuckSource] = self.__stuck_source_resolver.resolve(
+            agent_state=state,
+        )
+
+        if escalation_source is None:
+            return None
+
+        return self.__escalation_gate.decide(
+            source=escalation_source,
+            evidence=state.loop_evidence(),
+            deferrals=state.deferral_count,
         )
 
     @staticmethod

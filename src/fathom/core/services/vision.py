@@ -23,6 +23,7 @@ from fathom.schemas.conversation import ConversationTurn, TurnPart
 from fathom.schemas.observation import LoopObservation, ScreenObservation
 from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.vision import PastActionEntry
 from fathom.utils.image import ImageProcessor
 
 logger = getLogger(__name__)
@@ -653,7 +654,12 @@ class VisionService:
             payload.append(f"Screen Info: {knowledge['description']}")
 
         if history := knowledge.get("previous_actions", []):
-            payload.append(f"Past actions on this specific screen: {json.dumps(history)}")
+            annotated = [
+                PastActionEntry.from_raw(entry=entry).model_dump(mode="json")
+                for entry in history
+                if isinstance(entry, dict)
+            ]
+            payload.append(f"Past actions on this specific screen: {json.dumps(annotated)}")
 
         if context:
             payload.append(context)
