@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, cast
+from typing import Dict, List, Optional, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from fathom.constants.graph import NodeName
+from fathom.constants.graph import NodeName, RouteCause
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.interfaces.graph import GraphBuilder
 from fathom.strategies.graph.context import GraphContext
@@ -77,7 +77,16 @@ class IntentGraphBuilder(GraphBuilder):
             },
         )
 
-        workflow.add_edge(NodeName.EXECUTE, NodeName.OBSERVE)
+        workflow.add_conditional_edges(
+            NodeName.EXECUTE,
+            self.__route_after_execute,
+            {
+                NodeName.END: NodeName.END,
+                NodeName.GROUND: NodeName.GROUND,
+                NodeName.VERIFY: NodeName.VERIFY,
+                NodeName.OBSERVE: NodeName.OBSERVE,
+            },
+        )
         workflow.add_edge(NodeName.OBSERVE, NodeName.RECORD)
 
         workflow.add_conditional_edges(
@@ -201,6 +210,62 @@ class IntentGraphBuilder(GraphBuilder):
 
         logger.info("[ROUTING] After SUPERVISE -> EXECUTE")
         return NodeName.EXECUTE
+
+    def __route_after_execute(self, state: IntentGraphState) -> str:
+        """Route after execute: cancellation > terminal completion > retry > observe."""
+
+        if self.__context.is_cancelled:
+            return self.__log_execute_route(
+                destination=NodeName.END,
+                cause=RouteCause.CANCELLED,
+            )
+
+        if state.get(cast("str", CommonStateKey.IS_COMPLETE)):
+            if (reason := str(state.get(cast("str", CommonStateKey.COMPLETION_REASON), ""))) in {
+                CompletionReason.FAILED.value,
+                CompletionReason.MAX_STEPS.value,
+                CompletionReason.CANCELLED.value,
+            }:
+                return self.__log_execute_route(
+                    destination=NodeName.END,
+                    cause=RouteCause.TERMINAL_COMPLETION,
+                    completion_reason=reason,
+                )
+            return self.__log_execute_route(
+                destination=NodeName.VERIFY,
+                cause=RouteCause.NON_TERMINAL_COMPLETION,
+                completion_reason=reason,
+            )
+
+        if state.get(cast("str", IntentStateKey.SHOULD_RETRY)):
+            return self.__log_execute_route(
+                destination=NodeName.GROUND,
+                cause=RouteCause.SHOULD_RETRY,
+            )
+
+        return self.__log_execute_route(
+            destination=NodeName.OBSERVE,
+            cause=RouteCause.DEFAULT,
+        )
+
+    @staticmethod
+    def __log_execute_route(
+        *,
+        destination: str,
+        cause: RouteCause,
+        completion_reason: Optional[str] = None,
+    ) -> str:
+        """Emit the structured route event and return the destination."""
+
+        extra: Dict[str, object] = {
+            "event": "route.after_execute",
+            "destination": destination,
+            "cause": cause.value,
+        }
+        if completion_reason is not None:
+            extra["completion.reason"] = completion_reason
+        logger.info("Route after execute resolved", extra=extra)
+        return destination
 
     def __route_after_verify(self, state: IntentGraphState) -> str:
         """

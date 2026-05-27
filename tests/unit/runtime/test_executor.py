@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 from fathom.constants import SignalType
 from fathom.core.agent.state import AgentState
 from fathom.runtime.executor import GraphExecutor
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 
 
 class GraphExecutorRealignmentTest(unittest.IsolatedAsyncioTestCase):
@@ -21,7 +22,10 @@ class GraphExecutorRealignmentTest(unittest.IsolatedAsyncioTestCase):
         single source of truth instead of keeping a second counter.
         """
 
-        agent_state = AgentState(intent="finish onboarding")
+        agent_state = AgentState(
+            intent="finish onboarding",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True)),
+        )
         context = SimpleNamespace(
             agent_state=agent_state,
             context_manager=SimpleNamespace(inject_user_guidance=AsyncMock()),

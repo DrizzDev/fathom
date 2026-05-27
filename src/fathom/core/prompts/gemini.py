@@ -8,8 +8,9 @@ from fathom.core.prompts.templates import (
     COMMON_RULES,
     CONFIDENCE_RULES,
     COORD_RULES,
-    TOOL_GUIDANCE,
+    build_tool_guidance,
 )
+from fathom.schemas.tools import AllowedTools
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +20,12 @@ class GeminiPromptBuilder(PromptBuilder):
     Structured Gemini prompt builder that formats hierarchical context.
     """
 
-    def build(self) -> str:
-        """
-        Build stable system prompt for tool-based UI execution.
-        """
+    def build(self, *, tools: AllowedTools) -> str:
+        """Build the stable system prompt scoped to the allowed tools."""
 
         parts = [
             self.__get_persona(),
-            TOOL_GUIDANCE,
+            build_tool_guidance(tools=tools),
             COMMON_RULES,
             (
                 "OUTPUT REQUIREMENTS:\n"

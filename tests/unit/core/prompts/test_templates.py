@@ -1,56 +1,73 @@
 from __future__ import annotations
 
-from fathom.core.prompts.templates import TOOL_GUIDANCE
+import unittest
+
+from fathom.constants.tools import BASE_TOOLS, VERIFICATION_TOOLS, ToolName
+from fathom.core.prompts.templates import build_tool_guidance
+from fathom.schemas.tools import AllowedTools
 
 
-class TestToolGuidance:
-    """
-    Covers prompt guidance constants from templates.py.
-    """
+class ToolGuidanceTest(unittest.TestCase):
+    """Covers the dynamic system-prompt guidance assembled from AllowedTools."""
 
-    def test_tool_guidance_does_not_list_request_replan(self) -> None:
-        """
-        Runtime re-planning is disabled, so guidance must not advertise it.
-        """
+    @staticmethod
+    def __hitl_tools() -> AllowedTools:
+        """Allowed tool set for an HITL-capable runtime."""
 
-        assert "request_replan" not in TOOL_GUIDANCE
+        return AllowedTools(names=BASE_TOOLS | VERIFICATION_TOOLS | {ToolName.ASK_USER})
 
-    def test_tool_guidance_omits_legacy_tool_name(self) -> None:
-        """
-        Legacy screen-unactionable tool names must not remain in guidance.
-        """
+    @staticmethod
+    def __autonomous_tools() -> AllowedTools:
+        """Allowed tool set for an autonomous runtime (no ASK_USER)."""
 
-        assert "report_screen_unactionable" not in TOOL_GUIDANCE
+        return AllowedTools(names=BASE_TOOLS | VERIFICATION_TOOLS)
 
-    def test_tool_guidance_contains_mandatory_progress_safety_block(self) -> None:
-        """
-        The prompt guidance must include the mandatory progress-safety rule.
-        """
+    def test_omits_legacy_tool_names(self) -> None:
+        """Guidance must not advertise tools that no longer exist."""
 
-        assert "PROGRESS SAFETY (MANDATORY)" in TOOL_GUIDANCE
-        assert "ask the user instead of guessing" in TOOL_GUIDANCE
+        guidance = build_tool_guidance(tools=self.__hitl_tools())
 
-    def test_tool_guidance_forbids_visual_snap_fallback(self) -> None:
-        """
-        Guidance must forbid semantically unrelated visual snap fallback.
-        """
+        self.assertNotIn("request_replan", guidance)
+        self.assertNotIn("report_screen_unactionable", guidance)
 
-        assert "snap to a visually similar but semantically unrelated label" in TOOL_GUIDANCE
+    def test_contains_mandatory_progress_safety_block(self) -> None:
+        """The prompt guidance must include the mandatory progress-safety rule."""
 
-    def test_tool_guidance_permits_bbox_grounding_when_manifest_lacks_target(self) -> None:
-        """
-        Guidance must allow visual bbox grounding when manifest labels are insufficient.
-        """
+        guidance = build_tool_guidance(tools=self.__hitl_tools())
 
-        assert "'bbox'" in TOOL_GUIDANCE
-        assert "'label_id'" in TOOL_GUIDANCE
-        assert "manifest is a hint, not a precondition" in TOOL_GUIDANCE
+        self.assertIn("PROGRESS SAFETY (MANDATORY)", guidance)
 
-    def test_tool_guidance_escape_requires_both_paths_to_fail(self) -> None:
-        """
-        Guidance must require manifest and visual grounding to fail before asking.
-        """
+    def test_forbids_visual_snap_fallback(self) -> None:
+        """Guidance must forbid semantically unrelated visual snap fallback."""
 
-        assert (
-            "no matching manifest label AND no element you can visually identify" in TOOL_GUIDANCE
+        guidance = build_tool_guidance(tools=self.__autonomous_tools())
+
+        self.assertIn(
+            "snap to a visually similar but semantically unrelated label",
+            guidance,
         )
+
+    def test_permits_bbox_grounding_when_manifest_lacks_target(self) -> None:
+        """Guidance must allow visual bbox grounding when manifest labels are insufficient."""
+
+        guidance = build_tool_guidance(tools=self.__hitl_tools())
+
+        self.assertIn("'bbox'", guidance)
+        self.assertIn("'label_id'", guidance)
+        self.assertIn("manifest is a hint, not a precondition", guidance)
+
+    def test_describes_ask_user_only_when_allowed(self) -> None:
+        """The ask_user tool description must appear iff ASK_USER is allowed."""
+
+        self.assertIn("ask_user:", build_tool_guidance(tools=self.__hitl_tools()))
+        self.assertNotIn("ask_user:", build_tool_guidance(tools=self.__autonomous_tools()))
+
+    def test_fallback_rule_matches_runtime_capability(self) -> None:
+        """The fallback safety rule must steer toward ask_user only when it's exposed."""
+
+        hitl_guidance = build_tool_guidance(tools=self.__hitl_tools())
+        autonomous_guidance = build_tool_guidance(tools=self.__autonomous_tools())
+
+        self.assertIn("ask the user instead of guessing", hitl_guidance)
+        self.assertNotIn("ask the user instead of guessing", autonomous_guidance)
+        self.assertIn("deliberate recovery action", autonomous_guidance)

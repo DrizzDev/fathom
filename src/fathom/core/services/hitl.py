@@ -4,85 +4,67 @@ from logging import getLogger
 from typing import Optional
 
 from fathom.constants.events import FathomEvent
+from fathom.core.exceptions import HITLNotAvailableError
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.schemas.capabilities import RuntimeCapabilities
 
 logger = getLogger(__name__)
 
 
 class HITLService:
-    """
-    Application service for Human-In-The-Loop operations.
-
-    Orchestrates signal operations with proper telemetry event emission.
-    Belongs to Application layer - has access to both ports and context.
-    """
+    """Application-layer service that orchestrates signal and telemetry for HITL operations."""
 
     def __init__(
         self,
+        *,
         signal: SignalPort,
         telemetry: TelemetryPort,
+        capabilities: RuntimeCapabilities,
     ) -> None:
-        """
-        Initialize HITL service with required ports.
-        """
+        """Initialize HITL service with ports and runtime capabilities."""
 
         self.__signal = signal
         self.__telemetry = telemetry
+        self.__capabilities = capabilities
 
     async def check_signal(self) -> Optional[str]:
-        """
-        Check for control signal.
-        """
+        """Return the current control signal, if any."""
 
         return await self.__signal.check_signal()
 
     async def wait_for_pause(self) -> None:
-        """
-        Wait for pause signal.
-        """
+        """Block until a pause signal arrives."""
 
         await self.__signal.wait_for_pause()
 
     async def wait_for_resume(self) -> None:
-        """
-        Wait for resume signal.
-        """
+        """Block until a resume signal arrives."""
 
         await self.__signal.wait_for_resume()
 
     async def is_pause_requested(self) -> bool:
-        """
-        Check if pause is requested.
-        """
+        """Return whether a pause is currently requested."""
 
         return await self.__signal.is_pause_requested()
 
     async def has_injected_context(self) -> bool:
-        """
-        Check if context is available.
-        """
+        """Return whether injected context is available."""
 
         return await self.__signal.has_injected_context()
 
     async def peek_next_context(self) -> Optional[str]:
-        """
-        Peek at the next context without consuming it.
-        """
+        """Return the next injected context without consuming it."""
 
         return await self.__signal.peek_next_context()
 
     async def consume_context(self) -> None:
-        """
-        Explicitly consume the next context.
-        """
+        """Consume the next injected context."""
 
         await self.__signal.consume_context()
 
     async def get_injected_context(self, *, step: int) -> Optional[str]:
-        """
-        Retrieve injected context and emit HITL_RECEIVED event.
-        """
+        """Retrieve injected context and emit the HITL_RECEIVED event."""
 
         context = await self.__signal.get_injected_context()
         logger.info(f"Injected context for step number: {step} is {context}")
@@ -98,11 +80,10 @@ class HITLService:
         return context
 
     async def ask(self, *, prompt: str, step: int) -> str:
-        """
-        Request human input with proper event emission.
+        """Request human input; raise HITLNotAvailableError when the runtime cannot service HITL."""
 
-        Emits HITL_REQUESTED before asking, HITL_RECEIVED after response.
-        """
+        if not self.__capabilities.hitl.enabled:
+            raise HITLNotAvailableError()
 
         await self.__telemetry.info(
             step=step,

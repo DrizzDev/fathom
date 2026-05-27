@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
 from fathom.constants.state import CommonStateKey, IntentStateKey
 from fathom.core.agent.state import AgentState
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.verify import VerifyNode
@@ -99,7 +100,10 @@ class _Provider:
 
 class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
     def _agent_state(self) -> AgentState:
-        state = AgentState(intent="finish onboarding")
+        state = AgentState(
+            intent="finish onboarding",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
         state.set_sub_goals(
             [
                 SubGoal(index=0, description="Open the app"),

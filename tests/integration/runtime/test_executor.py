@@ -12,6 +12,7 @@ from fathom.constants import SignalType
 from fathom.core.services.hitl import HITLService
 from fathom.infrastructure.temporal.state import SignalStateRegistry
 from fathom.runtime.executor import GraphExecutor
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 
 
 class TestGraphExecutorIntegration:
@@ -32,7 +33,11 @@ class TestGraphExecutorIntegration:
         context = SimpleNamespace(
             is_cancelled=False,
             cancel=Mock(side_effect=lambda: setattr(context, "is_cancelled", True)),
-            hitl=HITLService(signal=adapter, telemetry=telemetry),
+            hitl=HITLService(
+                signal=adapter,
+                telemetry=telemetry,
+                capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True)),
+            ),
             telemetry=telemetry,
         )
         executor = GraphExecutor(

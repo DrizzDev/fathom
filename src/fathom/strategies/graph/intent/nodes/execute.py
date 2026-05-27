@@ -5,7 +5,9 @@ import time
 from typing import Any, Dict, cast
 
 from fathom.constants import ActionType
+from fathom.constants.messages import HITL_UNAVAILABLE_REPLAN_DIAGNOSTIC
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.core.exceptions import HITLNotAvailableError
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.results import ExecutionResult
@@ -117,7 +119,13 @@ class ExecuteNode:
                 await self.__provider.context.memory.set(key=key, value=str(value))
 
         if step.action.action_type == ActionType.ASK_USER:
-            execution_result = await self.__provider.hitl.ask(step=step, start_time=start_time)
+            try:
+                execution_result = await self.__provider.hitl.ask(
+                    step=step,
+                    start_time=start_time,
+                )
+            except HITLNotAvailableError:
+                return self.__route_back_for_replan()
         else:
             observation = state.get(CommonStateKey.SCREEN_OBSERVATION)
             resolved_observation = (
@@ -168,6 +176,22 @@ class ExecuteNode:
         self.__provider.persistence.persist(result=result_dict)
 
         return cast("IntentGraphState", result_dict)
+
+    def __route_back_for_replan(self) -> IntentGraphState:
+        """Clear the stale ASK_USER step and signal SHOULD_RETRY so the planner re-decides."""
+
+        result = cast(
+            "IntentGraphState",
+            {
+                IntentStateKey.PLAN: None,
+                IntentStateKey.PLANNED_STEP: None,
+                IntentStateKey.SHOULD_RETRY: True,
+                IntentStateKey.EXECUTION_CONTEXT: None,
+                CommonStateKey.FAILURE_DIAGNOSTIC: HITL_UNAVAILABLE_REPLAN_DIAGNOSTIC,
+            },
+        )
+        self.__provider.persistence.persist(result=result)
+        return result
 
     @staticmethod
     def __swipe_abort_diagnostic(*, execution_result: ExecutionResult) -> str | None:

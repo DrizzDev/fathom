@@ -20,6 +20,7 @@ from fathom.constants.state import CompletionReason
 from fathom.core.agent.ladder import LoopActionLadder
 from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState
 from fathom.schemas.actions import Action
+from fathom.schemas.capabilities import RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.effect import ActionEffect
 from fathom.schemas.loop import LoopEvidence
@@ -57,25 +58,18 @@ class AgentState:
         self,
         intent: str,
         *,
+        capabilities: RuntimeCapabilities,
         max_steps: int = DEFAULT_MAX_STEPS,
         loop_threshold: int = DEFAULT_LOOP_THRESHOLD,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         realignment_budget: int = DEFAULT_REALIGNMENT_BUDGET,
     ) -> None:
-        """
-        Initialize agent state.
-
-        Args:
-            intent: The goal to achieve.
-            max_steps: Maximum steps before giving up.
-            loop_threshold: Screen repetitions before stuck detection.
-            context_window: Number of recent items to keep in context.
-            realignment_budget: Maximum human interventions allowed for loops.
-        """
+        """Initialize agent state with the goal and live runtime capabilities."""
 
         self.__step_count = 0
         self.__intent = intent
         self.__max_steps = max_steps
+        self.__capabilities = capabilities
 
         self.__interaction_tracker = InteractionTracker()
         self.__action_history = ActionHistory(max_size=context_window)
@@ -265,16 +259,17 @@ class AgentState:
         self.reset_loop_history()
 
     @property
+    def capabilities(self) -> RuntimeCapabilities:
+        """
+        Return the live runtime capability flags.
+        """
+
+        return self.__capabilities
+
+    @property
     def can_continue(self) -> bool:
         """
-        Whether the agent can continue execution.
-        """
-
-        return self.can_continue_with(interactive_mode=False)
-
-    def can_continue_with(self, *, interactive_mode: bool) -> bool:
-        """
-        Return whether execution can continue under the active interaction mode.
+        Whether the agent can continue execution under the active capabilities.
         """
 
         if self.__is_complete:
@@ -284,7 +279,7 @@ class AgentState:
             return False
 
         if self.is_stuck:
-            if interactive_mode:
+            if self.__capabilities.hitl.enabled:
                 return not self.__runtime.realignment.exhausted()
 
             return self.__runtime.screen.detector.can_recover()
@@ -1172,15 +1167,14 @@ class AgentState:
         )
 
     @classmethod
-    def from_checkpoint(cls, data: Dict[str, object]) -> "AgentState":
+    def from_checkpoint(
+        cls,
+        data: Dict[str, object],
+        *,
+        capabilities: RuntimeCapabilities,
+    ) -> "AgentState":
         """
-        Restore state from checkpoint.
-
-        Args:
-            data: Checkpoint data from to_checkpoint().
-
-        Returns:
-            Restored AgentState.
+        Restore state from checkpoint, binding live (never-persisted) capabilities.
         """
 
         max_steps_value = data.get("max_steps")
@@ -1198,7 +1192,10 @@ class AgentState:
         )
 
         state = cls(
-            intent=str(data["intent"]), max_steps=max_steps, realignment_budget=realignment_budget
+            max_steps=max_steps,
+            intent=str(data["intent"]),
+            capabilities=capabilities,
+            realignment_budget=realignment_budget,
         )
 
         step_count_value = data.get("step_count")

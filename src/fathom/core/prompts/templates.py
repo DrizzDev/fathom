@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from types import MappingProxyType
+from typing import Mapping
+
+from fathom.constants.tools import ToolName
+from fathom.schemas.tools import AllowedTools
 
 # Coordinate system and confidence guidance
 COORD_RULES = (
@@ -103,45 +107,99 @@ ACTIONS:
 STRICT FORMAT: Return only valid tool calls using provided schema fields.
 """
 
-TOOL_GUIDANCE = """
-TOOL SELECTION & VALIDATION:
-- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).
-  * Delta telemetry is MANDATORY on every execute_ui call: always include both delta_observed (boolean) and delta_confidence (0.0-1.0).
-  * For explicit checks/validation, prefer execute_ui with action_type='validate'.
-  * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).
-  * Always provide condition text when visible; if omitted, conditional_type is used for default guard text.
-  * For overlay/popup dismissal: if the screenshot shows a scrim, dialog, sheet, or banner over the main UI, set overlay_detected=true and condition to describe the overlay (e.g., 'Cookie consent banner visible').
-  * Evaluate is_valid and validation_reason for EVERY action.
-  * confidence is REQUIRED for EVERY action.
-  * If action is risky/ambiguous, set is_valid=False and explain.
-  * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
-    DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
-  * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.
-    Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}
-    ALWAYS use this to "tick off" requirements from the user's goal as you complete them.
-- validate_state: Legacy fallback for explicit checks when no immediate UI action is required.
-- verify_goal: Use for explicit completion checks.
-- store_memory: Secondary tool. Use ONLY for saving complex text data that doesn't fit in execute_ui.
-- recall_memory: Check what you've already done to avoid repeating actions.
-- ask_user: Use this tool to ask the user for help or clarification when you are stuck or confused.
+_EXECUTE_UI_GUIDANCE = (
+    "- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).\n"
+    "  * Delta telemetry is MANDATORY on every execute_ui call: always include both delta_observed (boolean) and delta_confidence (0.0-1.0).\n"
+    "  * For explicit checks/validation, prefer execute_ui with action_type='validate'.\n"
+    "  * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).\n"
+    "  * Always provide condition text when visible; if omitted, conditional_type is used for default guard text.\n"
+    "  * For overlay/popup dismissal: if the screenshot shows a scrim, dialog, sheet, or banner over the main UI, set overlay_detected=true and condition to describe the overlay (e.g., 'Cookie consent banner visible').\n"
+    "  * Evaluate is_valid and validation_reason for EVERY action.\n"
+    "  * confidence is REQUIRED for EVERY action.\n"
+    "  * If action is risky/ambiguous, set is_valid=False and explain.\n"
+    "  * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').\n"
+    "    DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.\n"
+    "  * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.\n"
+    "    Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}\n"
+    "    ALWAYS use this to \"tick off\" requirements from the user's goal as you complete them."
+)
 
-PROGRESS SAFETY (MANDATORY):
-- Every UI action MUST be grounded by at least one of: (a) a 'label_id' from the element manifest whose text/affordance matches your named target, OR (b) a 'bbox' you have visually identified on the current screenshot. The manifest is the preferred source whenever it already exposes the relevant element or scroll container.
-- The manifest is a hint, not a precondition: when the intended target is visible on screen but absent from the element manifest, ground it via bbox instead of inventing a label_id.
-- For scroll/swipe actions, when the manifest exposes a matching scrollable container, you MUST use that container's label_id and describe the intended content in scroll_target. Do not invent a broad bbox when the manifest already gives you the container.
-- Observation scroll-region hints are NOT manifest label_ids. Never copy observation_hint values into label_id.
-- When repeating the same scroll objective, reuse the same container if it is still valid instead of switching to a broader region.
-- Before emitting the action, confirm the current screen is the one the active sub-goal expects.
-- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), ask the user instead of guessing.
-- Do NOT snap to a visually similar but semantically unrelated label (picking the wrong manifest entry just because it looks like a button). Do NOT emit a bbox for a region where you cannot see the target. Do NOT proceed when the screen contradicts the sub-goal.
+_TOOL_DESCRIPTIONS_RAW: Mapping[ToolName, str] = {
+    ToolName.EXECUTE_UI: _EXECUTE_UI_GUIDANCE,
+    ToolName.VALIDATE_STATE: (
+        "- validate_state: Legacy fallback for explicit checks when no immediate UI action is required."
+    ),
+    ToolName.VERIFY_GOAL: "- verify_goal: Use for explicit completion checks.",
+    ToolName.STORE_MEMORY: (
+        "- store_memory: Secondary tool. Use ONLY for saving complex text data that doesn't fit in execute_ui."
+    ),
+    ToolName.RECALL_MEMORY: (
+        "- recall_memory: Check what you've already done to avoid repeating actions."
+    ),
+    ToolName.ASK_USER: (
+        "- ask_user: Use this tool to ask the user for help or clarification when you are stuck or confused."
+    ),
+}
+TOOL_DESCRIPTIONS = MappingProxyType(_TOOL_DESCRIPTIONS_RAW)
 
-MEMORY STRATEGY:
-- The system has NO implicit memory of what you "meant" to do. You MUST write it down.
-- If you select 'Monday', you MUST write memory_updates={'monday': 'selected'}.
-- If you don't write it, you WILL forget it when the screen changes.
-"""
 
-STUCK_PROMPT = "SYSTEM ALERT: You are stuck in a repetitive loop (same action/target multiple times with no progress). DO NOT try the same action again. You MUST use the 'ask_user' tool to ask the human for help immediately. This is a mandatory requirement."
+_PROGRESS_SAFETY_BASE = (
+    "PROGRESS SAFETY (MANDATORY):\n"
+    "- Every UI action MUST be grounded by at least one of: (a) a 'label_id' from the element manifest whose text/affordance matches your named target, OR (b) a 'bbox' you have visually identified on the current screenshot. The manifest is the preferred source whenever it already exposes the relevant element or scroll container.\n"
+    "- The manifest is a hint, not a precondition: when the intended target is visible on screen but absent from the element manifest, ground it via bbox instead of inventing a label_id.\n"
+    "- For scroll/swipe actions, when the manifest exposes a matching scrollable container, you MUST use that container's label_id and describe the intended content in scroll_target. Do not invent a broad bbox when the manifest already gives you the container.\n"
+    "- Observation scroll-region hints are NOT manifest label_ids. Never copy observation_hint values into label_id.\n"
+    "- When repeating the same scroll objective, reuse the same container if it is still valid instead of switching to a broader region.\n"
+    "- Before emitting the action, confirm the current screen is the one the active sub-goal expects."
+)
+
+_PROGRESS_SAFETY_HITL_FALLBACK = (
+    "- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), ask the user instead of guessing."
+)
+
+_PROGRESS_SAFETY_AUTONOMOUS_FALLBACK = (
+    "- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), do NOT guess: emit a deliberate recovery action (back, home, swipe to re-orient) or signal completion failure via the appropriate flag."
+)
+
+_PROGRESS_SAFETY_TAIL = (
+    "- Do NOT snap to a visually similar but semantically unrelated label (picking the wrong manifest entry just because it looks like a button). Do NOT emit a bbox for a region where you cannot see the target. Do NOT proceed when the screen contradicts the sub-goal."
+)
+
+_MEMORY_STRATEGY = (
+    "MEMORY STRATEGY:\n"
+    "- The system has NO implicit memory of what you \"meant\" to do. You MUST write it down.\n"
+    "- If you select 'Monday', you MUST write memory_updates={'monday': 'selected'}.\n"
+    "- If you don't write it, you WILL forget it when the screen changes."
+)
+
+
+def build_tool_guidance(*, tools: AllowedTools) -> str:
+    """Render the TOOL SELECTION + PROGRESS SAFETY + MEMORY STRATEGY block for the allowed tools."""
+
+    tool_lines = [
+        TOOL_DESCRIPTIONS[name]
+        for name in _TOOL_DESCRIPTIONS_RAW
+        if tools.contains(name=name)
+    ]
+
+    fallback_rule = (
+        _PROGRESS_SAFETY_HITL_FALLBACK
+        if tools.contains(name=ToolName.ASK_USER)
+        else _PROGRESS_SAFETY_AUTONOMOUS_FALLBACK
+    )
+
+    return (
+        "TOOL SELECTION & VALIDATION:\n"
+        + "\n".join(tool_lines)
+        + "\n\n"
+        + _PROGRESS_SAFETY_BASE
+        + "\n"
+        + fallback_rule
+        + "\n"
+        + _PROGRESS_SAFETY_TAIL
+        + "\n\n"
+        + _MEMORY_STRATEGY
+    )
 
 # Summarization system instruction (for GCC milestone creation)
 SUMMARIZATION_SYSTEM = """You are an expert at analyzing mobile UI automation execution traces.

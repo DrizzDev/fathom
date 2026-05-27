@@ -261,6 +261,17 @@ class ScriptExportError(FathomError):
     """
 
 
+class HITLNotAvailableError(FathomError):
+    """
+    Raised when HITL is requested on a runtime with no human available.
+    """
+
+    def __init__(self, *, workflow_id: Optional[str] = None) -> None:
+        super().__init__("HITL requested without human availability", retryable=True)
+
+        self.workflow_id = workflow_id
+
+
 class FinalizationTimeoutError(FathomError):
     """
     Post-terminal finalization phase exceeded its allotted timeout.

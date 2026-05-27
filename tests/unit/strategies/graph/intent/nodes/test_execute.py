@@ -4,7 +4,14 @@ import unittest
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.core.exceptions import HITLNotAvailableError
+from fathom.schemas.actions import Action
+from fathom.schemas.execution import ExecutionContext
+from fathom.schemas.localization import LocalizationResult, LocalizationStatus
+from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.execute import ExecuteNode
 
 
@@ -50,6 +57,58 @@ class ExecuteNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
             result.get(CommonStateKey.COMPLETION_REASON),
             CompletionReason.CANCELLED.value,
         )
+
+    @staticmethod
+    def __capture() -> ScreenCapture:
+        """Build a minimal screen capture for ExecutionContext."""
+
+        return ScreenCapture(width=100, height=200, activity="app", image=b"", timestamp=1)
+
+    @staticmethod
+    def __ask_user_execution_context() -> ExecutionContext:
+        """Build an ExecutionContext carrying an ASK_USER step."""
+
+        action = Action(
+            action_type=ActionType.ASK_USER,
+            target="User",
+            confidence=1.0,
+            rationale="missing credentials",
+            text="What is your OTP?",
+        )
+        step = Step(step_number=3, screen_hash="v", action=action)
+        return ExecutionContext(
+            step=step,
+            capture=ExecuteNodeEarlyExitTest.__capture(),
+            localization=LocalizationResult(
+                status=LocalizationStatus.UNRESOLVED,
+                bounds=None,
+                source=None,
+                confidence=0.0,
+                reason="ask_user_bypass",
+            ),
+            package="app",
+        )
+
+    async def test_ask_user_with_hitl_unavailable_routes_back_to_ground(self) -> None:
+        """HITLNotAvailableError must clear the planned step and set SHOULD_RETRY."""
+
+        provider = self.__provider(cancelled=False)
+        provider.hitl.ask = AsyncMock(side_effect=HITLNotAvailableError())
+        node = ExecuteNode(provider=provider)
+
+        result: Any = await node(
+            state={IntentStateKey.EXECUTION_CONTEXT: self.__ask_user_execution_context()},
+        )
+
+        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+        self.assertIsNone(result.get(IntentStateKey.PLAN))
+        self.assertIsNone(result.get(IntentStateKey.PLANNED_STEP))
+        self.assertIsNone(result.get(IntentStateKey.EXECUTION_CONTEXT))
+        self.assertIn(
+            CommonStateKey.FAILURE_DIAGNOSTIC,
+            result,
+        )
+        provider.persistence.persist.assert_called()
 
     async def test_missing_execution_context_fails_terminally(self) -> None:
         """

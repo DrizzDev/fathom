@@ -9,6 +9,7 @@ from fathom.constants.state import CompletionReason
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.subgoal import SubGoal
@@ -64,7 +65,10 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         Build a state whose native recovery budget is exhausted.
         """
 
-        state = AgentState(intent="finish onboarding")
+        state = AgentState(
+            intent="finish onboarding",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True)),
+        )
         detector = state.runtime.screen.detector
         for _ in range(detector.threshold):
             detector.record(
@@ -91,7 +95,6 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
             context_manager=self.__context(),
             screen_width=100,
             screen_height=200,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 
@@ -127,7 +130,10 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         vision.analyze = AsyncMock(return_value=analysis)
         vision.build_rejection_history_from_analysis = Mock(return_value=[])
 
-        state = AgentState(intent="Tap on search bar")
+        state = AgentState(
+            intent="Tap on search bar",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
         state.set_sub_goals([SubGoal(index=0, description="Tap on search bar")])
         planner = StepPlanner(vision_tool=vision)
         reasoner = Mock()
@@ -140,7 +146,6 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
             context_manager=self.__context(),
             screen_width=100,
             screen_height=200,
-            interactive_mode=False,
             prompt_if_stuck=False,
         )
 
@@ -178,7 +183,10 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         vision = Mock()
         vision.analyze = AsyncMock(return_value=analysis)
 
-        state = AgentState(intent="Open Swiggy app")
+        state = AgentState(
+            intent="Open Swiggy app",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
         state.set_sub_goals([SubGoal(index=0, description="Open Swiggy app")])
         planner = StepPlanner(vision_tool=vision)
         reasoner = Mock()
@@ -191,9 +199,124 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
             context_manager=self.__context(),
             screen_width=100,
             screen_height=200,
-            interactive_mode=False,
             prompt_if_stuck=False,
         )
 
         self.assertIsNotNone(result.step)
         self.assertFalse(result.should_retry)
+
+
+class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestCase):
+    """Pins the autonomous-runtime substitution: ASK_USER -> recovery ladder."""
+
+    @staticmethod
+    def __capture() -> ScreenCapture:
+        """Return a minimal screen capture."""
+
+        return ScreenCapture(
+            width=100,
+            height=200,
+            activity="app",
+            image=b"png",
+            timestamp=1,
+        )
+
+    @staticmethod
+    def __context() -> SimpleNamespace:
+        """Return the context-manager surface used by the planner."""
+
+        return SimpleNamespace(
+            get_user_guidance=Mock(return_value=[]),
+            inject_user_guidance=AsyncMock(),
+            consume_user_guidance=Mock(),
+            clear_user_guidance=Mock(),
+            clear_verifier_feedback=Mock(),
+        )
+
+    @staticmethod
+    def __ask_user_analysis() -> AnalysisResult:
+        """Return an analysis whose primary action is ASK_USER."""
+
+        action = Action(
+            action_type=ActionType.ASK_USER,
+            target="User",
+            rationale="missing credentials",
+            confidence=0.9,
+            text="What is your OTP?",
+        )
+        return AnalysisResult(
+            action=action,
+            reasoning="Need credentials",
+            screen_description="login",
+            metadata={"tool_args": {}},
+        )
+
+    async def test_substitutes_ask_user_with_recovery_action(self) -> None:
+        """ASK_USER on autonomous runtime substitutes with the next ladder rung."""
+
+        analysis = self.__ask_user_analysis()
+        vision = Mock()
+        vision.analyze = AsyncMock(return_value=analysis)
+        vision.build_rejection_history_from_analysis = Mock(return_value=[])
+
+        state = AgentState(
+            intent="login",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
+        state.set_sub_goals([SubGoal(description="login", index=0)])
+        reasoner = Mock()
+        reasoner.select_best_action.return_value = analysis.action
+
+        planner = StepPlanner(vision_tool=vision)
+        result = await planner.plan_step(
+            state=state,
+            reasoner=reasoner,
+            capture=self.__capture(),
+            context_manager=self.__context(),
+            screen_width=100,
+            screen_height=200,
+            prompt_if_stuck=False,
+        )
+
+        self.assertIsNotNone(result.step)
+        assert result.step is not None
+        self.assertNotEqual(result.step.action.action_type, ActionType.ASK_USER)
+        self.assertIn(
+            result.step.action.action_type,
+            {ActionType.BACK, ActionType.SCROLL, ActionType.HOME},
+        )
+        self.assertFalse(result.is_complete)
+
+    async def test_terminates_when_ladder_exhausted(self) -> None:
+        """When the recovery ladder is spent, ASK_USER becomes terminal INTERVENTION_REQUIRED."""
+
+        analysis = self.__ask_user_analysis()
+        vision = Mock()
+        vision.analyze = AsyncMock(return_value=analysis)
+        vision.build_rejection_history_from_analysis = Mock(return_value=[])
+
+        state = AgentState(
+            intent="login",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
+        state.set_sub_goals([SubGoal(description="login", index=0)])
+        while state.runtime.screen.detector.can_recover():
+            state.runtime.screen.detector.record_recovery_attempt()
+
+        reasoner = Mock()
+        reasoner.select_best_action.return_value = analysis.action
+
+        planner = StepPlanner(vision_tool=vision)
+        result = await planner.plan_step(
+            state=state,
+            reasoner=reasoner,
+            capture=self.__capture(),
+            context_manager=self.__context(),
+            screen_width=100,
+            screen_height=200,
+            prompt_if_stuck=False,
+        )
+
+        self.assertIsNone(result.step)
+        self.assertTrue(result.is_complete)
+        self.assertEqual(result.reason, CompletionReason.INTERVENTION_REQUIRED.value)

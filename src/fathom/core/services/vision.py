@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Set, TypedDict
 
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.core.agent.tools import ToolScope
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.prompts.factory import PromptFactory
@@ -19,10 +20,12 @@ from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.schemas.capabilities import RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn, TurnPart
 from fathom.schemas.observation import LoopObservation, ScreenObservation
 from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.tools import AllowedTools
 from fathom.schemas.vision import PastActionEntry
 from fathom.utils.image import ImageProcessor
 
@@ -51,12 +54,12 @@ class VisionService:
         telemetry: TelemetryPort,
         *,
         use_cache: bool,
+        capabilities: RuntimeCapabilities,
+        tool_scope: Optional[ToolScope] = None,
         session_id: str = "",
         auditor: Optional[AuditService] = None,
     ) -> None:
-        """
-        Initialize vision service.
-        """
+        """Initialize vision service with the live runtime capabilities."""
 
         self.__llm = llm
         self.__memory = memory
@@ -68,59 +71,39 @@ class VisionService:
         self.__parser = ToolResponseParser()
         self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
-        # Use the original prompt builder factory
+        self.__capabilities = capabilities
+        self.__tool_scope = tool_scope or ToolScope()
+
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
-        self.__tool_definitions = ToolRegistry.get_all_definitions()
 
     async def prewarm(self) -> None:
-        """
-        Prewarm the planner prompt cache for the known planner tool variants.
-
-        Called concurrently with intent decomposition to reduce first-call latency.
-        Each variant creates a separate cached content entry in the provider.
-        """
-
-        instruction = self.__builder.build()
+        """Prewarm the LLM cache with the canonical tool variants for the live runtime."""
 
         start = time.time()
-        for tools in self.__planner_tool_variants():
-            await self.__llm.prewarm(tools=tools, system_instruction=instruction)
-
-        duration = time.time() - start
+        for variant in self.__prewarm_variants():
+            instruction = self.__builder.build(tools=variant)
+            payload = ToolRegistry.definitions(names=variant.names)
+            await self.__llm.prewarm(tools=payload, system_instruction=instruction)
 
         await self.__telemetry.debug(
             "Latency phase completed",
-            duration=duration,
+            duration=time.time() - start,
             phase="planner.prewarm",
             type=FathomEvent.LATENCY_PHASE,
         )
 
-    def __planner_tool_variants(self) -> List[Dict[str, Any]]:
-        """
-        Return the small fixed set of planner tool variants worth prewarming.
-        """
+    def __prewarm_variants(self) -> List[AllowedTools]:
+        """Return canonical tool variants matched to the runtime capabilities."""
 
-        try:
-            definitions = self.__tool_definitions["function_declarations"]
-            by_name = {definition["name"]: definition for definition in definitions}
-
-            return [
-                {"function_declarations": [by_name["execute_ui"]]},
-                {"function_declarations": [by_name["execute_ui"], by_name["verify_goal"]]},
-                {
-                    "function_declarations": [
-                        by_name["ask_user"],
-                        by_name["execute_ui"],
-                    ]
-                },
-            ]
-        except KeyError as exception:
-            logger.warning("[VisionService] Tool definition missing for prewarm: %s", exception)
-            return []
+        return [
+            self.__tool_scope.compute(intent=intent, capabilities=self.__capabilities)
+            for intent in ("interact", "verify")
+        ]
 
     async def analyze(
         self,
         intent: str,
+        tools: AllowedTools,
         capture: ScreenCapture,
         context_manager: ContextManager,
         *,
@@ -209,7 +192,7 @@ class VisionService:
             f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
         )
 
-        instruction = self.__builder.build()
+        instruction = self.__builder.build(tools=tools)
 
         # Sub-goal context (if provided by caller) - SINGLE FOCUS MODE
         # Only current sub-goal is passed to Gemini to prevent skip-ahead behavior.
@@ -270,7 +253,7 @@ class VisionService:
         )
 
         tool_scope_start = time.time()
-        tools = self.__scope_tools(intent=intent)
+        allowed_tools = ToolRegistry.definitions(names=tools.names)
         tool_scope_duration = time.time() - tool_scope_start
 
         # 3. CONTENT ASSEMBLY
@@ -328,8 +311,8 @@ class VisionService:
         for attempt in range(max_validation_retries + 1):
             commence = time.time()
             response = await self.__llm.generate(
-                tools=tools,
                 prompt=payload,
+                tools=allowed_tools,
                 use_cache=self.__use_cache,
                 system_instruction=instruction,
                 conversation_history=conversation_history if conversation_history else None,
@@ -605,32 +588,6 @@ class VisionService:
 
         return data
 
-    async def check_completion(
-        self,
-        intent: str,
-        visual_hash: str,
-        screen_width: int,
-        screen_height: int,
-        capture: ScreenCapture,
-        context_manager: ContextManager,
-        *,
-        tracking_note: Optional[str] = None,
-    ) -> bool:
-        """
-        Check if intent is complete.
-        """
-
-        result = await self.analyze(
-            intent=intent,
-            capture=capture,
-            visual_hash=visual_hash,
-            screen_width=screen_width,
-            screen_height=screen_height,
-            tracking_note=tracking_note,
-            context_manager=context_manager,
-        )
-        return result.is_goal_complete
-
     def __build_payload(
         self,
         intent: str,
@@ -850,26 +807,3 @@ class VisionService:
             if (raw := info.get(key)) is not None and (stripped := str(raw).strip()):
                 return stripped
         return ""
-
-    def __scope_tools(self, intent: str) -> Dict[str, Any]:
-        """
-        Dynamically selects tools (strictly mirrored).
-        """
-
-        allowed = {
-            "ask_user",
-            "execute_ui",
-            "recall_memory",
-            "store_memory",
-        }
-        if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):
-            allowed.update({"validate_state", "verify_goal"})
-
-        definitions = ToolRegistry.get_all_definitions()
-        return {
-            "function_declarations": [
-                definition
-                for definition in definitions["function_declarations"]
-                if definition["name"] in allowed
-            ]
-        }

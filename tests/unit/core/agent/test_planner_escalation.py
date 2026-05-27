@@ -17,6 +17,7 @@ from fathom.constants.state import CompletionReason
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.escalation import EscalationPolicy
 from fathom.schemas.results import AnalysisResult
@@ -64,12 +65,16 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             clear_verifier_feedback=Mock(),
         )
 
-    def __validate_only_stuck_state(self) -> AgentState:
+    def __validate_only_stuck_state(
+        self,
+        *,
+        capabilities: RuntimeCapabilities = RuntimeCapabilities(hitl=HITLCapability(enabled=True)),
+    ) -> AgentState:
         """
         Build a state whose loop detector is stuck via passive-only NO_PROGRESS turns.
         """
 
-        state = AgentState(intent="finish onboarding")
+        state = AgentState(intent="finish onboarding", capabilities=capabilities)
         state.set_sub_goals([SubGoal(description="Validate something", index=0, max_steps=10)])
         detector = state.runtime.screen.detector
         for _ in range(detector.threshold):
@@ -128,7 +133,6 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             context_manager=context,
             screen_width=100,
             screen_height=200,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 
@@ -141,7 +145,9 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         Three validate-only turns at tolerance=3 stay below the escalation cap.
         """
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
+        )
         state.set_sub_goals([SubGoal(description="v", index=0, max_steps=10)])
         detector = state.runtime.screen.detector
         for _ in range(3):
@@ -164,7 +170,6 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             context_manager=context,
             screen_width=100,
             screen_height=200,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
         self.assertEqual(state.deferral_count, 1)
@@ -189,7 +194,6 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             context_manager=self.__context_manager(),
             screen_width=100,
             screen_height=200,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 
@@ -220,7 +224,6 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             context_manager=context,
             screen_width=100,
             screen_height=200,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
         # Gate was NOT invoked → deferral count unchanged → guidance not injected.
@@ -244,7 +247,6 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             context_manager=self.__context_manager(),
             screen_width=100,
             screen_height=200,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 
@@ -253,12 +255,14 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result.step.action.action_type, ActionType.ASK_USER)
         self.assertEqual(state.deferral_count, 0)
 
-    async def test_non_interactive_mode_skips_gate_entirely(self) -> None:
+    async def test_autonomous_capability_skips_gate_entirely(self) -> None:
         """
-        Autonomous mode keeps its existing recovery path; the gate must not run.
+        Autonomous runtime keeps its existing recovery path; the gate must not run.
         """
 
-        state = self.__validate_only_stuck_state()
+        state = self.__validate_only_stuck_state(
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+        )
         context = self.__context_manager()
         planner = StepPlanner(vision_tool=Mock())
 
@@ -269,11 +273,10 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             context_manager=context,
             screen_width=100,
             screen_height=200,
-            interactive_mode=False,
             prompt_if_stuck=False,
         )
 
-        # Gate not invoked in non-interactive path.
+        # Gate not invoked on autonomous runtime.
         self.assertEqual(state.deferral_count, 0)
         context.inject_user_guidance.assert_not_awaited()
 
@@ -321,7 +324,9 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def __validate_only_stuck_state() -> AgentState:
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
+        )
         state.set_sub_goals([SubGoal(description="v", index=0, max_steps=10)])
         detector = state.runtime.screen.detector
         for _ in range(detector.threshold):
@@ -340,8 +345,8 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_llm_ask_user_passes_through_when_no_stuck_source(self) -> None:
         """
-        Fresh state with no stuck signal: the model's ASK_USER tool call is
-        a legitimate request for external information; let it through.
+        Fresh interactive state with no stuck signal: the model's ASK_USER
+        tool call is a legitimate request for external information; let it through.
         """
 
         analysis = self.__ask_user_analysis()
@@ -349,7 +354,9 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
         vision.analyze = AsyncMock(return_value=analysis)
         vision.build_rejection_history_from_analysis = Mock(return_value=[])
 
-        state = AgentState(intent="login")
+        state = AgentState(
+            intent="login", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
+        )
         state.set_sub_goals([SubGoal(description="login", index=0)])
         reasoner = Mock()
         reasoner.select_best_action.return_value = analysis.action
@@ -362,7 +369,6 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
             context_manager=self.__context_manager(),
             screen_width=100,
             screen_height=200,
-            interactive_mode=False,
             prompt_if_stuck=False,
         )
 
@@ -401,7 +407,6 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
             context_manager=context,
             screen_width=100,
             screen_height=200,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 

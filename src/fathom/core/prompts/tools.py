@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, FrozenSet, List, Optional
+
+from fathom.constants.tools import ToolName
 
 
 class ToolRegistry:
@@ -14,15 +16,36 @@ class ToolRegistry:
         Returns all tool definitions in a format compatible with Gemini API.
         """
 
+        return {"function_declarations": [factory() for factory in cls.__factories().values()]}
+
+    @classmethod
+    def definitions(
+        cls,
+        *,
+        names: FrozenSet[ToolName],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Return the function-declarations payload for the requested tools.
+        """
+
+        factories = cls.__factories()
+        ordered = [factories[name]() for name in factories if name in names]
+
+        return {"function_declarations": ordered}
+
+    @classmethod
+    def __factories(cls) -> Dict[ToolName, Callable[[], Dict[str, Any]]]:
+        """
+        Return the name → declaration-factory map in catalog order.
+        """
+
         return {
-            "function_declarations": [
-                cls.__ask_user(),
-                cls.__execute_ui(),
-                cls.__verify_goal(),
-                cls.__store_memory(),
-                cls.__recall_memory(),
-                cls.__validate_state(),
-            ]
+            ToolName.ASK_USER: cls.__ask_user,
+            ToolName.EXECUTE_UI: cls.__execute_ui,
+            ToolName.VERIFY_GOAL: cls.__verify_goal,
+            ToolName.STORE_MEMORY: cls.__store_memory,
+            ToolName.RECALL_MEMORY: cls.__recall_memory,
+            ToolName.VALIDATE_STATE: cls.__validate_state,
         }
 
     @classmethod

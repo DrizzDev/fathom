@@ -12,6 +12,7 @@ from fathom.base.paths import SharedPathManager
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
+from fathom.core.agent.tools import ToolScope
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.context.manager import ContextManager
 from fathom.core.localization import EnsembleLocalizerService
@@ -43,6 +44,7 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.processing.parsers.signature import HierarchySignatureBuilder
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
@@ -132,15 +134,25 @@ class GraphContext:
         # Injected services with defaults for backward compatibility
         self.__metrics = metrics or ExecutionMetrics()
 
+        self.__capabilities = RuntimeCapabilities(
+            hitl=HITLCapability(enabled=signal.supports_interruption()),
+        )
+        self.__tool_scope = ToolScope()
+
         self.__reasoner = reasoner or Reasoner(intent=intent)
         self.__agent_state = agent_state or AgentState(
             intent=intent,
             max_steps=max_steps,
+            capabilities=self.__capabilities,
             realignment_budget=self.__realignment.budget,
         )
 
         self.__signal = signal
-        self.__hitl = HITLService(signal=signal, telemetry=telemetry)
+        self.__hitl = HITLService(
+            signal=signal,
+            telemetry=telemetry,
+            capabilities=self.__capabilities,
+        )
 
         self.__artifact_pipeline = artifact_pipeline
 
@@ -166,6 +178,8 @@ class GraphContext:
             session_id=workflow_id,
             auditor=self.__auditor,
             use_cache=configuration.llm.use_cache,
+            capabilities=self.__capabilities,
+            tool_scope=self.__tool_scope,
         )
 
         self.__action_executor = action_executor or ActionExecutor(
@@ -184,6 +198,7 @@ class GraphContext:
         )
         self.__planner = planner or StepPlanner(
             vision_tool=self.__vision,
+            tool_scope=self.__tool_scope,
             escalation_policy=configuration.intent.escalation,
         )
 
@@ -317,6 +332,22 @@ class GraphContext:
         """
 
         return self.__hitl
+
+    @property
+    def capabilities(self) -> RuntimeCapabilities:
+        """
+        Returns live RuntimeCapabilities derived from the signal port.
+        """
+
+        return self.__capabilities
+
+    @property
+    def tool_scope(self) -> ToolScope:
+        """
+        Returns the shared ToolScope.
+        """
+
+        return self.__tool_scope
 
     @property
     def path_manager(self) -> SharedPathManager:

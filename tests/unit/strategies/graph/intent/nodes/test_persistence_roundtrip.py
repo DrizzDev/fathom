@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 from fathom.constants.state import IntentStateKey
 from fathom.core.agent.state import AgentState
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.persistence import GraphStatePersistence
 
@@ -21,7 +22,13 @@ class _StubContext:
     round-trip semantics rather than on context assembly.
     """
 
-    def __init__(self, *, agent_state: AgentState, workflow_id: str = "run-test") -> None:
+    def __init__(
+        self,
+        *,
+        agent_state: AgentState,
+        workflow_id: str = "run-test",
+        capabilities: RuntimeCapabilities = RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+    ) -> None:
         """
         Hold the live :class:`AgentState` and record any replacement
         via :meth:`set_agent_state` so the test can assert the swap.
@@ -29,6 +36,7 @@ class _StubContext:
 
         self.agent_state = agent_state
         self.workflow_id = workflow_id
+        self.capabilities = capabilities
         self.replaced_state: AgentState | None = None
 
     def set_agent_state(self, state: AgentState) -> None:
@@ -75,7 +83,9 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
         sub-goal list and the supplied intent.
         """
 
-        state = AgentState(intent=intent)
+        state = AgentState(
+            intent=intent, capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+        )
         state.set_sub_goals(self.__sub_goals())
         return state
 
@@ -113,7 +123,12 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
         graph_state: Dict[Any, Any] = {}
         helper.persist(result=graph_state)
 
-        restore_target = _StubContext(agent_state=AgentState(intent="placeholder"))
+        restore_target = _StubContext(
+            agent_state=AgentState(
+                intent="placeholder",
+                capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+            ),
+        )
         restore_helper = GraphStatePersistence(context=restore_target)  # type: ignore[arg-type]
         restore_helper.restore(state=graph_state)  # type: ignore[arg-type]
 

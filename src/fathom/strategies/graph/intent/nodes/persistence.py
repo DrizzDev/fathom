@@ -47,7 +47,10 @@ class GraphStatePersistence:
                     "sub_goal.index": checkpoint.get("current_sub_goal_index"),
                 },
             )
-            restored = AgentState.from_checkpoint(checkpoint)
+            restored = AgentState.from_checkpoint(
+                checkpoint,
+                capabilities=self.__context.capabilities,
+            )
             self.__context.set_agent_state(restored)
             return
 
@@ -56,8 +59,8 @@ class GraphStatePersistence:
                 "Restoring sub-goal index from graph state",
                 extra={
                     **self.__log_context(),
-                    "event": "graph.state.subgoal_index_restore",
                     "sub_goal.index": current_index,
+                    "event": "graph.state.subgoal_index_restore",
                 },
             )
             if self.__context.agent_state.sub_goal_list and current_index < len(
@@ -78,8 +81,8 @@ class GraphStatePersistence:
             extra={
                 **self.__log_context(),
                 "event": "graph.state.persist",
-                "step.count": checkpoint.get("step_count"),
                 "sub_goal.index": current_index,
+                "step.count": checkpoint.get("step_count"),
             },
         )
 
@@ -88,17 +91,13 @@ class GraphStatePersistence:
         result_dict[IntentStateKey.CURRENT_SUB_GOAL_INDEX.value] = current_index
 
     @staticmethod
-    def should_skip_launcher(
-        *,
-        execution_activity: str,
-        observed_activity: str,
-    ) -> bool:
+    def should_skip_launcher(*, execution_activity: str, observed_activity: str) -> bool:
         """
         Skip persistence only when the step both starts and ends on the launcher.
         """
 
-        execution_package = execution_activity.split("/")[0]
         observed_package = observed_activity.split("/")[0]
+        execution_package = execution_activity.split("/")[0]
 
         if execution_package not in LAUNCHER_PACKAGES:
             return False

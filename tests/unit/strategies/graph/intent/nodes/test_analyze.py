@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.agent.state import AgentState
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.screens import ScreenCapture
 from fathom.strategies.graph.intent.nodes.analyze import AnalyzeNode
 
@@ -33,7 +34,10 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
         ``SHOULD_RETRY=True`` and creating a graph loop.
         """
 
-        agent_state = AgentState(intent="finish onboarding")
+        agent_state = AgentState(
+            intent="finish onboarding",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
         planner = Mock()
         planner.plan_step = AsyncMock(side_effect=ValueError("bad planner state"))
         provider = SimpleNamespace(

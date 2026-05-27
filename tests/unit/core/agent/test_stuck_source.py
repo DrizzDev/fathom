@@ -8,6 +8,7 @@ import unittest
 
 from fathom.core.agent.state import AgentState
 from fathom.core.agent.stuck_source import StuckSourceResolver
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.subgoal import SubGoal
 
@@ -34,7 +35,9 @@ class StuckSourceResolverTest(unittest.TestCase):
         Fresh state with no signals returns None so callers can short-circuit.
         """
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+        )
         self.assertIsNone(self.__resolver().resolve(agent_state=state))
 
     def test_returns_loop_detector_when_only_loop_stuck(self) -> None:
@@ -44,7 +47,9 @@ class StuckSourceResolverTest(unittest.TestCase):
 
         from fathom.schemas.escalation import StuckSource
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+        )
         detector = state.runtime.screen.detector
         for _ in range(detector.threshold):
             detector.record(
@@ -63,7 +68,9 @@ class StuckSourceResolverTest(unittest.TestCase):
 
         from fathom.schemas.escalation import StuckSource
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+        )
         state.set_sub_goals([SubGoal(description="active", index=0, max_steps=1)])
 
         # Trip both signals simultaneously: budget exhausted + loop stuck.
@@ -87,7 +94,9 @@ class StuckSourceResolverTest(unittest.TestCase):
 
         from fathom.schemas.escalation import StuckSource
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+        )
         state.set_sub_goals([SubGoal(description="active", index=0, max_steps=1)])
         state.record_sub_goal_action()
 

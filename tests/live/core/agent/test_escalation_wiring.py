@@ -22,6 +22,7 @@ import pytest
 from fathom.constants import ActionType
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.state import AgentState
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.configuration import IntentConfiguration
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.escalation import EscalationPolicy
@@ -67,7 +68,9 @@ class EscalationGateWiringTest(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def __validate_only_stuck_state() -> AgentState:
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
+        )
         state.set_sub_goals([SubGoal(description="v", index=0, max_steps=10)])
         detector = state.runtime.screen.detector
         for _ in range(detector.threshold):
@@ -112,7 +115,6 @@ class EscalationGateWiringTest(unittest.IsolatedAsyncioTestCase):
             context_manager=self.__context(),
             screen_width=1080,
             screen_height=2400,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 
@@ -144,7 +146,6 @@ class EscalationGateWiringTest(unittest.IsolatedAsyncioTestCase):
             context_manager=self.__context(),
             screen_width=1080,
             screen_height=2400,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 

@@ -111,13 +111,20 @@ class ExplorationNodeProvider:
         width = capture.width
         height = capture.height
 
+        intent = "Explore this app. Find a unique interactive element."
+
+        tools = self.__context.tool_scope.compute(
+            intent=intent,
+            capabilities=self.__context.capabilities,
+        )
         analysis = await self.__context.vision.analyze(
+            tools=tools,
+            intent=intent,
             capture=capture,
             tracking_note=None,
             screen_width=width,
             screen_height=height,
             context_manager=self.__context.context_manager,
-            intent="Explore this app. Find a unique interactive element.",
             visual_hash=capture.state.visual_hash if capture.state is not None else "",
         )
 

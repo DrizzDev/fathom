@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Dict, Optional
+from unittest.mock import patch
 
 from google.genai import types
 
@@ -159,9 +161,7 @@ class GeminiLLMTest(unittest.TestCase):
         self.assertTrue(result)
 
     def test_generation_config_maps_unavailable_thinking_levels(self) -> None:
-        """
-        Build Gemini 3 thinking config with SDKs that expose only LOW and HIGH.
-        """
+        """Falls back to LOW when the SDK does not expose the requested thinking level."""
 
         gemini = object.__new__(GeminiLLM)
         gemini._GeminiLLM__configuration = LLMConfiguration(
@@ -169,7 +169,9 @@ class GeminiLLMTest(unittest.TestCase):
             thinking_level="minimal",
         )
 
-        config = gemini._GeminiLLM__get_generation_configuration()
+        sdk_stub = SimpleNamespace(LOW=types.ThinkingLevel.LOW, HIGH=types.ThinkingLevel.HIGH)
+        with patch("fathom.adapters.llm.gemini.types.ThinkingLevel", sdk_stub):
+            config = gemini._GeminiLLM__get_generation_configuration()
 
         self.assertIsNotNone(config.thinking_config)
         self.assertEqual(config.thinking_config.thinking_level, types.ThinkingLevel.LOW)

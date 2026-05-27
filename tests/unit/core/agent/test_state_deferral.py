@@ -9,6 +9,7 @@ import unittest
 from fathom.constants import ActionType
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.subgoal import SubGoal
 
@@ -20,7 +21,9 @@ class AgentStateDeferralTest(unittest.TestCase):
 
     @staticmethod
     def __state_with_subgoal() -> AgentState:
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+        )
         state.set_sub_goals([SubGoal(description="active", index=0)])
         return state
 
@@ -81,7 +84,9 @@ class AgentStateDeferralTest(unittest.TestCase):
         Without an active sub-goal the helpers are silent no-ops.
         """
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+        )
         state.record_deferral()
         self.assertEqual(state.deferral_count, 0)
 

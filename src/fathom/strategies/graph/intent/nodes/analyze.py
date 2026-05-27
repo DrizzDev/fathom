@@ -140,8 +140,8 @@ class AnalyzeNode:
             # Get Device Dimensions for Accurate Normalization (Strict)
             width, height = await self.__provider.context.device.get_dimensions()
 
-            # Determine interactive mode & config for planner
-            is_interactive = self.__provider.context.signal.supports_interruption()
+            # Domain capabilities flow through AgentState;
+            # only the configuration toggle for the stuck-loop HITL synthesis needs explicit threading.
             prompt_if_stuck = self.__provider.context.configuration.intent.prompt_user_if_stuck
 
             # HITL: Check for pause request or context injection before planning
@@ -165,7 +165,6 @@ class AnalyzeNode:
                 ),
                 screen_width=width,
                 screen_height=height,
-                interactive_mode=is_interactive,
                 prompt_if_stuck=prompt_if_stuck,
                 use_xml=self.__provider.context.use_xml,
                 reasoner=self.__provider.context.reasoner,

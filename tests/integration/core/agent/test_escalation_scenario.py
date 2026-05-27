@@ -26,6 +26,7 @@ from fathom.constants.state import CompletionReason
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.escalation import EscalationPolicy
 from fathom.schemas.loop import LoopReason
@@ -121,7 +122,10 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         Step 12 with no prior deferrals: gate defers, no ASK_USER returned.
         """
 
-        state = AgentState(intent="search for restaurants near me")
+        state = AgentState(
+            intent="search for restaurants near me",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True)),
+        )
         state.set_sub_goals(
             [SubGoal(description="Validate srp page is loaded", index=0, max_steps=10)]
         )
@@ -147,7 +151,6 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             context_manager=context,
             screen_width=1080,
             screen_height=2400,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 
@@ -167,7 +170,9 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         finds deferrals=3 > 2 and returns ASK_USER (DEFERRAL_LIMIT reason).
         """
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
+        )
         state.set_sub_goals([SubGoal(description="Validate srp page", index=0, max_steps=10)])
         self.__seed_validate_only_loop(state=state)
         # Simulate two earlier deferrals on this sub-goal.
@@ -183,7 +188,6 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             context_manager=self.__context(),
             screen_width=1080,
             screen_height=2400,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 
@@ -199,7 +203,9 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         Past tolerance=3 the gate escalates with PASSIVE_LIMIT reason.
         """
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
+        )
         state.set_sub_goals([SubGoal(description="Validate srp page", index=0, max_steps=10)])
         detector = state.runtime.screen.detector
         for _ in range(4):
@@ -218,7 +224,6 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             context_manager=self.__context(),
             screen_width=1080,
             screen_height=2400,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 
@@ -231,7 +236,9 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         Sub-goal budget exhaustion reaches the gate independently of is_stuck.
         """
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
+        )
         # max_steps=1 means a single recorded action exhausts the budget.
         state.set_sub_goals([SubGoal(description="active", index=0, max_steps=1)])
         state.record_sub_goal_action()
@@ -247,7 +254,6 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             context_manager=self.__context(),
             screen_width=1080,
             screen_height=2400,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 
@@ -262,7 +268,9 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
 
         from fathom.schemas.steps import Step, StepResult
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
+        )
         state.set_sub_goals([SubGoal(description="v", index=0, max_steps=10)])
         state.record_deferral()
         state.record_deferral()
@@ -293,7 +301,9 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         (immediate ASK_USER on the first stuck signal).
         """
 
-        state = AgentState(intent="x")
+        state = AgentState(
+            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
+        )
         state.set_sub_goals([SubGoal(description="v", index=0, max_steps=10)])
         self.__seed_validate_only_loop(state=state)
 
@@ -308,7 +318,6 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             context_manager=self.__context(),
             screen_width=1080,
             screen_height=2400,
-            interactive_mode=True,
             prompt_if_stuck=True,
         )
 

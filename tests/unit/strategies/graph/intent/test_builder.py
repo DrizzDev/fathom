@@ -11,6 +11,7 @@ from fathom.constants.graph import NodeName
 from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.agent.state import AgentState
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.state import VerificationLoopState
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 from fathom.strategies.graph.intent.nodes.factory import IntentGraphFactory
@@ -218,6 +219,74 @@ class TestIntentGraphBuilderRoutes(unittest.TestCase):
         self.assertEqual(route, NodeName.END)
 
 
+class TestRouteAfterExecute(unittest.TestCase):
+    """Pins routing decisions for the new conditional edge after EXECUTE."""
+
+    @staticmethod
+    def __builder(*, is_cancelled: bool = False) -> IntentGraphBuilder:
+        """Build a routing-only IntentGraphBuilder bound to a minimal context."""
+
+        return IntentGraphBuilder(
+            context=SimpleNamespace(is_cancelled=is_cancelled),  # type: ignore[arg-type]
+        )
+
+    def test_cancellation_routes_to_end(self) -> None:
+        """A cancelled context overrides any other state and routes to END."""
+
+        route = self.__builder(is_cancelled=True)._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
+            {IntentStateKey.SHOULD_RETRY: True},
+        )
+
+        self.assertEqual(route, NodeName.END)
+
+    def test_terminal_completion_routes_to_end(self) -> None:
+        """A terminal completion reason routes to END."""
+
+        for reason in (
+            CompletionReason.FAILED.value,
+            CompletionReason.MAX_STEPS.value,
+            CompletionReason.CANCELLED.value,
+        ):
+            with self.subTest(reason=reason):
+                route = self.__builder()._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
+                    {
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: reason,
+                    },
+                )
+                self.assertEqual(route, NodeName.END)
+
+    def test_non_terminal_completion_routes_to_verify(self) -> None:
+        """A non-terminal completion (e.g. success) routes to VERIFY."""
+
+        route = self.__builder()._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
+            {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.SUCCESS.value,
+            },
+        )
+
+        self.assertEqual(route, NodeName.VERIFY)
+
+    def test_should_retry_routes_to_ground(self) -> None:
+        """SHOULD_RETRY from EXECUTE (HITL unavailable) routes back to GROUND."""
+
+        route = self.__builder()._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
+            {IntentStateKey.SHOULD_RETRY: True},
+        )
+
+        self.assertEqual(route, NodeName.GROUND)
+
+    def test_default_path_routes_to_observe(self) -> None:
+        """Successful execution with no termination/retry signal routes to OBSERVE."""
+
+        route = self.__builder()._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
+            {},
+        )
+
+        self.assertEqual(route, NodeName.OBSERVE)
+
+
 class TestIntentGraphBuilderDestinations:
     """
     Verifies router return values match builder conditional-edge maps.
@@ -406,7 +475,11 @@ class TestIntentGraphBuilderVerifyLoop:
         The compiled graph must stop when VERIFY rejects the same epoch repeatedly.
         """
 
-        agent_state = AgentState(intent="tap sign in", max_steps=10)
+        agent_state = AgentState(
+            intent="tap sign in",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+            max_steps=10,
+        )
         agent_state._AgentState__step_count = 5
 
         context = MagicMock(name="GraphContext")

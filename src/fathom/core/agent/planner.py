@@ -10,6 +10,7 @@ from fathom.core.agent.escalation_gate import EscalationGate
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.agent.stuck_source import StuckSourceResolver
+from fathom.core.agent.tools import ToolScope
 from fathom.core.context.manager import ContextManager
 from fathom.core.runtime.identity import TargetIdentity
 from fathom.core.services.vision import SubGoalContext, VisionService
@@ -22,7 +23,7 @@ from fathom.schemas.steps import Step
 from fathom.schemas.supervision import BlockReason
 
 # Generic recovery hint injected when the escalation gate defers HITL. The
-# model is told what the graph observed and what behaviours are still safe;
+# model is told what the graph observed and what behaviors are still safe;
 # we deliberately avoid any app-specific suggestions.
 ESCALATION_DEFERRED_GUIDANCE: str = (
     "The graph detected a possible loop, but recent no-progress actions were "
@@ -47,11 +48,13 @@ class StepPlanner:
         self,
         vision_tool: VisionService,
         *,
+        tool_scope: Optional[ToolScope] = None,
         escalation_policy: Optional[EscalationPolicy] = None,
         escalation_gate: Optional[EscalationGate] = None,
         stuck_source_resolver: Optional[StuckSourceResolver] = None,
     ) -> None:
         self.__vision = vision_tool
+        self.__tool_scope = tool_scope or ToolScope()
         self.__escalation_gate = escalation_gate or EscalationGate(
             policy=escalation_policy or EscalationPolicy(),
         )
@@ -76,7 +79,6 @@ class StepPlanner:
         screen_height: int,
         use_xml: bool = True,
         prompt_if_stuck: bool = False,
-        interactive_mode: bool = False,
         elements: Optional[Dict[str, Any]] = None,
         screen_observation: Optional[ScreenObservation] = None,
     ) -> PlanResult:
@@ -84,7 +86,9 @@ class StepPlanner:
         Plan the next step based on current state.
         """
 
-        if not state.can_continue_with(interactive_mode=interactive_mode):
+        interactive_mode = state.capabilities.hitl.enabled
+
+        if not state.can_continue:
             if state.is_complete:
                 return PlanResult(
                     step=None, is_complete=True, reason=CompletionReason.SUCCESS.value
@@ -119,8 +123,8 @@ class StepPlanner:
                 else:
                     evidence = state.loop_evidence()
                     decision = self.__escalation_gate.decide(
-                        source=escalation_source,
                         evidence=evidence,
+                        source=escalation_source,
                         deferrals=state.deferral_count,
                     )
 
@@ -140,8 +144,8 @@ class StepPlanner:
                                 "event": "planner.escalation.allowed",
                                 "escalation.path": "planner_synthesized",
                                 "escalation.reason": decision.reason.value,
+                                "escalation.deferrals.before": decision.deferrals,
                                 "escalation.stuck_source": decision.stuck_source.value,
-                                "escalation.deferrals_before": decision.deferrals,
                             },
                         )
                         logger.info(
@@ -182,17 +186,18 @@ class StepPlanner:
                     # legitimate action this turn.
                     state.record_deferral()
                     await context_manager.inject_user_guidance(
-                        guidance=ESCALATION_DEFERRED_GUIDANCE,
                         step=state.step_count,
+                        guidance=ESCALATION_DEFERRED_GUIDANCE,
                     )
+
                     logger.info(
                         "Escalation deferred by gate; injecting recovery guidance",
                         extra={
                             "component": "core.agent.planner",
                             "event": "planner.escalation.deferred",
                             "escalation.reason": decision.reason.value,
+                            "escalation.deferrals.after": state.deferral_count,
                             "escalation.stuck_source": decision.stuck_source.value,
-                            "escalation.deferrals_after": state.deferral_count,
                             "sub_goal.index": (
                                 current_sub_goal.index
                                 if (current_sub_goal := state.get_current_sub_goal())
@@ -215,18 +220,24 @@ class StepPlanner:
         # Build minimal sub-goal context for vision (avoid passing AgentState into VisionService)
         sub_goal_info: Optional[SubGoalContext] = None
         current_sub_goal = state.get_current_sub_goal()
+
         if current_sub_goal and state.has_sub_goals():
             current_idx, total = state.get_sub_goal_progress()
             sub_goal_info = {
-                "index": current_idx,
                 "total": total,
+                "index": current_idx,
                 "description": current_sub_goal.description,
             }
 
+        allowed_tools = self.__tool_scope.compute(
+            intent=state.intent,
+            capabilities=state.capabilities,
+        )
         analysis = await self.__vision.analyze(
             use_xml=use_xml,
             capture=capture,
             elements=elements,
+            tools=allowed_tools,
             intent=state.intent,
             is_stuck=state.is_stuck,
             screen_width=screen_width,
@@ -235,8 +246,8 @@ class StepPlanner:
             context_manager=context_manager,
             last_action=state.last_action_type,
             tracking_note=current_tracking_note,
-            loop_observation=state.build_loop_observation(),
             screen_observation=screen_observation,
+            loop_observation=state.build_loop_observation(),
             prior_rejection_history=state.rejection_history,
             visual_hash=self.__compute_simple_hash(capture=capture),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
@@ -263,13 +274,21 @@ class StepPlanner:
         # external information (credentials, OTP, ambiguity) and is allowed
         # through unchanged.
         if action.action_type == ActionType.ASK_USER:
+            if not interactive_mode:
+                return self.__substitute_ask_user_with_recovery(
+                    state=state,
+                    capture=capture,
+                    analysis=analysis,
+                )
+
             llm_source = self.__stuck_source_resolver.resolve(agent_state=state)
+
             if llm_source is not None:
                 self.__log_escalation_detected(
-                    path="llm_tool",
                     state=state,
-                    evidence=state.loop_evidence(),
+                    path="llm_tool",
                     source=llm_source,
+                    evidence=state.loop_evidence(),
                 )
 
             llm_decision = self.__decide_llm_emitted_ask_user(state=state)
@@ -277,29 +296,31 @@ class StepPlanner:
                 logger.info(
                     "LLM-emitted ask_user passed through (no stuck source)",
                     extra={
+                        "escalation.gated": False,
+                        "escalation.path": "llm_tool",
                         "component": "core.agent.planner",
                         "event": "planner.ask_user.emitted",
-                        "escalation.path": "llm_tool",
-                        "escalation.gated": False,
                     },
                 )
             if llm_decision is not None and not llm_decision.allow:
                 state.record_deferral()
+
                 await context_manager.inject_user_guidance(
-                    guidance=ESCALATION_DEFERRED_GUIDANCE,
                     step=state.step_count,
+                    guidance=ESCALATION_DEFERRED_GUIDANCE,
                 )
+
                 logger.info(
                     "Escalation deferred on LLM-emitted ask_user; retrying after guidance",
                     extra={
-                        "component": "core.agent.planner",
-                        "event": "planner.escalation.deferred",
-                        "escalation.path": "llm_tool",
-                        "escalation.reason": llm_decision.reason.value,
-                        "escalation.stuck_source": llm_decision.stuck_source.value,
-                        "escalation.deferrals_after": state.deferral_count,
                         "route.next": "ground",
                         "plan.should_retry": True,
+                        "escalation.path": "llm_tool",
+                        "component": "core.agent.planner",
+                        "event": "planner.escalation.deferred",
+                        "escalation.reason": llm_decision.reason.value,
+                        "escalation.deferrals.after": state.deferral_count,
+                        "escalation.stuck_source": llm_decision.stuck_source.value,
                     },
                 )
                 return PlanResult(
@@ -322,21 +343,21 @@ class StepPlanner:
                 logger.info(
                     "LLM-emitted ask_user allowed by escalation gate",
                     extra={
+                        "escalation.path": "llm_tool",
                         "component": "core.agent.planner",
                         "event": "planner.escalation.allowed",
-                        "escalation.path": "llm_tool",
                         "escalation.reason": llm_decision.reason.value,
+                        "escalation.deferrals.before": llm_decision.deferrals,
                         "escalation.stuck_source": llm_decision.stuck_source.value,
-                        "escalation.deferrals_before": llm_decision.deferrals,
                     },
                 )
                 logger.info(
                     "ASK_USER materialized from LLM tool call",
                     extra={
+                        "escalation.gated": True,
+                        "escalation.path": "llm_tool",
                         "component": "core.agent.planner",
                         "event": "planner.ask_user.emitted",
-                        "escalation.path": "llm_tool",
-                        "escalation.gated": True,
                         "escalation.reason": llm_decision.reason.value,
                         "escalation.stuck_source": llm_decision.stuck_source.value,
                     },
@@ -539,6 +560,38 @@ class StepPlanner:
             },
         )
 
+    def __substitute_ask_user_with_recovery(
+        self,
+        *,
+        state: AgentState,
+        capture: ScreenCapture,
+        analysis: AnalysisResult,
+    ) -> PlanResult:
+        """
+        Substitute ASK_USER with the next recovery ladder rung; terminate when exhausted.
+        """
+
+        if (recovery_action := state.get_recovery_action()) is None:
+            state.mark_complete(reason=CompletionReason.INTERVENTION_REQUIRED.value)
+            return PlanResult(
+                step=None,
+                is_complete=True,
+                metrics=analysis.metrics,
+                memories=analysis.memories,
+                metadata=analysis.metadata or {},
+                reason=CompletionReason.INTERVENTION_REQUIRED.value,
+            )
+
+        return self.__build_plan_result(
+            capture=capture,
+            is_recovery=True,
+            action=recovery_action,
+            metrics=analysis.metrics,
+            memories=analysis.memories,
+            step_number=state.step_count,
+            metadata=analysis.metadata or {},
+        )
+
     def __decide_llm_emitted_ask_user(
         self,
         *,
@@ -588,20 +641,25 @@ class StepPlanner:
             return None
 
         history = analysis.metadata.get("current_workflow_screen_actions")
+
         if not isinstance(history, list):
             return None
 
         for entry in history:
             if not isinstance(entry, dict):
                 continue
+
             if entry.get("success") is not True:
                 continue
+
             previous_action_type = str(entry.get("action") or entry.get("type") or "").lower()
             if previous_action_type and previous_action_type != action.action_type.value:
                 continue
+
             previous_target = str(entry.get("target") or "")
             if not previous_target:
                 continue
+
             if StepPlanner.__describes_same_target(action=action, previous=previous_target):
                 return (
                     f"Action {action.to_description()!r} already succeeded on the current "
@@ -640,8 +698,8 @@ class StepPlanner:
         memories: int = 0,
         is_recovery: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
-        step_metadata: Optional[Dict[str, Any]] = None,
         metrics: Optional[Dict[str, float]] = None,
+        step_metadata: Optional[Dict[str, Any]] = None,
     ) -> PlanResult:
         """
         Return a PlanResult with the given action and metadata.
@@ -650,10 +708,10 @@ class StepPlanner:
         step: Step = self.__build_step(
             action=action,
             capture=capture,
+            metadata=step_metadata,
             is_recovery=is_recovery,
             step_number=step_number,
             event_type=(metadata or {}).get("event_type"),
-            metadata=step_metadata,
         )
 
         return PlanResult(
@@ -692,12 +750,12 @@ class StepPlanner:
 
         return Step(
             action=action,
+            metadata=metadata or {},
             screen_hash=screen_hash,
             step_number=step_number,
             is_conditional=is_recovery,
             event_type=validated_event_type,
             condition="recovery" if is_recovery else None,
-            metadata=metadata or {},
         )
 
     def __compute_simple_hash(self, *, capture: ScreenCapture) -> str:
@@ -710,7 +768,4 @@ class StepPlanner:
 
         logger.warning("Screen capture state missing visual_hash; falling back to activity hash")
 
-        return hashlib.md5(
-            capture.activity.encode("utf-8"),
-            usedforsecurity=False,
-        ).hexdigest()[:16]
+        return hashlib.md5(capture.activity.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
