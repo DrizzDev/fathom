@@ -101,12 +101,19 @@ class SwipeRetryCoordinatorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(execution.aborted_for)
         self.assertEqual(len(dispatcher.received), 1)
 
-    async def test_aborts_keyboard_blocked_without_any_dispatch(self) -> None:
+    async def test_keyboard_visible_no_longer_blocks_dispatch(self) -> None:
         """
-        When every candidate intersects the keyboard, no swipe is dispatched and abort is KEYBOARD_BLOCKED.
+        Keyboard visibility no longer pre-dispatch rejects swipes; the original
+        gesture is dispatched and the actual effect is observed post-action.
         """
 
-        dispatcher = _RecordingDispatcher(outcomes=[])
+        success = SwipeAttempt(
+            index=0,
+            path=self.__upward_path(),
+            device=DeviceOutcome(succeeded=True),
+            visual=VisualOutcome(changed=True, before="A", after="B"),
+        )
+        dispatcher = _RecordingDispatcher(outcomes=[success])
         coordinator = SwipeRetryCoordinator(planner=SwipeRetryPlanner(), dispatcher=dispatcher)
         keyboard = KeyboardObservation(
             visibility=KeyboardVisibility.VISIBLE,
@@ -127,9 +134,9 @@ class SwipeRetryCoordinatorTest(unittest.IsolatedAsyncioTestCase):
             original_before="A",
         )
 
-        self.assertEqual(len(execution.attempts), 0)
-        self.assertEqual(execution.aborted_for, AbortReason.KEYBOARD_BLOCKED)
-        self.assertEqual(len(dispatcher.received), 0)
+        self.assertEqual(len(execution.attempts), 1)
+        self.assertIsNone(execution.aborted_for)
+        self.assertTrue(execution.effective)
 
     async def test_iterates_retries_when_visual_unchanged(self) -> None:
         """

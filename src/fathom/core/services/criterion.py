@@ -141,14 +141,21 @@ def _tokenize(text: str) -> List[str]:
     return [t for t in tokens if len(t) >= SYMBOLIC_MIN_TOKEN_LEN and t not in _STOPWORDS]
 
 
-class CriterionChecker:
+class CriterionObserver:
     """
-    Tri-state criterion satisfaction check against a typed ScreenObservation.
+    Additive observer that reports whether a sub-goal's typed criterion is
+    observable on the current screen.
 
-    See module docstring for the symbolic-then-LLM layering and the caching
-    contract. The checker never raises into the gate — LLM failures degrade to
-    an UNCLEAR verdict so the completion gate's safety-net path remains in
-    control of the decision.
+    Tri-state verdict (SATISFIED / UNSATISFIED / UNCLEAR) returned via
+    :class:`CriterionDecision`. Logged for RCA on every turn but never gates
+    completion: the multi-signal :class:`CompletionGate` consumes this only
+    as an additive signal that cannot veto an otherwise-conclusive outcome.
+
+    Symbolic-then-LLM layering keeps cost low: a cheap token-overlap pass
+    resolves trivial cases without an LLM call; the LLM judge runs only on
+    UNCLEAR. Cache is positive-only — only SATISFIED verdicts are cached,
+    so transient UNSATISFIED / UNCLEAR results cannot lock a stuck loop in
+    against a screen the agent has actually moved past.
     """
 
     def __init__(self, *, llm: LLMPort) -> None:
@@ -197,13 +204,29 @@ class CriterionChecker:
             )
 
         symbolic = self.__symbolic_check(criterion=criterion, observation=observation)
+
         if symbolic.verdict is not CriterionVerdict.UNCLEAR:
-            self.__cache[cache_key] = symbolic
+            self.__cache_if_satisfied(cache_key=cache_key, decision=symbolic)
             return symbolic
 
         decision = await self.__llm_check(criterion=criterion, observation=observation)
-        self.__cache[cache_key] = decision
+        self.__cache_if_satisfied(cache_key=cache_key, decision=decision)
+
         return decision
+
+    def __cache_if_satisfied(
+        self,
+        *,
+        decision: CriterionDecision,
+        cache_key: Tuple[str, int, str, str],
+    ) -> None:
+        """
+        Cache only SATISFIED verdicts; transient UNSATISFIED/UNCLEAR are never cached,
+        so a stuck loop cannot lock in a wrong verdict against a screen the agent has actually transitioned past.
+        """
+
+        if decision.verdict is CriterionVerdict.SATISFIED:
+            self.__cache[cache_key] = decision
 
     @staticmethod
     def __symbolic_check(*, criterion: str, observation: ScreenObservation) -> CriterionDecision:
@@ -212,13 +235,14 @@ class CriterionChecker:
         """
 
         criterion_tokens = _tokenize(criterion)
+
         if not criterion_tokens:
             return CriterionDecision(
-                verdict=CriterionVerdict.UNCLEAR,
-                source=CriterionSource.SYMBOLIC,
-                confidence=0.0,
                 evidence=(),
-                notes="Criterion has no significant tokens after stopword removal.",
+                confidence=0.0,
+                source=CriterionSource.SYMBOLIC,
+                verdict=CriterionVerdict.UNCLEAR,
+                notes="Criterion has no significant tokens after stop-word removal.",
             )
 
         screen_text = " ".join(
@@ -238,18 +262,18 @@ class CriterionChecker:
                 SYMBOLIC_BASE_CONFIDENCE + 0.15 * (ratio - SYMBOLIC_REQUIRED_HIT_RATIO),
             )
             return CriterionDecision(
-                verdict=CriterionVerdict.SATISFIED,
-                source=CriterionSource.SYMBOLIC,
                 confidence=confidence,
                 evidence=tuple(matched[:6]),
+                source=CriterionSource.SYMBOLIC,
+                verdict=CriterionVerdict.SATISFIED,
                 notes=f"{len(matched)}/{len(criterion_tokens)} tokens matched.",
             )
 
         return CriterionDecision(
-            verdict=CriterionVerdict.UNCLEAR,
-            source=CriterionSource.SYMBOLIC,
             confidence=0.0,
             evidence=tuple(matched[:6]),
+            source=CriterionSource.SYMBOLIC,
+            verdict=CriterionVerdict.UNCLEAR,
             notes=(
                 f"Only {len(matched)}/{len(criterion_tokens)} tokens matched "
                 f"(threshold {SYMBOLIC_REQUIRED_HIT_RATIO})."
@@ -269,28 +293,29 @@ class CriterionChecker:
 
         screen_digest = self.__compact_screen(observation=observation)
         prompt = self.__build_prompt(criterion=criterion, screen_digest=screen_digest)
+
         try:
             result = await self.__llm.generate(
                 use_cache=False,
                 prompt=(prompt,),
                 system_instruction=_SYSTEM_INSTRUCTION,
             )
-        except Exception as exc:  # noqa: BLE001 - intentional broad catch; see docstring
+        except Exception as exception:  # noqa: BLE001 - intentional broad catch; see docstring
             logger.warning(
                 "criterion.llm.failed",
                 extra={
-                    "component": "core.services.criterion",
                     "event": "criterion.llm.failed",
-                    "error.type": type(exc).__name__,
-                    "error.message": str(exc),
+                    "error.message": str(exception),
+                    "error.type": type(exception).__name__,
+                    "component": "core.services.criterion",
                 },
             )
             return CriterionDecision(
-                verdict=CriterionVerdict.UNCLEAR,
-                source=CriterionSource.LLM,
-                confidence=0.0,
                 evidence=(),
-                notes=f"LLM check raised: {type(exc).__name__}",
+                confidence=0.0,
+                source=CriterionSource.LLM,
+                verdict=CriterionVerdict.UNCLEAR,
+                notes=f"LLM check raised: {type(exception).__name__}",
             )
 
         return self.__parse_llm_verdict(content=result.content or "")
@@ -302,16 +327,21 @@ class CriterionChecker:
         """
 
         lines: List[str] = [f"activity: {observation.activity}"]
+
         for element in observation.elements[:LLM_SCREEN_ELEMENT_LIMIT]:
             text = (element.text or "").strip()
             if not text:
                 continue
+
             lines.append(f"- {text}")
+
         if observation.keyboard.visibility.name != "HIDDEN":
             lines.append(f"keyboard: {observation.keyboard.visibility.value}")
+
         for overlay in observation.overlays:
             description = getattr(overlay, "description", None) or "overlay"
             lines.append(f"overlay: {description}")
+
         return "\n".join(lines)
 
     @staticmethod
@@ -336,12 +366,15 @@ class CriterionChecker:
 
         stripped = content.strip()
         head = stripped.upper()
+
         if head.startswith("SATISFIED"):
             verdict = CriterionVerdict.SATISFIED
             confidence = LLM_CONFIDENCE_SATISFIED
+
         elif head.startswith("UNSATISFIED"):
             verdict = CriterionVerdict.UNSATISFIED
             confidence = LLM_CONFIDENCE_UNSATISFIED
+
         else:
             verdict = CriterionVerdict.UNCLEAR
             confidence = LLM_CONFIDENCE_UNCLEAR
@@ -349,10 +382,11 @@ class CriterionChecker:
         # Keep evidence bounded: the leading line is the verdict + rationale,
         # which is the only piece a human RCA reader benefits from.
         leading = stripped.splitlines()[0][:240] if stripped else ""
+
         return CriterionDecision(
-            verdict=verdict,
-            source=CriterionSource.LLM,
-            confidence=confidence,
-            evidence=(leading,) if leading else (),
             notes=None,
+            verdict=verdict,
+            confidence=confidence,
+            source=CriterionSource.LLM,
+            evidence=(leading,) if leading else (),
         )

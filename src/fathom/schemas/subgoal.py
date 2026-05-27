@@ -56,6 +56,15 @@ class SubGoal(BaseModel):
         default=SubGoalStatus.PENDING, description="Current lifecycle status"
     )
 
+    kind: SubGoalKind = Field(
+        default=SubGoalKind.ACTION,
+        description=(
+            "Classification used by the completion gate: ACTION sub-goals require a "
+            "state-mutating action and screen evolution to advance; VALIDATION sub-goals "
+            "advance on an asserted completion claim alone."
+        ),
+    )
+
     # Completion signals (tracked for multi-signal verification)
     flagged_complete: bool = Field(default=False, description="Model raised the completion flag")
     trace_verified: bool = Field(
@@ -73,14 +82,14 @@ class SubGoal(BaseModel):
     )
 
     max_steps: int = Field(
-        default=DEFAULT_SUB_GOAL_MAX_STEPS,
         ge=1,
+        default=DEFAULT_SUB_GOAL_MAX_STEPS,
         description="Maximum graph iterations the agent may spend on this sub-goal.",
     )
 
     deferral_count: int = Field(
-        default=0,
         ge=0,
+        default=0,
         description=(
             "Consecutive escalations deferred by the escalation gate while "
             "this sub-goal was active. Resets on observable progress or is "
@@ -90,8 +99,8 @@ class SubGoal(BaseModel):
         ),
     )
     completion_claim_streak: int = Field(
-        default=0,
         ge=0,
+        default=0,
         description=(
             "Consecutive planner emits of ``validate`` + ``flagged_complete`` "
             "against a non-validate directive while this sub-goal was active. "

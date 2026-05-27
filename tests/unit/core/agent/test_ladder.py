@@ -4,6 +4,7 @@ import unittest
 
 from fathom.constants import ActionType
 from fathom.core.agent.ladder import LoopActionLadder
+from fathom.schemas.capabilities import DeviceCapability
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import LoopDetector
 
@@ -101,6 +102,63 @@ class LoopActionLadderTest(unittest.TestCase):
         ladder.next(detector=detector)
 
         self.assertIsNone(ladder.next(detector=detector))
+
+    def test_ios_capability_skips_back_rung_first_attempt_returns_scroll(self) -> None:
+        """
+        qMrGC replay: an iOS device adapter that cannot dispatch BACK must
+        cause the ladder to start at SCROLL instead, never emitting BACK.
+        """
+
+        detector = LoopDetector(max_recovery=3)
+        ladder = LoopActionLadder(
+            device=DeviceCapability(system_back_supported=False),
+        )
+
+        action = ladder.next(detector=detector)
+
+        self.assertIsNotNone(action)
+        assert action is not None
+        self.assertEqual(action.action_type, ActionType.SCROLL)
+
+    def test_ios_capability_second_attempt_returns_home(self) -> None:
+        """
+        With BACK filtered out, the ladder collapses to SCROLL then HOME.
+        """
+
+        detector = LoopDetector(max_recovery=3)
+        ladder = LoopActionLadder(
+            device=DeviceCapability(system_back_supported=False),
+        )
+
+        ladder.next(detector=detector)
+        action = ladder.next(detector=detector)
+
+        self.assertIsNotNone(action)
+        assert action is not None
+        self.assertEqual(action.action_type, ActionType.HOME)
+
+    def test_ios_capability_with_scroll_loop_skips_to_home(self) -> None:
+        """
+        iOS device with an already-scrolling stuck signal: SCROLL is filtered
+        at the rung level only by capability, but the runtime scroll-loop
+        check still bypasses SCROLL — the agent goes straight to HOME.
+        """
+
+        detector = LoopDetector(max_recovery=3)
+        detector.record(
+            screen=self.__screen(),
+            action_type="swipe_up",
+            action_description="Swipe up on feed",
+        )
+        ladder = LoopActionLadder(
+            device=DeviceCapability(system_back_supported=False),
+        )
+
+        action = ladder.next(detector=detector)
+
+        self.assertIsNotNone(action)
+        assert action is not None
+        self.assertEqual(action.action_type, ActionType.HOME)
 
     @staticmethod
     def __screen() -> ScreenState:

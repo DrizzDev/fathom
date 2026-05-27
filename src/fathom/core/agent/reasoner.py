@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from difflib import SequenceMatcher
 from logging import getLogger
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 from fathom.constants import (
     ACTION_EXECUTED_TYPES,
@@ -21,8 +21,17 @@ from fathom.constants.reasoning import (
     RATIONALE_MIN_SIMILARITY_FLOOR,
 )
 from fathom.schemas.actions import Action
+from fathom.schemas.completion import (
+    ActionEvidence,
+    ClaimEvidence,
+    CompletionEvidence,
+    CriterionEvidence,
+    ScreenEvidence,
+)
+from fathom.schemas.criterion import CriterionDecision, CriterionVerdict
 from fathom.schemas.reasoning import CompletionSignal, SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult
+from fathom.schemas.subgoal import SubGoal
 
 logger = getLogger(name=__name__)
 
@@ -240,6 +249,74 @@ class Reasoner:
         )
         return signal
 
+    def assess_completion(
+        self,
+        *,
+        sub_goal: SubGoal,
+        screen_changed: bool,
+        analysis: AnalysisResult,
+        delta_score: Optional[float] = None,
+        screen_description: Optional[str] = None,
+        criterion_decision: Optional[CriterionDecision] = None,
+    ) -> CompletionEvidence:
+        """
+        Collect this turn's evidence into a typed CompletionEvidence bundle.
+        """
+
+        notes: List[str] = []
+        target = sub_goal.description.lower()
+
+        asserted = (
+            analysis.is_sub_goal_complete
+            or analysis.is_goal_complete
+            or analysis.action.action_type == ActionType.COMPLETE
+        )
+        if asserted:
+            notes.append("claim.asserted: model flagged completion via tool output")
+
+        justified, rationale_note, _, _ = self.__verify_rationale(
+            target=target,
+            analysis=analysis,
+            flagged_complete=asserted,
+            screen_description=screen_description,
+        )
+        if justified and rationale_note is not None:
+            notes.append(f"claim.justified: {rationale_note}")
+
+        dispatched = analysis.action.action_type in ACTION_EXECUTED_TYPES
+        if dispatched:
+            notes.append(f"action.dispatched: {analysis.action.action_type.value}")
+
+        evolved, screen_note = self.__verify_screen_change(
+            delta_score=delta_score,
+            screen_changed=screen_changed,
+        )
+
+        if evolved:
+            notes.append(f"screen.evolved: {screen_note}")
+        elif asserted:
+            notes.append(f"screen.unchanged_despite_claim: {screen_note}")
+
+        criterion_evidence: Optional[CriterionEvidence] = None
+
+        if criterion_decision is not None:
+            criterion_observed = criterion_decision.verdict is CriterionVerdict.SATISFIED
+            criterion_evidence = CriterionEvidence(observed=criterion_observed)
+
+            notes.append(
+                f"criterion.{'observed' if criterion_observed else 'not_observed'}: "
+                f"verdict={criterion_decision.verdict.value} "
+                f"confidence={criterion_decision.confidence:.2f}"
+            )
+
+        return CompletionEvidence(
+            notes=tuple(notes),
+            criterion=criterion_evidence,
+            screen=ScreenEvidence(evolved=evolved),
+            action=ActionEvidence(dispatched=dispatched),
+            claim=ClaimEvidence(asserted=asserted, justified=justified),
+        )
+
     @staticmethod
     def __verify_rationale(
         *,
@@ -247,7 +324,7 @@ class Reasoner:
         flagged_complete: bool,
         analysis: AnalysisResult,
         screen_description: Optional[str],
-    ) -> tuple[bool, Optional[str], bool, float]:
+    ) -> Tuple[bool, Optional[str], bool, float]:
         """
         Decide rationale verification.
         Returns ``(verified, evidence, keyword_match, similarity)``.
@@ -285,9 +362,9 @@ class Reasoner:
                 "Rationale rejected: completion keyword present but similarity below floor",
                 extra={
                     "component": "reasoner",
-                    "event": "rationale.rejected.below_similarity_floor",
                     "similarity": round(similarity, 3),
                     "floor": RATIONALE_MIN_SIMILARITY_FLOOR,
+                    "event": "rationale.rejected.below_similarity_floor",
                 },
             )
 
@@ -296,8 +373,8 @@ class Reasoner:
     @staticmethod
     def __verify_screen_change(
         *,
-        delta_score: Optional[float],
         screen_changed: bool,
+        delta_score: Optional[float],
     ) -> tuple[bool, str]:
         """
         Decide screen verification. Returns ``(verified, evidence)``.

@@ -81,7 +81,8 @@ class AgentState:
             loop_window=context_window,
             realignment_budget=realignment_budget,
         )
-        self.__loop_action_ladder = LoopActionLadder()
+
+        self.__loop_action_ladder = LoopActionLadder(device=capabilities.device)
         self.__recovery_gate = RecoveryGate(active_kinds=AUTONOMOUS_RECOVERY_ACTIVE_KINDS)
 
         self.__is_complete = False

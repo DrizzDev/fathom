@@ -1,5 +1,5 @@
 """
-Unit pins for :class:`CriterionChecker`.
+Unit pins for :class:`CriterionObserver`.
 
 Covers the symbolic match layer, the LLM fallback layer (mocked), the
 action-criterion guard ("don't infer that actions happened"), and the
@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 
 from fathom.constants import ActionType
 from fathom.constants.observation import KeyboardVisibility
-from fathom.core.services.criterion import CriterionChecker
+from fathom.core.services.criterion import CriterionObserver
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.actions import Bounds
 from fathom.schemas.criterion import CriterionSource, CriterionVerdict
@@ -121,7 +121,7 @@ def _sub_goal(
     )
 
 
-class CriterionCheckerSymbolicTest(unittest.IsolatedAsyncioTestCase):
+class CriterionObserverSymbolicTest(unittest.IsolatedAsyncioTestCase):
     """
     Symbolic-layer pins: hit-ratio threshold, evidence capture, miss-then-fallback.
     """
@@ -132,7 +132,7 @@ class CriterionCheckerSymbolicTest(unittest.IsolatedAsyncioTestCase):
         """
 
         llm = _StubLLM(responses=[])
-        checker = CriterionChecker(llm=llm)
+        checker = CriterionObserver(llm=llm)
         observation = _observation(
             texts=["Jars", "&", "Containers", "Top rated"],
         )
@@ -159,7 +159,7 @@ class CriterionCheckerSymbolicTest(unittest.IsolatedAsyncioTestCase):
         """
 
         llm = _StubLLM(responses=["SATISFIED — page header confirms."])
-        checker = CriterionChecker(llm=llm)
+        checker = CriterionObserver(llm=llm)
         observation = _observation(texts=["Home", "Categories"])
         sub_goal = _sub_goal(
             index=0,
@@ -177,7 +177,7 @@ class CriterionCheckerSymbolicTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(llm.calls, 1)
 
 
-class CriterionCheckerLLMLayerTest(unittest.IsolatedAsyncioTestCase):
+class CriterionObserverLLMLayerTest(unittest.IsolatedAsyncioTestCase):
     """
     LLM-layer pins: tri-state mapping, error degrades to UNCLEAR, leading-line evidence.
     """
@@ -188,7 +188,7 @@ class CriterionCheckerLLMLayerTest(unittest.IsolatedAsyncioTestCase):
         """
 
         llm = _StubLLM(responses=["UNSATISFIED — login card not present."])
-        checker = CriterionChecker(llm=llm)
+        checker = CriterionObserver(llm=llm)
         observation = _observation(texts=["Home", "Categories"])
         sub_goal = _sub_goal(
             index=0,
@@ -210,7 +210,7 @@ class CriterionCheckerLLMLayerTest(unittest.IsolatedAsyncioTestCase):
         """
 
         llm = _StubLLM(responses=["UNCLEAR — not enough evidence on this screen."])
-        checker = CriterionChecker(llm=llm)
+        checker = CriterionObserver(llm=llm)
         observation = _observation(texts=["Home", "Categories"])
         sub_goal = _sub_goal(
             index=0,
@@ -233,7 +233,7 @@ class CriterionCheckerLLMLayerTest(unittest.IsolatedAsyncioTestCase):
 
         llm = AsyncMock(spec=LLMPort)
         llm.generate.side_effect = RuntimeError("provider down")
-        checker = CriterionChecker(llm=llm)
+        checker = CriterionObserver(llm=llm)
         observation = _observation(texts=["Home"])
         sub_goal = _sub_goal(
             index=0,
@@ -251,23 +251,55 @@ class CriterionCheckerLLMLayerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("RuntimeError", decision.notes or "")
 
 
-class CriterionCheckerCacheTest(unittest.IsolatedAsyncioTestCase):
+class CriterionObserverCacheTest(unittest.IsolatedAsyncioTestCase):
     """
-    Cache pins: repeated check on same (workflow, sub-goal, screen, criterion) does not re-call LLM.
+    Cache pins: positive-only cache. SATISFIED verdicts are cached;
+    UNSATISFIED and UNCLEAR verdicts are not cached and re-invoke the LLM
+    so a stuck loop cannot lock in a wrong verdict.
     """
 
-    async def test_repeated_check_returns_cache_source(self) -> None:
+    async def test_satisfied_verdict_is_cached(self) -> None:
         """
-        Second call against identical inputs uses the cache; LLM is not re-invoked.
+        Repeated check with SATISFIED first call hits cache on second call.
         """
 
         llm = _StubLLM(
             responses=[
-                "UNSATISFIED — first call goes to LLM.",
-                "SATISFIED — would change verdict if called.",
+                "SATISFIED — first call goes to LLM.",
+                "UNSATISFIED — would change verdict if called.",
             ]
         )
-        checker = CriterionChecker(llm=llm)
+        checker = CriterionObserver(llm=llm)
+        observation = _observation(texts=["Home"], visual_hash="hX")
+        sub_goal = _sub_goal(
+            index=0,
+            criterion="Login half card is displayed on the screen.",
+        )
+
+        first = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
+        second = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
+
+        self.assertEqual(first.verdict, CriterionVerdict.SATISFIED)
+        self.assertEqual(first.source, CriterionSource.LLM)
+        self.assertEqual(second.verdict, CriterionVerdict.SATISFIED)
+        self.assertEqual(second.source, CriterionSource.CACHE)
+        self.assertEqual(llm.calls, 1)
+
+    async def test_unsatisfied_verdict_is_not_cached(self) -> None:
+        """
+        Repeated check with UNSATISFIED first call re-invokes the LLM
+        — positive-only cache guarantees a stuck loop cannot lock in a
+        wrong UNSATISFIED verdict against a screen the agent has actually
+        transitioned past.
+        """
+
+        llm = _StubLLM(
+            responses=[
+                "UNSATISFIED — first call.",
+                "SATISFIED — second call sees post-state.",
+            ]
+        )
+        checker = CriterionObserver(llm=llm)
         observation = _observation(texts=["Home"], visual_hash="hX")
         sub_goal = _sub_goal(
             index=0,
@@ -279,22 +311,49 @@ class CriterionCheckerCacheTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(first.verdict, CriterionVerdict.UNSATISFIED)
         self.assertEqual(first.source, CriterionSource.LLM)
-        self.assertEqual(second.verdict, CriterionVerdict.UNSATISFIED)
-        self.assertEqual(second.source, CriterionSource.CACHE)
-        self.assertEqual(llm.calls, 1)
+        self.assertEqual(second.verdict, CriterionVerdict.SATISFIED)
+        self.assertEqual(second.source, CriterionSource.LLM)
+        self.assertEqual(llm.calls, 2)
 
-    async def test_distinct_screen_hash_bypasses_cache(self) -> None:
+    async def test_unclear_verdict_is_not_cached(self) -> None:
         """
-        A different visual_hash forces a fresh check.
+        Repeated check with UNCLEAR first call re-invokes the LLM.
         """
 
         llm = _StubLLM(
             responses=[
-                "UNSATISFIED — screen A.",
-                "SATISFIED — screen B has it.",
+                "UNCLEAR — not enough evidence on first call.",
+                "SATISFIED — second call resolves.",
             ]
         )
-        checker = CriterionChecker(llm=llm)
+        checker = CriterionObserver(llm=llm)
+        observation = _observation(texts=["Home"], visual_hash="hX")
+        sub_goal = _sub_goal(
+            index=0,
+            criterion="Login half card is displayed on the screen.",
+        )
+
+        first = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
+        second = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
+
+        self.assertEqual(first.verdict, CriterionVerdict.UNCLEAR)
+        self.assertEqual(first.source, CriterionSource.LLM)
+        self.assertEqual(second.verdict, CriterionVerdict.SATISFIED)
+        self.assertEqual(second.source, CriterionSource.LLM)
+        self.assertEqual(llm.calls, 2)
+
+    async def test_distinct_screen_hash_bypasses_cache(self) -> None:
+        """
+        A different visual_hash forces a fresh check even for cached SATISFIED.
+        """
+
+        llm = _StubLLM(
+            responses=[
+                "SATISFIED — screen A.",
+                "UNSATISFIED — screen B does not have it.",
+            ]
+        )
+        checker = CriterionObserver(llm=llm)
         sub_goal = _sub_goal(
             index=0,
             criterion="Login half card is displayed on the screen.",
@@ -311,12 +370,12 @@ class CriterionCheckerCacheTest(unittest.IsolatedAsyncioTestCase):
             observation=_observation(texts=["Home"], visual_hash="hB"),
         )
 
-        self.assertEqual(first.verdict, CriterionVerdict.UNSATISFIED)
-        self.assertEqual(second.verdict, CriterionVerdict.SATISFIED)
+        self.assertEqual(first.verdict, CriterionVerdict.SATISFIED)
+        self.assertEqual(second.verdict, CriterionVerdict.UNSATISFIED)
         self.assertEqual(llm.calls, 2)
 
 
-class CriterionCheckerEmptyCriterionTest(unittest.IsolatedAsyncioTestCase):
+class CriterionObserverEmptyCriterionTest(unittest.IsolatedAsyncioTestCase):
     """
     Pins for sub-goals lacking criterion text.
     """
@@ -327,7 +386,7 @@ class CriterionCheckerEmptyCriterionTest(unittest.IsolatedAsyncioTestCase):
         """
 
         llm = _StubLLM(responses=[])
-        checker = CriterionChecker(llm=llm)
+        checker = CriterionObserver(llm=llm)
         sub_goal = SubGoal(index=0, description="", criterion=None, directive=None)
 
         decision = await checker.check(

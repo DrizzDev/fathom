@@ -37,9 +37,11 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
 
         return GesturePath(start_x=540, start_y=start_y, end_x=540, end_y=end_y, duration=300)
 
-    def test_keyboard_blocked_returns_only_rejection(self) -> None:
+    def test_keyboard_intersection_no_longer_pre_dispatch_rejects(self) -> None:
         """
-        Original gesture intersecting the visible keyboard is rejected for KEYBOARD_BLOCKED.
+        Original gesture intersecting the visible keyboard region is still dispatched.
+        Keyboard avoidance is delegated to post-dispatch observation; rectangle-only
+        intersection guesswork pre-dispatch caused short-container swipes to never fire.
         """
 
         keyboard = KeyboardObservation(
@@ -61,9 +63,8 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
             keyboard=keyboard,
         )
 
-        self.assertEqual(len(sequence.accepted), 0)
-        self.assertEqual(len(sequence.rejections), 1)
-        self.assertEqual(sequence.rejections[0].reason, AbortReason.KEYBOARD_BLOCKED)
+        self.assertEqual(len(sequence.accepted), 1)
+        self.assertEqual(len(sequence.rejections), 0)
 
     def test_original_accepted_when_no_keyboard(self) -> None:
         """
@@ -108,9 +109,10 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
         self.assertLess(starts[2], starts[1])
         self.assertLess(starts[3], starts[2])
 
-    def test_retries_blocked_by_keyboard_are_rejected(self) -> None:
+    def test_retries_through_keyboard_region_are_accepted(self) -> None:
         """
-        Retry candidates whose shifted start lands inside the keyboard region are rejected.
+        Retry candidates whose shifted start lands inside the keyboard region
+        are no longer pre-dispatch rejected; they are dispatched and observed.
         """
 
         policy = SwipeRetryPolicy(
@@ -137,11 +139,16 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
         )
 
         rejection_reasons = {rejection.reason for rejection in sequence.rejections}
-        self.assertIn(AbortReason.KEYBOARD_BLOCKED, rejection_reasons)
+        self.assertNotIn(AbortReason.KEYBOARD_BLOCKED, rejection_reasons)
+        self.assertGreaterEqual(len(sequence.accepted), 1)
 
-    def test_minimum_travel_violation_rejected(self) -> None:
+    def test_short_travel_original_is_dispatched_cGJoU_replay(self) -> None:
         """
-        Candidates that collapse below ``minimum_travel`` are rejected for MINIMUM_TRAVEL_VIOLATED.
+        cGJoU replay: a gesture whose travel would have triggered the legacy
+        MINIMUM_TRAVEL_VIOLATED pre-dispatch reject is now dispatched. The
+        decision of whether the swipe was effective happens post-dispatch by
+        observing screen evolution; the coordinator falls through to shifted
+        candidates only when the original produces no visual change.
         """
 
         policy = SwipeRetryPolicy(enabled=False, minimum_travel=300)
@@ -152,8 +159,9 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
             keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
         )
 
-        self.assertEqual(len(sequence.accepted), 0)
-        self.assertEqual(sequence.rejections[0].reason, AbortReason.MINIMUM_TRAVEL_VIOLATED)
+        self.assertEqual(len(sequence.accepted), 1)
+        rejection_reasons = {rejection.reason for rejection in sequence.rejections}
+        self.assertNotIn(AbortReason.MINIMUM_TRAVEL_VIOLATED, rejection_reasons)
 
 
 class SwipeRetryPlannerHorizontalTest(unittest.TestCase):

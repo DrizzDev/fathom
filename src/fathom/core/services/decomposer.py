@@ -17,6 +17,7 @@ from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.decomposition import DecomposedTask, DecompositionSchema
 from fathom.schemas.subgoal import (
     SubGoal,
+    SubGoalKind,
     SubGoalStatus,
 )
 
@@ -238,13 +239,46 @@ class IntentDecomposer:
                 criterion=entry.criterion,
                 directive=entry.directive,
                 description=entry.description,
+                kind=IntentDecomposer.__classify_kind(
+                    directive=entry.directive, description=entry.description
+                ),
             )
+
+        description = str(entry)
 
         return SubGoal(
             index=index,
-            description=str(entry),
             confidence=confidence,
+            description=description,
+            kind=IntentDecomposer.__classify_kind(directive=None, description=description),
         )
+
+    @staticmethod
+    def __classify_kind(
+        *,
+        description: str,
+        directive: Optional[ActionType],
+    ) -> SubGoalKind:
+        """
+        Classify a sub-goal by its structured directive: VALIDATE directive maps
+        to VALIDATION, every other directive (and the legacy directive=None
+        case) maps to ACTION. The directive is the single authoritative source —
+        no description-string heuristics, which historically misclassified
+        action sub-goals whose button names contained validation keywords
+        (e.g. "Tap on Confirm location button").
+
+        Legacy decompositions with directive=None default to ACTION, the
+        stricter threshold; this is intentional safety: a legacy validation
+        sub-goal still advances under the 3-of-3 ACTION policy on real
+        evidence, never on a guessed classification.
+        """
+
+        _ = description
+
+        if directive is ActionType.VALIDATE:
+            return SubGoalKind.VALIDATION
+
+        return SubGoalKind.ACTION
 
     @staticmethod
     def __structured_dump(*, sub_goals: List[SubGoal]) -> List[Dict[str, Any]]:

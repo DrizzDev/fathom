@@ -9,6 +9,7 @@ from fathom.adapters.journal.noop import NoopRuntimeJournal
 from fathom.adapters.ocr.noop import NoopOcr
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
 from fathom.base.paths import SharedPathManager
+from fathom.constants.platform import DevicePlatform
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
@@ -44,7 +45,11 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.processing.parsers.signature import HierarchySignatureBuilder
-from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
+from fathom.schemas.capabilities import (
+    DeviceCapability,
+    HITLCapability,
+    RuntimeCapabilities,
+)
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
@@ -136,6 +141,9 @@ class GraphContext:
 
         self.__capabilities = RuntimeCapabilities(
             hitl=HITLCapability(enabled=signal.supports_interruption()),
+            device=DeviceCapability(
+                system_back_supported=configuration.device.platform != DevicePlatform.IOS,
+            ),
         )
         self.__tool_scope = ToolScope()
 
