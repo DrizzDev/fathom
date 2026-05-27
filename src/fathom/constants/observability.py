@@ -8,7 +8,6 @@ class CompletionEvent(StrEnum):
     Structured log event names emitted across the completion-gate pipeline.
     """
 
-
     SUBGOAL_ADVANCED = "completion.subgoal.advanced"
     SUBGOAL_RETAINED = "completion.subgoal.retained"
     INTENT_COMPLETED = "completion.intent.completed"
@@ -26,4 +25,3 @@ class SwipeEvent(StrEnum):
     GESTURE_ADAPTED = "swipe.gesture.adapted"
     GESTURE_REJECTED = "swipe.gesture.rejected"
     GESTURE_DISPATCHED = "swipe.gesture.dispatched"
-    

@@ -52,8 +52,12 @@ class LLMConfiguration(BaseModel):
         description="Whether to include the model's reasoning process in the response.",
     )
     media_resolution: Literal["low", "medium", "high"] = Field(
-        default="low",
-        description="Vision token density. 'low' is recommended for high-speed agents.",
+        default="high",
+        description=(
+            "Vision token density. 'high' gives Gemini more vertical resolution "
+            "and is required for accurate bbox grounding on tall mobile screenshots. "
+            "Lower values trade latency for spatial accuracy on the failure path; for live agents the oss-of-grounding cost dominates."
+        ),
     )
 
     # Common hyper-parameters

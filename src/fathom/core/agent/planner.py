@@ -379,9 +379,28 @@ class StepPlanner:
             analysis=analysis,
         )
         if current_screen_repeat is not None:
+            current_sub_goal = state.get_current_sub_goal()
             logger.warning(
                 "[Planner] Blocking repeated current-screen action: %s",
                 current_screen_repeat,
+                extra={
+                    "step.count": state.step_count,
+                    "component": "core.agent.planner",
+                    "action.type": action.action_type.value,
+                    "action.label_id": action.label_id,
+                    "block.reason": current_screen_repeat,
+                    "loop_detector.is_stuck": state.is_stuck,
+                    "event": "planner.block.repeated_current_screen",
+                    "loop_detector.stuck_reason": state.loop_evidence().reason.value,
+                    "loop_detector.recent_turns_count": len(state.loop_evidence().recent),
+                    "action.target": (action.target or action.natural_language_target or "")[:80],
+                    "sub_goal.index": (
+                        current_sub_goal.index if current_sub_goal is not None else None
+                    ),
+                    "sub_goal.description": (
+                        current_sub_goal.description[:80] if current_sub_goal is not None else None
+                    ),
+                },
             )
             state.record_blocked_action(
                 action=action,

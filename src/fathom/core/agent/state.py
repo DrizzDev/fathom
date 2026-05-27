@@ -328,20 +328,45 @@ class AgentState:
         is_new_screen = self.__runtime.screen.is_new(screen=screen)
         self.__runtime.screen.update(screen=screen, observation=None)
 
+        screen_decision_context: Dict[str, Any] = {
+            "is_new_screen": is_new_screen,
+            "component": "core.agent.state",
+            "current.activity": screen.activity,
+            "event": "screen.observation.recorded",
+            "current.visual_hash": screen.visual_hash[:16],
+            "current.activity_hash": screen.activity_hash[:16],
+            "previous.visual_hash": (previous_screen.visual_hash[:16] if previous_screen else None),
+            "previous.activity_hash": (
+                previous_screen.activity_hash[:16] if previous_screen else None
+            ),
+            "last_action.type": self.__last_action_type,
+            "last_action.description": (self.__last_action_description or "")[:80],
+        }
+
         if is_new_screen:
             self.__runtime.screen.remember(screen=screen)
-            logger.debug(f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})")
+            logger.info(
+                f"New screen detected: {screen.visual_hash[:8]} ({screen.activity})",
+                extra={**screen_decision_context, "branch": "new.screen"},
+            )
             # Loop detector owns the visual-progress policy:
             # it advances only when the new screen is visually distinct from the previous one, ignoring xml/interaction hash flips.
             self.__runtime.screen.detector.observe_screen(previous=previous_screen, current=screen)
 
         elif previous_screen and previous_screen.activity_hash != screen.activity_hash:
-            logger.debug(
+            logger.info(
                 f"Activity changed on known screen: {previous_screen.activity} -> "
-                f"{screen.activity}. Preserving loop detector state."
+                f"{screen.activity}. Preserving loop detector state.",
+                extra={
+                    **screen_decision_context,
+                    "branch": "activity.changed.known.screen",
+                },
             )
         else:
-            logger.debug(f"Returning to known screen: {screen.visual_hash[:8]}")
+            logger.info(
+                f"Returning to known screen: {screen.visual_hash[:8]}",
+                extra={**screen_decision_context, "branch": "returning.to.known.screen"},
+            )
 
         last_effect = self.__runtime.effects.last_effect()
 
@@ -352,9 +377,9 @@ class AgentState:
         )
         self.__runtime.screen.detector.record(
             screen=screen,
+            effect_status=effect_status,
             action_type=self.__last_action_type,
             action_description=self.__last_action_description,
-            effect_status=effect_status,
         )
         return is_new_screen
 

@@ -450,11 +450,21 @@ class ActionExecutor:
     ) -> PrimitiveExecution:
         """
         Execute back action.
+        Adapters that cannot dispatch a system back (e.g. iOS, which has no OS-level back gesture) raise :class:`NotImplementedError`
         """
 
+        try:
+            result = await self.__device.back()
+        except NotImplementedError as exception:
+            result = ActionResult(
+                duration=0,
+                success=False,
+                error=f"Device does not support back action: {exception}",
+            )
+
         return PrimitiveExecution(
-            action=await self.__device.back(),
             coords=None,
+            action=result,
             swipe_execution=None,
         )
 
@@ -466,9 +476,9 @@ class ActionExecutor:
         """
 
         return PrimitiveExecution(
-            action=await self.__device.home(),
             coords=None,
             swipe_execution=None,
+            action=await self.__device.home(),
         )
 
     async def __execute_enter(
@@ -481,8 +491,8 @@ class ActionExecutor:
         if not hasattr(self.__device, "enter"):
             return PrimitiveExecution(
                 action=ActionResult(
-                    success=False,
                     duration=0,
+                    success=False,
                     error="Device does not support enter action",
                 ),
                 coords=None,
@@ -490,9 +500,9 @@ class ActionExecutor:
             )
 
         return PrimitiveExecution(
-            action=await self.__device.enter(),
             coords=None,
             swipe_execution=None,
+            action=await self.__device.enter(),
         )
 
     async def __execute_hide_keyboard(
@@ -504,27 +514,36 @@ class ActionExecutor:
 
         if hasattr(self.__device, "hide_keyboard"):
             return PrimitiveExecution(
-                action=await self.__device.hide_keyboard(),
                 coords=None,
                 swipe_execution=None,
+                action=await self.__device.hide_keyboard(),
+            )
+
+        try:
+            result = await self.__device.back()
+        except NotImplementedError as exception:
+            result = ActionResult(
+                duration=0,
+                success=False,
+                error=f"Cannot hide keyboard: device does not support back fallback: {exception}",
             )
 
         return PrimitiveExecution(
-            action=await self.__device.back(),
             coords=None,
+            action=result,
             swipe_execution=None,
         )
 
     async def __execute_tap(
         self,
-        action: Action,
-        converter: CoordinateConverter,
+        step: Step,
         width: int,
         height: int,
-        pre_capture: ScreenCapture,
-        step: Step,
+        action: Action,
         session_id: str,
         package_name: str,
+        pre_capture: ScreenCapture,
+        converter: CoordinateConverter,
     ) -> PrimitiveExecution:
         """
         Helper Method To Execute `TAP` Command
@@ -539,12 +558,13 @@ class ActionExecutor:
         coords = (x, y)
         result = await self.__device.tap(x=x, y=y)
         trace_event = ActionTraceEvent(capture=pre_capture, coords=coords)
+
         await self.__emit_trace_event(
             step=step,
+            action=action,
             event=trace_event,
             session_id=session_id,
             package_name=package_name,
-            action=action,
         )
 
         return PrimitiveExecution(
@@ -556,14 +576,14 @@ class ActionExecutor:
 
     async def __execute_type(
         self,
+        step: Step,
         width: int,
         height: int,
         action: Action,
-        converter: CoordinateConverter,
-        pre_capture: ScreenCapture,
-        step: Step,
         session_id: str,
         package_name: str,
+        pre_capture: ScreenCapture,
+        converter: CoordinateConverter,
     ) -> PrimitiveExecution:
         """
         Execute TYPE command: focus tap, stabilization wait, then type.
@@ -603,10 +623,10 @@ class ActionExecutor:
         trace_event = ActionTraceEvent(capture=pre_capture, coords=coords)
         await self.__emit_trace_event(
             step=step,
+            action=action,
             event=trace_event,
             session_id=session_id,
             package_name=package_name,
-            action=action,
         )
 
         return PrimitiveExecution(
@@ -639,14 +659,14 @@ class ActionExecutor:
     async def __execute_swipe(
         self,
         *,
-        action: Action,
-        converter: CoordinateConverter,
-        pre_capture: ScreenCapture,
-        observation: Optional[ScreenObservation],
-        is_cancelled: CancelCheck | None,
         step: Step,
+        action: Action,
         session_id: str,
         package_name: str,
+        pre_capture: ScreenCapture,
+        converter: CoordinateConverter,
+        is_cancelled: Optional[CancelCheck],
+        observation: Optional[ScreenObservation],
     ) -> PrimitiveExecution:
         """
         Dispatch one logical swipe through the keyboard-aware retry coordinator.
@@ -675,27 +695,27 @@ class ActionExecutor:
         )
 
         return await self.__coordinate_and_emit(
-            action=action,
+            step=step,
             path=path,
+            action=action,
             region=region,
+            session_id=session_id,
             pre_capture=pre_capture,
             observation=observation,
-            step=step,
-            session_id=session_id,
             package_name=package_name,
         )
 
     async def __execute_scroll(
         self,
         *,
-        action: Action,
-        converter: CoordinateConverter,
-        pre_capture: ScreenCapture,
-        observation: Optional[ScreenObservation],
-        is_cancelled: CancelCheck | None,
         step: Step,
+        action: Action,
         session_id: str,
         package_name: str,
+        pre_capture: ScreenCapture,
+        converter: CoordinateConverter,
+        is_cancelled: Optional[CancelCheck],
+        observation: Optional[ScreenObservation],
     ) -> PrimitiveExecution:
         """
         Dispatch the default downward scroll through the keyboard-aware retry coordinator.
@@ -867,6 +887,7 @@ class ActionExecutor:
         if execution.effective:
             last = execution.attempts[-1]
             duration = last.path.duration
+
             return ActionResult(success=True, duration=duration)
 
         if execution.attempts:
@@ -982,6 +1003,7 @@ class ActionExecutor:
         # Long-press via static swipe avoids triggering a separate tap side-effect.
         long_press_result = await self.__device.swipe(x1=x, y1=y, x2=x, y2=y, duration=1000)
         trace_event = ActionTraceEvent(capture=pre_capture, coords=coords)
+
         await self.__emit_trace_event(
             step=step,
             action=action,

@@ -142,7 +142,7 @@ class GraphContext:
         self.__capabilities = RuntimeCapabilities(
             hitl=HITLCapability(enabled=signal.supports_interruption()),
             device=DeviceCapability(
-                system_back_supported=configuration.device.platform != DevicePlatform.IOS,
+                system_back_supported=self.__resolve_supports_back(device=device),
             ),
         )
         self.__tool_scope = ToolScope()
@@ -249,6 +249,18 @@ class GraphContext:
             journal=self.__journal,
             workflow_id=workflow_id,
         )
+
+    @staticmethod
+    def __resolve_supports_back(*, device: DevicePort) -> bool:
+        """
+        Return whether the live device adapter can dispatch a system back action.
+        """
+
+        runtime = device.configuration
+        if runtime is None:
+            return True
+
+        return runtime.platform is not DevicePlatform.IOS
 
     @property
     def intent(self) -> str:

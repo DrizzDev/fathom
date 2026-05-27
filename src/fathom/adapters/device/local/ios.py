@@ -242,21 +242,10 @@ class IOSDevice(DevicePort):
 
     async def back(self) -> ActionResult:
         """
-        Attempt back navigation via a left-edge swipe gesture.
+        iOS has no system-level back gesture.
         """
 
-        width, height = await self.get_dimensions()
-        y = int(height * self.__gesture_defaults.back_y_ratio)
-        x1 = int(width * self.__gesture_defaults.back_start_x_ratio)
-        x2 = int(width * self.__gesture_defaults.back_end_x_ratio)
-
-        return await self.swipe(
-            x1=x1,
-            y1=y,
-            x2=x2,
-            y2=y,
-            duration=self.__gesture_defaults.back_duration,
-        )
+        raise NotImplementedError("iOS has no system-level back gesture.")
 
     async def home(self) -> ActionResult:
         """

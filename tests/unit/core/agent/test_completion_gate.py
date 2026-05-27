@@ -59,9 +59,7 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(
-                asserted=True, justified=True, dispatched=True, evolved=True
-            ),
+            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=True),
             sub_goal=self.__sub_goal(),
         )
 
@@ -74,9 +72,7 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(
-                asserted=False, justified=True, dispatched=True, evolved=True
-            ),
+            evidence=self.__evidence(asserted=False, justified=True, dispatched=True, evolved=True),
             sub_goal=self.__sub_goal(),
         )
 
@@ -89,9 +85,7 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(
-                asserted=True, justified=False, dispatched=True, evolved=True
-            ),
+            evidence=self.__evidence(asserted=True, justified=False, dispatched=True, evolved=True),
             sub_goal=self.__sub_goal(),
         )
 
@@ -104,9 +98,7 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(
-                asserted=True, justified=True, dispatched=False, evolved=True
-            ),
+            evidence=self.__evidence(asserted=True, justified=True, dispatched=False, evolved=True),
             sub_goal=self.__sub_goal(),
         )
 
@@ -119,9 +111,7 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(
-                asserted=True, justified=True, dispatched=True, evolved=False
-            ),
+            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False),
             sub_goal=self.__sub_goal(),
         )
 

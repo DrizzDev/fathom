@@ -799,3 +799,119 @@ class ActionExecutorScrollRetryTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.success)
         self.assertEqual(device.swipe_calls, [])
         self.assertEqual(result.error, "scroll blocked by visible keyboard")
+
+
+class _DeviceWithoutBack(FakeDevice):
+    """
+    FakeDevice variant whose back() raises NotImplementedError, modelling
+    iOS adapters that have no system back gesture.
+    """
+
+    async def back(self) -> ActionResult:
+        """
+        Refuse back navigation the way an iOS adapter does.
+        """
+
+        raise NotImplementedError("iOS has no system-level back gesture.")
+
+
+class ActionExecutorBackUnsupportedTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Verify the executor returns a graceful soft-failure ActionResult instead
+    of letting NotImplementedError propagate when a device refuses BACK.
+    """
+
+    @staticmethod
+    def __build_step(action: Action) -> Step:
+        """
+        Wrap an action in a minimal Step for the executor.
+        """
+
+        return Step(
+            metadata={},
+            action=action,
+            step_number=1,
+            condition=None,
+            event_type="action",
+            screen_hash="abc123",
+            is_conditional=False,
+        )
+
+    @staticmethod
+    def __build_executor(device: DevicePort) -> ActionExecutor:
+        """
+        Build a minimal ActionExecutor bound to the supplied device.
+        """
+
+        return ActionExecutor(
+            max_retries=0,
+            device=device,
+            telemetry=Mock(),
+            path_manager=Mock(),
+            pipeline=None,
+        )
+
+    @staticmethod
+    def __build_capture() -> ScreenCapture:
+        """
+        Build a minimal ScreenCapture.
+        """
+
+        return ScreenCapture(
+            width=1080,
+            height=2340,
+            timestamp=0,
+            image=b"",
+            activity="com.test.app",
+        )
+
+    async def test_back_returns_soft_failure_when_device_unsupported(self) -> None:
+        """
+        ActionType.BACK against an iOS-style adapter returns success=False
+        with a descriptive error rather than raising into the executor.
+        """
+
+        device = _DeviceWithoutBack()
+        executor = self.__build_executor(device)
+        action = Action(
+            action_type=ActionType.BACK,
+            target="system: back",
+            rationale="loop recovery",
+            confidence=0.9,
+        )
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertFalse(result.success)
+        self.assertIn("does not support back", str(result.error or ""))
+
+    async def test_hide_keyboard_back_fallback_returns_soft_failure(self) -> None:
+        """
+        ActionType.HIDE_KEYBOARD on a device without native hide_keyboard
+        falls back to back(); when back() also raises NotImplementedError,
+        the executor returns a soft-failure ActionResult rather than crashing.
+        """
+
+        device = _DeviceWithoutBack()
+        executor = self.__build_executor(device)
+        action = Action(
+            action_type=ActionType.HIDE_KEYBOARD,
+            target="keyboard dismiss",
+            rationale="dismiss soft keyboard",
+            confidence=0.9,
+        )
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertFalse(result.success)
+        self.assertIn("hide keyboard", (result.error or "").lower())

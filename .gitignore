@@ -206,6 +206,7 @@ __marimo__/
 .DS_Store
 logs/
 assets/
+scripts/
 secrets/
 scripts/
 documents/

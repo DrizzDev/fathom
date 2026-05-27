@@ -73,11 +73,7 @@ class CompletionGate:
         Action sub-goal: require asserted claim, justified rationale, and screen-verified dispatch.
         """
 
-        if (
-            evidence.claim.asserted
-            and evidence.claim.justified
-            and screen_verified_dispatch
-        ):
+        if evidence.claim.asserted and evidence.claim.justified and screen_verified_dispatch:
             return GateDecision(outcome=GateOutcome.ADVANCE, retain_reason=None)
 
         return GateDecision(

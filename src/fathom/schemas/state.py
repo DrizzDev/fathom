@@ -257,9 +257,25 @@ class LoopDetector(BaseModel):
         actually fire on long sequences of near-identical screens.
         """
 
-        if current.has_visual_progress_from(
+        progressed = current.has_visual_progress_from(
             previous=previous, threshold=SCREEN_PROGRESS_HAMMING_THRESHOLD
-        ):
+        )
+        logger.info(
+            "LoopDetector.observe_screen evaluated",
+            extra={
+                "progressed": progressed,
+                "component": "loop.detector",
+                "event": "observe_screen.evaluated",
+                "threshold": SCREEN_PROGRESS_HAMMING_THRESHOLD,
+                "previous.visual_hash": (
+                    previous.visual_hash[:16] if previous is not None else None
+                ),
+                "current.visual_hash": current.visual_hash[:16],
+                "recovery_attempts.before": self.__recovery_attempts,
+                "recent_screens.count_before": len(self.__recent_screens),
+            },
+        )
+        if progressed:
             self.advance()
 
     def is_stuck(self) -> bool:
@@ -267,22 +283,53 @@ class LoopDetector(BaseModel):
         Evaluate if current interaction sequence indicates a loop.
         """
 
+        snapshot = {
+            "component": "loop.detector",
+            "event": "is_stuck.evaluate",
+            "threshold": self.threshold,
+            "window_size": self.window_size,
+            "recovery_attempts": self.__recovery_attempts,
+            "recent_hashes.count": len(self.__recent_hashes),
+            "recent_screens.count": len(self.__recent_screens),
+            "recent_actions.count": len(self.__recent_actions),
+            "recent_actions.unique": len(set(self.__recent_actions)),
+        }
+        logger.info("LoopDetector.is_stuck evaluating", extra=snapshot)
+
         # 0. Inert-action repetition fires at the tightest threshold so
         # the planner can pivot after one wasted action — independent
         # of how much screen / action history has accumulated.
         if self.__detect_inert_repetition():
+            logger.info(
+                "LoopDetector.is_stuck=True via inert_repetition",
+                extra={**snapshot, "event": "is_stuck.fired", "detector": "inert_repetition"},
+            )
             return True
 
         has_enough_screens = len(self.__recent_screens) >= self.threshold
         has_enough_actions = len(self.__recent_actions) >= self.threshold
 
         if not has_enough_screens and not has_enough_actions:
+            logger.info(
+                "LoopDetector.is_stuck=False insufficient_history",
+                extra={
+                    **snapshot,
+                    "event": "is_stuck.skipped",
+                    "reason": "insufficient_history",
+                    "has_enough_screens": has_enough_screens,
+                    "has_enough_actions": has_enough_actions,
+                },
+            )
             return False
 
         # Screen-based detectors require sufficient screen history.
         if has_enough_screens:
             # 1. Direct Repetition (screen + action counts)
             if self.__detect_repetition():
+                logger.info(
+                    "LoopDetector.is_stuck=True via screen_repetition",
+                    extra={**snapshot, "event": "is_stuck.fired", "detector": "screen_repetition"},
+                )
                 return True
 
             # 2. Near-duplicate Visual Repetition (visual pHash only).
@@ -292,23 +339,73 @@ class LoopDetector(BaseModel):
             # is visually identical. The standard repetition detector is bypassed
             # in that case; this complementary detector closes the gap.
             if self.__detect_near_duplicate_visual_repetition():
+                logger.info(
+                    "LoopDetector.is_stuck=True via near_duplicate_visual",
+                    extra={
+                        **snapshot,
+                        "event": "is_stuck.fired",
+                        "detector": "near_duplicate_visual",
+                    },
+                )
                 return True
 
             # 3. State Oscillation (A-B-A-B or A-B-C-A)
             if self.__detect_oscillation():
+                logger.info(
+                    "LoopDetector.is_stuck=True via oscillation",
+                    extra={**snapshot, "event": "is_stuck.fired", "detector": "oscillation"},
+                )
                 return True
 
             # 4. Scroll Stalling (Repetitive scrolling with minimal progress)
             if self.__detect_scroll_stall():
+                logger.info(
+                    "LoopDetector.is_stuck=True via scroll_stall",
+                    extra={**snapshot, "event": "is_stuck.fired", "detector": "scroll_stall"},
+                )
                 return True
 
             # 5. Action Velocity (Rapid firing with no progress)
             if self.__detect_action_velocity_loop():
+                logger.info(
+                    "LoopDetector.is_stuck=True via action_velocity",
+                    extra={**snapshot, "event": "is_stuck.fired", "detector": "action_velocity"},
+                )
                 return True
 
         # Action-based detection survives screen resets (advance).
         # Catches repeated actions across visually-different screens.
-        return has_enough_actions and self.__detect_action_repetition()
+        action_repetition = has_enough_actions and self.__detect_action_repetition()
+        if action_repetition:
+            logger.info(
+                "LoopDetector.is_stuck=True via action_repetition",
+                extra={**snapshot, "event": "is_stuck.fired", "detector": "action_repetition"},
+            )
+            return True
+
+        logger.info(
+            "LoopDetector.is_stuck=False no_detector_fired",
+            extra={
+                **snapshot,
+                "event": "is_stuck.not_stuck",
+                "evaluated_detectors": [
+                    "inert_repetition",
+                    *(
+                        [
+                            "screen_repetition",
+                            "near_duplicate_visual",
+                            "oscillation",
+                            "scroll_stall",
+                            "action_velocity",
+                        ]
+                        if has_enough_screens
+                        else []
+                    ),
+                    *(["action_repetition"] if has_enough_actions else []),
+                ],
+            },
+        )
+        return False
 
     def __detect_inert_repetition(self) -> bool:
         """
@@ -372,20 +469,43 @@ class LoopDetector(BaseModel):
                     count += 1
 
             if count >= self.threshold:
-                if len(set(self.__recent_actions)) >= self.threshold:
+                unique_actions = len(set(self.__recent_actions))
+                if unique_actions >= self.threshold:
+                    logger.debug(
+                        "LoopDetector.detect_repetition: screen-repeat detected but action diversity high; not flagging stuck",
+                        extra={
+                            "component": "loop.detector",
+                            "screen.repeat.count": count,
+                            "actions.unique": unique_actions,
+                            "actions.threshold": self.threshold,
+                            "event": "detect_repetition.skipped",
+                            "reason": "action_diversity_above_threshold",
+                            "actions.recent": list(self.__recent_actions),
+                        },
+                    )
                     continue
 
                 logger.warning(
                     "LoopDetector: stuck via screen repetition (%dx)",
                     count,
                     extra={
-                        "component": "loop_detector",
-                        "event": "stuck_screen_repetition",
                         "count": count,
+                        "component": "loop.detector",
+                        "actions.unique": unique_actions,
+                        "event": "stuck.screen.repetition",
                     },
                 )
                 return True
 
+        logger.debug(
+            "LoopDetector.detect_repetition=False no_screen_reached_threshold",
+            extra={
+                "threshold": self.threshold,
+                "component": "loop.detector",
+                "event": "detect_repetition.no_match",
+                "recent_screens.count": len(self.__recent_screens),
+            },
+        )
         return False
 
     def __detect_near_duplicate_visual_repetition(self) -> bool:
