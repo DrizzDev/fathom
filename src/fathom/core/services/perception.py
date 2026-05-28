@@ -4,8 +4,7 @@ import asyncio  # noqa: TC003 — used at runtime for Task types
 import hashlib
 import time
 from logging import getLogger
-from pathlib import Path
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.screen import INTERACTION_TEXT_PREVIEW_LENGTH, ZERO_HASH
@@ -18,6 +17,9 @@ from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = getLogger(__name__)
 
@@ -53,10 +55,15 @@ class PerceptionService:
         step_number: int,
     ) -> ScreenCapture:
         """
-        Capture current screen state via DevicePort.
+        Capture current screen state via DevicePort and emit it through the artifact pipeline.
 
-        Returns:
-            ScreenCapture with screenshot data
+        The pipeline owns the EFS staging file end-to-end (write, async
+        upload, retry, unlink); its filesystem path is an
+        Infrastructure-internal detail and must never leak into
+        Application-visible metadata. Downstream consumers operate on
+        ``capture.image`` bytes, so the race between background
+        upload-then-unlink and a downstream read is structurally
+        impossible.
         """
 
         effective_session_id = session_id or self.__session_id
@@ -77,10 +84,7 @@ class PerceptionService:
                 session_id=effective_session_id,
             )
 
-        metadata = dict(capture.metadata)
-        metadata["storage_id"] = str(staged_path)
-        metadata["path"] = str(staged_path)
-        return capture.model_copy(update={"metadata": metadata})
+        return capture
 
     async def __emit_screenshot_artifact(
         self,
@@ -118,7 +122,10 @@ class PerceptionService:
 
         Production runs always have the pipeline configured; this branch
         exists so unit tests and minimal embeddings that omit the
-        pipeline still produce a usable storage identifier.
+        pipeline still produce a usable storage identifier. The remote
+        identifier returned by :class:`StoragePort` is a stable handle
+        and may safely live on capture metadata; no local filesystem
+        path is exposed.
         """
 
         storage_id = await self.__storage.save(
@@ -134,9 +141,6 @@ class PerceptionService:
         )
         metadata = dict(capture.metadata)
         metadata["storage_id"] = storage_id
-
-        if Path(storage_id).is_absolute() and Path(storage_id).exists():
-            metadata["path"] = storage_id
 
         return capture.model_copy(update={"metadata": metadata})
 

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+from io import BytesIO
 from logging import getLogger
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     import xml.etree.ElementTree as ET  # nosec
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from fathom.constants import ActionType
 from fathom.processing.cv_labeler import VisualControlLabeler
@@ -40,41 +40,50 @@ class BoundsGenerator:
     @classmethod
     def create_element(
         cls,
+        *,
         root: ET.Element,
-        image_path: str,
+        image: bytes,
         action: Optional[ActionType] = None,
         cv_enabled: bool = False,
         **extra: Any,
     ) -> Tuple[List[LabeledElement], Dict[str, Any]]:
         """
-        Create bounding boxes for elements.
+        Create bounding boxes for elements from in-memory screenshot bytes.
 
-        ``cv_enabled`` defaults to False so the OpenCV
+        Consumers pass the canonical PNG bytes carried by
+        :class:`ScreenCapture` so this stage stays decoupled from any
+        filesystem-staging artifact lifecycle owned by the artifact
+        pipeline. ``cv_enabled`` defaults to False so the OpenCV
         :class:`VisualControlLabeler` is skipped on the original
         XML+LLM-only flow. When True, CV-detected regions are appended
         to the manifest as fallback anchors for icon-only screens.
         """
 
+        if not image:
+            raise ValueError("BoundsGenerator.create_element requires non-empty image bytes")
+
         logger.info(
-            f"BoundsGenerator.create_element called with image_path: {image_path}, action: {action}"
+            "BoundsGenerator.create_element invoked",
+            extra={
+                "component": "processing.drawer",
+                "event": "drawer.create_element.invoked",
+                "action": str(action) if action is not None else None,
+                "image_bytes": len(image),
+                "cv_enabled": cv_enabled,
+            },
         )
 
         parser = PlatformParserFactory.get_parser(root=root)
-
         logger.info(f"Using parser: {type(parser).__name__}")
 
         try:
-            with Image.open(fp=image_path) as image:
-                width = image.width
-                height = image.height
-                logger.info(f"Screenshot opened successfully: {width}x{height}")
+            with Image.open(fp=BytesIO(image)) as decoded:
+                width = decoded.width
+                height = decoded.height
+                logger.info(f"Screenshot decoded successfully: {width}x{height}")
 
-        except FileNotFoundError:
-            logger.error(f"Screenshot not found at {image_path}")
-            return [], {}
-
-        except Exception as exception:
-            logger.error(f"Failed to open screenshot at {image_path}: {exception}")
+        except UnidentifiedImageError as exception:
+            logger.error(f"Failed to decode screenshot bytes: {exception}")
             return [], {}
 
         factor = parser.get_scale_factor(root=root, screenshot_width=width)
@@ -127,7 +136,7 @@ class BoundsGenerator:
         cv_added = 0
         if cv_enabled:
             visual_controls = VisualControlLabeler.detect(
-                image_path=Path(image_path),
+                image=image,
                 existing_elements=filtered,
                 scale_factor=factor,
             )

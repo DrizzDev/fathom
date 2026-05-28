@@ -319,10 +319,12 @@ class IosTapDispatchTest(unittest.TestCase):
         with Image.open(descriptor["screenshot"]) as image:
             pixel_width, pixel_height = image.width, image.height
 
+        screenshot_bytes = Path(descriptor["screenshot"]).read_bytes()
+
         tree = ET.parse(descriptor["hierarchy"])
         elements, _ = BoundsGenerator.create_element(
             root=tree.getroot(),
-            image_path=str(descriptor["screenshot"]),
+            image=screenshot_bytes,
             action=ActionType.TAP,
             cv_enabled=False,
         )

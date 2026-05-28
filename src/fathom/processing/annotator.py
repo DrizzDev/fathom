@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, TypeAlias, Union
@@ -304,41 +305,32 @@ class ImageAnnotator:
     @classmethod
     def annotate(
         cls,
-        image_path: str,
-        output_path: str,
+        *,
+        image: bytes,
         elements: List[LabeledElement],
-        **kwargs: Any,
-    ) -> Optional[str]:
+        font_size: int = 24,
+        min_font_size: int = 10,
+        box_thickness: int = 2,
+    ) -> Optional[bytes]:
         """
-        Annotate an image with bounding boxes and labels.
+        Render bounding boxes and labels onto in-memory image bytes.
 
-        .. deprecated::
-            Use :class:`fathom.core.artifact.pipeline.ArtifactPipeline`
-            with :class:`fathom.schemas.artifact.AnnotatedPayload` (and
-            the shared :class:`fathom.core.artifact.drawing.BoxDrawer`
-            primitive). Retained while
-            :class:`HierarchyService.process_xml_and_screen` migrates;
-            do not introduce new callers.
+        Pure transform — bytes-in, bytes-out — so the annotation stage
+        owns no filesystem state and stays independent of any artifact
+        staging lifecycle. Returns ``None`` only when the input bytes
+        cannot be decoded; emit failures are logged with context.
         """
 
-        import warnings
-
-        warnings.warn(
-            "ImageAnnotator.annotate is deprecated; emit an AnnotatedPayload via "
-            "ArtifactPipeline using the shared BoxDrawer primitive.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if not image:
+            raise ValueError("ImageAnnotator.annotate requires non-empty image bytes")
 
         font_name = "arial.ttf"
-        font_size = int(kwargs.get("font_size", 24))
-        min_font_size = int(kwargs.get("min_font_size", 10))
-        box_thickness = int(kwargs.get("box_thickness", 2))
 
-        image = None
         try:
-            image = Image.open(image_path).convert("RGBA")
-            draw = ImageDraw.Draw(image, "RGBA")
+            with Image.open(io.BytesIO(image)) as source:
+                canvas = source.convert("RGBA")
+
+            draw = ImageDraw.Draw(canvas, "RGBA")
 
             font_cache = cls.__load_fonts(font_name, int(font_size), int(min_font_size))
             default_font = font_cache.get(int(font_size)) or list(font_cache.values())[0]
@@ -347,7 +339,7 @@ class ImageAnnotator:
             placed_outside_label_boxes: List[BoundsTuple] = []
 
             for element in elements:
-                bounds = (
+                bounds: BoundsTuple = (
                     float(element.bounds.x1),
                     float(element.bounds.y1),
                     float(element.bounds.x2),
@@ -362,8 +354,8 @@ class ImageAnnotator:
 
                 final_font = default_font
                 draw_connector_line = False
-                final_label_box = None
-                best_position = None
+                final_label_box: Optional[BoundsTuple] = None
+                best_position: Tuple[float, float]
 
                 fit_result = cls.__find_best_font_for_inside(
                     label=element.label,
@@ -390,8 +382,8 @@ class ImageAnnotator:
                 else:
                     best_position, final_label_box = cls.__get_outside_position(
                         label=element.label,
-                        image_width=image.width,
-                        image_height=image.height,
+                        image_width=canvas.width,
+                        image_height=canvas.height,
                         font=default_font,
                         bounds=bounds,
                         draw=draw,
@@ -411,11 +403,9 @@ class ImageAnnotator:
                     final_label_box=final_label_box,
                 )
 
-            out_path = Path(output_path)
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            image.save(output_path)
-            logger.info(f"Saved annotated image: {output_path}")
-            return output_path
+            buffer = io.BytesIO()
+            canvas.convert("RGB").save(buffer, format="PNG")
+            return buffer.getvalue()
 
         except Exception as exception:
             logger.exception(f"Failed to annotate: {exception}")

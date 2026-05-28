@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import TYPE_CHECKING, Iterable, List, Optional
+from typing import Iterable, List, Optional
 
 from fathom.schemas.ui import LabeledElement, UIBounds
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = getLogger(__name__)
 
@@ -31,13 +28,20 @@ class VisualControlLabeler:
     def detect(
         cls,
         *,
-        image_path: Path,
+        image: bytes,
         scale_factor: float,
         existing_elements: Iterable[LabeledElement],
     ) -> List[LabeledElement]:
         """
         Return additional logical-coordinate elements for visual controls.
+
+        Consumes in-memory screenshot bytes so the detector stays
+        independent of any filesystem-staging artifact lifecycle.
         """
+
+        if not image:
+            logger.warning("[CVLabeler] empty screenshot bytes; skipping visual controls")
+            return []
 
         try:
             import cv2
@@ -48,13 +52,14 @@ class VisualControlLabeler:
             )
             return []
 
-        image = cv2.imread(str(image_path))
-        if image is None:
-            logger.warning("[CVLabeler] unable to read screenshot: %s", image_path)
+        buffer = np.frombuffer(image, dtype=np.uint8)
+        decoded = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+        if decoded is None:
+            logger.warning("[CVLabeler] unable to decode screenshot bytes")
             return []
 
-        height, width = image.shape[:2]
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        height, width = decoded.shape[:2]
+        hsv = cv2.cvtColor(decoded, cv2.COLOR_BGR2HSV)
 
         # Saturated + bright regions capture filled CTA/buttons while ignoring dark overlay masks and white text.
         mask = ((hsv[:, :, 1] > 80) & (hsv[:, :, 2] > 120)).astype(np.uint8) * 255
