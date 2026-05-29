@@ -26,9 +26,7 @@ class ValidationRequirement(BaseModel):
     """
 
     item_name: str = Field(..., description="Name/label of the item to validate")
-    description: Optional[str] = Field(
-        None, description="Extended description for context"
-    )
+    description: Optional[str] = Field(None, description="Extended description for context")
     match_type: str = Field(
         default="fuzzy",
         description="Matching strategy: 'exact' or 'fuzzy'",
