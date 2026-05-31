@@ -21,7 +21,6 @@ from fathom.schemas.artifact import (
 )
 from fathom.schemas.screens import ScreenCapture
 
-
 _ANDROID_HIERARCHY = """
 <hierarchy package="com.test.app">
   <node class="android.widget.Button" bounds="[100,200][500,400]" clickable="true" text="Primary" />
