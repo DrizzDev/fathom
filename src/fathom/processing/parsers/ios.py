@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 if TYPE_CHECKING:
     import xml.etree.ElementTree as ET  # nosec
 
-from fathom.constants import ActionType
+from fathom.constants import GESTURE_ACTION_TYPES, ActionType
 from fathom.constants.screen import REPEATED_TEXT_SUPPRESSION_THRESHOLD
 from fathom.processing.geometry import GeometryUtils
 from fathom.processing.parsers.base import PlatformParser
@@ -661,7 +661,7 @@ class IOSParser(PlatformParser):
             if self.__is_tappable(element=element):
                 score += 100
 
-        elif action == ActionType.SWIPE and self.__is_swipeable(element=element):
+        elif action in GESTURE_ACTION_TYPES and self.__is_swipeable(element=element):
             score += 100
 
         score -= element.bounds.area / 50000.0
@@ -794,9 +794,7 @@ class IOSParser(PlatformParser):
         return sorted(deduped, key=lambda element: element.bounds.area, reverse=True)
 
     @staticmethod
-    def __suppress_repeated_decorative_text(
-        elements: List[LabeledElement],
-    ) -> List[LabeledElement]:
+    def __suppress_repeated_decorative_text(elements: List[LabeledElement]) -> List[LabeledElement]:
         """
         Collapse identical decorative-text labels that repeat across cards.
 
@@ -809,11 +807,14 @@ class IOSParser(PlatformParser):
 
         seen: Dict[str, int] = {}
         retained: List[LabeledElement] = []
+
         for element in elements:
             kind = element.attributes.get("type")
+
             if kind != "XCUIElementTypeStaticText":
                 retained.append(element)
                 continue
+
             key = (
                 (element.attributes.get("label") or element.attributes.get("name") or "")
                 .strip()
@@ -822,9 +823,11 @@ class IOSParser(PlatformParser):
             if not key:
                 retained.append(element)
                 continue
+
             seen[key] = seen.get(key, 0) + 1
             if seen[key] <= REPEATED_TEXT_SUPPRESSION_THRESHOLD - 1:
                 retained.append(element)
+
         return retained
 
     def filter_by_action(self, elements: List[LabeledElement], action: Any) -> List[LabeledElement]:
@@ -832,17 +835,37 @@ class IOSParser(PlatformParser):
         Filter parsed elements to action-compatible candidates.
         """
 
-        if action == ActionType.TAP:
-            return [element for element in elements if self.__is_tappable(element=element)]
+        reason = "unchanged"
 
-        if action in {ActionType.TEXT, ActionType.TYPE}:
-            return [
+        if action == ActionType.TAP:
+            reason = "tappable"
+            filtered = [element for element in elements if self.__is_tappable(element=element)]
+
+        elif action in {ActionType.TEXT, ActionType.TYPE}:
+            reason = "typeable_or_tappable"
+            filtered = [
                 element
                 for element in elements
                 if self.__is_typeable(element=element) or self.__is_tappable(element=element)
             ]
 
-        if action == ActionType.SWIPE:
-            return [element for element in elements if self.__is_swipeable(element=element)]
+        elif action in GESTURE_ACTION_TYPES:
+            reason = "swipeable"
+            filtered = [element for element in elements if self.__is_swipeable(element=element)]
 
-        return elements
+        else:
+            filtered = elements
+
+        logger.info(
+            "Filtered iOS elements for action",
+            extra={
+                "platform": "ios",
+                "filter.reason": reason,
+                "elements.after": len(filtered),
+                "elements.before": len(elements),
+                "event": "parser.filter_by_action",
+                "component": "processing.parsers.ios",
+                "action.type": action.value if isinstance(action, ActionType) else str(action),
+            },
+        )
+        return filtered

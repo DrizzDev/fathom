@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import xml.etree.ElementTree as ET  # nosec
 
+from fathom.constants import ActionType
 from fathom.processing.parsers.ios import IOSParser
 
 
@@ -57,3 +58,33 @@ class IOSParserTest(unittest.TestCase):
         self.assertEqual(elements[0].bounds.y2, 874)
         self.assertEqual(elements[0].attributes.get("scrollable"), "true")
         self.assertEqual(elements[0].attributes.get("kind"), "viewport")
+
+    def test_directional_swipe_filters_to_swipeable_candidates(self) -> None:
+        """
+        Directional swipe actions must use the same candidate filtering as generic swipe.
+        """
+
+        xml = """
+        <AppiumAUT>
+          <XCUIElementTypeApplication type="XCUIElementTypeApplication" x="0" y="0" width="440" height="956">
+            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" x="20" y="40" width="160" height="30" visible="true" label="More on Swiggy" />
+            <XCUIElementTypeCollectionView type="XCUIElementTypeCollectionView" x="0" y="756" width="440" height="102" visible="true" enabled="true" />
+          </XCUIElementTypeApplication>
+        </AppiumAUT>
+        """
+        root = ET.fromstring(xml)
+        parser = IOSParser()
+        elements = parser.find_all_elements(
+            root=root, screenshot_width=1320, screenshot_height=2868
+        )
+
+        filtered = parser.filter_by_action(elements=elements, action=ActionType.SWIPE_LEFT)
+
+        self.assertLess(len(filtered), len(elements))
+        self.assertTrue(filtered)
+        self.assertTrue(
+            all(
+                element.attributes.get("type") != "XCUIElementTypeStaticText"
+                for element in filtered
+            )
+        )

@@ -703,8 +703,53 @@ class ActionExecutor:
 
         _ = is_cancelled
 
+        keyboard = self.__keyboard_observation(observation=observation)
+
+        if keyboard.visibility is KeyboardVisibility.VISIBLE:
+            logger.warning(
+                "Scroll dispatch blocked by visible keyboard",
+                extra={
+                    "component": "core.services.action",
+                    "event": "scroll.dispatch.blocked",
+                    "workflow.id": session_id,
+                    "package.name": package_name,
+                    "step.number": step.step_number,
+                    "action.target": action.target,
+                    "action.type": action.action_type.value,
+                    "keyboard.visibility": keyboard.visibility.value,
+                    "keyboard.bounds": (
+                        keyboard.bounds.model_dump(mode="json") if keyboard.bounds else None
+                    ),
+                },
+            )
+            return PrimitiveExecution(
+                action=ActionResult(
+                    duration=0,
+                    success=False,
+                    error="scroll blocked by visible keyboard",
+                ),
+                coords=None,
+                swipe_execution=None,
+            )
+
         region = converter.viewport_region()
         path = converter.resolve_scroll_path(region=region, direction="down")
+
+        logger.info(
+            "Scroll dispatch allowed",
+            extra={
+                "component": "core.services.action",
+                "event": "scroll.dispatch.allowed",
+                "workflow.id": session_id,
+                "package.name": package_name,
+                "action.target": action.target,
+                "step.number": step.step_number,
+                "path": path.model_dump(mode="json"),
+                "action.type": action.action_type.value,
+                "region": region.model_dump(mode="json"),
+                "keyboard.visibility": keyboard.visibility.value,
+            },
+        )
         self.__log_gesture_path(
             path=path,
             action=None,
@@ -714,27 +759,27 @@ class ActionExecutor:
         )
 
         return await self.__coordinate_and_emit(
-            action=action,
+            step=step,
             path=path,
+            action=action,
             region=region,
+            session_id=session_id,
             pre_capture=pre_capture,
             observation=observation,
-            step=step,
-            session_id=session_id,
             package_name=package_name,
         )
 
     async def __coordinate_and_emit(
         self,
         *,
+        step: Step,
         action: Action,
+        session_id: str,
+        package_name: str,
         path: GesturePath,
         region: ExecutionRegion,
         pre_capture: ScreenCapture,
         observation: Optional[ScreenObservation],
-        step: Step,
-        session_id: str,
-        package_name: str,
     ) -> PrimitiveExecution:
         """
         Run the swipe coordinator and emit one trace event per dispatched attempt.
@@ -747,19 +792,19 @@ class ActionExecutor:
 
         execution = await self.__swipe_coordinator.execute(
             original=path,
-            bounds=viewport_bounds,
             policy=policy,
             keyboard=keyboard,
+            bounds=viewport_bounds,
             original_before=original_before,
         )
 
         trace_events = await self.__emit_attempt_traces(
-            execution=execution,
-            pre_capture=pre_capture,
             step=step,
-            session_id=session_id,
-            package_name=package_name,
             action=action,
+            execution=execution,
+            session_id=session_id,
+            pre_capture=pre_capture,
+            package_name=package_name,
         )
 
         final_path = execution.final or path
@@ -767,8 +812,8 @@ class ActionExecutor:
         action_result = self.__action_result_from_execution(execution=execution)
 
         return PrimitiveExecution(
-            action=action_result,
             coords=coords,
+            action=action_result,
             swipe_execution=execution,
             trace_events=trace_events,
         )
@@ -794,6 +839,7 @@ class ActionExecutor:
 
         if observation is not None and observation.keyboard is not None:
             return observation.keyboard
+
         return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
 
     @staticmethod
@@ -803,12 +849,13 @@ class ActionExecutor:
         """
 
         pixel_width, pixel_height = ActionExecutor.__resolve_pixel_dimensions(
+            capture=capture,
             logical_width=region.x + region.width,
             logical_height=region.y + region.height,
-            capture=capture,
         )
         width = max(1, max(pixel_width, region.x + region.width))
         height = max(1, max(pixel_height, region.y + region.height))
+
         return Bounds(x=0, y=0, width=width, height=height)
 
     @staticmethod
@@ -841,12 +888,12 @@ class ActionExecutor:
     async def __emit_attempt_traces(
         self,
         *,
-        execution: SwipeExecution,
-        pre_capture: ScreenCapture,
         step: Step,
+        action: Action,
         session_id: str,
         package_name: str,
-        action: Action,
+        execution: SwipeExecution,
+        pre_capture: ScreenCapture,
     ) -> Tuple[ActionTraceEvent, ...]:
         """
         Emit one ArtifactRecord trace event per dispatched attempt and return them in order.
@@ -861,11 +908,12 @@ class ActionExecutor:
             await self.__emit_trace_event(
                 step=step,
                 event=event,
+                action=action,
                 session_id=session_id,
                 package_name=package_name,
-                action=action,
             )
             events.append(event)
+
         return tuple(events)
 
     @staticmethod
@@ -911,14 +959,14 @@ class ActionExecutor:
 
     async def __execute_long_press(
         self,
-        action: Action,
-        converter: CoordinateConverter,
+        step: Step,
         width: int,
         height: int,
-        pre_capture: ScreenCapture,
-        step: Step,
+        action: Action,
         session_id: str,
         package_name: str,
+        pre_capture: ScreenCapture,
+        converter: CoordinateConverter,
     ) -> PrimitiveExecution:
         """
         Helper Method To Execute `LONG_PRESS` Command
@@ -936,15 +984,15 @@ class ActionExecutor:
         trace_event = ActionTraceEvent(capture=pre_capture, coords=coords)
         await self.__emit_trace_event(
             step=step,
+            action=action,
             event=trace_event,
             session_id=session_id,
             package_name=package_name,
-            action=action,
         )
         return PrimitiveExecution(
-            action=long_press_result,
             coords=coords,
             swipe_execution=None,
+            action=long_press_result,
             trace_events=(trace_event,),
         )
 
@@ -952,10 +1000,10 @@ class ActionExecutor:
         self,
         *,
         step: Step,
-        event: ActionTraceEvent,
+        action: Action,
         session_id: str,
         package_name: str,
-        action: Action,
+        event: ActionTraceEvent,
     ) -> None:
         """
         Emit one concrete trace artifact immediately after device dispatch.
@@ -972,8 +1020,8 @@ class ActionExecutor:
                 created=int(time.time() * 1000),
                 payload=TracePayload(
                     action=action,
-                    capture=event.capture,
                     coords=event.coords,
+                    capture=event.capture,
                     attempt=event.attempt,
                 ),
             ),

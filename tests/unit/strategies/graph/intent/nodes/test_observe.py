@@ -4,7 +4,9 @@ import unittest
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from fathom.constants import ActionExecutionKind, ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.strategies.graph.intent.nodes.observe import ObserveNode
 
 
@@ -48,3 +50,49 @@ class ObserveNodeFailureTest(unittest.IsolatedAsyncioTestCase):
             reason=CompletionReason.FAILED.value
         )
         provider.persistence.persist.assert_called_once()
+
+
+class ObserveNodeStepSuccessTest(unittest.TestCase):
+    """
+    Pins gesture step-success handling after post-action effect classification.
+    """
+
+    def test_gesture_no_progress_is_not_recorded_as_success(self) -> None:
+        """
+        A dispatched gesture with a no-progress effect must fail the recorded step.
+        """
+
+        effect = ActionEffect(
+            status=ActionEffectStatus.NO_PROGRESS,
+            visual_progress=0.0,
+            phash_distance=0,
+        )
+
+        result = ObserveNode._ObserveNode__step_success(  # noqa: SLF001
+            action_type=ActionType.SWIPE_DOWN,
+            action_effect=effect,
+            action_execution_kind=ActionExecutionKind.DEVICE,
+            execution_success=True,
+        )
+
+        self.assertFalse(result)
+
+    def test_non_gesture_success_keeps_execution_result(self) -> None:
+        """
+        Non-gesture device actions still use the adapter execution result.
+        """
+
+        effect = ActionEffect(
+            status=ActionEffectStatus.NO_PROGRESS,
+            visual_progress=0.0,
+            phash_distance=0,
+        )
+
+        result = ObserveNode._ObserveNode__step_success(  # noqa: SLF001
+            action_type=ActionType.TAP,
+            action_effect=effect,
+            action_execution_kind=ActionExecutionKind.DEVICE,
+            execution_success=True,
+        )
+
+        self.assertTrue(result)

@@ -207,7 +207,9 @@ __marimo__/
 logs/
 assets/
 secrets/
+scripts/
 documents/
+debug/
 research/
 debugging/
 debug/scroll/poc/

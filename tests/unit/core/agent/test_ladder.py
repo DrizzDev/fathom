@@ -47,7 +47,7 @@ class LoopActionLadderTest(unittest.TestCase):
         detector = LoopDetector(max_recovery=3)
         detector.record(
             screen=self.__screen(),
-            action_type="swipe_up",
+            action_type=ActionType.SWIPE_UP.value,
             action_description="Swipe up on feed",
         )
 
@@ -70,11 +70,11 @@ class LoopActionLadderTest(unittest.TestCase):
 
         detector.record(
             screen=self.__screen(),
-            action_type="tap",
+            action_type=ActionType.TAP.value,
             action_description="Tap continue",
         )
 
-        self.assertEqual(detector.last_action_type, "tap")
+        self.assertEqual(detector.last_action_type, ActionType.TAP.value)
 
     def test_third_attempt_returns_home(self) -> None:
         """

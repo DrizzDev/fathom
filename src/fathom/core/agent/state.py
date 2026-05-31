@@ -4,6 +4,7 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from fathom.constants import ActionExecutionKind, ActionType
+from fathom.constants.recovery import AUTONOMOUS_RECOVERY_ACTIVE_KINDS
 from fathom.constants.runtime import (
     DEFAULT_CONTEXT_WINDOW,
     DEFAULT_LOOP_THRESHOLD,
@@ -18,6 +19,7 @@ from fathom.constants.screen import (
 )
 from fathom.constants.state import CompletionReason
 from fathom.core.agent.ladder import LoopActionLadder
+from fathom.core.agent.recovery import RecoveryGate
 from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import RuntimeCapabilities
@@ -80,6 +82,7 @@ class AgentState:
             realignment_budget=realignment_budget,
         )
         self.__loop_action_ladder = LoopActionLadder()
+        self.__recovery_gate = RecoveryGate(active_kinds=AUTONOMOUS_RECOVERY_ACTIVE_KINDS)
 
         self.__is_complete = False
         self.__completion_reason: Optional[str] = None
@@ -796,7 +799,40 @@ class AgentState:
         Get the next mechanical recovery action when the agent is stuck.
         """
 
-        return self.__loop_action_ladder.next(detector=self.__runtime.screen.detector)
+        evidence = self.__runtime.screen.detector.evidence()
+        decision = self.__recovery_gate.decide(evidence=evidence)
+
+        logger.info(
+            "Autonomous recovery gate evaluated",
+            extra={
+                "component": "core.agent.state",
+                "event": "recovery.gate.evaluated",
+                "decision.kind": decision.kind.value,
+                "loop.stuck": evidence.stuck,
+                "loop.reason": evidence.reason.value,
+                "decision.allowed": decision.allowed,
+                "decision.reason": decision.reason.value,
+                "loop.recent.count": len(evidence.recent),
+                "loop.since_progress.count": len(evidence.since_progress),
+                "recovery.attempts": self.__runtime.screen.detector.to_state().recovery_attempts,
+            },
+        )
+        if not decision.allowed:
+            return None
+
+        action = self.__loop_action_ladder.next(detector=self.__runtime.screen.detector)
+        logger.info(
+            "Autonomous recovery ladder evaluated",
+            extra={
+                "component": "core.agent.state",
+                "event": "recovery.ladder.evaluated",
+                "recovery.available": action is not None,
+                "action.target": action.target if action else None,
+                "action.type": action.action_type.value if action else None,
+                "recovery.attempts": self.__runtime.screen.detector.to_state().recovery_attempts,
+            },
+        )
+        return action
 
     def record_recovery_attempt(self) -> int:
         """

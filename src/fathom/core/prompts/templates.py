@@ -121,7 +121,7 @@ _EXECUTE_UI_GUIDANCE = (
     "    DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.\n"
     "  * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.\n"
     "    Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}\n"
-    "    ALWAYS use this to \"tick off\" requirements from the user's goal as you complete them."
+    '    ALWAYS use this to "tick off" requirements from the user\'s goal as you complete them.'
 )
 
 _TOOL_DESCRIPTIONS_RAW: Mapping[ToolName, str] = {
@@ -153,21 +153,15 @@ _PROGRESS_SAFETY_BASE = (
     "- Before emitting the action, confirm the current screen is the one the active sub-goal expects."
 )
 
-_PROGRESS_SAFETY_HITL_FALLBACK = (
-    "- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), ask the user instead of guessing."
-)
+_PROGRESS_SAFETY_HITL_FALLBACK = "- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), ask the user instead of guessing."
 
-_PROGRESS_SAFETY_AUTONOMOUS_FALLBACK = (
-    "- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), do NOT guess: emit a deliberate recovery action (back, home, swipe to re-orient) or signal completion failure via the appropriate flag."
-)
+_PROGRESS_SAFETY_AUTONOMOUS_FALLBACK = "- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), do NOT guess: emit a deliberate recovery action (back, home, swipe to re-orient) or signal completion failure via the appropriate flag."
 
-_PROGRESS_SAFETY_TAIL = (
-    "- Do NOT snap to a visually similar but semantically unrelated label (picking the wrong manifest entry just because it looks like a button). Do NOT emit a bbox for a region where you cannot see the target. Do NOT proceed when the screen contradicts the sub-goal."
-)
+_PROGRESS_SAFETY_TAIL = "- Do NOT snap to a visually similar but semantically unrelated label (picking the wrong manifest entry just because it looks like a button). Do NOT emit a bbox for a region where you cannot see the target. Do NOT proceed when the screen contradicts the sub-goal."
 
 _MEMORY_STRATEGY = (
     "MEMORY STRATEGY:\n"
-    "- The system has NO implicit memory of what you \"meant\" to do. You MUST write it down.\n"
+    '- The system has NO implicit memory of what you "meant" to do. You MUST write it down.\n'
     "- If you select 'Monday', you MUST write memory_updates={'monday': 'selected'}.\n"
     "- If you don't write it, you WILL forget it when the screen changes."
 )
@@ -177,9 +171,7 @@ def build_tool_guidance(*, tools: AllowedTools) -> str:
     """Render the TOOL SELECTION + PROGRESS SAFETY + MEMORY STRATEGY block for the allowed tools."""
 
     tool_lines = [
-        TOOL_DESCRIPTIONS[name]
-        for name in _TOOL_DESCRIPTIONS_RAW
-        if tools.contains(name=name)
+        TOOL_DESCRIPTIONS[name] for name in _TOOL_DESCRIPTIONS_RAW if tools.contains(name=name)
     ]
 
     fallback_rule = (
@@ -200,6 +192,7 @@ def build_tool_guidance(*, tools: AllowedTools) -> str:
         + "\n\n"
         + _MEMORY_STRATEGY
     )
+
 
 # Summarization system instruction (for GCC milestone creation)
 SUMMARIZATION_SYSTEM = """You are an expert at analyzing mobile UI automation execution traces.

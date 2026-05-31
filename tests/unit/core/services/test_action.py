@@ -698,6 +698,26 @@ class ActionExecutorScrollRetryTest(unittest.IsolatedAsyncioTestCase):
             activity="com.test.app",
         )
 
+    @staticmethod
+    def __build_observation(*, keyboard: KeyboardVisibility) -> ScreenObservation:
+        """
+        Build a minimal observation with the requested keyboard state.
+        """
+
+        return ScreenObservation(
+            activity="com.test.app",
+            elements=(),
+            hashes=ScreenHashBundle(
+                visual_hash="0" * 16,
+                xml_hash="a" * 16,
+                interaction_hash="b" * 16,
+            ),
+            keyboard=KeyboardObservation(visibility=keyboard),
+            overlays=(),
+            scroll=(),
+            calls_to_action=(),
+        )
+
     async def test_swipe_failure_does_not_use_outer_retry_loop(self) -> None:
         """
         Outer ``act()`` must not multiply swipe attempts; only the inner coordinator retries.
@@ -740,3 +760,42 @@ class ActionExecutorScrollRetryTest(unittest.IsolatedAsyncioTestCase):
         # Inner coordinator may dispatch up to 1 + len(magnitudes) attempts; the outer
         # ``max_retries`` loop must not multiply that count.
         self.assertLessEqual(len(device.swipe_calls), 4)
+
+    async def test_system_scroll_is_blocked_when_keyboard_is_visible(self) -> None:
+        """
+        Mechanical SCROLL recovery must not dispatch into a visible keyboard surface.
+        """
+
+        device = FakeDevice(device_configuration=SWIPE_RETRY_POLICY)
+        executor = ActionExecutor(
+            max_retries=0,
+            device=device,
+            telemetry=Mock(),
+            path_manager=Mock(),
+        )
+        step = Step(
+            metadata={},
+            step_number=6,
+            condition=None,
+            event_type="action",
+            screen_hash="otp123",
+            is_conditional=False,
+            action=Action(
+                action_type=ActionType.SCROLL,
+                target="system: scroll",
+                rationale="recovery",
+                confidence=1.0,
+            ),
+        )
+
+        result = await executor.act(
+            session_id="keyboard-visible-scroll-regression",
+            package_name="com.test.app",
+            step=step,
+            pre_capture=self.__build_capture(),
+            observation=self.__build_observation(keyboard=KeyboardVisibility.VISIBLE),
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(device.swipe_calls, [])
+        self.assertEqual(result.error, "scroll blocked by visible keyboard")

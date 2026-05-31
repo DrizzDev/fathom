@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 
-from fathom.constants import ActionExecutionKind, ActionType
+from fathom.constants import GESTURE_ACTION_TYPES, ActionExecutionKind, ActionType
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenDiff
@@ -119,14 +120,32 @@ class ObserveNode:
             screen_diff=screen_diff,
         )
         step_success = self.__step_success(
-            action_execution_kind=context.step.action.execution_kind,
+            action_effect=action_effect,
             execution_success=execution_result.success,
+            action_type=context.step.action.action_type,
+            action_execution_kind=context.step.action.execution_kind,
         )
         logger.info(
             "pre_hash=%s post_hash=%s screen_changed=%s",
             pre_hash[:8],
             post_hash[:8],
             screen_changed,
+            extra={
+                "component": "graph.intent.observe",
+                "event": "observe.step.evaluated",
+                "pre.hash": pre_hash[:8],
+                "post.hash": post_hash[:8],
+                "step.success": step_success,
+                "screen.changed": screen_changed,
+                "step.number": context.step.step_number,
+                "effect.status": action_effect.status.value,
+                "execution.success": execution_result.success,
+                "workflow.id": self.__provider.context.workflow_id,
+                "action.type": context.step.action.action_type.value,
+                "effect.phash_distance": action_effect.phash_distance,
+                "effect.visual_progress": action_effect.visual_progress,
+                "action.execution_kind": context.step.action.execution_kind.value,
+            },
         )
 
         plan_observation = PostAction.plan_observation(state=state)
@@ -134,12 +153,12 @@ class ObserveNode:
             step=context.step,
             pre_hash=pre_hash,
             post_hash=post_hash,
-            observation=plan_observation,
+            success=step_success,
+            artifacts=step_artifacts,
             duration=context.duration,
             error=execution_result.error,
-            artifacts=step_artifacts,
             screen_changed=screen_changed,
-            success=step_success,
+            observation=plan_observation,
             generalized_target=context.step.action.script_target,
             is_positional=(context.step.action.target_type == "positional"),
         )
@@ -217,6 +236,8 @@ class ObserveNode:
     @staticmethod
     def __step_success(
         *,
+        action_type: ActionType,
+        action_effect: ActionEffect,
         action_execution_kind: ActionExecutionKind,
         execution_success: bool,
     ) -> bool:
@@ -224,5 +245,26 @@ class ObserveNode:
         Return the canonical success bit for one recorded step.
         """
 
-        _ = action_execution_kind
+        if action_execution_kind is not ActionExecutionKind.DEVICE:
+            return False
+
+        if (
+            action_type in GESTURE_ACTION_TYPES
+            and action_effect.status is ActionEffectStatus.NO_PROGRESS
+        ):
+            logger.info(
+                "Gesture execution success overridden by no-progress effect",
+                extra={
+                    "component": "graph.intent.observe",
+                    "action.type": action_type.value,
+                    "execution.success": execution_success,
+                    "override.reason": "gesture_no_progress",
+                    "effect.status": action_effect.status.value,
+                    "event": "observe.step.success.overridden",
+                    "effect.phash_distance": action_effect.phash_distance,
+                    "effect.visual_progress": action_effect.visual_progress,
+                },
+            )
+            return False
+
         return execution_success

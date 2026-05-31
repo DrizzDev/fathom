@@ -439,6 +439,27 @@ class ScreenObservationServiceOverlayDedupTest(unittest.IsolatedAsyncioTestCase)
         )
         self.assertGreaterEqual(len(page_regions), 1)
 
+    async def test_page_scroll_region_uses_logical_system_when_capture_dimensions_are_logical(
+        self,
+    ) -> None:
+        """
+        A synthetic page lane built from logical capture dimensions must
+        stay logical so execution does not divide it by the retina scale.
+        """
+
+        observation = await ScreenObservationService().observe(
+            capture=self.__capture().model_copy(update={"width": 402, "height": 874}),
+            hashes=self.__hashes(),
+            budget=self.__budget(),
+            manifest=(),
+            session_id="run-aekci",
+            step_number=4,
+        )
+
+        self.assertEqual(len(observation.scroll), 1)
+        self.assertEqual(observation.scroll[0].bounds.system, CoordinateSystem.LOGICAL)
+        self.assertEqual(observation.scroll[0].bounds.width, 402)
+
     async def test_large_manifest_container_becomes_explicit_scroll_region(self) -> None:
         """
         A large manifest-backed container should surface as an explicit scroll region.

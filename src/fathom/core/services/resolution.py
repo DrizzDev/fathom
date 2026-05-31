@@ -167,6 +167,33 @@ class ReferenceResolutionService:
                 reason=f"label_id '{action.label_id}' not present in current manifest",
             )
 
+        if action.action_type in GESTURE_ACTION_TYPES and not self.__gesture_axis_compatible(
+            action=action, element=info
+        ):
+            logger.warning(
+                "Gesture label snap rejected because axis metadata is incompatible",
+                extra={
+                    "component": "resolution",
+                    "event": "gesture.snap.axis_mismatch",
+                    "action.target": action.target,
+                    "element.axis": info.get("axis"),
+                    "element.kind": info.get("kind"),
+                    "workflow.id": self.__workflow_id,
+                    "action.label_id": action.label_id,
+                    "element.bounds": info.get("bounds"),
+                    "element.source": info.get("source"),
+                    "action.type": action.action_type.value,
+                },
+            )
+            return ResolveResult.unresolved(
+                action=action,
+                reason=(
+                    f"label_id '{action.label_id}' is not compatible with "
+                    f"{action.action_type.value}; element axis={info.get('axis')!r} "
+                    f"kind={info.get('kind')!r}"
+                ),
+            )
+
         if (
             action.bounds is not None
             and action.bounds.source is CoordinateSource.MODEL
@@ -309,6 +336,54 @@ class ReferenceResolutionService:
                 return True
 
         return False
+
+    @staticmethod
+    def __gesture_axis_compatible(*, action: Action, element: Dict[str, Any]) -> bool:
+        """
+        Return whether explicit manifest axis metadata agrees with a gesture action.
+        """
+
+        expected = ReferenceResolutionService.__expected_gesture_axis(action=action)
+        if expected is None:
+            return True
+
+        actual = ReferenceResolutionService.__element_axis(element=element)
+        if actual is None:
+            return True
+
+        return actual == expected
+
+    @staticmethod
+    def __expected_gesture_axis(*, action: Action) -> Optional[str]:
+        """
+        Return the axis implied by a directional gesture.
+        """
+
+        if action.action_type in {ActionType.SWIPE_LEFT, ActionType.SWIPE_RIGHT}:
+            return "horizontal"
+
+        if action.action_type in {ActionType.SWIPE_UP, ActionType.SWIPE_DOWN, ActionType.SCROLL}:
+            return "vertical"
+
+        return None
+
+    @staticmethod
+    def __element_axis(*, element: Dict[str, Any]) -> Optional[str]:
+        """
+        Return explicit axis metadata from a manifest element when present.
+        """
+
+        axis = str(element.get("axis") or "").strip().lower()
+        if axis in {"horizontal", "vertical"}:
+            return axis
+
+        kind = str(element.get("kind") or "").strip().lower()
+        if kind == "carousel":
+            return "horizontal"
+        if kind in {"viewport", "list"}:
+            return "vertical"
+
+        return None
 
     @staticmethod
     def __coordinate_source(*, element: Dict[str, Any]) -> CoordinateSource:

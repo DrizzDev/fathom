@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import io
 import time
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy
+from PIL import Image
 
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.ocr.noop import NoopOcr
@@ -120,11 +122,14 @@ class ScreenObservationService:
         """
 
         manifest_elements: List[PerceivedElement] = []
+        capture_system = self.__capture_dimension_system(capture=capture)
+
         for index, label in enumerate(manifest, start=1):
             element = self.__element_from_label(
                 element=label,
                 index=index,
                 capture=capture,
+                capture_system=capture_system,
             )
             if element is not None:
                 manifest_elements.append(element)
@@ -134,15 +139,17 @@ class ScreenObservationService:
         if self.__configuration.cv.enabled:
             if cv2 is None:
                 raise RuntimeError("OpenCV is required when perception.cv.enabled is true.")
+
             visual_elements = self.__visual_controls(
                 capture=capture,
                 existing=elements,
                 start=len(elements) + 1,
             )
             elements = (*elements, *visual_elements)
+
         elements = await self.__merge_async_enrichment(
-            capture=capture,
             budget=budget,
+            capture=capture,
             elements=elements,
             session_id=session_id,
             step_number=step_number,
@@ -150,17 +157,22 @@ class ScreenObservationService:
 
         keyboard = await self.__keyboard(elements=elements, capture=capture)
         overlays = self.__overlays(elements=elements, capture=capture)
+
         if (
             pixel_overlay := await self.__pixel_overlay_observation(
-                capture=capture,
                 budget=budget,
+                capture=capture,
                 existing=overlays,
                 elements=elements,
             )
         ) is not None:
             overlays = (*overlays, pixel_overlay)
 
-        scroll = self.__scroll_regions(elements=elements, capture=capture)
+        scroll = self.__scroll_regions(
+            capture=capture,
+            elements=elements,
+            capture_system=capture_system,
+        )
         calls_to_action = self.__calls_to_action(elements=elements)
 
         observation = ScreenObservation(
@@ -175,44 +187,46 @@ class ScreenObservationService:
         )
         await self.__emit_perception_artifact(
             capture=capture,
-            observation=observation,
             session_id=session_id,
             step_number=step_number,
+            observation=observation,
         )
+
         return observation
 
     async def __merge_async_enrichment(
         self,
         *,
+        session_id: str,
+        step_number: int,
         capture: ScreenCapture,
         budget: PerceptionBudget,
         elements: Tuple[PerceivedElement, ...],
-        session_id: str,
-        step_number: int,
     ) -> Tuple[PerceivedElement, ...]:
         """
         Merge optional OCR and icon enrichers without serializing their wall time.
         """
 
-        base = elements
         ocr_task = None
+        base = elements
+
         if self.__manifest_text_coverage(elements=base) < OCR_TRIGGER_MANIFEST_TEXT_COVERAGE:
             ocr_task = asyncio.create_task(
                 self.__ocr_elements(
-                    capture=capture,
                     budget=budget,
                     existing=base,
+                    capture=capture,
+                    start=len(base) + 1,
                     session_id=session_id,
                     step_number=step_number,
-                    start=len(base) + 1,
                 )
             )
 
         icon_task = asyncio.create_task(
             self.__icon_elements(
-                capture=capture,
                 budget=budget,
                 existing=base,
+                capture=capture,
                 start=len(base) + 1,
             )
         )
@@ -227,10 +241,10 @@ class ScreenObservationService:
     async def __emit_perception_artifact(
         self,
         *,
-        capture: ScreenCapture,
-        observation: ScreenObservation,
         session_id: str,
         step_number: int,
+        capture: ScreenCapture,
+        observation: ScreenObservation,
     ) -> None:
         """
         Hand perception evidence to the artifact pipeline, but only the
@@ -257,37 +271,38 @@ class ScreenObservationService:
         if any(source in enrichment_sources for source in sources):
             await self.__pipeline.emit(
                 record=ArtifactRecord(
-                    session_id=session_id,
-                    package_name=capture.activity,
-                    step_number=step_number,
                     created=created,
+                    session_id=session_id,
+                    step_number=step_number,
+                    package_name=capture.activity,
                     payload=PerceptionPayload(capture=capture, observation=observation),
                 ),
             )
         for source, payload_factory in (
-            (ElementSource.OCR, OcrPerceptionPayload),
             (ElementSource.CV, CvPerceptionPayload),
+            (ElementSource.OCR, OcrPerceptionPayload),
             (ElementSource.ICON, IconPerceptionPayload),
             (ElementSource.VISION, VisionPerceptionPayload),
         ):
             if source not in sources:
                 continue
+
             await self.__pipeline.emit(
                 record=ArtifactRecord(
-                    session_id=session_id,
-                    package_name=capture.activity,
-                    step_number=step_number,
                     created=created,
+                    session_id=session_id,
+                    step_number=step_number,
+                    package_name=capture.activity,
                     payload=payload_factory(capture=capture, observation=observation),
                 ),
             )
         if observation.overlays:
             await self.__pipeline.emit(
                 record=ArtifactRecord(
-                    session_id=session_id,
-                    package_name=capture.activity,
-                    step_number=step_number,
                     created=created,
+                    session_id=session_id,
+                    step_number=step_number,
+                    package_name=capture.activity,
                     payload=OverlayPerceptionPayload(
                         capture=capture,
                         observation=observation,
@@ -298,12 +313,12 @@ class ScreenObservationService:
     async def __ocr_elements(
         self,
         *,
+        start: int,
+        session_id: str,
+        step_number: int,
         capture: ScreenCapture,
         budget: PerceptionBudget,
         existing: Tuple[PerceivedElement, ...],
-        session_id: str,
-        step_number: int,
-        start: int,
     ) -> Tuple[PerceivedElement, ...]:
         """
         Call the OCR port and convert returned tokens into perceived elements.
@@ -315,19 +330,19 @@ class ScreenObservationService:
             logger.warning(
                 "OCR enrichment skipped",
                 extra={
-                    **self.__log_context(activity=capture.activity),
-                    "event": "observation.ocr.skipped",
-                    "retryable": exception.retryable,
                     "reason": exception.message,
+                    "retryable": exception.retryable,
+                    "event": "observation.ocr.skipped",
+                    **self.__log_context(activity=capture.activity),
                 },
             )
             return ()
 
         await self.__emit_ocr_raw_artifact(
             capture=capture,
-            raw_response=result.raw_response,
             session_id=session_id,
             step_number=step_number,
+            raw_response=result.raw_response,
         )
 
         tokens = tuple(
@@ -337,25 +352,28 @@ class ScreenObservationService:
             logger.info(
                 "OCR returned no usable tokens",
                 extra={
-                    **self.__log_context(activity=capture.activity),
                     "event": "observation.ocr.empty",
                     "raw.token.count": len(result.tokens),
+                    **self.__log_context(activity=capture.activity),
                 },
             )
             return ()
 
         merged: List[PerceivedElement] = []
+
         for offset, token in enumerate(tokens):
             if self.__overlaps_existing(bounds=token.bounds, existing=existing):
                 continue
+
             merged.append(self.__element_from_token(token=token, index=start + offset))
+
         logger.info(
             "OCR tokens merged into observation",
             extra={
-                **self.__log_context(activity=capture.activity),
-                "event": "observation.ocr.merged",
                 "merged.count": len(merged),
                 "duration.ms": result.duration,
+                "event": "observation.ocr.merged",
+                **self.__log_context(activity=capture.activity),
             },
         )
         return tuple(merged)
@@ -363,10 +381,10 @@ class ScreenObservationService:
     async def __emit_ocr_raw_artifact(
         self,
         *,
-        capture: ScreenCapture,
-        raw_response: Optional[str],
         session_id: str,
         step_number: int,
+        capture: ScreenCapture,
+        raw_response: Optional[str],
     ) -> None:
         """
         Persist raw OCR provider JSON next to XML hierarchy artifacts.
@@ -378,8 +396,8 @@ class ScreenObservationService:
         await self.__pipeline.emit(
             record=ArtifactRecord(
                 session_id=session_id,
-                package_name=capture.activity,
                 step_number=step_number,
+                package_name=capture.activity,
                 created=int(time.time() * 1000),
                 payload=OcrRawPayload(content=raw_response),
             ),
@@ -390,8 +408,8 @@ class ScreenObservationService:
         *,
         capture: ScreenCapture,
         budget: PerceptionBudget,
-        existing: Tuple[OverlayObservation, ...],
         elements: Tuple[PerceivedElement, ...],
+        existing: Tuple[OverlayObservation, ...],
     ) -> Optional[OverlayObservation]:
         """
         Build an OverlayObservation from pixel-level evidence when no element-level overlay exists.
@@ -407,9 +425,9 @@ class ScreenObservationService:
         logger.info(
             "Pixel overlay surfaced into observation",
             extra={
-                **self.__log_context(activity=capture.activity),
-                "event": "observation.overlay.pixel.surfaced",
                 "candidate.count": len(candidates),
+                "event": "observation.overlay.pixel.surfaced",
+                **self.__log_context(activity=capture.activity),
             },
         )
         return OverlayObservation(visible=True, bounds=bounds, candidates=candidates)
@@ -447,24 +465,24 @@ class ScreenObservationService:
         """
 
         return PerceivedElement(
-            identifier=f"ocr_{index}",
-            label_id=str(index),
-            text=token.text,
             parent=None,
-            bounds=token.bounds,
-            source=ElementSource.OCR,
-            role=ElementRole.TEXT,
-            confidence=token.raw_score,
             tappable=False,
+            text=token.text,
+            label_id=str(index),
+            bounds=token.bounds,
+            role=ElementRole.TEXT,
+            source=ElementSource.OCR,
+            identifier=f"ocr_{index}",
+            confidence=token.raw_score,
         )
 
     async def __icon_elements(
         self,
         *,
+        start: int,
         capture: ScreenCapture,
         budget: PerceptionBudget,
         existing: Tuple[PerceivedElement, ...],
-        start: int,
     ) -> Tuple[PerceivedElement, ...]:
         """
         Call the icon detector port and convert matches into perceived elements.
@@ -475,18 +493,21 @@ class ScreenObservationService:
             return ()
 
         merged: List[PerceivedElement] = []
+
         for offset, match in enumerate(result.matches):
             if self.__overlaps_existing(bounds=match.bounds, existing=existing):
                 continue
+
             merged.append(self.__element_from_icon(match=match, index=start + offset))
+
         if merged:
             logger.info(
                 "Icon matches merged into observation",
                 extra={
-                    **self.__log_context(activity=capture.activity),
-                    "event": "observation.icon.merged",
                     "merged.count": len(merged),
                     "duration.ms": result.duration,
+                    "event": "observation.icon.merged",
+                    **self.__log_context(activity=capture.activity),
                 },
             )
         return tuple(merged)
@@ -497,9 +518,9 @@ class ScreenObservationService:
         """
 
         return {
+            "activity": activity,
             "component": "core.observation",
             "workflow.id": self.__workflow_id,
-            "activity": activity,
         }
 
     def __element_from_icon(self, *, match: IconMatch, index: int) -> PerceivedElement:
@@ -508,19 +529,24 @@ class ScreenObservationService:
         """
 
         return PerceivedElement(
-            identifier=f"icon_{index}",
-            label_id=str(index),
-            text=match.kind.value,
             parent=None,
-            bounds=match.bounds,
-            source=ElementSource.ICON,
-            role=ElementRole.ICON,
-            confidence=match.confidence,
             tappable=True,
+            label_id=str(index),
+            bounds=match.bounds,
+            text=match.kind.value,
+            role=ElementRole.ICON,
+            source=ElementSource.ICON,
+            identifier=f"icon_{index}",
+            confidence=match.confidence,
         )
 
     def __element_from_label(
-        self, *, element: LabeledElement, index: int, capture: ScreenCapture
+        self,
+        *,
+        index: int,
+        capture: ScreenCapture,
+        element: LabeledElement,
+        capture_system: CoordinateSystem,
     ) -> Optional[PerceivedElement]:
         """
         Convert a labeled element into a perceived element.
@@ -529,7 +555,12 @@ class ScreenObservationService:
         attributes = element.attributes
 
         text = self.__text(attributes=attributes)
-        bounds = self.__bounds(bounds=element.bounds, capture=capture)
+        bounds = self.__bounds(
+            bounds=element.bounds,
+            capture=capture,
+            attributes=attributes,
+            capture_system=capture_system,
+        )
         if bounds is None:
             return None
 
@@ -544,12 +575,12 @@ class ScreenObservationService:
             parent=None,
             bounds=bounds,
             source=source,
+            label_id=identifier,
             confidence=confidence,
             identifier=identifier,
-            label_id=identifier,
+            axis=self.__axis(attributes=attributes),
             tappable=self.__is_tappable(role=role, attributes=attributes),
             scrollable=self.__scrollable(attributes=attributes, role=role),
-            axis=self.__axis(attributes=attributes),
             kind=self.__element_kind(attributes=attributes, role=role),
         )
 
@@ -581,6 +612,7 @@ class ScreenObservationService:
             (hsv[:, :, 1] > VISUAL_CONTROL_MINIMUM_SATURATION)
             & (hsv[:, :, 2] > VISUAL_CONTROL_MINIMUM_VALUE)
         ).astype(numpy.uint8) * 255
+
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
         mask = cast(
             "Any",
@@ -610,23 +642,25 @@ class ScreenObservationService:
                 screen_height=height,
             ):
                 continue
+
             if any(
                 self.__iou(first=bounds, second=element.bounds) >= VISUAL_CONTROL_MINIMUM_IOU
                 for element in existing
             ):
                 continue
+
             cv_index = start + len(controls)
             controls.append(
                 PerceivedElement(
-                    identifier=f"cv_{cv_index}",
-                    label_id=str(cv_index),
+                    text=None,
+                    parent=None,
+                    tappable=True,
                     bounds=bounds,
+                    label_id=str(cv_index),
                     source=ElementSource.CV,
                     role=ElementRole.BUTTON,
+                    identifier=f"cv_{cv_index}",
                     confidence=VISUAL_CONTROL_CONFIDENCE,
-                    text=None,
-                    tappable=True,
-                    parent=None,
                 )
             )
 
@@ -738,9 +772,9 @@ class ScreenObservationService:
             )
             if candidates:
                 return KeyboardObservation(
-                    visibility=KeyboardVisibility.VISIBLE,
-                    bounds=candidates[0].bounds,
                     dismiss=(),
+                    bounds=candidates[0].bounds,
+                    visibility=KeyboardVisibility.VISIBLE,
                 )
 
         if self.__device is None:
@@ -752,9 +786,9 @@ class ScreenObservationService:
             logger.warning(
                 "Device keyboard probe failed; treating as UNKNOWN",
                 extra={
+                    "error": str(exception),
                     "component": "core.perception.observation",
                     "event": "observation.keyboard.probe.failed",
-                    "error": str(exception),
                 },
             )
             return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
@@ -835,8 +869,9 @@ class ScreenObservationService:
     def __scroll_regions(
         self,
         *,
-        elements: Tuple[PerceivedElement, ...],
         capture: ScreenCapture,
+        capture_system: CoordinateSystem,
+        elements: Tuple[PerceivedElement, ...],
     ) -> Tuple[ScrollRegion, ...]:
         """
         Return scrollable region candidates.
@@ -848,13 +883,13 @@ class ScreenObservationService:
                 direction="vertical"
                 if (element.axis or "vertical") == "vertical"
                 else "horizontal",
-                confidence=element.confidence,
-                identifier=element.identifier,
                 label_id=element.label_id,
                 observation_region_id=None,
+                confidence=element.confidence,
+                identifier=element.identifier,
                 axis=element.axis or "vertical",
-                kind=self.__scope_kind(kind=element.kind, axis=element.axis),
                 source=ScrollEvidenceSource.SURFACE,
+                kind=self.__scope_kind(kind=element.kind, axis=element.axis),
             )
             for element in elements
             if element.role == ElementRole.SCROLL_REGION
@@ -874,7 +909,11 @@ class ScreenObservationService:
             if any((region.axis or "vertical") == "horizontal" for region in explicit):
                 return explicit
 
-        inferred = self.__page_scroll_region(elements=elements, capture=capture)
+        inferred = self.__page_scroll_region(
+            elements=elements,
+            capture=capture,
+            capture_system=capture_system,
+        )
         if inferred is None:
             return explicit
 
@@ -883,8 +922,9 @@ class ScreenObservationService:
     def __page_scroll_region(
         self,
         *,
-        elements: Tuple[PerceivedElement, ...],
         capture: ScreenCapture,
+        capture_system: CoordinateSystem,
+        elements: Tuple[PerceivedElement, ...],
     ) -> Optional[ScrollRegion]:
         """
         Infer a page-level vertical scroll lane when XML exposes only nested strips.
@@ -892,28 +932,128 @@ class ScreenObservationService:
 
         top = self.__page_top_boundary(elements=elements, capture=capture)
         bottom = self.__page_bottom_boundary(elements=elements, capture=capture)
+
         height = bottom - top
         if height < int(capture.height * 0.30):
+            logger.debug(
+                "Skipped inferred page scroll region because visible lane is too small",
+                extra={
+                    "region.top": top,
+                    "region.bottom": bottom,
+                    "region.height": height,
+                    "component": "core.observation",
+                    "capture.width": capture.width,
+                    "capture.height": capture.height,
+                    "reason": "height_below_threshold",
+                    "capture.system": capture_system.value,
+                    "event": "scroll.region.inferred.skipped",
+                },
+            )
             return None
 
-        return ScrollRegion(
+        region = ScrollRegion(
             bounds=Bounds(
                 x=0,
                 y=max(0, top),
                 width=capture.width,
-                height=min(capture.height - max(0, top), height),
-                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                coordinate_system=capture_system,
                 source=CoordinateSource.VIEWPORT,
+                height=min(capture.height - max(0, top), height),
             ),
-            direction="vertical",
-            confidence=0.72,
-            identifier="page_scroll_region",
             label_id=None,
-            observation_region_id="page_scroll_region",
+            confidence=0.72,
             axis="vertical",
+            direction="vertical",
+            identifier="page_scroll_region",
             kind=CommandScopeKind.VIEWPORT,
             source=ScrollEvidenceSource.SURFACE,
+            observation_region_id="page_scroll_region",
         )
+
+        logger.info(
+            "Inferred page scroll region",
+            extra={
+                "component": "core.observation",
+                "event": "scroll.region.inferred",
+                "region.axis": region.axis,
+                "bounds.x": region.bounds.x,
+                "bounds.y": region.bounds.y,
+                "region.id": region.identifier,
+                "capture.width": capture.width,
+                "capture.height": capture.height,
+                "region.kind": region.kind.value,
+                "bounds.width": region.bounds.width,
+                "region.direction": region.direction,
+                "bounds.height": region.bounds.height,
+                "capture.system": capture_system.value,
+                "region.confidence": region.confidence,
+                "bounds.system": region.bounds.system.value,
+                "bounds.source": region.bounds.source.value if region.bounds.source else None,
+            },
+        )
+        return region
+
+    @staticmethod
+    def __capture_dimension_system(*, capture: ScreenCapture) -> CoordinateSystem:
+        """
+        Return the coordinate system represented by ``capture.width`` / ``height``.
+        """
+
+        if not capture.image:
+            logger.info(
+                "Capture dimensions classified without image bytes",
+                extra={
+                    "component": "core.observation",
+                    "reason": "missing_image",
+                    "capture.width": capture.width,
+                    "capture.height": capture.height,
+                    "event": "capture.dimension_system.detected",
+                    "capture.system": CoordinateSystem.DEVICE_PIXEL.value,
+                },
+            )
+            return CoordinateSystem.DEVICE_PIXEL
+
+        try:
+            with Image.open(io.BytesIO(capture.image)) as image:
+                if image.width != capture.width or image.height != capture.height:
+                    logger.info(
+                        "Capture dimensions classified as logical",
+                        extra={
+                            "component": "core.observation",
+                            "reason": "image_size_mismatch",
+                            "image.width": image.width,
+                            "image.height": image.height,
+                            "capture.width": capture.width,
+                            "capture.height": capture.height,
+                            "event": "capture.dimension_system.detected",
+                            "capture.system": CoordinateSystem.LOGICAL.value,
+                        },
+                    )
+                    return CoordinateSystem.LOGICAL
+
+                logger.info(
+                    "Capture dimensions classified as device pixels",
+                    extra={
+                        "component": "core.observation",
+                        "reason": "image_size_match",
+                        "image.width": image.width,
+                        "image.height": image.height,
+                        "capture.width": capture.width,
+                        "capture.height": capture.height,
+                        "event": "capture.dimension_system.detected",
+                        "capture.system": CoordinateSystem.DEVICE_PIXEL.value,
+                    },
+                )
+        except Exception:
+            logger.debug(
+                "Could not inspect capture image dimensions; treating capture dimensions as device pixels",
+                extra={
+                    "component": "core.observation",
+                    "event": "capture.dimension_system.unknown",
+                },
+            )
+
+        return CoordinateSystem.DEVICE_PIXEL
 
     def __prune_nested_scroll_regions(
         self,
@@ -925,10 +1065,11 @@ class ScreenObservationService:
         """
 
         kept: List[ScrollRegion] = []
+
         for candidate in sorted(
             regions,
-            key=lambda region: region.bounds.width * region.bounds.height,
             reverse=True,
+            key=lambda region: region.bounds.width * region.bounds.height,
         ):
             if any(
                 self.__same_axis(first=candidate, second=existing)
@@ -936,7 +1077,9 @@ class ScreenObservationService:
                 for existing in kept
             ):
                 continue
+
             kept.append(candidate)
+
         return tuple(kept)
 
     @staticmethod
@@ -951,15 +1094,17 @@ class ScreenObservationService:
 
         if element.label_id is None:
             return False
+
         if element.source not in {ElementSource.XML, ElementSource.ACCESSIBILITY}:
             return False
+
         if element.tappable:
             return False
 
         structural_kind = (element.kind or "").lower()
         if element.role not in {
-            ElementRole.CONTAINER,
             ElementRole.UNKNOWN,
+            ElementRole.CONTAINER,
         } and structural_kind not in {"cell", "container", "list", "other"}:
             return False
 
@@ -1038,10 +1183,13 @@ class ScreenObservationService:
         """
 
         kind = str(attributes.get("kind", "")).strip().lower()
+
         if kind:
             return kind
+
         if role == ElementRole.SCROLL_REGION:
             return "container"
+
         return None
 
     @staticmethod
@@ -1051,31 +1199,39 @@ class ScreenObservationService:
         """
 
         normalized = (kind or "").lower()
+
         if normalized == "carousel":
             return CommandScopeKind.CAROUSEL
+
         if normalized == "sheet":
             return CommandScopeKind.SHEET
+
         if normalized == "list":
             return CommandScopeKind.LIST
+
         if normalized == "viewport":
             return CommandScopeKind.VIEWPORT
+
         if normalized == "container":
             return CommandScopeKind.CONTAINER
+
         if axis == "horizontal":
             return CommandScopeKind.CAROUSEL
+
         return CommandScopeKind.CONTAINER
 
     def __page_bottom_boundary(
         self,
         *,
-        elements: Tuple[PerceivedElement, ...],
         capture: ScreenCapture,
+        elements: Tuple[PerceivedElement, ...],
     ) -> int:
         """
         Return the safe bottom boundary for a feed-like page scroll.
         """
 
         _ = elements
+
         return int(capture.height * 0.86)
 
     def __calls_to_action(
@@ -1133,7 +1289,14 @@ class ScreenObservationService:
 
         return role in {ElementRole.BUTTON, ElementRole.ICON, ElementRole.INPUT}
 
-    def __bounds(self, *, bounds: UIBounds, capture: ScreenCapture) -> Optional[Bounds]:
+    def __bounds(
+        self,
+        *,
+        bounds: UIBounds,
+        capture: ScreenCapture,
+        attributes: Dict[str, object],
+        capture_system: CoordinateSystem,
+    ) -> Optional[Bounds]:
         """
         Convert UI bounds into viewport-clipped action bounds.
         """
@@ -1165,8 +1328,26 @@ class ScreenObservationService:
             y=y1,
             width=max(1, x2 - x1),
             height=max(1, y2 - y1),
-            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            coordinate_system=self.__element_bounds_system(
+                attributes=attributes,
+                capture_system=capture_system,
+            ),
         )
+
+    @staticmethod
+    def __element_bounds_system(
+        *,
+        attributes: Dict[str, object],
+        capture_system: CoordinateSystem,
+    ) -> CoordinateSystem:
+        """
+        Return the coordinate system carried by a manifest element's bounds.
+        """
+
+        if "logical_bounds" in attributes:
+            return CoordinateSystem.DEVICE_PIXEL
+
+        return capture_system
 
     def __text(self, *, attributes: Dict[str, object]) -> Optional[str]:
         """

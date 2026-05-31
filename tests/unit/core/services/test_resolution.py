@@ -439,3 +439,56 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved.action.bounds.y, 20)
         self.assertEqual(resolved.action.bounds.width, 190)
         self.assertEqual(resolved.action.bounds.height, 30)
+
+    async def test_horizontal_swipe_rejects_explicit_vertical_scroll_region(self) -> None:
+        """
+        A left/right swipe must not snap to a manifest region that explicitly declares vertical movement.
+        """
+
+        service = self.__build_service()
+        action = Action(
+            action_type=ActionType.SWIPE_LEFT,
+            target="More on Swiggy carousel",
+            rationale="find hidden card",
+            label_id="2",
+            confidence=1.0,
+        )
+        elements = {
+            "2": {
+                "bounds": "[0,0][1320,894]",
+                "axis": "vertical",
+                "kind": "viewport",
+            }
+        }
+
+        resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.UNRESOLVED)
+        self.assertIsNone(resolved.action.bounds)
+
+    async def test_horizontal_swipe_accepts_carousel_region(self) -> None:
+        """
+        A left/right swipe remains snappable when the manifest declares a carousel axis.
+        """
+
+        service = self.__build_service()
+        action = Action(
+            action_type=ActionType.SWIPE_LEFT,
+            target="More on Swiggy carousel",
+            rationale="find hidden card",
+            label_id="7",
+            confidence=1.0,
+        )
+        elements = {
+            "7": {
+                "bounds": "[0,2268][1320,2574]",
+                "axis": "horizontal",
+                "kind": "carousel",
+            }
+        }
+
+        resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
+        self.assertIsNotNone(resolved.action.bounds)
+        self.assertEqual(resolved.action.bounds.y, 2268)
