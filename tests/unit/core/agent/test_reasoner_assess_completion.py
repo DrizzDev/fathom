@@ -20,6 +20,7 @@ from fathom.schemas.criterion import (
     CriterionSource,
     CriterionVerdict,
 )
+from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
 
@@ -292,6 +293,75 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         )
 
         self.assertIsNone(evidence.criterion)
+
+    @staticmethod
+    def __effect(status: ActionEffectStatus) -> ActionEffect:
+        """
+        Build a minimal ActionEffect fixture; only the status drives the veto path under test.
+        """
+
+        return ActionEffect(
+            status=status,
+            visual_progress=0.0,
+            phash_distance=0,
+        )
+
+    def test_no_progress_effect_vetoes_screen_evolved_when_screen_changed_true(self) -> None:
+        """
+        ActionEffectStatus.NO_PROGRESS must veto screen.evolved even when the high-sensitivity flag reports True.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            analysis=self.__analysis(),
+            sub_goal=self.__sub_goal(),
+            screen_changed=True,
+            effect=self.__effect(status=ActionEffectStatus.NO_PROGRESS),
+        )
+
+        self.assertFalse(evidence.screen.evolved)
+
+    def test_no_progress_effect_vetoes_screen_evolved_when_delta_above_floor(self) -> None:
+        """
+        The veto must also block the magnitude path so a delta above the meaningful floor cannot revive evolved.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            analysis=self.__analysis(),
+            sub_goal=self.__sub_goal(),
+            screen_changed=True,
+            delta_score=0.95,
+            effect=self.__effect(status=ActionEffectStatus.NO_PROGRESS),
+        )
+
+        self.assertFalse(evidence.screen.evolved)
+
+    def test_progress_effect_does_not_block_screen_evolved(self) -> None:
+        """
+        ActionEffectStatus.PROGRESS must never tighten the gate; the reasoner still trusts screen_changed.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            analysis=self.__analysis(),
+            sub_goal=self.__sub_goal(),
+            screen_changed=True,
+            effect=self.__effect(status=ActionEffectStatus.PROGRESS),
+        )
+
+        self.assertTrue(evidence.screen.evolved)
+
+    def test_uncertain_effect_does_not_block_screen_evolved(self) -> None:
+        """
+        ActionEffectStatus.UNCERTAIN means signals disagreed; vetoing it would produce false negatives.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            analysis=self.__analysis(),
+            sub_goal=self.__sub_goal(),
+            screen_changed=True,
+            effect=self.__effect(status=ActionEffectStatus.UNCERTAIN),
+        )
+
+        self.assertTrue(evidence.screen.evolved)
 
     def test_iahtk_replay_all_four_signals_present(self) -> None:
         """

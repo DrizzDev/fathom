@@ -324,6 +324,96 @@ class TraceRendererTest(unittest.TestCase):
 
         Image.open(io.BytesIO(rendered))
 
+    def test_tap_logical_coords_project_into_retina_canvas(self) -> None:
+        """
+        Logical-space tap coords must be projected through CoordinateConverter so retina canvases draw at the
+        correct pixel, not the raw logical value (which would land in the upper-left ninth of the screenshot).
+        """
+
+        capture = ScreenCapture(
+            width=100,
+            height=100,
+            activity="app",
+            image=_Fixtures.png(width=300, height=300, color=(0, 0, 0)),
+            timestamp=0,
+        )
+        payload = TracePayload(
+            capture=capture,
+            coords=(50, 50),
+            action=Action(
+                action_type=ActionType.TAP,
+                target="x",
+                rationale="t",
+                confidence=1.0,
+            ),
+        )
+
+        rendered = TraceRenderer().render(record=_Fixtures.record(payload=payload))
+
+        decoded = Image.open(io.BytesIO(rendered)).convert("RGB")
+        self.assertEqual(decoded.size, (300, 300))
+        self.assertEqual(decoded.getpixel((150, 150)), (255, 59, 48))
+        self.assertEqual(decoded.getpixel((50, 50)), (0, 0, 0))
+
+    def test_swipe_logical_coords_project_into_retina_canvas(self) -> None:
+        """
+        Swipe endpoints in logical space must also project into pixel space so the rendered line traces the gesture.
+        """
+
+        capture = ScreenCapture(
+            width=100,
+            height=100,
+            activity="app",
+            image=_Fixtures.png(width=300, height=300, color=(0, 0, 0)),
+            timestamp=0,
+        )
+        payload = TracePayload(
+            capture=capture,
+            coords=(20, 50, 80, 50),
+            action=Action(
+                action_type=ActionType.SWIPE_LEFT,
+                target="x",
+                rationale="t",
+                confidence=1.0,
+            ),
+        )
+
+        rendered = TraceRenderer().render(record=_Fixtures.record(payload=payload))
+
+        decoded = Image.open(io.BytesIO(rendered)).convert("RGB")
+        self.assertEqual(decoded.size, (300, 300))
+        self.assertEqual(decoded.getpixel((60, 150)), (255, 59, 48))
+        self.assertEqual(decoded.getpixel((240, 150)), (255, 59, 48))
+
+    def test_tap_unscaled_when_pixel_dims_below_logical(self) -> None:
+        """
+        When the canvas is smaller than the capture's logical dims the renderer skips projection and draws raw coords.
+        """
+
+        capture = ScreenCapture(
+            width=200,
+            height=200,
+            activity="app",
+            image=_Fixtures.png(width=100, height=100, color=(0, 0, 0)),
+            timestamp=0,
+        )
+        payload = TracePayload(
+            capture=capture,
+            coords=(40, 40),
+            action=Action(
+                action_type=ActionType.TAP,
+                target="x",
+                rationale="t",
+                confidence=1.0,
+            ),
+        )
+
+        rendered = TraceRenderer().render(record=_Fixtures.record(payload=payload))
+
+        decoded = Image.open(io.BytesIO(rendered)).convert("RGB")
+        self.assertEqual(decoded.size, (100, 100))
+        self.assertEqual(decoded.getpixel((40, 40)), (255, 59, 48))
+
 
 class VerificationRendererTest(unittest.TestCase):
     """

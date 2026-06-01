@@ -91,6 +91,15 @@ class ActionKindDerivationTest(unittest.TestCase):
 
         self.assertIs(action_kind_from_token("TAP"), ActionKind.NAVIGATION)
 
+    def test_swipe_and_scroll_tokens_resolve_to_navigation(self) -> None:
+        """
+        Swipe-family and scroll tokens must resolve to NAVIGATION so loop evidence stays classified as active.
+        """
+
+        for token in ("swipe_left", "swipe_right", "swipe_up", "swipe_down", "scroll"):
+            with self.subTest(token=token):
+                self.assertIs(action_kind_from_token(token), ActionKind.NAVIGATION)
+
 
 class PastActionEntryTest(unittest.TestCase):
     """

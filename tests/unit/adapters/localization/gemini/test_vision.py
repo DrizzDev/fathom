@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from fathom.adapters.localization.gemini.vision import GeminiVisionLocalizer
 from fathom.constants.observation import KeyboardVisibility
 from fathom.interfaces.llm import LLMPort
-from fathom.schemas.actions import Action
+from fathom.schemas.actions import Action, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.observation import KeyboardObservation, ScreenObservation
 from fathom.schemas.results import GenerateResult
@@ -144,11 +144,9 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
             keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
         )
 
-    async def test_valid_payload_renders_pixel_bounds(self) -> None:
+    async def test_valid_payload_renders_logical_bounds(self) -> None:
         """
-        A well-formed normalized payload renders the bounds into pixel
-        space using the capture's width and height, and surfaces the
-        proposal with the localizer's canonical source name.
+        A normalized payload is scaled by the capture's logical dims and stamped LOGICAL with source MODEL.
         """
 
         llm = _StaticLlm(
@@ -169,8 +167,57 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(proposal.bounds.y, 200)
         self.assertEqual(proposal.bounds.width, 100)
         self.assertEqual(proposal.bounds.height, 100)
+        self.assertIs(proposal.bounds.system, CoordinateSystem.LOGICAL)
+        self.assertIs(proposal.bounds.source, CoordinateSource.MODEL)
         self.assertAlmostEqual(proposal.confidence, 0.8)
         self.assertEqual(proposal.source, "gemini.vision")
+
+    async def test_normalized_payload_survives_dispatch_translation_on_retina(self) -> None:
+        """
+        Normalized payload on a 3x retina capture must dispatch at the logical region the localizer named.
+        Mislabelling the bounds as DEVICE_PIXEL would divide by the 3x scale and shrink the target ninefold.
+        """
+
+        llm = _StaticLlm(
+            payload={
+                "x": 0.344,
+                "y": 0.4655,
+                "width": 0.312,
+                "height": 0.054,
+                "confidence": 0.9,
+            },
+        )
+        localizer = GeminiVisionLocalizer(llm=llm)
+
+        logical_width = 375
+        logical_height = 812
+        pixel_width = 1125
+        pixel_height = 2436
+
+        proposal = await localizer.locate(
+            action=self.__action(target="Alright, got it"),
+            capture=self.__capture(width=logical_width, height=logical_height),
+            budget=self.__budget(),
+            observation=self.__observation(),
+        )
+
+        self.assertIsNotNone(proposal)
+        assert proposal is not None
+        self.assertIs(proposal.bounds.system, CoordinateSystem.LOGICAL)
+
+        dispatch_x, dispatch_y, dispatch_width, dispatch_height = (
+            proposal.bounds.to_logical_dispatch(
+                logical_width=logical_width,
+                logical_height=logical_height,
+                pixel_width=pixel_width,
+                pixel_height=pixel_height,
+            )
+        )
+
+        self.assertEqual(dispatch_x, 129)
+        self.assertEqual(dispatch_y, 377)
+        self.assertEqual(dispatch_width, 117)
+        self.assertEqual(dispatch_height, 43)
 
     async def test_all_zero_payload_is_refusal_not_zero_bound_proposal(self) -> None:
         """

@@ -79,25 +79,18 @@ class VisionLocalizationPrompt:
         *,
         target: str,
         image: bytes,
-        image_width: int,
-        image_height: int,
     ) -> List[PromptPart]:
         """
         Return the prompt parts for one vision localizer call.
         """
 
         return [
-            (
-                "Screenshot dimensions: "
-                f"{image_width} pixels wide by {image_height} pixels tall. "
-                "Output normalized coordinates only; do not echo pixel values."
-            ),
+            "Output normalized coordinates only; do not echo pixel values.",
             f"Semantic target description: {target}",
             (
                 "Find the on-screen control that satisfies the target and "
                 "respond with the single JSON object defined in the system "
-                "instruction. Honor the refusal protocol if the target is "
-                "not visible."
+                "instruction. Honor the refusal protocol if the target is not visible."
             ),
             image,
         ]

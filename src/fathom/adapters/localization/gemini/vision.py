@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
 import json
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
+
+from PIL import Image
 
 from fathom.core.prompts.localization import VisionLocalizationPrompt
 from fathom.interfaces.llm import LLMPort
@@ -25,16 +28,16 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         self,
         *,
         llm: LLMPort,
-        prompt: Optional[VisionLocalizationPrompt] = None,
         workflow_id: Optional[str] = None,
+        prompt: Optional[VisionLocalizationPrompt] = None,
     ) -> None:
         """
         Initialize the member with an injected LLM port, prompt builder, and run context.
         """
 
         self.__llm = llm
-        self.__prompt = prompt if prompt is not None else VisionLocalizationPrompt()
         self.__workflow_id = workflow_id
+        self.__prompt = prompt if prompt is not None else VisionLocalizationPrompt()
 
     @property
     def name(self) -> str:
@@ -69,22 +72,17 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         )
 
         result = await self.__llm.generate(
-            prompt=self.__prompt.build(
-                target=target,
-                image=capture.image,
-                image_width=capture.width,
-                image_height=capture.height,
-            ),
+            prompt=self.__prompt.build(target=target, image=capture.image),
             use_cache=False,
             system_instruction=self.__prompt.SYSTEM_INSTRUCTION,
         )
 
         if (payload := self.__parse_payload(content=result.content, context=log_context)) is None:
             logger.warning(
-                "Vision localizer payload unparseable",
+                "Vision localizer payload unparsable",
                 extra={
                     **log_context,
-                    "event": "localizer.vision.payload.unparseable",
+                    "event": "localizer.vision.payload.unparsable",
                     "response.preview": (result.content or "")[:512],
                 },
             )
@@ -106,19 +104,26 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
                 "Vision localizer payload missing bounds",
                 extra={
                     **log_context,
-                    "event": "localizer.vision.payload.invalid",
                     "payload.raw": payload,
+                    "event": "localizer.vision.payload.invalid",
                 },
             )
             return None
 
         confidence = self.__confidence(payload=payload)
+        pixel_width, pixel_height = self.__pixel_dimensions(image=capture.image)
+
         logger.info(
             "Vision localizer proposal returned",
             extra={
                 **log_context,
-                "event": "localizer.vision.completed",
                 "confidence": confidence,
+                "payload.system": "normalized.0.1",
+                "bounds.system": bounds.system.value,
+                "event": "localizer.vision.completed",
+                "conversion": "normalized_to_logical",
+                "capture.pixel": {"width": pixel_width, "height": pixel_height},
+                "capture.logical": {"width": capture.width, "height": capture.height},
                 "payload.raw": {
                     "x": payload.get("x"),
                     "y": payload.get("y"),
@@ -160,24 +165,27 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
                 "Vision localizer response was not valid JSON",
                 extra={
                     **context,
-                    "event": "localizer.vision.payload.invalid_json",
                     "response.length": len(stripped),
+                    "event": "localizer.vision.payload.invalid_json",
                 },
             )
             return None
+
         if not isinstance(payload, dict):
             return None
+
         return payload
 
     def __bounds_from_payload(
         self,
         *,
-        payload: Dict[str, Any],
         width: int,
         height: int,
+        payload: Dict[str, Any],
     ) -> Optional[Bounds]:
         """
-        Convert normalized payload coordinates into pixel-space Bounds.
+        Scale the normalized payload by the capture's logical dims and return Bounds stamped LOGICAL.
+        The dispatch layer owns any further pixel/logical conversion; this adapter only translates units once.
         """
 
         try:
@@ -202,8 +210,23 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
             width=bound_width,
             height=bound_height,
             source=CoordinateSource.MODEL,
-            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            coordinate_system=CoordinateSystem.LOGICAL,
         )
+
+    @staticmethod
+    def __pixel_dimensions(*, image: bytes) -> Tuple[Optional[int], Optional[int]]:
+        """
+        Decode the capture PNG header and return its pixel dimensions.
+        """
+
+        if not image:
+            return None, None
+
+        try:
+            with Image.open(io.BytesIO(image)) as decoded:
+                return decoded.width, decoded.height
+        except (OSError, ValueError):
+            return None, None
 
     @staticmethod
     def __is_refusal(*, payload: Dict[str, Any]) -> bool:
@@ -214,6 +237,7 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         for key in ("x", "y", "width", "height"):
             if float(payload.get(key, -1.0) or 0.0) != 0.0:
                 return False
+
         return float(payload.get("confidence", -1.0) or 0.0) == 0.0
 
     @staticmethod
@@ -223,10 +247,12 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         """
 
         raw = payload.get("confidence", 0.5)
+
         try:
             value = float(raw)
         except (TypeError, ValueError):
             return 0.5
+
         return max(0.0, min(1.0, value))
 
     def __target_text(self, *, action: Action) -> str:
@@ -248,9 +274,9 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         """
 
         return {
-            "component": "adapter.localizer.vision",
-            "workflow.id": self.__workflow_id,
+            "member": self.name,
             "activity": activity,
             "target": target[:80],
-            "member": self.name,
+            "workflow.id": self.__workflow_id,
+            "component": "adapter.localizer.vision",
         }

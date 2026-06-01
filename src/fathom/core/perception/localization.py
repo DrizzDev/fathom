@@ -55,33 +55,71 @@ class TargetLocalizationService:
         _ = image
 
         if action.action_type not in SPATIAL_ACTION_TYPES:
-            return LocalizationResult(
+            result = LocalizationResult(
                 confidence=1.0,
                 status=LocalizationStatus.RESOLVED,
                 reason="Non-spatial action does not require target coordinates.",
             )
+            self.__log_localization_result(
+                action=action,
+                result=result,
+                method="non_spatial",
+                activity=observation.activity,
+            )
+            return result
 
         if action.action_type.value in SWIPE_ACTIONS and not action.label_id:
-            return LocalizationResult(
+            result = LocalizationResult(
                 confidence=1.0,
                 status=LocalizationStatus.RESOLVED,
                 reason="Gesture action can execute without a specific element target.",
             )
+            self.__log_localization_result(
+                action=action,
+                result=result,
+                method="gesture_without_label",
+                activity=observation.activity,
+            )
+            return result
 
         if action.label_id:
             label_result = self.__by_identifier(action=action, observation=observation)
+            self.__log_localization_result(
+                action=action,
+                method="label_id",
+                result=label_result,
+                activity=observation.activity,
+            )
             if label_result.status == LocalizationStatus.RESOLVED:
                 return label_result
 
         target_result = self.__by_target_identifier(action=action, observation=observation)
+        self.__log_localization_result(
+            action=action,
+            result=target_result,
+            method="target_identifier",
+            activity=observation.activity,
+        )
         if target_result.status == LocalizationStatus.RESOLVED:
             return target_result
 
         text_result = self.__by_exact_text(action=action, observation=observation)
+        self.__log_localization_result(
+            action=action,
+            result=text_result,
+            method="exact_text",
+            activity=observation.activity,
+        )
         if text_result.status == LocalizationStatus.RESOLVED:
             return text_result
 
         model_result = self.__by_model_bounds(action=action, observation=observation)
+        self.__log_localization_result(
+            action=action,
+            result=model_result,
+            method="model_bounds",
+            activity=observation.activity,
+        )
         if model_result.status == LocalizationStatus.RESOLVED:
             return model_result
 
@@ -90,6 +128,12 @@ class TargetLocalizationService:
             budget=budget,
             capture=capture,
             observation=observation,
+        )
+        self.__log_localization_result(
+            action=action,
+            method="ensemble",
+            result=ensemble_result,
+            activity=observation.activity,
         )
         if ensemble_result.status == LocalizationStatus.RESOLVED:
             return ensemble_result
@@ -105,12 +149,19 @@ class TargetLocalizationService:
             if element.tappable
         )
 
-        return LocalizationResult(
+        result = LocalizationResult(
             confidence=0.0,
             candidates=candidates,
             status=LocalizationStatus.UNRESOLVED,
             reason="No perceived element matched the semantic target.",
         )
+        self.__log_localization_result(
+            action=action,
+            result=result,
+            method="candidate_fallback",
+            activity=observation.activity,
+        )
+        return result
 
     async def __by_ensemble(
         self,
@@ -174,6 +225,134 @@ class TargetLocalizationService:
             "workflow.id": self.__workflow_id,
             "action.type": action.action_type.value,
             "action.target": (action.target or "")[:80],
+        }
+
+    def __log_localization_result(
+        self,
+        *,
+        method: str,
+        activity: str,
+        action: Action,
+        result: LocalizationResult,
+    ) -> None:
+        """
+        Emit one structured record for each localization decision point.
+
+        These records are intentionally verbose enough to reconstruct a
+        wrong-label RCA from logs alone: action target, planner metadata,
+        method, selected element text/role/source/bounds, candidate count,
+        and the final bounds that would reach execution.
+        """
+
+        selected = self.__selected_element(result=result)
+        logger.info(
+            "Localization method evaluated",
+            extra={
+                **self.__log_context(action=action, activity=activity),
+                "event": "localization.method.evaluated",
+                "localization.method": method,
+                "localization.reason": result.reason,
+                "localization.status": result.status.value,
+                "localization.confidence": result.confidence,
+                "localization.source": result.source.value if result.source else None,
+                "localization.bounds": self.__bounds_snapshot(bounds=result.bounds),
+                "localization.point": (
+                    {"x": result.point.x, "y": result.point.y} if result.point else None
+                ),
+                "candidate.count": len(result.candidates),
+                "candidate.preview": self.__candidate_preview(result=result),
+                "action.label_id": action.label_id,
+                "action.natural_language_target": (
+                    (action.natural_language_target or "")[:120]
+                    if action.natural_language_target
+                    else None
+                ),
+                "action.target_is_generic": action.target_is_generic,
+                "action.target_element_type": action.target_element_type,
+                "action.bounds": self.__bounds_snapshot(bounds=action.bounds),
+                "selected.element": self.__element_snapshot(element=selected),
+            },
+        )
+
+    @staticmethod
+    def __selected_element(*, result: LocalizationResult) -> Optional[PerceivedElement]:
+        """
+        Return the first candidate element when the localization selected one.
+        """
+
+        for candidate in result.candidates:
+            if candidate.element is not None:
+                return candidate.element
+
+        return None
+
+    @classmethod
+    def __candidate_preview(cls, *, result: LocalizationResult) -> tuple[Dict[str, Any], ...]:
+        """
+        Return a compact preview of the first few localization candidates.
+        """
+
+        return tuple(
+            {
+                "score": candidate.score,
+                "reason": candidate.reason,
+                "point": cls.__point_snapshot(point=candidate.point),
+                "element": cls.__element_snapshot(element=candidate.element),
+            }
+            for candidate in result.candidates[:3]
+        )
+
+    @staticmethod
+    def __point_snapshot(*, point: Optional[Point]) -> Optional[Dict[str, int]]:
+        """
+        Return a log-safe point snapshot.
+        """
+
+        if point is None:
+            return None
+
+        return {"x": point.x, "y": point.y}
+
+    @staticmethod
+    def __element_snapshot(*, element: Optional[PerceivedElement]) -> Optional[Dict[str, Any]]:
+        """
+        Return a stable log-safe snapshot for a perceived element.
+        """
+
+        if element is None:
+            return None
+
+        return {
+            "axis": element.axis,
+            "kind": element.kind,
+            "parent": element.parent,
+            "role": element.role.value,
+            "label_id": element.label_id,
+            "tappable": element.tappable,
+            "source": element.source.value,
+            "scrollable": element.scrollable,
+            "confidence": element.confidence,
+            "identifier": element.identifier,
+            "text": (element.text or "")[:120],
+            "bounds": TargetLocalizationService.__bounds_snapshot(bounds=element.bounds),
+        }
+
+    @staticmethod
+    def __bounds_snapshot(*, bounds: Optional[Bounds]) -> Optional[Dict[str, Any]]:
+        """
+        Return bounds in a consistent log shape.
+        """
+
+        if bounds is None:
+            return None
+
+        return {
+            "x": bounds.x,
+            "y": bounds.y,
+            "width": bounds.width,
+            "height": bounds.height,
+            "system": bounds.system.value,
+            "source": bounds.source.value if bounds.source else None,
         }
 
     def __from_proposal(self, *, proposal: LocalizationProposal) -> LocalizationResult:

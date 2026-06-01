@@ -17,14 +17,14 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
     """
 
     @staticmethod
-    def __build_service() -> ReferenceResolutionService:
+    def __build_service(*, workflow_id: Optional[str] = None) -> ReferenceResolutionService:
         """
         Build a resolution service with a no-op memory ledger.
         """
 
         ledger = Mock()
         ledger.get = AsyncMock(return_value=None)
-        return ReferenceResolutionService(ledger=ledger)
+        return ReferenceResolutionService(ledger=ledger, workflow_id=workflow_id)
 
     @staticmethod
     def __build_action(
@@ -286,6 +286,51 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved.action.bounds.source, CoordinateSource.OCR)
         self.assertEqual(resolved.action.bounds.x, 284)
         self.assertEqual(resolved.action.bounds.y, 383)
+
+    async def test_manifest_snap_logs_action_and_element_for_rca(self) -> None:
+        """
+        A manifest snap must log both the requested target and the selected
+        element descriptor so wrong-label snaps are diagnosable from logs.
+        """
+
+        service = self.__build_service(workflow_id="wf-resolution")
+        action = Action(
+            label_id="14",
+            rationale="tap continue",
+            target="Alright, got it button",
+            natural_language_target="Alright, got it button",
+            action_type=ActionType.TAP,
+            confidence=1.0,
+        )
+        elements = {
+            "14": {
+                "text": "You can now find all your categories on top of the page",
+                "role": "text",
+                "type": "XCUIElementTypeStaticText",
+                "source": "xml",
+                "bounds": "[129,378][246,422]",
+            },
+        }
+
+        with self.assertLogs("fathom.core.services.resolution", level="INFO") as captured:
+            resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
+        records = [
+            record for record in captured.records if record.__dict__.get("event") == "snapped"
+        ]
+        self.assertTrue(records)
+        record = records[-1]
+        self.assertEqual(record.__dict__["workflow.id"], "wf-resolution")
+        self.assertEqual(record.__dict__["action.target"], "Alright, got it button")
+        self.assertEqual(record.__dict__["action.label_id"], "14")
+        self.assertEqual(
+            record.__dict__["element"]["text"],
+            "You can now find all your categories on top of the page",
+        )
+        self.assertEqual(record.__dict__["element"]["role"], "text")
+        self.assertEqual(record.__dict__["element"]["source"], "xml")
+        self.assertEqual(record.__dict__["resolved.bounds"]["system"], "device_pixel")
 
     async def test_semantic_label_still_beats_model_bbox(self) -> None:
         """

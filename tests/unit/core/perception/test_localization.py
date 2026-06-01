@@ -99,6 +99,72 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(result.bounds)
         self.assertEqual(result.bounds, element.bounds)
 
+    async def test_resolved_method_logs_selected_element_for_rca(self) -> None:
+        """
+        A resolved localization must log the method and selected element so
+        wrong-label allegations can be answered from logs alone.
+        """
+
+        service = TargetLocalizationService(workflow_id="wf-localization")
+        element = self.__element(
+            identifier="body_text",
+            text="You can now find all your categories on top of the page",
+            bounds=Bounds(
+                x=10,
+                y=20,
+                width=300,
+                height=80,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                source=CoordinateSource.XML,
+            ),
+        )
+        action = Action(
+            action_type=ActionType.TAP,
+            target="Alright, got it button",
+            natural_language_target="Alright, got it button",
+            rationale="test",
+            confidence=1.0,
+            bounds=Bounds(
+                x=10,
+                y=20,
+                width=300,
+                height=80,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+                source=CoordinateSource.MODEL,
+            ),
+        )
+
+        with self.assertLogs("fathom.core.perception.localization", level="INFO") as captured:
+            result = await service.localize(
+                action=action,
+                observation=self.__observation(elements=(element,)),
+                image=b"",
+                budget=self.__budget(),
+            )
+
+        self.assertEqual(result.status, LocalizationStatus.RESOLVED)
+        records = [
+            record
+            for record in captured.records
+            if record.__dict__.get("event") == "localization.method.evaluated"
+            and record.__dict__.get("localization.status") == LocalizationStatus.RESOLVED.value
+        ]
+        self.assertTrue(records)
+        record = records[-1]
+        self.assertEqual(record.__dict__["localization.method"], "model_bounds")
+        self.assertEqual(record.__dict__["action.target"], action.target)
+        self.assertEqual(
+            record.__dict__["action.natural_language_target"],
+            action.natural_language_target,
+        )
+        self.assertEqual(
+            record.__dict__["selected.element"]["text"],
+            "You can now find all your categories on top of the page",
+        )
+        self.assertEqual(record.__dict__["selected.element"]["role"], ElementRole.BUTTON.value)
+        self.assertEqual(record.__dict__["selected.element"]["source"], ElementSource.VISION.value)
+        self.assertEqual(record.__dict__["candidate.count"], 1)
+
     async def test_model_bounds_without_perceived_overlap_are_unresolved(self) -> None:
         """
         Raw model bounds are not executable unless corroborated by perception.

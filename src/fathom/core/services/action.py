@@ -718,7 +718,8 @@ class ActionExecutor:
         observation: Optional[ScreenObservation],
     ) -> PrimitiveExecution:
         """
-        Dispatch the default downward scroll through the keyboard-aware retry coordinator.
+        Dispatch the downward scroll through the keyboard-aware retry coordinator.
+        Resolved ``action.bounds`` confines the gesture to that region (mirrors SWIPE); otherwise viewport is used.
         """
 
         _ = is_cancelled
@@ -729,12 +730,12 @@ class ActionExecutor:
             logger.warning(
                 "Scroll dispatch blocked by visible keyboard",
                 extra={
-                    "component": "core.services.action",
-                    "event": "scroll.dispatch.blocked",
                     "workflow.id": session_id,
                     "package.name": package_name,
-                    "step.number": step.step_number,
                     "action.target": action.target,
+                    "step.number": step.step_number,
+                    "event": "scroll.dispatch.blocked",
+                    "component": "core.services.action",
                     "action.type": action.action_type.value,
                     "keyboard.visibility": keyboard.visibility.value,
                     "keyboard.bounds": (
@@ -752,27 +753,29 @@ class ActionExecutor:
                 swipe_execution=None,
             )
 
-        region = converter.viewport_region()
+        region = self.__scroll_region(action=action, converter=converter)
         path = converter.resolve_scroll_path(region=region, direction="down")
 
         logger.info(
             "Scroll dispatch allowed",
             extra={
-                "component": "core.services.action",
                 "event": "scroll.dispatch.allowed",
+                "component": "core.services.action",
                 "workflow.id": session_id,
                 "package.name": package_name,
                 "action.target": action.target,
                 "step.number": step.step_number,
                 "path": path.model_dump(mode="json"),
+                "region.source": region.source.value,
                 "action.type": action.action_type.value,
                 "region": region.model_dump(mode="json"),
+                "action.has_bounds": action.bounds is not None,
                 "keyboard.visibility": keyboard.visibility.value,
             },
         )
         self.__log_gesture_path(
             path=path,
-            action=None,
+            action=action,
             kind="scroll",
             region=region,
             direction="down",
@@ -787,6 +790,20 @@ class ActionExecutor:
             pre_capture=pre_capture,
             observation=observation,
             package_name=package_name,
+        )
+
+    @staticmethod
+    def __scroll_region(*, action: Action, converter: CoordinateConverter) -> ExecutionRegion:
+        """
+        Return the scroll execution region, preferring resolved action bounds.
+        """
+
+        if action.bounds is None:
+            return converter.viewport_region()
+
+        return converter.region_from_bounds(
+            bounds=action.bounds,
+            source=action.bounds.source or CoordinateSource.MODEL,
         )
 
     async def __coordinate_and_emit(

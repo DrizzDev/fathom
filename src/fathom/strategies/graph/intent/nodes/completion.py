@@ -10,6 +10,7 @@ from fathom.core.agent.completion import CompletionGate
 from fathom.core.services.criterion import CriterionObserver
 from fathom.schemas.completion import CompletionEvidence, GateDecision
 from fathom.schemas.criterion import CriterionDecision
+from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.observability import CompletionLogContext
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.reasoning import SubGoalCompletionSignal
@@ -92,21 +93,30 @@ class SubGoalEvaluator:
             step_result=step_result,
         )
 
+        last_effect = agent_state.get_last_action_effect()
+
         evidence = self.__context.reasoner.assess_completion(
             sub_goal=active,
             analysis=analysis,
+            effect=last_effect,
             criterion_decision=criterion_decision,
             delta_score=agent_state.last_delta_score,
             screen_changed=step_result.screen_changed,
             screen_description=step_result.observation or step_result.step.action.target or "",
         )
-        self.__log_evidence_assessed(active=active, evidence=evidence, step_result=step_result)
+        self.__log_evidence_assessed(
+            active=active,
+            evidence=evidence,
+            effect=last_effect,
+            step_result=step_result,
+        )
 
         decision = self.__gate.adjudicate(evidence=evidence, sub_goal=active)
         self.__log_gate_adjudicated(
             active=active,
             evidence=evidence,
             decision=decision,
+            effect=last_effect,
             step_result=step_result,
         )
 
@@ -319,6 +329,7 @@ class SubGoalEvaluator:
         active: SubGoal,
         step_result: StepResult,
         evidence: CompletionEvidence,
+        effect: Optional[ActionEffect],
     ) -> None:
         """
         Structured log: per-turn evidence bundle assembled by the reasoner.
@@ -342,6 +353,12 @@ class SubGoalEvaluator:
                 "evidence.notes": list(evidence.notes),
                 "step.screen_changed": step_result.screen_changed,
                 "planner.emitted_action_type": step_result.step.action.action_type.value,
+                "effect.status": (effect.status.value if effect is not None else None),
+                "veto.applied": self.__no_progress_vetoed(
+                    effect=effect,
+                    screen_evolved=evidence.screen.evolved,
+                    screen_changed=step_result.screen_changed,
+                ),
             },
         )
 
@@ -352,6 +369,7 @@ class SubGoalEvaluator:
         decision: GateDecision,
         step_result: StepResult,
         evidence: CompletionEvidence,
+        effect: Optional[ActionEffect],
     ) -> None:
         """
         Structured log: completion-gate decision for this turn.
@@ -373,7 +391,30 @@ class SubGoalEvaluator:
                 "gate.retain_reason": (
                     decision.retain_reason.value if decision.retain_reason is not None else None
                 ),
+                "effect.status": (effect.status.value if effect is not None else None),
+                "veto.applied": self.__no_progress_vetoed(
+                    effect=effect,
+                    screen_evolved=evidence.screen.evolved,
+                    screen_changed=step_result.screen_changed,
+                ),
             },
+        )
+
+    @staticmethod
+    def __no_progress_vetoed(
+        *, screen_changed: bool, screen_evolved: bool, effect: Optional[ActionEffect]
+    ) -> bool:
+        """
+        Return True iff NO_PROGRESS overrode the high-sensitivity screen_changed signal on this turn.
+        """
+
+        if effect is None:
+            return False
+
+        return (
+            effect.status is ActionEffectStatus.NO_PROGRESS
+            and screen_changed
+            and not screen_evolved
         )
 
     def __log_retained(

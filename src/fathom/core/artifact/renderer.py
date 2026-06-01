@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from logging import getLogger
 from typing import Optional, Tuple, cast
 
 from PIL import Image, ImageDraw, ImageFont
@@ -25,6 +26,10 @@ from fathom.schemas.artifact import (
     VisionPerceptionPayload,
 )
 from fathom.schemas.observation import ElementSource, PerceivedElement, ScreenObservation
+from fathom.schemas.screens import ScreenCapture
+from fathom.utils.coordinates import CoordinateConverter
+
+logger = getLogger(name=__name__)
 
 
 class PassthroughRenderer(ArtifactRendererPort):
@@ -359,17 +364,95 @@ class TraceRenderer(ArtifactRendererPort):
         canvas = Image.open(io.BytesIO(payload.capture.image)).convert("RGB")
         draw = ImageDraw.Draw(canvas, "RGBA")
 
+        projected = self.__project_coords(
+            coords=payload.coords,
+            capture=payload.capture,
+            canvas_size=canvas.size,
+            session_id=record.session_id,
+            action_type=payload.action.action_type.value,
+        )
+
         action_type = payload.action.action_type.value
-        if action_type in self.__POINT_ACTIONS and len(payload.coords) >= 2:
-            self.__draw_point(draw=draw, coords=payload.coords)
-        elif action_type in self.__SWIPE_ACTIONS and len(payload.coords) >= 4:
-            self.__draw_swipe(draw=draw, coords=payload.coords)
+
+        if action_type in self.__POINT_ACTIONS and len(projected) >= 2:
+            self.__draw_point(draw=draw, coords=projected)
+
+        elif action_type in self.__SWIPE_ACTIONS and len(projected) >= 4:
+            self.__draw_swipe(draw=draw, coords=projected)
 
         self.__draw_label(draw=draw, label=payload.action.to_description())
 
         buffer = io.BytesIO()
         canvas.save(buffer, format="PNG")
         return buffer.getvalue()
+
+    @staticmethod
+    def __project_coords(
+        *,
+        session_id: str,
+        action_type: str,
+        capture: ScreenCapture,
+        coords: Tuple[int, ...],
+        canvas_size: Tuple[int, int],
+    ) -> Tuple[int, ...]:
+        """
+        Project logical dispatch coords through the capture's pixel canvas; raw coords are returned on invalid dims.
+        Fail-clean emits ``renderer.trace.unscaled`` so a missing/invalid scale never silently invents a factor.
+        """
+
+        pixel_width, pixel_height = canvas_size
+
+        logical_width = capture.width
+        logical_height = capture.height
+
+        if (
+            logical_width <= 0
+            or logical_height <= 0
+            or pixel_width <= 0
+            or pixel_height <= 0
+            or pixel_width < logical_width
+            or pixel_height < logical_height
+        ):
+            logger.warning(
+                "Trace renderer drawing coords without projection",
+                extra={
+                    "workflow.id": session_id,
+                    "action.type": action_type,
+                    "coords.raw": list(coords),
+                    "event": "renderer.trace.unscaled",
+                    "component": "core.artifact.renderer",
+                    "capture.pixel": {"width": pixel_width, "height": pixel_height},
+                    "capture.logical": {"width": logical_width, "height": logical_height},
+                },
+            )
+            return coords
+
+        converter = CoordinateConverter(
+            workflow_id=session_id,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
+            logical_width=logical_width,
+            logical_height=logical_height,
+        )
+        projected: Tuple[int, ...] = tuple(
+            value
+            for index in range(0, len(coords) - 1, 2)
+            for value in converter.capture_point(x=coords[index], y=coords[index + 1])
+        )
+        logger.debug(
+            "Trace renderer projected coords",
+            extra={
+                "workflow.id": session_id,
+                "action.type": action_type,
+                "coords.logical": list(coords),
+                "coords.pixel": list(projected),
+                "event": "renderer.trace.projected",
+                "component": "core.artifact.renderer",
+                "capture.pixel": {"width": pixel_width, "height": pixel_height},
+                "capture.logical": {"width": logical_width, "height": logical_height},
+            },
+        )
+        return projected
 
     @staticmethod
     def __draw_point(*, draw: ImageDraw.ImageDraw, coords: Tuple[int, ...]) -> None:
@@ -379,12 +462,14 @@ class TraceRenderer(ArtifactRendererPort):
 
         x, y = coords[0], coords[1]
         radius = TraceDrawing.TAP_RADIUS
+
         draw.ellipse(
             [x - radius, y - radius, x + radius, y + radius],
             outline=SourceColor.ACTION,
             width=TraceDrawing.LINE_WIDTH // 2,
             fill=(255, 59, 48, 100),
         )
+
         centre = TraceDrawing.CENTER_DOT_RADIUS
         draw.ellipse(
             [x - centre, y - centre, x + centre, y + centre],
@@ -398,12 +483,15 @@ class TraceRenderer(ArtifactRendererPort):
         """
 
         x1, y1, x2, y2 = coords[0], coords[1], coords[2], coords[3]
+
         draw.line([x1, y1, x2, y2], fill=SourceColor.ACTION, width=TraceDrawing.LINE_WIDTH)
         draw.ellipse(
             [x1 - 15, y1 - 15, x1 + 15, y1 + 15],
             fill=SourceColor.ACTION,
         )
+
         half = TraceDrawing.ARROW_HALF
+
         draw.line(
             [x2 - half, y2 - half, x2 + half, y2 + half],
             fill=SourceColor.ACTION,
@@ -422,6 +510,7 @@ class TraceRenderer(ArtifactRendererPort):
         """
 
         font = ImageFont.load_default()
+
         draw.text(
             (10, 10),
             f"Action: {label}",
@@ -463,6 +552,7 @@ class VerificationRenderer(ArtifactRendererPort):
 
         width, height = canvas.size
         color = self.__PASS_COLOR if payload.verdict.complete else self.__FAIL_COLOR
+
         draw.rectangle(
             [0, height - self.__VERDICT_HEIGHT, width, height],
             fill=(255, 255, 255, 200),
@@ -482,4 +572,5 @@ class VerificationRenderer(ArtifactRendererPort):
 
         buffer = io.BytesIO()
         canvas.save(buffer, format="PNG")
+
         return buffer.getvalue()

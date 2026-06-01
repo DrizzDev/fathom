@@ -29,6 +29,7 @@ from fathom.schemas.completion import (
     ScreenEvidence,
 )
 from fathom.schemas.criterion import CriterionDecision, CriterionVerdict
+from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.reasoning import CompletionSignal, SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.subgoal import SubGoal
@@ -256,11 +257,13 @@ class Reasoner:
         screen_changed: bool,
         analysis: AnalysisResult,
         delta_score: Optional[float] = None,
+        effect: Optional[ActionEffect] = None,
         screen_description: Optional[str] = None,
         criterion_decision: Optional[CriterionDecision] = None,
     ) -> CompletionEvidence:
         """
-        Collect this turn's evidence into a typed CompletionEvidence bundle.
+        Assemble this turn's typed CompletionEvidence bundle for the gate to adjudicate.
+        NO_PROGRESS effect vetoes screen.evolved so animation noise alone cannot satisfy the gate.
         """
 
         notes: List[str] = []
@@ -288,6 +291,7 @@ class Reasoner:
             notes.append(f"action.dispatched: {analysis.action.action_type.value}")
 
         evolved, screen_note = self.__verify_screen_change(
+            effect=effect,
             delta_score=delta_score,
             screen_changed=screen_changed,
         )
@@ -375,11 +379,15 @@ class Reasoner:
         *,
         screen_changed: bool,
         delta_score: Optional[float],
+        effect: Optional[ActionEffect] = None,
     ) -> tuple[bool, str]:
         """
-        Decide screen verification. Returns ``(verified, evidence)``.
-        Magnitude path takes precedence; boolean is the fallback.
+        Return (verified, evidence) for the screen-change verification; NO_PROGRESS effect short-circuits to false.
+        Magnitude path takes precedence over the boolean fallback when neither veto fires.
         """
+
+        if effect is not None and effect.status is ActionEffectStatus.NO_PROGRESS:
+            return (False, "effect.status=no_progress vetoed screen.evolved")
 
         if delta_score is not None:
             if delta_score >= MEANINGFUL_SCREEN_DELTA_FLOOR:

@@ -88,3 +88,31 @@ class IOSParserTest(unittest.TestCase):
                 for element in filtered
             )
         )
+
+    def test_collection_view_is_recognised_as_scrollable_for_scroll_action(self) -> None:
+        """
+        XCUIElementTypeCollectionView must survive the SCROLL action filter so product grids stay groundable.
+        """
+
+        xml = """
+        <AppiumAUT>
+          <XCUIElementTypeApplication type="XCUIElementTypeApplication" x="0" y="0" width="440" height="956">
+            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" x="20" y="40" width="160" height="30" visible="true" label="Filters" />
+            <XCUIElementTypeCollectionView type="XCUIElementTypeCollectionView" x="0" y="200" width="440" height="600" visible="true" enabled="true" />
+          </XCUIElementTypeApplication>
+        </AppiumAUT>
+        """
+        root = ET.fromstring(xml)
+        parser = IOSParser()
+        elements = parser.find_all_elements(
+            root=root, screenshot_width=1320, screenshot_height=2868
+        )
+
+        filtered = parser.filter_by_action(elements=elements, action=ActionType.SCROLL)
+
+        self.assertTrue(
+            any(
+                element.attributes.get("type") == "XCUIElementTypeCollectionView"
+                for element in filtered
+            )
+        )

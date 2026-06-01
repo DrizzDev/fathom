@@ -201,6 +201,17 @@ class ReferenceResolutionService:
             and not self.__element_has_semantic_descriptor(element=info)
             and action.action_type in {ActionType.TAP, ActionType.LONG_PRESS}
         ):
+            logger.info(
+                "Manifest label snap rejected because selected element is a generic visual container",
+                extra={
+                    "component": "resolution",
+                    "workflow.id": self.__workflow_id,
+                    **self.__action_snapshot(action=action),
+                    "event": "snap.generic_container.rejected",
+                    "reason": "generic_visual_container_requires_perception",
+                    "element": self.__element_snapshot(label_id=action.label_id, element=info),
+                },
+            )
             return ResolveResult.unresolved(
                 action=action,
                 reason=(
@@ -272,6 +283,16 @@ class ReferenceResolutionService:
                     "label_id": action.label_id,
                     "workflow.id": self.__workflow_id,
                     "clamped": raw_x1 < 0 or raw_y1 < 0 or raw_x2 < 0 or raw_y2 < 0,
+                    **self.__action_snapshot(action=action),
+                    "element": self.__element_snapshot(label_id=action.label_id, element=info),
+                    "resolved.bounds": {
+                        "x": x1,
+                        "y": y1,
+                        "width": width,
+                        "height": height,
+                        "system": CoordinateSystem.DEVICE_PIXEL.value,
+                        "source": self.__coordinate_source(element=info).value,
+                    },
                 },
             )
 
@@ -336,6 +357,92 @@ class ReferenceResolutionService:
                 return True
 
         return False
+
+    @staticmethod
+    def __action_snapshot(*, action: Action) -> Dict[str, Any]:
+        """
+        Return the action fields needed to debug snap-to-label decisions.
+        """
+
+        return {
+            "action.type": action.action_type.value,
+            "action.target": (action.target or "")[:120],
+            "action.natural_language_target": (
+                (action.natural_language_target or "")[:120]
+                if action.natural_language_target
+                else None
+            ),
+            "action.label_id": action.label_id,
+            "action.target_is_generic": action.target_is_generic,
+            "action.target_element_type": action.target_element_type,
+            "action.bounds": ReferenceResolutionService.__bounds_snapshot(bounds=action.bounds),
+        }
+
+    @staticmethod
+    def __element_snapshot(*, label_id: Optional[str], element: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Return a stable log-safe manifest element snapshot.
+        """
+
+        descriptor = ReferenceResolutionService.__element_descriptor(element=element)
+        return {
+            "label_id": label_id,
+            "text": descriptor[:120],
+            "type": element.get("type"),
+            "role": element.get("role"),
+            "kind": element.get("kind"),
+            "axis": element.get("axis"),
+            "class": element.get("class"),
+            "bounds": element.get("bounds"),
+            "source": element.get("source"),
+            "tappable": element.get("tappable"),
+            "name": str(element.get("name") or "")[:120],
+            "hint": str(element.get("hint") or "")[:120],
+            "label": str(element.get("label") or "")[:120],
+            "value": str(element.get("value") or "")[:120],
+            "raw_text": str(element.get("text") or "")[:120],
+        }
+
+    @staticmethod
+    def __element_descriptor(*, element: Dict[str, Any]) -> str:
+        """
+        Return the first semantic descriptor present on a manifest element.
+        """
+
+        for key in (
+            "text",
+            "label",
+            "name",
+            "value",
+            "hint",
+            "resource-id",
+            "content-desc",
+            "accessibility_label",
+            "accessibility-label",
+        ):
+            value = element.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+
+        return ""
+
+    @staticmethod
+    def __bounds_snapshot(*, bounds: Optional[Bounds]) -> Optional[Dict[str, Any]]:
+        """
+        Return action bounds in a consistent log shape.
+        """
+
+        if bounds is None:
+            return None
+
+        return {
+            "x": bounds.x,
+            "y": bounds.y,
+            "width": bounds.width,
+            "height": bounds.height,
+            "system": bounds.system.value,
+            "source": bounds.source.value if bounds.source else None,
+        }
 
     @staticmethod
     def __gesture_axis_compatible(*, action: Action, element: Dict[str, Any]) -> bool:

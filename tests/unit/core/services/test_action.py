@@ -800,6 +800,95 @@ class ActionExecutorScrollRetryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(device.swipe_calls, [])
         self.assertEqual(result.error, "scroll blocked by visible keyboard")
 
+    async def test_scroll_with_resolved_bounds_uses_region_not_viewport(self) -> None:
+        """
+        When action.bounds is resolved the scroll gesture must lie inside that region, mirroring the SWIPE shape.
+        """
+
+        device = FakeDevice(device_configuration=SWIPE_RETRY_POLICY)
+        executor = ActionExecutor(
+            max_retries=0,
+            device=device,
+            telemetry=Mock(),
+            path_manager=Mock(),
+        )
+        step = Step(
+            metadata={},
+            step_number=2,
+            condition=None,
+            event_type="action",
+            screen_hash="scroll-bounds-1",
+            is_conditional=False,
+            action=Action(
+                action_type=ActionType.SCROLL,
+                target="Product grid",
+                rationale="scroll the grid only",
+                confidence=1.0,
+                bounds=Bounds(
+                    x=100,
+                    y=500,
+                    width=800,
+                    height=600,
+                    coordinate_system=CoordinateSystem.LOGICAL,
+                ),
+            ),
+        )
+
+        await executor.act(
+            session_id="scroll-bounds-regression",
+            package_name="com.test.app",
+            step=step,
+            pre_capture=self.__build_capture(),
+            observation=self.__build_observation(keyboard=KeyboardVisibility.HIDDEN),
+        )
+
+        self.assertGreaterEqual(len(device.swipe_calls), 1)
+        for call in device.swipe_calls:
+            self.assertGreaterEqual(call["y1"], 500)
+            self.assertLessEqual(call["y2"], 500 + 600)
+            self.assertGreaterEqual(call["x1"], 100)
+            self.assertLessEqual(call["x1"], 100 + 800)
+
+    async def test_scroll_without_bounds_falls_back_to_viewport(self) -> None:
+        """
+        When action.bounds is absent the scroll must still dispatch against the full viewport (system scroll path).
+        """
+
+        device = FakeDevice(device_configuration=SWIPE_RETRY_POLICY)
+        executor = ActionExecutor(
+            max_retries=0,
+            device=device,
+            telemetry=Mock(),
+            path_manager=Mock(),
+        )
+        step = Step(
+            metadata={},
+            step_number=3,
+            condition=None,
+            event_type="action",
+            screen_hash="scroll-no-bounds-1",
+            is_conditional=False,
+            action=Action(
+                action_type=ActionType.SCROLL,
+                target="system: scroll",
+                rationale="loop recovery",
+                confidence=1.0,
+            ),
+        )
+
+        await executor.act(
+            session_id="scroll-viewport-regression",
+            package_name="com.test.app",
+            step=step,
+            pre_capture=self.__build_capture(),
+            observation=self.__build_observation(keyboard=KeyboardVisibility.HIDDEN),
+        )
+
+        self.assertGreaterEqual(len(device.swipe_calls), 1)
+        viewport_height = 2340
+        first_call = device.swipe_calls[0]
+        self.assertGreater(abs(first_call["y2"] - first_call["y1"]), viewport_height // 2)
+
 
 class _DeviceWithoutBack(FakeDevice):
     """

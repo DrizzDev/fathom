@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import unittest
 
+from fathom.constants import ActionType
 from fathom.constants.recovery import AUTONOMOUS_RECOVERY_ACTIVE_KINDS
 from fathom.core.agent.recovery import RecoveryGate
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.loop import LoopEvidence, LoopReason, LoopTurn
 from fathom.schemas.recovery import RecoveryDecisionKind, RecoveryReason
-from fathom.schemas.vision import ActionKind
+from fathom.schemas.vision import ActionKind, action_kind_for
 
 
 class RecoveryGateTest(unittest.TestCase):
@@ -54,6 +55,57 @@ class RecoveryGateTest(unittest.TestCase):
 
         self.assertEqual(decision.kind, RecoveryDecisionKind.ALLOW)
         self.assertEqual(decision.reason, RecoveryReason.SAFE)
+
+    def test_swipe_no_progress_blocks_blind_back_recovery(self) -> None:
+        """
+        Every swipe/scroll action type with NO_PROGRESS must classify as active and force REPLAN end-to-end.
+        Exercises the real ActionType -> action_kind_for chain so a future kind regression cannot pass silently.
+        """
+
+        for action_type in (
+            ActionType.SWIPE_LEFT,
+            ActionType.SWIPE_RIGHT,
+            ActionType.SWIPE_UP,
+            ActionType.SWIPE_DOWN,
+            ActionType.SCROLL,
+        ):
+            with self.subTest(action_type=action_type):
+                evidence = self.__evidence(
+                    turn=LoopTurn(
+                        action_kind=action_kind_for(action_type),
+                        action_type=action_type.value,
+                        effect_status=ActionEffectStatus.NO_PROGRESS,
+                    )
+                )
+
+                decision = RecoveryGate(active_kinds=AUTONOMOUS_RECOVERY_ACTIVE_KINDS).decide(
+                    evidence=evidence,
+                )
+
+                self.assertEqual(decision.kind, RecoveryDecisionKind.REPLAN)
+                self.assertEqual(decision.reason, RecoveryReason.ACTIVE_NO_PROGRESS)
+
+    def test_active_progress_or_uncertain_does_not_force_replan(self) -> None:
+        """
+        Only NO_PROGRESS on an active turn triggers REPLAN; PROGRESS and UNCERTAIN remain eligible for the ladder.
+        """
+
+        for status in (ActionEffectStatus.PROGRESS, ActionEffectStatus.UNCERTAIN):
+            with self.subTest(status=status):
+                evidence = self.__evidence(
+                    turn=LoopTurn(
+                        action_kind=action_kind_for(ActionType.SWIPE_LEFT),
+                        action_type=ActionType.SWIPE_LEFT.value,
+                        effect_status=status,
+                    )
+                )
+
+                decision = RecoveryGate(active_kinds=AUTONOMOUS_RECOVERY_ACTIVE_KINDS).decide(
+                    evidence=evidence,
+                )
+
+                self.assertEqual(decision.kind, RecoveryDecisionKind.ALLOW)
+                self.assertEqual(decision.reason, RecoveryReason.SAFE)
 
     @staticmethod
     def __evidence(*, turn: LoopTurn) -> LoopEvidence:

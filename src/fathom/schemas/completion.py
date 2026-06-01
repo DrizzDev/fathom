@@ -74,9 +74,8 @@ class ScreenEvidence(BaseModel):
 
     evolved: bool = Field(
         description=(
-            "True when the post-action screen differs from the pre-action screen, "
-            "either by screen_changed flag or visual-hash divergence. Even a single "
-            "text-value mutation (e.g. counter increment) flips this to true."
+            "True when the post-action screen differs from the pre-action screen, either by screen_changed flag or visual-hash divergence. "
+            "Vetoed to false when the consolidated ActionEffect classifier reports NO_PROGRESS, so animation noise alone cannot satisfy the gate."
         ),
     )
 
