@@ -73,9 +73,10 @@ class PostAction:
         pre_hash = context.pre_screen.visual_hash if context.pre_screen is not None else ZERO_HASH
         try:
             comparison = await self.__compare(
+                package_name=context.package,
                 before_capture=context.capture,
                 before_state=context.pre_screen,
-                package_name=context.package,
+                step_number=context.step.step_number,
             )
         except Exception as exception:
             await self.__context.telemetry.warning(
@@ -166,9 +167,10 @@ class PostAction:
     async def __compare(
         self,
         *,
+        step_number: int,
+        package_name: str,
         before_capture: ScreenCapture,
         before_state: Optional[ScreenState],
-        package_name: str,
     ) -> PostActionObservation:
         """
         Capture the post-action screen and compare it to the pre-action state.
@@ -292,6 +294,7 @@ class PostAction:
         after_artifact = await self.__persist_screen_artifact(
             phase="post_action",
             capture=post_capture,
+            step_number=step_number,
             package_name=package_name,
             visual_hash=post_hashes.visual_hash,
         )
@@ -349,6 +352,7 @@ class PostAction:
         self,
         *,
         phase: str,
+        step_number: int,
         package_name: str,
         capture: ScreenCapture,
         visual_hash: Optional[str],
@@ -366,7 +370,9 @@ class PostAction:
                 metadata={
                     "phase": phase,
                     "type": "screenshot",
+                    "category": "screenshot",
                     "timestamp": time.time(),
+                    "step_number": step_number,
                     "package_name": package_name,
                     "activity_name": capture.activity,
                     "session_id": self.__context.workflow_id,

@@ -15,6 +15,7 @@ from fathom.interfaces.artifact import ArtifactRendererPort, ArtifactSinkPort
 from fathom.schemas.artifact import (
     ArtifactKind,
     ArtifactMetadata,
+    ArtifactReceipt,
     ArtifactRecord,
     PipelineConfig,
     TracePayload,
@@ -65,55 +66,43 @@ class ArtifactPipeline:
         was rejected or the renderer raised.
         """
 
-        if (renderer := self.__renderers.get(record.payload.kind)) is None:
-            logger.warning(
-                "No renderer registered for artifact kind; dropping record",
-                extra={
-                    **self.__log_context(),
-                    "event": ArtifactEvent.EMIT_REJECTED,
-                    "artifact.kind": record.payload.kind.value,
-                },
-            )
-            return None
-
-        try:
-            content = renderer.render(record=record)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exception:
-            logger.warning(
-                "Artifact renderer raised; dropping record",
-                extra={
-                    **self.__log_context(),
-                    "event": ArtifactEvent.RENDER_FAILED,
-                    "artifact.kind": record.payload.kind.value,
-                    "error.message": str(exception),
-                },
-            )
+        content = self.__render(record=record)
+        if content is None:
             return None
 
         metadata = record.metadata()
         payload_path = await asyncio.to_thread(self.__stage_to_efs, record=record, content=content)
-        logger.debug(
-            "Artifact staged on EFS",
-            extra={
-                **self.__log_context(),
-                "event": ArtifactEvent.EMIT_STAGED,
-                "artifact.kind": metadata.kind.value,
-                "artifact.payload.path": str(payload_path),
-            },
-        )
+        self.__log_staged(metadata=metadata, payload_path=payload_path)
 
         task = asyncio.create_task(
             self.__dispatch(
-                metadata=metadata,
                 content=content,
+                metadata=metadata,
                 payload_path=payload_path,
             ),
         )
         self.__pending.add(task)
         task.add_done_callback(self.__pending.discard)
         return payload_path
+
+    async def emit_with_receipt(self, *, record: ArtifactRecord) -> Optional[ArtifactReceipt]:
+        """
+        Stage, upload, clean up, and return the sink receipt synchronously.
+        """
+
+        content = self.__render(record=record)
+        if content is None:
+            return None
+
+        metadata = record.metadata()
+        payload_path = await asyncio.to_thread(self.__stage_to_efs, record=record, content=content)
+        self.__log_staged(metadata=metadata, payload_path=payload_path)
+
+        return await self.__persist_and_cleanup(
+            content=content,
+            metadata=metadata,
+            payload_path=payload_path,
+        )
 
     async def drain(self) -> None:
         """
@@ -162,56 +151,123 @@ class ArtifactPipeline:
 
         metadata = record.metadata()
         filename = self.__filename(record=record, metadata=metadata)
+
         payload_path = self.__path_manager.get_artifact_path(
+            filename=filename,
             kind=metadata.kind,
             session_id=metadata.session_id,
             package_name=metadata.package_name,
-            filename=filename,
         )
         payload_path.write_bytes(content)
+
         return payload_path
 
     async def __dispatch(
         self,
         *,
-        metadata: ArtifactMetadata,
         content: bytes,
         payload_path: Path,
+        metadata: ArtifactMetadata,
     ) -> None:
         """
         Background worker: hand off to the sink, then clean up locally if asked.
         """
 
         async with self.__semaphore:
-            try:
-                receipt = await self.__sink.persist(metadata=metadata, content=content)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exception:
-                logger.warning(
-                    "Artifact sink raised; leaving EFS copy in place",
-                    extra={
-                        **self.__log_context(),
-                        "event": ArtifactEvent.UPLOAD_FAILED,
-                        "artifact.kind": metadata.kind.value,
-                        "error.message": str(exception),
-                    },
-                )
-                return
+            await self.__persist_and_cleanup(
+                content=content,
+                metadata=metadata,
+                payload_path=payload_path,
+            )
 
-            if not receipt.local_cleanup:
-                return
+    def __render(self, *, record: ArtifactRecord) -> Optional[bytes]:
+        """
+        Render an artifact record into bytes, returning ``None`` when unsupported.
+        """
 
-            await asyncio.to_thread(self.__unlink, payload_path=payload_path)
-            logger.debug(
-                "Local artifact cleanup completed",
+        if (renderer := self.__renderers.get(record.payload.kind)) is None:
+            logger.warning(
+                "No renderer registered for artifact kind; dropping record",
                 extra={
                     **self.__log_context(),
-                    "event": ArtifactEvent.LOCAL_CLEANUP,
-                    "artifact.kind": metadata.kind.value,
-                    "artifact.payload.path": str(payload_path),
+                    "event": ArtifactEvent.EMIT_REJECTED,
+                    "artifact.kind": record.payload.kind.value,
                 },
             )
+            return None
+
+        try:
+            return renderer.render(record=record)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:
+            logger.warning(
+                "Artifact renderer raised; dropping record",
+                extra={
+                    **self.__log_context(),
+                    "error.message": str(exception),
+                    "event": ArtifactEvent.RENDER_FAILED,
+                    "artifact.kind": record.payload.kind.value,
+                },
+            )
+            return None
+
+    async def __persist_and_cleanup(
+        self,
+        *,
+        content: bytes,
+        payload_path: Path,
+        metadata: ArtifactMetadata,
+    ) -> Optional[ArtifactReceipt]:
+        """
+        Persist rendered bytes and clean up the staged file when the sink allows it.
+        """
+
+        try:
+            receipt = await self.__sink.persist(metadata=metadata, content=content)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:
+            logger.warning(
+                "Artifact sink raised; leaving EFS copy in place",
+                extra={
+                    **self.__log_context(),
+                    "error.message": str(exception),
+                    "event": ArtifactEvent.UPLOAD_FAILED,
+                    "artifact.kind": metadata.kind.value,
+                },
+            )
+            return None
+
+        if not receipt.local_cleanup:
+            return receipt
+
+        await asyncio.to_thread(self.__unlink, payload_path=payload_path)
+        logger.debug(
+            "Local artifact cleanup completed",
+            extra={
+                **self.__log_context(),
+                "event": ArtifactEvent.LOCAL_CLEANUP,
+                "artifact.kind": metadata.kind.value,
+                "artifact.payload.path": str(payload_path),
+            },
+        )
+        return receipt
+
+    def __log_staged(self, *, metadata: ArtifactMetadata, payload_path: Path) -> None:
+        """
+        Log the durable staging path for one rendered artifact.
+        """
+
+        logger.debug(
+            "Artifact staged on EFS",
+            extra={
+                **self.__log_context(),
+                "event": ArtifactEvent.EMIT_STAGED,
+                "artifact.kind": metadata.kind.value,
+                "artifact.payload.path": str(payload_path),
+            },
+        )
 
     @staticmethod
     def __unlink(*, payload_path: Path) -> None:

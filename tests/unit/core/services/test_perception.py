@@ -150,8 +150,9 @@ class _TempPathManager:
 class TestPerceptionServicePipelineBranch(unittest.IsolatedAsyncioTestCase):
     """
     Pins for the pipeline-backed perceive path. Verifies the producer
-    never leaks an Infrastructure-internal EFS staging path through
-    Domain-visible ``ScreenCapture.metadata``.
+    publishes a stable artifact identifier without leaking an
+    Infrastructure-internal EFS staging path through
+    ``ScreenCapture.metadata``.
     """
 
     async def asyncSetUp(self) -> None:
@@ -183,9 +184,8 @@ class TestPerceptionServicePipelineBranch(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """
-        The pipeline's EFS staging path must never appear in the
-        returned capture's metadata; bytes-flow consumers rely only on
-        ``capture.image``.
+        Pipeline-backed captures expose an artifact id for step reports
+        while keeping EFS paths out of the returned capture metadata.
         """
 
         sink = _RecordingSink()
@@ -202,7 +202,8 @@ class TestPerceptionServicePipelineBranch(unittest.IsolatedAsyncioTestCase):
         await pipeline.drain()
 
         self.assertNotIn("path", result.metadata)
-        self.assertNotIn("storage_id", result.metadata)
+        self.assertEqual(result.metadata["storage_id"], "cloud://artifact")
+        self.assertNotIn(self.__tmp.name, result.metadata["storage_id"])
         self.assertEqual(perception.call_count, 1)
         emitted_kinds = [metadata.kind for metadata in sink.persisted]
         self.assertEqual(emitted_kinds, [ArtifactKind.SCREENSHOT])

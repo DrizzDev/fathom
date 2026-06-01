@@ -172,6 +172,52 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
 
         self.assertTrue(evidence.action.dispatched)
 
+    def test_action_dispatched_for_directional_swipe_actions(self) -> None:
+        """
+        Directional swipe variants are executable gestures → action.dispatched=True.
+        """
+
+        for action_type in (
+            ActionType.SWIPE_UP,
+            ActionType.SWIPE_DOWN,
+            ActionType.SWIPE_LEFT,
+            ActionType.SWIPE_RIGHT,
+        ):
+            with self.subTest(action_type=action_type):
+                evidence = self.__reasoner().assess_completion(
+                    analysis=self.__analysis(action_type=action_type),
+                    sub_goal=self.__sub_goal(),
+                    screen_changed=True,
+                )
+
+                self.assertTrue(evidence.action.dispatched)
+
+    def test_opening_sub_goal_completes_for_next_phase_actions(self) -> None:
+        """
+        Next-phase action types complete opener sub-goals when reasoning confirms follow-up work.
+        """
+
+        for action_type in (
+            ActionType.SWIPE,
+            ActionType.SCROLL,
+            ActionType.VALIDATE,
+            ActionType.SWIPE_UP,
+            ActionType.SWIPE_DOWN,
+            ActionType.SWIPE_LEFT,
+            ActionType.SWIPE_RIGHT,
+        ):
+            with self.subTest(action_type=action_type):
+                signal = self.__reasoner().analyze_completion(
+                    analysis=self.__analysis(
+                        action_type=action_type,
+                        reasoning="Swipe and check the main content after app launch.",
+                    ),
+                    current_sub_goal="Open Tata 1mg app",
+                )
+
+                self.assertTrue(signal.success_indicator)
+                self.assertIn(action_type.value, signal.evidence)
+
     def test_screen_evolved_via_delta_score_above_floor(self) -> None:
         """
         delta_score above the meaningful-delta floor → screen.evolved=True even

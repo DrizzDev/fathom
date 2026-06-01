@@ -4,7 +4,7 @@ import asyncio  # noqa: TC003 — used at runtime for Task types
 import hashlib
 import time
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import Any, List, Optional
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.screen import INTERACTION_TEXT_PREVIEW_LENGTH, ZERO_HASH
@@ -17,9 +17,6 @@ from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = getLogger(__name__)
 
@@ -73,18 +70,21 @@ class PerceptionService:
 
         capture = await self.__perception.capture()
 
-        staged_path = await self.__emit_screenshot_artifact(
+        storage_id = await self.__emit_screenshot_artifact(
             capture=capture,
             session_id=effective_session_id,
             step_number=step_number,
         )
-        if staged_path is None:
+        if storage_id is None:
             return await self.__fallback_persist_capture(
                 capture=capture,
                 session_id=effective_session_id,
             )
 
-        return capture
+        metadata = dict(capture.metadata)
+        metadata["storage_id"] = storage_id
+
+        return capture.model_copy(update={"metadata": metadata})
 
     async def __emit_screenshot_artifact(
         self,
@@ -92,30 +92,46 @@ class PerceptionService:
         capture: ScreenCapture,
         session_id: str,
         step_number: int,
-    ) -> Optional[Path]:
+    ) -> Optional[str]:
         """
         Hand the raw screen capture to the artifact pipeline and surface
-        the EFS-staged payload path for downstream metadata enrichment.
+        a stable pipeline artifact identifier for downstream metadata enrichment.
         """
 
         if self.__pipeline is None:
             return None
 
-        return await self.__pipeline.emit(
-            record=ArtifactRecord(
-                session_id=session_id,
-                package_name=capture.activity,
-                step_number=step_number,
-                created=int(time.time() * 1000),
-                payload=ScreenshotPayload(capture=capture),
-            ),
+        record = ArtifactRecord(
+            session_id=session_id,
+            step_number=step_number,
+            package_name=capture.activity,
+            created=int(time.time() * 1000),
+            payload=ScreenshotPayload(capture=capture),
         )
+
+        receipt = await self.__pipeline.emit_with_receipt(record=record)
+        if receipt is None or not receipt.identifier:
+            return None
+
+        logger.info(
+            "Pre-action screenshot artifact persisted",
+            extra={
+                "component": "perception.service",
+                "session.id": session_id,
+                "step.number": step_number,
+                "artifact.kind": "screenshot",
+                "artifact.identifier": receipt.identifier,
+                "event": "perception.screenshot.persisted",
+                "artifact.local_cleanup": receipt.local_cleanup,
+            },
+        )
+        return receipt.identifier
 
     async def __fallback_persist_capture(
         self,
         *,
-        capture: ScreenCapture,
         session_id: str,
+        capture: ScreenCapture,
     ) -> ScreenCapture:
         """
         Persist via :class:`StoragePort` when no artifact pipeline is wired.
