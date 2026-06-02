@@ -127,9 +127,7 @@ class QualifierComposerTest(unittest.IsolatedAsyncioTestCase):
         return a composition with zero owned resources.
         """
 
-        composer = QualifierComposer(
-            assembly=self.__assembly(), llm_factory=_ForbiddenLLMFactory()
-        )
+        composer = QualifierComposer(assembly=self.__assembly(), llm_factory=_ForbiddenLLMFactory())
 
         composition = await composer.compose(
             planner_llm=MagicMock(spec=LLMPort),

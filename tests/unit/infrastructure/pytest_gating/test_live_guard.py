@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 from tests.live.conftest import LiveTestGuard
 
-
 _REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 _LIVE_DIRECTORY: Path = _REPO_ROOT / "tests" / "live"
 
@@ -77,13 +76,7 @@ class LiveTestGuardItemScopingTest(unittest.TestCase):
         """
 
         unit_path = (
-            _REPO_ROOT
-            / "tests"
-            / "unit"
-            / "core"
-            / "services"
-            / "qualifier"
-            / "test_gate.py"
+            _REPO_ROOT / "tests" / "unit" / "core" / "services" / "qualifier" / "test_gate.py"
         )
         item = self.__item_at(path=unit_path)
         self.assertFalse(LiveTestGuard.is_live_item(item=item))

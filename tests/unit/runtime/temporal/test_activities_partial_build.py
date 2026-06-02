@@ -115,18 +115,10 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch("fathom.runtime.temporal.activities.LLMFactory") as llm_factory_cls,
             patch("fathom.runtime.temporal.activities.DeviceFactory") as device_factory_cls,
-            patch(
-                "fathom.runtime.temporal.activities.PerceptionFactory"
-            ) as perception_factory_cls,
-            patch(
-                "fathom.runtime.temporal.activities.TelemetryFactory"
-            ) as telemetry_factory_cls,
-            patch(
-                "fathom.runtime.temporal.activities.StorageFactory"
-            ) as storage_factory_cls,
-            patch(
-                "fathom.runtime.temporal.activities.SignalFactory"
-            ) as signal_factory_cls,
+            patch("fathom.runtime.temporal.activities.PerceptionFactory") as perception_factory_cls,
+            patch("fathom.runtime.temporal.activities.TelemetryFactory") as telemetry_factory_cls,
+            patch("fathom.runtime.temporal.activities.StorageFactory") as storage_factory_cls,
+            patch("fathom.runtime.temporal.activities.SignalFactory") as signal_factory_cls,
             patch("fathom.runtime.temporal.activities.QualifierComposer") as composer_cls,
             patch.object(
                 activities,
@@ -140,17 +132,13 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             device_factory_cls.return_value.create = MagicMock(return_value=device_adapter)
-            perception_factory_cls.return_value.create = MagicMock(
-                return_value=perception_adapter
-            )
+            perception_factory_cls.return_value.create = MagicMock(return_value=perception_adapter)
 
             llm_factory_instance = MagicMock()
             llm_factory_instance.create = MagicMock(return_value=planner_llm)
             llm_factory_cls.return_value = llm_factory_instance
 
-            telemetry_factory_cls.return_value.create = MagicMock(
-                return_value=telemetry_adapter
-            )
+            telemetry_factory_cls.return_value.create = MagicMock(return_value=telemetry_adapter)
             storage_factory_cls.return_value.create = MagicMock(return_value=storage_adapter)
             signal_factory_cls.return_value.create = MagicMock(return_value=signal_adapter)
 
