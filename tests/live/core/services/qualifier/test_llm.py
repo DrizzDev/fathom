@@ -16,7 +16,6 @@ from fathom.runtime.factories import LLMFactory
 from fathom.schemas.configuration import QualifierConfiguration
 from fathom.settings.env import FathomSettings
 
-
 logging.getLogger("google.genai").setLevel(logging.WARNING)
 logging.getLogger("fathom.core.services.qualifier.llm").setLevel(logging.WARNING)
 
@@ -86,7 +85,7 @@ class IntentCorpus:
         "write me a poem",
         "asdkfjhqwoeiruzxcv",
         "who founded google?",
-        "can you explain kubernetes?",   
+        "can you explain kubernetes?",
     ]
 
     @classmethod
@@ -190,9 +189,7 @@ class ProductionQualifierWiring:
         assembly = RunAssemblyBuilder(settings=FathomSettings())
 
         planner_llm = llm_factory.create(
-            configuration=assembly.build_qualifier_model_configuration(
-                configuration=configuration
-            )
+            configuration=assembly.build_qualifier_model_configuration(configuration=configuration)
         )
         return QualifierComposer(assembly=assembly, llm_factory=llm_factory).compose(
             planner_llm=planner_llm, configuration=configuration

@@ -36,7 +36,6 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         self.assertEqual(configuration.project_id, "bound-project")
         self.assertEqual(configuration.credentials, "/fake/credentials.json")
 
-
     def test_qualifier_knobs_flow_into_llm_configuration(self) -> None:
         """
         Temperature, use_cache and thinking_level on QualifierConfiguration must reach

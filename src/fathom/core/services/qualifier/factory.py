@@ -13,9 +13,7 @@ class IntentQualifierFactory:
     """
 
     @staticmethod
-    def create(
-        *, llm: LLMPort, configuration: QualifierConfiguration
-    ) -> IntentQualifierPort:
+    def create(*, llm: LLMPort, configuration: QualifierConfiguration) -> IntentQualifierPort:
         """
         Return the LLM-backed qualifier when enabled, otherwise the permissive one.
         """

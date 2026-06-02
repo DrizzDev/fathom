@@ -63,7 +63,6 @@ class FathomBuilderQualifierDefaultTest(unittest.TestCase):
             .with_config(configuration=configuration)
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
-
             .build()
         )
         installed = runner._FathomRunner__qualifier  # type: ignore[attr-defined]
@@ -75,11 +74,7 @@ class FathomBuilderQualifierDefaultTest(unittest.TestCase):
         """
 
         explicit = PermissiveIntentQualifier()
-        runner = (
-            self.__builder_with_required_ports()
-            .with_qualifier(port=explicit)
-            .build()
-        )
+        runner = self.__builder_with_required_ports().with_qualifier(port=explicit).build()
         installed = runner._FathomRunner__qualifier  # type: ignore[attr-defined]
         self.assertIs(installed, explicit)
 

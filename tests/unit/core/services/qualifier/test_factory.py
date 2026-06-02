@@ -75,9 +75,7 @@ class IntentQualifierFactoryTest(unittest.TestCase):
         """
 
         llm = MagicMock(spec=LLMPort)
-        qualifier = IntentQualifierFactory.create(
-            llm=llm, configuration=QualifierConfiguration()
-        )
+        qualifier = IntentQualifierFactory.create(llm=llm, configuration=QualifierConfiguration())
         self.assertIsInstance(qualifier, LLMIntentQualifier)
 
 

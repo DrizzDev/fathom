@@ -48,9 +48,21 @@ class _ForbiddenLLMFactory(LLMFactoryPort):
         """
 
         _ = configuration
-        raise AssertionError(
-            "LLMFactory.create must not be called when the qualifier is disabled"
-        )
+        raise AssertionError("LLMFactory.create must not be called when the qualifier is disabled")
+
+
+class _RaisingLLMFactory(LLMFactoryPort):
+    """
+    LLM factory double that simulates a construction failure such as Vertex auth refusal.
+    """
+
+    def create(self, *, configuration: LLMConfiguration) -> LLMPort:
+        """
+        Raise a vendor-shaped exception to exercise the composer's failure-log path.
+        """
+
+        _ = configuration
+        raise RuntimeError("simulated vertex auth failure")
 
 
 class QualifierComposerTest(unittest.TestCase):
@@ -97,16 +109,13 @@ class QualifierComposerTest(unittest.TestCase):
         self.assertEqual(captured.project_id, "bound-project")
         self.assertEqual(captured.location, "bound-location")
         self.assertEqual(captured.credentials, "/fake/credentials.json")
-        
 
     def test_disabled_returns_permissive_without_constructing_llm(self) -> None:
         """
         Disabled qualifier configuration must skip LLMFactory and install permissive.
         """
 
-        composer = QualifierComposer(
-            assembly=self.__assembly(), llm_factory=_ForbiddenLLMFactory()
-        )
+        composer = QualifierComposer(assembly=self.__assembly(), llm_factory=_ForbiddenLLMFactory())
 
         qualifier = composer.compose(
             planner_llm=MagicMock(spec=LLMPort),
@@ -114,6 +123,50 @@ class QualifierComposerTest(unittest.TestCase):
         )
 
         self.assertIsInstance(qualifier, PermissiveIntentQualifier)
+
+    def test_llm_construction_failure_logs_qualifier_context_and_propagates(self) -> None:
+        """
+        LLM construction failures must be logged with qualifier-specific context and re-raised
+        so callers fail fast instead of receiving an opaque vendor error.
+        """
+
+        composer = QualifierComposer(assembly=self.__assembly(), llm_factory=_RaisingLLMFactory())
+
+        with (
+            self.assertLogs("fathom.core.services.qualifier.composer", level="WARNING") as captured,
+            self.assertRaises(RuntimeError),
+        ):
+            composer.compose(
+                planner_llm=MagicMock(spec=LLMPort),
+                configuration=QualifierConfiguration(),
+            )
+
+        self.assertTrue(
+            any(
+                "qualifier.dedicated_llm_construction_failed" in record
+                for record in captured.output
+            ),
+            msg=f"Expected qualifier.dedicated_llm_construction_failed log; got {captured.output}",
+        )
+
+    def test_compose_emits_composed_log_with_implementation_details(self) -> None:
+        """
+        Every compose() call must emit a qualifier.composed INFO log so we can verify in
+        production which qualifier wiring is actually in use.
+        """
+
+        composer = QualifierComposer(assembly=self.__assembly(), llm_factory=_SpyLLMFactory())
+
+        with self.assertLogs("fathom.core.services.qualifier.composer", level="INFO") as captured:
+            composer.compose(
+                planner_llm=MagicMock(spec=LLMPort),
+                configuration=QualifierConfiguration(),
+            )
+
+        self.assertTrue(
+            any("qualifier.composed" in record for record in captured.output),
+            msg=f"Expected qualifier.composed log; got {captured.output}",
+        )
 
     def test_qualifier_knobs_reach_the_underlying_llm_configuration(self) -> None:
         """
