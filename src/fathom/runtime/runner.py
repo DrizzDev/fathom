@@ -199,25 +199,14 @@ class FathomRunner:
             },
         )
 
-        qualified_context = {
+        verdict_payload = {
             "intent": intent,
-            "blocked": blocked,
             "workflow_id": workflow_id,
             "latency": qualifier_latency,
             "label": verdict.label.value,
             "confidence": verdict.confidence,
             "rationale": verdict.rationale.model_dump(),
         }
-        await self.__telemetry.info(
-            "Intent qualified", type=FathomEvent.INTENT_QUALIFIED, **qualified_context
-        )
-        # Legacy companion event so clients that have not yet adopted INTENT_QUALIFIED
-        # still surface the qualifier verdict via the existing REASONING channel.
-        await self.__telemetry.info(
-            verdict.rationale.reasoning or "Intent qualified",
-            type=FathomEvent.REASONING,
-            **qualified_context,
-        )
 
         if blocked:
             logger.warning(
@@ -232,8 +221,13 @@ class FathomRunner:
                 verdict=verdict,
                 start_time=start_time,
                 workflow_id=workflow_id,
+                verdict_payload=verdict_payload,
             )
 
+        # Allow path: emit INTENT_QUALIFIED
+        await self.__telemetry.info(
+            "Intent qualified", type=FathomEvent.INTENT_QUALIFIED, **verdict_payload
+        )
         logger.info("gate.allow", extra={"workflow_id": workflow_id})
 
         # Initialize context namespace
@@ -547,6 +541,7 @@ class FathomRunner:
         workflow_id: str,
         start_time: float,
         verdict: QualificationVerdict,
+        verdict_payload: Dict[str, Any],
     ) -> IntentResult:
         """
         Emit the rejection notification and produce a terminal IntentResult.
@@ -558,37 +553,16 @@ class FathomRunner:
         user_message = verdict.message or DEFAULT_REJECTION_MESSAGE
         duration = time.time() - start_time
 
-        logger.info(
-            "gate.notify_rejection",
-            extra={"workflow_id": workflow_id, "duration": duration},
-        )
-
-        await self.notify(
-            level="warning",
-            message=user_message,
-            event_type=FathomEvent.INTENT_REJECTED,
-        )
-        await self.notify(
-            level="warning",
-            message=user_message,
-            event_type=FathomEvent.WORKFLOW_COMPLETED,
-        )
-
-        await self.__telemetry.info(
-            "Workflow execution finalized",
-            intent=intent,
-            success=False,
-            steps_taken=0,
-            rejected=True,
-            duration=duration,
-            workflow_id=workflow_id,
-            type=FathomEvent.WORKFLOW_COMPLETED,
-            completion_reason=CompletionReason.NOT_EXECUTABLE.value,
+        # Single event for the rejection. Client switches on type; everything the
+        # client needs to render (message + verdict) is in this one payload.
+        await self.__telemetry.warning(
+            user_message, type=FathomEvent.INTENT_REJECTED, **verdict_payload
         )
 
         logger.info(
             "gate.rejection_emitted",
             extra={
+                "duration": duration,
                 "workflow_id": workflow_id,
                 "completion_reason": CompletionReason.NOT_EXECUTABLE.value,
             },

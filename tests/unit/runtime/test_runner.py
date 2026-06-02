@@ -135,48 +135,12 @@ class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.intent, "who founded google?")
         self.assertEqual(result.steps_taken, 0)
 
-    async def test_blocking_verdict_emits_qualified_and_legacy_reasoning_events(self) -> None:
-        """
-        Both the new INTENT_QUALIFIED and legacy REASONING events must fire on every gate.
-        """
-
-        qualifier = BlockingQualifier()
-        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
-
-        with (
-            patch("fathom.runtime.runner.ContextManager"),
-            patch("fathom.runtime.runner.IntentStrategy"),
-        ):
-            await runner.run_intent(intent="who founded google?")
-
-        qualified_calls = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.INTENT_QUALIFIED
-        ]
-        reasoning_calls = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.REASONING
-        ]
-        self.assertEqual(len(qualified_calls), 1)
-        self.assertEqual(len(reasoning_calls), 1)
-        self.assertTrue(qualified_calls[0].kwargs["blocked"])
-        self.assertTrue(reasoning_calls[0].kwargs["blocked"])
-        self.assertEqual(
-            qualified_calls[0].kwargs["label"], QualificationLabel.NOT_EXECUTABLE.value
-        )
-        self.assertEqual(
-            reasoning_calls[0].kwargs["label"], QualificationLabel.NOT_EXECUTABLE.value
-        )
-        rationale_payload = qualified_calls[0].kwargs["rationale"]
-        self.assertEqual(rationale_payload["category"], RationaleCategory.INFORMATIONAL.value)
-
-    async def test_blocking_verdict_emits_rejected_and_workflow_completed_notifications(
+    async def test_blocking_verdict_emits_only_intent_rejected_with_full_payload(
         self,
     ) -> None:
         """
-        Rejection must emit both INTENT_REJECTED (new) and WORKFLOW_COMPLETED (legacy).
+        Rejection must emit exactly one qualifier event: INTENT_REJECTED with the full
+        verdict and the user-facing message. INTENT_QUALIFIED must never fire.
         """
 
         qualifier = BlockingQualifier(message="custom-rejection-message")
@@ -188,31 +152,21 @@ class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
         ):
             await runner.run_intent(intent="who founded google?")
 
-        rejection_warnings = [
+        qualifier_typed_calls = [
             call
-            for call in telemetry.warning.call_args_list
-            if call.kwargs.get("type") == FathomEvent.INTENT_REJECTED
+            for call in telemetry.info.call_args_list + telemetry.warning.call_args_list
+            if call.kwargs.get("type")
+            in {FathomEvent.INTENT_QUALIFIED, FathomEvent.INTENT_REJECTED}
         ]
-        workflow_completed_warnings = [
-            call
-            for call in telemetry.warning.call_args_list
-            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
-        ]
-        self.assertEqual(len(rejection_warnings), 1)
-        self.assertEqual(len(workflow_completed_warnings), 1)
-        self.assertEqual(rejection_warnings[0].args[0], "custom-rejection-message")
-        self.assertEqual(workflow_completed_warnings[0].args[0], "custom-rejection-message")
+        self.assertEqual(len(qualifier_typed_calls), 1)
 
-        workflow_completed_infos = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
-        ]
-        self.assertEqual(len(workflow_completed_infos), 1)
-        self.assertTrue(workflow_completed_infos[0].kwargs["rejected"])
+        rejection = qualifier_typed_calls[0]
+        self.assertEqual(rejection.kwargs["type"], FathomEvent.INTENT_REJECTED)
+        self.assertEqual(rejection.args[0], "custom-rejection-message")
+        self.assertEqual(rejection.kwargs["label"], QualificationLabel.NOT_EXECUTABLE.value)
+        self.assertEqual(rejection.kwargs["confidence"], 0.99)
         self.assertEqual(
-            workflow_completed_infos[0].kwargs["completion_reason"],
-            CompletionReason.NOT_EXECUTABLE.value,
+            rejection.kwargs["rationale"]["category"], RationaleCategory.INFORMATIONAL.value
         )
 
     async def test_passing_verdict_proceeds_to_strategy(self) -> None:
@@ -255,6 +209,19 @@ class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "completed")
         self.assertTrue(result.success)
         self.assertEqual(result.completion_reason, "Completed successfully")
+
+        # Allow path emits exactly one qualifier event: INTENT_QUALIFIED.
+        qualifier_typed_calls = [
+            call
+            for call in telemetry.info.call_args_list + telemetry.warning.call_args_list
+            if call.kwargs.get("type")
+            in {FathomEvent.INTENT_QUALIFIED, FathomEvent.INTENT_REJECTED}
+        ]
+        self.assertEqual(len(qualifier_typed_calls), 1)
+        self.assertEqual(qualifier_typed_calls[0].kwargs["type"], FathomEvent.INTENT_QUALIFIED)
+        self.assertEqual(
+            qualifier_typed_calls[0].kwargs["label"], QualificationLabel.EXECUTABLE.value
+        )
 
 
 if __name__ == "__main__":
