@@ -7,10 +7,11 @@ from typing import Any, Dict, Optional, cast
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ContextScope, FathomEvent
-from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE
+from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.state import CompletionReason
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
+from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
@@ -155,80 +156,23 @@ class FathomRunner:
         if hasattr(telemetry_with_identity, "update_identity"):
             telemetry_with_identity.update_identity(identity=workflow_id)
 
-        # Use provided package name or fetch from device
-        if not package_name:
-            package_name = await self.__device.get_current_package()
-
-        if self.__device.configuration:
-            device_serial = self.__device.configuration.identifier
-        else:
-            device_serial = None
-
         await self.__telemetry.info(
             "Starting intent workflow",
             intent=intent,
             max_steps=max_steps,
             workflow_id=workflow_id,
-            package_name=package_name,
-            device_serial=device_serial,
             context_scope=context_scope,
         )
 
-        logger.info(
-            "gate.qualify_start",
-            extra={
-                "workflow_id": workflow_id,
-                "intent_length": len(intent or ""),
-            },
+        rejection = await self.__qualify_or_reject(
+            intent=intent, workflow_id=workflow_id, start_time=start_time
         )
-        qualifier_started_at = time.perf_counter()
-        verdict = await self.__qualifier.qualify(intent=intent)
+        if rejection is not None:
+            return rejection
 
-        qualifier_latency = time.perf_counter() - qualifier_started_at
-        blocked = verdict.should_block(floor=self.__config.qualifier.confidence)
-
-        logger.info(
-            "gate.verdict",
-            extra={
-                "blocked": blocked,
-                "workflow_id": workflow_id,
-                "label": verdict.label.value,
-                "latency": qualifier_latency,
-                "confidence": verdict.confidence,
-                "category": verdict.rationale.category.value,
-            },
-        )
-
-        verdict_payload = {
-            "intent": intent,
-            "workflow_id": workflow_id,
-            "latency": qualifier_latency,
-            "label": verdict.label.value,
-            "confidence": verdict.confidence,
-            "rationale": verdict.rationale.model_dump(),
-        }
-
-        if blocked:
-            logger.warning(
-                "gate.block",
-                extra={
-                    "workflow_id": workflow_id,
-                    "category": verdict.rationale.category.value,
-                },
-            )
-            return await self.__build_rejection_result(
-                intent=intent,
-                verdict=verdict,
-                start_time=start_time,
-                workflow_id=workflow_id,
-                verdict_payload=verdict_payload,
-            )
-
-        # Allow path: emit INTENT_QUALIFIED
-        await self.__telemetry.info(
-            "Intent qualified", type=FathomEvent.INTENT_QUALIFIED, **verdict_payload
-        )
-        logger.info("gate.allow", extra={"workflow_id": workflow_id})
+        # Read device state only after the gate has allowed the run.
+        if not package_name:
+            package_name = await self.__device.get_current_package()
 
         # Initialize context namespace
         namespace = (
@@ -511,6 +455,9 @@ class FathomRunner:
         except Exception as exception:
             logger.warning(f"[FathomRunner] llm cleanup failed: {exception}")
 
+        # Note: the qualifier port has no cleanup() method by design.
+        # Any dedicated qualifier LLM is owned by the composition root (activity / CLI executor) via RunnerComposition.resources and closed there.
+
         # 3. Device — close HTTP client (ADB remote, iOS remote)
         if hasattr(self.__device, "close"):
             try:
@@ -533,6 +480,87 @@ class FathomRunner:
                 logger.warning(f"[FathomRunner] storage close failed: {exception}")
 
         logger.info("[FathomRunner] cleanup completed")
+
+    async def __qualify_or_reject(
+        self,
+        *,
+        intent: str,
+        workflow_id: str,
+        start_time: float,
+    ) -> Optional[IntentResult]:
+        """
+        Qualify the intent before any device interaction.
+
+        A rejected intent must never touch the device — package lookup, ADB round-trips, anything.
+        Returns a populated IntentResult when the gate blocks the run; returns None when the run is allowed to proceed.
+        """
+
+        logger.info(
+            "[FathomRunner] Qualifying intent before device interaction",
+            extra={"workflow_id": workflow_id, "intent_length": len(intent or "")},
+        )
+
+        qualifier_started_at = time.perf_counter()
+        verdict = await self.__qualifier.qualify(intent=intent)
+
+        qualifier_latency = time.perf_counter() - qualifier_started_at
+
+        gate_policy = QualificationGatePolicy(configuration=self.__config.qualifier)
+        blocked = gate_policy.should_block(verdict=verdict)
+
+        verdict_log_extra: Dict[str, Any] = {
+            "blocked": blocked,
+            "workflow_id": workflow_id,
+            "label": verdict.label.value,
+            "latency": qualifier_latency,
+            "confidence": verdict.confidence,
+            "category": verdict.rationale.category.value,
+        }
+        if verdict.rationale.category == RationaleCategory.QUALIFIER_ERROR:
+            verdict_log_extra["reasoning"] = verdict.rationale.reasoning
+        logger.info("[FathomRunner] Qualifier returned verdict", extra=verdict_log_extra)
+
+        verdict_payload: Dict[str, Any] = {
+            "intent": intent,
+            "workflow_id": workflow_id,
+            "latency": qualifier_latency,
+            "label": verdict.label.value,
+            "confidence": verdict.confidence,
+            "rationale": verdict.rationale.model_dump(),
+        }
+
+        if blocked:
+            logger.warning(
+                "[FathomRunner] Qualifier blocked the intent",
+                extra={
+                    "workflow_id": workflow_id,
+                    "label": verdict.label.value,
+                    "confidence": verdict.confidence,
+                    "category": verdict.rationale.category.value,
+                },
+            )
+            return await self.__build_rejection_result(
+                intent=intent,
+                verdict=verdict,
+                start_time=start_time,
+                workflow_id=workflow_id,
+                verdict_payload=verdict_payload,
+            )
+
+        await self.__telemetry.info(
+            "Intent qualified", type=FathomEvent.INTENT_QUALIFIED, **verdict_payload
+        )
+        logger.info(
+            "[FathomRunner] Qualifier allowed the intent, proceeding to execution",
+            extra={
+                "workflow_id": workflow_id,
+                "latency": qualifier_latency,
+                "label": verdict.label.value,
+                "confidence": verdict.confidence,
+                "category": verdict.rationale.category.value,
+            },
+        )
+        return None
 
     async def __build_rejection_result(
         self,
@@ -560,7 +588,7 @@ class FathomRunner:
         )
 
         logger.info(
-            "gate.rejection_emitted",
+            "[FathomRunner] Rejection emitted to client",
             extra={
                 "duration": duration,
                 "workflow_id": workflow_id,

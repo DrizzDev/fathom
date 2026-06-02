@@ -18,6 +18,7 @@ from fathom.schemas.configuration import (
     ExplorationConfiguration,
     FathomConfiguration,
     IntentConfiguration,
+    QualifierConfiguration,
 )
 from fathom.schemas.run import RealignmentPolicy
 from fathom.settings.env import FathomSettings
@@ -248,6 +249,15 @@ class FathomBuilder:
         """
 
         self.__config.exploration = configuration
+        return self
+
+    def with_qualifier_config(self, configuration: QualifierConfiguration) -> FathomBuilder:
+        """
+        Configure the intent qualifier so gate thresholds and inference knobs from the
+        request reach both the qualifier construction and the runner's gate decision.
+        """
+
+        self.__config.qualifier = configuration
         return self
 
     def with_qualifier(self, port: IntentQualifierPort) -> FathomBuilder:

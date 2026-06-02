@@ -36,10 +36,3 @@ class QualificationVerdict(BaseModel):
         default=None,
         description="Friendly explanation surfaced to the user (set only when blocking).",
     )
-
-    def should_block(self, *, floor: float) -> bool:
-        """
-        Whether this verdict blocks execution given the configured confidence floor.
-        """
-
-        return self.label == QualificationLabel.NOT_EXECUTABLE and self.confidence >= floor

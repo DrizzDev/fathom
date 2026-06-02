@@ -10,10 +10,17 @@ from fathom.schemas.configuration import QualifierConfiguration
 class IntentQualifierFactory:
     """
     Selects the qualifier implementation that matches the supplied configuration.
+
+    Lifecycle of the supplied LLM is the caller's concern. The factory does not record ownership;
+    the composition root tracks resources it created via QualifierComposition / RunnerComposition.
     """
 
     @staticmethod
-    def create(*, llm: LLMPort, configuration: QualifierConfiguration) -> IntentQualifierPort:
+    def create(
+        *,
+        llm: LLMPort,
+        configuration: QualifierConfiguration,
+    ) -> IntentQualifierPort:
         """
         Return the LLM-backed qualifier when enabled, otherwise the permissive one.
         """

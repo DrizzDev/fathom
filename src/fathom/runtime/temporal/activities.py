@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from temporalio import activity
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import FathomEvent
-from fathom.core.services.qualifier import QualifierComposer
 from fathom.infrastructure.temporal.state import SignalStateRegistry
+from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryLevel
 from fathom.runtime.assembly import RunAssemblyBuilder
@@ -22,7 +23,8 @@ from fathom.runtime.factories import (
     StorageFactory,
     TelemetryFactory,
 )
-from fathom.schemas.configuration import QualifierConfiguration
+from fathom.runtime.qualifier import QualifierComposer
+from fathom.schemas.composition import RunnerComposition
 from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest, RunRequest
 from fathom.settings.env import FathomSettings
 
@@ -78,9 +80,25 @@ class FathomActivities:
 
         return adapter
 
-    def __build_runner(self, *, workflow_id: str, request: RunRequest) -> "FathomRunner":
+    async def __build_runner(self, *, workflow_id: str, request: RunRequest) -> RunnerComposition:
         """
-        Build the Fathom runner for the validated run request.
+        Build the Fathom runner and bundle it with any owned infrastructure.
+
+        Whether a qualifier is attached is derived from the request itself —
+        intent runs whose configuration enables qualification get a dedicated
+        composed qualifier; exploration runs and disabled-qualifier intent runs
+        fall back to the builder's default permissive qualifier.
+
+        Returns a RunnerComposition so the composition root can drain any owned
+        resources (e.g. the dedicated qualifier LLM) alongside runner cleanup.
+
+        Build-time cleanup: every adapter created here is registered onto a
+        local list before the next step runs. If any step after creation fails
+        (composer auth refusal, telemetry connection error, builder.build()
+        raising), every registered adapter is drained in reverse-creation
+        order before re-raising — no resource leaks before a RunnerComposition
+        exists. The runner's own cleanup path takes over once builder.build()
+        succeeds.
         """
 
         device_configuration = self.__assembly.build_device_configuration(request=request)
@@ -91,51 +109,125 @@ class FathomActivities:
             workflow_id=workflow_id,
         )
 
-        signal_adapter = self.__create_signal_adapter(
-            request=request,
-            workflow_id=workflow_id,
-        )
-        path_manager = SharedPathManager(settings=self.__settings)
+        partial_resources: List[Any] = []
 
-        device_adapter = DeviceFactory().create(configuration=device_configuration)
-        perception_adapter = PerceptionFactory().create(
-            device=device_adapter,
-            use_xml=request.objective.use_xml,
-            configuration=device_configuration,
-        )
+        try:
+            signal_adapter = self.__create_signal_adapter(
+                request=request,
+                workflow_id=workflow_id,
+            )
+            partial_resources.append(signal_adapter)
 
-        llm_adapter = LLMFactory().create(configuration=planner_configuration)
-        telemetry_adapter = TelemetryFactory().create(configuration=telemetry_configuration)
-        storage_adapter = StorageFactory().create(
-            path_manager=path_manager,
-            configuration=storage_configuration,
-        )
-        qualifier_adapter = QualifierComposer(
-            assembly=self.__assembly, llm_factory=LLMFactory()
-        ).compose(planner_llm=llm_adapter, configuration=QualifierConfiguration())
+            path_manager = SharedPathManager(settings=self.__settings)
 
-        return (
-            Fathom.builder(path_manager=path_manager)
-            .with_llm(port=llm_adapter)
-            .with_device(port=device_adapter)
-            .with_signal(port=signal_adapter)
-            .with_storage(port=storage_adapter)
-            .with_telemetry(port=telemetry_adapter)
-            .with_qualifier(port=qualifier_adapter)
-            .with_perception(port=perception_adapter)
-            .with_realignment(policy=request.interaction.realignment)
-            .with_intent_config(configuration=request.interaction.intent_configuration)
-            .with_execution_config(configuration=request.interaction.execution_configuration)
-            .with_exploration_config(configuration=request.interaction.exploration_configuration)
-            .build()
-        )
+            device_adapter = DeviceFactory().create(configuration=device_configuration)
+            partial_resources.append(device_adapter)
 
-    async def __cleanup_runner(self, *, runner: "FathomRunner") -> None:
+            perception_adapter = PerceptionFactory().create(
+                device=device_adapter,
+                use_xml=request.objective.use_xml,
+                configuration=device_configuration,
+            )
+            partial_resources.append(perception_adapter)
+
+            llm_adapter = LLMFactory().create(configuration=planner_configuration)
+            partial_resources.append(llm_adapter)
+
+            telemetry_adapter = TelemetryFactory().create(configuration=telemetry_configuration)
+            partial_resources.append(telemetry_adapter)
+
+            storage_adapter = StorageFactory().create(
+                path_manager=path_manager,
+                configuration=storage_configuration,
+            )
+            partial_resources.append(storage_adapter)
+
+            builder = (
+                Fathom.builder(path_manager=path_manager)
+                .with_llm(port=llm_adapter)
+                .with_device(port=device_adapter)
+                .with_signal(port=signal_adapter)
+                .with_storage(port=storage_adapter)
+                .with_telemetry(port=telemetry_adapter)
+                .with_perception(port=perception_adapter)
+                .with_realignment(policy=request.interaction.realignment)
+                .with_intent_config(configuration=request.interaction.intent_configuration)
+                .with_execution_config(configuration=request.interaction.execution_configuration)
+                .with_exploration_config(
+                    configuration=request.interaction.exploration_configuration
+                )
+                .with_qualifier_config(configuration=request.interaction.qualifier_configuration)
+            )
+
+            owned_resources: tuple[LLMPort, ...] = ()
+            if QualifierComposer.should_compose(request=request):
+                composition = await QualifierComposer(
+                    assembly=self.__assembly, llm_factory=LLMFactory()
+                ).compose(
+                    planner_llm=llm_adapter,
+                    configuration=request.interaction.qualifier_configuration,
+                )
+                builder = builder.with_qualifier(port=composition.qualifier)
+                owned_resources = composition.resources
+                partial_resources.extend(composition.resources)
+
+            return RunnerComposition(runner=builder.build(), resources=owned_resources)
+        except (Exception, asyncio.CancelledError):
+            await self.__drain_partial_resources(resources=partial_resources)
+            raise
+
+    @staticmethod
+    async def __drain_partial_resources(*, resources: list[Any]) -> None:
         """
-        Cleanup runner resources.
+        Best-effort drain of every adapter created during a failed build.
+
+        Adapters expose cleanup() (async) or close() (async or sync) depending
+        on the kind. We probe for each in turn and isolate per-resource errors
+        so one failed close cannot skip the others. Drains in reverse-creation
+        order so later adapters built on earlier ones tear down first.
         """
 
-        await runner.cleanup()
+        for resource in reversed(resources):
+            try:
+                cleanup = getattr(resource, "cleanup", None)
+                if cleanup is not None:
+                    result = cleanup()
+                    if inspect.isawaitable(result):
+                        await result
+                    continue
+
+                close = getattr(resource, "close", None)
+                if close is None:
+                    continue
+
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+
+            except Exception as exception:
+                activity.logger.warning(
+                    f"[activity] partial-build resource cleanup failed: {exception}"
+                )
+
+    async def __cleanup_runner(self, *, composition: RunnerComposition) -> None:
+        """
+        Cleanup runner resources and any infrastructure the composition root owns.
+
+        Closes the runner first, then drains owned LLM resources (e.g. the
+        dedicated qualifier LLM). Each cleanup is isolated so a failure in one
+        resource does not skip the others.
+        """
+
+        try:
+            await composition.runner.cleanup()
+        except Exception as exception:
+            activity.logger.warning(f"[activity] runner.cleanup failed: {exception}")
+
+        for resource in composition.resources:
+            try:
+                await resource.cleanup()
+            except Exception as exception:
+                activity.logger.warning(f"[activity] owned resource cleanup failed: {exception}")
 
     async def __cancel_runner(
         self,
@@ -171,75 +263,77 @@ class FathomActivities:
             f"interactive={validated_request.runtime.interactive}"
         )
 
-        runner = self.__build_runner(workflow_id=workflow_id, request=validated_request)
-
         try:
-            activity.heartbeat("Starting execution")
+            composition = await self.__build_runner(
+                workflow_id=workflow_id, request=validated_request
+            )
+            runner = cast("FathomRunner", composition.runner)
 
-            package_name = (
-                validated_request.objective.package_name
-                or await runner.device.get_current_package()
-            )
+            try:
+                activity.heartbeat("Starting execution")
 
-            activity.logger.info(
-                f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=executing package={package_name}"
-            )
+                # Do NOT prefetch device.get_current_package here — the runner qualifies the intent before any device interaction.
+                # Prefetching would touch the device for intents that the gate will reject (e.g. `+` / gibberish).
+                # Package name is resolved by the runner from the live device after the gate allows the run; the request shape does not currently carry it.
+                activity.logger.info(
+                    f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=executing"
+                )
 
-            result = await runner.run_intent(
-                request_id=workflow_id,
-                package_name=package_name,
-                intent=validated_request.objective.intent,
-                use_xml=validated_request.objective.use_xml,
-                max_steps=validated_request.objective.max_steps,
-                context_scope=validated_request.memory.context_scope,
-                realignment=validated_request.interaction.realignment,
-                conversation_id=validated_request.memory.conversation_id,
-            )
+                result = await runner.run_intent(
+                    request_id=workflow_id,
+                    intent=validated_request.objective.intent,
+                    use_xml=validated_request.objective.use_xml,
+                    max_steps=validated_request.objective.max_steps,
+                    context_scope=validated_request.memory.context_scope,
+                    realignment=validated_request.interaction.realignment,
+                    conversation_id=validated_request.memory.conversation_id,
+                )
 
-            activity.logger.info(
-                f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=completed "
-                f"success={result.success} steps={result.steps_taken} duration_ms={result.duration}"
-            )
+                activity.logger.info(
+                    f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=completed "
+                    f"success={result.success} steps={result.steps_taken} duration_ms={result.duration}"
+                )
 
-            activity.heartbeat(f"Completed: {result.steps_taken} steps")
-            return {
-                "error": result.error,
-                "success": result.success,
-                "steps": result.steps_taken,
-                "duration": result.duration,
-                "metrics": result.metrics if result.metrics else None,
-            }
-        except asyncio.CancelledError:
-            activity.logger.warning(
-                f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=cancelled"
-            )
-            await self.__cancel_runner(
-                runner=runner,
-                level="warning",
-                message=(
-                    "Workflow execution was cancelled. Cleaning up resources and closing "
-                    "active connections."
-                ),
-                event_type=FathomEvent.WORKFLOW_CANCELLED,
-            )
-            raise
-        except Exception as exception:
-            activity.logger.exception(
-                f'[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=failed error="{exception}"'
-            )
-            runner.cancel()
-            return {
-                "steps": 0,
-                "duration": 0,
-                "metrics": None,
-                "success": False,
-                "error": str(exception),
-            }
+                activity.heartbeat(f"Completed: {result.steps_taken} steps")
+                return {
+                    "error": result.error,
+                    "success": result.success,
+                    "steps": result.steps_taken,
+                    "duration": result.duration,
+                    "metrics": result.metrics if result.metrics else None,
+                }
+            except asyncio.CancelledError:
+                activity.logger.warning(
+                    f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=cancelled"
+                )
+                await self.__cancel_runner(
+                    runner=runner,
+                    level="warning",
+                    message=(
+                        "Workflow execution was cancelled. Cleaning up resources and closing "
+                        "active connections."
+                    ),
+                    event_type=FathomEvent.WORKFLOW_CANCELLED,
+                )
+                raise
+            except Exception as exception:
+                activity.logger.exception(
+                    f'[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=failed error="{exception}"'
+                )
+                runner.cancel()
+                return {
+                    "steps": 0,
+                    "duration": 0,
+                    "metrics": None,
+                    "success": False,
+                    "error": str(exception),
+                }
+            finally:
+                activity.logger.info(
+                    f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=cleanup"
+                )
+                await self.__cleanup_runner(composition=composition)
         finally:
-            activity.logger.info(
-                f"[activity] workflow={workflow_id} activity=EXECUTE_INTENT phase=cleanup"
-            )
-            await self.__cleanup_runner(runner=runner)
             SignalStateRegistry.shared().release(workflow_id=workflow_id)
 
     @activity.defn(name="EXECUTE_EXPLORATION")  # type: ignore[untyped-decorator]
@@ -262,68 +356,73 @@ class FathomActivities:
             f"interactive={validated_request.runtime.interactive}"
         )
 
-        runner = self.__build_runner(workflow_id=workflow_id, request=validated_request)
-
         try:
-            activity.heartbeat("Starting exploration")
+            composition = await self.__build_runner(
+                workflow_id=workflow_id, request=validated_request
+            )
+            runner = cast("FathomRunner", composition.runner)
 
-            package_name = (
-                validated_request.objective.package_name
-                or await runner.device.get_current_package()
-            )
+            try:
+                activity.heartbeat("Starting exploration")
 
-            activity.logger.info(
-                f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=executing package={package_name}"
-            )
+                package_name = (
+                    validated_request.objective.package_name
+                    or await runner.device.get_current_package()
+                )
 
-            result = await runner.run_exploration(
-                request_id=workflow_id,
-                package_name=package_name,
-                max_steps=validated_request.objective.max_steps,
-            )
+                activity.logger.info(
+                    f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=executing package={package_name}"
+                )
 
-            activity.logger.info(
-                f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=completed "
-                f"success={result.success} steps={result.steps_executed} duration_ms={result.duration}"
-            )
+                result = await runner.run_exploration(
+                    request_id=workflow_id,
+                    package_name=package_name,
+                    max_steps=validated_request.objective.max_steps,
+                )
 
-            activity.heartbeat(f"Completed: {result.steps_executed} steps")
-            return {
-                "metrics": None,
-                "error": result.error,
-                "success": result.success,
-                "duration": result.duration,
-                "steps": result.steps_executed,
-            }
-        except asyncio.CancelledError:
-            activity.logger.warning(
-                f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=cancelled"
-            )
-            await self.__cancel_runner(
-                runner=runner,
-                level="warning",
-                message=(
-                    "Workflow execution was cancelled. Cleaning up resources and closing "
-                    "active connections."
-                ),
-                event_type=FathomEvent.WORKFLOW_CANCELLED,
-            )
-            raise
-        except Exception as exception:
-            activity.logger.exception(
-                f'[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=failed error="{exception}"'
-            )
-            runner.cancel()
-            return {
-                "steps": 0,
-                "duration": 0,
-                "metrics": None,
-                "success": False,
-                "error": str(exception),
-            }
+                activity.logger.info(
+                    f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=completed "
+                    f"success={result.success} steps={result.steps_executed} duration_ms={result.duration}"
+                )
+
+                activity.heartbeat(f"Completed: {result.steps_executed} steps")
+                return {
+                    "metrics": None,
+                    "error": result.error,
+                    "success": result.success,
+                    "duration": result.duration,
+                    "steps": result.steps_executed,
+                }
+            except asyncio.CancelledError:
+                activity.logger.warning(
+                    f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=cancelled"
+                )
+                await self.__cancel_runner(
+                    runner=runner,
+                    level="warning",
+                    message=(
+                        "Workflow execution was cancelled. Cleaning up resources and closing "
+                        "active connections."
+                    ),
+                    event_type=FathomEvent.WORKFLOW_CANCELLED,
+                )
+                raise
+            except Exception as exception:
+                activity.logger.exception(
+                    f'[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=failed error="{exception}"'
+                )
+                runner.cancel()
+                return {
+                    "steps": 0,
+                    "duration": 0,
+                    "metrics": None,
+                    "success": False,
+                    "error": str(exception),
+                }
+            finally:
+                activity.logger.info(
+                    f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=cleanup"
+                )
+                await self.__cleanup_runner(composition=composition)
         finally:
-            activity.logger.info(
-                f"[activity] workflow={workflow_id} activity=EXECUTE_EXPLORATION phase=cleanup"
-            )
-            await self.__cleanup_runner(runner=runner)
             SignalStateRegistry.shared().release(workflow_id=workflow_id)

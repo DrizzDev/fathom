@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
-from logging import getLogger
 from typing import Optional
 
 from pydantic import ValidationError
@@ -22,8 +20,6 @@ from fathom.schemas.configuration import QualifierConfiguration
 from fathom.schemas.qualification import QualificationVerdict, Rationale
 from fathom.utils.parsing import strip_code_fences
 
-logger = getLogger(__name__)
-
 
 class LLMIntentQualifier(IntentQualifierPort):
     """
@@ -39,7 +35,7 @@ class LLMIntentQualifier(IntentQualifierPort):
         prompt_builder: Optional[QualifierPromptBuilder] = None,
     ) -> None:
         """
-        Wire the qualifier with an LLM port, gate configuration, and an optional prompt builder.
+        Wire the qualifier with an LLM port. Lifecycle of `llm` is the caller's.
         """
 
         self.__llm = llm
@@ -51,52 +47,25 @@ class LLMIntentQualifier(IntentQualifierPort):
         """
         Classify the intent's executability and return a verdict.
 
-        Fail-open semantics: any LLM, parse, or schema failure yields a PROBABLY_EXECUTABLE
-        verdict so the qualifier can never cause a false rejection.
+        Fail-open semantics: any LLM, parse, or schema failure yields an EXECUTABLE verdict tagged with QUALIFIER_ERROR
+        so the gate explicitly passes the run through; the qualifier can never cause a false rejection.
         """
 
         normalized = intent.strip() if intent else ""
-        logger.info("qualifier.qualify_start", extra={"intent_length": len(normalized)})
 
         if not normalized:
-            logger.warning("qualifier.empty_intent")
             return self.__empty_intent_verdict()
-
-        started_at = time.perf_counter()
 
         try:
             response = await self.__llm.generate(
-                use_cache=self.__configuration.use_cache,
+                use_cache=self.__configuration.inference.use_cache,
                 prompt=[self.__prompt_builder.build_user_prompt(intent=normalized)],
                 system_instruction=self.__prompt_builder.build_system_instruction(),
             )
         except Exception as exception:
-            latency = time.perf_counter() - started_at
-            logger.warning(
-                "qualifier.llm_call_failed",
-                extra={"latency": latency, "reason": str(exception)},
-            )
             return self.__fail_open(reason=f"llm_error: {exception}")
 
-        latency = time.perf_counter() - started_at
-        logger.info(
-            "qualifier.llm_response",
-            extra={"latency": latency, "response_size": len(response.content or "")},
-        )
-
-        verdict = self.__parse_verdict(content=response.content)
-
-        logger.info(
-            "qualifier.qualify_done",
-            extra={
-                "label": verdict.label.value,
-                "confidence": verdict.confidence,
-                "category": verdict.rationale.category.value,
-                "blocked": verdict.should_block(floor=self.__configuration.confidence),
-            },
-        )
-
-        return verdict
+        return self.__parse_verdict(content=response.content)
 
     def __parse_verdict(self, *, content: str) -> QualificationVerdict:
         """
@@ -106,12 +75,20 @@ class LLMIntentQualifier(IntentQualifierPort):
         try:
             payload = json.loads(strip_code_fences(content))
         except json.JSONDecodeError as exception:
-            logger.warning("qualifier.non_json_response", extra={"reason": str(exception)})
-            return self.__fail_open(reason="non_json_response")
+            return self.__fail_open(reason=f"non_json_response: {exception}")
+
+        if not isinstance(payload, dict):
+            return self.__fail_open(
+                reason=f"non_object_json_response: payload_type={type(payload).__name__}"
+            )
 
         try:
             rationale_payload = payload.get("rationale") or {}
-            verdict = QualificationVerdict(
+
+            if not isinstance(rationale_payload, dict):
+                raise TypeError("rationale field is not an object")
+
+            return QualificationVerdict(
                 message=None,
                 confidence=float(payload["confidence"]),
                 label=QualificationLabel(payload["label"]),
@@ -121,13 +98,7 @@ class LLMIntentQualifier(IntentQualifierPort):
                 ),
             )
         except (KeyError, ValidationError, ValueError, TypeError) as exception:
-            logger.warning("qualifier.schema_validation_failed", extra={"reason": str(exception)})
-            return self.__fail_open(reason="schema_validation_failed")
-
-        if verdict.should_block(floor=self.__configuration.confidence):
-            return verdict.model_copy(update={"message": self.__rejection_message})
-
-        return verdict
+            return self.__fail_open(reason=f"schema_validation_failed: {exception}")
 
     def __empty_intent_verdict(self) -> QualificationVerdict:
         """
@@ -152,7 +123,7 @@ class LLMIntentQualifier(IntentQualifierPort):
         return QualificationVerdict(
             message=None,
             confidence=0.5,
-            label=QualificationLabel.PROBABLY_EXECUTABLE,
+            label=QualificationLabel.EXECUTABLE,
             rationale=Rationale(
                 category=RationaleCategory.QUALIFIER_ERROR,
                 reasoning=f"Qualifier abstained ({reason}); allowing execution to proceed.",

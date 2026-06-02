@@ -9,13 +9,16 @@ from fathom.constants.qualification import (
     QualificationLabel,
     RationaleCategory,
 )
+from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.core.services.qualifier.llm import LLMIntentQualifier
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import QualifierConfiguration
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.results import GenerateResult
 
-CONFIDENCE_FLOOR: float = QualifierConfiguration().confidence
+GATE_POLICY: QualificationGatePolicy = QualificationGatePolicy(
+    configuration=QualifierConfiguration()
+)
 
 
 class ScriptedLLM(LLMPort):
@@ -98,14 +101,16 @@ class VerdictPayload:
     """
 
     @staticmethod
-    def json(*, label: str, confidence: float) -> str:
+    def json(
+        *,
+        label: str,
+        confidence: float,
+        category: str = "ui_task",
+    ) -> str:
         """
-        Serialize a verdict-shaped payload that the LLM adapter knows how to parse.
+        Serialize a verdict-shaped payload the LLM adapter knows how to parse.
         """
 
-        category = (
-            "ui_task" if "EXECUTABLE" in label and label != "NOT_EXECUTABLE" else "informational"
-        )
         return json.dumps(
             {
                 "label": label,
@@ -128,11 +133,45 @@ REAL_EXECUTABLE_INTENTS = (
         "Open Swiggy app. Tap on Location dropdown. Select 'HSR Layout'. Tap on search bar. "
         "Enter 'Biryani' in search bar. Scroll up 40% auto suggest page. Tap on Show results."
     ),
-    "Find my invoices",
-    "Open billing page",
+)
+
+
+UNDER_SPECIFIED_UI_INTENTS = (
+    "Open browser",
+    "Open photos",
     "Check my settings",
-    "See open pull requests",
-    "Look for failed deployments",
+    "Submit a form",
+    "Find my invoices",
+    "Add item to cart",
+    "Open billing page",
+    "Upload a PDF",
+    "Login",
+)
+
+
+POLITE_QUESTION_EXECUTABLE_INTENTS = (
+    "Can you open Swiggy and search for Biryani?",
+    "Can you tap the checkout button?",
+    "Could you scroll down and find the price?",
+    "Can you go back to the previous screen?",
+    "Can you open Chrome and search for weather today?",
+    "Could you add this item to cart?",
+    "Can you tap Continue?",
+    "Can you open Settings and turn on Bluetooth?",
+)
+
+
+CONVERSATIONAL_MUST_BLOCK_INTENTS = (
+    "Why is this not done yet?",
+    "Why did this fail?",
+    "Why is checkout not working?",
+    "How does this app work?",
+    "What should I do next?",
+    "Can you explain why this failed?",
+    "Is my order confirmed?",
+    "Should I click continue?",
+    "Tell me what to do here.",
+    "Explain this screen to me.",
 )
 
 
@@ -150,7 +189,7 @@ CLEARLY_NON_EXECUTABLE_INTENTS = (
 
 class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
     """
-    Adapter must parse structured verdicts, fail open on errors, and apply the threshold.
+    Adapter must parse structured verdicts, fail open on errors, and apply the binary gate.
     """
 
     async def test_empty_intent_blocks_with_default_rejection_message(self) -> None:
@@ -162,7 +201,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         verdict = await qualifier.qualify(intent="   ")
         self.assertEqual(verdict.label, QualificationLabel.NOT_EXECUTABLE)
         self.assertEqual(verdict.rationale.category, RationaleCategory.EMPTY)
-        self.assertTrue(verdict.should_block(floor=CONFIDENCE_FLOOR))
+        self.assertTrue(GATE_POLICY.should_block(verdict=verdict))
         self.assertEqual(verdict.message, DEFAULT_REJECTION_MESSAGE)
 
     async def test_executable_intent_passes_through(self) -> None:
@@ -175,41 +214,66 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         verdict = await qualifier.qualify(intent="Search for McPuff")
         self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
         self.assertEqual(verdict.rationale.category, RationaleCategory.UI_TASK)
-        self.assertFalse(verdict.should_block(floor=CONFIDENCE_FLOOR))
+        self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
         self.assertIsNone(verdict.message)
 
-    async def test_not_executable_high_confidence_attaches_user_message(self) -> None:
+    async def test_not_executable_blocks_regardless_of_confidence(self) -> None:
         """
-        Confident NOT_EXECUTABLE must block and surface the default rejection message.
-        """
-
-        llm = ScriptedLLM(contents=[VerdictPayload.json(label="NOT_EXECUTABLE", confidence=0.97)])
-        qualifier = LLMIntentQualifier(llm=llm)
-        verdict = await qualifier.qualify(intent="what is 2 + 2?")
-        self.assertTrue(verdict.should_block(floor=CONFIDENCE_FLOOR))
-        self.assertEqual(verdict.message, DEFAULT_REJECTION_MESSAGE)
-
-    async def test_not_executable_low_confidence_does_not_block(self) -> None:
-        """
-        NOT_EXECUTABLE below the floor must pass through (bias toward allow).
+        NOT_EXECUTABLE must block at every confidence level. The binary gate has
+        no threshold; the model committing to "not a UI request" is enough.
         """
 
-        llm = ScriptedLLM(contents=[VerdictPayload.json(label="NOT_EXECUTABLE", confidence=0.6)])
-        qualifier = LLMIntentQualifier(llm=llm)
-        verdict = await qualifier.qualify(intent="maybe do something")
-        self.assertFalse(verdict.should_block(floor=CONFIDENCE_FLOOR))
-        self.assertIsNone(verdict.message)
+        for confidence in (0.1, 0.5, 0.95):
+            with self.subTest(confidence=confidence):
+                llm = ScriptedLLM(
+                    contents=[
+                        VerdictPayload.json(
+                            label="NOT_EXECUTABLE",
+                            confidence=confidence,
+                            category="informational",
+                        )
+                    ]
+                )
+                qualifier = LLMIntentQualifier(llm=llm)
+                verdict = await qualifier.qualify(intent="what is 2 + 2?")
+                self.assertTrue(GATE_POLICY.should_block(verdict=verdict))
+                self.assertIsNone(verdict.message)
 
     async def test_non_json_response_fails_open(self) -> None:
         """
-        Non-JSON LLM responses must fail open as PROBABLY_EXECUTABLE.
+        Non-JSON LLM responses must fail open as EXECUTABLE with QUALIFIER_ERROR.
         """
 
         qualifier = LLMIntentQualifier(llm=ScriptedLLM(contents=["definitely not json"]))
         verdict = await qualifier.qualify(intent="Search for McPuff")
-        self.assertEqual(verdict.label, QualificationLabel.PROBABLY_EXECUTABLE)
+        self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
         self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
-        self.assertFalse(verdict.should_block(floor=CONFIDENCE_FLOOR))
+        self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
+
+    async def test_valid_json_but_not_object_fails_open(self) -> None:
+        """
+        Valid JSON whose root is not an object (array, string, number, null) must
+        fail open instead of raising AttributeError when payload.get() is called.
+        """
+
+        for body in ("[]", '"foo"', "123", "null", "true"):
+            with self.subTest(body=body):
+                qualifier = LLMIntentQualifier(llm=ScriptedLLM(contents=[body]))
+                verdict = await qualifier.qualify(intent="Search for McPuff")
+                self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
+                self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
+                self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
+
+    async def test_rationale_is_not_object_fails_open(self) -> None:
+        """
+        A payload where 'rationale' is not an object (e.g. a string) must fail open.
+        """
+
+        body = json.dumps({"label": "EXECUTABLE", "confidence": 0.9, "rationale": "oops"})
+        qualifier = LLMIntentQualifier(llm=ScriptedLLM(contents=[body]))
+        verdict = await qualifier.qualify(intent="Search for McPuff")
+        self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
+        self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
 
     async def test_invalid_label_fails_open(self) -> None:
         """
@@ -229,8 +293,59 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         )
         qualifier = LLMIntentQualifier(llm=llm)
         verdict = await qualifier.qualify(intent="Search for McPuff")
-        self.assertEqual(verdict.label, QualificationLabel.PROBABLY_EXECUTABLE)
-        self.assertFalse(verdict.should_block(floor=CONFIDENCE_FLOOR))
+        self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
+        self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
+        self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
+
+    async def test_unknown_probably_executable_string_fails_open(self) -> None:
+        """
+        QualificationLabel is binary. Any non-binary label string (e.g. a stale
+        prompt response still emitting "PROBABLY_EXECUTABLE") must fail open as
+        EXECUTABLE with QUALIFIER_ERROR — the gate must never block on a parse
+        failure.
+        """
+
+        llm = ScriptedLLM(
+            contents=[
+                json.dumps(
+                    {
+                        "confidence": 0.8,
+                        "label": "PROBABLY_EXECUTABLE",
+                        "rationale": {"category": "ui_task", "reasoning": "x"},
+                    }
+                )
+            ]
+        )
+        qualifier = LLMIntentQualifier(llm=llm)
+        verdict = await qualifier.qualify(intent="Open browser")
+
+        self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
+        self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
+        self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
+
+    async def test_unknown_probably_not_executable_string_fails_open(self) -> None:
+        """
+        Mirror of the executable-leaning case: a stale "PROBABLY_NOT_EXECUTABLE"
+        label string must fail open rather than crash or block.
+        """
+
+        llm = ScriptedLLM(
+            contents=[
+                json.dumps(
+                    {
+                        "confidence": 0.9,
+                        "label": "PROBABLY_NOT_EXECUTABLE",
+                        "rationale": {"category": "ambiguous", "reasoning": "x"},
+                    }
+                )
+            ]
+        )
+        qualifier = LLMIntentQualifier(llm=llm)
+        verdict = await qualifier.qualify(intent="Submit a form")
+
+        self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
+        self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
+        self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
 
     async def test_invalid_category_fails_open(self) -> None:
         """
@@ -241,8 +356,8 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
             contents=[
                 json.dumps(
                     {
-                        "label": "EXECUTABLE",
                         "confidence": 0.9,
+                        "label": "EXECUTABLE",
                         "rationale": {"category": "nonsense_value", "reasoning": "x"},
                     }
                 )
@@ -258,8 +373,10 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         """
 
         wrapped = "```json\n" + VerdictPayload.json(label="EXECUTABLE", confidence=0.9) + "\n```"
+
         qualifier = LLMIntentQualifier(llm=ScriptedLLM(contents=[wrapped]))
         verdict = await qualifier.qualify(intent="Search for McPuff")
+
         self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
 
     async def test_llm_exception_fails_open(self) -> None:
@@ -269,52 +386,109 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
 
         qualifier = LLMIntentQualifier(llm=ExplodingLLM())
         verdict = await qualifier.qualify(intent="Search for McPuff")
-        self.assertEqual(verdict.label, QualificationLabel.PROBABLY_EXECUTABLE)
+
+        self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
+        self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
         self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
-        self.assertFalse(verdict.should_block(floor=CONFIDENCE_FLOOR))
 
 
 class CorpusRegressionTest(unittest.IsolatedAsyncioTestCase):
     """
-    Every real observed intent from logs/assets must pass the threshold gate
-    even when the model returns a borderline verdict.
+    Pin gate behavior against every bucket in the test corpus when the LLM
+    returns the expected label. These are scripted-LLM tests — they prove the
+    gate routes labels correctly. Prompt accuracy is covered by the live test.
     """
 
-    async def test_real_corpus_borderline_verdicts_never_block(self) -> None:
+    async def test_real_executable_intents_pass(self) -> None:
         """
-        Every observed real-log intent must pass the gate even at borderline labels.
+        Every real-log executable intent must pass when the model returns EXECUTABLE.
         """
 
         for intent in REAL_EXECUTABLE_INTENTS:
-            for label in (
-                QualificationLabel.EXECUTABLE,
-                QualificationLabel.PROBABLY_EXECUTABLE,
-                QualificationLabel.PROBABLY_NOT_EXECUTABLE,
-            ):
-                with self.subTest(intent=intent, label=label):
-                    llm = ScriptedLLM(
-                        contents=[VerdictPayload.json(label=label.value, confidence=0.99)]
-                    )
-                    qualifier = LLMIntentQualifier(llm=llm)
-                    verdict = await qualifier.qualify(intent=intent)
-                    self.assertFalse(
-                        verdict.should_block(floor=CONFIDENCE_FLOOR), f"{intent} blocked at {label}"
-                    )
+            with self.subTest(intent=intent):
+                llm = ScriptedLLM(
+                    contents=[VerdictPayload.json(label="EXECUTABLE", confidence=0.95)]
+                )
+                qualifier = LLMIntentQualifier(llm=llm)
+                verdict = await qualifier.qualify(intent=intent)
 
-    async def test_clearly_non_executable_blocks_when_model_is_confident(self) -> None:
+                self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
+
+    async def test_under_specified_ui_intents_pass(self) -> None:
         """
-        Clearly non-executable intents must be blocked when the model is confident.
+        Under-specified UI actions ('Open browser', 'Submit a form', ...) must
+        pass the binary gate. Specificity is the strategy's problem.
+        """
+
+        for intent in UNDER_SPECIFIED_UI_INTENTS:
+            with self.subTest(intent=intent):
+                llm = ScriptedLLM(
+                    contents=[VerdictPayload.json(label="EXECUTABLE", confidence=0.85)]
+                )
+                qualifier = LLMIntentQualifier(llm=llm)
+                verdict = await qualifier.qualify(intent=intent)
+
+                self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
+
+    async def test_polite_question_executable_intents_pass(self) -> None:
+        """
+        Polite-question-form UI commands ('Can you open Swiggy?') must pass the
+        gate. Question mark is not a block signal.
+        """
+
+        for intent in POLITE_QUESTION_EXECUTABLE_INTENTS:
+            with self.subTest(intent=intent):
+                llm = ScriptedLLM(
+                    contents=[VerdictPayload.json(label="EXECUTABLE", confidence=0.95)]
+                )
+                qualifier = LLMIntentQualifier(llm=llm)
+                verdict = await qualifier.qualify(intent=intent)
+
+                self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
+
+    async def test_conversational_intents_block(self) -> None:
+        """
+        Answer-seeking and meta-conversation must block when the model commits
+        to NOT_EXECUTABLE — this is the new corpus protecting against polite
+        questions being treated as UI actions.
+        """
+
+        for intent in CONVERSATIONAL_MUST_BLOCK_INTENTS:
+            with self.subTest(intent=intent):
+                llm = ScriptedLLM(
+                    contents=[
+                        VerdictPayload.json(
+                            confidence=0.95,
+                            label="NOT_EXECUTABLE",
+                            category="conversational",
+                        )
+                    ]
+                )
+                qualifier = LLMIntentQualifier(llm=llm)
+                verdict = await qualifier.qualify(intent=intent)
+
+                self.assertTrue(GATE_POLICY.should_block(verdict=verdict))
+
+    async def test_clearly_non_executable_intents_block(self) -> None:
+        """
+        Clearly non-executable intents must block when the model is confident.
         """
 
         for intent in CLEARLY_NON_EXECUTABLE_INTENTS:
             with self.subTest(intent=intent):
                 llm = ScriptedLLM(
-                    contents=[VerdictPayload.json(label="NOT_EXECUTABLE", confidence=0.95)]
+                    contents=[
+                        VerdictPayload.json(
+                            confidence=0.95,
+                            label="NOT_EXECUTABLE",
+                            category="informational",
+                        )
+                    ]
                 )
                 qualifier = LLMIntentQualifier(llm=llm)
                 verdict = await qualifier.qualify(intent=intent)
-                self.assertTrue(verdict.should_block(floor=CONFIDENCE_FLOOR))
-                self.assertEqual(verdict.message, DEFAULT_REJECTION_MESSAGE)
+
+                self.assertTrue(GATE_POLICY.should_block(verdict=verdict))
 
 
 if __name__ == "__main__":

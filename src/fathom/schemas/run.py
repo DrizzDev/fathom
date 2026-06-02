@@ -13,6 +13,7 @@ from fathom.schemas.configuration import (
     ExplorationConfiguration,
     IntentConfiguration,
     LLMConfiguration,
+    QualifierConfiguration,
     StorageConfiguration,
 )
 
@@ -176,6 +177,10 @@ class InteractionConfiguration(BaseModel):
     exploration_configuration: ExplorationConfiguration = Field(
         default_factory=ExplorationConfiguration,
         description="Exploration strategy configuration",
+    )
+    qualifier_configuration: QualifierConfiguration = Field(
+        default_factory=QualifierConfiguration,
+        description="Intent qualifier configuration (gate thresholds + inference knobs)",
     )
 
 

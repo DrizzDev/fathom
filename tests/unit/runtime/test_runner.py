@@ -135,6 +135,23 @@ class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.intent, "who founded google?")
         self.assertEqual(result.steps_taken, 0)
 
+    async def test_blocking_verdict_never_touches_device(self) -> None:
+        """
+        Regression check: a rejected intent must not trigger device.get_current_package
+        or any other device call. The qualifier sits in front of the device interaction.
+        """
+
+        qualifier = BlockingQualifier()
+        runner, _ = RunnerHarness.build(qualifier=qualifier)
+
+        with (
+            patch("fathom.runtime.runner.ContextManager"),
+            patch("fathom.runtime.runner.IntentStrategy"),
+        ):
+            await runner.run_intent(intent="+")
+
+        runner.device.get_current_package.assert_not_called()  # type: ignore[attr-defined]
+
     async def test_blocking_verdict_emits_only_intent_rejected_with_full_payload(
         self,
     ) -> None:

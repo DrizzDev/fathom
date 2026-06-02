@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Literal, Optional, Set, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants.platform import (
     DeviceConnectionType,
@@ -336,21 +336,13 @@ class IntentConfiguration(BaseModel):
     )
 
 
-class QualifierConfiguration(BaseModel):
+class InferenceConfiguration(BaseModel):
     """
-    Configuration for the intent executability qualifier.
+    Tuning knobs for the qualifier LLM call.
     """
 
-    enabled: bool = Field(
-        default=True,
-        description="Whether the executability gate runs; False installs the permissive qualifier.",
-    )
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        default=0.85,
-        description="Minimum model confidence on NOT_EXECUTABLE required to block a run.",
-    )
+    model_config = ConfigDict(extra="forbid")
+
     temperature: float = Field(
         ge=0.0,
         le=2.0,
@@ -364,6 +356,23 @@ class QualifierConfiguration(BaseModel):
     thinking_level: Literal["minimal", "low", "medium", "high"] = Field(
         default="low",
         description="Reasoning depth the qualifier LLM is allowed to spend per call.",
+    )
+
+
+class QualifierConfiguration(BaseModel):
+    """
+    Configuration for the intent executability qualifier.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether the executability gate runs; False installs the permissive qualifier.",
+    )
+    inference: InferenceConfiguration = Field(
+        default_factory=InferenceConfiguration,
+        description="Tuning knobs for the qualifier LLM call.",
     )
 
 

@@ -14,13 +14,11 @@ DEFAULT_REJECTION_MESSAGE: str = (
 
 class QualificationLabel(StrEnum):
     """
-    Four-level executability classification for a user intent.
+    Binary executability classification for a user intent.
     """
 
     EXECUTABLE = "EXECUTABLE"
     NOT_EXECUTABLE = "NOT_EXECUTABLE"
-    PROBABLY_EXECUTABLE = "PROBABLY_EXECUTABLE"
-    PROBABLY_NOT_EXECUTABLE = "PROBABLY_NOT_EXECUTABLE"
 
 
 class RationaleCategory(StrEnum):
@@ -37,4 +35,5 @@ class RationaleCategory(StrEnum):
     PERMISSIVE = "permissive"
     UNSPECIFIED = "unspecified"
     INFORMATIONAL = "informational"
+    CONVERSATIONAL = "conversational"
     QUALIFIER_ERROR = "qualifier_error"

@@ -11,7 +11,11 @@ from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.runtime.builder import Fathom
-from fathom.schemas.configuration import FathomConfiguration, QualifierConfiguration
+from fathom.schemas.configuration import (
+    FathomConfiguration,
+    InferenceConfiguration,
+    QualifierConfiguration,
+)
 
 
 class FathomBuilderQualifierDefaultTest(unittest.TestCase):
@@ -77,6 +81,29 @@ class FathomBuilderQualifierDefaultTest(unittest.TestCase):
         runner = self.__builder_with_required_ports().with_qualifier(port=explicit).build()
         installed = runner._FathomRunner__qualifier  # type: ignore[attr-defined]
         self.assertIs(installed, explicit)
+
+    def test_with_qualifier_config_flows_into_runner(self) -> None:
+        """
+        Regression: request-level qualifier configuration must reach the runner.
+
+        Setting a non-default inference knob must round-trip through the builder
+        so downstream code (composer, LLM factory) reads the caller's intent.
+        """
+
+        custom = QualifierConfiguration(
+            inference=InferenceConfiguration(temperature=0.0, thinking_level="medium")
+        )
+        runner = (
+            Fathom.builder()
+            .with_llm(port=MagicMock(spec=LLMPort))
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_qualifier_config(configuration=custom)
+            .build()
+        )
+        installed_config = runner._FathomRunner__config.qualifier  # type: ignore[attr-defined]
+        self.assertEqual(installed_config.inference.thinking_level, "medium")
+        self.assertEqual(installed_config.inference.temperature, 0.0)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,10 @@ from __future__ import annotations
 import unittest
 
 from fathom.runtime.assembly import RunAssemblyBuilder
-from fathom.schemas.configuration import QualifierConfiguration
+from fathom.schemas.configuration import (
+    InferenceConfiguration,
+    QualifierConfiguration,
+)
 from fathom.settings.env import FathomSettings
 
 
@@ -38,16 +41,18 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
 
     def test_qualifier_knobs_flow_into_llm_configuration(self) -> None:
         """
-        Temperature, use_cache and thinking_level on QualifierConfiguration must reach
-        the LLMConfiguration so the dedicated qualifier LLM behaves deterministically.
+        Inference knobs on QualifierConfiguration must reach the LLMConfiguration
+        so the dedicated qualifier LLM behaves deterministically.
         """
 
         assembly = RunAssemblyBuilder(settings=FathomSettings(gemini_api_key="x"))
         configuration = assembly.build_qualifier_model_configuration(
             configuration=QualifierConfiguration(
-                temperature=0.0,
-                use_cache=False,
-                thinking_level="minimal",
+                inference=InferenceConfiguration(
+                    temperature=0.0,
+                    use_cache=False,
+                    thinking_level="minimal",
+                ),
             )
         )
         self.assertFalse(configuration.use_cache)

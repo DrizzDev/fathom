@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import signal
 import time
 from logging import getLogger
-from typing import Optional
+from typing import Any, List, Optional, cast
 
 from rich.console import Console
 from rich.markup import escape
@@ -21,6 +22,7 @@ from fathom.interfaces.factory import (
     SignalFactoryPort,
     TelemetryFactoryPort,
 )
+from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
@@ -35,7 +37,9 @@ from fathom.runtime.factories import (
     SignalFactory,
     TelemetryFactory,
 )
+from fathom.runtime.qualifier import QualifierComposer
 from fathom.runtime.runner import FathomRunner
+from fathom.schemas.composition import RunnerComposition
 from fathom.schemas.configuration import DeviceConfiguration
 from fathom.schemas.results import IntentResult
 from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest, RunRequest
@@ -69,6 +73,8 @@ class CommandExecutor:
         self.__settings = settings
 
         self.__runner: Optional[FathomRunner] = None
+        self.__composition: Optional[RunnerComposition] = None
+
         self.__llm_factory = llm_factory or LLMFactory()
         self.__device_factory = device_factory or DeviceFactory()
 
@@ -129,9 +135,22 @@ class CommandExecutor:
 
         return signal_adapter
 
-    def __create_runner(self, *, request: RunRequest, signal_adapter: SignalPort) -> FathomRunner:
+    async def __create_runner(
+        self, *, request: RunRequest, signal_adapter: SignalPort
+    ) -> RunnerComposition:
         """
-        Build configured runtime runner for command execution.
+        Build configured runtime runner and bundle it with owned resources.
+
+        Returns a RunnerComposition so the caller can drain the dedicated
+        qualifier LLM (or any other infrastructure the composer creates)
+        alongside runner cleanup.
+
+        Build-time cleanup: every adapter is registered on a local list before
+        the next step runs. If any step fails (composer auth refusal, telemetry
+        connection error, builder.build() raising), every registered adapter is
+        drained in reverse-creation order before re-raising — no resource leaks
+        before a RunnerComposition exists. The runner's own cleanup path takes
+        over once builder.build() succeeds.
         """
 
         path_manager = SharedPathManager(settings=self.__settings)
@@ -141,30 +160,84 @@ class CommandExecutor:
         llm_configuration = assembly_builder.build_planner_model_configuration(request=request)
         telemetry_configuration = assembly_builder.build_telemetry_configuration(request=request)
 
-        device_adapter = self.__device_factory.create(configuration=device_configuration)
+        partial_resources: List[Any] = []
 
-        perception_adapter = self.__perception_factory.create(
-            device=device_adapter,
-            use_xml=request.objective.use_xml,
-            configuration=device_configuration,
-        )
+        try:
+            device_adapter = self.__device_factory.create(configuration=device_configuration)
+            partial_resources.append(device_adapter)
 
-        llm_adapter = self.__llm_factory.create(configuration=llm_configuration)
+            perception_adapter = self.__perception_factory.create(
+                device=device_adapter,
+                use_xml=request.objective.use_xml,
+                configuration=device_configuration,
+            )
+            partial_resources.append(perception_adapter)
 
-        telemetry_adapter = ConsoleTelemetryAdapter(
-            console=console,
-            inner=self.__telemetry_factory.create(configuration=telemetry_configuration),
-        )
+            llm_adapter = self.__llm_factory.create(configuration=llm_configuration)
+            partial_resources.append(llm_adapter)
 
-        return (
-            Fathom.builder(path_manager=path_manager)
-            .with_llm(port=llm_adapter)
-            .with_device(port=device_adapter)
-            .with_signal(port=signal_adapter)
-            .with_telemetry(port=telemetry_adapter)
-            .with_perception(port=perception_adapter)
-            .build()
-        )
+            telemetry_adapter = ConsoleTelemetryAdapter(
+                console=console,
+                inner=self.__telemetry_factory.create(configuration=telemetry_configuration),
+            )
+            partial_resources.append(telemetry_adapter)
+
+            builder = (
+                Fathom.builder(path_manager=path_manager)
+                .with_llm(port=llm_adapter)
+                .with_device(port=device_adapter)
+                .with_signal(port=signal_adapter)
+                .with_telemetry(port=telemetry_adapter)
+                .with_perception(port=perception_adapter)
+                .with_qualifier_config(configuration=request.interaction.qualifier_configuration)
+            )
+
+            owned_resources: tuple[LLMPort, ...] = ()
+            if QualifierComposer.should_compose(request=request):
+                qualifier_composition = await QualifierComposer(
+                    assembly=assembly_builder, llm_factory=self.__llm_factory
+                ).compose(
+                    planner_llm=llm_adapter,
+                    configuration=request.interaction.qualifier_configuration,
+                )
+                builder = builder.with_qualifier(port=qualifier_composition.qualifier)
+                owned_resources = qualifier_composition.resources
+                partial_resources.extend(qualifier_composition.resources)
+
+            return RunnerComposition(runner=builder.build(), resources=owned_resources)
+        except (Exception, asyncio.CancelledError):
+            await self.__drain_partial_resources(resources=partial_resources)
+            raise
+
+    @staticmethod
+    async def __drain_partial_resources(*, resources: list[Any]) -> None:
+        """
+        Best-effort drain of every adapter created during a failed build.
+
+        Adapters expose cleanup() (async) or close() (async or sync) depending
+        on the kind. Probe for each, isolate per-resource errors, drain in
+        reverse-creation order.
+        """
+
+        for resource in reversed(resources):
+            try:
+                cleanup = getattr(resource, "cleanup", None)
+                if cleanup is not None:
+                    result = cleanup()
+                    if inspect.isawaitable(result):
+                        await result
+                    continue
+
+                close = getattr(resource, "close", None)
+                if close is None:
+                    continue
+
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+
+            except Exception as exception:
+                logger.warning("CLI partial-build resource cleanup failed: %s", exception)
 
     async def __run_intent_workflow(self, *, request: IntentRunRequest) -> IntentResult:
         """
@@ -286,11 +359,25 @@ class CommandExecutor:
 
     async def __cleanup_runner(self) -> None:
         """
-        Cleanup current runner if initialized.
+        Cleanup current runner and drain owned infrastructure resources.
+
+        Mirrors the activity layer: closes the runner first, then drains any
+        resources the composition root tracks (dedicated qualifier LLM, etc.).
+        Each cleanup is isolated so a single failure does not skip the rest.
         """
 
-        if self.__runner:
-            await self.__runner.cleanup()
+        if self.__runner is not None:
+            try:
+                await self.__runner.cleanup()
+            except Exception as exception:
+                logger.warning("CLI runner.cleanup failed: %s", exception)
+
+        if self.__composition is not None:
+            for resource in self.__composition.resources:
+                try:
+                    await resource.cleanup()
+                except Exception as exception:
+                    logger.warning("CLI owned resource cleanup failed: %s", exception)
 
     async def run(self, *, request: IntentRunRequest) -> int:
         """
@@ -308,9 +395,14 @@ class CommandExecutor:
 
         try:
             signal_adapter = self.__create_signal_adapter(request=request)
-            self.__runner = self.__create_runner(request=request, signal_adapter=signal_adapter)
+            self.__composition = await self.__create_runner(
+                request=request, signal_adapter=signal_adapter
+            )
+            self.__runner = cast("FathomRunner", self.__composition.runner)
+
             result = await self.__run_intent_workflow(request=request)
             self.__print_execution_summary(result=result)
+
             return 0 if result.success else 1
 
         except (asyncio.CancelledError, KeyboardInterrupt):
@@ -348,7 +440,10 @@ class CommandExecutor:
                 interactive=False,
                 signal_type=request.runtime.signal_type.value,
             )
-            self.__runner = self.__create_runner(request=request, signal_adapter=signal_adapter)
+            self.__composition = await self.__create_runner(
+                request=request, signal_adapter=signal_adapter
+            )
+            self.__runner = cast("FathomRunner", self.__composition.runner)
 
             with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
                 result = await self.__runner.run_exploration(

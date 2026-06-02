@@ -92,13 +92,13 @@ class RunAssemblyBuilder:
         return LLMConfiguration.model_validate(
             {
                 "credentials": credentials,
-                "use_cache": configuration.use_cache,
                 "model": self.__settings.gemini_model,
-                "temperature": configuration.temperature,
                 "api_key": self.__settings.gemini_api_key,
                 "location": self.__settings.vertex_location,
-                "thinking_level": configuration.thinking_level,
+                "use_cache": configuration.inference.use_cache,
                 "project_id": self.__settings.vertex_project_id,
+                "temperature": configuration.inference.temperature,
+                "thinking_level": configuration.inference.thinking_level,
             }
         )
 
