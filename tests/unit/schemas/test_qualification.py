@@ -39,7 +39,7 @@ class QualificationVerdictTest(unittest.TestCase):
         """
 
         verdict = self._verdict(label=QualificationLabel.EXECUTABLE, confidence=1.0)
-        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence_floor))
+        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence))
 
     def test_probably_executable_never_blocks(self) -> None:
         """
@@ -47,7 +47,7 @@ class QualificationVerdictTest(unittest.TestCase):
         """
 
         verdict = self._verdict(label=QualificationLabel.PROBABLY_EXECUTABLE, confidence=0.99)
-        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence_floor))
+        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence))
 
     def test_probably_not_executable_never_blocks(self) -> None:
         """
@@ -55,7 +55,7 @@ class QualificationVerdictTest(unittest.TestCase):
         """
 
         verdict = self._verdict(label=QualificationLabel.PROBABLY_NOT_EXECUTABLE, confidence=0.99)
-        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence_floor))
+        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence))
 
     def test_not_executable_below_floor_does_not_block(self) -> None:
         """
@@ -64,9 +64,9 @@ class QualificationVerdictTest(unittest.TestCase):
 
         verdict = self._verdict(
             label=QualificationLabel.NOT_EXECUTABLE,
-            confidence=self.__configuration.confidence_floor - 0.01,
+            confidence=self.__configuration.confidence - 0.01,
         )
-        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence_floor))
+        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence))
 
     def test_not_executable_at_floor_blocks(self) -> None:
         """
@@ -75,9 +75,9 @@ class QualificationVerdictTest(unittest.TestCase):
 
         verdict = self._verdict(
             label=QualificationLabel.NOT_EXECUTABLE,
-            confidence=self.__configuration.confidence_floor,
+            confidence=self.__configuration.confidence,
         )
-        self.assertTrue(verdict.should_block(floor=self.__configuration.confidence_floor))
+        self.assertTrue(verdict.should_block(floor=self.__configuration.confidence))
 
     def test_not_executable_high_confidence_blocks(self) -> None:
         """
@@ -85,7 +85,7 @@ class QualificationVerdictTest(unittest.TestCase):
         """
 
         verdict = self._verdict(label=QualificationLabel.NOT_EXECUTABLE, confidence=0.99)
-        self.assertTrue(verdict.should_block(floor=self.__configuration.confidence_floor))
+        self.assertTrue(verdict.should_block(floor=self.__configuration.confidence))
 
     def test_confidence_bounds_are_validated(self) -> None:
         """
@@ -111,10 +111,10 @@ class QualificationVerdictTest(unittest.TestCase):
 
         verdict = self._verdict(
             label=QualificationLabel.NOT_EXECUTABLE,
-            confidence=self.__configuration.confidence_floor - 0.05,
+            confidence=self.__configuration.confidence - 0.05,
         )
-        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence_floor))
-        self.assertTrue(verdict.should_block(floor=self.__configuration.confidence_floor - 0.10))
+        self.assertFalse(verdict.should_block(floor=self.__configuration.confidence))
+        self.assertTrue(verdict.should_block(floor=self.__configuration.confidence - 0.10))
 
 
 if __name__ == "__main__":

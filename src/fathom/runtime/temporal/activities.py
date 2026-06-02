@@ -8,6 +8,7 @@ from temporalio import activity
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import FathomEvent
+from fathom.core.services.qualifier import QualifierComposer
 from fathom.infrastructure.temporal.state import SignalStateRegistry
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryLevel
@@ -21,6 +22,7 @@ from fathom.runtime.factories import (
     StorageFactory,
     TelemetryFactory,
 )
+from fathom.schemas.configuration import QualifierConfiguration
 from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest, RunRequest
 from fathom.settings.env import FathomSettings
 
@@ -108,6 +110,9 @@ class FathomActivities:
             path_manager=path_manager,
             configuration=storage_configuration,
         )
+        qualifier_adapter = QualifierComposer(
+            assembly=self.__assembly, llm_factory=LLMFactory()
+        ).compose(planner_llm=llm_adapter, configuration=QualifierConfiguration())
 
         return (
             Fathom.builder(path_manager=path_manager)
@@ -116,6 +121,7 @@ class FathomActivities:
             .with_signal(port=signal_adapter)
             .with_storage(port=storage_adapter)
             .with_telemetry(port=telemetry_adapter)
+            .with_qualifier(port=qualifier_adapter)
             .with_perception(port=perception_adapter)
             .with_realignment(policy=request.interaction.realignment)
             .with_intent_config(configuration=request.interaction.intent_configuration)

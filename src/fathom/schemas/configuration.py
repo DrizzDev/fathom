@@ -341,11 +341,15 @@ class QualifierConfiguration(BaseModel):
     Configuration for the intent executability qualifier.
     """
 
-    confidence_floor: float = Field(
+    enabled: bool = Field(
+        default=True,
+        description="Whether the executability gate runs; False installs the permissive qualifier.",
+    )
+    confidence: float = Field(
         ge=0.0,
         le=1.0,
         default=0.85,
-        description="Minimum confidence on NOT_EXECUTABLE required to block a run.",
+        description="Minimum model confidence on NOT_EXECUTABLE required to block a run.",
     )
     temperature: float = Field(
         ge=0.0,

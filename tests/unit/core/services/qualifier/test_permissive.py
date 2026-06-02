@@ -18,7 +18,7 @@ class PermissiveIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         """
 
         self.__qualifier = PermissiveIntentQualifier()
-        self.__floor = QualifierConfiguration().confidence_floor
+        self.__floor = QualifierConfiguration().confidence
 
     async def test_returns_executable_for_normal_intent(self) -> None:
         """

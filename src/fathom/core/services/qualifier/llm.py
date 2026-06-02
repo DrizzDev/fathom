@@ -92,7 +92,7 @@ class LLMIntentQualifier(IntentQualifierPort):
                 "label": verdict.label.value,
                 "confidence": verdict.confidence,
                 "category": verdict.rationale.category.value,
-                "blocked": verdict.should_block(floor=self.__configuration.confidence_floor),
+                "blocked": verdict.should_block(floor=self.__configuration.confidence),
             },
         )
 
@@ -124,7 +124,7 @@ class LLMIntentQualifier(IntentQualifierPort):
             logger.warning("qualifier.schema_validation_failed", extra={"reason": str(exception)})
             return self.__fail_open(reason="schema_validation_failed")
 
-        if verdict.should_block(floor=self.__configuration.confidence_floor):
+        if verdict.should_block(floor=self.__configuration.confidence):
             return verdict.model_copy(update={"message": self.__rejection_message})
 
         return verdict

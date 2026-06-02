@@ -82,7 +82,7 @@ class RunAssemblyBuilder:
         self, *, configuration: QualifierConfiguration
     ) -> LLMConfiguration:
         """
-        Resolve qualifier model configuration from settings and the qualifier configuration.
+        Resolve qualifier model configuration from settings and the qualifier knobs.
         """
 
         credentials = (

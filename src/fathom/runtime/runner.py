@@ -185,7 +185,7 @@ class FathomRunner:
         verdict = await self.__qualifier.qualify(intent=intent)
 
         qualifier_latency = time.perf_counter() - qualifier_started_at
-        blocked = verdict.should_block(floor=self.__config.qualifier.confidence_floor)
+        blocked = verdict.should_block(floor=self.__config.qualifier.confidence)
 
         logger.info(
             "gate.verdict",

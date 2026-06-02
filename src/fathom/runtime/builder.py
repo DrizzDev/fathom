@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from logging import getLogger
 from typing import TYPE_CHECKING, Optional
 
 from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
@@ -11,22 +10,17 @@ from fathom.adapters.summarization.llm import LLMSummarizer
 from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.core.exceptions import ConfigurationError
-from fathom.core.services.qualifier import LLMIntentQualifier
+from fathom.core.services.qualifier import IntentQualifierFactory
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
-from fathom.runtime.assembly import RunAssemblyBuilder
-from fathom.runtime.factories import LLMFactory
 from fathom.schemas.configuration import (
     ExecutionConfiguration,
     ExplorationConfiguration,
     FathomConfiguration,
     IntentConfiguration,
-    QualifierConfiguration,
 )
 from fathom.schemas.run import RealignmentPolicy
 from fathom.settings.env import FathomSettings
-
-logger = getLogger(__name__)
 
 if TYPE_CHECKING:
     from fathom.interfaces.device import DevicePort
@@ -284,25 +278,6 @@ class FathomBuilder:
         self.__realignment = policy
         return self
 
-    def __build_default_qualifier(
-        self, *, llm: LLMPort, configuration: QualifierConfiguration
-    ) -> LLMIntentQualifier:
-        """
-        Build the default qualifier backed by a dedicated low-temperature LLM.
-        """
-
-        try:
-            assembly = RunAssemblyBuilder(settings=FathomSettings())
-            qualifier_llm = LLMFactory().create(
-                configuration=assembly.build_qualifier_model_configuration(
-                    configuration=configuration
-                )
-            )
-            return LLMIntentQualifier(llm=qualifier_llm, configuration=configuration)
-        except Exception as exception:
-            logger.warning("qualifier.dedicated_llm_unavailable", extra={"reason": str(exception)})
-            return LLMIntentQualifier(llm=llm, configuration=configuration)
-
     def build(self) -> FathomRunner:
         """
         Build configured Fathom instance.
@@ -355,7 +330,7 @@ class FathomBuilder:
             self.__summarizer = LLMSummarizer(llm=self.__llm)
 
         if not self.__qualifier:
-            self.__qualifier = self.__build_default_qualifier(
+            self.__qualifier = IntentQualifierFactory.create(
                 llm=self.__llm, configuration=self.__config.qualifier
             )
 

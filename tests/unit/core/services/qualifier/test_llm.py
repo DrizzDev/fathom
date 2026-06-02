@@ -15,7 +15,7 @@ from fathom.schemas.configuration import QualifierConfiguration
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.results import GenerateResult
 
-CONFIDENCE_FLOOR: float = QualifierConfiguration().confidence_floor
+CONFIDENCE_FLOOR: float = QualifierConfiguration().confidence
 
 
 class ScriptedLLM(LLMPort):
