@@ -336,6 +336,33 @@ class IntentConfiguration(BaseModel):
     )
 
 
+class QualifierConfiguration(BaseModel):
+    """
+    Configuration for the intent executability qualifier.
+    """
+
+    confidence_floor: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.85,
+        description="Minimum confidence on NOT_EXECUTABLE required to block a run.",
+    )
+    temperature: float = Field(
+        ge=0.0,
+        le=2.0,
+        default=0.0,
+        description="Sampling temperature for the qualifier LLM (0 = deterministic).",
+    )
+    use_cache: bool = Field(
+        default=False,
+        description="Whether the qualifier LLM may reuse cached content between runs.",
+    )
+    thinking_level: Literal["minimal", "low", "medium", "high"] = Field(
+        default="low",
+        description="Reasoning depth the qualifier LLM is allowed to spend per call.",
+    )
+
+
 class WorkflowHostPolicyConfiguration(BaseModel):
     """
     Workflow-host activity policy for one workflow type.
@@ -453,3 +480,4 @@ class FathomConfiguration(BaseModel):
 
     intent: IntentConfiguration = Field(default_factory=IntentConfiguration)
     exploration: ExplorationConfiguration = Field(default_factory=ExplorationConfiguration)
+    qualifier: QualifierConfiguration = Field(default_factory=QualifierConfiguration)

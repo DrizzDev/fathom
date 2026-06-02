@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, cast
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ContextScope, FathomEvent
+from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE
 from fathom.constants.state import CompletionReason
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
@@ -15,12 +16,14 @@ from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.perception import PerceptionPort
+from fathom.interfaces.qualifier import IntentQualifierPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
+from fathom.schemas.qualification import QualificationVerdict
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
@@ -55,6 +58,7 @@ class FathomRunner:
         knowledge: KnowledgePort,
         telemetry: TelemetryPort,
         summarizer: SummarizationPort,
+        qualifier: IntentQualifierPort,
         path_manager: SharedPathManager,
         config: Optional[FathomConfiguration] = None,
         realignment: Optional[RealignmentPolicy] = None,
@@ -73,6 +77,7 @@ class FathomRunner:
         self.__signal = signal
         self.__storage = storage
         self.__telemetry = telemetry
+        self.__qualifier = qualifier
         self.__summarizer = summarizer
         self.__path_manager = path_manager
         self.__config = config or FathomConfiguration()
@@ -169,6 +174,68 @@ class FathomRunner:
             context_scope=context_scope,
         )
 
+        logger.info(
+            "gate.qualify_start",
+            extra={
+                "workflow_id": workflow_id,
+                "intent_length": len(intent or ""),
+            },
+        )
+        qualifier_started_at = time.perf_counter()
+        verdict = await self.__qualifier.qualify(intent=intent)
+
+        qualifier_latency = time.perf_counter() - qualifier_started_at
+        blocked = verdict.should_block(floor=self.__config.qualifier.confidence_floor)
+
+        logger.info(
+            "gate.verdict",
+            extra={
+                "blocked": blocked,
+                "workflow_id": workflow_id,
+                "label": verdict.label.value,
+                "latency": qualifier_latency,
+                "confidence": verdict.confidence,
+                "category": verdict.rationale.category.value,
+            },
+        )
+
+        qualified_context = {
+            "intent": intent,
+            "blocked": blocked,
+            "workflow_id": workflow_id,
+            "latency": qualifier_latency,
+            "label": verdict.label.value,
+            "confidence": verdict.confidence,
+            "rationale": verdict.rationale.model_dump(),
+        }
+        await self.__telemetry.info(
+            "Intent qualified", type=FathomEvent.INTENT_QUALIFIED, **qualified_context
+        )
+        # Legacy companion event so clients that have not yet adopted INTENT_QUALIFIED
+        # still surface the qualifier verdict via the existing REASONING channel.
+        await self.__telemetry.info(
+            verdict.rationale.reasoning or "Intent qualified",
+            type=FathomEvent.REASONING,
+            **qualified_context,
+        )
+
+        if blocked:
+            logger.warning(
+                "gate.block",
+                extra={
+                    "workflow_id": workflow_id,
+                    "category": verdict.rationale.category.value,
+                },
+            )
+            return await self.__build_rejection_result(
+                intent=intent,
+                verdict=verdict,
+                start_time=start_time,
+                workflow_id=workflow_id,
+            )
+
+        logger.info("gate.allow", extra={"workflow_id": workflow_id})
+
         # Initialize context namespace
         namespace = (
             conversation_id
@@ -185,7 +252,6 @@ class FathomRunner:
             intent=intent,
             llm=self.__llm,
             device=self.__device,
-            perception=self.__perception,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
@@ -193,8 +259,9 @@ class FathomRunner:
             package_name=package_name,
             telemetry=self.__telemetry,
             configuration=self.__config,
-            path_manager=self.__path_manager,
             summarizer=self.__summarizer,
+            perception=self.__perception,
+            path_manager=self.__path_manager,
             realignment=realignment or self.__realignment,
             max_steps=max_steps or self.__config.intent.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
@@ -472,6 +539,78 @@ class FathomRunner:
                 logger.warning(f"[FathomRunner] storage close failed: {exception}")
 
         logger.info("[FathomRunner] cleanup completed")
+
+    async def __build_rejection_result(
+        self,
+        *,
+        intent: str,
+        workflow_id: str,
+        start_time: float,
+        verdict: QualificationVerdict,
+    ) -> IntentResult:
+        """
+        Emit the rejection notification and produce a terminal IntentResult.
+
+        The run is marked as completed because the intent has been fully handled by the
+        qualifier; success is False because no UI action was attempted.
+        """
+
+        user_message = verdict.message or DEFAULT_REJECTION_MESSAGE
+        duration = time.time() - start_time
+
+        logger.info(
+            "gate.notify_rejection",
+            extra={"workflow_id": workflow_id, "duration": duration},
+        )
+
+        await self.notify(
+            level="warning",
+            message=user_message,
+            event_type=FathomEvent.INTENT_REJECTED,
+        )
+        await self.notify(
+            level="warning",
+            message=user_message,
+            event_type=FathomEvent.WORKFLOW_COMPLETED,
+        )
+
+        await self.__telemetry.info(
+            "Workflow execution finalized",
+            intent=intent,
+            success=False,
+            steps_taken=0,
+            rejected=True,
+            duration=duration,
+            workflow_id=workflow_id,
+            type=FathomEvent.WORKFLOW_COMPLETED,
+            completion_reason=CompletionReason.NOT_EXECUTABLE.value,
+        )
+
+        logger.info(
+            "gate.rejection_emitted",
+            extra={
+                "workflow_id": workflow_id,
+                "completion_reason": CompletionReason.NOT_EXECUTABLE.value,
+            },
+        )
+
+        return IntentResult(
+            error=None,
+            metrics={},
+            intent=intent,
+            success=False,
+            steps_taken=0,
+            subgoal_count=0,
+            step_results=[],
+            steps_executed=0,
+            status="completed",
+            memory_summary={},
+            duration=duration,
+            skipped_subgoals=[],
+            executed_subgoals=[],
+            workflow_id=workflow_id,
+            completion_reason=CompletionReason.NOT_EXECUTABLE.value,
+        )
 
     async def __get_memory_summary(self) -> Dict[str, Any]:
         """

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from logging import getLogger
 from typing import TYPE_CHECKING, Optional
 
 from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
@@ -10,16 +11,22 @@ from fathom.adapters.summarization.llm import LLMSummarizer
 from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.core.exceptions import ConfigurationError
+from fathom.core.services.qualifier import LLMIntentQualifier
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
+from fathom.runtime.assembly import RunAssemblyBuilder
+from fathom.runtime.factories import LLMFactory
 from fathom.schemas.configuration import (
     ExecutionConfiguration,
     ExplorationConfiguration,
     FathomConfiguration,
     IntentConfiguration,
+    QualifierConfiguration,
 )
 from fathom.schemas.run import RealignmentPolicy
 from fathom.settings.env import FathomSettings
+
+logger = getLogger(__name__)
 
 if TYPE_CHECKING:
     from fathom.interfaces.device import DevicePort
@@ -27,6 +34,7 @@ if TYPE_CHECKING:
     from fathom.interfaces.llm import LLMPort
     from fathom.interfaces.memory import MemoryPort
     from fathom.interfaces.perception import PerceptionPort
+    from fathom.interfaces.qualifier import IntentQualifierPort
     from fathom.interfaces.signal import SignalPort
     from fathom.interfaces.storage import StoragePort
     from fathom.interfaces.summarization import SummarizationPort
@@ -60,6 +68,7 @@ class FathomBuilder:
         self.__storage: Optional[StoragePort] = None
         self.__telemetry: Optional[TelemetryPort] = None
         self.__summarizer: Optional[SummarizationPort] = None
+        self.__qualifier: Optional[IntentQualifierPort] = None
         self.__realignment: Optional[RealignmentPolicy] = None
 
         self.__path_manager = path_manager
@@ -247,6 +256,20 @@ class FathomBuilder:
         self.__config.exploration = configuration
         return self
 
+    def with_qualifier(self, port: IntentQualifierPort) -> FathomBuilder:
+        """
+        Configure intent qualifier port.
+
+        Args:
+            port: Intent qualifier port implementation
+
+        Returns:
+            Builder instance for chaining
+        """
+
+        self.__qualifier = port
+        return self
+
     def with_realignment(self, policy: RealignmentPolicy) -> FathomBuilder:
         """
         Configure realignment policy.
@@ -260,6 +283,25 @@ class FathomBuilder:
 
         self.__realignment = policy
         return self
+
+    def __build_default_qualifier(
+        self, *, llm: LLMPort, configuration: QualifierConfiguration
+    ) -> LLMIntentQualifier:
+        """
+        Build the default qualifier backed by a dedicated low-temperature LLM.
+        """
+
+        try:
+            assembly = RunAssemblyBuilder(settings=FathomSettings())
+            qualifier_llm = LLMFactory().create(
+                configuration=assembly.build_qualifier_model_configuration(
+                    configuration=configuration
+                )
+            )
+            return LLMIntentQualifier(llm=qualifier_llm, configuration=configuration)
+        except Exception as exception:
+            logger.warning("qualifier.dedicated_llm_unavailable", extra={"reason": str(exception)})
+            return LLMIntentQualifier(llm=llm, configuration=configuration)
 
     def build(self) -> FathomRunner:
         """
@@ -312,20 +354,26 @@ class FathomBuilder:
         if not self.__summarizer:
             self.__summarizer = LLMSummarizer(llm=self.__llm)
 
+        if not self.__qualifier:
+            self.__qualifier = self.__build_default_qualifier(
+                llm=self.__llm, configuration=self.__config.qualifier
+            )
+
         if not self.__realignment:
             self.__realignment = RealignmentPolicy()
 
         return FathomRunner(
             llm=self.__llm,
             device=self.__device,
-            perception=self.__perception,
             config=self.__config,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
             knowledge=self.__knowledge,
             telemetry=self.__telemetry,
+            qualifier=self.__qualifier,
             summarizer=self.__summarizer,
+            perception=self.__perception,
             realignment=self.__realignment,
             path_manager=self.__path_manager,
         )
