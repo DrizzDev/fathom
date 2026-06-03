@@ -7,6 +7,7 @@ from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.screens import ScreenState
+from fathom.schemas.supervision import BlockReason
 
 
 class AgentStateContinuationTest(unittest.TestCase):
@@ -250,3 +251,50 @@ class AgentStateLastActionPersistenceTest(unittest.TestCase):
             state._AgentState__last_action_description,  # type: ignore[attr-defined]
             "Tap on Submit",
         )
+
+    def test_record_blocked_action_trips_loop_detector(self) -> None:
+        """
+        Reproduces Bug C from run 05e17bda step 12: the planner's
+        ``repeated_current_screen`` guard previously fired ``should_retry=True``
+        without feeding the rejected attempt into the LoopDetector, so the
+        detector's ``is_stuck`` never tripped and the workflow looped silently
+        until ``max_steps``. ``record_blocked_action`` must now route through
+        ``record_attempt`` so four blocks of the same target flip ``is_stuck``
+        and let the planner's escalation gate emit ``ASK_USER``.
+        """
+
+        state = AgentState(intent="test", capabilities=self.__caps())
+        state.update_screen(screen=self.__screen())
+
+        for _ in range(4):
+            state.record_blocked_action(
+                reason="Action 'Tap on Free Offers' already succeeded on the current screen during this workflow.",
+                action=self.__tap_action(target="Free Offers"),
+                block_reason=BlockReason.REPEATED_CURRENT_SCREEN_ACTION,
+            )
+
+        self.assertTrue(state.is_stuck)
+
+    def test_record_blocked_action_preserves_failure_context(self) -> None:
+        """
+        The historical responsibilities of ``record_blocked_action`` — pushing
+        a failed action into history, recording a failure for prompt context,
+        and surfacing the block reason via ``last_error`` — must continue to
+        hold after wiring the LoopDetector feed. This test pins those exact
+        side effects so a future refactor that drops them is caught here.
+        """
+
+        state = AgentState(intent="test", capabilities=self.__caps())
+        state.update_screen(screen=self.__screen())
+
+        state.record_blocked_action(
+            reason="Action already succeeded on this screen.",
+            action=self.__tap_action(target="Free Offers"),
+            block_reason=BlockReason.REPEATED_CURRENT_SCREEN_ACTION,
+        )
+
+        self.assertEqual(
+            state._AgentState__last_error,  # type: ignore[attr-defined]
+            "Action already succeeded on this screen.",
+        )
+        self.assertEqual(state.last_action_type, "tap")

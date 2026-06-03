@@ -90,7 +90,12 @@ class StorageConfiguration(BaseModel):
 
     backends: Set[StorageBackend] = Field(
         default={StorageBackend.LOCAL},
-        description="Storage backends to enable",
+        description=(
+            "Storage backends to enable. Defaults to LOCAL only so unconfigured "
+            "local runs do not attempt cloud uploads without ADC credentials. "
+            "Deployments that want CLOUD uploads pass ``backends={LOCAL, CLOUD}`` "
+            "explicitly (see ``services/crawler/manager.py``)."
+        ),
     )
     storage_bucket: Optional[str] = Field(
         default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"

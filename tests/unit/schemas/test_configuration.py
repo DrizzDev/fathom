@@ -12,9 +12,11 @@ from fathom.constants.qualification import (
     DEFAULT_QUALIFIER_TIMEOUT,
     DEFAULT_QUALIFIER_USE_CACHE,
 )
+from fathom.constants.storage import StorageBackend
 from fathom.schemas.configuration import (
     InferenceConfiguration,
     QualifierConfiguration,
+    StorageConfiguration,
 )
 
 
@@ -145,6 +147,55 @@ class QualifierConfigurationEvolveTest(unittest.TestCase):
 
         configuration = QualifierConfiguration.evolve(model="gemini-3.5-flash")
         self.assertTrue(configuration.enabled)
+
+
+class StorageConfigurationDefaultBackendsTest(unittest.TestCase):
+    """
+    The default ``backends`` set must stay LOCAL-only so that a stand-alone
+    fathom run on a machine without ADC credentials does not attempt cloud
+    uploads and bury the run in authentication errors. Deployments that need
+    cloud uploads pass ``backends={LOCAL, CLOUD}`` explicitly via their
+    composition root (e.g. ``services/crawler/manager.py``).
+    """
+
+    def test_default_backends_are_local_only(self) -> None:
+        """
+        A default-constructed StorageConfiguration must enable only LOCAL.
+        The bucket default is present for convenience but stays inert until
+        an operator opts into CLOUD by passing it through the request shape.
+        """
+
+        configuration = StorageConfiguration()
+
+        self.assertEqual(configuration.backends, {StorageBackend.LOCAL})
+
+    def test_explicit_both_backends_respected(self) -> None:
+        """
+        Deployments that want cloud uploads pass ``backends={LOCAL, CLOUD}``
+        through the request; that explicit choice must flow through unchanged.
+        """
+
+        configuration = StorageConfiguration(
+            backends={StorageBackend.LOCAL, StorageBackend.CLOUD},
+            storage_bucket="example-bucket",
+        )
+
+        self.assertEqual(
+            configuration.backends,
+            {StorageBackend.LOCAL, StorageBackend.CLOUD},
+        )
+
+    def test_explicit_cloud_only_backends_respected(self) -> None:
+        """
+        Cloud-only deployments must remain cloud-only after construction.
+        """
+
+        configuration = StorageConfiguration(
+            backends={StorageBackend.CLOUD},
+            storage_bucket="example-bucket",
+        )
+
+        self.assertEqual(configuration.backends, {StorageBackend.CLOUD})
 
 
 if __name__ == "__main__":

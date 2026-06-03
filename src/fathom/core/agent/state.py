@@ -1168,6 +1168,11 @@ class AgentState:
     ) -> None:
         """
         Record a deterministically blocked action as failure context.
+
+        Also feeds the LoopDetector window via :meth:`record_attempt` so the agent's *intent* to repeat the same blocked action
+        becomes visible to ``action_repetition``. Without this, the planner-side block path returned ``should_retry=True``
+        while the LoopDetector never saw the rejected attempt — so ``is_stuck`` never tripped, the planner's escalation gate never fired ``ASK_USER``,
+        and the workflow looped silently until ``max_steps``.
         """
 
         activity = (
@@ -1180,6 +1185,7 @@ class AgentState:
             detail=reason,
         )
         self.set_last_error(reason)
+        self.record_attempt(action=action, reason=block_reason.value)
 
     def is_action_repeating_on_screen(self, action: Action) -> bool:
         """

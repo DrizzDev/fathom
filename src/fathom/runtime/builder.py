@@ -21,6 +21,7 @@ from fathom.schemas.configuration import (
     FathomConfiguration,
     IntentConfiguration,
     QualifierConfiguration,
+    StorageConfiguration,
 )
 from fathom.schemas.run import RealignmentPolicy
 from fathom.settings.env import FathomSettings
@@ -199,18 +200,18 @@ class FathomBuilder:
         self.__signal = port
         return self
 
-    def with_storage(self, port: StoragePort) -> FathomBuilder:
+    def with_storage(
+        self,
+        port: StoragePort,
+        configuration: StorageConfiguration,
+    ) -> FathomBuilder:
         """
-        Configure storage port.
-
-        Args:
-            port: Storage port implementation
-
-        Returns:
-            Builder instance for chaining
+        Configure storage port and propagate its configuration into ``__config``.
         """
 
         self.__storage = port
+        self.__config.storage = configuration
+
         return self
 
     def with_telemetry(self, port: TelemetryPort) -> FathomBuilder:

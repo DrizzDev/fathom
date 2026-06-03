@@ -4,6 +4,7 @@ import unittest
 from typing import Any
 from unittest.mock import MagicMock
 
+from fathom.constants.storage import StorageBackend
 from fathom.core.services.qualifier import (
     LLMIntentQualifier,
     PermissiveIntentQualifier,
@@ -12,12 +13,14 @@ from fathom.interfaces.device import DevicePort
 from fathom.interfaces.factory import LLMFactoryPort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.perception import PerceptionPort
+from fathom.interfaces.storage import StoragePort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
 from fathom.schemas.configuration import (
     FathomConfiguration,
     LLMConfiguration,
     QualifierConfiguration,
+    StorageConfiguration,
 )
 from fathom.settings.env import FathomSettings
 
@@ -277,6 +280,87 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
         captured = factory.captured[0]
         self.assertEqual(captured.model, "gemini-2.5-flash")
         self.assertEqual(captured.timeout, 8.0)
+
+
+class FathomBuilderStorageUnificationTest(unittest.TestCase):
+    """
+    Builder must keep its two storage state slots in sync.
+
+    Before the unification ``with_storage`` set only ``self.__storage`` (the
+    port). The artifact pipeline reads ``self.__config.storage`` instead, so a
+    deployment that wired a multi-backend storage port still got an artifact
+    pipeline backed by the un-updated ``FathomConfiguration.storage`` default
+    — and ``EfsSink`` was selected on every stag run, silently dropping every
+    screenshot/annotated/trace upload while history uploads (which use the
+    port directly) continued to land in GCS.
+    """
+
+    @staticmethod
+    def __builder_with_required_ports():
+        """
+        Wire just enough ports for build() to succeed under default configuration.
+        """
+
+        return (
+            Fathom.builder()
+            .with_llm(port=MagicMock(spec=LLMPort))
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+        )
+
+    def test_with_storage_propagates_configuration_into_runner_config(self) -> None:
+        """
+        ``with_storage`` must update both the port AND ``__config.storage``
+        so the artifact-pipeline sink selector reads the operator's chosen
+        backends — not the StorageConfiguration field default.
+        """
+
+        configuration = StorageConfiguration(
+            backends={StorageBackend.LOCAL, StorageBackend.CLOUD},
+            storage_bucket="example-bucket",
+        )
+
+        runner = (
+            self.__builder_with_required_ports()
+            .with_storage(port=MagicMock(spec=StoragePort), configuration=configuration)
+            .build()
+        )
+
+        installed_storage_config = runner._FathomRunner__config.storage  # type: ignore[attr-defined]
+        self.assertEqual(
+            installed_storage_config.backends,
+            {StorageBackend.LOCAL, StorageBackend.CLOUD},
+        )
+        self.assertEqual(installed_storage_config.storage_bucket, "example-bucket")
+
+    def test_with_storage_port_and_config_reference_the_same_intent(self) -> None:
+        """
+        The port and the configuration must reflect a single operator decision.
+        Passing them together at the same call site is what makes them
+        impossible to drift apart by accident.
+        """
+
+        port = MagicMock(spec=StoragePort)
+        configuration = StorageConfiguration(
+            backends={StorageBackend.CLOUD},
+            storage_bucket="cloud-only-bucket",
+        )
+
+        runner = (
+            self.__builder_with_required_ports()
+            .with_storage(port=port, configuration=configuration)
+            .build()
+        )
+
+        self.assertIs(runner._FathomRunner__storage, port)  # type: ignore[attr-defined]
+        self.assertEqual(
+            runner._FathomRunner__config.storage.backends,  # type: ignore[attr-defined]
+            {StorageBackend.CLOUD},
+        )
+        self.assertEqual(
+            runner._FathomRunner__config.storage.storage_bucket,  # type: ignore[attr-defined]
+            "cloud-only-bucket",
+        )
 
 
 _ = Any  # exported for downstream extensions

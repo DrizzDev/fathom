@@ -160,11 +160,11 @@ class FathomActivities:
                 .with_llm(port=llm_adapter)
                 .with_device(port=device_adapter)
                 .with_signal(port=signal_adapter)
-                .with_storage(port=storage_adapter)
                 .with_telemetry(port=telemetry_adapter)
                 .with_perception(port=perception_adapter)
-                .with_runtime_configuration(loader=self.__runtime_configuration)
                 .with_realignment(policy=request.interaction.realignment)
+                .with_runtime_configuration(loader=self.__runtime_configuration)
+                .with_storage(port=storage_adapter, configuration=storage_configuration)
                 .with_intent_config(configuration=request.interaction.intent_configuration)
                 .with_execution_config(configuration=request.interaction.execution_configuration)
                 .with_exploration_config(
@@ -204,10 +204,12 @@ class FathomActivities:
         for resource in reversed(resources):
             try:
                 cleanup = getattr(resource, "cleanup", None)
+
                 if cleanup is not None:
                     result = cleanup()
                     if inspect.isawaitable(result):
                         await result
+
                     continue
 
                 close = getattr(resource, "close", None)
@@ -227,9 +229,8 @@ class FathomActivities:
         """
         Cleanup runner resources and any infrastructure the composition root owns.
 
-        Closes the runner first, then drains owned LLM resources (e.g. the
-        dedicated qualifier LLM). Each cleanup is isolated so a failure in one
-        resource does not skip the others.
+        Closes the runner first, then drains owned LLM resources (e.g. the dedicated qualifier LLM).
+        Each cleanup is isolated so a failure in one resource does not skip the others.
         """
 
         try:
