@@ -211,7 +211,7 @@ secrets/
 scripts/
 documents/
 debug/
-research/
-debug/
 debugging/
+research/
 debug/scroll/poc/
+tests/fixtures/

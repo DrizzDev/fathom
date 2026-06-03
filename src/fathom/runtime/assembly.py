@@ -7,6 +7,7 @@ from fathom.core.exceptions import ConfigurationError
 from fathom.schemas.configuration import (
     DeviceConfiguration,
     LLMConfiguration,
+    QualifierConfiguration,
     StorageConfiguration,
     TelemetryConfiguration,
 )
@@ -76,6 +77,32 @@ class RunAssemblyBuilder:
         }
         default_values.update(request_values)
         return LLMConfiguration.model_validate(default_values)
+
+    def build_qualifier_model_configuration(
+        self, *, configuration: QualifierConfiguration
+    ) -> LLMConfiguration:
+        """
+        Resolve qualifier model configuration from settings and the qualifier knobs.
+        """
+
+        credentials = (
+            self.__settings.google_credentials_dict
+            or self.__settings.google_application_credentials
+        )
+        return LLMConfiguration.model_validate(
+            {
+                "credentials": credentials,
+                "model": configuration.inference.model,
+                "api_key": self.__settings.gemini_api_key,
+                "timeout": configuration.inference.timeout,
+                "location": self.__settings.vertex_location,
+                "use_cache": configuration.inference.use_cache,
+                "project_id": self.__settings.vertex_project_id,
+                "temperature": configuration.inference.temperature,
+                "max_retries": configuration.inference.max_retries,
+                "thinking_level": configuration.inference.thinking_level,
+            }
+        )
 
     def build_storage_configuration(self, *, request: RunRequest) -> StorageConfiguration:
         """

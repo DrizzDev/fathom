@@ -4,13 +4,17 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, Callable, Optional, cast
+from unittest.mock import AsyncMock, MagicMock
 
 from fathom.adapters.checkpoint import SqliteCheckpointStore
+from fathom.constants.events import FathomEvent
 from fathom.runtime.checkpoint_serde import CheckpointSerdeFactory
 from fathom.schemas.checkpoint import SqliteCheckpointPolicy
 from fathom.strategies.intent import (
     CHECKPOINT_ALLOWED_JSON_MODULES,
     CHECKPOINT_ALLOWED_MSGPACK_MODULES,
+    IntentStrategy,
 )
 
 
@@ -64,3 +68,99 @@ class CheckpointStoreSerdeTest(unittest.IsolatedAsyncioTestCase):
                         checkpointer.serde._allowed_msgpack_modules,
                         set(CHECKPOINT_ALLOWED_MSGPACK_MODULES),
                     )
+
+
+class IntentStrategyTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Cover IntentStrategy SCRIPT_GENERATED emit behavior in isolation.
+    """
+
+    @staticmethod
+    def __strategy_with_stubbed_context(*, step_count: int = 3) -> Any:
+        """
+        Build a bare IntentStrategy with just enough graph-context stubs to
+        exercise the SCRIPT_GENERATED emit contract in isolation.
+        """
+
+        strategy = object.__new__(IntentStrategy)
+
+        agent_state = MagicMock()
+        agent_state.step_count = step_count
+
+        telemetry = MagicMock()
+        telemetry.info = AsyncMock()
+
+        graph_context = MagicMock()
+        graph_context.telemetry = telemetry
+        graph_context.agent_state = agent_state
+
+        strategy.__setattr__("_IntentStrategy__graph_context", graph_context)
+        return strategy, telemetry
+
+    async def __invoke_emit(self, *, strategy: Any, script_data: Optional[str]) -> None:
+        """
+        Call the private SCRIPT_GENERATED emit on the strategy under test.
+        """
+
+        emit = cast(
+            "Callable[..., Any]",
+            strategy.__getattribute__("_IntentStrategy__emit_script_generated_event"),
+        )
+        await emit(script_data=script_data)
+
+    async def test_script_generated_emits_with_non_empty_content(self) -> None:
+        """
+        Non-empty script must emit SCRIPT_GENERATED with the content and is_empty=False.
+        """
+
+        strategy, telemetry = self.__strategy_with_stubbed_context(step_count=5)
+        await self.__invoke_emit(strategy=strategy, script_data="open swiggy\nsearch biryani")
+
+        telemetry.info.assert_awaited_once()
+        call = telemetry.info.call_args
+        self.assertEqual(call.args[0], "open swiggy\nsearch biryani")
+        self.assertEqual(call.kwargs["type"], FathomEvent.SCRIPT_GENERATED)
+        self.assertEqual(call.kwargs["step"], 5)
+        self.assertFalse(call.kwargs["is_empty"])
+
+    async def test_script_generated_emits_even_when_content_is_empty(self) -> None:
+        """
+        Regression: empty script must STILL emit SCRIPT_GENERATED with is_empty=True.
+        """
+
+        strategy, telemetry = self.__strategy_with_stubbed_context(step_count=7)
+        await self.__invoke_emit(strategy=strategy, script_data="")
+
+        telemetry.info.assert_awaited_once()
+        call = telemetry.info.call_args
+        self.assertEqual(call.args[0], "")
+        self.assertEqual(call.kwargs["type"], FathomEvent.SCRIPT_GENERATED)
+        self.assertEqual(call.kwargs["step"], 7)
+        self.assertTrue(call.kwargs["is_empty"])
+
+    async def test_script_generated_emits_when_content_is_none(self) -> None:
+        """
+        None script must still emit a terminal event with is_empty=True.
+        """
+
+        strategy, telemetry = self.__strategy_with_stubbed_context(step_count=2)
+        await self.__invoke_emit(strategy=strategy, script_data=None)
+
+        telemetry.info.assert_awaited_once()
+        call = telemetry.info.call_args
+        self.assertEqual(call.args[0], "")
+        self.assertTrue(call.kwargs["is_empty"])
+
+    async def test_script_generated_treats_whitespace_only_as_empty(self) -> None:
+        """
+        Whitespace-only script data is not meaningful content; must mark is_empty=True
+        while preserving the raw payload for debugging consumers.
+        """
+
+        strategy, telemetry = self.__strategy_with_stubbed_context(step_count=1)
+        await self.__invoke_emit(strategy=strategy, script_data="   \n\t  ")
+
+        telemetry.info.assert_awaited_once()
+        call = telemetry.info.call_args
+        self.assertEqual(call.args[0], "   \n\t  ")
+        self.assertTrue(call.kwargs["is_empty"])

@@ -10,6 +10,14 @@ from fathom.constants.platform import (
     DevicePlatform,
     IOSAutomationBackend,
 )
+from fathom.constants.qualification import (
+    DEFAULT_QUALIFIER_MAX_RETRIES,
+    DEFAULT_QUALIFIER_MODEL,
+    DEFAULT_QUALIFIER_TEMPERATURE,
+    DEFAULT_QUALIFIER_THINKING_LEVEL,
+    DEFAULT_QUALIFIER_TIMEOUT,
+    DEFAULT_QUALIFIER_USE_CACHE,
+)
 from fathom.constants.storage import StorageBackend
 from fathom.schemas.artifact import PipelineConfiguration
 from fathom.schemas.checkpoint import (
@@ -455,6 +463,84 @@ class IntentConfiguration(BaseModel):
     )
 
 
+class InferenceConfiguration(BaseModel):
+    """
+    Generic LLM inference knobs. NO defaults — every consumer must supply every field via its own parent configuration's `default_factory`.
+    This forces explicit intent at every use site and prevents one consumer's tuning from silently leaking into another's defaults.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(description="Model identifier the LLM adapter will use.")
+    temperature: float = Field(
+        ge=0.0,
+        le=2.0,
+        description="Sampling temperature (0 = deterministic).",
+    )
+    use_cache: bool = Field(
+        description="Whether the LLM may reuse cached content between calls.",
+    )
+    thinking_level: Literal["minimal", "low", "medium", "high"] = Field(
+        description="Reasoning depth the LLM is allowed to spend per call.",
+    )
+    timeout: float = Field(
+        ge=0.1,
+        le=60.0,
+        description="Per-attempt wall-clock timeout in seconds.",
+    )
+    max_retries: int = Field(
+        ge=0,
+        le=5,
+        description="Retries after the initial attempt. Adapter handles backoff + jitter.",
+    )
+
+
+class QualifierConfiguration(BaseModel):
+    """
+    Configuration for the intent executability qualifier.
+
+    Owns all qualifier-specific tuning defaults via `default_factory`. Each field of the inference block is set explicitly
+    from the constants module so a future generic InferenceConfiguration consumer cannot accidentally inherit qualifier-flavored values.
+
+    Use `QualifierConfiguration.evolve(...)` to override individual inference fields while keeping the rest at the eval-validated defaults;
+    see method docstring for the rationale (avoids the verbose "respecify every field" boilerplate that strict-no-defaults forces on callers).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether the executability gate runs; False installs the permissive qualifier.",
+    )
+    inference: InferenceConfiguration = Field(
+        default_factory=lambda: InferenceConfiguration(
+            model=DEFAULT_QUALIFIER_MODEL,
+            timeout=DEFAULT_QUALIFIER_TIMEOUT,
+            use_cache=DEFAULT_QUALIFIER_USE_CACHE,
+            temperature=DEFAULT_QUALIFIER_TEMPERATURE,
+            max_retries=DEFAULT_QUALIFIER_MAX_RETRIES,
+            thinking_level=DEFAULT_QUALIFIER_THINKING_LEVEL,
+        ),
+        description="Inference knobs tuned for the qualifier — defaults reflect eval results.",
+    )
+
+    @classmethod
+    def evolve(cls, **inference_overrides: Any) -> "QualifierConfiguration":
+        """
+        Build a QualifierConfiguration replacing only the named inference fields,
+        keeping all other qualifier-tuned defaults.
+
+        Implementation routes the merged kwargs through the InferenceConfiguration constructor (not model_copy(update=...))
+        so the nested schema's `extra="forbid"` policy enforces field names. Typos in `inference_overrides` raise ValidationError
+        instead of being silently dropped onto the model's data dict.
+        """
+
+        base = cls()
+        merged = {**base.inference.model_dump(), **inference_overrides}
+
+        return cls(inference=InferenceConfiguration(**merged))
+
+
 class WorkflowHostPolicyConfiguration(BaseModel):
     """
     Workflow-host activity policy for one workflow type.
@@ -574,3 +660,4 @@ class FathomConfiguration(BaseModel):
 
     intent: IntentConfiguration = Field(default_factory=IntentConfiguration)
     exploration: ExplorationConfiguration = Field(default_factory=ExplorationConfiguration)
+    qualifier: QualifierConfiguration = Field(default_factory=QualifierConfiguration)

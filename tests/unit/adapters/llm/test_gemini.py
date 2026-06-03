@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 from typing import Dict, Optional
@@ -175,3 +176,29 @@ class GeminiLLMTest(unittest.TestCase):
 
         self.assertIsNotNone(config.thinking_config)
         self.assertEqual(config.thinking_config.thinking_level, types.ThinkingLevel.LOW)
+
+    def test_async_timeout_does_not_match_cancelled_classifier(self) -> None:
+        """
+        Regression: asyncio.wait_for raises asyncio.TimeoutError when the
+        per-attempt budget expires. That exception has no status code and its
+        message does not contain "cancelled", so the cancelled classifier must
+        return False — letting the GENERIC retry path engage instead of
+        immediately propagating as a cancellation.
+        """
+
+        timeout_message = str(asyncio.TimeoutError()).casefold()
+        result = GeminiLLM._GeminiLLM__is_cancelled_error(status_code=None, text=timeout_message)
+
+        self.assertFalse(result)
+
+    def test_async_timeout_does_not_match_rate_limit_classifier(self) -> None:
+        """
+        asyncio.TimeoutError must NOT classify as RATE_LIMITED either; it should
+        fall through to GENERIC so the retry path uses the default backoff
+        (not the rate-limit Retry-After path which expects status_code=429).
+        """
+
+        timeout_message = str(asyncio.TimeoutError()).casefold()
+        result = GeminiLLM._GeminiLLM__is_rate_limit_error(status_code=None, text=timeout_message)
+
+        self.assertFalse(result)

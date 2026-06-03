@@ -373,6 +373,32 @@ class IntentStrategy:
 
         self.__step_results = []
 
+    async def __emit_script_generated_event(self, *, script_data: Optional[str]) -> None:
+        """
+        Emit the SCRIPT_GENERATED terminal event unconditionally.
+
+        The exporter can legitimately return empty payloads (launcher-only runs,
+        structured-validation failures, no prior script.txt). The client still
+        needs a terminal signal that the run ended, so the event always fires —
+        an empty payload is flagged via the `is_empty` kwarg so consumers can
+        distinguish "no script" from "script with content."
+        """
+
+        is_empty_script = not bool(script_data and script_data.strip())
+
+        if is_empty_script:
+            logger.warning(
+                "Final script generation returned empty data; emitting empty "
+                "SCRIPT_GENERATED event so the client still receives a terminal signal"
+            )
+
+        await self.__graph_context.telemetry.info(
+            script_data or "",
+            is_empty=is_empty_script,
+            type=FathomEvent.SCRIPT_GENERATED,
+            step=self.__graph_context.agent_state.step_count,
+        )
+
     async def __cleanup_background_task(
         self,
         *,

@@ -34,6 +34,7 @@ class CompletionReason(StrEnum):
     STUCK = "Stuck: No progress"
     INTERVENTION_REQUIRED = "Human intervention required"
     USER_DIRECTIVE = "Marked complete via user directive"
+    NOT_EXECUTABLE = "Request is not an executable UI task"
     ACTION_BLOCKED = "Action blocked: repeated without progress"
 
 
