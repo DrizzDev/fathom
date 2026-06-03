@@ -4,6 +4,7 @@ import time
 from typing import Optional
 
 from fathom.core.exceptions import DeviceError
+from fathom.core.perception.orientation import CaptureOrientationResolver
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
@@ -51,7 +52,12 @@ class IOSNativePerceptionAdapter(PerceptionPort):
         if not screenshot_bytes:
             raise DeviceError("iOS native perception captured an empty screenshot.")
 
-        width, height = await self.__device.get_dimensions()
+        reported_width, reported_height = await self.__device.get_dimensions()
+        width, height = CaptureOrientationResolver.resolve(
+            image=screenshot_bytes,
+            reported_width=reported_width,
+            reported_height=reported_height,
+        )
         application_identifier = await self.__device.get_current_package()
 
         return ScreenCapture(
@@ -108,7 +114,12 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
         if not screenshot_bytes:
             raise DeviceError("iOS enhanced perception captured an empty screenshot.")
 
-        width, height = await self.__device.get_dimensions()
+        reported_width, reported_height = await self.__device.get_dimensions()
+        width, height = CaptureOrientationResolver.resolve(
+            image=screenshot_bytes,
+            reported_width=reported_width,
+            reported_height=reported_height,
+        )
         application_identifier = await self.__device.get_current_package()
 
         metadata = {

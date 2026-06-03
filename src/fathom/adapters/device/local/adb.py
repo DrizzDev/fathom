@@ -678,43 +678,32 @@ class ADBDevice(DevicePort):
 
     async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
         """
-        Capture atomic snapshot (Screenshot + XML) in parallel.
-
-        Wrapped in an outer timeout (``snapshot_timeout``) so a wedged emulator
-        (e.g. qcow2 backing file exhausted) surfaces as a clean
-        :class:`DeviceError` instead of an indefinite await. The inner
-        per-subprocess timeout (``command_timeout``) is not sufficient on its
-        own because the subprocess-cleanup path can itself hang when the
-        kernel cannot deliver SIGKILL to a process stuck in uninterruptible IO.
+        Capture a required screenshot and best-effort XML hierarchy.
         """
 
         try:
-            results = await asyncio.wait_for(
-                asyncio.gather(
-                    self.capture_screen(),
-                    self.dump_hierarchy(),
-                    return_exceptions=True,
-                ),
+            image = await self.capture_screen()
+        except Exception as exception:
+            logger.exception("Snapshot: Screenshot capture failed")
+            raise DeviceError(f"Snapshot capture failed: {exception}") from exception
+
+        if not image:
+            raise DeviceError("Snapshot capture failed: empty screenshot")
+
+        try:
+            xml = await asyncio.wait_for(
+                self.dump_hierarchy(),
                 timeout=self.__configuration.snapshot_timeout,
             )
-        except asyncio.TimeoutError as exception:
-            raise DeviceError(
-                f"Snapshot timed out after {self.__configuration.snapshot_timeout:.1f}s "
-                "(emulator likely wedged on host IO; check disk and emulator health)"
-            ) from exception
-
-        image_result = results[0]
-        xml_result = results[1]
-
-        if isinstance(xml_result, Exception):
-            logger.error(f"Snapshot: Hierarchy dump failed: {xml_result}")
-
-        if isinstance(image_result, Exception):
-            logger.error(f"Snapshot: Screenshot capture failed: {image_result}")
-            raise DeviceError(f"Snapshot capture failed: {image_result}") from image_result
-
-        image = image_result if isinstance(image_result, bytes) else b""
-        xml = xml_result if isinstance(xml_result, str) else None
+        except asyncio.TimeoutError:
+            logger.exception(
+                "Snapshot: Hierarchy dump timed out after %.1fs",
+                self.__configuration.snapshot_timeout,
+            )
+            xml = None
+        except Exception:
+            logger.exception("Snapshot: Hierarchy dump failed")
+            xml = None
 
         return image, xml
 

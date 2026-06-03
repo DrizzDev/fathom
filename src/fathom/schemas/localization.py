@@ -3,10 +3,72 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from fathom.constants.localization import LocalizationGridScale
 from fathom.schemas.actions import Bounds
 from fathom.schemas.observation import ElementSource, PerceivedElement
+
+
+class VisionLocalizationPayload(BaseModel):
+    """
+    Vision localizer response — bounding rectangle on the normalized integer grid.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    x1: int = Field(
+        ge=LocalizationGridScale.MINIMUM,
+        le=LocalizationGridScale.MAXIMUM,
+        description="Left edge of the target bounding rectangle.",
+    )
+    y1: int = Field(
+        ge=LocalizationGridScale.MINIMUM,
+        le=LocalizationGridScale.MAXIMUM,
+        description="Top edge of the target bounding rectangle.",
+    )
+    x2: int = Field(
+        ge=LocalizationGridScale.MINIMUM,
+        le=LocalizationGridScale.MAXIMUM,
+        description="Right edge of the target bounding rectangle.",
+    )
+    y2: int = Field(
+        ge=LocalizationGridScale.MINIMUM,
+        le=LocalizationGridScale.MAXIMUM,
+        description="Bottom edge of the target bounding rectangle.",
+    )
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Model self-reported confidence for the proposed bound.",
+    )
+    rationale: str = Field(description="One-sentence justification for the bound.")
+
+    @property
+    def refused(self) -> bool:
+        """
+        Whether this payload signals the localizer's refusal protocol.
+        """
+
+        return (
+            self.x1 == LocalizationGridScale.MINIMUM
+            and self.y1 == LocalizationGridScale.MINIMUM
+            and self.x2 == LocalizationGridScale.MINIMUM
+            and self.y2 == LocalizationGridScale.MINIMUM
+            and self.confidence == 0.0
+        )
+
+    @model_validator(mode="after")
+    def __check_axes(self) -> "VisionLocalizationPayload":
+        """
+        Reject non-refusal payloads with inverted axes or zero area.
+        """
+
+        if self.refused:
+            return self
+        if self.x1 >= self.x2 or self.y1 >= self.y2:
+            raise ValueError("axes inverted or zero area")
+        return self
 
 
 class Point(BaseModel):

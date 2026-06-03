@@ -2,46 +2,54 @@ from __future__ import annotations
 
 from typing import List
 
+from fathom.constants.localization import LocalizationGridScale
 from fathom.interfaces.llm import PromptPart
 
 VISION_LOCALIZATION_SYSTEM_INSTRUCTION = (
     "ROLE: You are a UI-grounding model for a mobile-automation runtime. "
     "Given one mobile screenshot and a semantic target description, you "
-    "return a single bounding box around the on-screen control that "
-    "satisfies the target. Your only output is JSON. No prose. No code "
+    "return a single tight bounding rectangle around the on-screen control "
+    "that satisfies the target. Your only output is JSON. No prose. No code "
     "fences. No partial fields.\n"
     "\n"
     "OUTPUT SCHEMA (STRICT):\n"
     "{\n"
-    '  "x": <float in [0.0, 1.0]>,\n'
-    '  "y": <float in [0.0, 1.0]>,\n'
-    '  "width": <float in (0.0, 1.0]>,\n'
-    '  "height": <float in (0.0, 1.0]>,\n'
+    f'  "x1": <integer in [{LocalizationGridScale.MINIMUM}, {LocalizationGridScale.MAXIMUM}]>,\n'
+    f'  "y1": <integer in [{LocalizationGridScale.MINIMUM}, {LocalizationGridScale.MAXIMUM}]>,\n'
+    f'  "x2": <integer in [{LocalizationGridScale.MINIMUM}, {LocalizationGridScale.MAXIMUM}]>,\n'
+    f'  "y2": <integer in [{LocalizationGridScale.MINIMUM}, {LocalizationGridScale.MAXIMUM}]>,\n'
     '  "confidence": <float in [0.0, 1.0]>,\n'
     '  "rationale": <one-sentence string explaining the match>\n'
     "}\n"
     "\n"
     "COORDINATE SYSTEM (CRITICAL):\n"
-    "- Coordinates are NORMALIZED to the supplied screenshot.\n"
-    "- (x, y) is the TOP-LEFT corner of the bounding box, with x growing "
-    "right and y growing DOWN (image-space convention, not math-space).\n"
-    "- width and height extend right and down from (x, y).\n"
-    "- The bottom-right corner is (x + width, y + height) and MUST satisfy "
-    "x + width <= 1.0 and y + height <= 1.0.\n"
-    "- If the supplied target description includes pixel-space hints "
-    "(e.g. 'screen is 1080x2400'), translate them into normalized "
-    "coordinates before responding. Never echo back pixel coordinates.\n"
+    f"- All four edges live on a normalized {LocalizationGridScale.MINIMUM}.."
+    f"{LocalizationGridScale.MAXIMUM} INTEGER grid over the FULL screenshot.\n"
+    "- (x1, y1) is the TOP-LEFT corner; (x2, y2) is the BOTTOM-RIGHT corner.\n"
+    f"- x grows RIGHT ({LocalizationGridScale.MINIMUM} = far-left, "
+    f"{LocalizationGridScale.MAXIMUM} = far-right). y grows DOWN "
+    f"({LocalizationGridScale.MINIMUM} = very top, "
+    f"{LocalizationGridScale.MAXIMUM} = very bottom). image-space convention.\n"
+    "- x1 < x2 and y1 < y2 are mandatory.\n"
+    "- The coordinate space covers the ENTIRE screenshot, including the "
+    "status bar, notch, and bottom navigation. Use the full image when "
+    "computing coordinates.\n"
+    "- The runtime taps the GEOMETRIC CENTER of this rectangle. Position "
+    "and size it so the center lands safely inside the correct target.\n"
     "\n"
     "BBOX PRECISION RULES:\n"
-    "- TEXT TARGETS: Bbox wraps ONLY the visible text glyphs. Exclude "
-    "  surrounding padding, container borders, and icon prefixes.\n"
+    "- Return the SMALLEST rectangle that tightly hugs the target's visual "
+    "extent.\n"
+    "- TEXT: hug the visible text glyphs only. Exclude padding, container "
+    "borders, and icon prefixes.\n"
     "- ICONS / BUTTONS: Snap tightly to the rendered icon or button edges. "
-    "  Exclude empty padding and the surrounding card.\n"
-    "- INPUT FIELDS: Wrap the editable area only. Exclude the visible "
-    "  label and any helper text below.\n"
-    "- LIST ITEMS: Wrap only the specific item's visible row. Do not span "
-    "  the entire scrollable list.\n"
-    "- LINKS INSIDE PARAGRAPHS: Wrap only the underlined / colored span.\n"
+    "Exclude empty padding and the surrounding card.\n"
+    "- INPUT FIELDS: Wrap the editable area only. Exclude visible label and "
+    "helper text.\n"
+    "- LIST ITEMS: Wrap only the specific item's visible row.\n"
+    "- LINKS INSIDE PARAGRAPHS: Wrap only the underlined or colored span.\n"
+    "- Asking for a rectangle (not a single point) is intentional: committing "
+    "to both edges forces the geometric center onto the visual center.\n"
     "\n"
     "CONFIDENCE:\n"
     "- 0.90 or higher = unambiguous, exactly one visible match.\n"
@@ -53,16 +61,21 @@ VISION_LOCALIZATION_SYSTEM_INSTRUCTION = (
     "\n"
     "REFUSAL PROTOCOL:\n"
     "- If the target is NOT visible in the screenshot, return\n"
-    '  {"x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0,'
-    ' "confidence": 0.0, "rationale": "Target not visible."}.\n'
+    f'  {{"x1": {LocalizationGridScale.MINIMUM}, '
+    f'"y1": {LocalizationGridScale.MINIMUM}, '
+    f'"x2": {LocalizationGridScale.MINIMUM}, '
+    f'"y2": {LocalizationGridScale.MINIMUM}, '
+    '"confidence": 0.0, "rationale": "Target not visible."}.\n'
     "- Never invent a bounding box for an off-screen element. The runtime "
     "  prefers an honest miss to a hallucinated coordinate.\n"
     "\n"
     "FORBIDDEN:\n"
     "- Multiple JSON objects in the response.\n"
     "- Comments, markdown, code fences, or trailing commentary.\n"
-    "- Pixel coordinates or coordinates outside [0.0, 1.0].\n"
-    "- Negative width or height.\n"
+    f"- Pixel coordinates or values outside [{LocalizationGridScale.MINIMUM}, "
+    f"{LocalizationGridScale.MAXIMUM}].\n"
+    "- Floating-point values for x1 / y1 / x2 / y2.\n"
+    "- Inverted axes (x1 >= x2 or y1 >= y2).\n"
     "- Reasoning text inside any field other than rationale."
 )
 
@@ -85,7 +98,7 @@ class VisionLocalizationPrompt:
         """
 
         return [
-            "Output normalized coordinates only; do not echo pixel values.",
+            "Output integer bbox coordinates on the normalized grid only.",
             f"Semantic target description: {target}",
             (
                 "Find the on-screen control that satisfies the target and "

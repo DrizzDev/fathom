@@ -424,11 +424,18 @@ class AgentState:
 
         if result.step.action.execution_kind is ActionExecutionKind.DEVICE:
             self.__interaction_tracker.record(action_type=result.step.action.action_type.value)
-            self.__last_action_type = result.step.action.action_type.value
-            self.__last_action_description = result.step.action.to_description()
+
+            self.__assign_last_action(
+                reason="device_action_recorded",
+                action_type=result.step.action.action_type.value,
+                action_description=result.step.action.to_description(),
+            )
         else:
-            self.__last_action_type = None
-            self.__last_action_description = None
+            self.__assign_last_action(
+                action_type=None,
+                action_description=None,
+                reason="control_action_wiped",
+            )
 
         if result.step.action.action_type == ActionType.COMPLETE and result.success:
             self.mark_complete(reason=CompletionReason.SUCCESS.value)
@@ -445,6 +452,81 @@ class AgentState:
             not in (ActionType.VALIDATE, ActionType.ASK_USER, ActionType.WAIT)
         ):
             self.clear_deferrals()
+
+    def record_attempt(self, *, action: Action, reason: str) -> None:
+        """
+        Record an attempted (but not dispatched) action against the loop detector.
+
+        Used at planner / supervise rejection sites so the agent's *intent* to
+        repeat the same action enters the LoopDetector window even when the
+        attempt is rejected before reaching the executor. Without this,
+        successive same-target attempts that are rejected upstream stay
+        invisible to ``action_repetition`` and the agent can loop silently.
+        """
+
+        action_type = action.action_type.value
+        action_description = action.to_description()
+
+        self.__assign_last_action(
+            action_type=action_type,
+            reason="attempt_recorded",
+            action_description=action_description,
+        )
+
+        current_screen = self.__runtime.screen.current
+        if current_screen is not None:
+            self.__runtime.screen.detector.record(
+                effect_status=None,
+                screen=current_screen,
+                action_type=action_type,
+                action_description=action_description,
+            )
+
+        logger.info(
+            "Attempted action recorded",
+            extra={
+                "event": "attempt.rejected",
+                "component": "core.agent.state",
+                "attempt.reason": reason,
+                "step.count": self.__step_count,
+                "attempt.action.type": action_type,
+                "attempt.action.description": action_description[:120],
+            },
+        )
+
+    def __assign_last_action(
+        self,
+        *,
+        reason: str,
+        action_type: Optional[str],
+        action_description: Optional[str],
+    ) -> None:
+        """
+        Single write site for ``__last_action_type`` / ``__last_action_description``.
+
+        Emits a structured transition log so every change to the descriptor
+        the LoopDetector consumes on the next ``update_screen`` is visible.
+        """
+
+        before_type = self.__last_action_type
+        before_description = self.__last_action_description
+
+        self.__last_action_type = action_type
+        self.__last_action_description = action_description
+
+        logger.info(
+            "Last action transition",
+            extra={
+                "component": "core.agent.state",
+                "event": "agent.last_action.transition",
+                "after.type": action_type,
+                "before.type": before_type,
+                "transition.reason": reason,
+                "step.count": self.__step_count,
+                "after.description": (action_description or "")[:80],
+                "before.description": (before_description or "")[:80],
+            },
+        )
 
     def mark_complete(self, reason: str) -> None:
         """
@@ -1153,6 +1235,8 @@ class AgentState:
             "loop_detector_state": self.__runtime.screen.detector.to_state().model_dump(
                 mode="json"
             ),
+            "last_action_type": self.__last_action_type,
+            "last_action_description": self.__last_action_description,
             # Diagnostic snapshot retained for backward-compatibility with
             # external checkpoint readers. Not consumed during restore.
             "action_stats": self.__action_history.get_stats(),
@@ -1177,6 +1261,8 @@ class AgentState:
         consecutive_complete_deferrals: int = 0,
         verification_loop: Optional[VerificationLoopState] = None,
         realignment_state: Optional[Dict[str, Any]] = None,
+        last_action_type: Optional[str] = None,
+        last_action_description: Optional[str] = None,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -1226,6 +1312,12 @@ class AgentState:
 
         self.__runtime.effects.load_effects(
             effects=[ActionEffect.model_validate(effect) for effect in recent_effects or []]
+        )
+
+        self.__assign_last_action(
+            reason="checkpoint_restore",
+            action_type=last_action_type,
+            action_description=last_action_description,
         )
 
     @classmethod
@@ -1332,6 +1424,14 @@ class AgentState:
             dict(realignment_state_raw) if isinstance(realignment_state_raw, dict) else None
         )
 
+        last_action_type_raw = data.get("last_action_type")
+        last_action_type = last_action_type_raw if isinstance(last_action_type_raw, str) else None
+
+        last_action_description_raw = data.get("last_action_description")
+        last_action_description = (
+            last_action_description_raw if isinstance(last_action_description_raw, str) else None
+        )
+
         state.__restore_from_data(
             sub_goals=sub_goals,
             step_count=step_count,
@@ -1348,6 +1448,8 @@ class AgentState:
             sub_goal_action_count=sub_goal_action_count,
             consecutive_complete_deferrals=consecutive_complete_deferrals,
             verification_loop=verification_loop,
+            last_action_type=last_action_type,
+            last_action_description=last_action_description,
         )
 
         return state

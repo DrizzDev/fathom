@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import io
-import json
 from logging import getLogger
 from typing import Any, Dict, Optional, Tuple
 
 from PIL import Image
+from pydantic import ValidationError
 
+from fathom.constants.localization import LocalizationGridScale
 from fathom.core.prompts.localization import VisionLocalizationPrompt
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.localization import TargetLocalizerPort
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
-from fathom.schemas.localization import LocalizationProposal
+from fathom.schemas.llm import StructuredOutput
+from fathom.schemas.localization import LocalizationProposal, VisionLocalizationPayload
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 
@@ -21,7 +23,7 @@ logger = getLogger(__name__)
 
 class GeminiVisionLocalizer(TargetLocalizerPort):
     """
-    Ensemble member that asks Gemini for normalized bounding-box coordinates.
+    Ensemble member that asks Gemini for a normalized bounding rectangle.
     """
 
     def __init__(
@@ -38,6 +40,7 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         self.__llm = llm
         self.__workflow_id = workflow_id
         self.__prompt = prompt if prompt is not None else VisionLocalizationPrompt()
+        self.__structured_output = StructuredOutput(payload=VisionLocalizationPayload)
 
     @property
     def name(self) -> str:
@@ -56,7 +59,7 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         observation: ScreenObservation,
     ) -> Optional[LocalizationProposal]:
         """
-        Issue a single Gemini call and parse a normalized bounding box.
+        Issue a single Gemini call and parse a normalized bounding rectangle.
         """
 
         _ = observation
@@ -75,61 +78,51 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
             prompt=self.__prompt.build(target=target, image=capture.image),
             use_cache=False,
             system_instruction=self.__prompt.SYSTEM_INSTRUCTION,
+            structured_output=self.__structured_output,
         )
 
-        if (payload := self.__parse_payload(content=result.content, context=log_context)) is None:
-            logger.warning(
-                "Vision localizer payload unparsable",
-                extra={
-                    **log_context,
-                    "event": "localizer.vision.payload.unparsable",
-                    "response.preview": (result.content or "")[:512],
-                },
-            )
+        if (payload := self.__try_parse(content=result.content, context=log_context)) is None:
             return None
 
-        if self.__is_refusal(payload=payload):
+        if payload.refused:
             logger.info(
                 "Vision localizer reported target not visible",
                 extra={**log_context, "event": "localizer.vision.refusal"},
             )
             return None
 
-        if (
-            bounds := self.__bounds_from_payload(
-                payload=payload, width=capture.width, height=capture.height
-            )
-        ) is None:
+        bounds = self.__bounds_from_payload(
+            payload=payload,
+            width=capture.width,
+            height=capture.height,
+        )
+        if bounds is None:
             logger.warning(
-                "Vision localizer payload missing bounds",
+                "Vision localizer payload yielded zero-area bounds after projection",
                 extra={
                     **log_context,
-                    "payload.raw": payload,
+                    "payload.raw": self.__payload_log(payload=payload),
                     "event": "localizer.vision.payload.invalid",
                 },
             )
             return None
 
-        confidence = self.__confidence(payload=payload)
         pixel_width, pixel_height = self.__pixel_dimensions(image=capture.image)
 
         logger.info(
             "Vision localizer proposal returned",
             extra={
                 **log_context,
-                "confidence": confidence,
-                "payload.system": "normalized.0.1",
+                "confidence": payload.confidence,
+                "payload.system": (
+                    f"normalized.{LocalizationGridScale.MINIMUM}.{LocalizationGridScale.MAXIMUM}"
+                ),
                 "bounds.system": bounds.system.value,
                 "event": "localizer.vision.completed",
                 "conversion": "normalized_to_logical",
                 "capture.pixel": {"width": pixel_width, "height": pixel_height},
                 "capture.logical": {"width": capture.width, "height": capture.height},
-                "payload.raw": {
-                    "x": payload.get("x"),
-                    "y": payload.get("y"),
-                    "width": payload.get("width"),
-                    "height": payload.get("height"),
-                },
+                "payload.raw": self.__payload_log(payload=payload),
                 "bounds.resolved": {
                     "x": bounds.x,
                     "y": bounds.y,
@@ -142,71 +135,61 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         return LocalizationProposal(
             bounds=bounds,
             source=self.name,
-            confidence=confidence,
+            confidence=payload.confidence,
             rationale=f"Gemini vision proposal for target '{target}'.",
         )
 
-    def __parse_payload(
+    def __try_parse(
         self,
         *,
         content: str,
         context: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[VisionLocalizationPayload]:
         """
-        Parse the model's JSON response and return None on malformed output.
+        Validate the JSON response against the published schema and return None on failure.
         """
 
-        if not (stripped := content.strip()):
+        if not (stripped := (content or "").strip()):
             return None
         try:
-            payload = json.loads(stripped)
-        except json.JSONDecodeError:
+            return VisionLocalizationPayload.model_validate_json(stripped)
+        except ValidationError:
             logger.warning(
-                "Vision localizer response was not valid JSON",
+                "Vision localizer response did not match the published schema",
                 extra={
                     **context,
                     "response.length": len(stripped),
-                    "event": "localizer.vision.payload.invalid_json",
+                    "event": "localizer.vision.payload.invalid",
+                    "response.preview": stripped[:512],
                 },
             )
             return None
 
-        if not isinstance(payload, dict):
-            return None
-
-        return payload
-
+    @staticmethod
     def __bounds_from_payload(
-        self,
         *,
+        payload: VisionLocalizationPayload,
         width: int,
         height: int,
-        payload: Dict[str, Any],
     ) -> Optional[Bounds]:
         """
-        Scale the normalized payload by the capture's logical dims and return Bounds stamped LOGICAL.
-        The dispatch layer owns any further pixel/logical conversion; this adapter only translates units once.
+        Project the grid bbox onto the capture's logical canvas and stamp it LOGICAL/MODEL.
         """
 
-        try:
-            x = float(payload["x"])
-            y = float(payload["y"])
-            box_width = float(payload["width"])
-            box_height = float(payload["height"])
-        except (KeyError, TypeError, ValueError):
-            return None
+        x_min = (payload.x1 * width) // LocalizationGridScale.MAXIMUM
+        y_min = (payload.y1 * height) // LocalizationGridScale.MAXIMUM
+        x_max = (payload.x2 * width) // LocalizationGridScale.MAXIMUM
+        y_max = (payload.y2 * height) // LocalizationGridScale.MAXIMUM
 
-        x_min = max(0.0, min(1.0, x)) * width
-        y_min = max(0.0, min(1.0, y)) * height
-        bound_width = int(max(0.0, min(1.0, box_width)) * width)
-        bound_height = int(max(0.0, min(1.0, box_height)) * height)
+        bound_width = x_max - x_min
+        bound_height = y_max - y_min
 
         if bound_width <= 0 or bound_height <= 0:
             return None
 
         return Bounds(
-            x=int(x_min),
-            y=int(y_min),
+            x=x_min,
+            y=y_min,
             width=bound_width,
             height=bound_height,
             source=CoordinateSource.MODEL,
@@ -229,33 +212,21 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
             return None, None
 
     @staticmethod
-    def __is_refusal(*, payload: Dict[str, Any]) -> bool:
+    def __payload_log(*, payload: VisionLocalizationPayload) -> Dict[str, Any]:
         """
-        Detect the refusal-protocol payload (all-zero coordinates and confidence).
+        Build a log-safe snapshot of the payload edges.
         """
 
-        for key in ("x", "y", "width", "height"):
-            if float(payload.get(key, -1.0) or 0.0) != 0.0:
-                return False
-
-        return float(payload.get("confidence", -1.0) or 0.0) == 0.0
+        return {
+            "x1": payload.x1,
+            "y1": payload.y1,
+            "x2": payload.x2,
+            "y2": payload.y2,
+            "confidence": payload.confidence,
+        }
 
     @staticmethod
-    def __confidence(*, payload: Dict[str, Any]) -> float:
-        """
-        Extract and clamp the model-reported confidence value.
-        """
-
-        raw = payload.get("confidence", 0.5)
-
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            return 0.5
-
-        return max(0.0, min(1.0, value))
-
-    def __target_text(self, *, action: Action) -> str:
+    def __target_text(*, action: Action) -> str:
         """
         Return the semantic target text from the action.
         """

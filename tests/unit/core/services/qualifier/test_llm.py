@@ -48,12 +48,15 @@ class ScriptedLLM(LLMPort):
         use_cache: bool,
         prompt: Sequence[Any],
         tools: Optional[Dict[str, Any]] = None,
+        structured_output: Optional[Any] = None,
         system_instruction: Optional[str] = None,
         conversation_history: Optional[Sequence[ConversationTurn]] = None,
     ) -> GenerateResult:
         """
         Pop and return the next scripted content as a generate result.
         """
+
+        _ = use_cache, prompt, tools, structured_output, system_instruction, conversation_history
 
         self.calls += 1
         content = self.__contents.pop(0)

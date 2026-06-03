@@ -171,11 +171,23 @@ class ToolRegistry:
                             },
                             "condition": {
                                 "type": "STRING",
-                                "description": "Condition required (e.g. 'Popup is visible', 'Section is collapsed', 'Error displayed')",
+                                "description": (
+                                    "Present-tense sentence describing the visible guard "
+                                    "this action depends on. MANDATORY whenever "
+                                    "is_conditional=true. Examples: 'Popup is visible', "
+                                    "'Section is collapsed', 'Error banner is displayed', "
+                                    "'Main menu is visible'. For a conditional wait, "
+                                    "describe the awaited state (e.g., 'Search results are visible'), "
+                                    "not the act of waiting."
+                                ),
                             },
                             "is_conditional": {
                                 "type": "BOOLEAN",
-                                "description": "Set true when this action should be executed only under a visible guard condition.",
+                                "description": (
+                                    "Set true when this action should be executed only "
+                                    "under a visible guard. When true, the 'condition' "
+                                    "field is REQUIRED — describe the guard in the present tense."
+                                ),
                             },
                             "conditional_type": {
                                 "type": "STRING",

@@ -7,10 +7,14 @@ from fathom.core.prompts.tools import ToolRegistry
 
 
 class ToolRegistryTest(unittest.TestCase):
-    """Pins the tool catalog filtering and ordering contracts."""
+    """
+    Pins the tool catalog filtering and ordering contracts.
+    """
 
     def test_execute_ui_action_requires_confidence(self) -> None:
-        """execute_ui's schema must require action.confidence on every tool call."""
+        """
+        execute_ui's schema must require action.confidence on every tool call.
+        """
 
         definitions = ToolRegistry.get_all_definitions()["function_declarations"]
         execute_ui = next(
@@ -20,8 +24,28 @@ class ToolRegistryTest(unittest.TestCase):
 
         self.assertIn("confidence", required)
 
+    def test_condition_field_announces_is_conditional_dependency(self) -> None:
+        """
+        The schema's condition description must teach the planner the is_conditional contract.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        execute_ui = next(
+            definition for definition in definitions if definition["name"] == "execute_ui"
+        )
+        condition = execute_ui["parameters"]["properties"]["action"]["properties"]["condition"]
+        is_conditional = execute_ui["parameters"]["properties"]["action"]["properties"][
+            "is_conditional"
+        ]
+
+        self.assertIn("conditional wait", condition["description"])
+        self.assertIn("'condition' field is REQUIRED", is_conditional["description"])
+        self.assertIn("MANDATORY whenever is_conditional=true", condition["description"])
+
     def test_definitions_filters_to_requested_names(self) -> None:
-        """definitions(names=…) returns only the requested tool declarations."""
+        """
+        definitions(names=…) returns only the requested tool declarations.
+        """
 
         result = ToolRegistry.definitions(
             names=frozenset({ToolName.EXECUTE_UI, ToolName.STORE_MEMORY}),
@@ -31,7 +55,9 @@ class ToolRegistryTest(unittest.TestCase):
         self.assertEqual(set(names), {"execute_ui", "store_memory"})
 
     def test_definitions_preserves_catalog_order(self) -> None:
-        """Output order follows the catalog regardless of input set iteration order."""
+        """
+        Output order follows the catalog regardless of input set iteration order.
+        """
 
         result = ToolRegistry.definitions(
             names=frozenset({ToolName.VALIDATE_STATE, ToolName.ASK_USER, ToolName.EXECUTE_UI}),
@@ -41,14 +67,18 @@ class ToolRegistryTest(unittest.TestCase):
         self.assertEqual(names, ["ask_user", "execute_ui", "validate_state"])
 
     def test_definitions_returns_empty_for_empty_set(self) -> None:
-        """An empty allowed set yields an empty declarations payload."""
+        """
+        An empty allowed set yields an empty declarations payload.
+        """
 
         result = ToolRegistry.definitions(names=frozenset())
 
         self.assertEqual(result["function_declarations"], [])
 
     def test_get_all_definitions_returns_full_catalog(self) -> None:
-        """The backwards-compatible getter still returns the full catalog."""
+        """
+        The backwards-compatible getter still returns the full catalog.
+        """
 
         names = {
             declaration["name"]

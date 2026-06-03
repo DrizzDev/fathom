@@ -45,6 +45,7 @@ class _FakeLlm(LLMPort):
         use_cache,
         prompt,
         tools=None,
+        structured_output=None,
         system_instruction=None,
         conversation_history=None,
     ):
@@ -53,6 +54,7 @@ class _FakeLlm(LLMPort):
         LLM into the assembly hot path would surface as ``NotImplementedError``.
         """
 
+        _ = structured_output
         raise NotImplementedError
 
     async def cleanup(self) -> None:

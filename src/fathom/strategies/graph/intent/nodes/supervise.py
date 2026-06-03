@@ -231,6 +231,10 @@ class SuperviseNode:
                 "workflow.id": self.__provider.context.workflow_id,
             },
         )
+        self.__provider.context.agent_state.record_attempt(
+            action=step.action,
+            reason="supervise_spatial_unresolved",
+        )
         result = cast(
             "IntentGraphState",
             {

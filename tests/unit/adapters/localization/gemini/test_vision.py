@@ -57,13 +57,14 @@ class _StaticLlm(LLMPort):
         tools=None,
         system_instruction=None,
         conversation_history=None,
+        structured_output=None,
     ):
         """
         Return the preconfigured :class:`GenerateResult` and increment the
         call counter so callers can verify dispatch happened (or didn't).
         """
 
-        _ = (prompt, use_cache, system_instruction, tools, conversation_history)
+        _ = structured_output
         self.calls += 1
         content = self.__raw if self.__raw is not None else json.dumps(self.__payload)
         return GenerateResult(content=content, metrics={})
@@ -146,11 +147,18 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_valid_payload_renders_logical_bounds(self) -> None:
         """
-        A normalized payload is scaled by the capture's logical dims and stamped LOGICAL with source MODEL.
+        A grid-bbox payload is projected onto the capture's logical dims and stamped LOGICAL with source MODEL.
         """
 
         llm = _StaticLlm(
-            payload={"x": 0.25, "y": 0.5, "width": 0.5, "height": 0.25, "confidence": 0.8},
+            payload={
+                "x1": 250,
+                "y1": 500,
+                "x2": 750,
+                "y2": 750,
+                "confidence": 0.8,
+                "rationale": "tight match",
+            },
         )
         localizer = GeminiVisionLocalizer(llm=llm)
 
@@ -172,19 +180,20 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(proposal.confidence, 0.8)
         self.assertEqual(proposal.source, "gemini.vision")
 
-    async def test_normalized_payload_survives_dispatch_translation_on_retina(self) -> None:
+    async def test_grid_payload_survives_dispatch_translation_on_retina(self) -> None:
         """
-        Normalized payload on a 3x retina capture must dispatch at the logical region the localizer named.
+        Grid-bbox payload on a 3x retina capture must dispatch at the logical region the localizer named.
         Mislabelling the bounds as DEVICE_PIXEL would divide by the 3x scale and shrink the target ninefold.
         """
 
         llm = _StaticLlm(
             payload={
-                "x": 0.344,
-                "y": 0.4655,
-                "width": 0.312,
-                "height": 0.054,
+                "x1": 344,
+                "y1": 465,
+                "x2": 656,
+                "y2": 518,
                 "confidence": 0.9,
+                "rationale": "tight overlay button",
             },
         )
         localizer = GeminiVisionLocalizer(llm=llm)
@@ -227,7 +236,16 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
         valid target and produce no-effect retries.
         """
 
-        llm = _StaticLlm(payload={"x": 0, "y": 0, "width": 0, "height": 0, "confidence": 0})
+        llm = _StaticLlm(
+            payload={
+                "x1": 0,
+                "y1": 0,
+                "x2": 0,
+                "y2": 0,
+                "confidence": 0.0,
+                "rationale": "Target not visible.",
+            },
+        )
         localizer = GeminiVisionLocalizer(llm=llm)
 
         result = await localizer.locate(
@@ -265,7 +283,14 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
         """
 
         llm = _StaticLlm(
-            payload={"x": 0.1, "y": 0.1, "width": 0.5, "height": 0.5, "confidence": 0.9},
+            payload={
+                "x1": 100,
+                "y1": 100,
+                "x2": 600,
+                "y2": 600,
+                "confidence": 0.9,
+                "rationale": "would never be sent",
+            },
         )
         localizer = GeminiVisionLocalizer(llm=llm)
 
@@ -281,14 +306,21 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_zero_pixel_box_rejected_as_invalid(self) -> None:
         """
-        Payloads whose width or height round to zero pixels after scaling
-        are invalid even when the coordinate values are non-zero. The
-        ensemble would otherwise see a zero-area proposal and fail
-        downstream IoU clustering with a division-by-zero.
+        Payloads whose projected width or height rounds to zero pixels are
+        rejected even when the grid coordinates are non-zero. The ensemble
+        would otherwise see a zero-area proposal and fail downstream IoU
+        clustering with a division-by-zero.
         """
 
         llm = _StaticLlm(
-            payload={"x": 0.1, "y": 0.1, "width": 0.0001, "height": 0.5, "confidence": 0.9},
+            payload={
+                "x1": 100,
+                "y1": 100,
+                "x2": 101,
+                "y2": 600,
+                "confidence": 0.9,
+                "rationale": "narrow rectangle for projection rounding",
+            },
         )
         localizer = GeminiVisionLocalizer(llm=llm)
 
@@ -301,15 +333,23 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
-    async def test_confidence_clamped_to_unit_interval(self) -> None:
+    async def test_confidence_out_of_range_returns_none(self) -> None:
         """
-        Provider-reported confidence above 1.0 is clamped at the schema
-        boundary so :class:`LocalizationProposal` construction never fails
-        validation on out-of-range floats.
+        Provider-reported confidence outside the closed unit interval is
+        rejected at the schema boundary. Fail-fast over silent clamp: the
+        ensemble falls through to the next member instead of acting on a
+        proposal whose self-reported trust signal is unreliable.
         """
 
         llm = _StaticLlm(
-            payload={"x": 0.1, "y": 0.1, "width": 0.5, "height": 0.5, "confidence": 2.5},
+            payload={
+                "x1": 100,
+                "y1": 100,
+                "x2": 600,
+                "y2": 600,
+                "confidence": 2.5,
+                "rationale": "model overshoots the unit interval",
+            },
         )
         localizer = GeminiVisionLocalizer(llm=llm)
 
@@ -320,6 +360,4 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
             observation=self.__observation(),
         )
 
-        self.assertIsNotNone(proposal)
-        assert proposal is not None
-        self.assertEqual(proposal.confidence, 1.0)
+        self.assertIsNone(proposal)

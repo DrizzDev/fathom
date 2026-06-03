@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+from enum import StrEnum
+
+
+class StructuredOutputMediaType(StrEnum):
+    """
+    Output media types adapters bind for constrained-decoding LLM calls.
+    """
+
+    JSON = "application/json"
+
+
 # Gemini provider HTTP-style status codes
 GEMINI_CANCELLED_STATUS_CODE = 499
 GEMINI_RATE_LIMIT_STATUS_CODE = 429

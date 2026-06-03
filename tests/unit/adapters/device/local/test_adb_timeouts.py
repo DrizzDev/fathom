@@ -1,9 +1,9 @@
 """
 Unit pins for the bounded-timeout hardening of :class:`ADBDevice`.
 
-Covers the three guards added after the wedged-emulator hang:
+Covers the guards added after the wedged-emulator hang:
 
-- ``get_snapshot`` outer timeout via ``snapshot_timeout``
+- best-effort ``get_snapshot`` hierarchy timeout via ``snapshot_timeout``
 - ``dump_hierarchy`` lock acquire timeout via ``hierarchy_lock_timeout``
 - post-kill subprocess reap cap via ``subprocess_cleanup_timeout``
 
@@ -24,8 +24,7 @@ from fathom.schemas.configuration import ADBConfiguration
 
 class ADBSnapshotTimeoutTest(unittest.IsolatedAsyncioTestCase):
     """
-    Pins the outer ``get_snapshot`` timeout introduced to recover from a
-    wedged emulator backing (qcow2 exhausted, NFS hang, etc.).
+    Pins ``get_snapshot`` behavior when optional hierarchy capture is slow.
     """
 
     def __build_device(self, *, snapshot_timeout: float) -> ADBDevice:
@@ -40,29 +39,25 @@ class ADBSnapshotTimeoutTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-    async def test_snapshot_timeout_raises_device_error(self) -> None:
+    async def test_snapshot_returns_image_when_hierarchy_times_out(self) -> None:
         """
-        A snapshot that exceeds ``snapshot_timeout`` raises :class:`DeviceError`.
+        A slow hierarchy dump is optional and should not discard the screenshot.
         """
 
         device = self.__build_device(snapshot_timeout=0.1)
-
-        async def __forever() -> bytes:
-            await asyncio.sleep(10)
-            return b""
 
         async def __forever_str() -> str:
             await asyncio.sleep(10)
             return ""
 
         with (
-            patch.object(device, "capture_screen", new=AsyncMock(side_effect=__forever)),
+            patch.object(device, "capture_screen", new=AsyncMock(return_value=b"png-bytes")),
             patch.object(device, "dump_hierarchy", new=AsyncMock(side_effect=__forever_str)),
-            self.assertRaises(DeviceError) as context,
         ):
-            await device.get_snapshot()
+            image, xml = await device.get_snapshot()
 
-        self.assertIn("Snapshot timed out", str(context.exception))
+        self.assertIsNone(xml)
+        self.assertEqual(image, b"png-bytes")
 
     async def test_snapshot_returns_when_both_paths_succeed(self) -> None:
         """
@@ -78,8 +73,8 @@ class ADBSnapshotTimeoutTest(unittest.IsolatedAsyncioTestCase):
         ):
             image, xml = await device.get_snapshot()
 
-        self.assertEqual(image, b"png-bytes")
         self.assertEqual(xml, "<xml/>")
+        self.assertEqual(image, b"png-bytes")
 
 
 class ADBHierarchyLockTimeoutTest(unittest.IsolatedAsyncioTestCase):

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Literal, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fathom.constants import ActionType
 from fathom.schemas.validators import enforce_validate_prefix
 
 CoordSystem = Literal["normalized", "pixel"]
@@ -474,6 +475,9 @@ class ExecuteAction(BaseModel):
 
     @model_validator(mode="after")
     def __normalize_conditionals(self) -> "ExecuteAction":
+        action_type = (self.action_type or "").strip().lower()
+        wait_subject = (self.wait_subject or "").strip() or None
+
         condition = (self.condition or "").strip() or None
         conditional_type = self.conditional_type
         is_conditional = self.is_conditional or bool(self.overlay_detected)
@@ -483,6 +487,19 @@ class ExecuteAction(BaseModel):
             condition = "Overlay is visible"
         if self.overlay_detected and not conditional_type:
             conditional_type = "blocker"
+
+        # A conditional wait is "wait for X to appear"; the subject is the de-facto
+        # guard. Mirror the overlay_detected default branch so the model is not
+        # forced to repeat the same phrase twice.
+        if (
+            is_conditional
+            and not condition
+            and action_type == ActionType.WAIT.value
+            and wait_subject
+        ):
+            condition = f"{wait_subject} is visible"
+        if is_conditional and not conditional_type and action_type == ActionType.WAIT.value:
+            conditional_type = "transient"
 
         # For all other conditional actions, require explicit condition text.
         if is_conditional and not condition:

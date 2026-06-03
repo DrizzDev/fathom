@@ -18,6 +18,7 @@ from fathom.interfaces.llm import LLMPort, PromptPart  # noqa: E402
 from fathom.interfaces.memory import MemoryPort  # noqa: E402
 from fathom.schemas.actions import Action  # noqa: E402
 from fathom.schemas.conversation import ConversationTurn  # noqa: E402
+from fathom.schemas.llm import StructuredOutput  # noqa: E402
 from fathom.schemas.results import GenerateResult  # noqa: E402
 from fathom.schemas.screens import ScreenState  # noqa: E402
 
@@ -44,13 +45,14 @@ class __LLMStub(LLMPort):
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
         conversation_history: Optional[Sequence[ConversationTurn]] = None,
+        structured_output: Optional[StructuredOutput] = None,
     ) -> GenerateResult:
         """
         Return an empty JSON payload regardless of input so callers can
         exercise the surrounding code paths without a live model.
         """
 
-        _ = use_cache, prompt, tools, system_instruction, conversation_history
+        _ = structured_output
         return GenerateResult(content="{}")
 
     async def cleanup(self) -> None:

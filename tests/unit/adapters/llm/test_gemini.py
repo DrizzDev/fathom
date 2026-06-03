@@ -9,8 +9,10 @@ from unittest.mock import patch
 from google.genai import types
 
 from fathom.adapters.llm.gemini import GeminiLLM
+from fathom.core.exceptions import VisionError
 from fathom.schemas.configuration import LLMConfiguration
-from fathom.schemas.llm import GeminiExceptionKind
+from fathom.schemas.llm import GeminiExceptionKind, StructuredOutput
+from fathom.schemas.localization import VisionLocalizationPayload
 
 
 class FakeResponse:
@@ -202,3 +204,149 @@ class GeminiLLMTest(unittest.TestCase):
         result = GeminiLLM._GeminiLLM__is_rate_limit_error(status_code=None, text=timeout_message)
 
         self.assertFalse(result)
+
+
+class GeminiStructuredOutputTest(unittest.TestCase):
+    """
+    Pins how the Gemini adapter translates the production structured-output spec.
+    """
+
+    @staticmethod
+    def __gemini() -> GeminiLLM:
+        """
+        Build an unconnected adapter instance with a minimal configuration.
+        """
+
+        gemini = object.__new__(GeminiLLM)
+        gemini._GeminiLLM__configuration = LLMConfiguration(
+            model="gemini-3-flash-preview",
+            thinking_level="low",
+        )
+        return gemini
+
+    def test_structured_output_binds_application_json_and_real_payload(self) -> None:
+        """
+        The adapter emits the JSON media type and binds the vision-localizer payload.
+        """
+
+        gemini = self.__gemini()
+        config = gemini._GeminiLLM__get_generation_configuration(
+            structured_output=StructuredOutput(payload=VisionLocalizationPayload),
+        )
+
+        self.assertEqual(config.response_mime_type, "application/json")
+        self.assertIs(config.response_schema, VisionLocalizationPayload)
+
+    def test_no_structured_output_leaves_schema_unset(self) -> None:
+        """
+        The adapter does not add response_schema when no structured-output spec is supplied.
+        """
+
+        gemini = self.__gemini()
+        config = gemini._GeminiLLM__get_generation_configuration()
+
+        self.assertIsNone(config.response_mime_type)
+        self.assertIsNone(config.response_schema)
+
+    def test_structured_output_with_tools_raises_vision_error(self) -> None:
+        """
+        Gemini cannot combine structured output with tool calling — fail-fast at the boundary.
+        """
+
+        gemini = object.__new__(GeminiLLM)
+        gemini._GeminiLLM__configuration = LLMConfiguration(model="gemini-3-flash-preview")
+        gemini._GeminiLLM__client = object()
+        gemini._GeminiLLM__cache = None
+
+        async def call() -> None:
+            """
+            Drive a structured-output request that must collide with tool calling.
+            """
+
+            await gemini.generate(
+                use_cache=False,
+                prompt=["hi"],
+                tools={"function_declarations": [{"name": "f"}]},
+                structured_output=StructuredOutput(payload=VisionLocalizationPayload),
+            )
+
+        with self.assertRaises(VisionError):
+            asyncio.run(call())
+
+
+class GeminiUsageMetricsTest(unittest.TestCase):
+    """
+    Pins how the Gemini adapter captures token usage from SDK responses.
+    """
+
+    @staticmethod
+    def __response(**usage_overrides: object) -> SimpleNamespace:
+        """
+        Build a response double whose usage_metadata mirrors the SDK shape.
+        """
+
+        usage = SimpleNamespace(
+            prompt_token_count=0,
+            candidates_token_count=0,
+            cached_content_token_count=0,
+            thoughts_token_count=0,
+            tool_use_prompt_token_count=0,
+            total_token_count=0,
+            traffic_type=None,
+        )
+        for attribute, value in usage_overrides.items():
+            setattr(usage, attribute, value)
+        return SimpleNamespace(usage_metadata=usage)
+
+    def test_collect_captures_every_known_token_field(self) -> None:
+        """
+        Every documented token counter on the SDK lands in the result metrics.
+        """
+
+        response = self.__response(
+            prompt_token_count=120,
+            candidates_token_count=24,
+            cached_content_token_count=8,
+            thoughts_token_count=300,
+            tool_use_prompt_token_count=16,
+            total_token_count=468,
+        )
+
+        metrics = GeminiLLM._GeminiLLM__collect_usage_metrics(response=response)
+
+        self.assertEqual(metrics["prompt_tokens"], 120.0)
+        self.assertEqual(metrics["completion_tokens"], 24.0)
+        self.assertEqual(metrics["cached_tokens"], 8.0)
+        self.assertEqual(metrics["thoughts_tokens"], 300.0)
+        self.assertEqual(metrics["tool_use_prompt_tokens"], 16.0)
+        self.assertEqual(metrics["total_tokens"], 468.0)
+
+    def test_collect_defaults_missing_counters_to_zero(self) -> None:
+        """
+        Missing or None-valued counters degrade to 0 without raising.
+        """
+
+        response = SimpleNamespace(usage_metadata=SimpleNamespace())
+
+        metrics = GeminiLLM._GeminiLLM__collect_usage_metrics(response=response)
+
+        for key in (
+            "prompt_tokens",
+            "completion_tokens",
+            "cached_tokens",
+            "thoughts_tokens",
+            "tool_use_prompt_tokens",
+            "total_tokens",
+        ):
+            self.assertEqual(metrics[key], 0.0)
+
+    def test_collect_returns_empty_when_usage_absent(self) -> None:
+        """
+        Responses without usage_metadata produce an empty metrics dict.
+        """
+
+        response = SimpleNamespace(usage_metadata=None)
+
+        metrics = GeminiLLM._GeminiLLM__collect_usage_metrics(response=response)
+
+        self.assertEqual(metrics, {})

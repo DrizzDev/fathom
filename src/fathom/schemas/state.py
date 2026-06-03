@@ -242,6 +242,17 @@ class LoopDetector(BaseModel):
             },
         )
 
+        if action_type is None and action_description is None:
+            logger.info(
+                "LoopDetector recorded turn with empty descriptor — "
+                "action_repetition will skip this slot",
+                extra={
+                    "component": "schemas.state.loop_detector",
+                    "event": "loop_detector.record.empty_descriptor",
+                    "screen.visual_hash": screen.visual_hash[:8],
+                },
+            )
+
     def observe_screen(self, *, previous: Optional[ScreenState], current: ScreenState) -> None:
         """
         Tell the detector a new screen was seen.

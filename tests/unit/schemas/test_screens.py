@@ -36,7 +36,6 @@ class TestActionHadEffectNoiseGate:
             changed_regions=[
                 ScreenChangeRegion(x=0, y=0, width=1, height=1) for _ in range(regions)
             ],
-            
         )
 
     def test_ios_springboard_clock_tick_noise_returns_false(self) -> None:
@@ -64,7 +63,6 @@ class TestActionHadEffectNoiseGate:
             ssim_score=0.99,
             phash_distance=1,
             content_pixel_diff_ratio=0.002,
-            
         )
         assert diff.action_had_effect is False
 
