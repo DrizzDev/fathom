@@ -5,7 +5,9 @@ import time
 import unittest
 from unittest.mock import MagicMock
 
+from fathom.constants import ActionType
 from fathom.core.context.manager import ContextManager
+from fathom.schemas.actions import Action
 
 
 class ContextManagerShutdownTest(unittest.IsolatedAsyncioTestCase):
@@ -56,6 +58,37 @@ class ContextManagerShutdownTest(unittest.IsolatedAsyncioTestCase):
                 f"Took {elapsed:.2f}s; regression — re-check whether "
                 "__start_persistence_loop() or its background_tasks.add() were "
                 "re-enabled without also disabling the drain logic."
+            ),
+        )
+
+    async def test_commit_does_not_grow_persist_queue(self) -> None:
+        """
+        Regression for the unbounded-queue leak in __enqueue_persist.
+
+        Every step of every workflow calls commit(); commit() calls
+        __enqueue_persist(). If __enqueue_persist still pushes to
+        __persist_queue while the persistence worker is disabled, the queue
+        grows by one entry per step for the worker process lifetime — a real
+        memory leak in long-running Temporal workers.
+
+        Per the disabled-persistence design, __enqueue_persist must return
+        early without touching the queue.
+        """
+
+        manager = ContextManager(memory=MagicMock())
+
+        action = Action(action_type=ActionType.TAP, rationale="test")
+
+        for _ in range(50):
+            await manager.commit(observation="ob", thought="th", action=action)
+
+        self.assertEqual(
+            manager._ContextManager__persist_queue.qsize(),  # type: ignore[attr-defined]
+            0,
+            msg=(
+                "__enqueue_persist must early-return while persistence is "
+                "disabled — every queue.put_nowait that lands here is a leaked "
+                "snapshot the disabled worker will never drain."
             ),
         )
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional, cast
 
 from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
 from fathom.adapters.memory.sqlite import SQLiteMemory
@@ -13,6 +13,7 @@ from fathom.core.exceptions import ConfigurationError
 from fathom.core.services.qualifier import IntentQualifierFactory
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
+from fathom.runtime.factories import LLMFactory
 from fathom.schemas.configuration import (
     ExecutionConfiguration,
     ExplorationConfiguration,
@@ -25,6 +26,7 @@ from fathom.settings.env import FathomSettings
 
 if TYPE_CHECKING:
     from fathom.interfaces.device import DevicePort
+    from fathom.interfaces.factory import LLMFactoryPort
     from fathom.interfaces.knowledge import KnowledgePort
     from fathom.interfaces.llm import LLMPort
     from fathom.interfaces.memory import MemoryPort
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
     from fathom.interfaces.storage import StoragePort
     from fathom.interfaces.summarization import SummarizationPort
     from fathom.interfaces.telemetry import TelemetryPort
+    from fathom.runtime.assembly import RunAssemblyBuilder
     from fathom.runtime.runner import FathomRunner
 
 
@@ -68,6 +71,10 @@ class FathomBuilder:
 
         self.__path_manager = path_manager
         self.__config: FathomConfiguration = FathomConfiguration()
+
+        # Set by the optional .with_assembly() path to build a dedicated qualifier LLM.
+        self.__llm_factory: Optional[LLMFactoryPort] = None
+        self.__assembly: Optional[RunAssemblyBuilder] = None
 
     def with_device(self, port: DevicePort) -> FathomBuilder:
         """
@@ -274,6 +281,38 @@ class FathomBuilder:
         self.__qualifier = port
         return self
 
+    def with_assembly(
+        self,
+        *,
+        assembly: RunAssemblyBuilder,
+        llm_factory: Optional[LLMFactoryPort] = None,
+    ) -> FathomBuilder:
+        """
+        Wire the bits the qualifier composer needs to build a dedicated
+        qualifier LLM (separate from the planner LLM passed to .with_llm).
+
+        When supplied, build() resolves the qualifier's model / timeout /
+        retries through `assembly.build_qualifier_model_configuration(...)`
+        and constructs a fresh LLM via `llm_factory.create(...)` — so the
+        eval-tuned defaults in QualifierConfiguration.inference actually
+        take effect for direct SDK callers (Enricher, integration tests,
+        notebooks). When omitted, the qualifier falls back to running on
+        the caller-supplied planner LLM and inference.* settings are
+        ignored — preserves existing behavior for callers that don't opt in.
+
+        Args:
+            assembly: RunAssemblyBuilder bound to settings the qualifier
+                LLM should resolve credentials and project from.
+            llm_factory: Optional LLM factory. Defaults to LLMFactory().
+
+        Returns:
+            Builder instance for chaining.
+        """
+
+        self.__assembly = assembly
+        self.__llm_factory = llm_factory or LLMFactory()
+        return self
+
     def with_realignment(self, policy: RealignmentPolicy) -> FathomBuilder:
         """
         Configure realignment policy.
@@ -339,10 +378,9 @@ class FathomBuilder:
         if not self.__summarizer:
             self.__summarizer = LLMSummarizer(llm=self.__llm)
 
+        owned_resources: List[LLMPort] = []
         if not self.__qualifier:
-            self.__qualifier = IntentQualifierFactory.create(
-                llm=self.__llm, configuration=self.__config.qualifier
-            )
+            self.__qualifier, owned_resources = self.__compose_qualifier()
 
         if not self.__realignment:
             self.__realignment = RealignmentPolicy()
@@ -361,7 +399,57 @@ class FathomBuilder:
             perception=self.__perception,
             realignment=self.__realignment,
             path_manager=self.__path_manager,
+            owned_resources=owned_resources,
         )
+
+    def __compose_qualifier(self) -> tuple[IntentQualifierPort, List[LLMPort]]:
+        """
+        Construct the qualifier port and any resources the runner must own.
+
+        Two paths:
+          - assembly supplied (.with_assembly): build a dedicated qualifier LLM
+            via the assembly's qualifier-model configuration. The dedicated LLM
+            is returned alongside the qualifier so the runner can clean it up.
+            inference.{model, timeout, max_retries, ...} take effect here.
+          - assembly NOT supplied: fall back to the planner LLM. inference.* is
+            stored on the config but ignored — preserves the pre-with_assembly
+            behavior for direct callers that haven't opted in.
+
+        This is the sync equivalent of QualifierComposer.compose(). Diverges
+        only in cleanup-on-failure: if IntentQualifierFactory.create raises
+        AFTER the dedicated LLM is built, the LLM is not awaited-closed (the
+        builder is a startup-time call; on construction failure the process
+        typically dies and the OS reclaims connections). Temporal / CLI paths
+        use the proper async QualifierComposer with full cleanup; this sync
+        version exists so direct SDK callers don't need to make build()
+        async.
+        """
+
+        # build() raises ConfigurationError before reaching here if self.__llm is None;
+        # cast removes the Optional from mypy's perspective without runtime overhead.
+        planner_llm = cast("LLMPort", self.__llm)
+
+        if self.__assembly is None or self.__llm_factory is None:
+            qualifier = IntentQualifierFactory.create(
+                llm=planner_llm, configuration=self.__config.qualifier
+            )
+            return qualifier, []
+
+        if not self.__config.qualifier.enabled:
+            qualifier = IntentQualifierFactory.create(
+                llm=planner_llm, configuration=self.__config.qualifier
+            )
+            return qualifier, []
+
+        qualifier_llm = self.__llm_factory.create(
+            configuration=self.__assembly.build_qualifier_model_configuration(
+                configuration=self.__config.qualifier
+            )
+        )
+        qualifier = IntentQualifierFactory.create(
+            llm=qualifier_llm, configuration=self.__config.qualifier
+        )
+        return qualifier, [qualifier_llm]
 
 
 class Fathom:

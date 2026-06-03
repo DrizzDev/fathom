@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 from unittest.mock import MagicMock
 
 from fathom.core.services.qualifier import (
@@ -8,13 +9,17 @@ from fathom.core.services.qualifier import (
     PermissiveIntentQualifier,
 )
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.factory import LLMFactoryPort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.perception import PerceptionPort
+from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
 from fathom.schemas.configuration import (
     FathomConfiguration,
+    LLMConfiguration,
     QualifierConfiguration,
 )
+from fathom.settings.env import FathomSettings
 
 
 class FathomBuilderQualifierDefaultTest(unittest.TestCase):
@@ -101,6 +106,180 @@ class FathomBuilderQualifierDefaultTest(unittest.TestCase):
         installed_config = runner._FathomRunner__config.qualifier  # type: ignore[attr-defined]
         self.assertEqual(installed_config.inference.thinking_level, "medium")
         self.assertEqual(installed_config.inference.temperature, 0.0)
+
+
+class _SpyLLMFactory(LLMFactoryPort):
+    """
+    LLM factory double that captures every configuration it receives and
+    returns a fresh mock LLM. Used to assert with_assembly() routes the
+    inference knobs through assembly.build_qualifier_model_configuration.
+    """
+
+    def __init__(self) -> None:
+        """
+        Start with an empty capture log.
+        """
+
+        self.captured: list[LLMConfiguration] = []
+
+    def create(self, *, configuration: LLMConfiguration) -> LLMPort:
+        """
+        Record the configuration and return a fresh mock LLM port.
+        """
+
+        self.captured.append(configuration)
+        return MagicMock(spec=LLMPort)
+
+
+class FathomBuilderWithAssemblyTest(unittest.TestCase):
+    """
+    .with_assembly() is the SDK-level escape hatch that makes
+    QualifierConfiguration.inference.{model, timeout, max_retries, ...} actually
+    take effect. Without it, the builder falls back to running the qualifier on
+    the planner LLM and ignores the inference block — the documented prior
+    behavior that Enricher silently inherited.
+    """
+
+    @staticmethod
+    def __assembly() -> RunAssemblyBuilder:
+        """
+        Build a credentialed assembly for the qualifier-model builder to read.
+        """
+
+        return RunAssemblyBuilder(
+            settings=FathomSettings(
+                gemini_api_key="test-key",
+                vertex_location="bound-location",
+                vertex_project_id="bound-project",
+            )
+        )
+
+    def test_with_assembly_builds_dedicated_qualifier_llm_via_factory(self) -> None:
+        """
+        With assembly supplied, the builder must build a NEW LLM via the factory
+        using the qualifier model configuration — not reuse the planner LLM.
+        """
+
+        planner = MagicMock(spec=LLMPort)
+        factory = _SpyLLMFactory()
+
+        runner = (
+            Fathom.builder()
+            .with_llm(port=planner)
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_assembly(assembly=self.__assembly(), llm_factory=factory)
+            .build()
+        )
+
+        # Factory called exactly once with the qualifier's model defaults.
+        self.assertEqual(len(factory.captured), 1)
+        captured = factory.captured[0]
+        self.assertEqual(captured.model, QualifierConfiguration().inference.model)
+        self.assertEqual(captured.timeout, QualifierConfiguration().inference.timeout)
+        self.assertEqual(captured.max_retries, QualifierConfiguration().inference.max_retries)
+
+        # The runner's qualifier LLM is NOT the planner; it's the dedicated one.
+        qualifier = runner._FathomRunner__qualifier  # type: ignore[attr-defined]
+        self.assertIsInstance(qualifier, LLMIntentQualifier)
+
+        # Runner takes ownership: the dedicated LLM is in owned_resources so
+        # runner.cleanup() will close it without the SDK caller tracking it.
+        owned = runner._FathomRunner__owned_resources  # type: ignore[attr-defined]
+        self.assertEqual(len(owned), 1)
+
+    def test_without_assembly_qualifier_runs_on_planner_llm(self) -> None:
+        """
+        Backward compat: with no assembly, the qualifier reuses the planner LLM
+        and inference.* settings DO NOT take effect. Owned resources is empty —
+        the planner LLM lifecycle stays with the caller-supplied port.
+        """
+
+        planner = MagicMock(spec=LLMPort)
+        runner = (
+            Fathom.builder()
+            .with_llm(port=planner)
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .build()
+        )
+
+        owned = runner._FathomRunner__owned_resources  # type: ignore[attr-defined]
+        self.assertEqual(owned, [])
+
+    def test_with_assembly_respects_explicit_qualifier_override(self) -> None:
+        """
+        .with_qualifier(port=...) takes precedence over .with_assembly() — the
+        factory must not be invoked at all if the caller injected their own
+        qualifier port.
+        """
+
+        explicit = PermissiveIntentQualifier()
+        factory = _SpyLLMFactory()
+
+        runner = (
+            Fathom.builder()
+            .with_llm(port=MagicMock(spec=LLMPort))
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_assembly(assembly=self.__assembly(), llm_factory=factory)
+            .with_qualifier(port=explicit)
+            .build()
+        )
+
+        self.assertEqual(len(factory.captured), 0)
+        self.assertIs(runner._FathomRunner__qualifier, explicit)  # type: ignore[attr-defined]
+        self.assertEqual(runner._FathomRunner__owned_resources, [])  # type: ignore[attr-defined]
+
+    def test_with_assembly_and_disabled_qualifier_skips_factory(self) -> None:
+        """
+        When qualifier is disabled the builder must install the permissive
+        qualifier and skip dedicated LLM construction entirely — no factory
+        call, no owned resource.
+        """
+
+        factory = _SpyLLMFactory()
+        runner = (
+            Fathom.builder()
+            .with_llm(port=MagicMock(spec=LLMPort))
+            .with_config(
+                configuration=FathomConfiguration(
+                    qualifier=QualifierConfiguration(enabled=False),
+                )
+            )
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_assembly(assembly=self.__assembly(), llm_factory=factory)
+            .build()
+        )
+
+        self.assertEqual(len(factory.captured), 0)
+        self.assertIsInstance(
+            runner._FathomRunner__qualifier,  # type: ignore[attr-defined]
+            PermissiveIntentQualifier,
+        )
+
+    def test_with_assembly_passes_evolved_inference_to_factory(self) -> None:
+        """
+        Custom inference knobs via QualifierConfiguration.evolve must reach the
+        dedicated LLM configuration the factory receives.
+        """
+
+        custom = QualifierConfiguration.evolve(model="gemini-2.5-flash", timeout=8.0)
+        factory = _SpyLLMFactory()
+
+        Fathom.builder().with_llm(port=MagicMock(spec=LLMPort)).with_device(
+            port=MagicMock(spec=DevicePort)
+        ).with_perception(port=MagicMock(spec=PerceptionPort)).with_qualifier_config(
+            configuration=custom
+        ).with_assembly(assembly=self.__assembly(), llm_factory=factory).build()
+
+        captured = factory.captured[0]
+        self.assertEqual(captured.model, "gemini-2.5-flash")
+        self.assertEqual(captured.timeout, 8.0)
+
+
+_ = Any  # exported for downstream extensions
 
 
 if __name__ == "__main__":

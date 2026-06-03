@@ -177,20 +177,26 @@ class ContextManager:
         """
         Captures a snapshot of the current state and queues it for persistence.
         This operation is O(1) in-memory and non-blocking.
+
+        DISABLED: the persistence worker is not spawned (see __init__). Returning
+        early avoids growing __persist_queue unbounded with snapshots that no
+        consumer will drain — this would leak roughly one queue entry per agent
+        step for the worker's lifetime across all workflows. Re-enable in
+        lockstep with __start_persistence_loop when separate context storage
+        is wired.
         """
 
-        try:
-            # Snapshot state immediately (Deep copy/Dehydration happens here)
-            # We dehydrate on the main thread to ensure consistency, but writing to DB happens in background.
-            state_data = {
-                "intent": self.__roadmap_intent,
-                "engine": self.__engine.dehydrate(),
-                "guidance": [guidance.model_dump() for guidance in self.__user_guidance],
-            }
-            # Push snapshot to queue
-            self.__persist_queue.put_nowait(state_data)
-        except Exception as exception:
-            logger.error(f"Context: Failed to enqueue persistence: {exception}")
+        return
+        # Reference snapshot composition for when persistence is re-enabled:
+        #     try:
+        #         state_data = {
+        #             "intent": self.__roadmap_intent,
+        #             "engine": self.__engine.dehydrate(),
+        #             "guidance": [g.model_dump() for g in self.__user_guidance],
+        #         }
+        #         self.__persist_queue.put_nowait(state_data)
+        #     except Exception as exception:
+        #         logger.error(f"Context: Failed to enqueue persistence: {exception}")
 
     async def commit(self, *, observation: str, thought: str, action: Action) -> None:
         """

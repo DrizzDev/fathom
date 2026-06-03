@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 from logging import getLogger
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ContextScope, FathomEvent
@@ -63,9 +63,17 @@ class FathomRunner:
         path_manager: SharedPathManager,
         config: Optional[FathomConfiguration] = None,
         realignment: Optional[RealignmentPolicy] = None,
+        owned_resources: Optional[List[LLMPort]] = None,
     ) -> None:
         """
         Initialize runner with all configured ports.
+
+        owned_resources: optional list of LLM ports the runner takes ownership
+        of for cleanup purposes. Used by SDK callers that construct the runner
+        via FathomBuilder with .with_assembly(...) — the builder creates a
+        dedicated qualifier LLM internally and hands it to the runner so the
+        caller doesn't have to track it separately. Temporal / CLI callers use
+        RunnerComposition at the composition root instead and pass nothing here.
         """
 
         self.__llm = llm
@@ -83,6 +91,7 @@ class FathomRunner:
         self.__path_manager = path_manager
         self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
+        self.__owned_resources: List[LLMPort] = list(owned_resources or [])
 
         # Wire core components
         self.__engine = ExecutionEngine(
@@ -455,8 +464,15 @@ class FathomRunner:
         except Exception as exception:
             logger.warning(f"[FathomRunner] llm cleanup failed: {exception}")
 
-        # Note: the qualifier port has no cleanup() method by design.
-        # Any dedicated qualifier LLM is owned by the composition root (activity / CLI executor) via RunnerComposition.resources and closed there.
+        # 2b. Owned resources — dedicated LLMs (e.g. qualifier LLM) that the
+        # SDK builder path handed over for cleanup. Temporal / CLI callers pass
+        # nothing here because they use RunnerComposition.resources at the
+        # composition root; the list is empty in that case.
+        for resource in self.__owned_resources:
+            try:
+                await resource.cleanup()
+            except Exception as exception:
+                logger.warning(f"[FathomRunner] owned resource cleanup failed: {exception}")
 
         # 3. Device — close HTTP client (ADB remote, iOS remote)
         if hasattr(self.__device, "close"):
@@ -581,8 +597,7 @@ class FathomRunner:
         user_message = verdict.message or DEFAULT_REJECTION_MESSAGE
         duration = time.time() - start_time
 
-        # Single event for the rejection. Client switches on type; everything the
-        # client needs to render (message + verdict) is in this one payload.
+        # INTENT_REJECTED carries the full verdict for clients that switch on it.
         await self.__telemetry.warning(
             user_message, type=FathomEvent.INTENT_REJECTED, **verdict_payload
         )
@@ -594,6 +609,17 @@ class FathomRunner:
                 "workflow_id": workflow_id,
                 "completion_reason": CompletionReason.NOT_EXECUTABLE.value,
             },
+        )
+
+        # WORKFLOW_COMPLETED is dual-emitted so legacy consumers (Genymotion,
+        # Temporal activity result handlers) that key off the terminal event
+        # still receive a completion signal. The run *is* terminating here.
+        await self.__telemetry.info(
+            "Workflow execution finalized",
+            success=False,
+            steps_taken=0,
+            duration=duration,
+            type=FathomEvent.WORKFLOW_COMPLETED,
         )
 
         return IntentResult(

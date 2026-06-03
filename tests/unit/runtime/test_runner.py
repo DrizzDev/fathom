@@ -106,8 +106,10 @@ class RunnerHarness:
 
 class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
     """
-    Runner must short-circuit on a blocking verdict and emit both the new and the
-    backward-compat workflow-completed event so existing clients still receive a signal.
+    Runner must short-circuit on a blocking verdict and emit BOTH the new
+    INTENT_REJECTED event (for clients that switch on the verdict) AND the
+    legacy WORKFLOW_COMPLETED event (so existing terminal-event consumers
+    still see the workflow as finalized).
     """
 
     async def test_blocking_verdict_short_circuits_with_completed_result(self) -> None:
@@ -152,12 +154,13 @@ class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
 
         runner.device.get_current_package.assert_not_called()  # type: ignore[attr-defined]
 
-    async def test_blocking_verdict_emits_only_intent_rejected_with_full_payload(
+    async def test_blocking_verdict_emits_intent_rejected_with_full_payload(
         self,
     ) -> None:
         """
-        Rejection must emit exactly one qualifier event: INTENT_REJECTED with the full
-        verdict and the user-facing message. INTENT_QUALIFIED must never fire.
+        Rejection must emit exactly one qualifier-typed event: INTENT_REJECTED
+        with the full verdict and user-facing message. INTENT_QUALIFIED must
+        never fire on the reject path.
         """
 
         qualifier = BlockingQualifier(message="custom-rejection-message")
@@ -185,6 +188,43 @@ class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             rejection.kwargs["rationale"]["category"], RationaleCategory.INFORMATIONAL.value
         )
+
+    async def test_blocking_verdict_dual_emits_workflow_completed_for_legacy_consumers(
+        self,
+    ) -> None:
+        """
+        Backward-compat: rejection must also emit WORKFLOW_COMPLETED so legacy
+        consumers (Genymotion, Temporal activity result handlers) that key off
+        the terminal event still get a completion signal. Payload mirrors the
+        success-path terminal event shape: success=False, steps_taken=0,
+        duration present.
+        """
+
+        qualifier = BlockingQualifier(message="custom-rejection-message")
+        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
+
+        with (
+            patch("fathom.runtime.runner.ContextManager"),
+            patch("fathom.runtime.runner.IntentStrategy"),
+        ):
+            await runner.run_intent(intent="who founded google?")
+
+        terminal_calls = [
+            call
+            for call in telemetry.info.call_args_list
+            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
+        ]
+        self.assertEqual(
+            len(terminal_calls),
+            1,
+            msg="rejection path must emit exactly one WORKFLOW_COMPLETED event",
+        )
+
+        terminal = terminal_calls[0]
+        self.assertEqual(terminal.kwargs["success"], False)
+        self.assertEqual(terminal.kwargs["steps_taken"], 0)
+        self.assertIn("duration", terminal.kwargs)
+        self.assertGreaterEqual(terminal.kwargs["duration"], 0.0)
 
     async def test_passing_verdict_proceeds_to_strategy(self) -> None:
         """
@@ -239,6 +279,92 @@ class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             qualifier_typed_calls[0].kwargs["label"], QualificationLabel.EXECUTABLE.value
         )
+
+
+class RunnerOwnedResourcesCleanupTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Runner takes optional ownership of LLM resources passed by the builder's
+    .with_assembly() path. Those resources must be drained in cleanup() so
+    SDK callers don't have to track them themselves.
+    """
+
+    async def test_cleanup_drains_each_owned_resource(self) -> None:
+        """
+        Every entry in owned_resources must have cleanup() awaited exactly once.
+        """
+
+        cleanup_order: list[str] = []
+
+        planner_llm = MagicMock()
+        planner_llm.cleanup = AsyncMock(side_effect=lambda: cleanup_order.append("planner"))
+
+        owned_a = MagicMock()
+        owned_a.cleanup = AsyncMock(side_effect=lambda: cleanup_order.append("owned_a"))
+
+        owned_b = MagicMock()
+        owned_b.cleanup = AsyncMock(side_effect=lambda: cleanup_order.append("owned_b"))
+
+        runner = FathomRunner(
+            llm=planner_llm,
+            device=MagicMock(),
+            perception=MagicMock(),
+            memory=MagicMock(),
+            signal=MagicMock(),
+            storage=MagicMock(),
+            knowledge=MagicMock(),
+            telemetry=MagicMock(),
+            summarizer=MagicMock(),
+            qualifier=MagicMock(),
+            path_manager=MagicMock(),
+            owned_resources=[owned_a, owned_b],
+        )
+
+        await runner.cleanup()
+
+        planner_llm.cleanup.assert_awaited_once_with()
+        owned_a.cleanup.assert_awaited_once_with()
+        owned_b.cleanup.assert_awaited_once_with()
+        # Planner cleaned first, then owned resources in registration order.
+        self.assertEqual(cleanup_order, ["planner", "owned_a", "owned_b"])
+
+    async def test_cleanup_isolates_owned_resource_failures(self) -> None:
+        """
+        A failure on one owned resource cleanup must not skip the others —
+        the per-resource try/except in runner.cleanup must isolate them.
+        """
+
+        planner_llm = MagicMock()
+        planner_llm.cleanup = AsyncMock()
+
+        good_first = MagicMock()
+        good_first.cleanup = AsyncMock()
+
+        bad = MagicMock()
+        bad.cleanup = AsyncMock(side_effect=RuntimeError("kaboom"))
+
+        good_last = MagicMock()
+        good_last.cleanup = AsyncMock()
+
+        runner = FathomRunner(
+            llm=planner_llm,
+            device=MagicMock(),
+            perception=MagicMock(),
+            memory=MagicMock(),
+            signal=MagicMock(),
+            storage=MagicMock(),
+            knowledge=MagicMock(),
+            telemetry=MagicMock(),
+            summarizer=MagicMock(),
+            qualifier=MagicMock(),
+            path_manager=MagicMock(),
+            owned_resources=[good_first, bad, good_last],
+        )
+
+        await runner.cleanup()
+
+        good_first.cleanup.assert_awaited_once_with()
+        bad.cleanup.assert_awaited_once_with()
+        good_last.cleanup.assert_awaited_once_with()
 
 
 if __name__ == "__main__":
