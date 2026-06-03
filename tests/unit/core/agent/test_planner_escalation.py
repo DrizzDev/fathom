@@ -257,18 +257,21 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_autonomous_capability_skips_gate_entirely(self) -> None:
         """
-        Autonomous runtime keeps its existing recovery path; the gate must not run.
+        Autonomous runtime skips the HITL gate; validate-passive stuck falls through to vision re-planning.
         """
 
         state = self.__validate_only_stuck_state(
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
         )
         context = self.__context_manager()
-        planner = StepPlanner(vision_tool=Mock())
+        vision = self.__vision_with_navigation_action()
+        reasoner = Mock()
+        reasoner.select_best_action.return_value = vision.analyze.return_value.action
+        planner = StepPlanner(vision_tool=vision)
 
         await planner.plan_step(
             state=state,
-            reasoner=Mock(),
+            reasoner=reasoner,
             capture=self.__capture(),
             context_manager=context,
             screen_width=100,

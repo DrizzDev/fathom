@@ -42,3 +42,12 @@ class GateOutcome(StrEnum):
     FAIL = "fail"
     RETAIN = "retain"
     ADVANCE = "advance"
+
+
+class AdvanceReason(StrEnum):
+    """
+    Diagnostic code explaining which gate branch ratified an ADVANCE this turn.
+    """
+
+    STRICT_PATH = "strict.path"
+    VALIDATION_IMPLICIT_COMPLETION = "validation.implicit.completion"

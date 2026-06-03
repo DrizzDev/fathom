@@ -60,24 +60,22 @@ class LoopActionLadder:
 
     def next(self, *, detector: LoopDetector) -> Optional[Action]:
         """
-        Return the next loop-breaking action when the detector still has budget.
+        Return the next loop-breaking action when the detector still has budget; None when passive.
         """
 
         if not detector.can_recover() or not self.__rungs:
             return None
 
         attempt = detector.record_recovery_attempt()
-        rung = self.__pick_rung(attempt=attempt, detector=detector)
+        return self.__pick_rung(attempt=attempt, detector=detector)
 
-        return rung
-
-    def __pick_rung(self, *, attempt: int, detector: LoopDetector) -> Action:
+    def __pick_rung(self, *, attempt: int, detector: LoopDetector) -> Optional[Action]:
         """
-        Pick the rung for this attempt, applying the runtime scroll-loop skip.
-
-        The attempt counter is 1-based. If the indexed rung is SCROLL and the detector indicates we are already in a scroll loop,
-        advance to the next non-scroll rung; if no later rung exists, fall back to the last rung in the filtered ladder.
+        Pick the rung; passive-VALIDATE turns get no mechanical recovery so the agent re-plans on its own.
         """
+
+        if self.__is_passive_validate(detector=detector):
+            return None
 
         index = min(attempt - 1, len(self.__rungs) - 1)
         rung = self.__rungs[index]
@@ -106,3 +104,12 @@ class LoopActionLadder:
 
         action_type = detector.last_action_type
         return action_type in LOOP_SCROLL_ACTION_TYPES if action_type else False
+
+    @staticmethod
+    def __is_passive_validate(*, detector: LoopDetector) -> bool:
+        """
+        A VALIDATE that produced no-progress is the expected outcome of a read action, not a stuck signal.
+        Emitting BACK/SCROLL/HOME here can navigate away from the app, so the ladder stays silent this turn.
+        """
+
+        return detector.last_action_type == ActionType.VALIDATE.value

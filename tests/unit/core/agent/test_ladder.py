@@ -172,3 +172,87 @@ class LoopActionLadderTest(unittest.TestCase):
             activity_hash="a" * 16,
             visual_hash="b" * 16,
         )
+
+
+class LoopActionLadderValidatePassiveTest(unittest.TestCase):
+    """
+    Pin the passive-VALIDATE behaviour: no mechanical recovery dispatched, no escalation to BACK or HOME.
+    """
+
+    def test_validate_last_action_yields_no_mechanical_recovery(self) -> None:
+        """
+        After a VALIDATE turn, the ladder emits no rung; agent re-plans next turn instead of being navigated away.
+        """
+
+        detector = LoopDetector(max_recovery=3)
+        detector.record(
+            screen=self.__screen(),
+            action_type=ActionType.VALIDATE.value,
+            action_description="Validate current state",
+        )
+
+        self.assertIsNone(LoopActionLadder().next(detector=detector))
+
+    def test_validate_passive_still_increments_recovery_budget(self) -> None:
+        """
+        Recovery attempts still count toward max_recovery so unbounded passive-VALIDATE loops eventually exhaust.
+        """
+
+        detector = LoopDetector(max_recovery=2)
+        detector.record(
+            screen=self.__screen(),
+            action_type=ActionType.VALIDATE.value,
+            action_description="Validate current state",
+        )
+        ladder = LoopActionLadder()
+
+        ladder.next(detector=detector)
+        ladder.next(detector=detector)
+
+        self.assertFalse(detector.can_recover())
+
+    def test_validate_passive_on_no_back_device_does_not_emit_home(self) -> None:
+        """
+        Specifically the regression P1 caught: no-BACK device must not jump to HOME after a passive VALIDATE.
+        """
+
+        detector = LoopDetector(max_recovery=3)
+        detector.record(
+            screen=self.__screen(),
+            action_type=ActionType.VALIDATE.value,
+            action_description="Validate current state",
+        )
+        ladder = LoopActionLadder(device=DeviceCapability(system_back_supported=False))
+
+        self.assertIsNone(ladder.next(detector=detector))
+
+    def test_tap_last_action_keeps_normal_back_recovery(self) -> None:
+        """
+        A non-VALIDATE last action continues to receive the normal mechanical ladder (BACK first).
+        """
+
+        detector = LoopDetector(max_recovery=3)
+        detector.record(
+            screen=self.__screen(),
+            action_type=ActionType.TAP.value,
+            action_description="Tap submit",
+        )
+
+        action = LoopActionLadder().next(detector=detector)
+
+        self.assertIsNotNone(action)
+        assert action is not None
+        self.assertEqual(action.action_type, ActionType.BACK)
+
+    @staticmethod
+    def __screen() -> ScreenState:
+        """
+        Return a minimal stable screen for detector history.
+        """
+
+        return ScreenState(
+            activity="app",
+            timestamp=0,
+            activity_hash="a" * 16,
+            visual_hash="b" * 16,
+        )

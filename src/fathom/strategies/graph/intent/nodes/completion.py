@@ -3,7 +3,7 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
-from fathom.constants.completion import GateOutcome
+from fathom.constants.completion import AdvanceReason, GateOutcome
 from fathom.constants.observability import CompletionEvent
 from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey
 from fathom.core.agent.completion import CompletionGate
@@ -16,7 +16,7 @@ from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.steps import StepResult
-from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.subgoal import SubGoal, SubGoalKind
 from fathom.schemas.vision import ActionKind, action_kind_for
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
@@ -28,14 +28,18 @@ class SubGoalEvaluator:
     """
     Decide whether the executed step satisfies the active sub-goal.
 
-    Multi-signal architecture mirroring the main branch's proven policy.
     Each turn produces a typed CompletionEvidence bundle (claim, action,
-    screen, optional criterion) which the CompletionGate adjudicates per
-    sub-goal kind:
+    screen, optional criterion) and the emitted action kind, which the
+    CompletionGate adjudicates per sub-goal kind:
 
       - ACTION sub-goals require asserted claim AND justified rationale AND
-        a dispatched action that caused screen evolution. Equivalent to
-        main's 3-of-3 with the screen-verified gate on action_executed.
+        a dispatched action that caused screen evolution. The single
+        exception is the VALIDATION-kind escape branch: when the planner
+        emits a VALIDATE action against an ACTION sub-goal and asserts
+        completion, the gate advances on (asserted AND dispatched) alone.
+        VALIDATE is a read action that cannot move the screen; requiring
+        screen.evolved for this branch would loop indefinitely whenever
+        the world is already past the failed step.
       - VALIDATION sub-goals short-circuit on an asserted claim; otherwise
         require any two of justified rationale and screen-verified dispatch.
 
@@ -111,13 +115,19 @@ class SubGoalEvaluator:
             step_result=step_result,
         )
 
-        decision = self.__gate.adjudicate(evidence=evidence, sub_goal=active)
+        emitted_kind = action_kind_for(step_result.step.action.action_type)
+        decision = self.__gate.adjudicate(
+            evidence=evidence,
+            sub_goal=active,
+            action_kind=emitted_kind,
+        )
         self.__log_gate_adjudicated(
             active=active,
             evidence=evidence,
             decision=decision,
             effect=last_effect,
             step_result=step_result,
+            action_kind=emitted_kind,
         )
 
         if decision.outcome is GateOutcome.ADVANCE:
@@ -368,11 +378,12 @@ class SubGoalEvaluator:
         active: SubGoal,
         decision: GateDecision,
         step_result: StepResult,
+        action_kind: ActionKind,
         evidence: CompletionEvidence,
         effect: Optional[ActionEffect],
     ) -> None:
         """
-        Structured log: completion-gate decision for this turn.
+        Structured log: completion-gate decision for this turn, including which branch ratified an ADVANCE.
         """
 
         logger.info(
@@ -391,6 +402,13 @@ class SubGoalEvaluator:
                 "gate.retain_reason": (
                     decision.retain_reason.value if decision.retain_reason is not None else None
                 ),
+                "gate.advance_reason": self.__advance_reason(
+                    sub_goal=active,
+                    decision=decision,
+                    evidence=evidence,
+                    action_kind=action_kind,
+                ),
+                "action.kind": action_kind.value,
                 "effect.status": (effect.status.value if effect is not None else None),
                 "veto.applied": self.__no_progress_vetoed(
                     effect=effect,
@@ -399,6 +417,30 @@ class SubGoalEvaluator:
                 ),
             },
         )
+
+    @staticmethod
+    def __advance_reason(
+        *,
+        sub_goal: SubGoal,
+        decision: GateDecision,
+        action_kind: ActionKind,
+        evidence: CompletionEvidence,
+    ) -> Optional[str]:
+        """
+        Tag an ADVANCE outcome with the branch that ratified it so RCA can distinguish strict vs implicit-completion.
+        """
+
+        if decision.outcome is not GateOutcome.ADVANCE:
+            return None
+
+        if (
+            not evidence.screen.evolved
+            and sub_goal.kind is SubGoalKind.ACTION
+            and action_kind is ActionKind.VALIDATION
+        ):
+            return AdvanceReason.VALIDATION_IMPLICIT_COMPLETION.value
+
+        return AdvanceReason.STRICT_PATH.value
 
     @staticmethod
     def __no_progress_vetoed(
