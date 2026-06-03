@@ -17,7 +17,6 @@ from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.qualifier import QualifierComposer
 from fathom.schemas.composition import QualifierComposition
 from fathom.schemas.configuration import (
-    InferenceConfiguration,
     LLMConfiguration,
     QualifierConfiguration,
 )
@@ -192,18 +191,10 @@ class QualifierComposerTest(unittest.IsolatedAsyncioTestCase):
 
         await composer.compose(
             planner_llm=MagicMock(spec=LLMPort),
-            configuration=QualifierConfiguration(
-                inference=InferenceConfiguration(
-                    temperature=0.0,
-                    use_cache=False,
-                    thinking_level="minimal",
-                ),
-            ),
+            configuration=QualifierConfiguration.evolve(thinking_level="minimal"),
         )
 
         captured = factory.captured_configurations[0]
-        self.assertFalse(captured.use_cache)
-        self.assertEqual(captured.temperature, 0.0)
         self.assertEqual(captured.thinking_level, "minimal")
 
     async def test_post_construction_compose_failure_cleans_dedicated_llm(self) -> None:

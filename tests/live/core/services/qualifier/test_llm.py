@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fathom.constants.qualification import QualificationLabel
+from fathom.constants.qualification import DEFAULT_QUALIFIER_MODEL, QualificationLabel
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.interfaces.qualifier import IntentQualifierPort
 from fathom.runtime.assembly import RunAssemblyBuilder
@@ -367,11 +367,35 @@ class LLMIntentQualifierLiveTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_every_intent_classifies_correctly(self) -> None:
         """
-        Run the corpus through Gemini and report per-intent and aggregate outcomes.
+        Run the corpus through the real qualifier wiring and report per-intent
+        and aggregate outcomes. The corpus is invoked through the same code
+        path production uses: assembly → composer → composition.qualifier.
+
+        The model the qualifier resolves to is asserted against the eval-validated
+        default so a regression that points the qualifier back at the planner's
+        model (e.g. an old preview model) fails this test loudly instead of
+        silently slipping into production.
         """
 
         cases = IntentCorpus.cases()
         configuration = QualifierConfiguration()
+
+        # Lock in: the assembly must resolve the qualifier model to the
+        # eval-validated default. If anyone re-wires this to read the planner's
+        # GEMINI_MODEL setting (a known regression mode), this fails fast.
+        assembly = RunAssemblyBuilder(settings=FathomSettings())
+        resolved_llm_configuration = assembly.build_qualifier_model_configuration(
+            configuration=configuration
+        )
+        self.assertEqual(
+            resolved_llm_configuration.model,
+            DEFAULT_QUALIFIER_MODEL,
+            msg=(
+                "Live test must exercise the eval-validated default qualifier model. "
+                f"Resolved {resolved_llm_configuration.model!r}, expected "
+                f"{DEFAULT_QUALIFIER_MODEL!r} from fathom.constants.qualification."
+            ),
+        )
 
         qualifier = await ProductionQualifierWiring.build(configuration=configuration)
         policy = QualificationGatePolicy(configuration=configuration)

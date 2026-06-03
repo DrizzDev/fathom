@@ -13,7 +13,6 @@ from fathom.interfaces.perception import PerceptionPort
 from fathom.runtime.builder import Fathom
 from fathom.schemas.configuration import (
     FathomConfiguration,
-    InferenceConfiguration,
     QualifierConfiguration,
 )
 
@@ -90,9 +89,7 @@ class FathomBuilderQualifierDefaultTest(unittest.TestCase):
         so downstream code (composer, LLM factory) reads the caller's intent.
         """
 
-        custom = QualifierConfiguration(
-            inference=InferenceConfiguration(temperature=0.0, thinking_level="medium")
-        )
+        custom = QualifierConfiguration.evolve(thinking_level="medium")
         runner = (
             Fathom.builder()
             .with_llm(port=MagicMock(spec=LLMPort))
