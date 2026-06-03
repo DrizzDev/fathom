@@ -30,14 +30,32 @@ def get_action_type(step: Union[StepResult, Dict[str, Any]]) -> str:
 
 
 def swipe_direction_label(action_type: str) -> str:
+    """
+    Return the script-line label that preserves the executed gesture direction.
+
+    The mapping must NOT flip vertical direction — the script-replay engine
+    interprets ``"Scroll up"`` and ``"Scroll down"`` literally, so any
+    inversion here causes the replay to scroll the opposite way and the
+    intended target never comes into view. Earlier versions inverted
+    ``swipe_up``→``"Scroll down"`` and ``swipe_down``→``"Scroll up"`` on the
+    gesture-vs-content convention, which broke replays when the planner had
+    in fact chosen the correct direction at execution time.
+
+    The covered keys are exactly the contents of
+    :data:`fathom.constants.SWIPE_ACTIONS` — the only set the caller in
+    :mod:`action_catalog` ever passes in. A bare ``"scroll"`` (no direction)
+    resolves to ``"Scroll up"`` because that is the documented default the
+    planner intends when it emits a direction-less scroll.
+    """
+
     mapping = {
-        "scroll": "Scroll down",
-        "swipe_up": "Scroll down",
-        "swipe_down": "Scroll up",
+        "scroll": "Scroll up",
+        "swipe_up": "Scroll up",
+        "swipe_down": "Scroll down",
         "swipe_left": "Swipe left",
         "swipe_right": "Swipe right",
     }
-    return mapping.get(action_type, "Scroll")
+    return mapping.get(action_type, "Scroll up")
 
 
 def get_activity(step: Union[StepResult, Dict[str, Any]]) -> str:
