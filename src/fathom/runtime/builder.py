@@ -92,6 +92,10 @@ class FathomBuilder:
         # Temporal activity arguments.
         self.__runtime_configuration: Optional[RuntimeConfigLoader] = None
 
+        # Set by the optional .with_assembly() path to build a dedicated qualifier LLM.
+        self.__llm_factory: Optional[LLMFactoryPort] = None
+        self.__assembly: Optional[RunAssemblyBuilder] = None
+
     def with_runtime_configuration(self, loader: RuntimeConfigLoader) -> FathomBuilder:
         """
         Attach a pre-bound :class:`RuntimeConfigLoader` so its settings
@@ -110,10 +114,6 @@ class FathomBuilder:
 
         self.__runtime_configuration = loader
         return self
-
-        # Set by the optional .with_assembly() path to build a dedicated qualifier LLM.
-        self.__llm_factory: Optional[LLMFactoryPort] = None
-        self.__assembly: Optional[RunAssemblyBuilder] = None
 
     def with_device(self, port: DevicePort) -> FathomBuilder:
         """
