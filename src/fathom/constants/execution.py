@@ -12,7 +12,7 @@ LAUNCHER_PACKAGES: frozenset[str] = frozenset(
         "com.google.android.apps.nexuslauncher",  # Google Pixel default
         "com.android.launcher",
         "com.android.launcher3",
-        "com.sec.android.app.launchers",  # Samsung default
+        "com.sec.android.app.launcher",  # Samsung default
         "com.miui.home",  # MIUI default
         "com.oppo.launcher",  # OPPO default
         # iOS
@@ -21,9 +21,10 @@ LAUNCHER_PACKAGES: frozenset[str] = frozenset(
 )
 
 # Swipe and scroll distances (pixels)
+BOUNDS_SWIPE_DISTANCE = 100
 DEFAULT_SWIPE_DISTANCE = 300
 DEFAULT_SCROLL_DISTANCE = 300
-BOUNDS_SWIPE_DISTANCE = 100
+
 
 # Timing (milliseconds)
 DEFAULT_SWIPE_DURATION = 350  # Swipe gesture duration; 350ms reliable on modern devices

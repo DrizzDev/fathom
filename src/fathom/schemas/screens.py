@@ -173,17 +173,21 @@ class ScreenDiff(BaseModel):
     @property
     def action_had_effect(self) -> bool:
         """
-        High-sensitivity check. Any single signal means the action had an effect.
+        True when the action produced an observable screen effect.
+        Structural-only signals (xml_hash / interaction_hash / changed_regions)
+        require a visual or scroll co-signal to fire, gating render-loop
+        noise and frequently-updating ignorable elements.
         """
 
         if self.activity_changed:
             return True
 
-        if self.xml_hash_changed:
-            return True
+        return self.__has_visual_signal() or self.__has_action_scroll_signal()
 
-        if self.interaction_hash_changed:
-            return True
+    def __has_visual_signal(self) -> bool:
+        """
+        True when phash / ssim / content_diff crosses the action-effect threshold.
+        """
 
         if self.phash_distance > ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD:
             return True
@@ -191,16 +195,10 @@ class ScreenDiff(BaseModel):
         if self.ssim_score is not None and self.ssim_score < ACTION_EFFECT_SSIM_THRESHOLD:
             return True
 
-        if (
+        return (
             self.content_pixel_diff_ratio is not None
             and self.content_pixel_diff_ratio > ACTION_EFFECT_CONTENT_DIFF_RATIO_THRESHOLD
-        ):
-            return True
-
-        if self.changed_regions:
-            return True
-
-        return bool(self.__has_action_scroll_signal())
+        )
 
     @property
     def is_genuinely_different_state(self) -> bool:
