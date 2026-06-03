@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
+from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
@@ -231,6 +232,23 @@ class ActionTraceEvent(BaseModel):
     )
 
 
+class TraceEmission(BaseModel):
+    """
+    Adapter-layer outcome of staging one rendered trace through the artifact pipeline.
+    Composes the source gesture event with an optional artifact handle so future metadata extends here.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    event: ActionTraceEvent = Field(
+        description="Source gesture event the trace was rendered from.",
+    )
+    artifact: Optional[ScreenArtifact] = Field(
+        default=None,
+        description="Pipeline-staged trace artifact when emission succeeded; None when un-wired or skipped.",
+    )
+
+
 class ExecutionResult(BaseModel):
     """
     Result of step execution attempt.
@@ -251,9 +269,9 @@ class ExecutionResult(BaseModel):
         default=None,
         description="Bounded swipe execution outcome (attempts, rejections, abort reason) when available.",
     )
-    trace_events: Tuple[ActionTraceEvent, ...] = Field(
+    trace_emissions: Tuple[TraceEmission, ...] = Field(
         default_factory=tuple,
-        description="Concrete trace events captured during execution.",
+        description="Trace emissions captured during execution; each wraps the gesture event and its staged artifact handle.",
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,

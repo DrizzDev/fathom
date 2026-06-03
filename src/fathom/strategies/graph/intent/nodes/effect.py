@@ -9,11 +9,16 @@ from fathom.constants import ActionType
 from fathom.constants.screen import ZERO_HASH
 from fathom.constants.state import IntentStateKey, PlanMetadataKey
 from fathom.constants.storage import StorageBackend
-from fathom.schemas.artifacts import ScreenArtifact, ScreenArtifactBundle, StepArtifacts
+from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
+from fathom.schemas.artifacts import (
+    ScreenArtifact,
+    ScreenArtifactBundle,
+    StepArtifacts,
+)
 from fathom.schemas.effect import ActionEffect
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import PostActionObservation, ScreenObservation
-from fathom.schemas.results import PlanResult
+from fathom.schemas.results import PlanResult, TraceEmission
 from fathom.schemas.screens import ScreenCapture, ScreenDiff, ScreenState
 from fathom.schemas.ui import LabeledElement
 from fathom.strategies.graph.intent.nodes.observer import ScreenObserver
@@ -71,12 +76,16 @@ class PostAction:
         await stability_wait(self.__context.configuration)
 
         pre_hash = context.pre_screen.visual_hash if context.pre_screen is not None else ZERO_HASH
+        trace_emissions = (
+            context.execution_result.trace_emissions if context.execution_result is not None else ()
+        )
+
         try:
             comparison = await self.__compare(
                 package_name=context.package,
                 before_capture=context.capture,
                 before_state=context.pre_screen,
-                step_number=context.step.step_number,
+                trace_emissions=trace_emissions,
             )
         except Exception as exception:
             await self.__context.telemetry.warning(
@@ -87,17 +96,16 @@ class PostAction:
         observation = comparison.observation
         screen_diff = comparison.screen_diff
         post_hash = comparison.post_visual_hash or pre_hash
+
         try:
             post_activity = await self.__context.device.get_current_package() or context.package
         except Exception:
             post_activity = context.package
+
         return observation, screen_diff, post_hash, post_activity, comparison.artifacts
 
     @staticmethod
-    def effect_from(
-        *,
-        diff: Optional[ScreenDiff],
-    ) -> ActionEffect:
+    def effect_from(*, diff: Optional[ScreenDiff]) -> ActionEffect:
         """
         Build diagnostic post-action effect data from the screen diff only.
         """
@@ -124,8 +132,8 @@ class PostAction:
     def log_diff(
         self,
         *,
-        screen_diff: Optional[ScreenDiff],
         action_effect: ActionEffect,
+        screen_diff: Optional[ScreenDiff],
     ) -> None:
         """
         Emit a structured log entry describing the observed screen diff.
@@ -140,12 +148,12 @@ class PostAction:
                 **self.__log_context(),
                 "event": "observe.screen.diff",
                 "ssim.score": screen_diff.ssim_score,
+                "effect.status": action_effect.status.value,
                 "phash.distance": screen_diff.phash_distance,
                 "changed.regions": len(screen_diff.changed_regions),
+                "effect.visual_progress": action_effect.visual_progress,
                 "scroll.translation": str(screen_diff.scroll_translation),
                 "content.diff.ratio": screen_diff.content_pixel_diff_ratio,
-                "effect.status": action_effect.status.value,
-                "effect.visual_progress": action_effect.visual_progress,
                 "effect.signal.expected": action_effect.signal_counts.expected,
                 "effect.signal.progress": action_effect.signal_counts.progress,
                 "effect.signal.no_progress": action_effect.signal_counts.no_progress,
@@ -159,34 +167,33 @@ class PostAction:
         """
 
         plan = state.get(IntentStateKey.PLAN)
+
         if isinstance(plan, PlanResult):
             value = plan.metadata.get(PlanMetadataKey.OBSERVATION.value)
             return value if isinstance(value, str) else None
+
         return None
 
     async def __compare(
         self,
         *,
-        step_number: int,
         package_name: str,
         before_capture: ScreenCapture,
         before_state: Optional[ScreenState],
+        trace_emissions: Tuple[TraceEmission, ...],
     ) -> PostActionObservation:
         """
-        Capture the post-action screen and compare it to the pre-action state.
-
-        The before-capture's pre-existing ``metadata['storage_id']`` (set
-        by :class:`PerceptionService` during GROUND) is wrapped into a
-        :class:`ScreenArtifact`; the post-capture is persisted through
-        the :class:`StoragePort` and wrapped likewise. Both ride out in
-        the returned :class:`PostActionObservation.artifacts` envelope.
+        Capture the post-action screen, compare it to the pre-action state, and compose the artifact bundle.
+        Before/annotated URIs ride on ``before_capture``; after URI comes from the pipeline; traces map from
+        ``trace_emissions`` collected by the executor on this turn.
         """
 
         before_visual_hash = before_state.visual_hash if before_state is not None else None
-        before_artifact = self.__build_screen_artifact_from_capture(
-            capture=before_capture,
-            visual_hash=before_visual_hash,
-        )
+
+        before = self.__build_before(capture=before_capture, visual_hash=before_visual_hash)
+        annotated = self.__build_annotated(capture=before_capture, visual_hash=before_visual_hash)
+
+        traces = self.__build_traces(emissions=trace_emissions)
 
         capture_start = time.time()
         post_capture = await self.__context.perception_port.capture()
@@ -202,12 +209,16 @@ class PostAction:
 
         if self.__context.is_cancelled:
             return PostActionObservation(
-                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+                artifacts=self.__compose_step_artifacts(
+                    before=before, after=None, annotated=annotated, traces=traces
+                ),
             )
 
         if not post_capture.image:
             return PostActionObservation(
-                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+                artifacts=self.__compose_step_artifacts(
+                    before=before, after=None, annotated=annotated, traces=traces
+                ),
             )
 
         elements_start = time.time()
@@ -224,7 +235,9 @@ class PostAction:
 
         if self.__context.is_cancelled:
             return PostActionObservation(
-                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+                artifacts=self.__compose_step_artifacts(
+                    before=before, after=None, annotated=annotated, traces=traces
+                ),
             )
 
         hash_start = time.time()
@@ -244,7 +257,9 @@ class PostAction:
         if self.__context.is_cancelled:
             return PostActionObservation(
                 post_visual_hash=post_hashes.visual_hash,
-                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+                artifacts=self.__compose_step_artifacts(
+                    before=before, after=None, annotated=annotated, traces=traces
+                ),
             )
 
         after_state = self.__observer.build_screen_state(
@@ -275,12 +290,14 @@ class PostAction:
             return PostActionObservation(
                 screen_diff=screen_diff,
                 post_visual_hash=post_hashes.visual_hash,
-                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+                artifacts=self.__compose_step_artifacts(
+                    before=before, after=None, annotated=annotated, traces=traces
+                ),
             )
 
         post_observation = await self.__observer.observe(
-            capture=post_capture,
             hashes=post_hashes,
+            capture=post_capture,
             elements=post_elements,
         )
 
@@ -288,13 +305,13 @@ class PostAction:
             return PostActionObservation(
                 screen_diff=screen_diff,
                 post_visual_hash=post_hashes.visual_hash,
-                artifacts=self.__compose_step_artifacts(before=before_artifact, after=None),
+                artifacts=self.__compose_step_artifacts(
+                    before=before, after=None, annotated=annotated, traces=traces
+                ),
             )
 
-        after_artifact = await self.__persist_screen_artifact(
-            phase="post_action",
+        after = await self.__build_after(
             capture=post_capture,
-            step_number=step_number,
             package_name=package_name,
             visual_hash=post_hashes.visual_hash,
         )
@@ -303,7 +320,9 @@ class PostAction:
             screen_diff=screen_diff,
             observation=post_observation,
             post_visual_hash=post_hashes.visual_hash,
-            artifacts=self.__compose_step_artifacts(before=before_artifact, after=after_artifact),
+            artifacts=self.__compose_step_artifacts(
+                before=before, after=after, annotated=annotated, traces=traces
+            ),
         )
 
     def __elements(self, *, capture: ScreenCapture) -> List[LabeledElement]:
@@ -320,99 +339,163 @@ class PostAction:
             action_type=ActionType.TAP,
         )
 
-    def __build_screen_artifact_from_capture(
+    def __build_before(
         self,
         *,
         capture: ScreenCapture,
         visual_hash: Optional[str] = None,
     ) -> Optional[ScreenArtifact]:
         """
-        Wrap an already-persisted capture into a :class:`ScreenArtifact`.
-
-        The pre-action capture is persisted up-front by
-        :class:`PerceptionService` during GROUND, so its
-        ``metadata['storage_id']`` is the canonical URI. Returns ``None``
-        when the storage id is missing (e.g. unit-test path that bypasses
-        persistence).
+        Build the pre-action :class:`ScreenArtifact` from the raw screen
+        bytes carried on ``capture.image``, with the optional storage
+        URI stamped earlier by :class:`PerceptionService`.
         """
 
-        if not (storage_id := (capture.metadata or {}).get("storage_id")):
+        if not capture.image and not capture.screenshot_uri:
             return None
 
         return ScreenArtifact(
-            uri=str(storage_id),
             width=capture.width,
             height=capture.height,
             visual_hash=visual_hash,
+            image=capture.image or None,
             captured_at=capture.timestamp,
             storage_backend=self.__resolve_storage_backend(),
+            uri=capture.screenshot_uri if capture.screenshot_uri else None,
         )
 
-    async def __persist_screen_artifact(
+    def __build_annotated(
         self,
         *,
-        phase: str,
-        step_number: int,
+        capture: ScreenCapture,
+        visual_hash: Optional[str] = None,
+    ) -> Optional[ScreenArtifact]:
+        """
+        Build the annotated :class:`ScreenArtifact` from the annotated
+        bytes on ``capture.annotated_image``, with the optional storage
+        URI stamped earlier by :class:`HierarchyService`.
+        """
+
+        if not capture.annotated_image and not capture.annotated_uri:
+            return None
+
+        return ScreenArtifact(
+            width=capture.width,
+            height=capture.height,
+            visual_hash=visual_hash,
+            image=capture.annotated_image,
+            captured_at=capture.timestamp,
+            storage_backend=self.__resolve_storage_backend(),
+            uri=capture.annotated_uri if capture.annotated_uri else None,
+        )
+
+    async def __build_after(
+        self,
+        *,
         package_name: str,
         capture: ScreenCapture,
         visual_hash: Optional[str],
     ) -> Optional[ScreenArtifact]:
         """
-        Persist the post-action capture via :class:`StoragePort` and wrap
-        it as a :class:`ScreenArtifact`. Returns ``None`` when the
-        storage adapter raises so a transient save failure does not
-        propagate as a step-level error.
+        Build the post-action :class:`ScreenArtifact` from the captured
+        bytes and stamp the storage URI from the artifact pipeline's
+        staged path when a pipeline is wired. Returns ``None`` only when the capture itself yielded no bytes.
         """
 
-        try:
-            storage_id = await self.__context.storage.save(
-                data=capture.image,
-                metadata={
-                    "phase": phase,
-                    "type": "screenshot",
-                    "category": "screenshot",
-                    "timestamp": time.time(),
-                    "step_number": step_number,
-                    "package_name": package_name,
-                    "activity_name": capture.activity,
-                    "session_id": self.__context.workflow_id,
-                },
-            )
-        except Exception as exception:
-            logger.warning(
-                "Failed to persist post-action screen artifact",
-                extra={
-                    **self.__log_context(),
-                    "event": "observe.artifact.persist_failed",
-                    "phase": phase,
-                    "error.message": str(exception),
-                },
-            )
+        if not capture.image:
             return None
 
+        uri = await self.__stage_post_action(capture=capture, package_name=package_name)
+
         return ScreenArtifact(
-            uri=str(storage_id),
+            uri=uri,
+            image=capture.image,
             width=capture.width,
             height=capture.height,
             visual_hash=visual_hash,
             captured_at=capture.timestamp,
             storage_backend=self.__resolve_storage_backend(),
         )
+
+    async def __stage_post_action(
+        self,
+        *,
+        package_name: str,
+        capture: ScreenCapture,
+    ) -> Optional[str]:
+        """
+        Hand the post-action capture to the artifact pipeline and surface
+        the staged path so the after artifact can carry a storage URI
+        alongside the bytes. Returns ``None`` when the pipeline is un-wired or emission fails.
+        """
+
+        if (pipeline := self.__context.artifact_pipeline) is None:
+            return None
+
+        try:
+            staged_path = await pipeline.emit(
+                record=ArtifactRecord(
+                    package_name=package_name,
+                    created=int(time.time() * 1000),
+                    session_id=self.__context.workflow_id,
+                    payload=ScreenshotPayload(capture=capture),
+                    step_number=self.__context.agent_state.step_count,
+                ),
+            )
+        except Exception as exception:
+            logger.warning(
+                "Failed to emit post-action capture to pipeline",
+                extra={
+                    **self.__log_context(),
+                    "error.message": str(exception),
+                    "event": "observe.pipeline.emit_failed",
+                },
+            )
+            return None
+
+        return str(staged_path) if staged_path is not None else None
 
     @staticmethod
     def __compose_step_artifacts(
         *,
         after: Optional[ScreenArtifact],
         before: Optional[ScreenArtifact],
+        annotated: Optional[ScreenArtifact],
+        traces: Optional[Tuple[ScreenArtifact, ...]],
     ) -> Optional[StepArtifacts]:
         """
-        Build the :class:`StepArtifacts` envelope, or ``None`` when both
-        sides are missing (nothing to surface in telemetry / step record).
+        Build the StepArtifacts envelope, or None when every slot is empty.
         """
 
-        if before is None and after is None:
+        if before is None and after is None and annotated is None and not traces:
             return None
-        return StepArtifacts(screen=ScreenArtifactBundle(before=before, after=after))
+
+        return StepArtifacts(
+            screen=ScreenArtifactBundle(
+                after=after,
+                before=before,
+                traces=traces,
+                annotated=annotated,
+            ),
+        )
+
+    def __build_traces(
+        self,
+        *,
+        emissions: Tuple[TraceEmission, ...],
+    ) -> Optional[Tuple[ScreenArtifact, ...]]:
+        """
+        Project trace emissions into the bundle's traces tuple, returning None when the executor ran no trace path.
+        Emissions whose pipeline staging failed are dropped so callers iterate only over artifacts with handles.
+        """
+
+        if not emissions:
+            return None
+
+        artifacts = tuple(
+            emission.artifact for emission in emissions if emission.artifact is not None
+        )
+        return artifacts
 
     def __resolve_storage_backend(self) -> StorageBackend:
         """
@@ -422,8 +505,10 @@ class PostAction:
         """
 
         backend = getattr(self.__context.storage, "backend", None)
+
         if isinstance(backend, StorageBackend):
             return backend
+
         return StorageBackend.LOCAL
 
     def __log_context(self) -> Dict[str, Any]:

@@ -17,7 +17,7 @@ from fathom.schemas.artifact import (
     ArtifactMetadata,
     ArtifactReceipt,
     ArtifactRecord,
-    PipelineConfig,
+    PipelineConfiguration,
     TracePayload,
 )
 
@@ -37,21 +37,22 @@ class ArtifactPipeline:
     def __init__(
         self,
         *,
-        config: PipelineConfig,
-        renderers: Mapping[ArtifactKind, ArtifactRendererPort],
-        sink: ArtifactSinkPort,
-        path_manager: SharedPathManager,
         workflow_id: str,
+        sink: ArtifactSinkPort,
+        config: PipelineConfiguration,
+        path_manager: SharedPathManager,
+        renderers: Mapping[ArtifactKind, ArtifactRendererPort],
     ) -> None:
         """
         Bind the pipeline to its renderers, sink, path manager, and run context.
         """
 
+        self.__sink = sink
         self.__config = config
         self.__renderers = renderers
-        self.__sink = sink
-        self.__path_manager = path_manager
         self.__workflow_id = workflow_id
+        self.__path_manager = path_manager
+
         self.__pending: Set[asyncio.Task[None]] = set()
         self.__semaphore = asyncio.Semaphore(config.queue.capacity)
 
@@ -83,6 +84,7 @@ class ArtifactPipeline:
         )
         self.__pending.add(task)
         task.add_done_callback(self.__pending.discard)
+
         return payload_path
 
     async def emit_with_receipt(self, *, record: ArtifactRecord) -> Optional[ArtifactReceipt]:
@@ -116,8 +118,8 @@ class ArtifactPipeline:
             "Artifact pipeline drain started",
             extra={
                 **self.__log_context(),
-                "event": ArtifactEvent.DRAIN_STARTED,
                 "pending.count": len(self.__pending),
+                "event": ArtifactEvent.DRAIN_STARTED,
             },
         )
         try:
@@ -134,16 +136,16 @@ class ArtifactPipeline:
                 "Artifact pipeline drain timed out; surviving tasks abandoned",
                 extra={
                     **self.__log_context(),
-                    "event": ArtifactEvent.DRAIN_TIMED_OUT,
                     "pending.count": len(self.__pending),
+                    "event": ArtifactEvent.DRAIN_TIMED_OUT,
                 },
             )
 
     def __stage_to_efs(
         self,
         *,
-        record: ArtifactRecord,
         content: bytes,
+        record: ArtifactRecord,
     ) -> Path:
         """
         Synchronously write the payload bytes to EFS and return the path.
@@ -239,7 +241,7 @@ class ArtifactPipeline:
             )
             return None
 
-        if not receipt.local_cleanup:
+        if not receipt.local_cleanup or not self.__config.local.cleanup:
             return receipt
 
         await asyncio.to_thread(self.__unlink, payload_path=payload_path)
@@ -312,12 +314,15 @@ class ArtifactPipeline:
         Resolve the on-disk file extension for one :class:`ArtifactKind`.
         """
 
-        if kind == ArtifactKind.HIERARCHY_XML:
-            return "xml"
-        if kind == ArtifactKind.OCR_RAW:
-            return "json"
         if kind == ArtifactKind.SCRIPT:
             return "txt"
+
+        if kind == ArtifactKind.OCR_RAW:
+            return "json"
+
+        if kind == ArtifactKind.HIERARCHY_XML:
+            return "xml"
+
         return "png"
 
     def __log_context(self) -> Dict[str, Any]:
@@ -326,8 +331,8 @@ class ArtifactPipeline:
         """
 
         return {
-            "component": ArtifactComponent.PIPELINE,
             "workflow.id": self.__workflow_id,
+            "component": ArtifactComponent.PIPELINE,
         }
 
     @property

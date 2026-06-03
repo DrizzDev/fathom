@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from typing import Optional
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 from fathom.constants import ActionType
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
 from fathom.constants.state import IntentStateKey, PlanMetadataKey
 from fathom.schemas.actions import Action
+from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
+from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
-from fathom.schemas.results import PlanResult
-from fathom.schemas.screens import ScreenCapture, ScreenDiff, ScreenState
+from fathom.schemas.results import ActionTraceAttempt, ActionTraceEvent, PlanResult, TraceEmission
+from fathom.schemas.screens import ScreenCapture, ScreenDiff
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.effect import PostAction
 
@@ -263,12 +267,16 @@ class PostActionCancellationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancellation_after_capture_skips_diff_and_observation(self) -> None:
         """
-        Once cancellation is visible after capture, expensive perception stages are skipped.
+        Once cancellation is visible after capture, expensive perception
+        stages are skipped, but the before artifact still carries the
+        capture bytes so the caller can render the pre-action frame.
         """
 
         context = SimpleNamespace(
             configuration=SimpleNamespace(engine=SimpleNamespace(stability_wait=0)),
             perception_port=SimpleNamespace(capture=AsyncMock(return_value=self.__capture())),
+            storage=SimpleNamespace(backend=None),
+            telemetry=AsyncMock(),
             use_xml=True,
             is_cancelled=True,
             workflow_id="wf",
@@ -289,145 +297,307 @@ class PostActionCancellationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(screen_diff)
         self.assertEqual(post_hash, "0000000000000000")
         self.assertEqual(post_activity, "app")
-        self.assertIsNone(artifacts)
+        self.assertIsNotNone(artifacts)
+        self.assertIsNotNone(artifacts.screen.before)
+        self.assertEqual(artifacts.screen.before.image, b"png")
+        self.assertIsNone(artifacts.screen.after)
         comparator.compare.assert_not_called()
         observer.observe.assert_not_called()
 
 
-class PostActionArtifactEnvelopeTest(unittest.IsolatedAsyncioTestCase):
+def _capture(
+    *,
+    image: bytes = b"raw-png",
+    screenshot_uri: Optional[str] = None,
+    annotated_image: Optional[bytes] = None,
+    annotated_uri: Optional[str] = None,
+) -> ScreenCapture:
     """
-    Pins the before/after screen artifact envelope emitted after a completed action.
+    Build a configurable :class:`ScreenCapture` for the three builder tests.
     """
 
-    @staticmethod
-    def __screen_state() -> ScreenState:
-        """
-        Build a minimal screen state fixture for post-action comparison.
-        """
+    return ScreenCapture(
+        width=1080,
+        height=2400,
+        activity="com.test.app",
+        image=image,
+        annotated_image=annotated_image,
+        screenshot_uri=screenshot_uri,
+        annotated_uri=annotated_uri,
+        timestamp=1_714_200_000_000,
+        metadata={},
+    )
 
-        return ScreenState(
-            activity="app",
-            timestamp=1,
-            activity_hash="activity",
-            visual_hash="0" * 16,
-            xml_hash="xml",
-            interaction_hash="interaction",
-        )
 
-    @staticmethod
-    def __capture(
-        *,
-        storage_id: str | None = None,
-        timestamp: int = 1,
-    ) -> ScreenCapture:
-        """
-        Build a screen capture fixture, optionally carrying a persisted artifact id.
-        """
+class PostActionArtifactBuildersTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pin the three artifact builders consumed by :class:`PostAction`; before/annotated read URI fields
+    populated upstream, after stages the post-action capture through the pipeline and stamps the URI back.
+    """
 
-        metadata = {"storage_id": storage_id} if storage_id else {}
-        return ScreenCapture(
-            width=100,
-            height=200,
-            activity="app",
-            image=b"png",
-            timestamp=timestamp,
-            metadata=metadata,
-        )
-
-    @staticmethod
-    def __execution_context(*, capture: ScreenCapture) -> ExecutionContext:
+    def __post_action(self, *, pipeline) -> PostAction:
         """
-        Build the execution context consumed by :class:`PostAction`.
+        Build a PostAction with a mocked context exposing only the surfaces the artifact path reads.
         """
 
-        action = Action(
-            action_type=ActionType.SWIPE_UP,
-            target="Main content",
-            rationale="Scroll main content.",
-            confidence=1.0,
-        )
-        step = Step(
-            action=action,
-            screen_hash="0" * 16,
-            step_number=7,
-        )
-        return ExecutionContext(
-            step=step,
-            capture=capture,
-            pre_screen=PostActionArtifactEnvelopeTest.__screen_state(),
-            localization=LocalizationResult(
-                status=LocalizationStatus.UNRESOLVED,
-                confidence=0.0,
-            ),
-            package="app",
-        )
-
-    async def test_observe_emits_before_and_after_artifacts_for_report_mapping(self) -> None:
-        """
-        A persisted pre-capture plus post-capture save produces both screen artifact sides.
-        """
-
-        saved_metadata = {}
-
-        async def save(*, data: bytes, metadata: dict) -> str:
-            """
-            Capture post-action storage metadata and return a storage URI.
-            """
-
-            _ = data
-            saved_metadata.update(metadata)
-            return "cloud://after-screen"
-
-        post_capture = self.__capture(timestamp=2)
-        context = SimpleNamespace(
-            configuration=SimpleNamespace(engine=SimpleNamespace(stability_wait=0)),
-            perception_port=SimpleNamespace(capture=AsyncMock(return_value=post_capture)),
-            device=SimpleNamespace(get_current_package=AsyncMock(return_value="app")),
-            hierarchy=SimpleNamespace(extract_elements=Mock(return_value=[])),
-            storage=SimpleNamespace(save=AsyncMock(side_effect=save)),
-            telemetry=SimpleNamespace(warning=AsyncMock()),
-            use_xml=False,
-            is_cancelled=False,
-            workflow_id="workflow-1",
-        )
-        observer = Mock()
-        observer.resolve_capture_hashes.return_value = SimpleNamespace(
-            visual_hash="f" * 16,
-            xml_hash="xml-after",
-            interaction_hash="interaction-after",
-        )
-        observer.build_screen_state.return_value = self.__screen_state()
-        observer.observe = AsyncMock(return_value=None)
-        comparator = Mock()
-        comparator.compare.return_value = ScreenDiff(
-            phash_distance=16,
-            xml_hash_changed=True,
-            interaction_hash_changed=True,
-            activity_changed=False,
-        )
-        post_action = PostAction(
+        context = MagicMock()
+        context.workflow_id = "wf-1"
+        context.artifact_pipeline = pipeline
+        context.agent_state.step_count = 4
+        context.storage = MagicMock()
+        context.storage.backend = None
+        return PostAction(
             context=context,
-            observer=observer,
-            comparator=comparator,
+            observer=MagicMock(),
+            comparator=MagicMock(),
         )
 
-        _, _, _, _, artifacts = await post_action.observe(
-            context=self.__execution_context(
-                capture=self.__capture(storage_id="cloud://before-screen"),
+    def test_before_carries_capture_bytes_and_uri(self) -> None:
+        """
+        The before artifact carries the raw capture bytes verbatim and the URI stamped by PerceptionService.
+        """
+
+        post_action = self.__post_action(pipeline=None)
+        capture = _capture(image=b"pre-png", screenshot_uri="gs://b/before.png")
+
+        artifact = post_action._PostAction__build_before(capture=capture, visual_hash="h-b")  # type: ignore[attr-defined]
+
+        self.assertIsNotNone(artifact)
+        self.assertEqual(artifact.image, b"pre-png")
+        self.assertEqual(artifact.uri, "gs://b/before.png")
+
+    def test_before_returns_none_when_capture_is_empty(self) -> None:
+        """
+        A capture without bytes or URI yields no before artifact.
+        """
+
+        post_action = self.__post_action(pipeline=None)
+        capture = _capture(image=b"", screenshot_uri=None)
+
+        artifact = post_action._PostAction__build_before(capture=capture)  # type: ignore[attr-defined]
+
+        self.assertIsNone(artifact)
+
+    def test_annotated_carries_annotated_bytes_and_uri(self) -> None:
+        """
+        The annotated artifact carries the annotated bytes rendered by HierarchyService and the matching URI.
+        """
+
+        post_action = self.__post_action(pipeline=None)
+        capture = _capture(annotated_image=b"anno-png", annotated_uri="gs://b/anno.png")
+
+        artifact = post_action._PostAction__build_annotated(capture=capture, visual_hash="h-a")  # type: ignore[attr-defined]
+
+        self.assertIsNotNone(artifact)
+        self.assertEqual(artifact.image, b"anno-png")
+        self.assertEqual(artifact.uri, "gs://b/anno.png")
+
+    def test_annotated_returns_none_when_annotation_missing(self) -> None:
+        """
+        Without annotated bytes or URI, no annotated artifact is produced.
+        """
+
+        post_action = self.__post_action(pipeline=None)
+        capture = _capture(annotated_image=None, annotated_uri=None)
+
+        artifact = post_action._PostAction__build_annotated(capture=capture)  # type: ignore[attr-defined]
+
+        self.assertIsNone(artifact)
+
+    async def test_after_emits_screenshot_payload_and_stamps_uri(self) -> None:
+        """
+        The pipeline receives one ScreenshotPayload record and the staged path becomes the after artifact URI.
+        """
+
+        pipeline = MagicMock()
+        pipeline.emit = AsyncMock(return_value=Path("/efs/staged/after.png"))
+        post_action = self.__post_action(pipeline=pipeline)
+        capture = _capture(image=b"post-png")
+
+        artifact = await post_action._PostAction__build_after(  # type: ignore[attr-defined]
+            capture=capture,
+            package_name="com.test.app",
+            visual_hash="hash-after",
+        )
+
+        self.assertIsNotNone(artifact)
+        self.assertEqual(artifact.image, b"post-png")
+        self.assertEqual(artifact.uri, "/efs/staged/after.png")
+        pipeline.emit.assert_awaited_once()
+        record = pipeline.emit.call_args.kwargs["record"]
+        self.assertIsInstance(record, ArtifactRecord)
+        self.assertIsInstance(record.payload, ScreenshotPayload)
+        self.assertEqual(record.session_id, "wf-1")
+        self.assertEqual(record.package_name, "com.test.app")
+        self.assertEqual(record.step_number, 4)
+
+    async def test_after_carries_bytes_when_pipeline_missing(self) -> None:
+        """
+        Pipeline-less embeddings still produce an after artifact carrying the capture bytes with no URI.
+        """
+
+        post_action = self.__post_action(pipeline=None)
+        capture = _capture(image=b"post-png")
+
+        artifact = await post_action._PostAction__build_after(  # type: ignore[attr-defined]
+            capture=capture,
+            package_name="com.test.app",
+            visual_hash=None,
+        )
+
+        self.assertIsNotNone(artifact)
+        self.assertEqual(artifact.image, b"post-png")
+        self.assertIsNone(artifact.uri)
+
+    async def test_after_carries_bytes_when_pipeline_emit_raises(self) -> None:
+        """
+        A pipeline emit failure is swallowed; the after artifact still ships capture bytes for the report.
+        """
+
+        pipeline = MagicMock()
+        pipeline.emit = AsyncMock(side_effect=RuntimeError("pipeline broker down"))
+        post_action = self.__post_action(pipeline=pipeline)
+        capture = _capture(image=b"post-png")
+
+        artifact = await post_action._PostAction__build_after(  # type: ignore[attr-defined]
+            capture=capture,
+            package_name="com.test.app",
+            visual_hash=None,
+        )
+
+        self.assertIsNotNone(artifact)
+        self.assertEqual(artifact.image, b"post-png")
+        self.assertIsNone(artifact.uri)
+        pipeline.emit.assert_awaited_once()
+
+    async def test_after_returns_none_when_capture_has_no_bytes(self) -> None:
+        """
+        A capture that yielded no bytes produces no after artifact.
+        """
+
+        post_action = self.__post_action(pipeline=None)
+        capture = _capture(image=b"")
+
+        artifact = await post_action._PostAction__build_after(  # type: ignore[attr-defined]
+            capture=capture,
+            package_name="com.test.app",
+            visual_hash=None,
+        )
+
+        self.assertIsNone(artifact)
+
+
+class PostActionBuildTracesTest(unittest.TestCase):
+    """
+    Pin __build_traces; maps executor emissions to bundle artifacts while preserving order and dropping
+    emissions whose pipeline staging produced no handle.
+    """
+
+    @staticmethod
+    def __post_action() -> PostAction:
+        """
+        Build a PostAction with mocked dependencies sufficient for invoking __build_traces directly.
+        """
+
+        context = MagicMock()
+        context.workflow_id = "wf-1"
+        context.storage = MagicMock()
+        context.storage.backend = None
+        return PostAction(
+            context=context,
+            observer=MagicMock(),
+            comparator=MagicMock(),
+        )
+
+    @staticmethod
+    def __capture() -> ScreenCapture:
+        """
+        Build a ScreenCapture fixture shared by every trace event emitted in this class.
+        """
+
+        return ScreenCapture(
+            width=1080,
+            height=2400,
+            activity="com.test.app",
+            image=b"png",
+            timestamp=1_714_200_000_000,
+        )
+
+    def test_no_emissions_returns_none(self) -> None:
+        """
+        An empty emissions tuple means no trace path ran; the helper returns None to mark the absent slot.
+        """
+
+        result = self.__post_action()._PostAction__build_traces(emissions=())  # type: ignore[attr-defined]
+
+        self.assertIsNone(result)
+
+    def test_emissions_map_to_ordered_artifact_tuple(self) -> None:
+        """
+        Each emission with a staged artifact contributes one entry to the returned tuple in original order.
+        """
+
+        emissions = (
+            TraceEmission(
+                event=ActionTraceEvent(
+                    capture=self.__capture(),
+                    coords=(10, 20),
+                    attempt=ActionTraceAttempt(index=0),
+                ),
+                artifact=ScreenArtifact(uri="cdn://trace-0"),
+            ),
+            TraceEmission(
+                event=ActionTraceEvent(
+                    capture=self.__capture(),
+                    coords=(30, 40),
+                    attempt=ActionTraceAttempt(index=1),
+                ),
+                artifact=ScreenArtifact(uri="cdn://trace-1"),
             ),
         )
 
-        self.assertIsNotNone(artifacts)
-        assert artifacts is not None
-        self.assertIsNotNone(artifacts.screen)
-        assert artifacts.screen is not None
-        self.assertIsNotNone(artifacts.screen.before)
-        self.assertIsNotNone(artifacts.screen.after)
-        assert artifacts.screen.before is not None
-        assert artifacts.screen.after is not None
-        self.assertEqual(artifacts.screen.before.uri, "cloud://before-screen")
-        self.assertEqual(artifacts.screen.after.uri, "cloud://after-screen")
-        self.assertEqual(saved_metadata["category"], "screenshot")
-        self.assertEqual(saved_metadata["phase"], "post_action")
-        self.assertEqual(saved_metadata["session_id"], "workflow-1")
-        self.assertEqual(saved_metadata["step_number"], 7)
+        result = self.__post_action()._PostAction__build_traces(emissions=emissions)  # type: ignore[attr-defined]
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual([artifact.uri for artifact in result], ["cdn://trace-0", "cdn://trace-1"])
+
+    def test_emissions_without_artifact_are_dropped(self) -> None:
+        """
+        Emissions whose pipeline staging returned no handle drop out so consumers iterate only on real artifacts.
+        """
+
+        emissions = (
+            TraceEmission(
+                event=ActionTraceEvent(capture=self.__capture(), coords=(10, 20)),
+                artifact=ScreenArtifact(uri="cdn://trace-0"),
+            ),
+            TraceEmission(
+                event=ActionTraceEvent(capture=self.__capture(), coords=(30, 40)),
+                artifact=None,
+            ),
+        )
+
+        result = self.__post_action()._PostAction__build_traces(emissions=emissions)  # type: ignore[attr-defined]
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].uri, "cdn://trace-0")
+
+    def test_all_emissions_without_artifact_yield_empty_tuple(self) -> None:
+        """
+        When the trace path ran but every emission failed to stage, the helper returns an empty tuple, not None.
+        Caller distinguishes "ran-empty" from "never-ran" by tuple-vs-None.
+        """
+
+        emissions = (
+            TraceEmission(
+                event=ActionTraceEvent(capture=self.__capture(), coords=(10, 20)),
+                artifact=None,
+            ),
+        )
+
+        result = self.__post_action()._PostAction__build_traces(emissions=emissions)  # type: ignore[attr-defined]
+
+        self.assertEqual(result, ())

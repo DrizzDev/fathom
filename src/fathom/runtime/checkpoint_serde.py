@@ -51,6 +51,7 @@ class CheckpointSerdeFactory:
         ("fathom.schemas.results", "ActionTraceEvent"),
         ("fathom.schemas.results", "ExecutionResult"),
         ("fathom.schemas.results", "PlanResult"),
+        ("fathom.schemas.results", "TraceEmission"),
         ("fathom.schemas.screens", "ScreenCapture"),
         ("fathom.schemas.screens", "ScreenChangeRegion"),
         ("fathom.schemas.screens", "ScreenDiff"),

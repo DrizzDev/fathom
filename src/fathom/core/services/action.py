@@ -5,9 +5,12 @@ import io
 import json
 import time
 from logging import getLogger
-from typing import Awaitable, Callable, Dict, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional, Set, Tuple
 
 from PIL import Image
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from fathom.adapters.swipe import DeviceSwipeDispatcher
 from fathom.adapters.vision import PhashVisualHasher
@@ -19,6 +22,7 @@ from fathom.constants import (
     ActionType,
 )
 from fathom.constants.execution import MAX_ACTION_WAIT_MS
+from fathom.constants.observability import ExecutorEvent
 from fathom.constants.observation import KeyboardVisibility
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
@@ -37,6 +41,7 @@ from fathom.schemas.actions import (
     InputContext,
 )
 from fathom.schemas.artifact import ArtifactRecord, TracePayload
+from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.execution import PrimitiveExecution
 from fathom.schemas.observation import KeyboardObservation, ScreenObservation
@@ -44,6 +49,7 @@ from fathom.schemas.results import (
     ActionResult,
     ActionTraceEvent,
     ExecutionResult,
+    TraceEmission,
 )
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
@@ -231,7 +237,7 @@ class ActionExecutor:
                     error=primitive.action.error,
                     success=primitive.action.success,
                     swipe_execution=primitive.swipe_execution,
-                    trace_events=primitive.trace_events,
+                    trace_emissions=primitive.trace_emissions,
                 ),
                 primitive.coords,
             )
@@ -559,7 +565,7 @@ class ActionExecutor:
         result = await self.__device.tap(x=x, y=y)
         trace_event = ActionTraceEvent(capture=pre_capture, coords=coords)
 
-        await self.__emit_trace_event(
+        emission = await self.__stage_trace(
             step=step,
             action=action,
             event=trace_event,
@@ -571,7 +577,7 @@ class ActionExecutor:
             action=result,
             coords=coords,
             swipe_execution=None,
-            trace_events=(trace_event,),
+            trace_emissions=(emission,),
         )
 
     async def __execute_type(
@@ -621,7 +627,7 @@ class ActionExecutor:
             )
 
         trace_event = ActionTraceEvent(capture=pre_capture, coords=coords)
-        await self.__emit_trace_event(
+        emission = await self.__stage_trace(
             step=step,
             action=action,
             event=trace_event,
@@ -633,7 +639,7 @@ class ActionExecutor:
             action=result,
             coords=coords,
             swipe_execution=None,
-            trace_events=(trace_event,),
+            trace_emissions=(emission,),
         )
 
     async def __focus_and_type(
@@ -835,7 +841,7 @@ class ActionExecutor:
             original_before=original_before,
         )
 
-        trace_events = await self.__emit_attempt_traces(
+        trace_emissions = await self.__stage_attempt_traces(
             step=step,
             action=action,
             execution=execution,
@@ -852,7 +858,7 @@ class ActionExecutor:
             coords=coords,
             action=action_result,
             swipe_execution=execution,
-            trace_events=trace_events,
+            trace_emissions=trace_emissions,
         )
 
     def __hash_capture(self, *, capture: ScreenCapture) -> str:
@@ -923,7 +929,7 @@ class ActionExecutor:
         )
         return ActionResult(success=False, duration=0, error=error)
 
-    async def __emit_attempt_traces(
+    async def __stage_attempt_traces(
         self,
         *,
         step: Step,
@@ -932,27 +938,28 @@ class ActionExecutor:
         package_name: str,
         execution: SwipeExecution,
         pre_capture: ScreenCapture,
-    ) -> Tuple[ActionTraceEvent, ...]:
+    ) -> Tuple[TraceEmission, ...]:
         """
-        Emit one ArtifactRecord trace event per dispatched attempt and return them in order.
+        Stage one trace artifact per dispatched swipe attempt and return their emission envelopes.
         """
 
-        events: list[ActionTraceEvent] = []
+        emissions: list[TraceEmission] = []
+
         for attempt in execution.attempts:
             event = ActionTraceEvent(
                 capture=pre_capture,
                 coords=attempt.path.to_coordinates(),
             )
-            await self.__emit_trace_event(
+            emission = await self.__stage_trace(
                 step=step,
                 event=event,
                 action=action,
                 session_id=session_id,
                 package_name=package_name,
             )
-            events.append(event)
+            emissions.append(emission)
 
-        return tuple(events)
+        return tuple(emissions)
 
     @staticmethod
     def __log_gesture_path(
@@ -1021,7 +1028,7 @@ class ActionExecutor:
         long_press_result = await self.__device.swipe(x1=x, y1=y, x2=x, y2=y, duration=1000)
         trace_event = ActionTraceEvent(capture=pre_capture, coords=coords)
 
-        await self.__emit_trace_event(
+        emission = await self.__stage_trace(
             step=step,
             action=action,
             event=trace_event,
@@ -1032,10 +1039,10 @@ class ActionExecutor:
             coords=coords,
             swipe_execution=None,
             action=long_press_result,
-            trace_events=(trace_event,),
+            trace_emissions=(emission,),
         )
 
-    async def __emit_trace_event(
+    async def __stage_trace(
         self,
         *,
         step: Step,
@@ -1043,15 +1050,26 @@ class ActionExecutor:
         session_id: str,
         package_name: str,
         event: ActionTraceEvent,
-    ) -> None:
+    ) -> TraceEmission:
         """
-        Emit one concrete trace artifact immediately after device dispatch.
+        Stage one rendered trace artifact through the pipeline and return its emission envelope.
+        The emission carries the source event plus an optional ScreenArtifact when staging produced a URI.
         """
 
         if self.__pipeline is None:
-            return
+            logger.warning(
+                "Trace staging skipped; pipeline not wired",
+                extra={
+                    "workflow.id": session_id,
+                    "step.number": step.step_number,
+                    "component": "core.services.action",
+                    "event": ExecutorEvent.TRACE_SKIPPED.value,
+                    "attempt.index": event.attempt.index if event.attempt is not None else None,
+                },
+            )
+            return TraceEmission(event=event, artifact=None)
 
-        await self.__pipeline.emit(
+        staged_path = await self.__pipeline.emit(
             record=ArtifactRecord(
                 session_id=session_id,
                 package_name=package_name,
@@ -1064,6 +1082,39 @@ class ActionExecutor:
                     attempt=event.attempt,
                 ),
             ),
+        )
+
+        artifact = self.__build_trace_artifact(event=event, staged_path=staged_path)
+        logger.info(
+            "Trace artifact staged",
+            extra={
+                "component": "core.services.action",
+                "workflow.id": session_id,
+                "step.number": step.step_number,
+                "coordinates": list(event.coords),
+                "event": ExecutorEvent.TRACE_STAGED.value,
+                "attempt.index": event.attempt.index if event.attempt is not None else None,
+                "trace.uri": artifact.uri if artifact is not None else None,
+            },
+        )
+        return TraceEmission(event=event, artifact=artifact)
+
+    @staticmethod
+    def __build_trace_artifact(
+        *, event: ActionTraceEvent, staged_path: Optional[Path]
+    ) -> Optional[ScreenArtifact]:
+        """
+        Build a ScreenArtifact handle for a staged trace, or None when no path was produced.
+        """
+
+        if staged_path is None:
+            return None
+
+        return ScreenArtifact(
+            uri=str(staged_path),
+            width=event.capture.width,
+            height=event.capture.height,
+            captured_at=event.capture.timestamp,
         )
 
     async def drain_background_tasks(self) -> None:

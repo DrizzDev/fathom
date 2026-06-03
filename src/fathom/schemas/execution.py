@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.schemas.localization import LocalizationResult
-from fathom.schemas.results import ActionResult, ActionTraceEvent, ExecutionResult
+from fathom.schemas.results import ActionResult, ExecutionResult, TraceEmission
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step
 from fathom.schemas.swipe import SwipeExecution
@@ -58,7 +58,7 @@ class PrimitiveExecution(BaseModel):
         default=None,
         description="Bounded swipe execution outcome when the primitive went through the swipe coordinator.",
     )
-    trace_events: tuple[ActionTraceEvent, ...] = Field(
+    trace_emissions: tuple[TraceEmission, ...] = Field(
         default_factory=tuple,
-        description="Trace events emitted by the primitive execution path.",
+        description="Trace emissions captured by the primitive execution path; one per dispatched attempt.",
     )

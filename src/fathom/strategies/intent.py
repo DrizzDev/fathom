@@ -135,6 +135,7 @@ class IntentStrategy:
             artifact_pipeline=assembly.pipeline(
                 path_manager=path_manager,
                 storage_configuration=configuration.storage,
+                artifact_configuration=configuration.artifact,
             ),
         )
 
@@ -142,8 +143,7 @@ class IntentStrategy:
         interrupt_nodes = [] if not signal.supports_interruption() else [NodeName.EXECUTE.value]
 
         # Defer checkpointer + graph construction to execute(), because the checkpointer
-        # is owned by a CheckpointStore async context manager that must stay open for the
-        # duration of the graph run.
+        # is owned by a CheckpointStore async context manager that must stay open for the duration of the graph run.
         self.__graph_builder = builder
         self.__interrupt_nodes = interrupt_nodes
         self.__checkpoint_store = checkpoint_store or self.__build_default_checkpoint_store(

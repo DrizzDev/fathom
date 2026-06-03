@@ -66,7 +66,7 @@ class ArtifactCategory:
         return cls.__MAPPING[kind]
 
 
-class QueueConfig(BaseModel):
+class QueueConfiguration(BaseModel):
     """
     Bounded-queue tuning for :class:`ArtifactPipeline` background work.
     """
@@ -85,16 +85,38 @@ class QueueConfig(BaseModel):
     )
 
 
-class PipelineConfig(BaseModel):
+class LocalArtifactPolicy(BaseModel):
+    """
+    Retention policy for the EFS-staged artifact copy.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    cleanup: bool = Field(
+        default=True,
+        description=(
+            "Whether the pipeline unlinks the EFS-staged file after the sink "
+            "acknowledges cleanup. Hosts that read the staged path after the "
+            "sink ack (e.g. enricher's healing bridge queueing a delayed "
+            "Cloudinary upload) disable this and own a fallback sweep."
+        ),
+    )
+
+
+class PipelineConfiguration(BaseModel):
     """
     Top-level :class:`ArtifactPipeline` configuration aggregate.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    queue: QueueConfig = Field(
-        default_factory=QueueConfig,
+    queue: QueueConfiguration = Field(
+        default_factory=QueueConfiguration,
         description="Bounded-queue tuning for the background upload worker.",
+    )
+    local: LocalArtifactPolicy = Field(
+        default_factory=LocalArtifactPolicy,
+        description="Retention policy for the EFS-staged artifact copy.",
     )
 
 

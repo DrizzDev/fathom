@@ -11,6 +11,7 @@ from fathom.constants.platform import (
     IOSAutomationBackend,
 )
 from fathom.constants.storage import StorageBackend
+from fathom.schemas.artifact import PipelineConfiguration
 from fathom.schemas.checkpoint import (
     CheckpointConfiguration,
     SqliteCheckpointConfiguration,
@@ -566,7 +567,9 @@ class FathomConfiguration(BaseModel):
     llm: LLMConfiguration = Field(default_factory=LLMConfiguration)
     device: DeviceConfiguration = Field(default_factory=DeviceConfiguration)
     engine: ExecutionConfiguration = Field(default_factory=ExecutionConfiguration)
+
     storage: StorageConfiguration = Field(default_factory=StorageConfiguration)
+    artifact: PipelineConfiguration = Field(default_factory=PipelineConfiguration)
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
 
     intent: IntentConfiguration = Field(default_factory=IntentConfiguration)

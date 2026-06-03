@@ -41,8 +41,8 @@ class HierarchyService:
         self,
         storage: Optional[StoragePort] = None,
         *,
-        configuration: Optional[PerceptionConfiguration] = None,
         pipeline: Optional[ArtifactPipeline] = None,
+        configuration: Optional[PerceptionConfiguration] = None,
     ) -> None:
         """
         Initialize hierarchy service.
@@ -144,12 +144,15 @@ class HierarchyService:
             capture = self.__build_capture(
                 original=screen, annotated_image=annotated_image, xml_path=xml_path
             )
-            await self.__emit_annotated_artifact(
-                capture=capture,
-                session_id=session_id,
-                package_name=package_name,
-                step_number=step_number,
-            )
+            if (
+                staged_path := await self.__emit_annotated_artifact(
+                    capture=capture,
+                    session_id=session_id,
+                    step_number=step_number,
+                    package_name=package_name,
+                )
+            ) is not None:
+                capture = capture.model_copy(update={"annotated_uri": str(staged_path)})
 
             duration = (datetime.now() - start_time).total_seconds()
             label_map_count = sum(
@@ -158,19 +161,19 @@ class HierarchyService:
             logger.info(
                 "Hierarchy stage count",
                 extra={
-                    "component": "core.services.hierarchy",
-                    "event": "hierarchy.stage.count",
                     "stage": "summary",
+                    "duration": round(duration, 3),
                     "count": len(labeled_elements),
+                    "event": "hierarchy.stage.count",
                     "label_map_size": label_map_count,
-                    "duration_s": round(duration, 3),
+                    "component": "core.services.hierarchy",
                 },
             )
 
             return HierarchyProcessingResult(
                 annotated_capture=capture,
-                labeled_elements=labeled_elements,
                 label_map=extraction.label_map,
+                labeled_elements=labeled_elements,
             )
 
         except Exception as exception:
@@ -221,15 +224,17 @@ class HierarchyService:
         session_id: str,
         package_name: str,
         step_number: int,
-    ) -> None:
+    ) -> Optional[Path]:
         """
-        Hand the XML-annotated capture to the artifact pipeline for durable upload.
+        Hand the XML-annotated capture to the artifact pipeline and surface
+        the staged path so the caller can stamp ``annotated_uri`` on the
+        returned capture.
         """
 
         if self.__pipeline is None:
-            return
+            return None
 
-        await self.__pipeline.emit(
+        return await self.__pipeline.emit(
             record=ArtifactRecord(
                 session_id=session_id,
                 package_name=package_name,
@@ -289,4 +294,6 @@ class HierarchyService:
             timestamp=original.timestamp,
             annotated_image=annotated_image,
             xml_content=original.xml_content,
+            annotated_uri=original.annotated_uri,
+            screenshot_uri=original.screenshot_uri,
         )

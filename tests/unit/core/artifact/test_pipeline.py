@@ -24,8 +24,9 @@ from fathom.schemas.artifact import (
     ArtifactMetadata,
     ArtifactReceipt,
     ArtifactRecord,
+    LocalArtifactPolicy,
     OcrRawPayload,
-    PipelineConfig,
+    PipelineConfiguration,
     ScreenshotPayload,
 )
 from fathom.schemas.screens import ScreenCapture
@@ -151,14 +152,14 @@ def _pipeline(
     *,
     tmp: Path,
     sink: ArtifactSinkPort,
-    config: PipelineConfig | None = None,
+    config: PipelineConfiguration | None = None,
 ) -> ArtifactPipeline:
     """
     Wire a :class:`ArtifactPipeline` for tests with a passthrough renderer.
     """
 
     return ArtifactPipeline(
-        config=config or PipelineConfig(),
+        config=config or PipelineConfiguration(),
         renderers={
             ArtifactKind.SCREENSHOT: PassthroughRenderer(kind=ArtifactKind.SCREENSHOT),
             ArtifactKind.PERCEPTION: PerceptionRenderer(),
@@ -204,7 +205,7 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp)
             sink = _RecordingSink(cleanup=False)
             pipeline = ArtifactPipeline(
-                config=PipelineConfig(),
+                config=PipelineConfiguration(),
                 renderers={
                     ArtifactKind.OCR_RAW: PassthroughRenderer(kind=ArtifactKind.OCR_RAW),
                 },
@@ -238,7 +239,7 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp)
             sink = _RecordingSink(cleanup=False)
             pipeline = ArtifactPipeline(
-                config=PipelineConfig(),
+                config=PipelineConfiguration(),
                 renderers={},
                 sink=sink,
                 path_manager=_path_manager(tmp=tmp_path),
@@ -261,7 +262,7 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp)
             sink = _RecordingSink(cleanup=False)
             pipeline = ArtifactPipeline(
-                config=PipelineConfig(),
+                config=PipelineConfiguration(),
                 renderers={ArtifactKind.SCREENSHOT: _BadRenderer()},
                 sink=sink,
                 path_manager=_path_manager(tmp=tmp_path),
@@ -324,6 +325,55 @@ class ArtifactPipelineCleanupTest(unittest.IsolatedAsyncioTestCase):
             await pipeline.drain()
 
             self.assertTrue(list(tmp_path.rglob("*.png")))
+
+
+class ArtifactPipelineLocalRetentionPolicyTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins the ``PipelineConfiguration.local.cleanup`` gate.
+
+    Hosts that consume the EFS-staged path after the sink ack disable
+    this flag and own a fallback sweep; the pipeline must skip the
+    unlink whenever the policy is off, even if the sink reports
+    cleanup-safe.
+    """
+
+    async def test_policy_off_keeps_efs_when_sink_acks_cleanup(self) -> None:
+        """
+        Policy disabled overrides a sink receipt's ``local_cleanup=True``.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sink = _RecordingSink(cleanup=True)
+            pipeline = _pipeline(
+                tmp=tmp_path,
+                sink=sink,
+                config=PipelineConfiguration(local=LocalArtifactPolicy(cleanup=False)),
+            )
+
+            await pipeline.emit(record=_record())
+            await pipeline.drain()
+
+            self.assertTrue(list(tmp_path.rglob("*.png")))
+
+    async def test_policy_on_preserves_default_cleanup(self) -> None:
+        """
+        Default policy ``cleanup=True`` still unlinks on a clean sink ack.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sink = _RecordingSink(cleanup=True)
+            pipeline = _pipeline(
+                tmp=tmp_path,
+                sink=sink,
+                config=PipelineConfiguration(local=LocalArtifactPolicy(cleanup=True)),
+            )
+
+            await pipeline.emit(record=_record())
+            await pipeline.drain()
+
+            self.assertEqual(list(tmp_path.rglob("*.png")), [])
 
 
 class ArtifactPipelineCloudIntegrationTest(unittest.IsolatedAsyncioTestCase):

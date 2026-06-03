@@ -365,6 +365,14 @@ class ScreenCapture(BaseModel):
         default=None,
         description="Computed screen state (may be populated lazily)",
     )
+    screenshot_uri: Optional[str] = Field(
+        default=None,
+        description="External handle returned when the raw screenshot was published for the step",
+    )
+    annotated_uri: Optional[str] = Field(
+        default=None,
+        description="External handle returned when the annotated screenshot was published",
+    )
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional capture metadata"
     )

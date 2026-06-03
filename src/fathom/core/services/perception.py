@@ -4,7 +4,7 @@ import asyncio  # noqa: TC003 — used at runtime for Task types
 import hashlib
 import time
 from logging import getLogger
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.screen import INTERACTION_TEXT_PREVIEW_LENGTH, ZERO_HASH
@@ -17,6 +17,9 @@ from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = getLogger(__name__)
 
@@ -37,12 +40,13 @@ class PerceptionService:
         visual_hash_engine: Optional[VisualHashEngine] = None,
     ) -> None:
         self.__storage = storage
-        self.__perception = perception
-        self.__hierarchy_signature_builder = hierarchy_signature_builder
-
-        self.__session_id = session_id
         self.__pipeline = pipeline
+        self.__perception = perception
+        self.__session_id = session_id
+
+        self.__hierarchy_signature_builder = hierarchy_signature_builder
         self.__visual_hash_engine = visual_hash_engine or VisualHashEngine()
+
         self.__background_tasks: set[asyncio.Task[Any]] = set()
 
     async def perceive(
@@ -52,39 +56,28 @@ class PerceptionService:
         step_number: int,
     ) -> ScreenCapture:
         """
-        Capture current screen state via DevicePort and emit it through the artifact pipeline.
-
-        The pipeline owns the EFS staging file end-to-end (write, async
-        upload, retry, unlink); its filesystem path is an
-        Infrastructure-internal detail and must never leak into
-        Application-visible metadata. Downstream consumers operate on
-        ``capture.image`` bytes, so the race between background
-        upload-then-unlink and a downstream read is structurally
-        impossible.
+        Capture the current screen, emit it through the artifact pipeline,
+        and stamp the staged path onto ``capture.screenshot_uri`` as the
+        canonical handle. Downstream services read the URI off the typed field; raw bytes ride on ``capture.image``.
         """
 
-        effective_session_id = session_id or self.__session_id
-
-        if not effective_session_id:
+        if not (effective_session_id := session_id or self.__session_id):
             raise ConfigurationError("session_id must be provided either in __init__ or perceive()")
 
         capture = await self.__perception.capture()
 
-        storage_id = await self.__emit_screenshot_artifact(
+        staged_path = await self.__emit_screenshot_artifact(
             capture=capture,
             session_id=effective_session_id,
             step_number=step_number,
         )
-        if storage_id is None:
+        if staged_path is None:
             return await self.__fallback_persist_capture(
                 capture=capture,
                 session_id=effective_session_id,
             )
 
-        metadata = dict(capture.metadata)
-        metadata["storage_id"] = storage_id
-
-        return capture.model_copy(update={"metadata": metadata})
+        return capture.model_copy(update={"screenshot_uri": str(staged_path)})
 
     async def __emit_screenshot_artifact(
         self,
@@ -92,40 +85,40 @@ class PerceptionService:
         capture: ScreenCapture,
         session_id: str,
         step_number: int,
-    ) -> Optional[str]:
+    ) -> Optional[Path]:
         """
-        Hand the raw screen capture to the artifact pipeline and surface
-        a stable pipeline artifact identifier for downstream metadata enrichment.
+        Stage the screen capture through the artifact pipeline and return the EFS-staged path.
+        Caller stamps the path onto ``capture.screenshot_uri`` so downstream consumers read bytes from local disk.
         """
 
         if self.__pipeline is None:
             return None
 
-        record = ArtifactRecord(
-            session_id=session_id,
-            step_number=step_number,
-            package_name=capture.activity,
-            created=int(time.time() * 1000),
-            payload=ScreenshotPayload(capture=capture),
+        staged_path = await self.__pipeline.emit(
+            record=ArtifactRecord(
+                session_id=session_id,
+                step_number=step_number,
+                package_name=capture.activity,
+                created=int(time.time() * 1000),
+                payload=ScreenshotPayload(capture=capture),
+            ),
         )
 
-        receipt = await self.__pipeline.emit_with_receipt(record=record)
-        if receipt is None or not receipt.identifier:
+        if staged_path is None:
             return None
 
         logger.info(
-            "Pre-action screenshot artifact persisted",
+            "Pre-action screenshot artifact staged",
             extra={
                 "component": "perception.service",
                 "session.id": session_id,
                 "step.number": step_number,
                 "artifact.kind": "screenshot",
-                "artifact.identifier": receipt.identifier,
-                "event": "perception.screenshot.persisted",
-                "artifact.local_cleanup": receipt.local_cleanup,
+                "artifact.path": str(staged_path),
+                "event": "perception.screenshot.staged",
             },
         )
-        return receipt.identifier
+        return staged_path
 
     async def __fallback_persist_capture(
         self,
@@ -140,8 +133,8 @@ class PerceptionService:
         exists so unit tests and minimal embeddings that omit the
         pipeline still produce a usable storage identifier. The remote
         identifier returned by :class:`StoragePort` is a stable handle
-        and may safely live on capture metadata; no local filesystem
-        path is exposed.
+        and is stamped onto ``screenshot_uri`` (a typed field) so
+        downstream consumers do not need to peek into ``metadata``.
         """
 
         storage_id = await self.__storage.save(
@@ -158,7 +151,12 @@ class PerceptionService:
         metadata = dict(capture.metadata)
         metadata["storage_id"] = storage_id
 
-        return capture.model_copy(update={"metadata": metadata})
+        return capture.model_copy(
+            update={
+                "metadata": metadata,
+                "screenshot_uri": storage_id,
+            }
+        )
 
     def compute_visual_hash(self, *, capture: ScreenCapture) -> str:
         """

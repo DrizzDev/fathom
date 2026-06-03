@@ -25,3 +25,12 @@ class SwipeEvent(StrEnum):
     GESTURE_ADAPTED = "swipe.gesture.adapted"
     GESTURE_REJECTED = "swipe.gesture.rejected"
     GESTURE_DISPATCHED = "swipe.gesture.dispatched"
+
+
+class ExecutorEvent(StrEnum):
+    """
+    Structured log event names emitted by the action executor at staging boundaries.
+    """
+
+    TRACE_STAGED = "executor.trace.staged"
+    TRACE_SKIPPED = "executor.trace.skipped"

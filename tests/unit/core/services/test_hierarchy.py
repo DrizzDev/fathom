@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import List
 from unittest.mock import patch
 
@@ -17,7 +18,7 @@ from fathom.schemas.artifact import (
     ArtifactKind,
     ArtifactMetadata,
     ArtifactReceipt,
-    PipelineConfig,
+    PipelineConfiguration,
 )
 from fathom.schemas.screens import ScreenCapture
 
@@ -66,6 +67,10 @@ class _UnlinkingSink(ArtifactSinkPort):
     """
 
     def __init__(self) -> None:
+        """
+        Initialise the record of persisted metadata observations.
+        """
+
         self.persisted: List[ArtifactMetadata] = []
 
     async def persist(
@@ -74,6 +79,11 @@ class _UnlinkingSink(ArtifactSinkPort):
         metadata: ArtifactMetadata,
         content: bytes,
     ) -> ArtifactReceipt:
+        """
+        Record the persist invocation and report ``local_cleanup=True``
+        so the pipeline's unlink path runs synchronously in the test.
+        """
+
         self.persisted.append(metadata)
         return ArtifactReceipt(identifier="local-sink", local_cleanup=True)
 
@@ -119,8 +129,6 @@ class HierarchyServiceBytesContractTest(unittest.IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self) -> None:
-        from tempfile import TemporaryDirectory
-
         self.__tmp = TemporaryDirectory()
         self.__path_manager = _FakePathManager(root=Path(self.__tmp.name))
 
@@ -138,7 +146,7 @@ class HierarchyServiceBytesContractTest(unittest.IsolatedAsyncioTestCase):
             ArtifactKind.ANNOTATED: PassthroughRenderer(kind=ArtifactKind.ANNOTATED),
         }
         return ArtifactPipeline(
-            config=PipelineConfig(),
+            config=PipelineConfiguration(),
             renderers=renderers,
             sink=sink,
             path_manager=self.__path_manager,  # type: ignore[arg-type]
@@ -294,6 +302,57 @@ class HierarchyServiceBytesContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.labeled_elements, [])
         self.assertEqual(result.label_map, {})
         self.assertIs(result.annotated_capture, original)
+
+    async def test_process_xml_and_screen_stamps_annotated_uri_from_pipeline_staged_path(
+        self,
+    ) -> None:
+        """
+        After the annotated bytes land in the pipeline, the staged path
+        is stamped onto the annotated capture's typed ``annotated_uri``
+        field as the canonical handle.
+        """
+
+        sink = _UnlinkingSink()
+        pipeline = self.__build_pipeline(sink=sink)
+        service = HierarchyService(pipeline=pipeline)
+
+        result = await service.process_xml_and_screen(
+            _ANDROID_HIERARCHY,
+            _capture(),
+            session_id="session-1",
+            package_name="com.test.app",
+            step_number=4,
+            path_manager=self.__path_manager,  # type: ignore[arg-type]
+            action_type=ActionType.TAP,
+        )
+        await pipeline.drain()
+
+        self.assertIsNotNone(result.annotated_capture)
+        self.assertIsNotNone(result.annotated_capture.annotated_uri)
+        self.assertTrue(str(result.annotated_capture.annotated_uri).endswith(".png"))
+
+    async def test_process_xml_and_screen_leaves_annotated_uri_unset_when_pipeline_missing(
+        self,
+    ) -> None:
+        """
+        Without an artifact pipeline the annotated bytes still flow
+        through, but ``annotated_uri`` stays unset because no staged
+        path exists to stamp.
+        """
+
+        service = HierarchyService()
+
+        result = await service.process_xml_and_screen(
+            _ANDROID_HIERARCHY,
+            _capture(),
+            session_id="session-1",
+            package_name="com.test.app",
+            step_number=4,
+            path_manager=self.__path_manager,  # type: ignore[arg-type]
+            action_type=ActionType.TAP,
+        )
+
+        self.assertIsNone(result.annotated_capture.annotated_uri)
 
     async def test_process_xml_and_screen_short_circuits_on_undersized_xml(self) -> None:
         """

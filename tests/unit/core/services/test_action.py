@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -614,6 +615,79 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
         pipeline.emit.assert_awaited_once()
         record = pipeline.emit.await_args.kwargs["record"]
         self.assertNotEqual(record.payload.coords, ())
+
+    async def test_tap_propagates_pipeline_staged_path_as_trace_emission_uri(self) -> None:
+        """
+        The staged path returned by pipeline.emit() must surface on TraceEmission.artifact.uri so the bundle
+        can carry the trace URI downstream to the caller alongside before/after/annotated.
+        """
+
+        device = FakeDevice()
+        pipeline = Mock()
+        pipeline.emit = AsyncMock(return_value=Path("/efs/staged/trace.png"))
+        executor = self.__build_executor(device, pipeline=pipeline)
+
+        action = Action(
+            action_type=ActionType.TAP,
+            target="x",
+            rationale="t",
+            confidence=1.0,
+            bounds=Bounds(
+                x=100,
+                y=200,
+                width=300,
+                height=120,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+        )
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertEqual(len(result.trace_emissions), 1)
+        emission = result.trace_emissions[0]
+        self.assertIsNotNone(emission.artifact)
+        assert emission.artifact is not None
+        self.assertEqual(emission.artifact.uri, "/efs/staged/trace.png")
+
+    async def test_tap_emission_artifact_is_none_when_pipeline_returns_no_path(self) -> None:
+        """
+        When pipeline.emit() returns None (un-wired or render failed) the emission keeps the event but its
+        artifact is None so downstream callers see the gesture occurred without a dereferenceable URI.
+        """
+
+        device = FakeDevice()
+        pipeline = Mock()
+        pipeline.emit = AsyncMock(return_value=None)
+        executor = self.__build_executor(device, pipeline=pipeline)
+
+        action = Action(
+            action_type=ActionType.TAP,
+            target="x",
+            rationale="t",
+            confidence=1.0,
+            bounds=Bounds(
+                x=100,
+                y=200,
+                width=300,
+                height=120,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+        )
+
+        result = await executor.act(
+            session_id="session__1",
+            package_name="com.test.app",
+            step=self.__build_step(action),
+            pre_capture=self.__build_capture(),
+        )
+
+        self.assertEqual(len(result.trace_emissions), 1)
+        self.assertIsNone(result.trace_emissions[0].artifact)
 
     @patch("fathom.core.services.action.asyncio.sleep", new_callable=AsyncMock)
     async def test_type_retry_waits_twice(self, mock_sleep: AsyncMock) -> None:

@@ -485,8 +485,10 @@ class ReferenceResolutionService:
             return axis
 
         kind = str(element.get("kind") or "").strip().lower()
+
         if kind == "carousel":
             return "horizontal"
+
         if kind in {"viewport", "list"}:
             return "vertical"
 
@@ -499,10 +501,13 @@ class ReferenceResolutionService:
         """
 
         source = str(element.get("source", "")).strip().lower()
+
         if source == CoordinateSource.OCR.value:
             return CoordinateSource.OCR
+
         if source in {CoordinateSource.VIEWPORT.value, "cv", "icon", "vision"}:
             return CoordinateSource.VIEWPORT
+
         return CoordinateSource.XML
 
     @staticmethod

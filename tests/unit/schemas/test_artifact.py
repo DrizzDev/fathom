@@ -11,8 +11,10 @@ from fathom.schemas.artifact import (
     ArtifactKind,
     ArtifactReceipt,
     ArtifactRecord,
+    LocalArtifactPolicy,
     OcrRawPayload,
     PerceptionPayload,
+    PipelineConfiguration,
     ScreenshotPayload,
     TracePayload,
 )
@@ -195,3 +197,35 @@ class ArtifactReceiptTest(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             ArtifactReceipt(identifier="x", local_cleanup=False, surprise=True)  # type: ignore[call-arg]
+
+
+class LocalArtifactPolicyTest(unittest.TestCase):
+    """
+    Pins the EFS retention policy schema and its embedding into PipelineConfiguration.
+    """
+
+    def test_default_cleanup_is_enabled(self) -> None:
+        """
+        Crawler and other consumers without explicit overrides must keep today's cleanup behaviour.
+        """
+
+        self.assertTrue(LocalArtifactPolicy().cleanup)
+        self.assertTrue(PipelineConfiguration().local.cleanup)
+
+    def test_cleanup_can_be_disabled_for_host_managed_retention(self) -> None:
+        """
+        Hosts that own a fallback sweep disable the policy explicitly.
+        """
+
+        policy = LocalArtifactPolicy(cleanup=False)
+
+        self.assertFalse(policy.cleanup)
+        self.assertFalse(PipelineConfiguration(local=policy).local.cleanup)
+
+    def test_policy_rejects_extra_fields(self) -> None:
+        """
+        ``extra='forbid'`` keeps the boundary tight.
+        """
+
+        with self.assertRaises(ValidationError):
+            LocalArtifactPolicy(cleanup=True, surprise=1)  # type: ignore[call-arg]

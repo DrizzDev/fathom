@@ -42,7 +42,7 @@ from fathom.interfaces.localization import TargetLocalizerPort
 from fathom.interfaces.ocr import OcrPort
 from fathom.interfaces.overlay import OverlayDetectorPort
 from fathom.interfaces.storage import StoragePort
-from fathom.schemas.artifact import ArtifactKind, PipelineConfig
+from fathom.schemas.artifact import ArtifactKind, PipelineConfiguration
 from fathom.schemas.configuration import StorageConfiguration
 from fathom.schemas.localization import EnsembleMemberName
 from fathom.schemas.observation import ElementSource
@@ -58,26 +58,26 @@ class AdapterAssembly:
 
     Lives in :mod:`fathom.runtime` because it imports from ``adapters/``
     and is the only place those concrete classes meet — domain code in
-    ``core/`` depends only on the ports under ``interfaces/`` and never
-    on the adapters directly.
+    ``core/`` depends only on the ports under ``interfaces/`` and never on the adapters directly.
     """
 
     def __init__(
         self,
         *,
-        loader: RuntimeConfigLoader,
         llm: LLMPort,
         workflow_id: str,
+        loader: RuntimeConfigLoader,
         journal_directory: Optional[Path] = None,
     ) -> None:
         """
         Initialize the assembly with config loader, LLM port, run id, and journal output dir.
         """
 
-        self.__loader = loader
         self.__llm = llm
+        self.__loader = loader
         self.__workflow_id = workflow_id
         self.__journal_directory = journal_directory
+
         self.__perception = loader.perception()
         self.__localization = loader.localization()
 
@@ -122,9 +122,9 @@ class AdapterAssembly:
             "Document AI OCR adapter assembled",
             extra={
                 **self.__log_context(),
-                "event": "factory.ocr.document_ai.assembled",
-                "processor": credentials.processor,
                 "location": credentials.location,
+                "processor": credentials.processor,
+                "event": "factory.ocr.document_ai.assembled",
             },
         )
         return DocumentAiOcr(configuration=configuration, workflow_id=self.__workflow_id)
@@ -135,8 +135,7 @@ class AdapterAssembly:
 
         The template registry ships empty until a future entry populates
         it, so a "default-on" icon detector adds latency without value.
-        Gated behind :attr:`IconConfiguration.enabled` so the original
-        XML+LLM flow runs without it.
+        Gated behind :attr:`IconConfiguration.enabled` so the original XML+LLM flow runs without it.
         """
 
         if not self.__perception.icon.enabled:
@@ -163,6 +162,7 @@ class AdapterAssembly:
             return EnsembleLocalizerService(workflow_id=self.__workflow_id)
 
         members: List[TargetLocalizerPort] = []
+
         for name in self.__localization.members:
             if (member := self.__build_member(name=name)) is not None:
                 members.append(member)
@@ -172,8 +172,8 @@ class AdapterAssembly:
             extra={
                 **self.__log_context(),
                 "event": "factory.ensemble.assembled",
-                "members.configured": [m.value for m in self.__localization.members],
                 "members.active": [member.name for member in members],
+                "members.configured": [member.value for member in self.__localization.members],
             },
         )
         return EnsembleLocalizerService(
@@ -186,6 +186,7 @@ class AdapterAssembly:
         *,
         path_manager: SharedPathManager,
         storage_configuration: StorageConfiguration,
+        artifact_configuration: Optional[PipelineConfiguration] = None,
     ) -> ArtifactPipeline:
         """
         Build the artifact pipeline wired against the configured backends.
@@ -201,35 +202,35 @@ class AdapterAssembly:
         drawer = BoxDrawer()
 
         renderers: Dict[ArtifactKind, ArtifactRendererPort] = {
+            ArtifactKind.HIERARCHY_XML: PassthroughRenderer(kind=ArtifactKind.HIERARCHY_XML),
             ArtifactKind.SCREENSHOT: PassthroughRenderer(kind=ArtifactKind.SCREENSHOT),
             ArtifactKind.ANNOTATED: PassthroughRenderer(kind=ArtifactKind.ANNOTATED),
-            ArtifactKind.HIERARCHY_XML: PassthroughRenderer(kind=ArtifactKind.HIERARCHY_XML),
             ArtifactKind.OCR_RAW: PassthroughRenderer(kind=ArtifactKind.OCR_RAW),
             ArtifactKind.SCRIPT: PassthroughRenderer(kind=ArtifactKind.SCRIPT),
             ArtifactKind.PERCEPTION: PerceptionRenderer(drawer=drawer),
             ArtifactKind.OCR_PERCEPTION: SourceFilteredPerceptionRenderer(
-                kind=ArtifactKind.OCR_PERCEPTION,
-                source=ElementSource.OCR,
                 drawer=drawer,
+                source=ElementSource.OCR,
+                kind=ArtifactKind.OCR_PERCEPTION,
             ),
             ArtifactKind.CV_PERCEPTION: SourceFilteredPerceptionRenderer(
-                kind=ArtifactKind.CV_PERCEPTION,
-                source=ElementSource.CV,
                 drawer=drawer,
+                source=ElementSource.CV,
+                kind=ArtifactKind.CV_PERCEPTION,
             ),
             ArtifactKind.ICON_PERCEPTION: SourceFilteredPerceptionRenderer(
-                kind=ArtifactKind.ICON_PERCEPTION,
-                source=ElementSource.ICON,
                 drawer=drawer,
+                source=ElementSource.ICON,
+                kind=ArtifactKind.ICON_PERCEPTION,
             ),
             ArtifactKind.VISION_PERCEPTION: SourceFilteredPerceptionRenderer(
-                kind=ArtifactKind.VISION_PERCEPTION,
-                source=ElementSource.VISION,
                 drawer=drawer,
+                source=ElementSource.VISION,
+                kind=ArtifactKind.VISION_PERCEPTION,
             ),
-            ArtifactKind.OVERLAY_PERCEPTION: OverlayPerceptionRenderer(drawer=drawer),
             ArtifactKind.TRACE: TraceRenderer(),
             ArtifactKind.VERIFICATION: VerificationRenderer(),
+            ArtifactKind.OVERLAY_PERCEPTION: OverlayPerceptionRenderer(drawer=drawer),
         }
 
         logger.info(
@@ -241,11 +242,11 @@ class AdapterAssembly:
             },
         )
         return ArtifactPipeline(
-            config=PipelineConfig(),
-            renderers=renderers,
             sink=sink,
+            renderers=renderers,
             path_manager=path_manager,
             workflow_id=self.__workflow_id,
+            config=artifact_configuration or PipelineConfiguration(),
         )
 
     def journal(self) -> RuntimeJournalPort:
@@ -257,12 +258,13 @@ class AdapterAssembly:
             return NoopRuntimeJournal()
 
         path = self.__journal_directory / f"{self.__workflow_id}.jsonl"
+
         logger.info(
             "Local JSONL runtime journal assembled",
             extra={
                 **self.__log_context(),
-                "event": "factory.journal.jsonl.assembled",
                 "journal.path": str(path),
+                "event": "factory.journal.jsonl.assembled",
             },
         )
         return JsonRuntimeJournal(path=path)
@@ -271,27 +273,28 @@ class AdapterAssembly:
         """
         Build one ensemble member by its typed name.
 
-        ``DOCUMENT_AI_LAYOUT`` is a downstream consumer of OCR tokens —
-        it has nothing to localize against when OCR is disabled or
-        unconfigured. Drop it at composition so the ensemble never
-        carries a member that can only ever return ``None``.
+        ``DOCUMENT_AI_LAYOUT`` is a downstream consumer of OCR tokens — it has nothing to localize against when OCR is disabled or un-configured.
+        Drop it at composition so the ensemble never carries a member that can only ever return ``None``.
         """
 
         if name == EnsembleMemberName.GEMINI_VISION:
             return GeminiVisionLocalizer(llm=self.__llm, workflow_id=self.__workflow_id)
+
         if name == EnsembleMemberName.DOCUMENT_AI_LAYOUT:
             if not self.__perception.ocr.enabled or self.__perception.ocr.document_ai is None:
                 logger.info(
                     "Skipping document_ai_layout ensemble member: OCR not configured",
                     extra={
                         **self.__log_context(),
+                        "reason": "ocr.disabled.or.un-configured",
                         "event": "factory.ensemble.member.skipped",
                         "member": EnsembleMemberName.DOCUMENT_AI_LAYOUT.value,
-                        "reason": "ocr.disabled.or.unconfigured",
                     },
                 )
                 return None
+
             return DocumentAiLayoutLocalizer(workflow_id=self.__workflow_id)
+
         return None
 
     def __resolve_sink(self, *, configuration: StorageConfiguration) -> ArtifactSinkPort:
