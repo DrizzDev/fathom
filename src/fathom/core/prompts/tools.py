@@ -119,7 +119,16 @@ class ToolRegistry:
                             },
                             "bbox": {
                                 "type": "OBJECT",
-                                "description": "Bounding box for the action target. x,y are TOP-LEFT and width,height extend right/down. Use normalized values (0-1000) only for visually estimated regions; use coordinate_system='pixel' when copying manifest or screenshot-space bounds.",
+                                "description": (
+                                    "Bounding box for the action target. x,y are TOP-LEFT and "
+                                    "width,height extend right/down. The rectangle MUST hug the "
+                                    "visible glyph or icon pixels of the specific interactive "
+                                    "control only — exclude surrounding card, shadow, halo, and "
+                                    "empty padding. The runtime taps the GEOMETRIC CENTER of this "
+                                    "rectangle. Use normalized values (0-1000) for visually "
+                                    "estimated regions; set coordinate_system='pixel' when "
+                                    "copying manifest or screenshot-space bounds."
+                                ),
                                 "properties": {
                                     "x": {"type": "INTEGER"},
                                     "y": {"type": "INTEGER"},
@@ -135,12 +144,14 @@ class ToolRegistry:
                             "target_name": {
                                 "type": "STRING",
                                 "description": (
-                                    "Descriptive, user-facing name of the element "
-                                    "(e.g., 'Search box', 'Add to cart button', "
-                                    "'Settings tab'). MUST NOT be a generic placeholder "
-                                    "like 'element', 'UI Element', 'button', 'label', "
-                                    "or 'icon'. Always choose the text a human tester "
-                                    "would naturally say when referring to this element."
+                                    "EXACT visible text or glyph label of the target control as "
+                                    "rendered on screen, verbatim. Do NOT append interaction-kind "
+                                    "suffixes such as 'button', 'icon', 'tab', 'link', 'chip', "
+                                    "'cell', or 'row' — action_type already carries the "
+                                    "interaction. For unlabelled icons, describe the visible "
+                                    "symbol concisely (e.g., 'Magnifying glass'). MUST NOT be a "
+                                    "generic placeholder like 'element', 'UI Element', 'button', "
+                                    "'label', or 'icon' alone."
                                 ),
                             },
                             "text_to_type": {

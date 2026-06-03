@@ -5,7 +5,16 @@ from typing import Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from fathom.constants.localization import LocalizationGridScale
+from fathom.constants.localization import (
+    LAYOUT_MAX_HEIGHT_RATIO,
+    LAYOUT_MAX_HORIZONTAL_GAP_RATIO,
+    LAYOUT_MAX_ROW_OFFSET_RATIO,
+    LAYOUT_MIN_TOKEN_CONFIDENCE,
+    LAYOUT_MIN_WORD_LENGTH_FOR_FUZZ,
+    LAYOUT_PER_WORD_SIMILARITY_THRESHOLD,
+    LAYOUT_PHRASE_MATCH_THRESHOLD,
+    LocalizationGridScale,
+)
 from fathom.schemas.actions import Bounds
 from fathom.schemas.observation import ElementSource, PerceivedElement
 
@@ -66,9 +75,81 @@ class VisionLocalizationPayload(BaseModel):
 
         if self.refused:
             return self
+
         if self.x1 >= self.x2 or self.y1 >= self.y2:
             raise ValueError("axes inverted or zero area")
+
         return self
+
+
+class PhraseMatch(BaseModel):
+    """
+    Merged phrase formed by clustering adjacent OCR tokens for a single match.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bounds: Bounds = Field(description="Union pixel bounds of the clustered tokens.")
+    text: str = Field(min_length=1, description="Concatenated phrase text from the cluster.")
+
+    score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Match score between the target and this phrase on the unit interval.",
+    )
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Lowest provider-reported token confidence across the cluster.",
+    )
+    token_count: int = Field(gt=0, description="Number of source tokens merged into this phrase.")
+
+
+class LayoutMatchConfiguration(BaseModel):
+    """
+    Tunable's governing phrase clustering and target matching in the layout localizer.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    phrase_match_threshold: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=LAYOUT_PHRASE_MATCH_THRESHOLD,
+        description="Minimum F1 score required to accept a phrase as a match.",
+    )
+    per_word_similarity_threshold: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=LAYOUT_PER_WORD_SIMILARITY_THRESHOLD,
+        description="Per-word similarity ratio that treats two words as equivalent.",
+    )
+    min_word_length_for_fuzz: int = Field(
+        gt=0,
+        default=LAYOUT_MIN_WORD_LENGTH_FOR_FUZZ,
+        description="Words shorter than this require exact equality instead of fuzzy similarity.",
+    )
+    min_token_confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=LAYOUT_MIN_TOKEN_CONFIDENCE,
+        description="Tokens below this provider confidence are excluded from clustering.",
+    )
+    max_row_offset_ratio: float = Field(
+        gt=0.0,
+        default=LAYOUT_MAX_ROW_OFFSET_RATIO,
+        description="Maximum y-centre offset relative to token height for same-row clustering.",
+    )
+    max_horizontal_gap_ratio: float = Field(
+        gt=0.0,
+        default=LAYOUT_MAX_HORIZONTAL_GAP_RATIO,
+        description="Maximum horizontal gap relative to token height for adjacency.",
+    )
+    max_height_ratio: float = Field(
+        gt=1.0,
+        default=LAYOUT_MAX_HEIGHT_RATIO,
+        description="Maximum height ratio between adjacent tokens to remain in the same cluster.",
+    )
 
 
 class Point(BaseModel):

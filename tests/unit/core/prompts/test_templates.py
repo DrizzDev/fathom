@@ -120,3 +120,23 @@ class ToolGuidanceTest(unittest.TestCase):
         self.assertIn("ask the user instead of guessing", hitl_guidance)
         self.assertIn("deliberate recovery action", autonomous_guidance)
         self.assertNotIn("ask the user instead of guessing", autonomous_guidance)
+
+    def test_bbox_precision_directive_is_present(self) -> None:
+        """
+        Guidance must teach the planner to hug visible glyph extent in bbox.
+        """
+
+        guidance = build_tool_guidance(tools=self.__autonomous_tools())
+
+        self.assertIn("BBOX PRECISION", guidance)
+        self.assertIn("hug the visible glyph", guidance)
+
+    def test_target_name_must_not_contain_interaction_kind(self) -> None:
+        """
+        Guidance forbids interaction-kind suffixes in target_name.
+        """
+
+        guidance = build_tool_guidance(tools=self.__autonomous_tools())
+
+        self.assertIn("EXACT visible text", guidance)
+        self.assertIn("Do NOT append interaction-kind suffixes", guidance)

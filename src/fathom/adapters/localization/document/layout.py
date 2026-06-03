@@ -3,11 +3,12 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Any, Dict, Optional
 
+from fathom.core.localization.matcher import OcrPhraseMatcher
 from fathom.interfaces.localization import TargetLocalizerPort
 from fathom.schemas.actions import Action
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.localization import LocalizationProposal
-from fathom.schemas.observation import ElementSource, PerceivedElement, ScreenObservation
+from fathom.schemas.observation import ElementSource, ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 
 logger = getLogger(__name__)
@@ -15,15 +16,21 @@ logger = getLogger(__name__)
 
 class DocumentAiLayoutLocalizer(TargetLocalizerPort):
     """
-    Ensemble member that resolves targets against OCR tokens already in the observation.
+    Ensemble member that resolves targets against OCR phrases in the observation.
     """
 
-    def __init__(self, *, workflow_id: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        *,
+        workflow_id: Optional[str] = None,
+        matcher: Optional[OcrPhraseMatcher] = None,
+    ) -> None:
         """
-        Initialize the layout localizer with optional run context.
+        Initialize the layout localizer with optional run context and matcher.
         """
 
         self.__workflow_id = workflow_id
+        self.__matcher = matcher if matcher is not None else OcrPhraseMatcher()
 
     @property
     def name(self) -> str:
@@ -42,21 +49,17 @@ class DocumentAiLayoutLocalizer(TargetLocalizerPort):
         observation: ScreenObservation,
     ) -> Optional[LocalizationProposal]:
         """
-        Return a proposal when an OCR token's text matches the action target.
+        Return a proposal when an OCR phrase's text matches the action target.
         """
 
         _ = budget
 
-        if not (target := self.__target_text(action=action)):
+        target = self.__target_text(action=action)
+        if not target:
             return None
 
         context = self.__log_context(target=target, activity=capture.activity)
 
-        # Surface the implicit OCR dependency explicitly. When no OCR-sourced
-        # elements survived perception (OCR disabled, timed out, or returned
-        # nothing) the localizer cannot contribute — log a structured
-        # degradation event so the ensemble disagreement signal is
-        # explainable instead of silently mysterious.
         if not self.__has_ocr_elements(observation=observation):
             logger.info(
                 "Layout localizer degraded: observation carries no OCR elements",
@@ -64,82 +67,53 @@ class DocumentAiLayoutLocalizer(TargetLocalizerPort):
             )
             return None
 
-        if (match := self.__match_token(target=target, observation=observation)) is None:
+        match = self.__matcher.find_best_match(target=target, elements=observation.elements)
+        if match is None:
             logger.info(
-                "Layout localizer found no OCR match",
+                "Layout localizer found no phrase match above threshold",
                 extra={**context, "event": "localizer.layout.miss"},
             )
             return None
 
         logger.info(
-            "Layout localizer matched OCR token",
+            "Layout localizer matched OCR phrase",
             extra={
                 **context,
                 "event": "localizer.layout.match",
-                "confidence": match.confidence,
+                "match.text": match.text,
+                "match.score": match.score,
+                "match.confidence": match.confidence,
+                "match.token_count": match.token_count,
             },
         )
         return LocalizationProposal(
+            source=self.name,
             bounds=match.bounds,
             confidence=match.confidence,
-            source=self.name,
-            rationale=f"OCR token '{match.text}' matched action target.",
+            rationale=f"OCR phrase '{match.text}' matched action target.",
         )
 
     @staticmethod
     def __has_ocr_elements(*, observation: ScreenObservation) -> bool:
         """
         Return whether the observation carries any OCR-sourced element.
-
-        The layout localizer matches strictly against OCR tokens. When
-        OCR is disabled, times out, or returns no usable tokens, the
-        observation will have zero OCR elements — the localizer must
-        surface that degradation rather than masquerading as a normal miss.
         """
 
         return any(element.source == ElementSource.OCR for element in observation.elements)
 
-    def __match_token(
-        self,
-        *,
-        target: str,
-        observation: ScreenObservation,
-    ) -> Optional[PerceivedElement]:
-        """
-        Return the first OCR-sourced element whose normalized text equals the target.
-        """
-
-        for element in observation.elements:
-            if element.source != ElementSource.OCR:
-                continue
-            if not element.text:
-                continue
-            if self.__normalize(value=element.text) == target:
-                return element
-        return None
-
-    def __target_text(self, *, action: Action) -> str:
-        """
-        Return the normalized semantic target text from the action.
-        """
-
-        return self.__normalize(
-            value=(
-                action.natural_language_target
-                or action.export_target
-                or action.script_target
-                or action.target
-                or ""
-            )
-        )
-
     @staticmethod
-    def __normalize(*, value: str) -> str:
+    def __target_text(*, action: Action) -> str:
         """
-        Normalize text for exact matching against OCR token surface forms.
+        Return the semantic target text from the action.
         """
 
-        return " ".join(value.strip().lower().split())
+        return (
+            action.natural_language_target
+            or action.export_target
+            or action.script_target
+            or action.target
+            or ""
+        ).strip()
 
     def __log_context(self, *, target: str, activity: str) -> Dict[str, Any]:
         """

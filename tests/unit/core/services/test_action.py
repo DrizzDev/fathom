@@ -526,8 +526,7 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(device.tap_calls), 1)
-        # y=250 shifted up by 20% tap bias (250 - 20 = 230)
-        self.assertEqual(device.tap_calls[0], (300, 230))
+        self.assertEqual(device.tap_calls[0], (300, 250))
         self.assertEqual(len(device.type_calls), 1)
 
     @patch("fathom.core.services.action.asyncio.sleep", new_callable=AsyncMock)

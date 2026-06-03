@@ -118,8 +118,9 @@ _EXECUTE_UI_GUIDANCE = (
     "  * Evaluate is_valid and validation_reason for EVERY action.\n"
     "  * confidence is REQUIRED for EVERY action.\n"
     "  * If action is risky/ambiguous, set is_valid=False and explain.\n"
-    "  * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').\n"
-    "    DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.\n"
+    "  * BBOX PRECISION: bbox MUST hug the visible glyph or icon pixels of the SPECIFIC interactive control. Exclude surrounding card, shadow, halo, and empty padding. The runtime taps the geometric center of bbox.\n"
+    "  * COMMAND NAMING: 'target_name' and 'natural_language_target' MUST be the EXACT visible text or glyph label of the control, verbatim (e.g., 'Submit', 'Add to cart', 'HSR Layout'). Do NOT append interaction-kind suffixes such as 'button', 'icon', 'tab', 'link', 'chip', 'cell', 'row' — 'action_type' already names the interaction.\n"
+    "    DO NOT use raw IDs like 'edt_cvv' or 'button_23'. For unlabelled icons describe the visible symbol concisely (e.g., 'Magnifying glass').\n"
     "  * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.\n"
     "    Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}\n"
     '    ALWAYS use this to "tick off" requirements from the user\'s goal as you complete them.'

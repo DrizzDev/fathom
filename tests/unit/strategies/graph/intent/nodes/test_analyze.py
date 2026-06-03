@@ -81,3 +81,70 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
             provider.persistence.last[CommonStateKey.COMPLETION_REASON],
             CompletionReason.FAILED.value,
         )
+
+
+class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins that the planner receives capture dims, not stale device dims.
+    """
+
+    async def test_planner_receives_capture_dims_not_device_dims(self) -> None:
+        """
+        Landscape capture must produce landscape screen dims in the planner call.
+        """
+
+        agent_state = AgentState(
+            intent="open the app",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
+        planner = Mock()
+        planner.plan_step = AsyncMock(
+            return_value=SimpleNamespace(
+                action=None,
+                metrics=None,
+                rationale="",
+                step=None,
+                is_complete=False,
+                reasoning="",
+                ux_label="",
+                use_xml_grounding=True,
+            ),
+        )
+        provider = SimpleNamespace(
+            is_cancelled=AsyncMock(return_value=False),
+            persistence=_Persistence(),
+            hitl=SimpleNamespace(prompt=AsyncMock()),
+            context=SimpleNamespace(
+                workflow_id="run-test",
+                max_steps=10,
+                agent_state=agent_state,
+                context_manager=SimpleNamespace(get_user_guidance=Mock(return_value=[])),
+                device=SimpleNamespace(get_dimensions=AsyncMock(return_value=(1080, 2340))),
+                signal=SimpleNamespace(supports_interruption=Mock(return_value=False)),
+                configuration=SimpleNamespace(intent=SimpleNamespace(prompt_user_if_stuck=False)),
+                planner=planner,
+                use_xml=True,
+                reasoner=Mock(),
+                metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
+            ),
+        )
+        node = AnalyzeNode(provider=provider)  # type: ignore[arg-type]
+
+        await node.run(
+            state={
+                CommonStateKey.CAPTURE: ScreenCapture(
+                    width=2340,
+                    height=1080,
+                    activity="app",
+                    image=b"png",
+                    timestamp=1,
+                )
+            }
+        )
+
+        call = planner.plan_step.await_args
+        self.assertIsNotNone(call)
+        kwargs = call.kwargs
+        self.assertEqual(kwargs["screen_width"], 2340)
+        self.assertEqual(kwargs["screen_height"], 1080)

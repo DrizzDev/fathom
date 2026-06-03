@@ -35,7 +35,6 @@ from fathom.schemas.actions import (
     Action,
     Bounds,
     CoordinateSource,
-    CoordinateSystem,
     ExecutionRegion,
     GesturePath,
     InputContext,
@@ -284,32 +283,6 @@ class ActionExecutor:
             )
             return logical_width, logical_height
 
-    def __apply_tap_bias(
-        self, x: int, y: int, action: Action, converter: CoordinateConverter
-    ) -> Tuple[int, int]:
-        """
-        Apply upward coordinate bias for VLM-detected bounds.
-        Skips adjustment for label-snapped pixel bounds which are already grounded.
-        """
-
-        if not action.bounds:
-            return x, y
-
-        # Label-snapped device-pixel bounds are already grounded to exact device coordinates.
-        is_label_snapped_pixel = (
-            bool(action.label_id) and action.bounds.system is CoordinateSystem.DEVICE_PIXEL
-        )
-
-        if is_label_snapped_pixel:
-            return x, y
-
-        # Apply 20% upward bias for VLM-detected bounds to account for bounding box imprecision
-        _, _, width_px, height_px = converter.to_pixels(bounds=action.bounds)
-        if height_px > 0:
-            y = max(0, y - max(2, int(height_px * 0.20)))
-
-        return x, y
-
     def __is_non_interactive_action(self, *, action: Action) -> bool:
         """
         Check whether action can be completed without device interaction.
@@ -555,7 +528,6 @@ class ActionExecutor:
 
         if action.bounds:
             x, y = converter.center_to_pixels(bounds=action.bounds)
-            x, y = self.__apply_tap_bias(x=x, y=y, action=action, converter=converter)
         else:
             x, y = width // 2, height // 2
 
@@ -603,7 +575,6 @@ class ActionExecutor:
             raise ExecutionError("Type action requires bounds for focus tap guard")
 
         x, y = converter.center_to_pixels(bounds=action.bounds)
-        x, y = self.__apply_tap_bias(x=x, y=y, action=action, converter=converter)
 
         coords = (x, y)
         context = action.input_context or InputContext()

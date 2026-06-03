@@ -24,6 +24,7 @@ from fathom.constants.perception import (
     MAX_ACTION_BOUND,
     OCR_MAXIMUM_TOKEN_LENGTH,
     OCR_TRIGGER_MANIFEST_TEXT_COVERAGE,
+    OCR_TRIGGER_MIN_TEXT_BEARING_ELEMENTS,
     OVERLAY_MINIMUM_COVERAGE_RATIO,
     SCROLL_CLASS_HINTS,
     VISUAL_CONTROL_CONFIDENCE,
@@ -210,7 +211,7 @@ class ScreenObservationService:
         ocr_task = None
         base = elements
 
-        if self.__manifest_text_coverage(elements=base) < OCR_TRIGGER_MANIFEST_TEXT_COVERAGE:
+        if self.__should_run_ocr(elements=base):
             ocr_task = asyncio.create_task(
                 self.__ocr_elements(
                     budget=budget,
@@ -435,7 +436,7 @@ class ScreenObservationService:
     @staticmethod
     def __manifest_text_coverage(*, elements: Tuple[PerceivedElement, ...]) -> float:
         """
-        Return the fraction of perceived elements that already carry visible text.
+        Return the fraction of perceived elements that already carry text labels.
         """
 
         if not elements:
@@ -443,6 +444,18 @@ class ScreenObservationService:
 
         with_text = sum(1 for element in elements if element.text)
         return with_text / len(elements)
+
+    @classmethod
+    def __should_run_ocr(cls, *, elements: Tuple[PerceivedElement, ...]) -> bool:
+        """
+        Decide whether OCR should run based on text-bearing density and absolute count.
+        """
+
+        text_bearing = sum(1 for element in elements if element.text)
+        if text_bearing < OCR_TRIGGER_MIN_TEXT_BEARING_ELEMENTS:
+            return True
+        coverage = cls.__manifest_text_coverage(elements=elements)
+        return coverage < OCR_TRIGGER_MANIFEST_TEXT_COVERAGE
 
     def __overlaps_existing(
         self,

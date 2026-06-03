@@ -10,7 +10,12 @@ from fathom.core.perception.observation import ScreenObservationService
 from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.artifact import OcrPerceptionPayload, OcrRawPayload, OverlayPerceptionPayload
 from fathom.schemas.budgets import PerceptionBudget
-from fathom.schemas.observation import ElementSource, OverlayObservation
+from fathom.schemas.observation import (
+    ElementRole,
+    ElementSource,
+    OverlayObservation,
+    PerceivedElement,
+)
 from fathom.schemas.ocr import OcrConfidence, OcrResult, OcrToken
 from fathom.schemas.perception import KeyboardConfiguration, PerceptionConfiguration
 from fathom.schemas.screens import ScreenCapture, ScreenHashBundle
@@ -718,3 +723,99 @@ class ScreenObservationServiceKeyboardProbeTest(unittest.IsolatedAsyncioTestCase
 
         device.detect_keyboard.assert_awaited_once()
         self.assertIs(observation.keyboard.visibility, KeyboardVisibility.UNKNOWN)
+
+
+class ScreenObservationServiceOcrTriggerTest(unittest.TestCase):
+    """
+    Pins the sparse-manifest gate that decides whether OCR enrichment runs.
+    """
+
+    @staticmethod
+    def __element(*, text: str, identifier: str) -> PerceivedElement:
+        """
+        Build one perceived element carrying the supplied text label.
+        """
+
+        return PerceivedElement(
+            parent=None,
+            tappable=True,
+            text=text,
+            label_id=identifier,
+            bounds=Bounds(
+                x=0,
+                y=0,
+                width=100,
+                height=40,
+                source=CoordinateSource.XML,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+            role=ElementRole.BUTTON,
+            source=ElementSource.XML,
+            identifier=identifier,
+            confidence=1.0,
+        )
+
+    def test_unity_collapse_single_textful_element_triggers_ocr(self) -> None:
+        """
+        A manifest with one generic textful container fires OCR despite a 1.0 ratio.
+        """
+
+        elements = (self.__element(text="Game view", identifier="xml_1"),)
+
+        decision = ScreenObservationService._ScreenObservationService__should_run_ocr(
+            elements=elements,
+        )
+
+        self.assertTrue(decision)
+
+    def test_two_textful_elements_still_below_count_floor(self) -> None:
+        """
+        Two text-bearing elements is still below the floor and must run OCR.
+        """
+
+        elements = (
+            self.__element(text="Home", identifier="xml_1"),
+            self.__element(text="Settings", identifier="xml_2"),
+        )
+
+        decision = ScreenObservationService._ScreenObservationService__should_run_ocr(
+            elements=elements,
+        )
+
+        self.assertTrue(decision)
+
+    def test_three_textful_elements_with_high_ratio_skips_ocr(self) -> None:
+        """
+        Once the count floor is satisfied and the ratio is high, OCR may skip.
+        """
+
+        elements = (
+            self.__element(text="Home", identifier="xml_1"),
+            self.__element(text="Settings", identifier="xml_2"),
+            self.__element(text="Profile", identifier="xml_3"),
+        )
+
+        decision = ScreenObservationService._ScreenObservationService__should_run_ocr(
+            elements=elements,
+        )
+
+        self.assertFalse(decision)
+
+    def test_low_ratio_manifest_still_triggers_ocr(self) -> None:
+        """
+        Even with enough text-bearing elements, a low ratio still triggers OCR.
+        """
+
+        textful = tuple(
+            self.__element(text=f"Item {index}", identifier=f"xml_{index}") for index in range(3)
+        )
+        empty = tuple(
+            self.__element(text="", identifier=f"xml_empty_{index}") for index in range(20)
+        )
+        elements = textful + empty
+
+        decision = ScreenObservationService._ScreenObservationService__should_run_ocr(
+            elements=elements,
+        )
+
+        self.assertTrue(decision)

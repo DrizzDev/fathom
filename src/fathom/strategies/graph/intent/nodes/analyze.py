@@ -137,8 +137,10 @@ class AnalyzeNode:
             if isinstance(raw_elements, dict):
                 elements = raw_elements
 
-            # Get Device Dimensions for Accurate Normalization (Strict)
-            width, height = await self.__provider.context.device.get_dimensions()
+            # Use orientation-corrected capture dims so the planner's prompt
+            # advertises the actual canvas the screenshot was rendered on, ot the device-cached portrait template.
+            width = capture.width
+            height = capture.height
 
             # Domain capabilities flow through AgentState;
             # only the configuration toggle for the stuck-loop HITL synthesis needs explicit threading.

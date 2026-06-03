@@ -96,3 +96,31 @@ class ToolRegistryTest(unittest.TestCase):
                 "validate_state",
             },
         )
+
+    def test_bbox_description_demands_tight_visible_extent(self) -> None:
+        """
+        The bbox schema description must instruct the planner to hug visible glyph extent only.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        execute_ui = next(
+            definition for definition in definitions if definition["name"] == "execute_ui"
+        )
+        bbox = execute_ui["parameters"]["properties"]["action"]["properties"]["bbox"]
+
+        self.assertIn("hug the visible glyph", bbox["description"])
+        self.assertIn("exclude surrounding card", bbox["description"].lower())
+
+    def test_target_name_rejects_interaction_kind_suffix(self) -> None:
+        """
+        The target_name description must tell the planner to drop interaction-kind suffixes.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        execute_ui = next(
+            definition for definition in definitions if definition["name"] == "execute_ui"
+        )
+        target_name = execute_ui["parameters"]["properties"]["action"]["properties"]["target_name"]
+
+        self.assertIn("EXACT visible text", target_name["description"])
+        self.assertIn("Do NOT append interaction-kind suffixes", target_name["description"])

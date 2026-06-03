@@ -79,7 +79,6 @@ class ExecuteActionConditionalWaitTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ExecuteAction.model_validate(
                 {
-                    
                     "confidence": 0.9,
                     "action_type": "wait",
                 },
@@ -95,12 +94,9 @@ class ExecuteActionConditionalWaitTest(unittest.TestCase):
                 action_type="tap",
                 target_name="Dismiss",
                 overlay_detected=True,
-                
             ),
         )
 
         self.assertTrue(action.is_conditional)
         self.assertEqual(action.conditional_type, "blocker")
         self.assertEqual(action.condition, "Overlay is visible")
-        
-        
