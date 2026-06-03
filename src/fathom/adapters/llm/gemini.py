@@ -251,10 +251,16 @@ class GeminiLLM(LLMPort):
                 else:
                     contents = [types.Content(role="user", parts=parts)]
 
-                response = await self.__client.aio.models.generate_content(
-                    config=config,
-                    model=self.__configuration.model,
-                    contents=contents,
+                # Per-attempt timeout — caps a single Gemini call so a slow tail latency event (preview-model variance, regional slow path)
+                # cannot stall the caller for the full HTTP timeout. On expiry, asyncio.TimeoutError is raised, classified as GENERIC
+                # by __build_exception_metadata, and the retry path engages with backoff + jitter just like any other transient failure.
+                response = await asyncio.wait_for(
+                    self.__client.aio.models.generate_content(
+                        config=config,
+                        contents=contents,
+                        model=self.__configuration.model,
+                    ),
+                    timeout=self.__configuration.timeout,
                 )
 
                 # Extract content

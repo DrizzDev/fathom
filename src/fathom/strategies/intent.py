@@ -157,17 +157,7 @@ class IntentStrategy:
                 script_data = await self.__graph_context.history.get_current_script(
                     intent=self.__intent
                 )
-                if script_data:
-                    await self.__graph_context.telemetry.info(
-                        script_data,
-                        type=FathomEvent.SCRIPT_GENERATED,
-                        step=self.__graph_context.agent_state.step_count,
-                    )
-                else:
-                    logger.warning(
-                        "Final script generation returned empty data; cannot publish "
-                        "SCRIPT_GENERATED event"
-                    )
+                await self.__emit_script_generated_event(script_data=script_data)
 
                 if self.__graph is None:
                     raise RuntimeError("Intent graph is not initialized")
@@ -228,6 +218,32 @@ class IntentStrategy:
                 await self.__graph_context.shutdown()
             except Exception as shutdown_error:
                 logger.warning(f"[intent-strategy] graph context shutdown failed: {shutdown_error}")
+
+    async def __emit_script_generated_event(self, *, script_data: Optional[str]) -> None:
+        """
+        Emit the SCRIPT_GENERATED terminal event unconditionally.
+
+        The exporter can legitimately return empty payloads (launcher-only runs,
+        structured-validation failures, no prior script.txt). The client still
+        needs a terminal signal that the run ended, so the event always fires —
+        an empty payload is flagged via the `is_empty` kwarg so consumers can
+        distinguish "no script" from "script with content."
+        """
+
+        is_empty_script = not bool(script_data and script_data.strip())
+
+        if is_empty_script:
+            logger.warning(
+                "Final script generation returned empty data; emitting empty "
+                "SCRIPT_GENERATED event so the client still receives a terminal signal"
+            )
+
+        await self.__graph_context.telemetry.info(
+            script_data or "",
+            is_empty=is_empty_script,
+            type=FathomEvent.SCRIPT_GENERATED,
+            step=self.__graph_context.agent_state.step_count,
+        )
 
     async def __cleanup_background_task(
         self,

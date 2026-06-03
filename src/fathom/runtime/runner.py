@@ -3,24 +3,28 @@ from __future__ import annotations
 import time
 import uuid
 from logging import getLogger
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from fathom.base.paths import SharedPathManager
 from fathom.constants import ContextScope, FathomEvent
+from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.state import CompletionReason
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
+from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.perception import PerceptionPort
+from fathom.interfaces.qualifier import IntentQualifierPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
+from fathom.schemas.qualification import QualificationVerdict
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
@@ -55,12 +59,21 @@ class FathomRunner:
         knowledge: KnowledgePort,
         telemetry: TelemetryPort,
         summarizer: SummarizationPort,
+        qualifier: IntentQualifierPort,
         path_manager: SharedPathManager,
         config: Optional[FathomConfiguration] = None,
         realignment: Optional[RealignmentPolicy] = None,
+        owned_resources: Optional[List[LLMPort]] = None,
     ) -> None:
         """
         Initialize runner with all configured ports.
+
+        owned_resources: optional list of LLM ports the runner takes ownership
+        of for cleanup purposes. Used by SDK callers that construct the runner
+        via FathomBuilder with .with_assembly(...) — the builder creates a
+        dedicated qualifier LLM internally and hands it to the runner so the
+        caller doesn't have to track it separately. Temporal / CLI callers use
+        RunnerComposition at the composition root instead and pass nothing here.
         """
 
         self.__llm = llm
@@ -73,10 +86,12 @@ class FathomRunner:
         self.__signal = signal
         self.__storage = storage
         self.__telemetry = telemetry
+        self.__qualifier = qualifier
         self.__summarizer = summarizer
         self.__path_manager = path_manager
         self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
+        self.__owned_resources: List[LLMPort] = list(owned_resources or [])
 
         # Wire core components
         self.__engine = ExecutionEngine(
@@ -150,24 +165,23 @@ class FathomRunner:
         if hasattr(telemetry_with_identity, "update_identity"):
             telemetry_with_identity.update_identity(identity=workflow_id)
 
-        # Use provided package name or fetch from device
-        if not package_name:
-            package_name = await self.__device.get_current_package()
-
-        if self.__device.configuration:
-            device_serial = self.__device.configuration.identifier
-        else:
-            device_serial = None
-
         await self.__telemetry.info(
             "Starting intent workflow",
             intent=intent,
             max_steps=max_steps,
             workflow_id=workflow_id,
-            package_name=package_name,
-            device_serial=device_serial,
             context_scope=context_scope,
         )
+
+        rejection = await self.__qualify_or_reject(
+            intent=intent, workflow_id=workflow_id, start_time=start_time
+        )
+        if rejection is not None:
+            return rejection
+
+        # Read device state only after the gate has allowed the run.
+        if not package_name:
+            package_name = await self.__device.get_current_package()
 
         # Initialize context namespace
         namespace = (
@@ -185,7 +199,6 @@ class FathomRunner:
             intent=intent,
             llm=self.__llm,
             device=self.__device,
-            perception=self.__perception,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
@@ -193,8 +206,9 @@ class FathomRunner:
             package_name=package_name,
             telemetry=self.__telemetry,
             configuration=self.__config,
-            path_manager=self.__path_manager,
             summarizer=self.__summarizer,
+            perception=self.__perception,
+            path_manager=self.__path_manager,
             realignment=realignment or self.__realignment,
             max_steps=max_steps or self.__config.intent.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
@@ -450,6 +464,16 @@ class FathomRunner:
         except Exception as exception:
             logger.warning(f"[FathomRunner] llm cleanup failed: {exception}")
 
+        # 2b. Owned resources — dedicated LLMs (e.g. qualifier LLM) that the
+        # SDK builder path handed over for cleanup. Temporal / CLI callers pass
+        # nothing here because they use RunnerComposition.resources at the
+        # composition root; the list is empty in that case.
+        for resource in self.__owned_resources:
+            try:
+                await resource.cleanup()
+            except Exception as exception:
+                logger.warning(f"[FathomRunner] owned resource cleanup failed: {exception}")
+
         # 3. Device — close HTTP client (ADB remote, iOS remote)
         if hasattr(self.__device, "close"):
             try:
@@ -472,6 +496,149 @@ class FathomRunner:
                 logger.warning(f"[FathomRunner] storage close failed: {exception}")
 
         logger.info("[FathomRunner] cleanup completed")
+
+    async def __qualify_or_reject(
+        self,
+        *,
+        intent: str,
+        workflow_id: str,
+        start_time: float,
+    ) -> Optional[IntentResult]:
+        """
+        Qualify the intent before any device interaction.
+
+        A rejected intent must never touch the device — package lookup, ADB round-trips, anything.
+        Returns a populated IntentResult when the gate blocks the run; returns None when the run is allowed to proceed.
+        """
+
+        logger.info(
+            "[FathomRunner] Qualifying intent before device interaction",
+            extra={"workflow_id": workflow_id, "intent_length": len(intent or "")},
+        )
+
+        qualifier_started_at = time.perf_counter()
+        verdict = await self.__qualifier.qualify(intent=intent)
+
+        qualifier_latency = time.perf_counter() - qualifier_started_at
+
+        gate_policy = QualificationGatePolicy(configuration=self.__config.qualifier)
+        blocked = gate_policy.should_block(verdict=verdict)
+
+        verdict_log_extra: Dict[str, Any] = {
+            "blocked": blocked,
+            "workflow_id": workflow_id,
+            "label": verdict.label.value,
+            "latency": qualifier_latency,
+            "confidence": verdict.confidence,
+            "category": verdict.rationale.category.value,
+        }
+        if verdict.rationale.category == RationaleCategory.QUALIFIER_ERROR:
+            verdict_log_extra["reasoning"] = verdict.rationale.reasoning
+        logger.info("[FathomRunner] Qualifier returned verdict", extra=verdict_log_extra)
+
+        verdict_payload: Dict[str, Any] = {
+            "intent": intent,
+            "workflow_id": workflow_id,
+            "latency": qualifier_latency,
+            "label": verdict.label.value,
+            "confidence": verdict.confidence,
+            "rationale": verdict.rationale.model_dump(),
+        }
+
+        if blocked:
+            logger.warning(
+                "[FathomRunner] Qualifier blocked the intent",
+                extra={
+                    "workflow_id": workflow_id,
+                    "label": verdict.label.value,
+                    "confidence": verdict.confidence,
+                    "category": verdict.rationale.category.value,
+                },
+            )
+            return await self.__build_rejection_result(
+                intent=intent,
+                verdict=verdict,
+                start_time=start_time,
+                workflow_id=workflow_id,
+                verdict_payload=verdict_payload,
+            )
+
+        await self.__telemetry.info(
+            "Intent qualified", type=FathomEvent.INTENT_QUALIFIED, **verdict_payload
+        )
+        logger.info(
+            "[FathomRunner] Qualifier allowed the intent, proceeding to execution",
+            extra={
+                "workflow_id": workflow_id,
+                "latency": qualifier_latency,
+                "label": verdict.label.value,
+                "confidence": verdict.confidence,
+                "category": verdict.rationale.category.value,
+            },
+        )
+        return None
+
+    async def __build_rejection_result(
+        self,
+        *,
+        intent: str,
+        workflow_id: str,
+        start_time: float,
+        verdict: QualificationVerdict,
+        verdict_payload: Dict[str, Any],
+    ) -> IntentResult:
+        """
+        Emit the rejection notification and produce a terminal IntentResult.
+
+        The run is marked as completed because the intent has been fully handled by the
+        qualifier; success is False because no UI action was attempted.
+        """
+
+        user_message = verdict.message or DEFAULT_REJECTION_MESSAGE
+        duration = time.time() - start_time
+
+        # INTENT_REJECTED carries the full verdict for clients that switch on it.
+        await self.__telemetry.warning(
+            user_message, type=FathomEvent.INTENT_REJECTED, **verdict_payload
+        )
+
+        logger.info(
+            "[FathomRunner] Rejection emitted to client",
+            extra={
+                "duration": duration,
+                "workflow_id": workflow_id,
+                "completion_reason": CompletionReason.NOT_EXECUTABLE.value,
+            },
+        )
+
+        # WORKFLOW_COMPLETED is dual-emitted so legacy consumers (Genymotion,
+        # Temporal activity result handlers) that key off the terminal event
+        # still receive a completion signal. The run *is* terminating here.
+        await self.__telemetry.info(
+            "Workflow execution finalized",
+            success=False,
+            steps_taken=0,
+            duration=duration,
+            type=FathomEvent.WORKFLOW_COMPLETED,
+        )
+
+        return IntentResult(
+            error=None,
+            metrics={},
+            intent=intent,
+            success=False,
+            steps_taken=0,
+            subgoal_count=0,
+            step_results=[],
+            steps_executed=0,
+            status="completed",
+            memory_summary={},
+            duration=duration,
+            skipped_subgoals=[],
+            executed_subgoals=[],
+            workflow_id=workflow_id,
+            completion_reason=CompletionReason.NOT_EXECUTABLE.value,
+        )
 
     async def __get_memory_summary(self) -> Dict[str, Any]:
         """

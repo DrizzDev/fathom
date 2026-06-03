@@ -61,11 +61,15 @@ class ContextManager:
         # Async Lifecycle
         self.__background_tasks: set[asyncio.Task[None]] = set()
 
-        # Persistence Queue for Non-Blocking I/O
+        # Persistence Queue for Non-Blocking I/O.
+        # DISABLED: GCC context is not persisted to Ledger (see __persistence_worker
+        # docstring). Spawn is commented out so shutdown() does NOT block 30s waiting
+        # on a worker that loops forever on an empty queue. Re-enable in lockstep
+        # with __enqueue_persist when separate context storage is added.
         self.__persistence_task: Optional[asyncio.Task[None]] = None
         self.__persist_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
 
-        self.__start_persistence_loop()
+        # self.__start_persistence_loop()
 
     def __start_persistence_loop(self) -> None:
         """
@@ -75,8 +79,15 @@ class ContextManager:
         loop = asyncio.get_running_loop()
         self.__persistence_task = loop.create_task(self.__persistence_worker())
 
-        self.__background_tasks.add(self.__persistence_task)
-        self.__persistence_task.add_done_callback(self.__background_tasks.discard)
+        # NOTE: persistence_task intentionally NOT registered into
+        # __background_tasks. shutdown() iterates that set with a 30s
+        # drain timeout; the persistence worker blocks forever on an empty
+        # queue (because __enqueue_persist is a no-op while persistence is
+        # disabled), so adding it here makes every successful run wait
+        # 30s at cleanup for nothing. shutdown() cancels persistence_task
+        # via its own dedicated branch instead.
+        # self.__background_tasks.add(self.__persistence_task)
+        # self.__persistence_task.add_done_callback(self.__background_tasks.discard)
 
     async def __persistence_worker(self) -> None:
         """
@@ -166,20 +177,26 @@ class ContextManager:
         """
         Captures a snapshot of the current state and queues it for persistence.
         This operation is O(1) in-memory and non-blocking.
+
+        DISABLED: the persistence worker is not spawned (see __init__). Returning
+        early avoids growing __persist_queue unbounded with snapshots that no
+        consumer will drain — this would leak roughly one queue entry per agent
+        step for the worker's lifetime across all workflows. Re-enable in
+        lockstep with __start_persistence_loop when separate context storage
+        is wired.
         """
 
-        try:
-            # Snapshot state immediately (Deep copy/Dehydration happens here)
-            # We dehydrate on the main thread to ensure consistency, but writing to DB happens in background.
-            state_data = {
-                "intent": self.__roadmap_intent,
-                "engine": self.__engine.dehydrate(),
-                "guidance": [guidance.model_dump() for guidance in self.__user_guidance],
-            }
-            # Push snapshot to queue
-            self.__persist_queue.put_nowait(state_data)
-        except Exception as exception:
-            logger.error(f"Context: Failed to enqueue persistence: {exception}")
+        return
+        # Reference snapshot composition for when persistence is re-enabled:
+        #     try:
+        #         state_data = {
+        #             "intent": self.__roadmap_intent,
+        #             "engine": self.__engine.dehydrate(),
+        #             "guidance": [g.model_dump() for g in self.__user_guidance],
+        #         }
+        #         self.__persist_queue.put_nowait(state_data)
+        #     except Exception as exception:
+        #         logger.error(f"Context: Failed to enqueue persistence: {exception}")
 
     async def commit(self, *, observation: str, thought: str, action: Action) -> None:
         """
