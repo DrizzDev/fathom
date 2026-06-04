@@ -13,6 +13,7 @@ from fathom.constants.reasoning import (
     ACTION_MIN_CONFIDENCE,
     ACTION_NEXT_PHASE_CONFIDENCE,
     COMPLETION_KEYWORDS,
+    LATERAL_CREDIT_SIMILARITY_THRESHOLD,
     MEANINGFUL_SCREEN_DELTA_FLOOR,
     NEXT_PHASE_KEYWORDS,
     OPENER_GOAL_WORDS,
@@ -277,7 +278,7 @@ class Reasoner:
         if asserted:
             notes.append("claim.asserted: model flagged completion via tool output")
 
-        justified, rationale_note, _, _ = self.__verify_rationale(
+        justified, rationale_note, _, rationale_similarity = self.__verify_rationale(
             target=target,
             analysis=analysis,
             flagged_complete=asserted,
@@ -285,6 +286,27 @@ class Reasoner:
         )
         if justified and rationale_note is not None:
             notes.append(f"claim.justified: {rationale_note}")
+
+        if asserted and rationale_similarity < LATERAL_CREDIT_SIMILARITY_THRESHOLD:
+            logger.info(
+                "Completion claim observed with weak rationale alignment to active sub-goal",
+                extra={
+                    "component": "reasoner",
+                    "event": "completion.lateral_credit.observed",
+                    "sub_goal.index": sub_goal.index,
+                    "sub_goal.description": sub_goal.description[:120],
+                    "rationale.similarity": round(rationale_similarity, 3),
+                    "rationale.threshold": LATERAL_CREDIT_SIMILARITY_THRESHOLD,
+                    "claim.justified": justified,
+                    "model.subgoal_completion_reason": (
+                        (analysis.subgoal_completion_reason or "")[:240] or None
+                    ),
+                    "model.goal_completion_reason": (
+                        (analysis.goal_completion_reason or "")[:240] or None
+                    ),
+                    "action.type": analysis.action.action_type.value,
+                },
+            )
 
         dispatched = analysis.action.action_type in ACTION_EXECUTED_TYPES
         if dispatched:

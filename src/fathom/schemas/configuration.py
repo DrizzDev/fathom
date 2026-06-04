@@ -27,6 +27,7 @@ from fathom.schemas.checkpoint import (
 from fathom.schemas.escalation import EscalationPolicy
 from fathom.schemas.finalization import FinalizationBudgetPolicy
 from fathom.schemas.swipe import SwipeRetryPolicy
+from fathom.schemas.telemetry import PhaseMessage
 
 logger = getLogger(__name__)
 
@@ -647,6 +648,13 @@ class TelemetryConfiguration(BaseModel):
         default=None, description="Session ID for channel interpolation"
     )
     identity: Optional[str] = Field(default=None, description="Workflow identity for log routing")
+    phase: PhaseMessage = Field(
+        default_factory=PhaseMessage,
+        description=(
+            "Client-facing phase messages and heartbeat budget; configurable per "
+            "deployment so message strings can be localised without code changes."
+        ),
+    )
 
 
 class FathomConfiguration(BaseModel):

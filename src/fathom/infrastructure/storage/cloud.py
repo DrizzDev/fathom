@@ -30,8 +30,7 @@ class GCSImageStorage(IImageStorage):
 
     async def save(self, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Uploads image to GCS and returns the URI.
-        Path: YYYY-MM-DD/{package}/{session}/{timestamp}__{activity}.png
+        Upload bytes to GCS using path layout {category}/{date}/{session}/{filename}.
         """
 
         project = self.__configuration.project_id
@@ -40,7 +39,7 @@ class GCSImageStorage(IImageStorage):
 
         def __upload_sync() -> str:
             """
-            Uploads image to GCS and returns the URI.
+            Synchronously perform the upload on a worker thread.
             """
 
             try:
@@ -63,31 +62,12 @@ class GCSImageStorage(IImageStorage):
                 storage_bucket = client.bucket(bucket)
 
                 folder = datetime.now().strftime("%Y-%m-%d")
+                computed_name = meta.filename or self.__fallback_filename(
+                    category=meta.category, activity=meta.activity, package=meta.package
+                )
+                filename = f"{meta.category}/{folder}/{meta.session}/{computed_name}"
 
-                if meta.filename:
-                    filename = (
-                        f"{meta.category}/{folder}/{meta.package}/{meta.session}/{meta.filename}"
-                    )
-                else:
-                    timestamp = int(time.time() * 1000)
-                    filename = f"{meta.category}/{folder}/{meta.package}/{meta.session}/{timestamp}__{meta.activity}.png"
-
-                content_type = "application/octet-stream"
-
-                if filename.endswith(".png"):
-                    content_type = "image/png"
-
-                elif filename.endswith(".json"):
-                    content_type = "application/json"
-
-                elif filename.endswith(".yaml") or filename.endswith(".yml"):
-                    content_type = "text/yaml"
-
-                elif filename.endswith(".txt"):
-                    content_type = "text/plain"
-
-                elif filename.endswith(".xml"):
-                    content_type = "application/xml"
+                content_type = self.__content_type_for(filename=filename)
 
                 blob = storage_bucket.blob(filename)
                 blob.upload_from_string(data, content_type=content_type)
@@ -100,3 +80,52 @@ class GCSImageStorage(IImageStorage):
                 raise VisionError(f"GCS upload failed: {exception}") from exception
 
         return await asyncio.to_thread(__upload_sync)
+
+    @staticmethod
+    def __fallback_filename(*, category: str, activity: str, package: str) -> str:
+        """
+        Build a category-aware filename when the caller did not supply one.
+        Package is embedded so multi-package sessions do not collide.
+        """
+
+        extension = GCSImageStorage.__extension_for(category=category)
+
+        timestamp = int(time.time() * 1000)
+        return f"{timestamp}__{package}__{activity}{extension}"
+
+    @staticmethod
+    def __extension_for(*, category: str) -> str:
+        """
+        Resolve the file extension for an artifact category.
+        """
+
+        if category == "xmls":
+            return ".xml"
+
+        if category == "history":
+            return ".txt"
+
+        return ".png"
+
+    @staticmethod
+    def __content_type_for(*, filename: str) -> str:
+        """
+        Resolve the HTTP content-type for an uploaded GCS object from its extension.
+        """
+
+        if filename.endswith(".png"):
+            return "image/png"
+
+        if filename.endswith(".json"):
+            return "application/json"
+
+        if filename.endswith(".yaml") or filename.endswith(".yml"):
+            return "text/yaml"
+
+        if filename.endswith(".txt"):
+            return "text/plain"
+
+        if filename.endswith(".xml"):
+            return "application/xml"
+
+        return "application/octet-stream"

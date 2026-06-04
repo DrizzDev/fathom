@@ -63,15 +63,18 @@ class TraceService:
         try:
             action_type = getattr(action, "action_type", "unknown")
 
-            timestamp = datetime.now(tz=timezone.utc).strftime(ArtifactFilename.TIMESTAMP_FORMAT)
-            step = str(step_number).zfill(ArtifactFilename.STEP_DIGITS)
             separator = ArtifactFilename.SEPARATOR
-            filename = f"step-{step}{separator}{ArtifactKind.TRACE.value}{separator}{timestamp}.png"
+            step = str(step_number).zfill(ArtifactFilename.STEP_DIGITS)
+            timestamp = datetime.now(tz=timezone.utc).strftime(ArtifactFilename.TIMESTAMP_FORMAT)
+
+            filename = (
+                f"step-{step}{separator}{ArtifactKind.TRACE.value}"
+                f"{separator}{package_name}{separator}{timestamp}.png"
+            )
 
             path = self.__path_manager.get_trace_path(
                 filename=filename,
                 session_id=session_id,
-                package_name=package_name,
             )
 
             # ImageAnnotator handles the actual drawing and saving

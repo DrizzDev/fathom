@@ -29,6 +29,7 @@ from fathom.core.services.history import HistoryService
 from fathom.core.services.hitl import HITLService
 from fathom.core.services.perception import PerceptionService
 from fathom.core.services.resolution import ReferenceResolutionService
+from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
 from fathom.interfaces.device import DevicePort
@@ -75,6 +76,7 @@ class GraphContext:
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
+        phase: PhaseAnnouncer,
         telemetry: TelemetryPort,
         perception: PerceptionPort,
         path_manager: SharedPathManager,
@@ -121,6 +123,7 @@ class GraphContext:
         self.__storage = storage
         self.__knowledge = knowledge
 
+        self.__phase = phase
         self.__telemetry = telemetry
         self.__path_manager = path_manager
 
@@ -325,6 +328,14 @@ class GraphContext:
         """
 
         return self.__telemetry
+
+    @property
+    def phase(self) -> PhaseAnnouncer:
+        """
+        Returns the PhaseAnnouncer shared with the parent strategy.
+        """
+
+        return self.__phase
 
     @property
     def comparator(self) -> ScreenComparator:

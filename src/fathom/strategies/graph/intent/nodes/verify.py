@@ -219,21 +219,18 @@ class VerifyNode:
             },
         )
 
-        await self.__emit_verification_artifact(
-            capture=capture,
-            complete=is_truly_complete,
-            reason=reason,
-        )
+        # Verification artefact emission suppressed; no downstream reader today.
+        # await self.__emit_verification_artifact(capture=capture, complete=is_truly_complete, reason=reason)
 
         if is_truly_complete and is_subgoal_verify and current_sub_goal is not None:
             has_more = agent_state.mark_current_sub_goal_complete(
                 completion_signal=SubGoalCompletionSignal(
-                    evidence=f"Verified by screenshot: {reason}",
+                    llm_confidence=1.0,
+                    screen_verified=True,
+                    action_executed=True,
                     flagged_complete=True,
                     rationale_verified=False,
-                    action_executed=True,
-                    screen_verified=True,
-                    llm_confidence=1.0,
+                    evidence=f"Verified by screenshot: {reason}",
                 )
             )
             agent_state.clear_verification_loop()
@@ -250,10 +247,10 @@ class VerifyNode:
                 result = cast(
                     "IntentGraphState",
                     {
-                        CommonStateKey.IS_COMPLETE: False,
-                        IntentStateKey.SHOULD_RETRY: True,
                         IntentStateKey.PLAN: None,
                         IntentStateKey.PLANNED_STEP: None,
+                        CommonStateKey.IS_COMPLETE: False,
+                        IntentStateKey.SHOULD_RETRY: True,
                         CommonStateKey.COMPLETION_REASON: None,
                     },
                 )
@@ -276,6 +273,7 @@ class VerifyNode:
         if is_truly_complete:
             self.__provider.context.agent_state.clear_verification_loop()
             self.__provider.context.agent_state.mark_complete(reason=reason)
+
             result = cast(
                 "IntentGraphState",
                 {
@@ -321,9 +319,9 @@ class VerifyNode:
                 extra={
                     "component": "graph.intent.verify",
                     "event": "verify.loop.terminated",
+                    "limit": DEFAULT_VERIFICATION_REJECTION_LIMIT,
                     "workflow.id": self.__provider.context.workflow_id,
                     "consecutive.rejections": loop_state.consecutive_rejections,
-                    "limit": DEFAULT_VERIFICATION_REJECTION_LIMIT,
                 },
             )
             self.__provider.context.agent_state.mark_complete(reason=CompletionReason.STUCK.value)
@@ -345,8 +343,8 @@ class VerifyNode:
         logger.warning(
             f"{feedback}",
             extra={
-                "component": "graph.intent.verify",
                 "event": "verify.log",
+                "component": "graph.intent.verify",
                 "workflow.id": self.__provider.context.workflow_id,
             },
         )
@@ -361,9 +359,9 @@ class VerifyNode:
         result = cast(
             "IntentGraphState",
             {
+                IntentStateKey.PLAN: None,
                 CommonStateKey.IS_COMPLETE: False,
                 IntentStateKey.SHOULD_RETRY: True,
-                IntentStateKey.PLAN: None,
                 IntentStateKey.PLANNED_STEP: None,
                 CommonStateKey.COMPLETION_REASON: None,
             },
@@ -374,9 +372,9 @@ class VerifyNode:
     async def __emit_verification_artifact(
         self,
         *,
-        capture: ScreenCapture,
-        complete: bool,
         reason: str,
+        complete: bool,
+        capture: ScreenCapture,
     ) -> None:
         """
         Hand the verifier capture + verdict to the artifact pipeline.
@@ -387,17 +385,17 @@ class VerifyNode:
             return
 
         verdict = CompletionVerdict(
+            missing=[],
+            reason=reason,
             complete=complete,
             next_state=ExecutionTaskState.SUCCEEDED if complete else ExecutionTaskState.FAILED,
-            reason=reason,
-            missing=[],
         )
         await pipeline.emit(
             record=ArtifactRecord(
-                session_id=self.__provider.context.workflow_id,
                 package_name=capture.activity,
-                step_number=self.__provider.context.agent_state.step_count,
                 created=int(time.time() * 1000),
+                session_id=self.__provider.context.workflow_id,
+                step_number=self.__provider.context.agent_state.step_count,
                 payload=VerificationPayload(capture=capture, verdict=verdict),
             ),
         )

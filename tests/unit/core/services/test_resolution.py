@@ -537,3 +537,110 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
         self.assertIsNotNone(resolved.action.bounds)
         self.assertEqual(resolved.action.bounds.y, 2268)
+
+
+class ReferenceResolutionSnapEvaluatedTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins the structured snap.evaluated event emitted on every spatial resolve.
+    """
+
+    @staticmethod
+    def __build_service() -> ReferenceResolutionService:
+        """
+        Build a resolution service with a no-op memory ledger.
+        """
+
+        ledger = Mock()
+        ledger.get = AsyncMock(return_value=None)
+        return ReferenceResolutionService(ledger=ledger, workflow_id="wf-snap")
+
+    async def test_event_emitted_for_resolved_spatial_action(self) -> None:
+        """
+        A successful spatial resolve emits snap.evaluated with outcome=RESOLVED and manifest fields.
+        """
+
+        service = self.__build_service()
+        action = Action(
+            action_type=ActionType.TAP,
+            target="Submit",
+            rationale="commit form",
+            label_id="3",
+            confidence=1.0,
+        )
+        elements = {
+            "3": {
+                "bounds": "[10,20][100,80]",
+                "text": "Submit",
+                "source": "xml",
+            }
+        }
+
+        with self.assertLogs("fathom.core.services.resolution", level="INFO") as captured:
+            resolved = await service.resolve(action=action, elements=elements)
+
+        self.assertEqual(resolved.status, ResolveStatus.RESOLVED)
+
+        snap_events = [
+            record
+            for record in captured.records
+            if record.__dict__.get("event") == "snap.evaluated"
+        ]
+        self.assertEqual(len(snap_events), 1)
+        record = snap_events[0]
+        self.assertEqual(record.__dict__["outcome"], ResolveStatus.RESOLVED.value)
+        self.assertEqual(record.__dict__["action.label_id"], "3")
+        self.assertEqual(record.__dict__["manifest.source"], "xml")
+        self.assertEqual(record.__dict__["manifest.bounds"], "[10,20][100,80]")
+
+    async def test_event_emitted_for_unresolved_spatial_action(self) -> None:
+        """
+        An unresolved spatial action still emits snap.evaluated, carrying the failure reason.
+        """
+
+        service = self.__build_service()
+        action = Action(
+            action_type=ActionType.TAP,
+            target="Missing",
+            rationale="r",
+            label_id="missing",
+            confidence=1.0,
+        )
+
+        with self.assertLogs("fathom.core.services.resolution", level="INFO") as captured:
+            resolved = await service.resolve(action=action, elements={})
+
+        self.assertEqual(resolved.status, ResolveStatus.UNRESOLVED)
+
+        snap_events = [
+            record
+            for record in captured.records
+            if record.__dict__.get("event") == "snap.evaluated"
+        ]
+        self.assertEqual(len(snap_events), 1)
+        record = snap_events[0]
+        self.assertEqual(record.__dict__["outcome"], ResolveStatus.UNRESOLVED.value)
+        self.assertIsNotNone(record.__dict__["reason"])
+
+    async def test_event_not_emitted_for_non_spatial_action(self) -> None:
+        """
+        Non-spatial actions (WAIT, VALIDATE, COMPLETE) skip snap.evaluated entirely.
+        """
+
+        service = self.__build_service()
+        action = Action(
+            action_type=ActionType.WAIT,
+            target="",
+            rationale="settle",
+            label_id="stray",
+            confidence=1.0,
+        )
+
+        with self.assertLogs("fathom.core.services.resolution", level="INFO") as captured:
+            await service.resolve(action=action, elements={})
+
+        snap_events = [
+            record
+            for record in captured.records
+            if record.__dict__.get("event") == "snap.evaluated"
+        ]
+        self.assertEqual(snap_events, [])

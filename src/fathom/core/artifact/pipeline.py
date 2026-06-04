@@ -158,7 +158,6 @@ class ArtifactPipeline:
             filename=filename,
             kind=metadata.kind,
             session_id=metadata.session_id,
-            package_name=metadata.package_name,
         )
         payload_path.write_bytes(content)
 

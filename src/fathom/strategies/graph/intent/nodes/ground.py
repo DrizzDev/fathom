@@ -111,12 +111,8 @@ class GroundNode:
                     },
                 )
 
-            current_step_num = self.__provider.context.agent_state.step_count + 1
-
-            await self.__provider.context.telemetry.info(
-                f"Grounding step {current_step_num}...",
-                type="STEP_STARTED",
-                step=current_step_num,
+            await self.__provider.context.phase.grounding(
+                intent=self.__provider.context.intent,
             )
 
             start_time = time.time()
@@ -135,8 +131,8 @@ class GroundNode:
                 logger.error(
                     "Empty screenshot captured",
                     extra={
-                        "component": "graph.intent.ground",
                         "event": "ground.log",
+                        "component": "graph.intent.ground",
                         "workflow.id": self.__provider.context.workflow_id,
                     },
                 )
@@ -166,8 +162,8 @@ class GroundNode:
                 logger.error(
                     f"Invalid dimensions {width}x{height}",
                     extra={
-                        "component": "graph.intent.ground",
                         "event": "ground.log",
+                        "component": "graph.intent.ground",
                         "workflow.id": self.__provider.context.workflow_id,
                     },
                 )
@@ -206,12 +202,12 @@ class GroundNode:
                 process_start = time.time()
                 hierarchy_result = await self.__provider.context.hierarchy.process_xml_and_screen(
                     xml=xml,
-                    session_id=self.__provider.context.workflow_id,
-                    package_name=activity,
-                    step_number=self.__provider.context.agent_state.step_count + 1,
-                    path_manager=self.__provider.context.path_manager,
-                    action_type=ActionType.TAP,
                     screen=raw_screen,
+                    package_name=activity,
+                    action_type=ActionType.TAP,
+                    session_id=self.__provider.context.workflow_id,
+                    path_manager=self.__provider.context.path_manager,
+                    step_number=self.__provider.context.agent_state.step_count + 1,
                 )
                 self.__provider.context.metrics.record(
                     operation="hierarchy_processing", duration=time.time() - process_start
@@ -230,8 +226,8 @@ class GroundNode:
 
             screen_state = self.__provider.observer.build_screen_state(
                 capture=raw_screen,
-                visual_hash=capture_hashes.visual_hash,
                 xml_hash=capture_hashes.xml_hash,
+                visual_hash=capture_hashes.visual_hash,
                 interaction_hash=capture_hashes.interaction_hash,
             )
             screen_observation = await self.__provider.observer.observe(
@@ -276,24 +272,24 @@ class GroundNode:
             logger.info(
                 f"Screen captured: hash={capture_hashes.visual_hash}, activity={activity}, is_new={is_new_screen}, elements={len(elements) if elements else 0}",
                 extra={
-                    "component": "graph.intent.ground",
                     "event": "ground.log",
+                    "component": "graph.intent.ground",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
             logger.info(
                 f"Grounding completed in {duration:.2f}s",
                 extra={
-                    "component": "graph.intent.ground",
                     "event": "ground.log",
+                    "component": "graph.intent.ground",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
             logger.info(
                 "-> Transitioning to ANALYZE",
                 extra={
-                    "component": "graph.intent.ground",
                     "event": "ground.log",
+                    "component": "graph.intent.ground",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
@@ -307,12 +303,12 @@ class GroundNode:
                     IntentStateKey.XML_CONTENT: xml,
                     CommonStateKey.STEP_RESULT: None,
                     IntentStateKey.ELEMENTS: elements,
-                    CommonStateKey.SCREEN_OBSERVATION: screen_observation,
                     IntentStateKey.PLANNED_STEP: None,
                     IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.SCREEN_STATE: screen_state,
                     CommonStateKey.GROUNDING_DURATION: duration,
                     CommonStateKey.IS_NEW_SCREEN: is_new_screen,
+                    CommonStateKey.SCREEN_OBSERVATION: screen_observation,
                 },
             )
 
@@ -329,8 +325,8 @@ class GroundNode:
             logger.exception(
                 f"Grounding failed: {exception}",
                 extra={
-                    "component": "graph.intent.ground",
                     "event": "ground.log",
+                    "component": "graph.intent.ground",
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )

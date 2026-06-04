@@ -163,12 +163,13 @@ class CriterionObserverSymbolicTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.source, CriterionSource.SYMBOLIC)
         self.assertEqual(decision.verdict, CriterionVerdict.SATISFIED)
 
-    async def test_symbolic_miss_falls_back_to_llm(self) -> None:
+    async def test_symbolic_miss_returns_unclear_without_llm(self) -> None:
         """
-        Too few criterion tokens match → LLM is invoked.
+        Too few criterion tokens match → returns SYMBOLIC/UNCLEAR; Tier-2
+        LLM is intentionally suppressed (criterion is observe-only today).
         """
 
-        llm = _StubLLM(responses=["SATISFIED — page header confirms."])
+        llm = _StubLLM(responses=[])
 
         checker = CriterionObserver(llm=llm)
         observation = _observation(texts=["Home", "Categories"])
@@ -184,11 +185,17 @@ class CriterionObserverSymbolicTest(unittest.IsolatedAsyncioTestCase):
             observation=observation,
         )
 
-        self.assertEqual(llm.calls, 1)
-        self.assertEqual(decision.source, CriterionSource.LLM)
-        self.assertEqual(decision.verdict, CriterionVerdict.SATISFIED)
+        self.assertEqual(llm.calls, 0)
+        self.assertEqual(decision.source, CriterionSource.SYMBOLIC)
+        self.assertEqual(decision.verdict, CriterionVerdict.UNCLEAR)
 
 
+@unittest.skip(
+    "Tier-2 LLM adjudication is intentionally suppressed in CriterionObserver.check; "
+    "the call is preserved on the class but not invoked because the criterion "
+    "decision is currently observe-only. Re-enable these pins alongside the "
+    "call-site reactivation in core/services/criterion.py."
+)
 class CriterionObserverLLMLayerTest(unittest.IsolatedAsyncioTestCase):
     """
     LLM-layer pins: tri-state mapping, error degrades to UNCLEAR, leading-line evidence.
@@ -267,6 +274,12 @@ class CriterionObserverLLMLayerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.verdict, CriterionVerdict.UNCLEAR)
 
 
+@unittest.skip(
+    "Cache pins exercise LLM-driven SATISFIED/UNSATISFIED/UNCLEAR verdicts; "
+    "since Tier-2 LLM is suppressed at the call site, only symbolic SATISFIED "
+    "is cacheable. Re-enable alongside CriterionObserverLLMLayerTest when the "
+    "criterion decision is wired into the gate as a real consumer."
+)
 class CriterionObserverCacheTest(unittest.IsolatedAsyncioTestCase):
     """
     Cache pins: positive-only cache. SATISFIED verdicts are cached;
@@ -396,6 +409,66 @@ class CriterionObserverCacheTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(llm.calls, 2)
         self.assertEqual(first.verdict, CriterionVerdict.SATISFIED)
         self.assertEqual(second.verdict, CriterionVerdict.UNSATISFIED)
+
+
+class CriterionObserverSymbolicOnlyTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins the Tier-2 LLM suppression: the call site is commented out, so symbolic
+    verdicts (including UNCLEAR) flow through untouched and __llm_adjudicate is never invoked.
+    """
+
+    async def test_symbolic_miss_returns_unclear_without_invoking_llm(self) -> None:
+        """
+        Symbolic UNCLEAR is returned directly; the LLM port is never called.
+        """
+
+        llm = _StubLLM(responses=[])
+        checker = CriterionObserver(llm=llm)
+        observation = _observation(texts=["Home", "Categories"])
+        sub_goal = _sub_goal(
+            index=0,
+            criterion="Login flow has been triggered and overlay is visible.",
+        )
+
+        decision = await checker.check(
+            workflow_id="wf-1",
+            sub_goal=sub_goal,
+            observation=observation,
+        )
+
+        self.assertEqual(llm.calls, 0)
+        self.assertEqual(decision.source, CriterionSource.SYMBOLIC)
+        self.assertEqual(decision.verdict, CriterionVerdict.UNCLEAR)
+
+    async def test_satisfied_symbolic_verdict_still_cached(self) -> None:
+        """
+        Symbolic SATISFIED verdicts cache so a repeated check on the same screen returns from cache.
+        """
+
+        llm = _StubLLM(responses=[])
+        checker = CriterionObserver(llm=llm)
+        observation = _observation(texts=["Jars", "Containers"], visual_hash="hX")
+        sub_goal = _sub_goal(
+            index=0,
+            criterion="'Jars & containers' is visible on the screen.",
+        )
+
+        first = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
+        second = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
+
+        self.assertEqual(llm.calls, 0)
+        self.assertEqual(first.source, CriterionSource.SYMBOLIC)
+        self.assertEqual(first.verdict, CriterionVerdict.SATISFIED)
+        self.assertEqual(second.source, CriterionSource.CACHE)
+        self.assertEqual(second.verdict, CriterionVerdict.SATISFIED)
+
+    async def test_llm_adjudicate_helper_still_present(self) -> None:
+        """
+        The private LLM adjudication helper remains on the class for easy reactivation.
+        """
+
+        helper = getattr(CriterionObserver, "_CriterionObserver__llm_adjudicate", None)
+        self.assertTrue(callable(helper))
 
 
 class CriterionObserverEmptyCriterionTest(unittest.IsolatedAsyncioTestCase):

@@ -61,7 +61,7 @@ class LocalImageStorage(IImageStorage):
             )
 
             path = self.__resolve_destination_path(
-                category=category, filename=filename, session_id=session, package_name=package
+                category=category, filename=filename, session_id=session
             )
 
             self.__write(path=path, data=data)
@@ -117,38 +117,23 @@ class LocalImageStorage(IImageStorage):
 
         return ".png"
 
-    def __resolve_destination_path(
-        self, *, category: str, filename: str, session_id: str, package_name: str
-    ) -> Path:
+    def __resolve_destination_path(self, *, category: str, filename: str, session_id: str) -> Path:
         """
         Resolve the filesystem path for the artifact category.
         """
 
         if category == "annotated":
-            return self.__path_manager.get_annotated_path(
-                filename=filename, session_id=session_id, package_name=package_name
-            )
+            return self.__path_manager.get_annotated_path(filename=filename, session_id=session_id)
 
         if category == "xmls":
-            return self.__path_manager.get_xml_path(
-                filename=filename, session_id=session_id, package_name=package_name
-            )
+            return self.__path_manager.get_xml_path(filename=filename, session_id=session_id)
 
         if category == "traces":
-            return self.__path_manager.get_trace_path(
-                filename=filename, session_id=session_id, package_name=package_name
-            )
+            return self.__path_manager.get_trace_path(filename=filename, session_id=session_id)
         if category == "history":
-            return (
-                self.__path_manager.get_history_directory(
-                    session_id=session_id,
-                    package_name=package_name,
-                )
-                / filename
-            )
+            return self.__path_manager.get_history_directory(session_id=session_id) / filename
 
         return self.__path_manager.get_screenshot_path(
             filename=filename,
             session_id=session_id,
-            package_name=package_name,
         )

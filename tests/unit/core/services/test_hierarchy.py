@@ -97,12 +97,12 @@ class _FakePathManager:
     def __init__(self, *, root: Path) -> None:
         self.__root = root
 
-    def get_xml_path(self, package_name: str, session_id: str, filename: str) -> Path:
+    def get_xml_path(self, *, session_id: str, filename: str) -> Path:
         """
         Resolve the XML dump path for the requested session.
         """
 
-        directory = self.__root / "xmls" / package_name / session_id
+        directory = self.__root / "xmls" / session_id
         directory.mkdir(parents=True, exist_ok=True)
         return directory / filename
 
@@ -110,7 +110,6 @@ class _FakePathManager:
         self,
         *,
         kind: ArtifactKind,
-        package_name: str,
         session_id: str,
         filename: str,
     ) -> Path:
@@ -118,7 +117,7 @@ class _FakePathManager:
         Resolve an artifact path under the temp root.
         """
 
-        directory = self.__root / kind.value / package_name / session_id
+        directory = self.__root / kind.value / session_id
         directory.mkdir(parents=True, exist_ok=True)
         return directory / filename
 

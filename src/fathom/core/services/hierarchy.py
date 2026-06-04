@@ -108,7 +108,7 @@ class HierarchyService:
             filename_base = f"{timestamp}"
 
             xml_path = path_manager.get_xml_path(
-                package_name=package_name, session_id=session_id, filename=f"{filename_base}.xml"
+                session_id=session_id, filename=f"{filename_base}__{package_name}.xml"
             )
             xml_bytes = xml.encode("utf-8")
             self.__save_file(path=xml_path, data=xml_bytes, mode="wb")
@@ -116,8 +116,8 @@ class HierarchyService:
             await self.__emit_xml_artifact(
                 content=xml,
                 session_id=session_id,
-                package_name=package_name,
                 step_number=step_number,
+                package_name=package_name,
             )
 
             extraction = await asyncio.to_thread(
@@ -137,8 +137,8 @@ class HierarchyService:
             if not annotated_image:
                 return HierarchyProcessingResult(
                     annotated_capture=screen,
-                    labeled_elements=labeled_elements,
                     label_map=extraction.label_map,
+                    labeled_elements=labeled_elements,
                 )
 
             capture = self.__build_capture(
@@ -197,8 +197,8 @@ class HierarchyService:
         *,
         content: str,
         session_id: str,
-        package_name: str,
         step_number: int,
+        package_name: str,
     ) -> None:
         """
         Hand the hierarchy XML dump to the artifact pipeline for durable upload.
@@ -220,10 +220,10 @@ class HierarchyService:
     async def __emit_annotated_artifact(
         self,
         *,
-        capture: ScreenCapture,
         session_id: str,
-        package_name: str,
         step_number: int,
+        package_name: str,
+        capture: ScreenCapture,
     ) -> Optional[Path]:
         """
         Hand the XML-annotated capture to the artifact pipeline and surface
@@ -237,8 +237,8 @@ class HierarchyService:
         return await self.__pipeline.emit(
             record=ArtifactRecord(
                 session_id=session_id,
-                package_name=package_name,
                 step_number=step_number,
+                package_name=package_name,
                 created=int(time.time() * 1000),
                 payload=AnnotatedPayload(capture=capture),
             ),
@@ -273,9 +273,9 @@ class HierarchyService:
     def __build_capture(
         self,
         *,
-        original: ScreenCapture,
-        annotated_image: bytes,
         xml_path: Path,
+        annotated_image: bytes,
+        original: ScreenCapture,
     ) -> ScreenCapture:
         """
         Build a capture carrying the annotated bytes alongside the original screen.

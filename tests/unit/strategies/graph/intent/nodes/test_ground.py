@@ -44,25 +44,27 @@ class GroundNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
         height: int = 2000,
     ) -> MagicMock:
         """
-        Mocked :class:`IntentNodeProvider` exposing only the surface area
-        GROUND touches on the early-exit branches.
+        Mocked :class:`IntentNodeProvider` exposing only the surface area GROUND touches on the early-exit branches.
 
-        ``is_cancelled`` is an :class:`AsyncMock` because the node awaits
-        it; ``perceive`` is mocked so the empty-screenshot path can be
-        forced by passing ``image=b""``.
+        ``is_cancelled`` is an :class:`AsyncMock` because the node awaits it;
+        ``perceive`` is mocked so the empty-screenshot path can be forced by passing ``image=b""``.
         """
 
         provider = MagicMock(name="IntentNodeProvider")
-        provider.is_cancelled = AsyncMock(return_value=cancelled)
+
+        provider.context.max_steps = max_steps
         provider.context.workflow_id = "run-test"
         provider.context.agent_state.step_count = step_count
-        provider.context.max_steps = max_steps
+
         provider.context.telemetry.info = AsyncMock()
         provider.context.telemetry.error = AsyncMock()
+        provider.context.phase.grounding = AsyncMock()
+        provider.is_cancelled = AsyncMock(return_value=cancelled)
         provider.context.perception.perceive = AsyncMock(
             return_value=MagicMock(image=image, width=width, height=height, activity="app"),
         )
         provider.persistence.persist = MagicMock()
+
         return provider
 
     async def test_cancellation_terminates_with_cancelled_reason(self) -> None:
@@ -87,10 +89,8 @@ class GroundNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_step_count_at_cap_terminates_with_max_steps_reason(self) -> None:
         """
-        Reaching the configured step cap before planning the next action
-        must terminate with :attr:`CompletionReason.MAX_STEPS`, not
-        FAILED. The cap is checked before any work to avoid spending a
-        capture on a step that cannot execute.
+        Reaching the configured step cap before planning the next action must terminate with :attr:`CompletionReason.MAX_STEPS`,
+        not FAILED. The cap is checked before any work to avoid spending a capture on a step that cannot execute.
         """
 
         provider = self.__provider(cancelled=False, step_count=20, max_steps=20)
@@ -107,10 +107,8 @@ class GroundNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_capture_terminates_with_failed_reason(self) -> None:
         """
-        An empty screenshot from the perception port is a hard failure
-        (device disconnected, lost surface, etc.) and must terminate with
-        :attr:`CompletionReason.FAILED` so the run is surfaced as broken
-        rather than silently looping on empty captures.
+        An empty screenshot from the perception port is a hard failure (device disconnected, lost surface, etc.)
+        and must terminate with :attr:`CompletionReason.FAILED` so the run is surfaced as broken rather than silently looping on empty captures.
         """
 
         provider = self.__provider(cancelled=False, image=b"")
@@ -137,8 +135,10 @@ class GroundNodeOcrManifestFallbackTest(unittest.IsolatedAsyncioTestCase):
         """
 
         image = Image.new("RGB", (1080, 2340), "white")
+
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
+
         return buffer.getvalue()
 
     @classmethod
@@ -150,9 +150,9 @@ class GroundNodeOcrManifestFallbackTest(unittest.IsolatedAsyncioTestCase):
         return ScreenCapture(
             width=1080,
             height=2340,
-            activity="com.google.android.apps.nexuslauncher",
-            image=cls.__png(),
             timestamp=123,
+            image=cls.__png(),
+            activity="com.google.android.apps.nexuslauncher",
         )
 
     @staticmethod
@@ -165,20 +165,20 @@ class GroundNodeOcrManifestFallbackTest(unittest.IsolatedAsyncioTestCase):
             activity="com.google.android.apps.nexuslauncher",
             keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
             hashes=ScreenHashBundle(
-                visual_hash="c5ab006a70c02a85",
                 xml_hash="",
                 interaction_hash="",
+                visual_hash="c5ab006a70c02a85",
             ),
             elements=(
                 PerceivedElement(
-                    identifier="ocr_13",
                     label_id="13",
                     text="Swiggy",
                     parent=None,
-                    source=ElementSource.OCR,
-                    role=ElementRole.TEXT,
-                    confidence=0.96,
                     tappable=False,
+                    confidence=0.96,
+                    identifier="ocr_13",
+                    role=ElementRole.TEXT,
+                    source=ElementSource.OCR,
                     bounds=Bounds(
                         x=284,
                         y=383,
@@ -199,35 +199,42 @@ class GroundNodeOcrManifestFallbackTest(unittest.IsolatedAsyncioTestCase):
 
         capture = cls.__capture()
         hashes = ScreenHashBundle(
-            visual_hash="c5ab006a70c02a85",
             xml_hash="",
             interaction_hash="",
+            visual_hash="c5ab006a70c02a85",
         )
         state = ScreenState(
+            xml_hash=hashes.xml_hash,
             activity=capture.activity,
             timestamp=capture.timestamp,
-            activity_hash="activityhash1234",
             visual_hash=hashes.visual_hash,
-            xml_hash=hashes.xml_hash,
+            activity_hash="activityhash1234",
             interaction_hash=hashes.interaction_hash,
         )
 
         provider = MagicMock(name="IntentNodeProvider")
+
         provider.is_cancelled = AsyncMock(return_value=False)
-        provider.context.workflow_id = "934671ae"
+
         provider.context.use_xml = True
         provider.context.max_steps = 50
+        provider.context.workflow_id = "934671ae"
         provider.context.agent_state.step_count = 0
-        provider.context.agent_state.update_screen = MagicMock(return_value=True)
-        provider.context.agent_state.runtime.screen.update = MagicMock()
+        provider.observer.build_screen_state.return_value = state
+        provider.observer.resolve_capture_hashes.return_value = hashes
+
         provider.context.telemetry.info = AsyncMock()
         provider.context.telemetry.error = AsyncMock()
         provider.context.metrics.record = MagicMock()
+        provider.context.phase.grounding = AsyncMock()
+        provider.context.agent_state.runtime.screen.update = MagicMock()
         provider.context.perception.perceive = AsyncMock(return_value=capture)
-        provider.observer.resolve_capture_hashes.return_value = hashes
-        provider.observer.build_screen_state.return_value = state
+        provider.context.agent_state.update_screen = MagicMock(return_value=True)
+
         provider.observer.observe = AsyncMock(return_value=cls.__observation())
+
         provider.persistence.persist = MagicMock()
+
         return provider
 
     async def test_ocr_elements_become_manifest_when_xml_is_absent(self) -> None:

@@ -9,6 +9,7 @@ scenarios.
 
 from __future__ import annotations
 
+import logging
 import unittest
 from typing import Optional
 
@@ -391,3 +392,141 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         self.assertTrue(evidence.screen.evolved)
         assert evidence.criterion is not None
         self.assertFalse(evidence.criterion.observed)
+
+
+class ReasonerLateralCreditObservedTest(unittest.TestCase):
+    """
+    Pins completion.lateral_credit.observed: fires only when the model
+    asserts completion against an active sub-goal whose description does
+    not actually share enough text with the rationale to justify the claim.
+    """
+
+    @staticmethod
+    def __reasoner() -> Reasoner:
+        """
+        Build a reasoner with a representative intent string.
+        """
+
+        return Reasoner(intent="open meesho and find Jars & containers")
+
+    @staticmethod
+    def __sub_goal(*, description: str) -> SubGoal:
+        """
+        Build a sub-goal carrying the supplied description as the active target.
+        """
+
+        return SubGoal(
+            index=2,
+            description=description,
+            kind=SubGoalKind.ACTION,
+            directive=ActionType.TAP,
+        )
+
+    @staticmethod
+    def __analysis(
+        *,
+        is_sub_goal_complete: bool,
+        reasoning: str,
+        subgoal_completion_reason: Optional[str] = None,
+    ) -> AnalysisResult:
+        """
+        Build an analysis result with the supplied rationale and completion claim flag.
+        """
+
+        return AnalysisResult(
+            action=Action(
+                action_type=ActionType.TAP,
+                target="t",
+                rationale="r",
+                confidence=1.0,
+            ),
+            reasoning=reasoning,
+            screen_description="",
+            is_sub_goal_complete=is_sub_goal_complete,
+            is_goal_complete=False,
+            subgoal_completion_reason=subgoal_completion_reason,
+            metadata={"tool_args": {}},
+        )
+
+    def test_observed_when_asserted_with_unrelated_rationale(self) -> None:
+        """
+        Asserted claim against a sub-goal whose description shares almost nothing with the rationale fires the event.
+        """
+
+        sub_goal = self.__sub_goal(description="Apply the 10% off coupon at checkout")
+        analysis = self.__analysis(
+            is_sub_goal_complete=True,
+            reasoning="Pizza delivered.",
+            subgoal_completion_reason="Pizza delivered.",
+        )
+
+        with self.assertLogs("fathom.core.agent.reasoner", level=logging.INFO) as captured:
+            self.__reasoner().assess_completion(
+                analysis=analysis,
+                sub_goal=sub_goal,
+                screen_changed=True,
+            )
+
+        records = [
+            record
+            for record in captured.records
+            if record.__dict__.get("event") == "completion.lateral_credit.observed"
+        ]
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(record.__dict__["sub_goal.index"], sub_goal.index)
+        self.assertEqual(record.__dict__["sub_goal.description"], sub_goal.description[:120])
+
+    def test_not_observed_when_claim_not_asserted(self) -> None:
+        """
+        Without an asserted claim the lateral-credit event is suppressed regardless of similarity.
+        """
+
+        sub_goal = self.__sub_goal(description="Apply the 10% off coupon at checkout")
+        analysis = self.__analysis(
+            is_sub_goal_complete=False,
+            reasoning="Some unrelated narration.",
+        )
+
+        with self.assertLogs("fathom.core.agent.reasoner", level=logging.INFO) as captured:
+            self.__reasoner().assess_completion(
+                analysis=analysis,
+                sub_goal=sub_goal,
+                screen_changed=True,
+            )
+            logging.getLogger("fathom.core.agent.reasoner").info("sentinel")
+
+        records = [
+            record
+            for record in captured.records
+            if record.__dict__.get("event") == "completion.lateral_credit.observed"
+        ]
+        self.assertEqual(records, [])
+
+    def test_not_observed_when_rationale_aligned_with_sub_goal(self) -> None:
+        """
+        Strong textual alignment between sub-goal description and rationale keeps the event quiet.
+        """
+
+        description = "Tap on Submit button"
+        sub_goal = self.__sub_goal(description=description)
+        analysis = self.__analysis(
+            is_sub_goal_complete=True,
+            reasoning=description,
+            subgoal_completion_reason=description,
+        )
+
+        with self.assertLogs("fathom.core.agent.reasoner", level=logging.INFO) as captured:
+            self.__reasoner().assess_completion(
+                analysis=analysis,
+                sub_goal=sub_goal,
+                screen_changed=True,
+            )
+            logging.getLogger("fathom.core.agent.reasoner").info("sentinel")
+
+        records = [
+            record
+            for record in captured.records
+            if record.__dict__.get("event") == "completion.lateral_credit.observed"
+        ]
+        self.assertEqual(records, [])

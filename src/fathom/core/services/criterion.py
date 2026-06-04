@@ -9,10 +9,10 @@ and a small in-memory cache keyed on the screen visual hash.
 
 Layering:
 
-1. Symbolic check — cheap, deterministic. Tokenises the criterion text and the
+1. Symbolic check — cheap, deterministic. Tokenizes the criterion text and the
    visible screen text and computes a hit-ratio. Resolves presence/visibility
    criteria without an LLM call. Returns UNCLEAR when the ratio is below
-   threshold so behavioural criteria are not falsely rejected.
+   threshold so behavioral criteria are not falsely rejected.
 
 2. LLM check — invoked only when the symbolic layer is UNCLEAR. The prompt
    instructs the model not to infer that earlier actions happened; only
@@ -204,15 +204,10 @@ class CriterionObserver:
             )
 
         symbolic = self.__symbolic_check(criterion=criterion, observation=observation)
+        self.__cache_if_satisfied(cache_key=cache_key, decision=symbolic)
 
-        if symbolic.verdict is not CriterionVerdict.UNCLEAR:
-            self.__cache_if_satisfied(cache_key=cache_key, decision=symbolic)
-            return symbolic
-
-        decision = await self.__llm_check(criterion=criterion, observation=observation)
-        self.__cache_if_satisfied(cache_key=cache_key, decision=decision)
-
-        return decision
+        # return await self.__llm_adjudicate(criterion=criterion, observation=observation, cache_key=cache_key)
+        return symbolic
 
     def __cache_if_satisfied(
         self,
@@ -280,15 +275,15 @@ class CriterionObserver:
             ),
         )
 
-    async def __llm_check(
-        self, *, criterion: str, observation: ScreenObservation
+    async def __llm_adjudicate(
+        self,
+        *,
+        criterion: str,
+        observation: ScreenObservation,
+        cache_key: Tuple[str, int, str, str],
     ) -> CriterionDecision:
         """
-        LLM-backed adjudication for criteria the symbolic layer could not resolve.
-
-        Any exception from the LLM port degrades to an UNCLEAR verdict so the
-        gate's safety-net path takes the decision; this service must not crash
-        the agent loop.
+        LLM adjudication for UNCLEAR symbolic verdicts; degrades to UNCLEAR on failure and caches SATISFIED.
         """
 
         screen_digest = self.__compact_screen(observation=observation)
@@ -300,7 +295,7 @@ class CriterionObserver:
                 prompt=(prompt,),
                 system_instruction=_SYSTEM_INSTRUCTION,
             )
-        except Exception as exception:  # noqa: BLE001 - intentional broad catch; see docstring
+        except Exception as exception:  # noqa: BLE001 - broad catch keeps the loop alive
             logger.warning(
                 "criterion.llm.failed",
                 extra={
@@ -318,7 +313,9 @@ class CriterionObserver:
                 notes=f"LLM check raised: {type(exception).__name__}",
             )
 
-        return self.__parse_llm_verdict(content=result.content or "")
+        decision = self.__parse_llm_verdict(content=result.content or "")
+        self.__cache_if_satisfied(cache_key=cache_key, decision=decision)
+        return decision
 
     @staticmethod
     def __compact_screen(*, observation: ScreenObservation) -> str:

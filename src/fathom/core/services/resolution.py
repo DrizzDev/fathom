@@ -64,6 +64,11 @@ class ReferenceResolutionService:
         """
 
         attempt = self.__snap_to_label(action=action, elements=elements)
+        self.__emit_snap_evaluation(
+            requested=action,
+            resolved=attempt,
+            elements=elements,
+        )
         substituted = await self.__substitute_references(action=attempt.action)
 
         return attempt.model_copy(update={"action": substituted})
@@ -332,6 +337,38 @@ class ReferenceResolutionService:
                 action=action,
                 reason=f"snap failed for label_id '{action.label_id}': {exception}",
             )
+
+    def __emit_snap_evaluation(
+        self,
+        *,
+        requested: Action,
+        resolved: ResolveResult,
+        elements: Optional[Dict[str, Any]],
+    ) -> None:
+        """
+        Emit one structured snap.evaluated event per spatial snap attempt.
+        """
+
+        if requested.action_type not in SPATIAL_ACTION_TYPES:
+            return
+
+        element = (elements or {}).get(requested.label_id) if requested.label_id else None
+
+        logger.info(
+            "Snap evaluation completed",
+            extra={
+                "event": "snap.evaluated",
+                "component": "resolution",
+                "workflow.id": self.__workflow_id,
+                "outcome": resolved.status.value,
+                "reason": resolved.reason,
+                "action.label_id": requested.label_id,
+                "action.type": requested.action_type.value,
+                "action.target": (requested.target or "")[:120],
+                "manifest.source": (element or {}).get("source"),
+                "manifest.bounds": (element or {}).get("bounds"),
+            },
+        )
 
     @staticmethod
     def __element_has_semantic_descriptor(*, element: Dict[str, Any]) -> bool:

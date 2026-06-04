@@ -426,14 +426,15 @@ class HistoryService:
 
     def __get_history_file_path(self, *, package_name: str, filename: str) -> Path:
         """
-        Resolve a history artifact path for the current package context.
+        Resolve a history artifact path. Package is embedded in the filename so a
+        single session that touches multiple packages does not collide its histories.
         """
 
-        directory = self.__path_manager.get_history_directory(
-            package_name=package_name,
-            session_id=self.__workflow_id,
-        )
-        return directory / filename
+        directory = self.__path_manager.get_history_directory(session_id=self.__workflow_id)
+        stem, _, ext = filename.rpartition(".")
+        scoped = f"{stem}__{package_name}.{ext}" if stem and ext else f"{filename}__{package_name}"
+
+        return directory / scoped
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """

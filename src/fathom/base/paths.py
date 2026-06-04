@@ -15,7 +15,7 @@ logger = getLogger(__name__)
 class SharedPathManager:
     """
     Manages base paths for assets, memory, and logs.
-    Enforces structure: assets/{category}/{date}/{package}/{session}/
+    Enforces structure: assets/{category}/{date}/{session}/
     """
 
     def __init__(self, settings: "FathomSettings") -> None:
@@ -36,61 +36,60 @@ class SharedPathManager:
             },
         )
 
-    def __get_category_root(self, category: str, package_name: str, session_id: str) -> Path:
+    def __get_category_root(self, category: str, session_id: str) -> Path:
         """
         Get the root directory for a specific category within a session.
         """
 
         date_str = datetime.now().strftime("%Y-%m-%d")
-        path = self.__base_path / category / date_str / package_name / session_id
+        path = self.__base_path / category / date_str / session_id
         path.mkdir(parents=True, exist_ok=True)
 
         return path
 
-    def get_screenshot_path(self, package_name: str, session_id: str, filename: str) -> Path:
+    def get_screenshot_path(self, *, session_id: str, filename: str) -> Path:
         """
         Get the full path for a screenshot.
         """
 
-        directory = self.__get_category_root("screenshot", package_name, session_id)
+        directory = self.__get_category_root("screenshot", session_id)
         return directory / filename
 
-    def get_trace_path(self, package_name: str, session_id: str, filename: str) -> Path:
+    def get_trace_path(self, *, session_id: str, filename: str) -> Path:
         """
         Get the full path for a trace image.
         """
 
-        directory = self.__get_category_root("traces", package_name, session_id)
+        directory = self.__get_category_root("traces", session_id)
         return directory / filename
 
-    def get_history_directory(self, package_name: str, session_id: str) -> Path:
+    def get_history_directory(self, *, session_id: str) -> Path:
         """
         Get directory for history artifacts.
         """
 
-        return self.__get_category_root("history", package_name, session_id)
+        return self.__get_category_root("history", session_id)
 
-    def get_annotated_path(self, package_name: str, session_id: str, filename: str) -> Path:
+    def get_annotated_path(self, *, session_id: str, filename: str) -> Path:
         """
         Get the full path for an annotated image.
         """
 
-        directory = self.__get_category_root("annotated", package_name, session_id)
+        directory = self.__get_category_root("annotated", session_id)
         return directory / filename
 
-    def get_xml_path(self, package_name: str, session_id: str, filename: str) -> Path:
+    def get_xml_path(self, *, session_id: str, filename: str) -> Path:
         """
         Get the full path for an XML dump.
         """
 
-        directory = self.__get_category_root("xmls", package_name, session_id)
+        directory = self.__get_category_root("xmls", session_id)
         return directory / filename
 
     def get_artifact_path(
         self,
         *,
         kind: "ArtifactKind",
-        package_name: str,
         session_id: str,
         filename: str,
     ) -> Path:
@@ -104,7 +103,6 @@ class SharedPathManager:
 
         directory = self.__get_category_root(
             self.__directory_for(kind=kind),
-            package_name,
             session_id,
         )
         return directory / filename

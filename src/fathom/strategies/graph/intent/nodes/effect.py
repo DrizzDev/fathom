@@ -299,10 +299,21 @@ class PostAction:
                 ),
             )
 
-        post_observation = await self.__observer.observe(
-            hashes=post_hashes,
-            capture=post_capture,
-            elements=post_elements,
+        # Post-action enrichment (OCR + icon + ensemble) was previously
+        # re-run here on every turn; the next GROUND call rebuilds the same
+        # observation from a fresh capture before any planner reads it, so
+        # the only downstream consumers of the post-action enrichment were
+        # history and debug artefacts. Skipping the call drops a full
+        # OCR/icon round-trip per step. Pre-action observation flows
+        # through as the fallback on the next ANALYZE turn.
+        post_observation: Optional[ScreenObservation] = None
+        logger.info(
+            "Post-action enrichment skipped",
+            extra={
+                **self.__log_context(),
+                "event": "observe.post.enrichment_skipped",
+                "reason": "ground_rebuilds_observation_next_turn",
+            },
         )
 
         if self.__context.is_cancelled:

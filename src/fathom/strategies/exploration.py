@@ -6,10 +6,8 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.base.paths import SharedPathManager
+from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.interfaces.device import DevicePort
-
-if TYPE_CHECKING:
-    from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.perception import PerceptionPort
@@ -21,6 +19,9 @@ from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.results import ExecutionResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.exploration.builder import ExplorationGraphBuilder
+
+if TYPE_CHECKING:
+    from fathom.core.config.loader import RuntimeConfigLoader
 
 logger = getLogger(name=__name__)
 
@@ -63,17 +64,23 @@ class ExplorationStrategy:
             runtime_configuration if runtime_configuration is not None else RuntimeConfigLoader()
         )
 
+        phase = PhaseAnnouncer(
+            telemetry=telemetry,
+            message=configuration.telemetry.phase,
+        )
+
         self.__graph_context = GraphContext(
             llm=llm,
+            phase=phase,
             intent=intent,
             use_xml=False,
             device=device,
-            perception=perception,
             signal=signal,
             memory=memory,
             storage=storage,
             telemetry=telemetry,
             max_steps=max_steps,
+            perception=perception,
             workflow_id=workflow_id,
             package_name=package_name,
             path_manager=path_manager,

@@ -17,6 +17,7 @@ from fathom.constants.state import CommonStateKey, CompletionReason, IntentState
 from fathom.core.config import RuntimeConfigLoader
 from fathom.core.exceptions import FinalizationTimeoutError
 from fathom.core.services.decomposer import IntentDecomposer
+from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.interfaces.checkpoint import CheckpointStore, LangGraphCheckpointer
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
@@ -88,6 +89,11 @@ class IntentStrategy:
         self.__step_results: List[StepResult] = []
         self.__completion_reason: Optional[str] = None
 
+        self.__phase = PhaseAnnouncer(
+            telemetry=telemetry,
+            message=configuration.telemetry.phase,
+        )
+
         # Use the caller-bound loader when supplied; fall back to an
         # env-only :class:`RuntimeConfigLoader()` for stand-alone runs
         # (tests, CLI) that don't construct a settings object upstream.
@@ -117,6 +123,7 @@ class IntentStrategy:
             signal=signal,
             use_xml=use_xml,
             storage=storage,
+            phase=self.__phase,
             telemetry=telemetry,
             max_steps=max_steps,
             summarizer=summarizer,
@@ -160,9 +167,11 @@ class IntentStrategy:
 
         start_time = time.time()
         prewarm_task: Optional["asyncio.Task[None]"] = None
-        assembler = self.__ResultAssembler(workflow_id=self.__workflow_id, started_at=start_time)
-        final_state: Optional[Any] = None
+
         executor_failed = False
+        final_state: Optional[Any] = None
+        assembler = self.__ResultAssembler(workflow_id=self.__workflow_id, started_at=start_time)
+
         stack = AsyncExitStack()
         budgets = self.__graph_context.configuration.intent.finalization
 
@@ -182,12 +191,32 @@ class IntentStrategy:
                 llm=self.__llm,
                 configuration=self.__graph_context.configuration.llm,
             )
+            await self.__phase.intent_decomposing(intent=self.__intent)
             sub_goals = await decomposer.decompose(intent=self.__intent)
 
             self.__graph_context.agent_state.set_sub_goals(sub_goals)
+            sub_goal_payload = [
+                {
+                    "index": goal.index,
+                    "description": goal.description,
+                    "directive": goal.directive.value if goal.directive is not None else None,
+                }
+                for goal in sub_goals
+            ]
             logger.info(
-                f"[IntentStrategy] Intent decomposed into {len(sub_goals)} sub-goals. "
-                "Starting execution..."
+                "Intent decomposed; starting execution",
+                extra={
+                    "event": "intent.decomposed",
+                    "component": "strategies.intent",
+                    "intent": self.__intent,
+                    "sub_goals": sub_goal_payload,
+                    "sub_goals.count": len(sub_goals),
+                    "workflow.id": self.__workflow_id,
+                },
+            )
+            await self.__phase.plan_synthesized(
+                intent=self.__intent,
+                sub_goals=sub_goal_payload,
             )
 
             executor = GraphExecutor(
@@ -201,19 +230,19 @@ class IntentStrategy:
 
             if not executor_failed:
                 await self.__run_finalization_phase(
-                    phase=FinalizationPhase.HISTORY_FLUSH,
-                    timeout=budgets.history.flush,
-                    awaitable=self.__graph_context.history.flush_pending_operations(),
                     assembler=assembler,
+                    timeout=budgets.history.flush,
+                    phase=FinalizationPhase.HISTORY_FLUSH,
+                    awaitable=self.__graph_context.history.flush_pending_operations(),
                 )
                 script_data = await self.__run_finalization_phase(
-                    phase=FinalizationPhase.HISTORY_SCRIPT,
+                    assembler=assembler,
                     timeout=budgets.history.script,
+                    phase=FinalizationPhase.HISTORY_SCRIPT,
                     awaitable=self.__graph_context.history.get_current_script(
                         intent=self.__intent,
                         step_number=self.__graph_context.agent_state.step_count,
                     ),
-                    assembler=assembler,
                 )
                 if script_data:
                     await self.__graph_context.telemetry.info(
@@ -232,28 +261,30 @@ class IntentStrategy:
 
                 config: RunnableConfig = {"configurable": {"thread_id": self.__workflow_id}}
                 final_state = await self.__run_finalization_phase(
-                    phase=FinalizationPhase.GRAPH_STATE_READ,
-                    timeout=budgets.graph.state_read,
-                    awaitable=self.__graph.aget_state(config),
                     assembler=assembler,
+                    timeout=budgets.graph.state_read,
+                    phase=FinalizationPhase.GRAPH_STATE_READ,
+                    awaitable=self.__graph.aget_state(config),
                 )
         except asyncio.CancelledError:
             raise
+
         except Exception as exception:
             logger.exception("Intent strategy execution failed: %s", exception)
             executor_failed = True
             self.__try_recover_step_results()
+
         finally:
             await AbandonablePhase(
-                phase=FinalizationPhase.CHECKPOINTER_CLOSE,
-                timeout=budgets.graph.checkpointer_close,
                 workflow_id=self.__workflow_id,
+                timeout=budgets.graph.checkpointer_close,
+                phase=FinalizationPhase.CHECKPOINTER_CLOSE,
             ).execute(awaitable=stack.aclose())
 
             await AbandonablePhase(
+                workflow_id=self.__workflow_id,
                 phase=FinalizationPhase.BACKGROUND_DRAIN,
                 timeout=budgets.runtime.background_drain,
-                workflow_id=self.__workflow_id,
             ).execute(
                 awaitable=self.__cleanup_background_task(
                     task=prewarm_task, task_name="planner prewarm"
@@ -261,20 +292,23 @@ class IntentStrategy:
             )
 
             await AbandonablePhase(
+                workflow_id=self.__workflow_id,
                 phase=FinalizationPhase.CONTEXT_SHUTDOWN,
                 timeout=budgets.runtime.context_shutdown,
-                workflow_id=self.__workflow_id,
             ).execute(awaitable=self.__shutdown_graph_context())
 
         result = assembler.assemble(
-            agent_state=self.__graph_context.agent_state,
-            is_cancelled=self.__graph_context.is_cancelled,
             final_state=final_state,
             executor_failed=executor_failed,
+            agent_state=self.__graph_context.agent_state,
+            is_cancelled=self.__graph_context.is_cancelled,
         )
+
         self.__completion_reason = assembler.completion_reason
+
         if final_state is not None:
             self.__step_results = list(final_state.values.get(IntentStateKey.STEP_RESULTS) or [])
+
         return result
 
     async def __run_executor(self, *, executor: Any) -> bool:
@@ -283,15 +317,19 @@ class IntentStrategy:
         """
 
         workflow_id = self.__workflow_id
+
         logger.info(
             "executor started",
             extra={"event": "fathom.intent.executor.started", "workflow.id": workflow_id},
         )
+
         started_at = time.perf_counter()
+
         try:
             await executor.run()
         except asyncio.CancelledError:
             raise
+
         except Exception as exception:
             logger.error(
                 "executor failed: %s",
@@ -300,9 +338,9 @@ class IntentStrategy:
                 extra={
                     "event": "fathom.intent.executor.failed",
                     "workflow.id": workflow_id,
-                    "duration": time.perf_counter() - started_at,
-                    "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
+                    "exception.type": type(exception).__name__,
+                    "duration": time.perf_counter() - started_at,
                 },
             )
             return True
@@ -319,9 +357,9 @@ class IntentStrategy:
     async def __run_finalization_phase(
         self,
         *,
-        phase: FinalizationPhase,
         timeout: float,
         awaitable: Any,
+        phase: FinalizationPhase,
         assembler: "IntentStrategy.__ResultAssembler",
     ) -> Any:
         """
@@ -340,9 +378,9 @@ class IntentStrategy:
                 "finalization phase timed out",
                 extra={
                     "event": f"{phase.value}.partial",
+                    "timeout": timeout,
                     "phase": phase.value,
                     "workflow.id": self.__workflow_id,
-                    "timeout": timeout,
                 },
             )
             return None
@@ -361,8 +399,8 @@ class IntentStrategy:
                 extra={
                     "event": f"{FinalizationPhase.CONTEXT_SHUTDOWN.value}.failed",
                     "workflow.id": self.__workflow_id,
-                    "exception.type": type(shutdown_error).__name__,
                     "exception.message": str(shutdown_error),
+                    "exception.type": type(shutdown_error).__name__,
                 },
             )
 
@@ -456,9 +494,14 @@ class IntentStrategy:
 
         from fathom.schemas.subgoal import SubGoalStatus
 
-        subgoals = self.__graph_context.agent_state.sub_goal_list
-        executed = [sg.description for sg in subgoals if sg.status == SubGoalStatus.COMPLETE]
         skipped: List[str] = []
+        subgoals = self.__graph_context.agent_state.sub_goal_list
+        executed = [
+            sub_goal.description
+            for sub_goal in subgoals
+            if sub_goal.status == SubGoalStatus.COMPLETE
+        ]
+
         return executed, skipped, len(subgoals)
 
     @property
@@ -500,9 +543,9 @@ class IntentStrategy:
         checkpoint_configuration = configuration.intent.checkpoint
         if isinstance(checkpoint_configuration, SqliteCheckpointConfiguration):
             return SqliteCheckpointStore(
-                directory=path_manager.get_checkpoint_directory(),
-                policy=checkpoint_configuration.policy,
                 serde=CheckpointSerdeFactory.build(),
+                policy=checkpoint_configuration.policy,
+                directory=path_manager.get_checkpoint_directory(),
             )
 
         raise RuntimeError(
@@ -521,8 +564,8 @@ class IntentStrategy:
             Bind workflow identity and execution start timestamp for duration accounting.
             """
 
-            self.__workflow_id = workflow_id
             self.__started_at = started_at
+            self.__workflow_id = workflow_id
             self.__failed_phase: Optional[str] = None
             self.__completion_reason: Optional[str] = None
 
@@ -555,27 +598,29 @@ class IntentStrategy:
             *,
             agent_state: Any,
             is_cancelled: bool,
-            final_state: Optional[Any],
             executor_failed: bool,
+            final_state: Optional[Any],
         ) -> ExecutionResult:
             """
             Compose the ExecutionResult honoring partial-finalization semantics.
             """
 
             metadata: Dict[str, Any] = {}
+
             if self.__failed_phase is not None:
                 metadata["finalization.partial"] = True
                 metadata["finalization.failed_phase"] = self.__failed_phase
+
             duration = int((time.time() - self.__started_at) * 1000)
 
             if executor_failed:
                 self.__completion_reason = CompletionReason.FAILED.value
                 return ExecutionResult(
-                    duration=duration,
-                    is_cancelled=is_cancelled,
                     success=False,
-                    error="executor failed before terminal state",
+                    duration=duration,
                     metadata=metadata,
+                    is_cancelled=is_cancelled,
+                    error="executor failed before terminal state",
                 )
 
             completion_reason = self.__resolve_completion_reason(
@@ -583,23 +628,24 @@ class IntentStrategy:
                 final_state=final_state,
             )
             self.__completion_reason = completion_reason
+
             success = self.__is_successful_completion(
-                is_complete=agent_state.is_complete,
                 is_cancelled=is_cancelled,
+                is_complete=agent_state.is_complete,
                 completion_reason=completion_reason,
             )
             error = self.__resolve_error(
                 success=success,
-                completion_reason=completion_reason,
                 final_state=final_state,
+                completion_reason=completion_reason,
             )
 
             return ExecutionResult(
+                error=error,
+                metadata=metadata,
                 duration=duration,
                 is_cancelled=is_cancelled,
                 success=success and not is_cancelled,
-                error=error,
-                metadata=metadata,
             )
 
         @staticmethod
@@ -614,16 +660,18 @@ class IntentStrategy:
 
             if final_state is not None:
                 reason = final_state.values.get("completion_reason")
+
                 if reason is not None:
                     return cast("Optional[str]", reason)
+
             return cast("Optional[str]", agent_state.completion_reason)
 
         @staticmethod
         def __resolve_error(
             *,
             success: bool,
-            completion_reason: Optional[str],
             final_state: Optional[Any],
+            completion_reason: Optional[str],
         ) -> Optional[str]:
             """
             Resolve a user-facing error string from final state diagnostic and completion reason.
@@ -631,10 +679,14 @@ class IntentStrategy:
 
             if success:
                 return None
-            if final_state is not None:
-                failure_diagnostic = final_state.values.get(CommonStateKey.FAILURE_DIAGNOSTIC.value)
-                if failure_diagnostic:
-                    return str(failure_diagnostic)
+
+            if final_state is not None and (
+                failure_diagnostic := final_state.values.get(
+                    CommonStateKey.FAILURE_DIAGNOSTIC.value
+                )
+            ):
+                return str(failure_diagnostic)
+
             return completion_reason
 
         @staticmethod
@@ -653,10 +705,10 @@ class IntentStrategy:
 
             return completion_reason not in {
                 None,
+                CompletionReason.STUCK.value,
                 CompletionReason.FAILED.value,
                 CompletionReason.CANCELLED.value,
                 CompletionReason.MAX_STEPS.value,
-                CompletionReason.STUCK.value,
-                CompletionReason.INTERVENTION_REQUIRED.value,
                 CompletionReason.USER_DIRECTIVE.value,
+                CompletionReason.INTERVENTION_REQUIRED.value,
             }

@@ -15,6 +15,7 @@ from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
+from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
@@ -117,6 +118,10 @@ class FathomRunner:
         self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
         self.__owned_resources: List[LLMPort] = list(owned_resources or [])
+        self.__phase = PhaseAnnouncer(
+            telemetry=telemetry,
+            message=self.__config.telemetry.phase,
+        )
 
         # Wire core components
         self.__engine = ExecutionEngine(
@@ -354,6 +359,7 @@ class FathomRunner:
             return result
 
         finally:
+            await self.__phase.shutdown()
             self.__current_strategy = None
 
     async def run_exploration(
@@ -541,6 +547,24 @@ class FathomRunner:
                     },
                 )
 
+        async def __phase_shutdown() -> None:
+            """
+            Cancel any in-flight phase pulse so the heartbeat task cannot outlive the workflow.
+            """
+
+            try:
+                await self.__phase.shutdown()
+            except Exception as exception:
+                logger.warning(
+                    "phase announcer shutdown failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.phase.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
+
         async def __llm_cleanup() -> None:
             """
             LLM port cleanup wrapped for capture by AbandonablePhase.
@@ -643,6 +667,7 @@ class FathomRunner:
                 )
 
         for awaitable in (
+            __phase_shutdown(),
             __context_manager_shutdown(),
             __llm_cleanup(),
             __owned_resources_cleanup(),
@@ -677,8 +702,8 @@ class FathomRunner:
         )
 
         qualifier_started_at = time.perf_counter()
+        await self.__phase.intent_qualifying(intent=intent)
         verdict = await self.__qualifier.qualify(intent=intent)
-
         qualifier_latency = time.perf_counter() - qualifier_started_at
 
         gate_policy = QualificationGatePolicy(configuration=self.__config.qualifier)

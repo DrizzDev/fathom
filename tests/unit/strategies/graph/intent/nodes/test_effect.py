@@ -601,3 +601,146 @@ class PostActionBuildTracesTest(unittest.TestCase):
         result = self.__post_action()._PostAction__build_traces(emissions=emissions)  # type: ignore[attr-defined]
 
         self.assertEqual(result, ())
+
+
+class PostActionCompareEnrichmentSkipTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins the post-action enrichment skip in __compare: the heavy
+    ``observer.observe`` call is intentionally bypassed; downstream code
+    falls back to the pre-action observation on the next ANALYZE turn.
+    """
+
+    @staticmethod
+    def __capture(*, image: bytes = b"post-bytes") -> ScreenCapture:
+        """
+        Build a minimal ScreenCapture for the post-action observation step.
+        """
+
+        return ScreenCapture(
+            width=1080,
+            height=2400,
+            activity="com.test.app",
+            image=image,
+            timestamp=1_714_200_000_000,
+        )
+
+    @staticmethod
+    def __screen_diff() -> ScreenDiff:
+        """
+        Build a benign ScreenDiff fixture so the comparator returns a valid object.
+        """
+
+        return ScreenDiff(
+            phash_distance=0,
+            ssim_score=1.0,
+            content_pixel_diff_ratio=0.0,
+            xml_hash_changed=False,
+            interaction_hash_changed=False,
+            activity_changed=False,
+        )
+
+    def __build_post_action(self) -> tuple:
+        """
+        Build a PostAction wired against MagicMocks; return (post_action, observer, context).
+        """
+
+        from fathom.schemas.screens import ScreenHashBundle, ScreenState
+
+        context = MagicMock()
+        context.workflow_id = "wf-1"
+        context.is_cancelled = False
+        context.use_xml = False
+        context.artifact_pipeline = None
+        context.storage = MagicMock()
+        context.storage.backend = None
+        context.agent_state.step_count = 1
+
+        post_capture = self.__capture()
+        context.perception_port.capture = AsyncMock(return_value=post_capture)
+
+        observer = MagicMock()
+        observer.resolve_capture_hashes = MagicMock(
+            return_value=ScreenHashBundle(
+                visual_hash="vh",
+                xml_hash="xh",
+                interaction_hash="ih",
+            )
+        )
+        observer.build_screen_state = MagicMock(
+            return_value=ScreenState(
+                activity="com.test.app",
+                timestamp=1_714_200_000_000,
+                activity_hash="ah",
+                visual_hash="vh",
+                xml_hash="xh",
+                interaction_hash="ih",
+            )
+        )
+        observer.observe = AsyncMock()
+
+        comparator = MagicMock()
+        comparator.compare = MagicMock(return_value=self.__screen_diff())
+
+        post_action = PostAction(
+            context=context,
+            observer=observer,
+            comparator=comparator,
+        )
+        return post_action, observer, context
+
+    async def test_observer_observe_is_not_called_in_post_action_path(self) -> None:
+        """
+        The post-action compare path bypasses observer.observe entirely so OCR/icon enrichment never re-runs.
+        """
+
+        post_action, observer, _ = self.__build_post_action()
+
+        await post_action._PostAction__compare(  # type: ignore[attr-defined]
+            package_name="com.test.app",
+            before_capture=self.__capture(image=b"before"),
+            before_state=None,
+            trace_emissions=(),
+        )
+
+        observer.observe.assert_not_called()
+
+    async def test_post_observation_is_none(self) -> None:
+        """
+        The returned PostActionObservation carries no observation, leaving the next turn's GROUND to rebuild it.
+        """
+
+        post_action, _, _ = self.__build_post_action()
+
+        result = await post_action._PostAction__compare(  # type: ignore[attr-defined]
+            package_name="com.test.app",
+            before_capture=self.__capture(image=b"before"),
+            before_state=None,
+            trace_emissions=(),
+        )
+
+        self.assertIsNone(result.observation)
+
+    async def test_enrichment_skipped_event_logged(self) -> None:
+        """
+        An ``observe.post.enrichment_skipped`` event is emitted with the documented reason.
+        """
+
+        post_action, _, _ = self.__build_post_action()
+
+        with self.assertLogs(
+            "fathom.strategies.graph.intent.nodes.effect", level="INFO"
+        ) as captured:
+            await post_action._PostAction__compare(  # type: ignore[attr-defined]
+                package_name="com.test.app",
+                before_capture=self.__capture(image=b"before"),
+                before_state=None,
+                trace_emissions=(),
+            )
+
+        skip_events = [
+            record
+            for record in captured.records
+            if record.__dict__.get("event") == "observe.post.enrichment_skipped"
+        ]
+        self.assertEqual(len(skip_events), 1)
+        self.assertEqual(skip_events[0].__dict__["reason"], "ground_rebuilds_observation_next_turn")

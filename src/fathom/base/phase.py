@@ -37,29 +37,33 @@ class _PhaseLogger:
     def emit(
         self,
         *,
-        suffix: str,
         level: int,
+        suffix: str,
+        sink: Logger = logger,
         duration: Optional[float] = None,
         exception: Optional[BaseException] = None,
-        sink: Logger = logger,
     ) -> None:
         """
         Emit one structured log record for a phase boundary transition.
         """
 
         event = f"{self.__phase.value}.{suffix}"
+
         extra: Dict[str, Any] = {
             "event": event,
-            "phase": self.__phase.value,
             "timeout": self.__timeout,
+            "phase": self.__phase.value,
         }
         if self.__workflow_id is not None:
             extra["workflow.id"] = self.__workflow_id
+
         if duration is not None:
             extra["duration"] = duration
+
         if exception is not None:
-            extra["exception.type"] = type(exception).__name__
             extra["exception.message"] = str(exception)
+            extra["exception.type"] = type(exception).__name__
+
         sink.log(level, "phase=%s event=%s", self.__phase.value, event, extra=extra)
 
 
@@ -71,8 +75,8 @@ class BoundedPhase(Generic[_RESULT]):
     def __init__(
         self,
         *,
-        phase: FinalizationPhase,
         timeout: float,
+        phase: FinalizationPhase,
         workflow_id: Optional[str] = None,
     ) -> None:
         """
@@ -89,34 +93,36 @@ class BoundedPhase(Generic[_RESULT]):
         Await the inner awaitable under the configured deadline.
         """
 
-        self.__log.emit(suffix="started", level=INFO)
         started_at = time.perf_counter()
+        self.__log.emit(suffix="started", level=INFO)
+
         try:
             result = await asyncio.wait_for(awaitable, timeout=self.__timeout)
         except asyncio.TimeoutError as exception:
             self.__log.emit(
-                suffix="timed_out",
                 level=WARNING,
+                suffix="timed_out",
                 duration=time.perf_counter() - started_at,
             )
             raise FinalizationTimeoutError(
-                phase=self.__phase.value,
                 timeout=self.__timeout,
+                phase=self.__phase.value,
                 workflow_id=self.__workflow_id,
             ) from exception
         except asyncio.CancelledError:
             raise
         except Exception as exception:
             self.__log.emit(
-                suffix="failed",
                 level=WARNING,
-                duration=time.perf_counter() - started_at,
+                suffix="failed",
                 exception=exception,
+                duration=time.perf_counter() - started_at,
             )
             raise
+
         self.__log.emit(
-            suffix="completed",
             level=INFO,
+            suffix="completed",
             duration=time.perf_counter() - started_at,
         )
         return result

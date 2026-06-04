@@ -89,7 +89,7 @@ class VisionService:
             "Latency phase completed",
             duration=time.time() - start,
             phase="planner.prewarm",
-            type=FathomEvent.LATENCY_PHASE,
+            type=FathomEvent.PHASE_HEARTBEAT,
         )
 
     def __prewarm_variants(self) -> List[AllowedTools]:
