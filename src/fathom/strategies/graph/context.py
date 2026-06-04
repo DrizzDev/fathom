@@ -160,6 +160,7 @@ class GraphContext:
 
         self.__signal = signal
         self.__hitl = HITLService(
+            phase=phase,
             signal=signal,
             telemetry=telemetry,
             capabilities=self.__capabilities,

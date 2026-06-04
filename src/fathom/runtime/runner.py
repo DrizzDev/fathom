@@ -349,7 +349,7 @@ class FathomRunner:
             )
 
             await self.__telemetry.info(
-                "Workflow execution finalized",
+                "All wrapped up.",
                 duration=duration,
                 success=result.success,
                 steps_taken=result.steps_taken,
@@ -754,7 +754,7 @@ class FathomRunner:
             )
 
         await self.__telemetry.info(
-            "Intent qualified", type=FathomEvent.INTENT_QUALIFIED, **verdict_payload
+            "Got it, getting started...", type=FathomEvent.INTENT_QUALIFIED, **verdict_payload
         )
         logger.info(
             "[FathomRunner] Qualifier allowed the intent, proceeding to execution",
@@ -805,12 +805,19 @@ class FathomRunner:
         # Temporal activity result handlers) that key off the terminal event
         # still receive a completion signal. The run *is* terminating here.
         await self.__telemetry.info(
-            "Workflow execution finalized",
+            "All wrapped up.",
             success=False,
             steps_taken=0,
             duration=duration,
             type=FathomEvent.WORKFLOW_COMPLETED,
         )
+        try:
+            await self.__phase.shutdown()
+        except Exception as exception:
+            logger.warning(
+                "Runner: phase.shutdown after qualifier-reject failed: %s; terminal event already emitted",
+                exception,
+            )
 
         return IntentResult(
             error=None,

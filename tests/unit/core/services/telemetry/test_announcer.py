@@ -284,6 +284,107 @@ class PhaseAnnouncerPulseTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(beats_after_shutdown, beats_before_shutdown)
 
+    async def test_pause_cancels_pulse_keeps_active_phase_for_resume(self) -> None:
+        """
+        pause cancels the pending beat task but keeps the active phase identity
+        so resume can restart a fresh pulse for the same phase.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="long task")
+        await announcer.pause()
+        await asyncio.sleep(0.25)
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertEqual(beats, [])
+
+    async def test_resume_after_pause_emits_beat_for_kept_phase(self) -> None:
+        """
+        resume schedules a fresh beat tagged with the phase that was active at the time of pause.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="long task")
+        await announcer.pause()
+        await asyncio.sleep(0.1)
+        telemetry.events.clear()
+        await announcer.resume()
+        await asyncio.sleep(0.15)
+        await announcer.shutdown()
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertGreaterEqual(len(beats), 1)
+        self.assertEqual(beats[0][2]["phase"], PhaseKind.QUALIFYING.value)
+        self.assertEqual(beats[0][2]["intent"], "long task")
+
+    async def test_resume_after_shutdown_is_noop(self) -> None:
+        """
+        Once shutdown has cleared the active phase, a subsequent resume must not emit any beats.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.shutdown()
+        await announcer.resume()
+        await asyncio.sleep(0.2)
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertEqual(beats, [])
+
+    async def test_resume_without_prior_pause_is_noop(self) -> None:
+        """
+        Calling resume without a paired pause must not start a second concurrent pulse.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.resume()
+        await asyncio.sleep(0.15)
+        await announcer.shutdown()
+
+        beats_after_quiet = [
+            event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT
+        ]
+        self.assertGreaterEqual(len(beats_after_quiet), 1)
+
+    async def test_double_pause_is_idempotent(self) -> None:
+        """
+        Calling pause twice in a row must not double-cancel or leak; the second is a no-op.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.pause()
+        await announcer.pause()
+        await asyncio.sleep(0.2)
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertEqual(beats, [])
+
+    async def test_pause_resume_cycle_survives_phase_swap(self) -> None:
+        """
+        Opening a new phase after pause should resume normal beats under the new phase tag,
+        not the paused one.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.pause()
+        await announcer.intent_decomposing(intent="x")
+        await asyncio.sleep(0.15)
+        await announcer.shutdown()
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertGreaterEqual(len(beats), 1)
+        for beat in beats:
+            self.assertEqual(beat[2]["phase"], PhaseKind.DECOMPOSING.value)
+
     async def test_shutdown_when_no_pulse_active_is_noop(self) -> None:
         """
         Calling shutdown without an in-flight phase does not raise and emits no events.

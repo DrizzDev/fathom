@@ -199,8 +199,9 @@ class GraphExecutor:
             with contextlib.suppress(asyncio.CancelledError):
                 await stream_task
             await self.__context.telemetry.info(
-                "Workflow execution cancelled", type=FathomEvent.WORKFLOW_CANCELLED
+                "Stopping the run.", type=FathomEvent.WORKFLOW_CANCELLED
             )
+            await self.__guarded_phase_shutdown(reason="manual_cancel_during_pause")
             return False
 
         # Do not cancel in-flight graph execution. Let current stream cycle
@@ -225,8 +226,9 @@ class GraphExecutor:
 
         logger.warning(f"Executor: Workflow {self.__thread_id} cancelled {phase}")
         await self.__context.telemetry.info(
-            "Workflow execution cancelled", type=FathomEvent.WORKFLOW_CANCELLED
+            "Stopping the run.", type=FathomEvent.WORKFLOW_CANCELLED
         )
+        await self.__guarded_phase_shutdown(reason=f"cancelled_during_{phase}")
 
         return True
 
@@ -263,25 +265,27 @@ class GraphExecutor:
             self.__context.cancel()
 
             await self.__context.telemetry.info(
-                "Workflow execution cancelled", type=FathomEvent.WORKFLOW_CANCELLED
+                "Stopping the run.", type=FathomEvent.WORKFLOW_CANCELLED
             )
+            await self.__guarded_phase_shutdown(reason=f"cancelled_at_{source}")
             return
 
         logger.info(f"Executor: Pausing execution ({source})")
         await self.__context.telemetry.info(
-            "Workflow execution paused", type=FathomEvent.WORKFLOW_PAUSED
+            "Holding here for now.", type=FathomEvent.WORKFLOW_PAUSED
         )
+        await self.__guarded_phase_pause(reason=f"paused_at_{source}")
 
         try:
             await self.__context.hitl.wait_for_resume()
         except WorkflowCancelledError:
             logger.info("Executor: Received workflow cancellation while paused")
             self.__context.cancel()
+            await self.__guarded_phase_shutdown(reason="cancelled_while_paused")
             return
 
-        await self.__context.telemetry.info(
-            "Workflow execution resumed", type=FathomEvent.WORKFLOW_RESUMED
-        )
+        await self.__context.telemetry.info("Picking back up...", type=FathomEvent.WORKFLOW_RESUMED)
+        await self.__guarded_phase_resume(reason=f"resumed_at_{source}")
 
         # Process ALL pending contexts in order
         processed_count = 0
@@ -379,3 +383,46 @@ class GraphExecutor:
         logger.info(
             f"Executor: Graph state updated with context injection. Keys updated: {list(update_dict.keys())}"
         )
+
+    async def __guarded_phase_pause(self, *, reason: str) -> None:
+        """
+        Pause the phase announcer pulse without ever letting an exception bubble
+        out — the lifecycle telemetry event already shipped and must not be undone.
+        """
+
+        try:
+            await self.__context.phase.pause()
+        except Exception as exception:
+            logger.warning(
+                "Executor: phase.pause failed (%s): %s; lifecycle event already emitted",
+                reason,
+                exception,
+            )
+
+    async def __guarded_phase_resume(self, *, reason: str) -> None:
+        """
+        Resume the phase announcer pulse, suppressing any failure so the workflow keeps running.
+        """
+
+        try:
+            await self.__context.phase.resume()
+        except Exception as exception:
+            logger.warning(
+                "Executor: phase.resume failed (%s): %s; lifecycle event already emitted",
+                reason,
+                exception,
+            )
+
+    async def __guarded_phase_shutdown(self, *, reason: str) -> None:
+        """
+        Shutdown the phase announcer pulse, suppressing failures so the cancellation path completes.
+        """
+
+        try:
+            await self.__context.phase.shutdown()
+        except Exception as exception:
+            logger.warning(
+                "Executor: phase.shutdown failed (%s): %s; lifecycle event already emitted",
+                reason,
+                exception,
+            )
