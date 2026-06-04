@@ -18,8 +18,9 @@ DEFAULT_PAID_LOCALIZATION_ATTEMPT_BUDGET: Final[int] = 0
 DEFAULT_LOOP_WINDOW: Final[int] = 10
 DEFAULT_LOOP_THRESHOLD: Final[int] = 3
 
-# Minimum identical consecutive (action, NO_PROGRESS) pairs that count as an "inert repetition
-DEFAULT_INERT_REPETITION_THRESHOLD: Final[int] = 2
+# Minimum identical consecutive (action, NO_PROGRESS) pairs that count as an "inert repetition".
+# Raised from 2 to 3 so a single misfired tap + planner retry does not immediately trigger a loop.
+DEFAULT_INERT_REPETITION_THRESHOLD: Final[int] = 3
 
 DEFAULT_MAX_STEPS: Final[int] = 20
 DEFAULT_CONTEXT_WINDOW: Final[int] = 10

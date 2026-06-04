@@ -27,18 +27,18 @@ class TestLoopDetectorInertRepetition:
         """
 
         return ScreenState(
-            activity="com.example/.Main",
             timestamp=0,
             activity_hash="0" * 16,
             visual_hash=visual_hash,
+            activity="com.example/.Main",
         )
 
     @staticmethod
     def __record_inert_streak(
         *,
-        detector: LoopDetector,
-        action: str,
         count: int,
+        action: str,
+        detector: LoopDetector,
     ) -> None:
         """
         Drive ``count`` records of ``(action, NO_PROGRESS)`` into the detector.
@@ -46,10 +46,10 @@ class TestLoopDetectorInertRepetition:
 
         for _ in range(count):
             detector.record(
-                screen=TestLoopDetectorInertRepetition.__screen(),
                 action_type="tap",
                 action_description=action,
                 effect_status=ActionEffectStatus.NO_PROGRESS,
+                screen=TestLoopDetectorInertRepetition.__screen(),
             )
 
     def test_fresh_detector_is_not_stuck(self) -> None:
@@ -63,10 +63,8 @@ class TestLoopDetectorInertRepetition:
 
     def test_threshold_inert_same_action_marks_stuck(self) -> None:
         """
-        Threshold-many identical action descriptors paired with trailing
-        ``NO_PROGRESS`` effects must trip the detector — independent of
-        whether the classic screen / action repetition thresholds have
-        accumulated enough samples.
+        Threshold-many identical action descriptors paired with trailing ``NO_PROGRESS`` effects must trip the detector
+        independent of whether the classic screen / action repetition thresholds have accumulated enough samples.
         """
 
         detector = LoopDetector()
@@ -89,14 +87,14 @@ class TestLoopDetectorInertRepetition:
         action = "Tap on Confirm & proceed button"
 
         detector.record(
-            screen=self.__screen(),
             action_type="tap",
+            screen=self.__screen(),
             action_description=action,
             effect_status=ActionEffectStatus.NO_PROGRESS,
         )
         detector.record(
-            screen=self.__screen(),
             action_type="tap",
+            screen=self.__screen(),
             action_description=action,
             effect_status=ActionEffectStatus.PROGRESS,
         )
@@ -112,14 +110,14 @@ class TestLoopDetectorInertRepetition:
         detector = LoopDetector()
 
         detector.record(
-            screen=self.__screen(),
             action_type="tap",
+            screen=self.__screen(),
             action_description="Tap A",
             effect_status=ActionEffectStatus.NO_PROGRESS,
         )
         detector.record(
-            screen=self.__screen(),
             action_type="tap",
+            screen=self.__screen(),
             action_description="Tap B",
             effect_status=ActionEffectStatus.NO_PROGRESS,
         )
@@ -128,48 +126,47 @@ class TestLoopDetectorInertRepetition:
 
     def test_uncertain_effect_does_not_trip_detector(self) -> None:
         """
-        ``UNCERTAIN`` is not ``NO_PROGRESS``; the detector must require
-        the strong signal before declaring inert repetition.
+        ``UNCERTAIN`` is not ``NO_PROGRESS``; the detector must require the strong signal before declaring inert repetition.
+        Each record uses a distinct screen hash so the unrelated screen-repetition detector cannot fire on the same history.
         """
 
         detector = LoopDetector()
         action = "Tap on Confirm & proceed button"
+        hashes = ("0" * 16, "a" * 16, "f" * 16)
 
-        for _ in range(DEFAULT_INERT_REPETITION_THRESHOLD):
+        for index in range(DEFAULT_INERT_REPETITION_THRESHOLD):
             detector.record(
-                screen=self.__screen(),
                 action_type="tap",
                 action_description=action,
                 effect_status=ActionEffectStatus.UNCERTAIN,
+                screen=self.__screen(visual_hash=hashes[index]),
             )
 
         assert detector.is_stuck() is False
 
     def test_missing_effect_status_does_not_trip_detector(self) -> None:
         """
-        Legacy ``record()`` calls without an effect status must not
-        false-fire the inert detector — empty slots are treated as
-        "not classifiable", not "no progress".
+        Legacy ``record()`` calls without an effect status must not false-fire the inert detector
+        empty slots are treated as "not classifiable", not "no progress". Distinct screen hashes keep the screen-repetition detector silent.
         """
 
         detector = LoopDetector()
         action = "Tap on Confirm & proceed button"
+        hashes = ("0" * 16, "a" * 16, "f" * 16)
 
-        for _ in range(DEFAULT_INERT_REPETITION_THRESHOLD):
+        for index in range(DEFAULT_INERT_REPETITION_THRESHOLD):
             detector.record(
-                screen=self.__screen(),
                 action_type="tap",
                 action_description=action,
+                screen=self.__screen(visual_hash=hashes[index]),
             )
 
         assert detector.is_stuck() is False
 
     def test_inert_streak_survives_checkpoint_round_trip(self) -> None:
         """
-        After ``restore``, the detector's inert-repetition history must
-        reproduce the same verdict as the live detector — the new
-        ``effect_statuses`` field on :class:`LoopDetectorState` is the
-        field that keeps resumed runs aware of inert streaks.
+        After ``restore``, the detector's inert-repetition history must reproduce the same verdict as the live detector
+        the new ``effect_statuses`` field on :class:`LoopDetectorState` is the field that keeps resumed runs aware of inert streaks.
         """
 
         live = LoopDetector()

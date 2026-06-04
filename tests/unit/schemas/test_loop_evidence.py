@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import unittest
 
+from fathom.constants.runtime import DEFAULT_INERT_REPETITION_THRESHOLD
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.loop import LoopEvidence, LoopReason
 from fathom.schemas.screens import ScreenState
@@ -24,13 +25,16 @@ class LoopEvidenceTest(unittest.TestCase):
 
     @staticmethod
     def __screen(*, visual_hash: str = "a" * 16) -> ScreenState:
+        """
+        Returns ScreenState
+        """
         return ScreenState(
-            activity="com.example/.Main",
             timestamp=0,
-            activity_hash="ah",
-            visual_hash=visual_hash,
             xml_hash="x",
+            activity_hash="ah",
             interaction_hash="i",
+            visual_hash=visual_hash,
+            activity="com.example/.Main",
         )
 
     def test_empty_detector_returns_not_stuck(self) -> None:
@@ -39,11 +43,13 @@ class LoopEvidenceTest(unittest.TestCase):
         """
 
         evidence = LoopDetector().evidence()
-        self.assertIsInstance(evidence, LoopEvidence)
+
         self.assertFalse(evidence.stuck)
-        self.assertIs(evidence.reason, LoopReason.NOT_STUCK)
+
         self.assertEqual(evidence.recent, ())
         self.assertEqual(evidence.since_progress, ())
+        self.assertIsInstance(evidence, LoopEvidence)
+        self.assertIs(evidence.reason, LoopReason.NOT_STUCK)
 
     def test_recent_window_uses_action_kind_derivation(self) -> None:
         """
@@ -65,6 +71,7 @@ class LoopEvidenceTest(unittest.TestCase):
         )
 
         evidence = detector.evidence()
+
         self.assertEqual(len(evidence.recent), 2)
         self.assertIs(evidence.recent[0].action_kind, ActionKind.VALIDATION)
         self.assertIs(evidence.recent[1].action_kind, ActionKind.NAVIGATION)
@@ -102,6 +109,7 @@ class LoopEvidenceTest(unittest.TestCase):
 
         evidence = detector.evidence()
         self.assertEqual(len(evidence.recent), 4)
+
         # since_progress excludes the old NO_PROGRESS tap and the PROGRESS swipe
         self.assertEqual(len(evidence.since_progress), 2)
         for turn in evidence.since_progress:
@@ -123,6 +131,7 @@ class LoopEvidenceTest(unittest.TestCase):
             )
 
         evidence = detector.evidence()
+
         self.assertEqual(len(evidence.recent), 3)
         self.assertEqual(len(evidence.since_progress), 3)
 
@@ -133,22 +142,24 @@ class LoopEvidenceTest(unittest.TestCase):
 
         detector = LoopDetector()
         detector.record(
-            screen=self.__screen(),
             action_type="tap",
+            screen=self.__screen(),
             action_description="t",
         )
 
         evidence = detector.evidence()
+
         self.assertEqual(len(evidence.recent), 1)
         self.assertIs(evidence.recent[0].effect_status, ActionEffectStatus.UNCERTAIN)
 
     def test_reason_reports_inert_repetition_when_classifier_fires(self) -> None:
         """
-        Two identical NO_PROGRESS records trip the inert-repetition detector.
+        ``DEFAULT_INERT_REPETITION_THRESHOLD`` identical NO_PROGRESS records trip the inert-repetition detector.
         """
 
         detector = LoopDetector()
-        for _ in range(2):
+
+        for _ in range(DEFAULT_INERT_REPETITION_THRESHOLD):
             detector.record(
                 screen=self.__screen(),
                 action_type="validate",
@@ -157,6 +168,7 @@ class LoopEvidenceTest(unittest.TestCase):
             )
 
         evidence = detector.evidence()
+
         self.assertTrue(evidence.stuck)
         self.assertIs(evidence.reason, LoopReason.INERT_REPETITION)
 
@@ -167,9 +179,9 @@ class LoopEvidenceTest(unittest.TestCase):
 
         detector = LoopDetector()
         detector.record(
-            screen=self.__screen(visual_hash="abcdefghij" * 2),
             action_type="tap",
             action_description="t",
+            screen=self.__screen(visual_hash="abcdefghij" * 2),
         )
 
         evidence = detector.evidence()
@@ -177,26 +189,19 @@ class LoopEvidenceTest(unittest.TestCase):
 
     def test_snapshot_tail_aligns_when_advance_clears_screens(self) -> None:
         """
-        Regression: :meth:`advance` clears screens but preserves actions, so the
-        deques diverge. The snapshot must align from the tail or the gate will
-        evaluate stale turns from before the most recent recovery.
-
-        Reproduces the Swiggy-trail bug where two consecutive validates with
-        NO_PROGRESS were recorded after a PROGRESS swipe, and the gate saw
-        ``since_progress=[]`` because it indexed the oldest entries instead of
-        the most recent ones.
+        Regression: :meth:`advance` clears screens but preserves actions, so the deque's diverge.
+        The snapshot must align from the tail or the gate will evaluate stale turns from before the most recent recovery.
         """
 
         detector = LoopDetector()
 
-        # Drive an extensive action history so the actions deque is longer
-        # than the screens deque after the upcoming advance.
+        # Drive an extensive action history so the actions deque is longer than the screens deque after the upcoming advance.
         for index in range(5):
             detector.record(
-                screen=self.__screen(visual_hash=f"{index:016x}"),
                 action_type="tap",
                 action_description=f"tap_{index}",
                 effect_status=ActionEffectStatus.PROGRESS,
+                screen=self.__screen(visual_hash=f"{index:016x}"),
             )
 
         # A real PROGRESS swipe triggers advance() in production via
@@ -245,5 +250,5 @@ class LoopEvidenceTest(unittest.TestCase):
         first = detector.evidence()
         second = detector.evidence()
         self.assertEqual(first.recent, second.recent)
-        self.assertEqual(first.since_progress, second.since_progress)
         self.assertEqual(first.reason, second.reason)
+        self.assertEqual(first.since_progress, second.since_progress)
