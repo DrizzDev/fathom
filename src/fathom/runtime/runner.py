@@ -703,7 +703,12 @@ class FathomRunner:
 
         qualifier_started_at = time.perf_counter()
         await self.__phase.intent_qualifying(intent=intent)
-        verdict = await self.__qualifier.qualify(intent=intent)
+
+        try:
+            verdict = await self.__qualifier.qualify(intent=intent)
+        finally:
+            await self.__phase.shutdown()
+
         qualifier_latency = time.perf_counter() - qualifier_started_at
 
         gate_policy = QualificationGatePolicy(configuration=self.__config.qualifier)

@@ -651,6 +651,11 @@ class GraphContext:
         Drain background tasks from all owned services before teardown.
         """
 
+        try:
+            await self.__phase.shutdown()
+        except Exception as exception:
+            logger.warning(f"[graph-context] phase announcer shutdown failed: {exception}")
+
         for service in (self.__action_executor, self.__hierarchy, self.__history):
             if hasattr(service, "drain_background_tasks"):
                 try:

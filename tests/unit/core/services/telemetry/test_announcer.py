@@ -262,6 +262,28 @@ class PhaseAnnouncerPulseTest(unittest.IsolatedAsyncioTestCase):
         beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
         self.assertLessEqual(len(beats), 3)
 
+    async def test_shutdown_after_unpaired_phase_open_kills_pulse(self) -> None:
+        """
+        Regression: a phase method that opens a pulse without a paired terminal call (e.g. INTENT_QUALIFYING with no INTENT_QUALIFIED closer)
+        must be cancellable by shutdown. In prod, a leaked QUALIFYING pulse kept firing PHASE_HEARTBEAT events for minutes after the workflow ended — pin shutdown is the safety net.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await asyncio.sleep(0.08)
+        await announcer.shutdown()
+
+        beats_before_shutdown = sum(
+            1 for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT
+        )
+        await asyncio.sleep(0.25)
+        beats_after_shutdown = sum(
+            1 for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT
+        )
+
+        self.assertEqual(beats_after_shutdown, beats_before_shutdown)
+
     async def test_shutdown_when_no_pulse_active_is_noop(self) -> None:
         """
         Calling shutdown without an in-flight phase does not raise and emits no events.
