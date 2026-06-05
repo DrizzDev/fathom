@@ -12,16 +12,24 @@ class CoordinateSource(StrEnum):
     """
     Evidence source that produced a :class:`Bounds`.
 
-    - ``OCR``: derived from OCR token geometry.
-    - ``XML``: snapped against the parsed XML manifest.
-    - ``MODEL``: emitted directly by the planner / LLM tool call.
+    Stages of the localization cascade map to distinct values so production
+    log filters can attribute a tap-failure to a specific failure mode:
+
+    - ``OCR``: phrase-matched OCR tokens (cascade stage 3).
+    - ``XML``: snapped against the parsed XML manifest (cascade stages 1-2).
+    - ``VISION``: vision-LLM ensemble member or DocumentAI layout resolved the bounds (cascade stage 5).
     - ``VIEWPORT``: derived from rendered viewport pixels (pixel overlay, icon template, region clipping).
+    - ``MODEL``: planner LLM bounds dispatched without independent corroboration (cascade stage 6, last-resort blind trust).
+    - ``MODEL_GROUNDED``: planner LLM bounds corroborated by OCR phrase evidence inside the proposed region (cascade stage 4).
+
     """
 
     XML = "xml"
     OCR = "ocr"
     MODEL = "model"
+    VISION = "vision"
     VIEWPORT = "viewport"
+    MODEL_GROUNDED = "model_grounded"
 
 
 class InputContextSource(StrEnum):

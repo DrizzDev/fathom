@@ -6,6 +6,7 @@ from typing import Tuple
 from unittest.mock import AsyncMock, Mock
 
 from fathom.constants.observation import KeyboardVisibility
+from fathom.constants.ocr import OcrConfidence
 from fathom.core.perception.observation import ScreenObservationService
 from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.artifact import OcrPerceptionPayload, OcrRawPayload, OverlayPerceptionPayload
@@ -16,7 +17,7 @@ from fathom.schemas.observation import (
     OverlayObservation,
     PerceivedElement,
 )
-from fathom.schemas.ocr import OcrConfidence, OcrResult, OcrToken
+from fathom.schemas.ocr import OcrResult, OcrToken
 from fathom.schemas.perception import KeyboardConfiguration, PerceptionConfiguration
 from fathom.schemas.screens import ScreenCapture, ScreenHashBundle
 from fathom.schemas.ui import LabeledElement, UIBounds

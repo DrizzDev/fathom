@@ -2,18 +2,20 @@ from __future__ import annotations
 
 from typing import Final
 
+MILLISECONDS_PER_SECOND: Final[float] = 1000.0
+
 # Time-based budgets (milliseconds)
-DEFAULT_LOCALIZATION_BUDGET: Final[int] = 5000
+# Sized to accommodate two vision-localizer attempts (30s each) plus retry backoff,
+# so the outer cascade does not amputate a legitimate retry burst.
+DEFAULT_LOCALIZATION_BUDGET: Final[int] = 60_000
 DEFAULT_OCR_PERCEPTION_BUDGET: Final[int] = 5000
 DEFAULT_LOCAL_PERCEPTION_BUDGET: Final[int] = 5000
 
 
 # Non-time runtime knobs
 # Confidence floor for accepting a localization match. Dimensionless ratio in [0, 1]; not a timeout.
-DEFAULT_LOCALIZATION_CONFIDENCE_THRESHOLD: Final[float] = 0.72
-
 DEFAULT_PAID_LOCALIZATION_ATTEMPT_BUDGET: Final[int] = 0
-
+DEFAULT_LOCALIZATION_CONFIDENCE_THRESHOLD: Final[float] = 0.72
 
 DEFAULT_LOOP_WINDOW: Final[int] = 10
 DEFAULT_LOOP_THRESHOLD: Final[int] = 3

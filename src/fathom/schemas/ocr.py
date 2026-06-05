@@ -1,31 +1,22 @@
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Any, Dict, Optional, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.constants.ocr import OcrConfidence, OcrLevel
 from fathom.schemas.actions import Bounds
-
-
-class OcrConfidence(StrEnum):
-    """
-    Coarse confidence band assigned to an OCR-detected token.
-    """
-
-    LOW = "low"
-    HIGH = "high"
-    MEDIUM = "medium"
 
 
 class OcrToken(BaseModel):
     """
-    One OCR-detected token with executable pixel bounds.
+    One OCR-detected element with executable pixel bounds.
+    May represent a single word, a row-merged phrase, or a multi-row semantic block — distinguished by :attr:`level`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    text: str = Field(min_length=1, description="Recognized token text.")
+    text: str = Field(min_length=1, description="Recognized text.")
     bounds: Bounds = Field(description="Pixel bounds in the source screenshot.")
 
     confidence: OcrConfidence = Field(
@@ -35,6 +26,10 @@ class OcrToken(BaseModel):
         ge=0.0,
         le=1.0,
         description="Provider-reported numeric confidence in the closed unit interval.",
+    )
+    level: OcrLevel = Field(
+        default=OcrLevel.TOKEN,
+        description="Layout hierarchy level this element was extracted from.",
     )
 
 
@@ -46,6 +41,7 @@ class OcrResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tokens: Tuple[OcrToken, ...] = Field(description="Detected tokens in reading order.")
+
     duration: int = Field(ge=0, description="Provider call duration in milliseconds.")
     raw_response: Optional[str] = Field(
         default=None,

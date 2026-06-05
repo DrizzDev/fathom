@@ -14,6 +14,22 @@ from fathom.constants.localization import (
     LAYOUT_PER_WORD_SIMILARITY_THRESHOLD,
     LAYOUT_PHRASE_MATCH_THRESHOLD,
     LocalizationGridScale,
+    RegionalEvidenceDecision,
+)
+from fathom.constants.perception import (
+    CONTAINMENT_MINIMUM_RATIO,
+    FUSED_WEIGHT_CONTAINMENT,
+    FUSED_WEIGHT_DENSITY,
+    FUSED_WEIGHT_IOU,
+    FUSED_WEIGHT_RECALL,
+    FUSED_WEIGHT_SUM_TOLERANCE,
+    MODEL_BOUNDS_MINIMUM_IOU,
+    PHRASE_DENSITY_FLOOR,
+    PHRASE_MATCH_MINIMUM_RECALL,
+    REGIONAL_EVIDENCE_FLOOR,
+    VISION_LOCALIZER_ATTEMPTS,
+    VISION_LOCALIZER_RETRY_BACKOFF,
+    VISION_LOCALIZER_TIMEOUT,
 )
 from fathom.schemas.actions import Bounds
 from fathom.schemas.observation import ElementSource, PerceivedElement
@@ -60,11 +76,11 @@ class VisionLocalizationPayload(BaseModel):
         """
 
         return (
-            self.x1 == LocalizationGridScale.MINIMUM
+            self.confidence == 0.0
+            and self.x1 == LocalizationGridScale.MINIMUM
             and self.y1 == LocalizationGridScale.MINIMUM
             and self.x2 == LocalizationGridScale.MINIMUM
             and self.y2 == LocalizationGridScale.MINIMUM
-            and self.confidence == 0.0
         )
 
     @model_validator(mode="after")
@@ -103,6 +119,246 @@ class PhraseMatch(BaseModel):
         description="Lowest provider-reported token confidence across the cluster.",
     )
     token_count: int = Field(gt=0, description="Number of source tokens merged into this phrase.")
+
+
+class FusedScoreWeights(BaseModel):
+    """
+    Convex weights blending recall, density, containment, and IoU into the
+    fused regional-evidence score. Must sum to 1.0.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    recall: float = Field(
+        ge=0.0,
+        le=1.0,
+        default_factory=lambda: FUSED_WEIGHT_RECALL,
+        description="Weight applied to target-word recall.",
+    )
+    density: float = Field(
+        ge=0.0,
+        le=1.0,
+        default_factory=lambda: FUSED_WEIGHT_DENSITY,
+        description="Weight applied to phrase-word density of target words.",
+    )
+    containment: float = Field(
+        ge=0.0,
+        le=1.0,
+        default_factory=lambda: FUSED_WEIGHT_CONTAINMENT,
+        description="Weight applied to best per-element containment ratio.",
+    )
+    iou: float = Field(
+        ge=0.0,
+        le=1.0,
+        default_factory=lambda: FUSED_WEIGHT_IOU,
+        description="Weight applied to best per-element IoU.",
+    )
+
+    @model_validator(mode="after")
+    def __check_convex(self) -> "FusedScoreWeights":
+        """
+        Reject weight sets that do not sum to one within floating tolerance.
+        """
+
+        total = self.recall + self.density + self.containment + self.iou
+
+        if abs(total - 1.0) > FUSED_WEIGHT_SUM_TOLERANCE:
+            raise ValueError(f"Fused-score weights must sum to 1.0; got {total:.6f}.")
+
+        return self
+
+
+class RegionalEvidenceConfiguration(BaseModel):
+    """
+    Thresholds for ``RegionalEvidenceMatcher`` — recall, density, containment,
+    and the IoU floor that decides whether LLM bounds + OCR phrase evidence
+    inside those bounds is strong enough to dispatch the action.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    recall: float = Field(
+        ge=0.0,
+        le=1.0,
+        default_factory=lambda: PHRASE_MATCH_MINIMUM_RECALL,
+        description="Minimum fraction of target words that must appear in the matched phrase.",
+    )
+    density: float = Field(
+        ge=0.0,
+        le=1.0,
+        default_factory=lambda: PHRASE_DENSITY_FLOOR,
+        description="Minimum fraction of matched-phrase words that must come from the target.",
+    )
+    containment: float = Field(
+        ge=0.0,
+        le=1.0,
+        default_factory=lambda: CONTAINMENT_MINIMUM_RATIO,
+        description="Minimum fraction of an element's area that must lie inside the model bounds.",
+    )
+    iou: float = Field(
+        ge=0.0,
+        le=1.0,
+        default_factory=lambda: MODEL_BOUNDS_MINIMUM_IOU,
+        description="Symmetric-case IoU floor between the model bounds and one element.",
+    )
+    floor: float = Field(
+        ge=0.0,
+        le=1.0,
+        default_factory=lambda: REGIONAL_EVIDENCE_FLOOR,
+        description="Fused-score floor below which a proposal is rejected even with one strong signal.",
+    )
+
+    weights: FusedScoreWeights = Field(
+        default_factory=FusedScoreWeights,
+        description="Convex weights that combine recall, density, containment, and IoU.",
+    )
+
+
+class VisionRetryPolicy(BaseModel):
+    """
+    Retry policy for the vision localization adapter.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    attempts: int = Field(
+        ge=1,
+        default_factory=lambda: VISION_LOCALIZER_ATTEMPTS,
+        description="Total attempts including the first call.",
+    )
+    backoff: float = Field(
+        ge=1.0,
+        default_factory=lambda: VISION_LOCALIZER_RETRY_BACKOFF,
+        description="Multiplier applied between successive attempts.",
+    )
+
+
+class VisionLocalizationConfiguration(BaseModel):
+    """
+    Boot-time configuration for the vision localization adapter.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    timeout: int = Field(
+        ge=1,
+        default_factory=lambda: VISION_LOCALIZER_TIMEOUT,
+        description="Per-attempt wait window in milliseconds.",
+    )
+    retry: VisionRetryPolicy = Field(
+        default_factory=VisionRetryPolicy,
+        description="Retry policy applied when an attempt times out.",
+    )
+
+
+class RegionalEvidenceMetrics(BaseModel):
+    """
+    Per-evaluation observability metrics for the regional matcher.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    recall: float = Field(ge=0.0, le=1.0, description="Target-word recall inside the cluster.")
+    density: float = Field(ge=0.0, le=1.0, description="Cluster-word density of target words.")
+
+    containment: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Best per-element containment ratio inside the model bounds.",
+    )
+    iou: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Best per-element IoU with the model bounds.",
+    )
+    fused: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Weighted combination of recall, density, containment and IoU.",
+    )
+
+    @classmethod
+    def zero(cls) -> "RegionalEvidenceMetrics":
+        """
+        Return zero-valued metrics for decisions where no math was computed.
+        """
+
+        return cls(recall=0.0, density=0.0, containment=0.0, iou=0.0, fused=0.0)
+
+
+class RegionalEvidenceProposal(BaseModel):
+    """
+    Outcome of scoring perceived OCR evidence against planner-emitted bounds.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bounds: Bounds = Field(description="Tight bounds covering the matched OCR phrase cluster.")
+    score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Fused score over recall, density, containment, and IoU.",
+    )
+    recall: float = Field(
+        ge=0.0, le=1.0, description="Target-word recall inside the matched phrase."
+    )
+    density: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Matched-phrase density of target words.",
+    )
+    containment: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Best per-element containment ratio inside the model bounds.",
+    )
+    iou: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Best per-element IoU with the model bounds.",
+    )
+    phrase: str = Field(
+        min_length=1,
+        description="Concatenated phrase text from the chosen cluster.",
+    )
+
+
+class RegionalEvidenceVerdict(BaseModel):
+    """
+    Structured outcome of one ``RegionalEvidenceMatcher.evaluate`` call.
+    Carries the decision, the math, and the proposal so callers can log
+    every branch (resolved or rejected) with full attribution.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    metrics: RegionalEvidenceMetrics = Field(description="Per-gate metrics computed this turn.")
+    decision: RegionalEvidenceDecision = Field(description="Why the matcher resolved or abstained.")
+
+    proposal: Optional[RegionalEvidenceProposal] = Field(
+        default=None,
+        description="Tight tap-target proposal when the decision is RESOLVED.",
+    )
+    phrase: Optional[str] = Field(
+        default=None,
+        description="Cluster phrase text considered this turn, when a cluster was formed.",
+    )
+    cluster_token_count: int = Field(
+        ge=0,
+        description="Tokens merged into the considered cluster.",
+    )
+    in_region_token_count: int = Field(
+        ge=0,
+        description="OCR tokens whose centroid lay inside the model bounds.",
+    )
+
+    @property
+    def resolved(self) -> bool:
+        """
+        Convenience flag for callers that only need the boolean outcome.
+        """
+
+        return self.decision is RegionalEvidenceDecision.RESOLVED
 
 
 class LayoutMatchConfiguration(BaseModel):

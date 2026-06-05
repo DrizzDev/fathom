@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from typing import Final
 
 
@@ -11,6 +11,20 @@ class LocalizationGridScale(IntEnum):
 
     MINIMUM = 0
     MAXIMUM = 1000
+
+
+class RegionalEvidenceDecision(StrEnum):
+    """
+    Decision taken by ``RegionalEvidenceMatcher`` for one evaluation call.
+    """
+
+    RESOLVED = "RESOLVED"
+    EMPTY_TARGET = "EMPTY_TARGET"
+    RECALL_BELOW_FLOOR = "RECALL_BELOW_FLOOR"
+    DENSITY_BELOW_FLOOR = "DENSITY_BELOW_FLOOR"
+    NO_GEOMETRIC_SIGNAL = "NO_GEOMETRIC_SIGNAL"
+    NO_IN_REGION_CLUSTER = "NO_IN_REGION_CLUSTER"
+    FUSED_SCORE_BELOW_FLOOR = "FUSED_SCORE_BELOW_FLOOR"
 
 
 LAYOUT_MIN_WORD_LENGTH_FOR_FUZZ: Final[int] = 3

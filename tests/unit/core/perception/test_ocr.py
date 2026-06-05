@@ -3,12 +3,13 @@ from __future__ import annotations
 import unittest
 from typing import Tuple
 
+from fathom.constants.ocr import OcrConfidence
 from fathom.core.exceptions import OcrError
 from fathom.core.perception.ocr import OcrEnsembleService
 from fathom.interfaces.ocr import OcrPort
 from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import PerceptionBudget
-from fathom.schemas.ocr import OcrConfidence, OcrResult, OcrToken
+from fathom.schemas.ocr import OcrResult, OcrToken
 from fathom.schemas.screens import ScreenCapture
 
 

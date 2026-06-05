@@ -475,6 +475,7 @@ class ScreenObservationService:
     def __element_from_token(self, *, token: OcrToken, index: int) -> PerceivedElement:
         """
         Convert one OCR token into a perceived element.
+        The Document AI layout level is woven into the identifier so production traces attribute snaps to the level the merge structure came from.
         """
 
         return PerceivedElement(
@@ -485,8 +486,8 @@ class ScreenObservationService:
             bounds=token.bounds,
             role=ElementRole.TEXT,
             source=ElementSource.OCR,
-            identifier=f"ocr_{index}",
             confidence=token.raw_score,
+            identifier=f"ocr__{token.level.value.lower()}__{index}",
         )
 
     async def __icon_elements(
@@ -592,9 +593,9 @@ class ScreenObservationService:
             confidence=confidence,
             identifier=identifier,
             axis=self.__axis(attributes=attributes),
+            kind=self.__element_kind(attributes=attributes, role=role),
             tappable=self.__is_tappable(role=role, attributes=attributes),
             scrollable=self.__scrollable(attributes=attributes, role=role),
-            kind=self.__element_kind(attributes=attributes, role=role),
         )
 
     def __visual_controls(
@@ -616,17 +617,20 @@ class ScreenObservationService:
 
         image_array = numpy.frombuffer(capture.image, dtype=numpy.uint8)
         image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
         if image is None:
             return ()
 
         height, width = image.shape[:2]
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
         mask = (
             (hsv[:, :, 1] > VISUAL_CONTROL_MINIMUM_SATURATION)
             & (hsv[:, :, 2] > VISUAL_CONTROL_MINIMUM_VALUE)
         ).astype(numpy.uint8) * 255
 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+
         mask = cast(
             "Any",
             cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2),
@@ -636,8 +640,9 @@ class ScreenObservationService:
             cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1),
         )
 
-        count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
         controls: List[PerceivedElement] = []
+        count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+
         for index in range(1, count):
             x, y, candidate_width, candidate_height, area = (int(value) for value in stats[index])
             bounds = Bounds(
@@ -649,8 +654,8 @@ class ScreenObservationService:
                 coordinate_system=CoordinateSystem.DEVICE_PIXEL,
             )
             if not self.__viable_visual_control(
-                bounds=bounds,
                 area=area,
+                bounds=bounds,
                 screen_width=width,
                 screen_height=height,
             ):
@@ -672,7 +677,7 @@ class ScreenObservationService:
                     label_id=str(cv_index),
                     source=ElementSource.CV,
                     role=ElementRole.BUTTON,
-                    identifier=f"cv_{cv_index}",
+                    identifier=f"CV__{cv_index}",
                     confidence=VISUAL_CONTROL_CONFIDENCE,
                 )
             )
@@ -766,15 +771,6 @@ class ScreenObservationService:
     ) -> KeyboardObservation:
         """
         Detect keyboard state from perceived elements, falling back to the device IME probe.
-
-        When the perception layer is disabled or vision-only mode emits no
-        KEYBOARD-class element, ask the device adapter (Android dumpsys, iOS
-        XCUITest XML walk) so the SwipeRetryPlanner can still apply its
-        keyboard filter and avoid Glide-Typing collisions.
-
-        Any failure in the device probe — unimplemented adapter, transport
-        timeout, malformed dumpsys output — degrades silently to UNKNOWN so
-        the observation pipeline keeps producing a screen.
         """
 
         _ = capture
@@ -845,9 +841,8 @@ class ScreenObservationService:
         """
         Whether one perceived element represents a blocking overlay.
 
-        XML/accessibility-sourced elements only qualify when their role is
-        explicitly OVERLAY; visual or model-sourced regions qualify on size
-        alone. Scroll regions, inputs, and keyboards are never overlays.
+        XML/accessibility-sourced elements only qualify when their role is explicitly OVERLAY;
+        visual or model-sourced regions qualify on size alone. Scroll regions, inputs, and keyboards are never overlays.
         """
 
         if (
@@ -913,18 +908,20 @@ class ScreenObservationService:
             )
         )
         explicit = self.__prune_nested_scroll_regions(regions=explicit)
+
         if explicit:
             large_vertical = tuple(
                 region for region in explicit if region.bounds.height >= int(capture.height * 0.35)
             )
             if large_vertical:
                 return large_vertical
+
             if any((region.axis or "vertical") == "horizontal" for region in explicit):
                 return explicit
 
         inferred = self.__page_scroll_region(
-            elements=elements,
             capture=capture,
+            elements=elements,
             capture_system=capture_system,
         )
         if inferred is None:
@@ -948,7 +945,7 @@ class ScreenObservationService:
 
         height = bottom - top
         if height < int(capture.height * 0.30):
-            logger.debug(
+            logger.warning(
                 "Skipped inferred page scroll region because visible lane is too small",
                 extra={
                     "region.top": top,

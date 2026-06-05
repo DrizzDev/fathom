@@ -1,20 +1,32 @@
 from __future__ import annotations
 
+import asyncio
 import io
 from logging import getLogger
 from typing import Any, Dict, Optional, Tuple
 
 from PIL import Image
 from pydantic import ValidationError
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from fathom.constants.localization import LocalizationGridScale
+from fathom.constants.runtime import MILLISECONDS_PER_SECOND
 from fathom.core.prompts.localization import VisionLocalizationPrompt
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.localization import TargetLocalizerPort
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.llm import StructuredOutput
-from fathom.schemas.localization import LocalizationProposal, VisionLocalizationPayload
+from fathom.schemas.localization import (
+    LocalizationProposal,
+    VisionLocalizationConfiguration,
+    VisionLocalizationPayload,
+)
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 
@@ -32,15 +44,19 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         llm: LLMPort,
         workflow_id: Optional[str] = None,
         prompt: Optional[VisionLocalizationPrompt] = None,
+        configuration: Optional[VisionLocalizationConfiguration] = None,
     ) -> None:
         """
-        Initialize the member with an injected LLM port, prompt builder, and run context.
+        Initialize the member with its LLM port, prompt builder, timeout + retry policy, and run context.
         """
 
         self.__llm = llm
         self.__workflow_id = workflow_id
         self.__prompt = prompt if prompt is not None else VisionLocalizationPrompt()
         self.__structured_output = StructuredOutput(payload=VisionLocalizationPayload)
+        self.__configuration = (
+            configuration if configuration is not None else VisionLocalizationConfiguration()
+        )
 
     @property
     def name(self) -> str:
@@ -59,7 +75,7 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         observation: ScreenObservation,
     ) -> Optional[LocalizationProposal]:
         """
-        Issue a single Gemini call and parse a normalized bounding rectangle.
+        Run the vision-LLM locate request inside a bounded retry loop.
         """
 
         _ = observation
@@ -68,39 +84,128 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         if not (target := self.__target_text(action=action)):
             return None
 
-        log_context = self.__log_context(target=target, activity=capture.activity)
+        context = self.__context(target=target, activity=capture.activity)
+        return await self.__attempt_with_retries(target=target, capture=capture, context=context)
+
+    async def __attempt_with_retries(
+        self,
+        *,
+        target: str,
+        capture: ScreenCapture,
+        context: Dict[str, Any],
+    ) -> Optional[LocalizationProposal]:
+        """
+        Retry the vision call on timeout using the configured policy.
+        """
+
+        attempts = self.__configuration.retry.attempts
+        timeout = self.__configuration.timeout / MILLISECONDS_PER_SECOND
+
+        retrying = AsyncRetrying(
+            reraise=True,
+            stop=stop_after_attempt(attempts),
+            wait=wait_exponential(
+                min=0,
+                multiplier=timeout,
+                exp_base=self.__configuration.retry.backoff,
+            ),
+            retry=retry_if_exception_type(asyncio.TimeoutError),
+        )
+
+        try:
+            async for attempt in retrying:
+                with attempt:
+                    proposal = await self.__bounded_call(
+                        target=target, capture=capture, context=context, attempt=attempt
+                    )
+            return proposal
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Vision localizer exhausted attempt budget",
+                extra={
+                    **context,
+                    "attempt.budget": attempts,
+                    "event": "localizer.vision.exhausted",
+                },
+            )
+        return None
+
+    async def __bounded_call(
+        self,
+        *,
+        target: str,
+        attempt: Any,
+        capture: ScreenCapture,
+        context: Dict[str, Any],
+    ) -> Optional[LocalizationProposal]:
+        """
+        Wrap one Gemini call in a per-attempt timeout and log start/timeout.
+        """
+
+        attempt_index = attempt.retry_state.attempt_number - 1
+        timeout = self.__configuration.timeout / MILLISECONDS_PER_SECOND
+
         logger.info(
             "Vision localizer call started",
-            extra={**log_context, "event": "localizer.vision.started"},
+            extra={
+                **context,
+                "timeout.seconds": timeout,
+                "attempt.index": attempt_index,
+                "event": "localizer.vision.started",
+            },
         )
+        try:
+            return await asyncio.wait_for(
+                self.__single_call(target=target, capture=capture, context=context),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Vision localizer attempt timed out",
+                extra={
+                    **context,
+                    "timeout.seconds": timeout,
+                    "attempt.index": attempt_index,
+                    "event": "localizer.vision.timeout",
+                },
+            )
+            raise
+
+    async def __single_call(
+        self,
+        *,
+        target: str,
+        capture: ScreenCapture,
+        context: Dict[str, Any],
+    ) -> Optional[LocalizationProposal]:
+        """
+        Execute one Gemini call and project the payload into pixel bounds.
+        """
 
         result = await self.__llm.generate(
-            prompt=self.__prompt.build(target=target, image=capture.image),
             use_cache=False,
-            system_instruction=self.__prompt.SYSTEM_INSTRUCTION,
             structured_output=self.__structured_output,
+            system_instruction=self.__prompt.SYSTEM_INSTRUCTION,
+            prompt=self.__prompt.build(target=target, image=capture.image),
         )
-
-        if (payload := self.__try_parse(content=result.content, context=log_context)) is None:
+        if (payload := self.__try_parse(content=result.content, context=context)) is None:
             return None
 
         if payload.refused:
             logger.info(
                 "Vision localizer reported target not visible",
-                extra={**log_context, "event": "localizer.vision.refusal"},
+                extra={**context, "event": "localizer.vision.refusal"},
             )
             return None
 
         bounds = self.__bounds_from_payload(
-            payload=payload,
-            width=capture.width,
-            height=capture.height,
+            payload=payload, width=capture.width, height=capture.height
         )
         if bounds is None:
             logger.warning(
                 "Vision localizer payload yielded zero-area bounds after projection",
                 extra={
-                    **log_context,
+                    **context,
                     "payload.raw": self.__payload_log(payload=payload),
                     "event": "localizer.vision.payload.invalid",
                 },
@@ -112,7 +217,7 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         logger.info(
             "Vision localizer proposal returned",
             extra={
-                **log_context,
+                **context,
                 "confidence": payload.confidence,
                 "payload.system": (
                     f"normalized.{LocalizationGridScale.MINIMUM}.{LocalizationGridScale.MAXIMUM}"
@@ -120,9 +225,9 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
                 "bounds.system": bounds.system.value,
                 "event": "localizer.vision.completed",
                 "conversion": "normalized_to_logical",
+                "payload.raw": self.__payload_log(payload=payload),
                 "capture.pixel": {"width": pixel_width, "height": pixel_height},
                 "capture.logical": {"width": capture.width, "height": capture.height},
-                "payload.raw": self.__payload_log(payload=payload),
                 "bounds.resolved": {
                     "x": bounds.x,
                     "y": bounds.y,
@@ -131,7 +236,6 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
                 },
             },
         )
-
         return LocalizationProposal(
             bounds=bounds,
             source=self.name,
@@ -146,11 +250,12 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
         context: Dict[str, Any],
     ) -> Optional[VisionLocalizationPayload]:
         """
-        Validate the JSON response against the published schema and return None on failure.
+        Validate the JSON response against the published schema.
         """
 
         if not (stripped := (content or "").strip()):
             return None
+
         try:
             return VisionLocalizationPayload.model_validate_json(stripped)
         except ValidationError:
@@ -159,8 +264,8 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
                 extra={
                     **context,
                     "response.length": len(stripped),
-                    "event": "localizer.vision.payload.invalid",
                     "response.preview": stripped[:512],
+                    "event": "localizer.vision.payload.invalid",
                 },
             )
             return None
@@ -168,12 +273,12 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
     @staticmethod
     def __bounds_from_payload(
         *,
-        payload: VisionLocalizationPayload,
         width: int,
         height: int,
+        payload: VisionLocalizationPayload,
     ) -> Optional[Bounds]:
         """
-        Project the grid bbox onto the capture's logical canvas and stamp it LOGICAL/MODEL.
+        Project the grid bbox onto the capture's logical canvas.
         """
 
         x_min = (payload.x1 * width) // LocalizationGridScale.MAXIMUM
@@ -239,9 +344,9 @@ class GeminiVisionLocalizer(TargetLocalizerPort):
             or ""
         ).strip()
 
-    def __log_context(self, *, target: str, activity: str) -> Dict[str, Any]:
+    def __context(self, *, target: str, activity: str) -> Dict[str, Any]:
         """
-        Return shared structured-logging context for this localizer invocation.
+        Return shared structured-logging context for this invocation.
         """
 
         return {

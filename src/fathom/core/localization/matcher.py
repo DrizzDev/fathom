@@ -40,6 +40,53 @@ class OcrPhraseMatcher:
         Return the highest-scoring phrase match above the configured threshold.
         """
 
+        return self.__best_match(target=target, elements=elements)
+
+    def find_best_match_within(
+        self,
+        *,
+        target: str,
+        bounds: Bounds,
+        elements: Tuple[PerceivedElement, ...],
+    ) -> Optional[PhraseMatch]:
+        """
+        Return the highest-scoring phrase cluster restricted to OCR elements whose centroid lies inside ``bounds``.
+
+        The region pre-filter is the matcher's spatial gate when the planner already provided a target region:
+        the F1 threshold is intentionally bypassed here so the caller (``RegionalEvidenceMatcher``) can apply a recall-weighted decision on the returned cluster.
+        """
+
+        if not (target_words := self.__words(value=target)):
+            return None
+
+        scoped = tuple(
+            element
+            for element in elements
+            if self.__centroid_inside(element=element, bounds=bounds)
+        )
+        if not (ocr_elements := self.__filter_eligible(elements=scoped)):
+            return None
+
+        candidates: List[PhraseMatch] = []
+
+        for row in self.__cluster_rows(elements=ocr_elements):
+            candidates.extend(self.__walk_row(row=row, target_words=target_words))
+
+        if not candidates:
+            return None
+
+        return max(candidates, key=lambda candidate: candidate.score)
+
+    def __best_match(
+        self,
+        *,
+        target: str,
+        elements: Tuple[PerceivedElement, ...],
+    ) -> Optional[PhraseMatch]:
+        """
+        Cluster the eligible OCR tokens and return the highest-scoring phrase whose score clears the configured F1 floor.
+        """
+
         if not (target_words := self.__words(value=target)):
             return None
 
@@ -47,6 +94,7 @@ class OcrPhraseMatcher:
             return None
 
         candidates: List[PhraseMatch] = []
+
         for row in self.__cluster_rows(elements=ocr_elements):
             candidates.extend(self.__walk_row(row=row, target_words=target_words))
 
@@ -58,6 +106,20 @@ class OcrPhraseMatcher:
             return None
 
         return best
+
+    @staticmethod
+    def __centroid_inside(*, element: PerceivedElement, bounds: Bounds) -> bool:
+        """
+        Return whether the element's centroid lies inside ``bounds``.
+        """
+
+        centroid_x = element.bounds.x + element.bounds.width / 2
+        centroid_y = element.bounds.y + element.bounds.height / 2
+
+        return (
+            bounds.x <= centroid_x <= bounds.x + bounds.width
+            and bounds.y <= centroid_y <= bounds.y + bounds.height
+        )
 
     def __filter_eligible(
         self,
@@ -75,6 +137,7 @@ class OcrPhraseMatcher:
             for element in elements
             if element.source == ElementSource.OCR and element.text and element.confidence >= floor
         )
+
         return tuple(eligible)
 
     def __cluster_rows(

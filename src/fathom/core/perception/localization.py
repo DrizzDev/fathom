@@ -4,16 +4,20 @@ from logging import getLogger
 from typing import Any, Dict, Optional
 
 from fathom.constants import SPATIAL_ACTION_TYPES, SWIPE_ACTIONS
-from fathom.constants.perception import MODEL_BOUNDS_MINIMUM_IOU
 from fathom.core.localization.ensemble import EnsembleLocalizerService
-from fathom.schemas.actions import Action, Bounds
+from fathom.core.localization.matcher import OcrPhraseMatcher
+from fathom.core.localization.regional import RegionalEvidenceMatcher
+from fathom.schemas.actions import Action, Bounds, CoordinateSource
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.localization import (
     LocalizationCandidate,
     LocalizationProposal,
     LocalizationResult,
     LocalizationStatus,
+    PhraseMatch,
     Point,
+    RegionalEvidenceProposal,
+    RegionalEvidenceVerdict,
 )
 from fathom.schemas.observation import ElementSource, PerceivedElement, ScreenObservation
 from fathom.schemas.screens import ScreenCapture
@@ -30,14 +34,25 @@ class TargetLocalizationService:
         self,
         *,
         workflow_id: Optional[str] = None,
+        phrase_matcher: Optional[OcrPhraseMatcher] = None,
         ensemble: Optional[EnsembleLocalizerService] = None,
+        regional_matcher: Optional[RegionalEvidenceMatcher] = None,
     ) -> None:
         """
-        Initialize the localizer with an optional ensemble layer and run context.
+        Initialize the localizer with optional ensemble layer, phrase + regional
+        matchers, and run context. Defaults instantiate the Domain matchers so
+        unit tests and minimal compositions need not wire them explicitly.
         """
 
         self.__ensemble = ensemble
         self.__workflow_id = workflow_id
+        self.__phrase_matcher = phrase_matcher if phrase_matcher is not None else OcrPhraseMatcher()
+
+        self.__regional_matcher = (
+            regional_matcher
+            if regional_matcher is not None
+            else RegionalEvidenceMatcher(phrase_matcher=self.__phrase_matcher)
+        )
 
     async def localize(
         self,
@@ -113,15 +128,17 @@ class TargetLocalizationService:
         if text_result.status == LocalizationStatus.RESOLVED:
             return text_result
 
-        model_result = self.__by_model_bounds(action=action, observation=observation)
+        regional_result = self.__by_regional_evidence(action=action, observation=observation)
+
         self.__log_localization_result(
             action=action,
-            result=model_result,
-            method="model_bounds",
+            result=regional_result,
+            method="regional_evidence",
             activity=observation.activity,
         )
-        if model_result.status == LocalizationStatus.RESOLVED:
-            return model_result
+
+        if regional_result.status == LocalizationStatus.RESOLVED:
+            return regional_result
 
         ensemble_result = await self.__by_ensemble(
             action=action,
@@ -138,27 +155,29 @@ class TargetLocalizationService:
         if ensemble_result.status == LocalizationStatus.RESOLVED:
             return ensemble_result
 
-        candidates = tuple(
-            LocalizationCandidate(
-                element=element,
-                score=element.confidence,
-                reason="Visible tappable candidate.",
-                point=self.__center(bounds=element.bounds),
-            )
-            for element in observation.elements
-            if element.tappable
+        blind_result = self.__by_blind_model_bounds(action=action)
+        self.__log_localization_result(
+            action=action,
+            result=blind_result,
+            method="blind_model_bounds",
+            activity=observation.activity,
         )
+
+        if blind_result.status == LocalizationStatus.RESOLVED:
+            return blind_result
 
         result = LocalizationResult(
             confidence=0.0,
-            candidates=candidates,
             status=LocalizationStatus.UNRESOLVED,
-            reason="No perceived element matched the semantic target.",
+            reason=(
+                "Every cascade stage abstained and the planner did not supply "
+                "fallback bounds; supervise must escalate."
+            ),
         )
         self.__log_localization_result(
             action=action,
             result=result,
-            method="candidate_fallback",
+            method="unresolved",
             activity=observation.activity,
         )
         return result
@@ -274,6 +293,85 @@ class TargetLocalizationService:
             },
         )
 
+    def __log_phrase_fallback(
+        self,
+        *,
+        target: str,
+        action: Action,
+        phrase: Optional[PhraseMatch],
+        observation: ScreenObservation,
+    ) -> None:
+        """
+        Emit a structured record for one phrase-fallback evaluation inside ``__by_exact_text``.
+        """
+
+        eligible_ocr = sum(
+            1
+            for element in observation.elements
+            if element.source == ElementSource.OCR and element.text
+        )
+
+        logger.info(
+            "Phrase fallback evaluated",
+            extra={
+                **self.__log_context(action=action, activity=observation.activity),
+                "event": "localization.phrase_fallback.evaluated",
+                "target.normalized": target[:120],
+                "phrase.matched": phrase is not None,
+                "observation.ocr_token_count": eligible_ocr,
+                "target.word_count": len(target.split()) if target else 0,
+                "observation.total_element_count": len(observation.elements),
+                "phrase.score": phrase.score if phrase is not None else None,
+                "phrase.text": (phrase.text[:120] if phrase is not None else None),
+                "phrase.confidence": (phrase.confidence if phrase is not None else None),
+                "phrase.token_count": phrase.token_count if phrase is not None else None,
+                "phrase.bounds": (
+                    self.__bounds_snapshot(bounds=phrase.bounds) if phrase is not None else None
+                ),
+            },
+        )
+
+    def __log_regional_verdict(
+        self,
+        *,
+        action: Action,
+        observation: ScreenObservation,
+        verdict: RegionalEvidenceVerdict,
+    ) -> None:
+        """
+        Emit a structured record carrying every gate metric and the verdict's decision.
+        """
+
+        configuration = self.__regional_matcher.configuration
+        proposed_bounds = verdict.proposal.bounds if verdict.proposal is not None else None
+        logger.info(
+            "Regional evidence evaluated",
+            extra={
+                **self.__log_context(action=action, activity=observation.activity),
+                "event": "localization.regional_evidence.evaluated",
+                "regional.resolved": verdict.resolved,
+                "regional.decision": verdict.decision.value,
+                "regional.metrics.iou": verdict.metrics.iou,
+                "regional.thresholds.iou": configuration.iou,
+                "regional.metrics.fused": verdict.metrics.fused,
+                "regional.thresholds.floor": configuration.floor,
+                "regional.metrics.recall": verdict.metrics.recall,
+                "regional.thresholds.recall": configuration.recall,
+                "regional.metrics.density": verdict.metrics.density,
+                "regional.thresholds.density": configuration.density,
+                "regional.metrics.containment": verdict.metrics.containment,
+                "regional.cluster.token_count": verdict.cluster_token_count,
+                "regional.thresholds.containment": configuration.containment,
+                "regional.in_region_token_count": verdict.in_region_token_count,
+                "regional.action.bounds": self.__bounds_snapshot(bounds=action.bounds),
+                "regional.proposed.bounds": self.__bounds_snapshot(bounds=proposed_bounds),
+                "regional.cluster.phrase": (verdict.phrase[:120] if verdict.phrase else None),
+                "regional.observation.ocr_token_count": sum(
+                    1 for element in observation.elements if element.source == ElementSource.OCR
+                ),
+            },
+        )
+
     @staticmethod
     def __selected_element(*, result: LocalizationResult) -> Optional[PerceivedElement]:
         """
@@ -357,20 +455,22 @@ class TargetLocalizationService:
 
     def __from_proposal(self, *, proposal: LocalizationProposal) -> LocalizationResult:
         """
-        Convert an ensemble proposal into a resolved LocalizationResult.
+        Convert an ensemble proposal into a resolved result tagged ``VISION``.
         """
 
+        bounds = proposal.bounds.model_copy(update={"source": CoordinateSource.VISION})
+
         return LocalizationResult(
-            bounds=proposal.bounds,
+            bounds=bounds,
             source=ElementSource.MODEL,
             confidence=proposal.confidence,
             status=LocalizationStatus.RESOLVED,
-            point=self.__center(bounds=proposal.bounds),
+            point=self.__center(bounds=bounds),
             candidates=(
                 LocalizationCandidate(
                     element=None,
                     score=proposal.confidence,
-                    point=self.__center(bounds=proposal.bounds),
+                    point=self.__center(bounds=bounds),
                     reason=proposal.rationale or "Ensemble consensus proposal.",
                 ),
             ),
@@ -436,7 +536,7 @@ class TargetLocalizationService:
         observation: ScreenObservation,
     ) -> LocalizationResult:
         """
-        Resolve by exact normalized visible text.
+        Resolve by exact normalized text, falling back to a row-clustered phrase match.
         """
 
         target = self.__target_text(action=action)
@@ -472,20 +572,33 @@ class TargetLocalizationService:
                 reason="Multiple elements matched the exact visible text.",
             )
 
+        phrase = self.__phrase_matcher.find_best_match(
+            target=target,
+            elements=observation.elements,
+        )
+        self.__log_phrase_fallback(
+            phrase=phrase,
+            action=action,
+            target=target,
+            observation=observation,
+        )
+        if phrase is not None:
+            return self.__from_phrase_match(phrase=phrase)
+
         return LocalizationResult(
             confidence=0.0,
             status=LocalizationStatus.UNRESOLVED,
-            reason="No element matched the exact visible text.",
+            reason="No element matched the exact visible text or row-clustered phrase.",
         )
 
-    def __by_model_bounds(
+    def __by_regional_evidence(
         self,
         *,
         action: Action,
         observation: ScreenObservation,
     ) -> LocalizationResult:
         """
-        Resolve model bounds only when they overlap perceived evidence.
+        Resolve by fusing planner bounds with OCR phrase evidence inside the region.
         """
 
         if action.bounds is None:
@@ -495,37 +608,144 @@ class TargetLocalizationService:
                 reason="Action did not include model bounds.",
             )
 
-        best_score = 0.0
-        best_element: Optional[PerceivedElement] = None
-
-        for element in observation.elements:
-            score = self.__iou(first=action.bounds, second=element.bounds)
-            if score > best_score:
-                best_score = score
-                best_element = element
-
-        if best_element is None or best_score < MODEL_BOUNDS_MINIMUM_IOU:
+        target = self.__target_text(action=action)
+        if not target:
             return LocalizationResult(
                 confidence=0.0,
                 status=LocalizationStatus.UNRESOLVED,
-                reason="Model bounds did not overlap perceived screen evidence.",
+                reason="Action has no semantic text target for regional evidence.",
             )
 
+        verdict = self.__regional_matcher.evaluate(
+            target=target,
+            bounds=action.bounds,
+            elements=observation.elements,
+        )
+        self.__log_regional_verdict(
+            action=action,
+            verdict=verdict,
+            observation=observation,
+        )
+        if verdict.proposal is not None:
+            return self.__from_regional_proposal(proposal=verdict.proposal)
+
         return LocalizationResult(
-            bounds=best_element.bounds,
+            confidence=0.0,
+            status=LocalizationStatus.UNRESOLVED,
+            reason=f"Regional evidence abstained: {verdict.decision.value}.",
+        )
+
+    def __by_blind_model_bounds(self, *, action: Action) -> LocalizationResult:
+        """
+        Dispatch planner bounds verbatim when every other stage abstained.
+        """
+
+        if action.bounds is None:
+            logger.warning(
+                "Blind dispatch skipped because action carries no model bounds",
+                extra={
+                    **self.__log_context(action=action, activity=""),
+                    "event": "localization.blind_model_bounds.skipped",
+                    "skip.reason": "no_model_bounds",
+                },
+            )
+            return LocalizationResult(
+                confidence=0.0,
+                status=LocalizationStatus.UNRESOLVED,
+                reason="Action did not include model bounds for blind dispatch.",
+            )
+
+        bounds = action.bounds.model_copy(update={"source": CoordinateSource.MODEL})
+        confidence = action.confidence if 0.0 <= action.confidence <= 1.0 else 0.0
+        center = self.__center(bounds=bounds)
+
+        logger.warning(
+            "Blind dispatch of planner-emitted bounds",
+            extra={
+                **self.__log_context(action=action, activity=""),
+                "event": "localization.blind_model_bounds.dispatched",
+                "blind.confidence": confidence,
+                "blind.point": {"x": center.x, "y": center.y},
+                "blind.bounds": self.__bounds_snapshot(bounds=bounds),
+            },
+        )
+        return LocalizationResult(
+            point=center,
+            bounds=bounds,
             source=ElementSource.MODEL,
+            confidence=confidence,
             status=LocalizationStatus.RESOLVED,
-            point=self.__center(bounds=best_element.bounds),
-            confidence=min(best_element.confidence, best_score),
             candidates=(
                 LocalizationCandidate(
-                    score=best_score,
-                    element=best_element,
-                    point=self.__center(bounds=best_element.bounds),
-                    reason="Model bounds overlapped perceived element.",
+                    point=center,
+                    element=None,
+                    score=confidence,
+                    reason="Blind dispatch of planner-emitted bounds; no corroboration available.",
                 ),
             ),
-            reason="Model bounds reconciled with perceived screen evidence.",
+            reason=(
+                "Dispatching planner-emitted bounds without corroboration; "
+                "all text and vision methods abstained."
+            ),
+        )
+
+    def __from_phrase_match(self, *, phrase: PhraseMatch) -> LocalizationResult:
+        """
+        Convert a phrase cluster into a resolved result tagged ``OCR``.
+        """
+
+        bounds = phrase.bounds.model_copy(update={"source": CoordinateSource.OCR})
+        return LocalizationResult(
+            bounds=bounds,
+            source=ElementSource.OCR,
+            confidence=phrase.confidence,
+            status=LocalizationStatus.RESOLVED,
+            point=self.__center(bounds=bounds),
+            candidates=(
+                LocalizationCandidate(
+                    element=None,
+                    score=phrase.score,
+                    point=self.__center(bounds=bounds),
+                    reason=(
+                        f"Phrase '{phrase.text[:40]}' matched target via row-cluster "
+                        f"(F1={phrase.score:.2f}, tokens={phrase.token_count})."
+                    ),
+                ),
+            ),
+            reason=(
+                "Resolved by OCR phrase row-cluster fallback "
+                f"(text='{phrase.text[:60]}', F1={phrase.score:.2f})."
+            ),
+        )
+
+    def __from_regional_proposal(self, *, proposal: RegionalEvidenceProposal) -> LocalizationResult:
+        """
+        Convert a regional-evidence proposal into a resolved result tagged ``MODEL_GROUNDED``.
+        """
+
+        bounds = proposal.bounds.model_copy(update={"source": CoordinateSource.MODEL_GROUNDED})
+        return LocalizationResult(
+            bounds=bounds,
+            source=ElementSource.MODEL,
+            confidence=proposal.score,
+            status=LocalizationStatus.RESOLVED,
+            point=self.__center(bounds=bounds),
+            candidates=(
+                LocalizationCandidate(
+                    element=None,
+                    score=proposal.score,
+                    point=self.__center(bounds=bounds),
+                    reason=(
+                        f"Regional evidence: phrase='{proposal.phrase[:40]}' "
+                        f"recall={proposal.recall:.2f} density={proposal.density:.2f} "
+                        f"containment={proposal.containment:.2f} iou={proposal.iou:.2f}"
+                    ),
+                ),
+            ),
+            reason=(
+                "Resolved by regional evidence (LLM bounds + OCR phrase corroboration); "
+                f"score={proposal.score:.2f}."
+            ),
         )
 
     def __resolved(self, *, element: PerceivedElement, reason: str) -> LocalizationResult:

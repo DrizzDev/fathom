@@ -30,10 +30,14 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         """
 
         return PerceivedElement(
+            text=text,
             parent=None,
             tappable=False,
-            text=text,
             label_id=identifier,
+            identifier=identifier,
+            confidence=confidence,
+            role=ElementRole.TEXT,
+            source=ElementSource.OCR,
             bounds=Bounds(
                 x=x,
                 y=y,
@@ -42,10 +46,6 @@ class OcrPhraseMatcherTest(unittest.TestCase):
                 source=CoordinateSource.OCR,
                 coordinate_system=CoordinateSystem.DEVICE_PIXEL,
             ),
-            role=ElementRole.TEXT,
-            source=ElementSource.OCR,
-            identifier=identifier,
-            confidence=confidence,
         )
 
     @staticmethod
@@ -56,19 +56,19 @@ class OcrPhraseMatcherTest(unittest.TestCase):
 
         return (
             OcrPhraseMatcherTest.__ocr_element(
-                text="Free",
                 x=1040,
                 y=705,
                 width=115,
                 height=41,
+                text="Free",
                 identifier="ocr_27",
             ),
             OcrPhraseMatcherTest.__ocr_element(
-                text="Offers",
                 x=1224,
                 y=703,
                 width=171,
                 height=45,
+                text="Offers",
                 identifier="ocr_28",
             ),
         )
@@ -85,13 +85,14 @@ class OcrPhraseMatcherTest(unittest.TestCase):
             elements=self.__earn_spoons_row(),
         )
 
-        self.assertIsNotNone(match)
         assert match is not None
-        self.assertEqual(match.text, "Free Offers")
+        self.assertIsNotNone(match)
+
         self.assertEqual(match.token_count, 2)
         self.assertEqual(match.bounds.x, 1040)
-        self.assertEqual(match.bounds.width, 1395 - 1040)
+        self.assertEqual(match.text, "Free Offers")
         self.assertGreaterEqual(match.score, 0.95)
+        self.assertEqual(match.bounds.width, 1395 - 1040)
 
     def test_single_token_target_still_matches_when_phrase_is_single_word(self) -> None:
         """
@@ -99,6 +100,7 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         """
 
         matcher = OcrPhraseMatcher()
+
         elements = (
             self.__ocr_element(
                 text="Submit", x=100, y=200, width=140, height=44, identifier="ocr_1"
@@ -107,10 +109,11 @@ class OcrPhraseMatcherTest(unittest.TestCase):
 
         match = matcher.find_best_match(target="Submit", elements=elements)
 
-        self.assertIsNotNone(match)
         assert match is not None
-        self.assertEqual(match.text, "Submit")
+        self.assertIsNotNone(match)
+
         self.assertEqual(match.score, 1.0)
+        self.assertEqual(match.text, "Submit")
 
     def test_cross_row_tokens_never_merge(self) -> None:
         """
@@ -118,6 +121,7 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         """
 
         matcher = OcrPhraseMatcher()
+
         elements = (
             self.__ocr_element(
                 text="Free", x=1040, y=100, width=115, height=41, identifier="ocr_1"
@@ -137,6 +141,7 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         """
 
         matcher = OcrPhraseMatcher()
+
         elements = (
             self.__ocr_element(text="Free", x=10, y=500, width=115, height=41, identifier="ocr_1"),
             self.__ocr_element(
@@ -154,6 +159,7 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         """
 
         matcher = OcrPhraseMatcher()
+
         elements = (
             self.__ocr_element(text="Tap", x=100, y=200, width=80, height=36, identifier="ocr_1"),
             self.__ocr_element(
@@ -175,6 +181,7 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         """
 
         matcher = OcrPhraseMatcher()
+
         elements = (
             self.__ocr_element(text="Save", x=100, y=200, width=120, height=40, identifier="ocr_1"),
         )
@@ -191,22 +198,22 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         matcher = OcrPhraseMatcher()
         elements = (
             self.__ocr_element(
-                text="Free",
                 x=1040,
                 y=705,
                 width=115,
                 height=41,
-                identifier="ocr_27",
+                text="Free",
                 confidence=0.3,
+                identifier="ocr_27",
             ),
             self.__ocr_element(
-                text="Offers",
                 x=1224,
                 y=703,
                 width=171,
                 height=45,
-                identifier="ocr_28",
+                text="Offers",
                 confidence=0.3,
+                identifier="ocr_28",
             ),
         )
 
@@ -220,6 +227,7 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         """
 
         matcher = OcrPhraseMatcher()
+
         elements = (
             self.__ocr_element(
                 text="Free", x=1040, y=705, width=115, height=41, identifier="ocr_1"
@@ -231,8 +239,8 @@ class OcrPhraseMatcherTest(unittest.TestCase):
 
         match = matcher.find_best_match(target="Free Offers", elements=elements)
 
-        self.assertIsNotNone(match)
         assert match is not None
+        self.assertIsNotNone(match)
         self.assertEqual(match.text, "Free 0ffers")
 
     def test_short_target_requires_exact_word_match(self) -> None:
@@ -258,8 +266,12 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         xml_element = PerceivedElement(
             parent=None,
             tappable=True,
-            text="Free Offers",
+            confidence=1.0,
             label_id="xml_1",
+            identifier="xml_1",
+            text="Free Offers",
+            role=ElementRole.BUTTON,
+            source=ElementSource.XML,
             bounds=Bounds(
                 x=1040,
                 y=703,
@@ -268,10 +280,6 @@ class OcrPhraseMatcherTest(unittest.TestCase):
                 source=CoordinateSource.XML,
                 coordinate_system=CoordinateSystem.DEVICE_PIXEL,
             ),
-            role=ElementRole.BUTTON,
-            source=ElementSource.XML,
-            identifier="xml_1",
-            confidence=1.0,
         )
 
         match = matcher.find_best_match(target="Free Offers", elements=(xml_element,))
@@ -286,6 +294,7 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         matcher = OcrPhraseMatcher(
             configuration=LayoutMatchConfiguration(phrase_match_threshold=0.5),
         )
+
         elements = (
             self.__ocr_element(
                 text="Free", x=1040, y=705, width=115, height=41, identifier="ocr_1"
@@ -297,8 +306,8 @@ class OcrPhraseMatcherTest(unittest.TestCase):
 
         match = matcher.find_best_match(target="Free Offers", elements=elements)
 
-        self.assertIsNotNone(match)
         assert match is not None
+        self.assertIsNotNone(match)
         self.assertLess(match.score, 0.8)
 
     def test_empty_target_returns_no_match(self) -> None:
@@ -323,3 +332,153 @@ class OcrPhraseMatcherTest(unittest.TestCase):
         match = matcher.find_best_match(target="Free Offers", elements=())
 
         self.assertIsNone(match)
+
+
+class OcrPhraseMatcherWithinRegionTest(unittest.TestCase):
+    """
+    Pins ``find_best_match_within`` semantics: spatial pre-filter on element centroid plus row-cluster scoring,
+    with the F1 threshold deliberately bypassed so the caller (``RegionalEvidenceMatcher``) can apply its own recall-weighted decision.
+    """
+
+    @staticmethod
+    def __ocr_element(
+        *,
+        text: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        identifier: str,
+        confidence: float = 0.95,
+    ) -> PerceivedElement:
+        """
+        Build one OCR-sourced perceived element with stable defaults.
+        """
+
+        return PerceivedElement(
+            parent=None,
+            tappable=False,
+            text=text,
+            label_id=identifier,
+            confidence=confidence,
+            identifier=identifier,
+            role=ElementRole.TEXT,
+            source=ElementSource.OCR,
+            bounds=Bounds(
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                source=CoordinateSource.OCR,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+        )
+
+    @staticmethod
+    def __region(*, x: int = 31, y: int = 1989, width: int = 937, height: int = 73) -> Bounds:
+        """
+        Region enclosing a single-row OCR phrase.
+        """
+
+        return Bounds(
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            source=CoordinateSource.MODEL,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
+
+    def test_returns_low_f1_cluster_when_target_is_prefix_of_phrase(self) -> None:
+        """
+        Within-region match bypasses the global F1 floor so the caller can score.
+        """
+
+        elements = (
+            self.__ocr_element(text="Buy", x=327, y=2034, width=70, height=33, identifier="t1"),
+            self.__ocr_element(
+                text="tickets", x=405, y=2033, width=124, height=33, identifier="t2"
+            ),
+            self.__ocr_element(text="from", x=540, y=2033, width=84, height=33, identifier="t3"),
+            self.__ocr_element(text="$", x=637, y=2033, width=23, height=31, identifier="t4"),
+            self.__ocr_element(text="0.00", x=664, y=2033, width=84, height=31, identifier="t5"),
+        )
+
+        match = OcrPhraseMatcher().find_best_match_within(
+            target="Buy tickets",
+            bounds=self.__region(),
+            elements=elements,
+        )
+
+        assert match is not None
+        self.assertIsNotNone(match)
+        self.assertLess(match.score, 0.8)
+        self.assertEqual(match.text, "Buy tickets from $ 0.00")
+
+    def test_drops_elements_whose_centroid_lies_outside_the_region(self) -> None:
+        """
+        Tokens whose geometric centre falls outside the region must not enter
+        any cluster — the region is the spatial filter for the matcher.
+        """
+
+        in_region = self.__ocr_element(
+            text="Buy", x=327, y=2034, width=70, height=33, identifier="in_region"
+        )
+        outside = self.__ocr_element(
+            text="tickets", x=50, y=100, width=200, height=40, identifier="outside"
+        )
+
+        match = OcrPhraseMatcher().find_best_match_within(
+            target="Buy tickets",
+            bounds=self.__region(),
+            elements=(in_region, outside),
+        )
+
+        assert match is not None
+        self.assertIsNotNone(match)
+        self.assertEqual(match.text, "Buy")
+        self.assertEqual(match.token_count, 1)
+
+    def test_empty_target_returns_no_match(self) -> None:
+        """
+        A blank target must short-circuit before any clustering happens.
+        """
+
+        elements = (
+            self.__ocr_element(text="Buy", x=327, y=2034, width=70, height=33, identifier="t"),
+        )
+
+        match = OcrPhraseMatcher().find_best_match_within(
+            target="",
+            elements=elements,
+            bounds=self.__region(),
+        )
+
+        self.assertIsNone(match)
+
+    def test_no_in_region_tokens_returns_no_match(self) -> None:
+        """
+        When every element lies outside the region the matcher abstains
+        instead of returning a phrase from somewhere else on the screen.
+        """
+
+        outside = self.__ocr_element(
+            x=50,
+            y=100,
+            width=300,
+            height=40,
+            text="Buy tickets",
+            identifier="far_away",
+        )
+
+        match = OcrPhraseMatcher().find_best_match_within(
+            target="Buy tickets",
+            elements=(outside,),
+            bounds=self.__region(),
+        )
+
+        self.assertIsNone(match)
+
+
+if __name__ == "__main__":
+    unittest.main()

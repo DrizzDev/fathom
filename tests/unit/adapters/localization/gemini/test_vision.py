@@ -361,3 +361,219 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(proposal)
+
+
+class _DelayedLlm(LLMPort):
+    """
+    Test double whose ``generate`` sleeps for a configurable duration before
+    returning a frozen payload — drives the retry/timeout invariants of the
+    vision adapter.
+    """
+
+    def __init__(
+        self,
+        *,
+        delays_seconds: tuple,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Initialise with a per-attempt delay tuple and a fixed payload.
+        """
+
+        import asyncio
+
+        self.__asyncio = asyncio
+        self.__delays = list(delays_seconds)
+        self.__payload = payload or {
+            "x1": 100,
+            "y1": 100,
+            "x2": 200,
+            "y2": 200,
+            "confidence": 0.9,
+            "rationale": "test",
+        }
+        self.calls: int = 0
+
+    @property
+    def model_name(self) -> str:
+        """
+        Stable identifier surfaced in cache keys and structured logs.
+        """
+
+        return "delayed-llm"
+
+    async def generate(  # type: ignore[no-untyped-def]
+        self,
+        *,
+        use_cache,
+        prompt,
+        tools=None,
+        system_instruction=None,
+        conversation_history=None,
+        structured_output=None,
+    ):
+        """
+        Sleep for the next configured delay then return the fixed payload.
+        """
+
+        index = self.calls
+        self.calls += 1
+        delay = self.__delays[index] if index < len(self.__delays) else 0.0
+        await self.__asyncio.sleep(delay)
+        return GenerateResult(content=json.dumps(self.__payload), metrics={})
+
+    async def cleanup(self) -> None:
+        """
+        Port-required teardown hook. No resources are held by this double.
+        """
+
+        return None
+
+
+class GeminiVisionLocalizerTimeoutTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins the per-attempt timeout and retry-with-backoff behaviour of the
+    vision adapter. Uses a sub-millisecond timeout so the tests stay fast.
+    """
+
+    @staticmethod
+    def __capture() -> ScreenCapture:
+        """
+        Minimal capture fixture; the adapter ignores its bytes in these tests.
+        """
+
+        return ScreenCapture(
+            width=200,
+            height=400,
+            activity="app",
+            image=b"PNGFAKE",
+            timestamp=0,
+        )
+
+    @staticmethod
+    def __action() -> Action:
+        """
+        Minimal action fixture with a non-empty target so the adapter does not
+        short-circuit before reaching the retry loop.
+        """
+
+        return Action(  # type: ignore[arg-type]
+            action_type="tap",
+            target="Continue button",
+            rationale="test",
+            confidence=1.0,
+        )
+
+    @staticmethod
+    def __budget() -> LocalizationBudget:
+        """
+        Localization budget fixture; the adapter owns its own timeout now
+        and ignores ``budget.local`` for per-attempt waits.
+        """
+
+        return LocalizationBudget(vision=True, attempts=1, local=10_000, threshold=0.5)
+
+    @staticmethod
+    def __observation() -> ScreenObservation:
+        """
+        Minimal observation fixture; vision localizer reads no fields off it.
+        """
+
+        return ScreenObservation(
+            activity="app",
+            hashes=ScreenHashBundle(
+                visual_hash="0" * 16,
+                xml_hash="a" * 16,
+                interaction_hash="b" * 16,
+            ),
+            elements=(),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
+        )
+
+    @staticmethod
+    def __configuration(*, timeout_milliseconds: int, attempts: int) -> Any:
+        """
+        Build a vision localization configuration with the requested timeout
+        and attempts; backoff stays at the default 1.5x multiplier.
+        """
+
+        from fathom.schemas.localization import (
+            VisionLocalizationConfiguration,
+            VisionRetryPolicy,
+        )
+
+        return VisionLocalizationConfiguration(
+            timeout=timeout_milliseconds,
+            retry=VisionRetryPolicy(attempts=attempts, backoff=1.0),
+        )
+
+    async def test_first_attempt_timeout_is_retried_and_succeeds(self) -> None:
+        """
+        First attempt sleeps longer than the per-attempt timeout, second
+        attempt returns within the window — the adapter must retry and
+        return the proposal from the second call.
+        """
+
+        llm = _DelayedLlm(delays_seconds=(0.1, 0.0))
+        localizer = GeminiVisionLocalizer(
+            llm=llm,
+            configuration=self.__configuration(timeout_milliseconds=50, attempts=2),
+        )
+
+        proposal = await localizer.locate(
+            action=self.__action(),
+            capture=self.__capture(),
+            budget=self.__budget(),
+            observation=self.__observation(),
+        )
+
+        self.assertIsNotNone(proposal)
+        self.assertEqual(llm.calls, 2)
+
+    async def test_all_attempts_timeout_returns_none(self) -> None:
+        """
+        Every attempt exceeds the per-attempt timeout; after the configured
+        attempt budget is exhausted the adapter abstains by returning ``None``.
+        """
+
+        llm = _DelayedLlm(delays_seconds=(0.1, 0.1))
+        localizer = GeminiVisionLocalizer(
+            llm=llm,
+            configuration=self.__configuration(timeout_milliseconds=20, attempts=2),
+        )
+
+        result = await localizer.locate(
+            action=self.__action(),
+            capture=self.__capture(),
+            budget=self.__budget(),
+            observation=self.__observation(),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(llm.calls, 2)
+
+    async def test_single_attempt_when_attempts_is_one(self) -> None:
+        """
+        With ``attempts=1`` the adapter must not retry on timeout; exactly one
+        LLM call happens and a timeout yields ``None``.
+        """
+
+        llm = _DelayedLlm(delays_seconds=(0.05,))
+        localizer = GeminiVisionLocalizer(
+            llm=llm,
+            configuration=self.__configuration(timeout_milliseconds=10, attempts=1),
+        )
+
+        result = await localizer.locate(
+            action=self.__action(),
+            capture=self.__capture(),
+            budget=self.__budget(),
+            observation=self.__observation(),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(llm.calls, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
