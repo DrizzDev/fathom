@@ -6,6 +6,7 @@ import time
 from logging import getLogger
 from typing import Any, Dict
 
+from fathom.constants.agent import DirectiveKind
 from fathom.constants.messages import HITL_DEFAULT_PROMPT
 from fathom.core.exceptions import WorkflowCancelledError
 from fathom.core.services.hitl import HITLService
@@ -78,11 +79,21 @@ class Hitl:
         )
         self.__context.agent_state.record_hitl_intervention()
 
+        kind, target_descriptor = self.__classify_response(response=response)
+        directive = self.__context.agent_state.set_operator_directive(
+            kind=kind,
+            source_text=response,
+            target_descriptor=target_descriptor,
+        )
+
         logger.info(
             "HITL intervention recorded",
             extra={
                 **self.__log_context(),
                 "event": "hitl.ask.recorded",
+                "directive.ttl": directive.ttl_turns,
+                "directive.kind": directive.kind.value,
+                "directive.target": directive.target_descriptor,
             },
         )
         return ExecutionResult(
@@ -183,3 +194,40 @@ class Hitl:
             "component": "graph.intent.hitl",
             "workflow.id": self.__context.workflow_id,
         }
+
+    @staticmethod
+    def __classify_response(*, response: str) -> tuple[DirectiveKind, str | None]:
+        """
+        Map a raw HITL response into a directive kind plus a target
+        descriptor the planner guards can match against.
+        """
+
+        normalised = response.strip().lower()
+
+        completion_phrases = (
+            "mark the execution as completed",
+            "mark as completed",
+            "mark as complete",
+            "mark execution complete",
+            "complete the execution",
+            "finish the execution",
+            "stop the execution",
+            "close the execution",
+            "end the execution",
+        )
+        if any(phrase in normalised for phrase in completion_phrases):
+            return DirectiveKind.COMPLETE, response.strip()
+
+        for prefix in ("tap on ", "click on ", "press on ", "tap the ", "click the "):
+            if normalised.startswith(prefix):
+                descriptor = response.strip()[len(prefix) :].strip()
+                descriptor = descriptor.split(",")[0].strip() or descriptor
+                return DirectiveKind.RETRY_ACTION, descriptor
+
+        navigation_prefixes = ("go to ", "navigate to ", "open ")
+        for prefix in navigation_prefixes:
+            if normalised.startswith(prefix):
+                descriptor = response.strip()[len(prefix) :].strip()
+                return DirectiveKind.NAVIGATE, descriptor
+
+        return DirectiveKind.FREE_FORM, None

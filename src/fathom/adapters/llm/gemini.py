@@ -74,6 +74,14 @@ class GeminiLLM(LLMPort):
 
         return self.__configuration.model
 
+    @property
+    def client(self) -> Any:
+        """
+        Underlying ``google.genai`` client; consumed by sibling adapters that share auth.
+        """
+
+        return self.__client
+
     def __initialize(self) -> None:
         """
         Initialize client.

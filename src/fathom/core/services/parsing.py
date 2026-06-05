@@ -173,6 +173,44 @@ class ToolResponseParser:
         else:
             raise VisionError(f"Unknown function call: {name}")
 
+    @staticmethod
+    def __autofill_completion_reasons(*, result: AnalysisResult, source_tool: str) -> None:
+        """
+        Derive missing completion-reason fields from ``action.rationale`` so
+        the completion gate's structured path remains valid even when the
+        model forgets the conditionally-required fields.
+        """
+
+        rationale = (result.action.rationale or "").strip()
+        if not rationale:
+            return
+
+        if result.is_sub_goal_complete and not (result.subgoal_completion_reason or "").strip():
+            object.__setattr__(result, "subgoal_completion_reason", rationale)
+            logger.info(
+                "Auto-derived missing subgoal_completion_reason from rationale",
+                extra={
+                    "component": "core.services.parsing",
+                    "event": "parsing.completion_reason.autofilled",
+                    "completion.scope": "subgoal",
+                    "source.tool": source_tool,
+                    "source.field": "action.rationale",
+                },
+            )
+
+        if result.is_goal_complete and not (result.goal_completion_reason or "").strip():
+            object.__setattr__(result, "goal_completion_reason", rationale)
+            logger.info(
+                "Auto-derived missing goal_completion_reason from rationale",
+                extra={
+                    "component": "core.services.parsing",
+                    "event": "parsing.completion_reason.autofilled",
+                    "completion.scope": "goal",
+                    "source.tool": source_tool,
+                    "source.field": "action.rationale",
+                },
+            )
+
     def __normalize_completion_flags(
         self,
         *,
@@ -186,6 +224,8 @@ class ToolResponseParser:
 
         - Preserves raw Gemini signals in metadata for auditability.
         - Normalizes is_goal_complete / is_sub_goal_complete when action_type is COMPLETE.
+        - Autofills missing completion-reason fields from ``action.rationale`` so the
+          downstream completion gate can verify the claim without a fuzzy match.
         """
 
         # Preserve raw model emissions for debugging and analytics.
@@ -194,6 +234,8 @@ class ToolResponseParser:
             "sub_goal_completed": raw_sub_goal_completed,
         }
         result.metadata.setdefault("raw_completion_flags", raw_flags)
+
+        self.__autofill_completion_reasons(result=result, source_tool=source_tool)
 
         # Only enforce invariants for terminal COMPLETE actions.
         if result.action.action_type == ActionType.COMPLETE:

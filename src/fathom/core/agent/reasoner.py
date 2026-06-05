@@ -9,6 +9,7 @@ from fathom.constants import (
     NEXT_PHASE_ACTION_TYPES,
     ActionType,
 )
+from fathom.constants.agent import DirectiveKind
 from fathom.constants.reasoning import (
     ACTION_MIN_CONFIDENCE,
     ACTION_NEXT_PHASE_CONFIDENCE,
@@ -91,7 +92,6 @@ class Reasoner:
         # We check if the reasoning text semantically overlaps with the target goal
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
 
-        # Quick ratio check - O(N) but very fast for short strings
         similarity = SequenceMatcher(None, target_goal, context).ratio()
 
         if similarity > RATIONALE_CONTEXT_RELEVANCE_THRESHOLD:
@@ -261,6 +261,8 @@ class Reasoner:
         effect: Optional[ActionEffect] = None,
         screen_description: Optional[str] = None,
         criterion_decision: Optional[CriterionDecision] = None,
+        directive_kind: Optional[DirectiveKind] = None,
+        semantic_similarity: Optional[float] = None,
     ) -> CompletionEvidence:
         """
         Assemble this turn's typed CompletionEvidence bundle for the gate to adjudicate.
@@ -278,12 +280,45 @@ class Reasoner:
         if asserted:
             notes.append("claim.asserted: model flagged completion via tool output")
 
-        justified, rationale_note, _, rationale_similarity = self.__verify_rationale(
-            target=target,
-            analysis=analysis,
-            flagged_complete=asserted,
-            screen_description=screen_description,
-        )
+        directive_completes = directive_kind is DirectiveKind.COMPLETE
+        explicit_reason = analysis.subgoal_completion_reason or analysis.goal_completion_reason
+
+        if directive_completes:
+            justified = True
+            rationale_note: Optional[str] = "Rationale verified via operator directive (HITL)"
+            rationale_similarity = 1.0
+            notes.append("claim.justified.via_operator_directive")
+        elif asserted and explicit_reason:
+            justified = True
+            rationale_note = f"Rationale verified via model reason: '{explicit_reason}'"
+            rationale_similarity = (
+                semantic_similarity
+                if semantic_similarity is not None
+                else SequenceMatcher(
+                    None,
+                    target,
+                    f"{analysis.reasoning} {screen_description or ''}".lower(),
+                ).ratio()
+            )
+            notes.append("claim.justified.via_explicit_reason")
+        elif (
+            asserted
+            and semantic_similarity is not None
+            and semantic_similarity >= LATERAL_CREDIT_SIMILARITY_THRESHOLD
+        ):
+            justified = True
+            rationale_note = (
+                f"Rationale verified via embedding similarity (cosine={semantic_similarity:.2f})"
+            )
+            rationale_similarity = semantic_similarity
+            notes.append("claim.justified.via_embedding_similarity")
+        else:
+            justified, rationale_note, _, rationale_similarity = self.__verify_rationale(
+                target=target,
+                analysis=analysis,
+                flagged_complete=asserted,
+                screen_description=screen_description,
+            )
         if justified and rationale_note is not None:
             notes.append(f"claim.justified: {rationale_note}")
 

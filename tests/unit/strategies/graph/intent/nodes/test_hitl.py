@@ -301,17 +301,36 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
         """
 
         interventions: List[bool] = []
+        directives: List[SimpleNamespace] = []
+
+        def __set_directive(*, kind, source_text, target_descriptor=None, ttl_turns=2):
+            """
+            Add 1 line doc-string
+            """
+
+            directive = SimpleNamespace(
+                kind=kind,
+                ttl_turns=ttl_turns,
+                source_text=source_text,
+                target_descriptor=target_descriptor,
+            )
+            directives.append(directive)
+
+            return directive
+
         return SimpleNamespace(
             hitl=hitl,
-            workflow_id="run-test",
             is_cancelled=False,
+            workflow_id="run-test",
             agent_state=SimpleNamespace(
                 step_count=0,
+                set_operator_directive=__set_directive,
                 record_hitl_intervention=lambda: interventions.append(True),
             ),
             context_manager=SimpleNamespace(
                 inject_user_guidance=AsyncMock(),
             ),
+            _directives=directives,
             _interventions=interventions,
         )
 

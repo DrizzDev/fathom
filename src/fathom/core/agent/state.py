@@ -4,6 +4,7 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from fathom.constants import ActionExecutionKind, ActionType
+from fathom.constants.agent import DIRECTIVE_DEFAULT_TTL_TURNS, DirectiveKind
 from fathom.constants.recovery import AUTONOMOUS_RECOVERY_ACTIVE_KINDS
 from fathom.constants.runtime import (
     DEFAULT_CONTEXT_WINDOW,
@@ -24,6 +25,7 @@ from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn
+from fathom.schemas.directive import OperatorDirective
 from fathom.schemas.effect import ActionEffect
 from fathom.schemas.loop import LoopEvidence
 from fathom.schemas.observation import LoopObservation, ScreenRelation
@@ -125,6 +127,13 @@ class AgentState:
         # VERIFY does not emit recorded steps. Persist one explicit
         # no-progress verification streak so repeated rejection on the same recorded-step epoch can be bounded cleanly.
         self.__verification_loop: Optional[VerificationLoopState] = None
+
+        # Operator-issued directive (e.g. HITL response) authoritative
+        # for the next planner turn. While set, the planner repeat
+        # guards and the completion lateral-credit gate consult it
+        # before rejecting the matching action — so a human override
+        # cannot be silently re-blocked by autonomous-mode heuristics.
+        self.__operator_directive: Optional[OperatorDirective] = None
 
     @property
     def intent(self) -> str:
@@ -261,6 +270,90 @@ class AgentState:
 
         self.bump_realignment_budget()
         self.reset_loop_history()
+
+    def set_operator_directive(
+        self,
+        *,
+        kind: DirectiveKind,
+        source_text: str,
+        target_descriptor: Optional[str] = None,
+        ttl_turns: int = DIRECTIVE_DEFAULT_TTL_TURNS,
+    ) -> OperatorDirective:
+        """
+        Record an operator-issued directive that overrides autonomous
+        repeat / completion guards for ``ttl_turns`` planner turns.
+        """
+
+        self.__operator_directive = OperatorDirective(
+            kind=kind,
+            ttl_turns=ttl_turns,
+            source_text=source_text,
+            set_at_step=self.__step_count,
+            target_descriptor=target_descriptor,
+        )
+        return self.__operator_directive
+
+    @property
+    def operator_directive(self) -> Optional[OperatorDirective]:
+        """
+        Return the active operator directive, if any.
+        """
+
+        return self.__operator_directive
+
+    @property
+    def has_active_directive(self) -> bool:
+        """
+        Whether an unconsumed operator directive is in effect.
+        """
+
+        return self.__operator_directive is not None and not self.__operator_directive.expired
+
+    def directive_matches(self, *, action: Action) -> bool:
+        """
+        Return whether the active directive points at the same target as ``action``.
+        """
+
+        if not self.has_active_directive:
+            return False
+
+        directive = self.__operator_directive
+        if directive is None:
+            return False
+        descriptor = (directive.target_descriptor or "").strip().lower()
+        if not descriptor:
+            return True
+
+        candidates = (
+            action.target,
+            action.natural_language_target,
+            action.script_target,
+        )
+        for candidate in candidates:
+            if candidate and descriptor in candidate.strip().lower():
+                return True
+            if candidate and candidate.strip().lower() in descriptor:
+                return True
+        return False
+
+    def consume_operator_directive(self, *, reason: str) -> None:
+        """
+        Clear the active operator directive after it has been honored.
+        """
+
+        _ = reason
+        self.__operator_directive = None
+
+    def tick_operator_directive(self) -> None:
+        """
+        Decrement the directive's TTL; clear it when the budget runs out.
+        """
+
+        if self.__operator_directive is None:
+            return
+
+        next_directive = self.__operator_directive.decremented()
+        self.__operator_directive = None if next_directive.expired else next_directive
 
     @property
     def capabilities(self) -> RuntimeCapabilities:
@@ -413,6 +506,8 @@ class AgentState:
         """
 
         self.__step_count += 1
+
+        self.tick_operator_directive()
 
         # Optimized record including activity context
         activity = (

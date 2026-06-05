@@ -138,6 +138,7 @@ class IntentStrategy:
             icons=assembly.icons(),
             pixel_overlay=assembly.overlay(),
             ensemble=assembly.ensemble(),
+            embedder=assembly.embedder(),
             journal=assembly.journal(),
             artifact_pipeline=assembly.pipeline(
                 path_manager=path_manager,
@@ -195,6 +196,10 @@ class IntentStrategy:
             sub_goals = await decomposer.decompose(intent=self.__intent)
 
             self.__graph_context.agent_state.set_sub_goals(sub_goals)
+            if self.__graph_context.embedding_cache is not None:
+                self.__graph_context.embedding_cache.warm(
+                    texts=tuple(goal.description for goal in sub_goals),
+                )
             sub_goal_payload = [
                 {
                     "index": goal.index,

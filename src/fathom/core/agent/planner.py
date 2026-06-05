@@ -378,6 +378,29 @@ class StepPlanner:
             action=action,
             analysis=analysis,
         )
+
+        directive = state.operator_directive
+
+        if (
+            directive is not None
+            and state.has_active_directive
+            and current_screen_repeat is not None
+            and state.directive_matches(action=action)
+        ):
+            logger.info(
+                "[Planner] Operator directive overrides repeated current-screen guard",
+                extra={
+                    "step.count": state.step_count,
+                    "component": "core.agent.planner",
+                    "event": "planner.guard.bypassed",
+                    "guard.name": "repeated_current_screen",
+                    "directive.kind": directive.kind.value,
+                    "directive.target": directive.target_descriptor,
+                    "action.target": (action.target or action.natural_language_target or "")[:80],
+                },
+            )
+            current_screen_repeat = None
+
         if current_screen_repeat is not None:
             current_sub_goal = state.get_current_sub_goal()
             logger.warning(
@@ -433,7 +456,9 @@ class StepPlanner:
 
         # Check if same tap/type action repeated 3+ times on the same screen.
         # Swipes/scrolls are excluded since they legitimately repeat.
-        if state.is_action_repeating_on_screen(action=action):
+        if state.is_action_repeating_on_screen(action=action) and not (
+            state.has_active_directive and state.directive_matches(action=action)
+        ):
             repeated_desc = action.to_description()
             logger.warning(
                 "[Planner] Action '%s' repeated 3+ times on same screen — blocking repeat.",

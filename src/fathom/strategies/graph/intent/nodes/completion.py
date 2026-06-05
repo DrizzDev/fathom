@@ -99,10 +99,22 @@ class SubGoalEvaluator:
 
         last_effect = agent_state.get_last_action_effect()
 
+        directive = agent_state.operator_directive
+        directive_kind = (
+            directive.kind if directive is not None and agent_state.has_active_directive else None
+        )
+
+        semantic_similarity = await self.__semantic_similarity(
+            sub_goal=active,
+            analysis=analysis,
+        )
+
         evidence = self.__context.reasoner.assess_completion(
             sub_goal=active,
             analysis=analysis,
             effect=last_effect,
+            directive_kind=directive_kind,
+            semantic_similarity=semantic_similarity,
             criterion_decision=criterion_decision,
             delta_score=agent_state.last_delta_score,
             screen_changed=step_result.screen_changed,
@@ -214,6 +226,56 @@ class SubGoalEvaluator:
         """
 
         return current is not None and has_sub_goals
+
+    async def __semantic_similarity(
+        self,
+        *,
+        sub_goal: SubGoal,
+        analysis: AnalysisResult,
+    ) -> Optional[float]:
+        """
+        Cosine similarity between rationale and sub-goal via embedding port + cache; ``None`` on any failure.
+        """
+
+        cache = self.__context.embedding_cache
+        embedder = self.__context.embedder
+        if cache is None or embedder is None:
+            return None
+
+        rationale = (analysis.subgoal_completion_reason or analysis.reasoning or "").strip()
+        if not rationale:
+            return None
+
+        try:
+            sub_goal_vector = await cache.get(text=sub_goal.description)
+            if sub_goal_vector is None:
+                return None
+            rationale_result = await embedder.embed(texts=(rationale,))
+        except Exception as exception:  # noqa: BLE001 - logged below
+            logger.warning(
+                "Semantic similarity scoring failed; falling back to legacy verifier",
+                extra={
+                    "component": "graph.intent.completion",
+                    "event": "completion.semantic_similarity.error",
+                    "error.kind": type(exception).__name__,
+                },
+            )
+            return None
+
+        if not rationale_result.vectors:
+            return None
+
+        try:
+            return float(sub_goal_vector.cosine(other=rationale_result.vectors[0]))
+        except ValueError:
+            logger.warning(
+                "Embedding vector dimension mismatch",
+                extra={
+                    "component": "graph.intent.completion",
+                    "event": "completion.semantic_similarity.dimension_mismatch",
+                },
+            )
+            return None
 
     def __advance_or_complete(
         self,

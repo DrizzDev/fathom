@@ -16,6 +16,7 @@ from fathom.core.agent.state import AgentState
 from fathom.core.agent.tools import ToolScope
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.context.manager import ContextManager
+from fathom.core.embedding.cache import EmbeddingCache
 from fathom.core.localization import EnsembleLocalizerService
 from fathom.core.perception.localization import TargetLocalizationService
 from fathom.core.perception.observation import ScreenObservationService
@@ -33,6 +34,7 @@ from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.embedding import EmbeddingPort
 from fathom.interfaces.icon import IconDetectorPort
 from fathom.interfaces.journal import RuntimeJournalPort
 from fathom.interfaces.knowledge import KnowledgePort
@@ -113,10 +115,18 @@ class GraphContext:
         screen_observer: Optional[ScreenObservationService] = None,
         target_localizer: Optional[TargetLocalizationService] = None,
         artifact_pipeline: Optional[ArtifactPipeline] = None,
+        embedder: Optional[EmbeddingPort] = None,
+        embedding_cache: Optional[EmbeddingCache] = None,
     ) -> None:
         self.__intent = intent
         self.__device = device
         self.__perception_port = perception
+        self.__embedder = embedder
+        self.__embedding_cache = (
+            embedding_cache
+            if embedding_cache is not None
+            else (EmbeddingCache(embedder=embedder) if embedder is not None else None)
+        )
 
         self.__llm = llm
         self.__memory = memory
@@ -297,6 +307,22 @@ class GraphContext:
         """
 
         return self.__llm
+
+    @property
+    def embedder(self) -> Optional[EmbeddingPort]:
+        """
+        Embedding port; ``None`` when embedding support is unavailable.
+        """
+
+        return self.__embedder
+
+    @property
+    def embedding_cache(self) -> Optional[EmbeddingCache]:
+        """
+        Async cache that warms sub-goal embeddings; ``None`` when disabled.
+        """
+
+        return self.__embedding_cache
 
     @property
     def memory(self) -> MemoryPort:

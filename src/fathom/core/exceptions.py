@@ -60,6 +60,12 @@ class PortError(FathomError):
     """
 
 
+class EmbeddingError(PortError):
+    """
+    Terminal failure inside an :class:`EmbeddingPort` implementation.
+    """
+
+
 class ToolError(FathomError):
     """
     Base for tool-related errors.

@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 
 from fathom.adapters.artifact.cloud import CloudSink
 from fathom.adapters.artifact.efs import EfsSink
+from fathom.adapters.embedding.gemini import GeminiEmbeddingAdapter
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.icon.template import TemplateIconDetector
 from fathom.adapters.journal.jsonl import JsonRuntimeJournal
@@ -35,6 +36,7 @@ from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.localization.ensemble import EnsembleLocalizerService
 from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.interfaces.artifact import ArtifactRendererPort, ArtifactSinkPort
+from fathom.interfaces.embedding import EmbeddingPort
 from fathom.interfaces.icon import IconDetectorPort
 from fathom.interfaces.journal import RuntimeJournalPort
 from fathom.interfaces.llm import LLMPort
@@ -152,6 +154,27 @@ class AdapterAssembly:
             return NoopOverlayDetector()
 
         return PixelOverlayDetector(workflow_id=self.__workflow_id)
+
+    def embedder(self) -> Optional[EmbeddingPort]:
+        """
+        Build the Gemini embedding adapter sharing auth with the chat LLM; ``None`` when unavailable.
+        """
+
+        client = getattr(self.__llm, "client", None)
+        if client is None:
+            logger.info(
+                "LLM port does not expose an embedding-capable client; embeddings disabled",
+                extra={
+                    **self.__log_context(),
+                    "event": "factory.embedder.unavailable",
+                },
+            )
+            return None
+
+        return GeminiEmbeddingAdapter(
+            client=client,
+            workflow_id=self.__workflow_id,
+        )
 
     def ensemble(self) -> EnsembleLocalizerService:
         """

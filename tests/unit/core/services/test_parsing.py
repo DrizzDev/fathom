@@ -211,3 +211,155 @@ class ToolResponseParserExecuteUiTest(unittest.TestCase):
 
         self.assertEqual(result.action.action_type, ActionType.ENTER)
         self.assertEqual(result.action.target, "Search button on keyboard")
+
+
+class ToolResponseParserCompletionReasonAutofillTest(unittest.TestCase):
+    """
+    Pins the parser's autofill of missing ``subgoal_completion_reason`` /
+    ``goal_completion_reason`` fields so the downstream completion gate
+    can verify the claim without falling back to fuzzy matching.
+    """
+
+    @staticmethod
+    def __response(*, args: Dict[str, Any]) -> GenerateResult:
+        """
+        Wrap an ``execute_ui`` tool call in a generate result.
+        """
+
+        return GenerateResult(
+            content="",
+            metrics={},
+            tool_calls=[_Call(name="execute_ui", args=args)],
+        )
+
+    @staticmethod
+    def __completion_args(
+        *,
+        rationale: str,
+        sub_goal_completed: bool,
+        goal_completed: bool = False,
+        subgoal_completion_reason: Any = None,
+        goal_completion_reason: Any = None,
+    ) -> Dict[str, Any]:
+        """
+        Build a baseline ``execute_ui`` argument set that flags completion.
+        """
+
+        return {
+            "assistant_message": "OK",
+            "goal_completed": goal_completed,
+            "sub_goal_completed": sub_goal_completed,
+            "goal_completion_reason": goal_completion_reason,
+            "subgoal_completion_reason": subgoal_completion_reason,
+            "action": {
+                "action_type": "complete",
+                "target_name": "Sub-goal verification",
+                "rationale": rationale,
+                "is_valid": True,
+                "confidence": 1.0,
+            },
+        }
+
+    def test_autofills_subgoal_reason_from_rationale_when_missing(self) -> None:
+        """
+        Missing ``subgoal_completion_reason`` is filled from ``action.rationale``
+        when the model flagged the sub-goal as complete.
+        """
+
+        parser = ToolResponseParser()
+        response = self.__response(
+            args=self.__completion_args(
+                sub_goal_completed=True,
+                rationale="Offerwall menu has been dismissed successfully",
+            )
+        )
+
+        result = parser.parse(response=response)
+
+        self.assertTrue(result.is_sub_goal_complete)
+        self.assertEqual(
+            result.subgoal_completion_reason,
+            "Offerwall menu has been dismissed successfully",
+        )
+
+    def test_preserves_model_supplied_subgoal_reason(self) -> None:
+        """
+        A non-empty ``subgoal_completion_reason`` from the model is preserved verbatim.
+        """
+
+        parser = ToolResponseParser()
+        response = self.__response(
+            args=self.__completion_args(
+                sub_goal_completed=True,
+                rationale="Backup rationale not used",
+                subgoal_completion_reason="Order placed successfully",
+            )
+        )
+
+        result = parser.parse(response=response)
+
+        self.assertEqual(result.subgoal_completion_reason, "Order placed successfully")
+
+    def test_does_not_autofill_when_completion_flag_false(self) -> None:
+        """
+        Autofill only triggers when the model claims completion.
+        """
+
+        parser = ToolResponseParser()
+        args = self.__completion_args(
+            sub_goal_completed=False,
+            rationale="Just a regular tap on the search box",
+        )
+        args["action"]["action_type"] = "tap"
+        args["action"]["target_name"] = "Search box"
+        response = self.__response(args=args)
+
+        result = parser.parse(response=response)
+
+        self.assertFalse(result.is_sub_goal_complete)
+        self.assertIsNone(result.subgoal_completion_reason)
+
+    def test_autofills_goal_reason_from_rationale(self) -> None:
+        """
+        Missing ``goal_completion_reason`` is filled from rationale when the
+        model claims overall goal completion.
+        """
+
+        parser = ToolResponseParser()
+        response = self.__response(
+            args=self.__completion_args(
+                sub_goal_completed=True,
+                goal_completed=True,
+                rationale="Workflow finished as per operator instruction",
+            )
+        )
+
+        result = parser.parse(response=response)
+
+        self.assertTrue(result.is_goal_complete)
+        self.assertEqual(
+            result.goal_completion_reason,
+            "Workflow finished as per operator instruction",
+        )
+
+    def test_leaves_reason_null_when_rationale_is_whitespace_only(self) -> None:
+        """
+        With both the reason field empty AND the rationale collapsing to
+        whitespace, the autofill must leave the reason None — never guess.
+        """
+
+        parser = ToolResponseParser()
+        response = self.__response(
+            args=self.__completion_args(
+                sub_goal_completed=True,
+                rationale="   \t\n  ",
+            )
+        )
+
+        result = parser.parse(response=response)
+        self.assertTrue(result.is_sub_goal_complete)
+        self.assertIsNone(result.subgoal_completion_reason)
+
+
+if __name__ == "__main__":
+    unittest.main()
