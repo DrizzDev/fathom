@@ -32,6 +32,24 @@ class ResolveStatus(StrEnum):
     UNRESOLVED = "unresolved"
 
 
+class UnresolvedKind(StrEnum):
+    """
+    Machine-readable taxonomy of why a resolution attempt did not resolve.
+
+    Distinct from the free-text ``reason`` field on :class:`ResolveResult`
+    so downstream consumers can branch on the failure cause without
+    string matching.
+    """
+
+    OTHER = "other"
+    AXIS_MISMATCH = "axis_mismatch"
+    INVALID_BOUNDS = "invalid_bounds"
+    MISSING_BOUNDS = "missing_bounds"
+    EMPTY_MANIFEST = "empty_manifest"
+    LABEL_NOT_FOUND = "label_not_found"
+    GENERIC_CONTAINER = "generic_container"
+
+
 class ResolveCandidate(BaseModel):
     """
     A single candidate element returned when resolution is ambiguous.
@@ -92,6 +110,13 @@ class ResolveResult(BaseModel):
         default=None,
         description="Short diagnostic explaining why status is not RESOLVED.",
     )
+    unresolved_kind: Optional[UnresolvedKind] = Field(
+        default=None,
+        description=(
+            "Machine-readable kind explaining why status is UNRESOLVED. "
+            "None for RESOLVED and AMBIGUOUS outcomes."
+        ),
+    )
     candidates: List[ResolveCandidate] = Field(
         default_factory=list,
         description=(
@@ -108,15 +133,26 @@ class ResolveResult(BaseModel):
         return cls(status=ResolveStatus.RESOLVED, action=action)
 
     @classmethod
-    def unresolved(cls, *, action: Action, reason: str) -> "ResolveResult":
+    def unresolved(
+        cls,
+        *,
+        reason: str,
+        action: Action,
+        kind: UnresolvedKind = UnresolvedKind.OTHER,
+    ) -> "ResolveResult":
         """
         Build an UNRESOLVED outcome with the original action preserved.
 
-        ``reason`` is short, mechanical text, e.g. "no manifest element
-        matched target 'Alright, got it button'".
+        ``reason`` is short, mechanical text, e.g. "no manifest element matched target 'Alright, got it button'".
+        ``kind`` carries the machine-readable failure taxonomy used by downstream routing.
         """
 
-        return cls(status=ResolveStatus.UNRESOLVED, action=action, reason=reason)
+        return cls(
+            action=action,
+            reason=reason,
+            unresolved_kind=kind,
+            status=ResolveStatus.UNRESOLVED,
+        )
 
     @classmethod
     def ambiguous(

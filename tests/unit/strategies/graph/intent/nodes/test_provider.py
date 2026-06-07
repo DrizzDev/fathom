@@ -23,6 +23,7 @@ class IntentNodeProviderCancellationTest(unittest.IsolatedAsyncioTestCase):
             hitl=SimpleNamespace(check_signal=AsyncMock(return_value="CANCELLED")),
             cancel=Mock(),
             llm=Mock(),
+            abort_detector=Mock(),
         )
         provider = IntentNodeProvider(
             context=context,  # type: ignore[arg-type]
@@ -42,6 +43,7 @@ class IntentNodeProviderCancellationTest(unittest.IsolatedAsyncioTestCase):
             hitl=SimpleNamespace(check_signal=AsyncMock(return_value=None)),
             cancel=Mock(),
             llm=Mock(),
+            abort_detector=Mock(),
         )
         provider = IntentNodeProvider(
             context=context,  # type: ignore[arg-type]

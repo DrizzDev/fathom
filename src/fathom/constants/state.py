@@ -29,13 +29,24 @@ class CompletionReason(StrEnum):
 
     FAILED = "Failed"
     CANCELLED = "Cancelled"
+    STUCK = "Stuck: No progress"
     MAX_STEPS = "Max steps reached"
     SUCCESS = "Completed successfully"
-    STUCK = "Stuck: No progress"
+    OPERATOR_ABORTED = "Aborted by operator"
     INTERVENTION_REQUIRED = "Human intervention required"
     USER_DIRECTIVE = "Marked complete via user directive"
     NOT_EXECUTABLE = "Request is not an executable UI task"
     ACTION_BLOCKED = "Action blocked: repeated without progress"
+
+
+class RunOutcome(StrEnum):
+    """
+    Terminal state of the graph executor for a single run.
+    """
+
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    COMPLETED = "completed"
 
 
 class CommonStateKey(StrEnum):

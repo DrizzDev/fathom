@@ -241,10 +241,11 @@ class WorkflowCancelledError(WorkflowError):
     Workflow was cancelled.
     """
 
-    def __init__(self, workflow_id: str) -> None:
+    def __init__(self, workflow_id: str, *, reason: Optional[str] = None) -> None:
         message = f"Workflow '{workflow_id}' was cancelled"
         super().__init__(message, retryable=False)
 
+        self.reason = reason
         self.workflow_id = workflow_id
 
 

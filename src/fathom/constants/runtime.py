@@ -8,7 +8,7 @@ MILLISECONDS_PER_SECOND: Final[float] = 1000.0
 # Sized to accommodate two vision-localizer attempts (30s each) plus retry backoff,
 # so the outer cascade does not amputate a legitimate retry burst.
 DEFAULT_LOCALIZATION_BUDGET: Final[int] = 60_000
-DEFAULT_OCR_PERCEPTION_BUDGET: Final[int] = 5000
+DEFAULT_OCR_PERCEPTION_BUDGET: Final[int] = 30_000
 DEFAULT_LOCAL_PERCEPTION_BUDGET: Final[int] = 5000
 
 

@@ -75,10 +75,13 @@ class EmbeddingVector(BaseModel):
             raise ValueError(f"Vector length mismatch: {len(self.values)} vs {len(other.values)}")
 
         dot = sum(left * right for left, right in zip(self.values, other.values, strict=True))
+
         norm_left = sum(left * left for left in self.values) ** 0.5
         norm_right = sum(right * right for right in other.values) ** 0.5
+
         if norm_left == 0.0 or norm_right == 0.0:
             return 0.0
+
         return float(dot / (norm_left * norm_right))
 
 
@@ -89,8 +92,9 @@ class EmbeddingResult(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    provider: EmbeddingProvider = Field(description="Backend that produced the vectors.")
     model: str = Field(min_length=1, description="Provider model identifier.")
+    provider: EmbeddingProvider = Field(description="Backend that produced the vectors.")
+
     duration: int = Field(ge=0, description="Provider call duration in milliseconds.")
     vectors: Tuple[EmbeddingVector, ...] = Field(
         min_length=1, description="One vector per input text, in request order."

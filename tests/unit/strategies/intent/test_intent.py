@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fathom.adapters.checkpoint import SqliteCheckpointStore
 from fathom.constants.events import FathomEvent
+from fathom.constants.state import RunOutcome
 from fathom.runtime.checkpoint_serde import CheckpointSerdeFactory
 from fathom.schemas.checkpoint import SqliteCheckpointPolicy
 from fathom.strategies.intent import (
@@ -95,9 +96,16 @@ class IntentStrategyTest(unittest.IsolatedAsyncioTestCase):
         graph_context.agent_state = agent_state
 
         strategy.__setattr__("_IntentStrategy__graph_context", graph_context)
+        strategy.__setattr__("_IntentStrategy__workflow_id", "wf-test")
         return strategy, telemetry
 
-    async def __invoke_emit(self, *, strategy: Any, script_data: Optional[str]) -> None:
+    async def __invoke_emit(
+        self,
+        *,
+        strategy: Any,
+        script_data: Optional[str],
+        run_outcome: RunOutcome = RunOutcome.COMPLETED,
+    ) -> None:
         """
         Call the private SCRIPT_GENERATED emit on the strategy under test.
         """
@@ -106,7 +114,7 @@ class IntentStrategyTest(unittest.IsolatedAsyncioTestCase):
             "Callable[..., Any]",
             strategy.__getattribute__("_IntentStrategy__emit_script_generated_event"),
         )
-        await emit(script_data=script_data)
+        await emit(script_data=script_data, run_outcome=run_outcome)
 
     async def test_script_generated_emits_with_non_empty_content(self) -> None:
         """

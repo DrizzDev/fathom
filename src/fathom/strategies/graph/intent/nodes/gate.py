@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from fathom.constants.runtime import (
     DEFAULT_LOCALIZATION_BUDGET,
     DEFAULT_LOCALIZATION_CONFIDENCE_THRESHOLD,
@@ -8,6 +10,7 @@ from fathom.constants.runtime import (
 from fathom.schemas.budgets import LocalizationBudget
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import ScreenObservation
+from fathom.schemas.resolution import UnresolvedKind
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.context import GraphContext
@@ -35,6 +38,7 @@ class ActionGate:
         step: Step,
         capture: ScreenCapture,
         observation: ScreenObservation,
+        snap_outcome: Optional[UnresolvedKind] = None,
     ) -> LocalizationResult:
         """
         Resolve an action target against the runtime screen observation.
@@ -45,6 +49,7 @@ class ActionGate:
             action=step.action,
             image=capture.image,
             observation=observation,
+            snap_outcome=snap_outcome,
             budget=LocalizationBudget(
                 vision=True,
                 local=DEFAULT_LOCALIZATION_BUDGET,

@@ -82,8 +82,9 @@ class LoopActionLadderTest(unittest.TestCase):
         The third and later ladder attempts must escalate to HOME.
         """
 
-        detector = LoopDetector(max_recovery=3)
         ladder = LoopActionLadder()
+        detector = LoopDetector(max_recovery=3)
+
         ladder.next(detector=detector)
         ladder.next(detector=detector)
         action = ladder.next(detector=detector)
@@ -97,8 +98,9 @@ class LoopActionLadderTest(unittest.TestCase):
         Once the detector cannot recover further, the ladder returns None.
         """
 
-        detector = LoopDetector(max_recovery=1)
         ladder = LoopActionLadder()
+        detector = LoopDetector(max_recovery=1)
+
         ladder.next(detector=detector)
 
         self.assertIsNone(ladder.next(detector=detector))
@@ -176,7 +178,7 @@ class LoopActionLadderTest(unittest.TestCase):
 
 class LoopActionLadderValidatePassiveTest(unittest.TestCase):
     """
-    Pin the passive-VALIDATE behaviour: no mechanical recovery dispatched, no escalation to BACK or HOME.
+    Pin the passive-VALIDATE behavior: no mechanical recovery dispatched, no escalation to BACK or HOME.
     """
 
     def test_validate_last_action_yields_no_mechanical_recovery(self) -> None:
@@ -251,8 +253,8 @@ class LoopActionLadderValidatePassiveTest(unittest.TestCase):
         """
 
         return ScreenState(
-            activity="app",
             timestamp=0,
-            activity_hash="a" * 16,
+            activity="app",
             visual_hash="b" * 16,
+            activity_hash="a" * 16,
         )

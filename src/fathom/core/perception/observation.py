@@ -24,6 +24,7 @@ from fathom.constants.perception import (
     MAX_ACTION_BOUND,
     OCR_MAXIMUM_TOKEN_LENGTH,
     OCR_TRIGGER_MANIFEST_TEXT_COVERAGE,
+    OCR_TRIGGER_MIN_MANIFEST_SIZE,
     OCR_TRIGGER_MIN_TEXT_BEARING_ELEMENTS,
     OVERLAY_MINIMUM_COVERAGE_RATIO,
     SCROLL_CLASS_HINTS,
@@ -38,6 +39,7 @@ from fathom.constants.perception import (
     VISUAL_CONTROL_MINIMUM_VALUE,
     VISUAL_CONTROL_MINIMUM_WIDTH,
 )
+from fathom.constants.screen import ScreenKind
 from fathom.constants.scroll import ScrollEvidenceSource
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.exceptions import OcrError
@@ -45,6 +47,7 @@ from fathom.interfaces.device import DevicePort
 from fathom.interfaces.icon import IconDetectorPort
 from fathom.interfaces.ocr import OcrPort
 from fathom.interfaces.overlay import OverlayDetectorPort
+from fathom.processing.parsers.kind import ScreenKindClassifier
 from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.artifact import (
     ArtifactRecord,
@@ -148,12 +151,19 @@ class ScreenObservationService:
             )
             elements = (*elements, *visual_elements)
 
+        screen_kind = ScreenKindClassifier.classify(
+            screen_width=capture.width,
+            screen_height=capture.height,
+            xml_content=capture.xml_content,
+        )
+
         elements = await self.__merge_async_enrichment(
             budget=budget,
             capture=capture,
             elements=elements,
             session_id=session_id,
             step_number=step_number,
+            screen_kind=screen_kind,
         )
 
         keyboard = await self.__keyboard(elements=elements, capture=capture)
@@ -201,6 +211,7 @@ class ScreenObservationService:
         session_id: str,
         step_number: int,
         capture: ScreenCapture,
+        screen_kind: ScreenKind,
         budget: PerceptionBudget,
         elements: Tuple[PerceivedElement, ...],
     ) -> Tuple[PerceivedElement, ...]:
@@ -211,7 +222,21 @@ class ScreenObservationService:
         ocr_task = None
         base = elements
 
-        if self.__should_run_ocr(elements=base):
+        if screen_kind is not ScreenKind.NATIVE or self.__should_run_ocr(elements=base):
+            logger.info(
+                "OCR budget selected",
+                extra={
+                    "event": "ocr.budget.selected",
+                    "budget.ms": budget.ocr,
+                    "screen.kind": screen_kind.value,
+                    "reason": (
+                        "hierarchy_blind"
+                        if screen_kind is not ScreenKind.NATIVE
+                        else "low_text_coverage"
+                    ),
+                    **self.__log_context(activity=capture.activity),
+                },
+            )
             ocr_task = asyncio.create_task(
                 self.__ocr_elements(
                     budget=budget,
@@ -221,6 +246,16 @@ class ScreenObservationService:
                     session_id=session_id,
                     step_number=step_number,
                 )
+            )
+        else:
+            logger.info(
+                "OCR skipped — hierarchy already provides text coverage",
+                extra={
+                    "event": "ocr.skipped",
+                    "reason": "hierarchy_text_coverage_sufficient",
+                    "screen.kind": screen_kind.value,
+                    **self.__log_context(activity=capture.activity),
+                },
             )
 
         icon_task = asyncio.create_task(
@@ -263,8 +298,8 @@ class ScreenObservationService:
         created = int(time.time() * 1000)
         sources = {element.source for element in observation.elements}
         enrichment_sources = {
-            ElementSource.OCR,
             ElementSource.CV,
+            ElementSource.OCR,
             ElementSource.ICON,
             ElementSource.VISION,
         }
@@ -448,9 +483,18 @@ class ScreenObservationService:
     @classmethod
     def __should_run_ocr(cls, *, elements: Tuple[PerceivedElement, ...]) -> bool:
         """
-        Decide whether OCR should run based on text-bearing density and absolute count.
+        Decide whether OCR should run on a NATIVE frame whose hierarchy parsed.
+
+        Bias is asymmetric: a false-negative (skipping OCR when it was needed)
+        leaves the planner blind and triggers self-loops; a false-positive
+        (running OCR when the hierarchy already had everything) costs a couple
+        of seconds and tokens. So OCR runs unless ALL signals say the manifest
+        is already rich: enough total elements, enough text-bearing elements,
+        and enough coverage of those elements with text labels.
         """
 
+        if len(elements) < OCR_TRIGGER_MIN_MANIFEST_SIZE:
+            return True
         text_bearing = sum(1 for element in elements if element.text)
         if text_bearing < OCR_TRIGGER_MIN_TEXT_BEARING_ELEMENTS:
             return True

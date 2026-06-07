@@ -1,17 +1,58 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import unittest
 from types import SimpleNamespace
 from typing import List, Optional
 from unittest.mock import AsyncMock
 
 from fathom.constants import ActionType
+from fathom.constants.agent import DirectiveKind
+from fathom.constants.state import CompletionReason
 from fathom.core.exceptions import WorkflowCancelledError
 from fathom.core.services.hitl import HITLService
+from fathom.interfaces.abort import AbortDetectorPort
+from fathom.schemas.abort import AbortDecision
 from fathom.schemas.actions import Action
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.hitl import Hitl
+
+
+class _StubAborter(AbortDetectorPort):
+    """
+    Configurable test double for the abort detector port.
+    """
+
+    def __init__(
+        self,
+        *,
+        aborted: bool = False,
+        confidence: float = 0.0,
+        fallback: bool = False,
+    ) -> None:
+        """
+        Bind the scripted decision returned from every call to :meth:`aborted`.
+        """
+
+        self.__decision = AbortDecision(aborted=aborted, confidence=confidence, fallback=fallback)
+        self.calls: List[str] = []
+        self.warmup_calls: int = 0
+
+    async def aborted(self, *, response: str) -> AbortDecision:
+        """
+        Record the inspected response and return the scripted decision.
+        """
+
+        self.calls.append(response)
+        return self.__decision
+
+    async def warmup(self) -> None:
+        """
+        Record the warmup invocation; no underlying resource to prime.
+        """
+
+        self.warmup_calls += 1
 
 
 class _FakeHitlService(HITLService):
@@ -176,7 +217,7 @@ class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
         prompt returns immediately without inspecting any other state.
         """
 
-        helper = Hitl(context=self.__context(hitl=object()))  # type: ignore[arg-type]
+        helper = Hitl(context=self.__context(hitl=object()), aborter=_StubAborter())  # type: ignore[arg-type]
 
         # Must not raise even though the placeholder hitl has none of
         # the service methods.
@@ -189,7 +230,7 @@ class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
         """
 
         fake = _FakeHitlService(pause_requested=False)
-        helper = Hitl(context=self.__context(hitl=fake))  # type: ignore[arg-type]
+        helper = Hitl(context=self.__context(hitl=fake), aborter=_StubAborter())  # type: ignore[arg-type]
 
         await helper.prompt(step=0)
 
@@ -220,7 +261,7 @@ class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
             agent_state=agent_state,
             context_manager=context_manager,
         )
-        helper = Hitl(context=ctx)  # type: ignore[arg-type]
+        helper = Hitl(context=ctx, aborter=_StubAborter())  # type: ignore[arg-type]
 
         await helper.prompt(step=0)
 
@@ -238,7 +279,7 @@ class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
 
         fake = _BlockingHitlService()
         ctx = self.__context(hitl=fake)
-        helper = Hitl(context=ctx)  # type: ignore[arg-type]
+        helper = Hitl(context=ctx, aborter=_StubAborter())  # type: ignore[arg-type]
 
         async def _cancel_soon() -> None:
             await asyncio.sleep(0.15)
@@ -305,7 +346,7 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
 
         def __set_directive(*, kind, source_text, target_descriptor=None, ttl_turns=2):
             """
-            Add 1 line doc-string
+            Stand-in for ``context.set_active_directive`` that records each call.
             """
 
             directive = SimpleNamespace(
@@ -342,7 +383,7 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
 
         fake = _FakeHitlService(ask_response="ok")
         ctx = self.__context(hitl=fake)
-        helper = Hitl(context=ctx)  # type: ignore[arg-type]
+        helper = Hitl(context=ctx, aborter=_StubAborter())  # type: ignore[arg-type]
 
         result = await helper.ask(
             step=self.__step(action=self.__action(text="What size?")),
@@ -359,7 +400,7 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
         """
 
         fake = _FakeHitlService(ask_response="ok")
-        helper = Hitl(context=self.__context(hitl=fake))  # type: ignore[arg-type]
+        helper = Hitl(context=self.__context(hitl=fake), aborter=_StubAborter())  # type: ignore[arg-type]
 
         await helper.ask(
             step=self.__step(action=self.__action(text=None)),
@@ -378,7 +419,7 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
 
         fake = _FakeHitlService(ask_response="Medium")
         ctx = self.__context(hitl=fake)
-        helper = Hitl(context=ctx)  # type: ignore[arg-type]
+        helper = Hitl(context=ctx, aborter=_StubAborter())  # type: ignore[arg-type]
 
         await helper.ask(
             step=self.__step(action=self.__action(text="Size?")),
@@ -397,7 +438,7 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
 
         fake = _FakeHitlService(ask_response="ok")
         ctx = self.__context(hitl=fake)
-        helper = Hitl(context=ctx)  # type: ignore[arg-type]
+        helper = Hitl(context=ctx, aborter=_StubAborter())  # type: ignore[arg-type]
 
         await helper.ask(
             step=self.__step(action=self.__action(text="x")),
@@ -413,7 +454,7 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
 
         fake = _BlockingHitlService()
         ctx = self.__context(hitl=fake)
-        helper = Hitl(context=ctx)  # type: ignore[arg-type]
+        helper = Hitl(context=ctx, aborter=_StubAborter())  # type: ignore[arg-type]
 
         async def _cancel_soon() -> None:
             await asyncio.sleep(0.15)
@@ -429,3 +470,179 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(fake.ask_cancelled)
         ctx.context_manager.inject_user_guidance.assert_not_awaited()
+
+
+class _SpyContext(SimpleNamespace):
+    """
+    Cancel-tracking :class:`GraphContext` double for the abort-routing tests.
+    """
+
+    def __init__(self, *, hitl: HITLService, workflow_id: str = "wf-test") -> None:
+        """
+        Build the spy with the bare-minimum surface the HITL ASK_USER path touches.
+        """
+
+        self.cancel_calls = 0
+        self.directive_kinds: List[DirectiveKind] = []
+
+        def record_directive(*, kind, source_text, target_descriptor=None, ttl_turns=2):
+            """
+            Capture every directive recorded by Hitl for the cancel-vs-record assertions.
+            """
+
+            _ = source_text
+            self.directive_kinds.append(kind)
+            return SimpleNamespace(
+                kind=kind,
+                ttl_turns=ttl_turns,
+                target_descriptor=target_descriptor,
+            )
+
+        super().__init__(
+            hitl=hitl,
+            workflow_id=workflow_id,
+            is_cancelled=False,
+            agent_state=SimpleNamespace(
+                step_count=3,
+                record_hitl_intervention=lambda: None,
+                set_operator_directive=record_directive,
+            ),
+            context_manager=SimpleNamespace(
+                inject_user_guidance=AsyncMock(),
+            ),
+        )
+
+    def cancel(self) -> None:
+        """
+        Track the cancel invocation and flip the cancellation flag.
+        """
+
+        self.cancel_calls += 1
+        self.is_cancelled = True
+
+
+def _ask_user_step() -> Step:
+    """
+    Build a minimal ASK_USER step fixture for the cancellation tests.
+    """
+
+    return Step(
+        step_number=1,
+        screen_hash="hash",
+        action=Action(
+            target="user",
+            confidence=1.0,
+            rationale="ask",
+            action_type=ActionType.ASK_USER,
+            text="Are you sure?",
+        ),
+    )
+
+
+class HitlAbortCancellationTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins :meth:`Hitl.ask` cancel-on-abort behaviour driven by the injected detector.
+    """
+
+    async def test_abort_decision_cancels_context(self) -> None:
+        """
+        An aborted decision must invoke ``context.cancel`` exactly once.
+        """
+
+        service = _FakeHitlService(ask_response="close the execution")
+        aborter = _StubAborter(aborted=True, confidence=0.95)
+        context = _SpyContext(hitl=service)
+        helper = Hitl(context=context, aborter=aborter)  # type: ignore[arg-type]
+
+        with self.assertRaises(WorkflowCancelledError):
+            await helper.ask(step=_ask_user_step(), start_time=time.time())
+
+        self.assertEqual(context.cancel_calls, 1)
+        self.assertTrue(context.is_cancelled)
+        self.assertEqual(aborter.calls, ["close the execution"])
+
+    async def test_abort_decision_raises_with_operator_aborted_reason(self) -> None:
+        """
+        The raised :class:`WorkflowCancelledError` carries the OPERATOR_ABORTED reason.
+        """
+
+        service = _FakeHitlService(ask_response="please stop the run")
+        aborter = _StubAborter(aborted=True, confidence=0.9)
+        context = _SpyContext(hitl=service)
+        helper = Hitl(context=context, aborter=aborter)  # type: ignore[arg-type]
+
+        with self.assertRaises(WorkflowCancelledError) as recorded:
+            await helper.ask(step=_ask_user_step(), start_time=time.time())
+
+        self.assertEqual(
+            recorded.exception.reason,
+            CompletionReason.OPERATOR_ABORTED.value,
+        )
+        self.assertEqual(recorded.exception.workflow_id, "wf-test")
+
+    async def test_abort_decision_skips_directive_recording(self) -> None:
+        """
+        Abort must bypass the operator-directive recorder entirely.
+        """
+
+        service = _FakeHitlService(ask_response="cancel the workflow")
+        aborter = _StubAborter(aborted=True)
+        context = _SpyContext(hitl=service)
+        helper = Hitl(context=context, aborter=aborter)  # type: ignore[arg-type]
+
+        with self.assertRaises(WorkflowCancelledError):
+            await helper.ask(step=_ask_user_step(), start_time=time.time())
+
+        self.assertEqual(context.directive_kinds, [])
+
+
+class HitlNonAbortResponseTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins :meth:`Hitl.ask` non-abort routing through the existing directive recorder.
+    """
+
+    async def test_non_abort_decision_runs_directive_recording(self) -> None:
+        """
+        A non-abort decision must allow the directive recorder to fire normally.
+        """
+
+        service = _FakeHitlService(ask_response="go to settings")
+        aborter = _StubAborter(aborted=False)
+        context = _SpyContext(hitl=service)
+        helper = Hitl(context=context, aborter=aborter)  # type: ignore[arg-type]
+
+        result = await helper.ask(step=_ask_user_step(), start_time=time.time())
+
+        self.assertTrue(result.success)
+        self.assertEqual(context.cancel_calls, 0)
+        self.assertFalse(context.is_cancelled)
+
+    async def test_retry_action_response_records_retry_directive(self) -> None:
+        """
+        A response with a retry prefix records DirectiveKind.RETRY_ACTION.
+        """
+
+        service = _FakeHitlService(ask_response="tap on Close button")
+        aborter = _StubAborter(aborted=False)
+        context = _SpyContext(hitl=service)
+        helper = Hitl(context=context, aborter=aborter)  # type: ignore[arg-type]
+
+        await helper.ask(step=_ask_user_step(), start_time=time.time())
+
+        self.assertEqual(context.directive_kinds, [DirectiveKind.RETRY_ACTION])
+        self.assertEqual(context.cancel_calls, 0)
+
+    async def test_freeform_response_records_freeform_directive(self) -> None:
+        """
+        Free-form text records DirectiveKind.FREE_FORM without triggering cancellation.
+        """
+
+        service = _FakeHitlService(ask_response="the close X is in the top right corner")
+        aborter = _StubAborter(aborted=False)
+        context = _SpyContext(hitl=service)
+        helper = Hitl(context=context, aborter=aborter)  # type: ignore[arg-type]
+
+        await helper.ask(step=_ask_user_step(), start_time=time.time())
+
+        self.assertEqual(context.directive_kinds, [DirectiveKind.FREE_FORM])
+        self.assertEqual(context.cancel_calls, 0)

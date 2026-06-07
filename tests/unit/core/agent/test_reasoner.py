@@ -1,12 +1,3 @@
-"""
-Unit pins for :meth:`Reasoner.assess_completion`.
-
-The reasoner converts a planner turn into a typed CompletionEvidence bundle.
-These tests verify the 4 mechanical signals (claim/action/screen) and the
-optional criterion fold-in match main-branch behavior and the four bug-replay
-scenarios.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -364,13 +355,13 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
 
         self.assertTrue(evidence.screen.evolved)
 
-    def test_iahtk_replay_all_four_signals_present(self) -> None:
+    def test_dispatched_tap_with_justified_claim_and_screen_change_produces_all_action_signals(
+        self,
+    ) -> None:
         """
-        IahTk replay at the Reasoner level: successful tap with explicit
-        completion claim + justification + screen evolution produces all 4
-        signals true. The criterion can be observed False (post-tap screen
-        no longer contains the criterion tokens) and the evidence remains
-        valid for ACTION sub-goal advancement.
+        A dispatched TAP with a justified completion claim and an evolved
+        screen yields all four ACTION-level evidence signals regardless of
+        criterion verdict.
         """
 
         evidence = self.__reasoner().assess_completion(

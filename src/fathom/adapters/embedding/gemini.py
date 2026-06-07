@@ -97,8 +97,10 @@ class GeminiEmbeddingAdapter(EmbeddingPort):
                 extra={**log_context, "event": "embedding.exhausted"},
             )
             raise EmbeddingError("Embedding call exhausted attempt budget") from exception
+
         except EmbeddingError:
             raise
+
         except Exception as exception:
             logger.exception(
                 "Embedding call failed with unexpected error",
@@ -107,6 +109,16 @@ class GeminiEmbeddingAdapter(EmbeddingPort):
             raise EmbeddingError(f"Embedding call failed: {exception}") from exception
 
         duration = int((time.monotonic() - started) * MILLISECONDS_PER_SECOND)
+        logger.info(
+            "Embedding call completed",
+            extra={
+                **log_context,
+                "event": "embedding.completed",
+                "duration.ms": duration,
+                "vector.count": len(response),
+                "vector.dimension": len(response[0].values) if response else 0,
+            },
+        )
 
         return EmbeddingResult(
             vectors=response,

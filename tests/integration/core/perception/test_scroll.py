@@ -20,8 +20,7 @@ class ScrollRegionCoordinateRegressionTest(unittest.IsolatedAsyncioTestCase):
     Replays captured production-style fixtures through scroll-region perception.
     """
 
-    __ROOT = Path(__file__).resolve().parents[4]
-    __DEBUG = __ROOT / "debug" / "scroll"
+    __FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "perception" / "scroll"
 
     @staticmethod
     def __hashes() -> ScreenHashBundle:
@@ -40,10 +39,8 @@ class ScrollRegionCoordinateRegressionTest(unittest.IsolatedAsyncioTestCase):
         Logical capture dimensions with a larger PNG must not be treated as device pixels.
         """
 
-        xml_path = self.__DEBUG / "AEKCI" / "assets" / "xmls" / "1780051837410__bundl.swiggy.png"
-        screenshot_path = (
-            self.__DEBUG / "AEKCI" / "assets" / "screenshot" / "1780051837345__bundl.swiggy.png"
-        )
+        xml_path = self.__FIXTURES / "AEKCI" / "hierarchy.xml"
+        screenshot_path = self.__FIXTURES / "AEKCI" / "screenshot.png"
         xml = xml_path.read_text(encoding="utf-8")
         root = ET.fromstring(xml)
         app = root.find(".//XCUIElementTypeApplication")
@@ -97,7 +94,7 @@ class ScrollRegionCoordinateRegressionTest(unittest.IsolatedAsyncioTestCase):
         Directional swipe filtering should keep scrollable collection views, not static text.
         """
 
-        xml_path = self.__DEBUG / "FsIfE" / "assets" / "xmls" / "1780051090775__bundl.swiggy.png"
+        xml_path = self.__FIXTURES / "FsIfE" / "hierarchy.xml"
         root = ET.fromstring(xml_path.read_text(encoding="utf-8"))
         parser = IOSParser()
         elements = parser.find_all_elements(

@@ -4,7 +4,8 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional
 
 from fathom.interfaces.context import ContextEngine
-from fathom.schemas.gcc import BranchState, CommitNode, ExecutionRecord
+from fathom.schemas.gcc import BranchState, CommitNode
+from fathom.schemas.trace import ExecutionRecord
 
 logger = getLogger(__name__)
 

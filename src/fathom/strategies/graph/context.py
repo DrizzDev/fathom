@@ -21,6 +21,7 @@ from fathom.core.localization import EnsembleLocalizerService
 from fathom.core.perception.localization import TargetLocalizationService
 from fathom.core.perception.observation import ScreenObservationService
 from fathom.core.runtime import RuntimeEventEmitter
+from fathom.core.services.abort import AbortDetectorFactory
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.audit import AuditService
 from fathom.core.services.comparator import ScreenComparator
@@ -33,6 +34,7 @@ from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
+from fathom.interfaces.abort import AbortDetectorPort
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.embedding import EmbeddingPort
 from fathom.interfaces.icon import IconDetectorPort
@@ -117,6 +119,7 @@ class GraphContext:
         artifact_pipeline: Optional[ArtifactPipeline] = None,
         embedder: Optional[EmbeddingPort] = None,
         embedding_cache: Optional[EmbeddingCache] = None,
+        abort_detector: Optional[AbortDetectorPort] = None,
     ) -> None:
         self.__intent = intent
         self.__device = device
@@ -257,6 +260,8 @@ class GraphContext:
             ensemble=self.__ensemble,
         )
 
+        self.__abort_detector = abort_detector or AbortDetectorFactory.build(llm=llm)
+
         self.__journal = journal if journal is not None else NoopRuntimeJournal()
 
         self.__event_emitter = RuntimeEventEmitter(
@@ -307,6 +312,14 @@ class GraphContext:
         """
 
         return self.__llm
+
+    @property
+    def abort_detector(self) -> AbortDetectorPort:
+        """
+        Composite operator-abort detector wired with LLM primary and heuristic fallback.
+        """
+
+        return self.__abort_detector
 
     @property
     def embedder(self) -> Optional[EmbeddingPort]:

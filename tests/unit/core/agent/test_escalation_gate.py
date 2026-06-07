@@ -27,8 +27,8 @@ class EscalationGateDecisionTest(unittest.TestCase):
     def __turn(
         kind: ActionKind,
         *,
-        effect: ActionEffectStatus = ActionEffectStatus.NO_PROGRESS,
         action_type: str = "x",
+        effect: ActionEffectStatus = ActionEffectStatus.NO_PROGRESS,
     ) -> LoopTurn:
         """
         Build a typed :class:`LoopTurn` with sensible defaults.
@@ -40,19 +40,22 @@ class EscalationGateDecisionTest(unittest.TestCase):
     def __evidence(cls, *turns: LoopTurn) -> LoopEvidence:
         """
         Wrap turns in a :class:`LoopEvidence` snapshot using the same tuple
-        for ``recent`` and ``since_progress`` so tests are explicit about
-        what the gate is asked to consider.
+        for ``recent`` and ``since_progress`` so tests are explicit about what the gate is asked to consider.
         """
 
         recent: Tuple[LoopTurn, ...] = tuple(turns)
         return LoopEvidence(
             stuck=True,
-            reason=LoopReason.INERT_REPETITION,
             recent=recent,
             since_progress=recent,
+            reason=LoopReason.INERT_REPETITION,
         )
 
     def __gate(self, *, policy: EscalationPolicy = EscalationPolicy()) -> EscalationGate:
+        """
+        Build an :class:`EscalationGate` bound to the supplied policy.
+        """
+
         return EscalationGate(policy=policy)
 
     def test_disabled_policy_always_allows(self) -> None:
@@ -61,10 +64,11 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate(policy=EscalationPolicy(enabled=False))
+
         decision = gate.decide(
+            deferrals=0,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(self.__turn(ActionKind.VALIDATION)),
-            deferrals=0,
         )
         self.assertTrue(decision.allow)
         self.assertIs(decision.reason, EscalationReason.DISABLED)
@@ -75,10 +79,11 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate(policy=EscalationPolicy(deferral_limit=2))
+
         decision = gate.decide(
+            deferrals=3,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(self.__turn(ActionKind.VALIDATION)),
-            deferrals=3,
         )
         self.assertTrue(decision.allow)
         self.assertIs(decision.reason, EscalationReason.DEFERRAL_LIMIT)
@@ -89,10 +94,11 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate(policy=EscalationPolicy(deferral_limit=2))
+
         decision = gate.decide(
+            deferrals=2,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(self.__turn(ActionKind.VALIDATION)),
-            deferrals=2,
         )
         self.assertFalse(decision.allow)
         self.assertIs(decision.reason, EscalationReason.PASSIVE_RUN)
@@ -103,10 +109,11 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate()
+
         decision = gate.decide(
+            deferrals=0,
             source=StuckSource.SUBGOAL_BUDGET,
             evidence=self.__evidence(self.__turn(ActionKind.VALIDATION)),
-            deferrals=0,
         )
         self.assertTrue(decision.allow)
         self.assertIs(decision.reason, EscalationReason.SUBGOAL_BUDGET)
@@ -117,14 +124,15 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate()
+
         decision = gate.decide(
+            deferrals=0,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(
                 self.__turn(ActionKind.VALIDATION),
                 self.__turn(ActionKind.VALIDATION),
                 self.__turn(ActionKind.VALIDATION),
             ),
-            deferrals=0,
         )
         self.assertFalse(decision.allow)
         self.assertIs(decision.reason, EscalationReason.PASSIVE_RUN)
@@ -135,10 +143,11 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate()
+
         decision = gate.decide(
+            deferrals=0,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(*(self.__turn(ActionKind.VALIDATION) for _ in range(4))),
-            deferrals=0,
         )
         self.assertTrue(decision.allow)
         self.assertIs(decision.reason, EscalationReason.PASSIVE_LIMIT)
@@ -149,13 +158,14 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate()
+
         decision = gate.decide(
+            deferrals=0,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(
                 self.__turn(ActionKind.NAVIGATION),
                 self.__turn(ActionKind.VALIDATION),
             ),
-            deferrals=0,
         )
         self.assertTrue(decision.allow)
         self.assertIs(decision.reason, EscalationReason.ACTIVE_STALL)
@@ -167,14 +177,15 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate()
+
         decision = gate.decide(
+            deferrals=0,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(
                 self.__turn(ActionKind.NAVIGATION, effect=ActionEffectStatus.UNCERTAIN),
                 self.__turn(ActionKind.NAVIGATION, effect=ActionEffectStatus.UNCERTAIN),
                 self.__turn(ActionKind.NAVIGATION, effect=ActionEffectStatus.UNCERTAIN),
             ),
-            deferrals=0,
         )
         self.assertTrue(decision.allow)
         self.assertIs(decision.reason, EscalationReason.ACTIVE_STALL)
@@ -185,14 +196,15 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate()
+
         decision = gate.decide(
+            deferrals=0,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(
                 self.__turn(ActionKind.VALIDATION, effect=ActionEffectStatus.UNCERTAIN),
                 self.__turn(ActionKind.VALIDATION),
                 self.__turn(ActionKind.VALIDATION),
             ),
-            deferrals=0,
         )
         # Two NO_PROGRESS validates with tolerance=3 still defer (within run).
         self.assertFalse(decision.allow)
@@ -204,10 +216,11 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate()
+
         decision = gate.decide(
+            deferrals=1,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(self.__turn(ActionKind.VALIDATION)),
-            deferrals=1,
         )
         self.assertEqual(decision.deferrals, 1)
 
@@ -217,9 +230,10 @@ class EscalationGateDecisionTest(unittest.TestCase):
         """
 
         gate = self.__gate()
+
         decision = gate.decide(
+            deferrals=0,
             source=StuckSource.LOOP_DETECTOR,
             evidence=self.__evidence(self.__turn(ActionKind.VALIDATION)),
-            deferrals=0,
         )
         self.assertIs(decision.stuck_source, StuckSource.LOOP_DETECTOR)

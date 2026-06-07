@@ -145,7 +145,7 @@ class RecordNode:
                     f"step_num={step_result.step.step_number}, action_type={step_result.step.action.action_type.value}"
                 )
                 await self.__provider.context.telemetry.warning(
-                    f"Step {step_result.step.step_number} not persisted (on launcher)",
+                    f"Step {step_result.step.step_number + 1} not persisted (on launcher)",
                     execution_package=execution_activity,
                     observed_package=current_activity,
                     step_number=step_result.step.step_number + 1,
@@ -204,7 +204,7 @@ class RecordNode:
             )
 
             await self.__provider.context.telemetry.info(
-                f"Step {step_result.step.step_number} completed",
+                f"Step {step_result.step.step_number + 1} completed",
                 type=FathomEvent.STEP_COMPLETED,
                 success=record.success,
                 duration=total_duration,

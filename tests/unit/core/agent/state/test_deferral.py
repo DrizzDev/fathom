@@ -1,17 +1,12 @@
-"""
-Unit pins for :class:`AgentState` deferral helpers and the observable-progress reset.
-"""
-
 from __future__ import annotations
 
 import unittest
 
+from tests.builders import ActionFixtures, AgentFixtures, SubGoalFixtures
+
 from fathom.constants import ActionType
 from fathom.core.agent.state import AgentState
-from fathom.schemas.actions import Action
-from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal
 
 
 class AgentStateDeferralTest(unittest.TestCase):
@@ -21,10 +16,12 @@ class AgentStateDeferralTest(unittest.TestCase):
 
     @staticmethod
     def __state_with_subgoal() -> AgentState:
-        state = AgentState(
-            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
-        )
-        state.set_sub_goals([SubGoal(description="active", index=0)])
+        """
+        Build a fresh :class:`AgentState` with one active sub-goal.
+        """
+
+        state = AgentFixtures.state(intent="x")
+        state.set_sub_goals([SubGoalFixtures.make(description="active")])
         return state
 
     @staticmethod
@@ -34,11 +31,12 @@ class AgentStateDeferralTest(unittest.TestCase):
         success: bool,
         screen_changed: bool,
     ) -> StepResult:
-        action = Action(
-            action_type=action_type,
-            target="t",
-            rationale="r",
-            confidence=1.0,
+        """
+        Build a :class:`StepResult` with the requested action shape and outcome.
+        """
+
+        action = ActionFixtures.make(
+            action_type=action_type, target="t", rationale="r", confidence=1.0
         )
         step = Step(action=action, step_number=0, screen_hash="pre")
         return StepResult(
@@ -84,9 +82,7 @@ class AgentStateDeferralTest(unittest.TestCase):
         Without an active sub-goal the helpers are silent no-ops.
         """
 
-        state = AgentState(
-            intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
-        )
+        state = AgentFixtures.state(intent="x")
         state.record_deferral()
         self.assertEqual(state.deferral_count, 0)
 

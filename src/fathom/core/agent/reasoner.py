@@ -260,9 +260,9 @@ class Reasoner:
         delta_score: Optional[float] = None,
         effect: Optional[ActionEffect] = None,
         screen_description: Optional[str] = None,
-        criterion_decision: Optional[CriterionDecision] = None,
-        directive_kind: Optional[DirectiveKind] = None,
         semantic_similarity: Optional[float] = None,
+        directive_kind: Optional[DirectiveKind] = None,
+        criterion_decision: Optional[CriterionDecision] = None,
     ) -> CompletionEvidence:
         """
         Assemble this turn's typed CompletionEvidence bundle for the gate to adjudicate.
@@ -280,14 +280,14 @@ class Reasoner:
         if asserted:
             notes.append("claim.asserted: model flagged completion via tool output")
 
-        directive_completes = directive_kind is DirectiveKind.COMPLETE
+        directive_aborts = directive_kind is DirectiveKind.ABORT
         explicit_reason = analysis.subgoal_completion_reason or analysis.goal_completion_reason
 
-        if directive_completes:
+        if directive_aborts:
             justified = True
-            rationale_note: Optional[str] = "Rationale verified via operator directive (HITL)"
             rationale_similarity = 1.0
             notes.append("claim.justified.via_operator_directive")
+            rationale_note: Optional[str] = "Rationale verified via operator directive (HITL)"
         elif asserted and explicit_reason:
             justified = True
             rationale_note = f"Rationale verified via model reason: '{explicit_reason}'"
@@ -328,18 +328,18 @@ class Reasoner:
                 extra={
                     "component": "reasoner",
                     "event": "completion.lateral_credit.observed",
+                    "claim.justified": justified,
                     "sub_goal.index": sub_goal.index,
+                    "action.type": analysis.action.action_type.value,
                     "sub_goal.description": sub_goal.description[:120],
                     "rationale.similarity": round(rationale_similarity, 3),
                     "rationale.threshold": LATERAL_CREDIT_SIMILARITY_THRESHOLD,
-                    "claim.justified": justified,
-                    "model.subgoal_completion_reason": (
-                        (analysis.subgoal_completion_reason or "")[:240] or None
-                    ),
                     "model.goal_completion_reason": (
                         (analysis.goal_completion_reason or "")[:240] or None
                     ),
-                    "action.type": analysis.action.action_type.value,
+                    "model.subgoal_completion_reason": (
+                        (analysis.subgoal_completion_reason or "")[:240] or None
+                    ),
                 },
             )
 
@@ -355,6 +355,7 @@ class Reasoner:
 
         if evolved:
             notes.append(f"screen.evolved: {screen_note}")
+
         elif asserted:
             notes.append(f"screen.unchanged_despite_claim: {screen_note}")
 

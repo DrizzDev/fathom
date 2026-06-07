@@ -286,9 +286,12 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         context.reasoner = _StubReasoner(evidence=evidence, signal=signal)
         return context
 
-    async def test_iahtk_replay_all_four_signals_advances_action_sub_goal(self) -> None:
+    async def test_action_subgoal_advances_when_all_four_evidence_signals_present(
+        self,
+    ) -> None:
         """
-        IahTk replay: tap succeeded with claim+justified+dispatched+evolved → ADVANCE.
+        ACTION sub-goal with asserted + justified + dispatched + evolved evidence
+        advances regardless of criterion observer verdict.
         """
 
         sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
@@ -313,10 +316,12 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         assert result is not None
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
 
-    async def test_iahtk_replay_advances_even_when_criterion_unsatisfied(self) -> None:
+    async def test_action_subgoal_advances_when_criterion_observer_unsatisfied(
+        self,
+    ) -> None:
         """
-        IahTk replay: criterion observer reporting UNSATISFIED must NOT veto a
-        conclusive action-sub-goal gate decision. This is the exact bug we are fixing.
+        Criterion observer reporting UNSATISFIED must NOT veto a conclusive
+        ACTION sub-goal gate decision.
         """
 
         sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
@@ -341,9 +346,10 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         assert result is not None
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
 
-    async def test_12258b13_replay_validation_subgoal_advances_on_claim_alone(self) -> None:
+    async def test_validation_subgoal_advances_on_claim_asserted_alone(self) -> None:
         """
-        12258b13 replay: validation sub-goal advances on claim.asserted alone.
+        VALIDATION sub-goal advances on ``claim.asserted`` alone, without
+        requiring action dispatch or screen evolution.
         """
 
         sub_goal = self.__sub_goal(

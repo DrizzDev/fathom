@@ -43,7 +43,7 @@ class IntentNodeProvider:
             observer=self.__observer,
             comparator=screen_comparator,
         )
-        self.__hitl = Hitl(context=context)
+        self.__hitl = Hitl(context=context, aborter=context.abort_detector)
 
         self.__criterion_observer = CriterionObserver(llm=context.llm)
         self.__completion = SubGoalEvaluator(

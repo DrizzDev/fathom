@@ -142,14 +142,16 @@ class SuperviseNode:
             # (DocumentAI / icon templates / overlay pixels) via the
             # gate. Runs when the manifest snap could not bind the
             # target to a concrete bounds.
+            snap_outcome = resolve_result.unresolved_kind
             logger.info(
                 "Perception cascade Stage 2 (vision-localizer) engaged",
                 extra={
                     "component": "graph.intent.supervise",
                     "event": "supervise.cascade.stage2.engaged",
-                    "reason": resolve_result.reason,
                     "target": step.action.target,
+                    "reason": resolve_result.reason,
                     "label_id": step.action.label_id,
+                    "snap.outcome": snap_outcome.value if snap_outcome is not None else None,
                     "workflow.id": self.__provider.context.workflow_id,
                 },
             )
@@ -157,6 +159,7 @@ class SuperviseNode:
                 step=step,
                 capture=screen_capture,
                 observation=observation,
+                snap_outcome=snap_outcome,
             )
             step = self.__provider.gate.apply_localization(step=step, localization=localization)
 
@@ -168,8 +171,8 @@ class SuperviseNode:
                 )
 
         return self.__allow_non_spatial_step(
-            state=state,
             step=step,
+            state=state,
             capture=screen_capture,
             localization=localization,
         )
@@ -179,9 +182,8 @@ class SuperviseNode:
         """
         Read the drawer label-map out of state for snap-to-label.
 
-        Returns ``None`` when the manifest hasn't been produced yet so
-        :meth:`ReferenceResolutionService.resolve` can route to an
-        ``UNRESOLVED`` outcome instead of crashing on attribute access.
+        Returns ``None`` when the manifest hasn't been produced yet so :meth:`ReferenceResolutionService.resolve`
+        can route to an ``UNRESOLVED`` outcome instead of crashing on attribute access.
         """
 
         raw = state.get(IntentStateKey.ELEMENTS)
@@ -198,6 +200,7 @@ class SuperviseNode:
         """
 
         action_type = step.action.action_type
+
         return (
             action_type in SPATIAL_ACTION_TYPES
             and action_type not in GESTURE_ACTION_TYPES
@@ -208,8 +211,8 @@ class SuperviseNode:
         self,
         *,
         step: Step,
-        localization: LocalizationResult,
         reason: Optional[str],
+        localization: LocalizationResult,
     ) -> IntentGraphState:
         """
         Route unresolved element actions back to GROUND instead of executing guessed coordinates.
@@ -220,6 +223,7 @@ class SuperviseNode:
             f"target={step.action.target!r}; resolution={reason or 'unresolved'}; "
             f"localization={localization.reason or localization.status.value}"
         )
+
         logger.warning(
             "Supervise refused unresolved spatial action",
             extra={
@@ -258,18 +262,18 @@ class SuperviseNode:
 
         bounds = step.action.bounds
         return LocalizationResult(
-            status=LocalizationStatus.RESOLVED,
             bounds=bounds,
-            source=ElementSource.XML,
             confidence=1.0,
+            source=ElementSource.XML,
+            status=LocalizationStatus.RESOLVED,
         )
 
     def __allow_non_spatial_step(
         self,
         *,
-        state: IntentGraphState,
         step: Step,
         capture: ScreenCapture,
+        state: IntentGraphState,
         localization: LocalizationResult,
     ) -> IntentGraphState:
         """
@@ -278,27 +282,29 @@ class SuperviseNode:
 
         package_name = self.__provider.context.package_name or "unknown"
         current_screen_state = state.get(CommonStateKey.SCREEN_STATE)
+
         if package_name == "unknown" and isinstance(current_screen_state, ScreenState):
             package_name = current_screen_state.activity or "unknown"
 
         execution_context = ExecutionContext(
             step=step,
             capture=capture,
+            package=package_name,
+            localization=localization,
             pre_screen=(
                 current_screen_state if isinstance(current_screen_state, ScreenState) else None
             ),
-            localization=localization,
-            package=package_name,
         )
 
         observation = state.get(CommonStateKey.SCREEN_OBSERVATION)
         result = cast(
             "IntentGraphState",
             {
-                IntentStateKey.EXECUTION_CONTEXT: execution_context,
-                CommonStateKey.SCREEN_OBSERVATION: observation,
                 IntentStateKey.PLANNED_STEP: step,
+                CommonStateKey.SCREEN_OBSERVATION: observation,
+                IntentStateKey.EXECUTION_CONTEXT: execution_context,
             },
         )
         self.__provider.persistence.persist(result=result)
+
         return result

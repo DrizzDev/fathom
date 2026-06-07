@@ -106,7 +106,13 @@ class RunCommandInput(LocalCommandInput):
     immediate_realignment: bool = Field(default=True)
 
     api_key: Optional[str] = Field(default=None)
+
     verbose: bool = Field(default=False)
+    log_file: Optional[str] = Field(
+        default=None,
+        description="When set, also mirror logs to a file under logs/<date>/<workflow_id>/run.log "
+        "(use 'auto' for the default path, or provide an explicit path).",
+    )
 
     @field_validator("api_key", mode="before")
     @classmethod

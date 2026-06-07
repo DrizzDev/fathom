@@ -785,15 +785,32 @@ class ScreenObservationServiceOcrTriggerTest(unittest.TestCase):
 
         self.assertTrue(decision)
 
-    def test_three_textful_elements_with_high_ratio_skips_ocr(self) -> None:
+    def test_three_textful_elements_still_below_manifest_size_floor(self) -> None:
         """
-        Once the count floor is satisfied and the ratio is high, OCR may skip.
+        A three-element manifest is still too thin to trust the hierarchy; even
+        with a perfect text ratio, OCR must run to cover the missing nodes.
         """
 
         elements = (
             self.__element(text="Home", identifier="xml_1"),
             self.__element(text="Settings", identifier="xml_2"),
             self.__element(text="Profile", identifier="xml_3"),
+        )
+
+        decision = ScreenObservationService._ScreenObservationService__should_run_ocr(
+            elements=elements,
+        )
+
+        self.assertTrue(decision)
+
+    def test_dense_textful_manifest_skips_ocr(self) -> None:
+        """
+        Once the manifest is dense and well-labelled (size, text-bearing count,
+        and coverage all above their floors), OCR is redundant and may skip.
+        """
+
+        elements = tuple(
+            self.__element(text=f"Item {index}", identifier=f"xml_{index}") for index in range(8)
         )
 
         decision = ScreenObservationService._ScreenObservationService__should_run_ocr(

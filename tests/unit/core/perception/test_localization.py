@@ -16,6 +16,7 @@ from fathom.schemas.observation import (
     PerceivedElement,
     ScreenObservation,
 )
+from fathom.schemas.resolution import UnresolvedKind
 from fathom.schemas.screens import ScreenHashBundle
 
 
@@ -230,6 +231,86 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.status, LocalizationStatus.RESOLVED)
+
+    async def test_generic_container_snap_outcome_skips_label_and_uses_model_bbox(self) -> None:
+        """
+        GENERIC_CONTAINER upstream snap outcome bypasses identifier match and lands on bbox.
+        """
+
+        service = TargetLocalizationService()
+        element = self.__element(
+            identifier="13",
+            bounds=Bounds(
+                x=136,
+                y=0,
+                width=154,
+                height=110,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+        )
+        action = Action(
+            target="X",
+            label_id="13",
+            confidence=0.95,
+            action_type=ActionType.TAP,
+            rationale="tap close X in top right corner",
+            bounds=Bounds(
+                x=1936,
+                y=15,
+                width=98,
+                height=95,
+                source=CoordinateSource.MODEL,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+        )
+
+        result = await service.localize(
+            image=b"",
+            action=action,
+            budget=self.__budget(),
+            observation=self.__observation(elements=(element,)),
+            snap_outcome=UnresolvedKind.GENERIC_CONTAINER,
+        )
+
+        self.assertEqual(result.status, LocalizationStatus.RESOLVED)
+        self.assertIsNotNone(result.bounds)
+        self.assertEqual(result.bounds.x, 1936)
+        self.assertEqual(result.bounds.y, 15)
+        self.assertEqual(result.bounds.source, CoordinateSource.MODEL)
+
+    async def test_default_snap_outcome_still_resolves_via_identifier(self) -> None:
+        """
+        Without a GENERIC_CONTAINER signal the identifier-match stage resolves matching labels.
+        """
+
+        service = TargetLocalizationService()
+        element = self.__element(
+            identifier="13",
+            bounds=Bounds(
+                x=136,
+                y=0,
+                width=154,
+                height=110,
+                coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+            ),
+        )
+        action = Action(
+            target="X",
+            label_id="13",
+            confidence=0.95,
+            action_type=ActionType.TAP,
+            rationale="tap X",
+        )
+
+        result = await service.localize(
+            image=b"",
+            action=action,
+            budget=self.__budget(),
+            observation=self.__observation(elements=(element,)),
+        )
+
+        self.assertEqual(result.status, LocalizationStatus.RESOLVED)
+        self.assertEqual(result.bounds, element.bounds)
 
 
 class FragmentedOcrTargetResolutionTest(unittest.IsolatedAsyncioTestCase):

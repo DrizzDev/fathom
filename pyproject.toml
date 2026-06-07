@@ -46,17 +46,18 @@ dependencies = [
     "pydantic>=2.0.0",
     "tenacity>=9.0.0",
     "aiosqlite>=0.20.0",
-    "opencv-python>=4.13.0.92",
-    "pydantic-settings>=2.0.0",
+    "rapidfuzz>=3.0",
     "aiohttp>=3.8.0",
+    "rustworkx>=0.15.0",
     "structlog>=23.0.0",
     "google-auth>=2.0.0",
-    "python-dotenv>=1.0.0",
     "google-genai>=0.2.0",
+    "python-dotenv>=1.0.0",
+    "pydantic-settings>=2.0.0",
+    "opencv-python>=4.13.0.92",
     "google-cloud-storage>=2.0.0",
     "google-cloud-documentai>=2.20.0",
     "types-PyYAML>=6.0.12.20250915",
-    "rustworkx>=0.15.0",
     "langgraph>=0.0.10",
     "langgraph-checkpoint-sqlite>=3.0.3"
 ]
@@ -160,6 +161,15 @@ explicit_package_bases = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+[tool.pyrefly]
+# Pyrefly only resolves first-party imports from entries in ``search-path``;
+# ``src`` is the production root and ``.`` lets it discover the implicit
+# ``tests`` namespace package so ``from tests.builders import …`` resolves
+# inside test modules.
+search-path = ["src", "."]
+project-includes = ["src/**/*.py", "tests/**/*.py"]
+project-excludes = ["**/.venv/**", "**/__pycache__/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

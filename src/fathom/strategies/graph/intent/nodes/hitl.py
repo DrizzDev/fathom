@@ -4,12 +4,15 @@ import asyncio
 import contextlib
 import time
 from logging import getLogger
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
 from fathom.constants.agent import DirectiveKind
 from fathom.constants.messages import HITL_DEFAULT_PROMPT
+from fathom.constants.state import CompletionReason
 from fathom.core.exceptions import WorkflowCancelledError
 from fathom.core.services.hitl import HITLService
+from fathom.interfaces.abort import AbortDetectorPort
+from fathom.schemas.abort import AbortDecision
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.context import GraphContext
@@ -22,12 +25,18 @@ class Hitl:
     Drives Human-In-The-Loop pause / resume and ASK_USER turns.
     """
 
-    def __init__(self, *, context: GraphContext) -> None:
+    def __init__(
+        self,
+        *,
+        context: GraphContext,
+        aborter: AbortDetectorPort,
+    ) -> None:
         """
-        Initialize the bridge with the shared graph context.
+        Bind the bridge to the shared graph context and the operator-abort detector.
         """
 
         self.__context = context
+        self.__aborter = aborter
 
     async def prompt(self, *, step: int) -> None:
         """
@@ -73,6 +82,16 @@ class Hitl:
             prompt=question,
             step=current_step + 1,
         )
+
+        decision = await self.__aborter.aborted(response=response)
+
+        if decision.aborted:
+            await self.__trigger_workflow_cancellation(
+                response=response,
+                step=current_step + 1,
+                decision=decision,
+            )
+
         await self.__context.context_manager.inject_user_guidance(
             guidance=response,
             step=current_step,
@@ -101,18 +120,60 @@ class Hitl:
             duration=int((time.time() - start_time) * 1000),
         )
 
+    async def __trigger_workflow_cancellation(
+        self,
+        *,
+        step: int,
+        response: str,
+        decision: AbortDecision,
+    ) -> None:
+        """
+        Cancel the run when the operator's response carries an abort directive.
+        """
+
+        logger.info(
+            "HITL abort directive detected; cancelling workflow",
+            extra={
+                **self.__log_context(),
+                "event": "hitl.abort.cancellation_requested",
+                "step.index": step,
+                "response.preview": response[:120],
+                "abort.confidence": round(decision.confidence, 4),
+                "abort.fallback": decision.fallback,
+            },
+        )
+
+        self.__context.cancel()
+
+        logger.info(
+            "Workflow cancellation requested from HITL abort directive",
+            extra={
+                **self.__log_context(),
+                "event": "workflow.cancel.requested",
+                "step.index": step,
+                "source": "hitl_abort",
+            },
+        )
+
+        raise WorkflowCancelledError(
+            workflow_id=self.__context.workflow_id,
+            reason=CompletionReason.OPERATOR_ABORTED.value,
+        )
+
     async def __wait_for_resume_with_cancellation(self, *, hitl: HITLService) -> None:
         """
         Wait for pause/resume input while honoring graph-level cancellation.
         """
 
         resume_task = asyncio.create_task(hitl.wait_for_resume())
+
         try:
             while not resume_task.done():
                 if self.__context.is_cancelled:
                     resume_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await resume_task
+
                     raise WorkflowCancelledError(workflow_id=self.__context.workflow_id)
 
                 await asyncio.sleep(0.1)
@@ -196,37 +257,21 @@ class Hitl:
         }
 
     @staticmethod
-    def __classify_response(*, response: str) -> tuple[DirectiveKind, str | None]:
+    def __classify_response(*, response: str) -> Tuple[DirectiveKind, Optional[str]]:
         """
-        Map a raw HITL response into a directive kind plus a target
-        descriptor the planner guards can match against.
+        Map a non-abort HITL response into a directive kind plus a target descriptor.
         """
 
-        normalised = response.strip().lower()
-
-        completion_phrases = (
-            "mark the execution as completed",
-            "mark as completed",
-            "mark as complete",
-            "mark execution complete",
-            "complete the execution",
-            "finish the execution",
-            "stop the execution",
-            "close the execution",
-            "end the execution",
-        )
-        if any(phrase in normalised for phrase in completion_phrases):
-            return DirectiveKind.COMPLETE, response.strip()
+        normalized = response.strip().lower()
 
         for prefix in ("tap on ", "click on ", "press on ", "tap the ", "click the "):
-            if normalised.startswith(prefix):
+            if normalized.startswith(prefix):
                 descriptor = response.strip()[len(prefix) :].strip()
                 descriptor = descriptor.split(",")[0].strip() or descriptor
                 return DirectiveKind.RETRY_ACTION, descriptor
 
-        navigation_prefixes = ("go to ", "navigate to ", "open ")
-        for prefix in navigation_prefixes:
-            if normalised.startswith(prefix):
+        for prefix in ("go to ", "navigate to ", "open "):
+            if normalized.startswith(prefix):
                 descriptor = response.strip()[len(prefix) :].strip()
                 return DirectiveKind.NAVIGATE, descriptor
 

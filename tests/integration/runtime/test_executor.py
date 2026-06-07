@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
@@ -10,7 +11,9 @@ import pytest
 from fathom.adapters.signal.temporal import TemporalSignalAdapter
 from fathom.constants import SignalType
 from fathom.core.services.hitl import HITLService
+from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.infrastructure.temporal.state import SignalStateRegistry
+from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.executor import GraphExecutor
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 
@@ -29,16 +32,24 @@ class TestGraphExecutorIntegration:
         workflow_id = f"integration-{uuid4()}"
         adapter = TemporalSignalAdapter(workflow_id=workflow_id)
         state = SignalStateRegistry.shared().get(workflow_id=workflow_id)
-        telemetry = SimpleNamespace(info=AsyncMock())
+
+        info_spy = AsyncMock()
+        telemetry = cast("TelemetryPort", SimpleNamespace(info=info_spy))
+
+        phase = cast(
+            "PhaseAnnouncer",
+            SimpleNamespace(pause=AsyncMock(), resume=AsyncMock()),
+        )
         context = SimpleNamespace(
             is_cancelled=False,
+            telemetry=telemetry,
             cancel=Mock(side_effect=lambda: setattr(context, "is_cancelled", True)),
             hitl=HITLService(
+                phase=phase,
                 signal=adapter,
                 telemetry=telemetry,
                 capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True)),
             ),
-            telemetry=telemetry,
         )
         executor = GraphExecutor(
             thread_id="thread-integration",
@@ -59,9 +70,11 @@ class TestGraphExecutorIntegration:
 
             assert should_continue is False
             assert context.is_cancelled is True
+
             assert stream_task.cancelled()
             assert await adapter.check_signal() == SignalType.CANCELLED.value
-            telemetry.info.assert_awaited_once()
+            info_spy.assert_awaited_once()
+
         finally:
             stream_task.cancel()
             SignalStateRegistry.shared().release(workflow_id=workflow_id)

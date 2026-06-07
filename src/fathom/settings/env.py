@@ -66,6 +66,13 @@ class FathomSettings(BaseSettings):
     # Assets path
     assets_path: Path = Field(default=PROJECT_ROOT / "assets", alias="FATHOM_ASSETS_PATH")
 
+    # Per-workflow run-log directory (mirror of the structured log stream written when --log-file is passed on the CLI).
+    # Lives under assets/ so artifact retention and cleanup share a single root.
+    run_logs_path: Path = Field(
+        alias="FATHOM_RUN_LOGS_PATH",
+        default=PROJECT_ROOT / "assets" / "logs",
+    )
+
     # Perception subsystem toggles. CV stays off by default because its
     # anonymous visual-control boxes are still too noisy for production
     # grounding and can pollute both prompts and debug artifacts.
@@ -73,10 +80,7 @@ class FathomSettings(BaseSettings):
     observation_cv_enabled: bool = Field(default=False, alias="FATHOM_OBSERVATION_CV")
     observation_icon_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_ICON")
     observation_overlay_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OVERLAY")
-    observation_keyboard_enabled: bool = Field(
-        default=False,
-        alias="FATHOM_OBSERVATION_KEYBOARD",
-    )
+    observation_keyboard_enabled: bool = Field(default=False, alias="FATHOM_OBSERVATION_KEYBOARD")
 
     # Ensemble vision-localizer (Gemini-vision + DocumentAI-layout)
     # toggles. Enabled with both members so the supervise cascade can

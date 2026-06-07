@@ -527,9 +527,9 @@ class AgentState:
             )
         else:
             self.__assign_last_action(
-                action_type=None,
-                action_description=None,
-                reason="control_action_wiped",
+                reason="control_action_recorded",
+                action_type=result.step.action.action_type.value,
+                action_description=result.step.action.to_description(),
             )
 
         if result.step.action.action_type == ActionType.COMPLETE and result.success:

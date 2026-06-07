@@ -14,6 +14,7 @@ from fathom.core.services.qualifier.llm import LLMIntentQualifier
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import QualifierConfiguration
 from fathom.schemas.conversation import ConversationTurn
+from fathom.schemas.qualification import QualificationVerdict
 from fathom.schemas.results import GenerateResult
 
 GATE_POLICY: QualificationGatePolicy = QualificationGatePolicy(
@@ -33,6 +34,7 @@ class ScriptedLLM(LLMPort):
 
         self.__contents = list(contents)
         self.calls = 0
+        self.structured_outputs: List[Optional[Any]] = []
 
     @property
     def model_name(self) -> str:
@@ -56,9 +58,10 @@ class ScriptedLLM(LLMPort):
         Pop and return the next scripted content as a generate result.
         """
 
-        _ = use_cache, prompt, tools, structured_output, system_instruction, conversation_history
+        _ = use_cache, prompt, tools, system_instruction, conversation_history
 
         self.calls += 1
+        self.structured_outputs.append(structured_output)
         content = self.__contents.pop(0)
         return GenerateResult(content=content)
 
@@ -206,6 +209,23 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(verdict.rationale.category, RationaleCategory.EMPTY)
         self.assertTrue(GATE_POLICY.should_block(verdict=verdict))
         self.assertEqual(verdict.message, DEFAULT_REJECTION_MESSAGE)
+
+    async def test_qualify_call_passes_structured_output_contract(self) -> None:
+        """
+        Every classification call must pin :class:`QualificationVerdict` as the
+        structured-output payload so the adapter constrains decoding.
+        """
+
+        llm = ScriptedLLM(contents=[VerdictPayload.json(label="EXECUTABLE", confidence=0.9)])
+        qualifier = LLMIntentQualifier(llm=llm)
+
+        await qualifier.qualify(intent="Open Swiggy")
+
+        self.assertEqual(len(llm.structured_outputs), 1)
+        structured = llm.structured_outputs[0]
+        self.assertIsNotNone(structured)
+        assert structured is not None
+        self.assertIs(structured.payload, QualificationVerdict)
 
     async def test_executable_intent_passes_through(self) -> None:
         """

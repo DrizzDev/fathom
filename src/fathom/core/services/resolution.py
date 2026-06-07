@@ -6,6 +6,7 @@ from logging import getLogger
 from typing import Any, Dict, Optional, Pattern
 
 from fathom.constants import GESTURE_ACTION_TYPES, SPATIAL_ACTION_TYPES, ActionType
+from fathom.constants.perception import LABEL_BBOX_AGREEMENT_FLOOR
 from fathom.interfaces.memory import MemoryPort
 from fathom.schemas.actions import (
     Action,
@@ -15,7 +16,7 @@ from fathom.schemas.actions import (
     InputContext,
     InputContextSource,
 )
-from fathom.schemas.resolution import ResolveResult
+from fathom.schemas.resolution import ResolveResult, UnresolvedKind
 
 logger = getLogger(__name__)
 
@@ -153,6 +154,7 @@ class ReferenceResolutionService:
 
             return ResolveResult.unresolved(
                 action=action,
+                kind=UnresolvedKind.LABEL_NOT_FOUND,
                 reason=(
                     "spatial action emitted without a label_id; model coordinates require "
                     "perception-backed localization"
@@ -162,6 +164,7 @@ class ReferenceResolutionService:
         if not elements:
             return ResolveResult.unresolved(
                 action=action,
+                kind=UnresolvedKind.EMPTY_MANIFEST,
                 reason="manifest empty; no labeled elements to snap against",
             )
 
@@ -169,6 +172,7 @@ class ReferenceResolutionService:
         if not info:
             return ResolveResult.unresolved(
                 action=action,
+                kind=UnresolvedKind.LABEL_NOT_FOUND,
                 reason=f"label_id '{action.label_id}' not present in current manifest",
             )
 
@@ -197,6 +201,7 @@ class ReferenceResolutionService:
                     f"{action.action_type.value}; element axis={info.get('axis')!r} "
                     f"kind={info.get('kind')!r}"
                 ),
+                kind=UnresolvedKind.AXIS_MISMATCH,
             )
 
         if (
@@ -206,29 +211,49 @@ class ReferenceResolutionService:
             and not self.__element_has_semantic_descriptor(element=info)
             and action.action_type in {ActionType.TAP, ActionType.LONG_PRESS}
         ):
-            logger.info(
-                "Manifest label snap rejected because selected element is a generic visual container",
-                extra={
-                    "component": "resolution",
-                    "workflow.id": self.__workflow_id,
-                    **self.__action_snapshot(action=action),
-                    "event": "snap.generic_container.rejected",
-                    "reason": "generic_visual_container_requires_perception",
-                    "element": self.__element_snapshot(label_id=action.label_id, element=info),
-                },
-            )
-            return ResolveResult.unresolved(
-                action=action,
-                reason=(
-                    f"label_id '{action.label_id}' is a generic visual container; "
-                    "perception-backed localization is required"
-                ),
-            )
+            iou = self.__label_bbox_iou(element=info, action=action)
+
+            if iou is not None and iou >= LABEL_BBOX_AGREEMENT_FLOOR:
+                logger.info(
+                    "Manifest label snap retained on bbox-label IoU agreement",
+                    extra={
+                        "component": "resolution",
+                        "event": "snap.label_bbox.agreement",
+                        "workflow.id": self.__workflow_id,
+                        "iou.label_vs_bbox": round(iou, 4),
+                        **self.__action_snapshot(action=action),
+                        "iou.floor": LABEL_BBOX_AGREEMENT_FLOOR,
+                        "element": self.__element_snapshot(element=info, label_id=action.label_id),
+                    },
+                )
+            else:
+                logger.info(
+                    "Manifest label snap rejected because selected element is a generic visual container",
+                    extra={
+                        "component": "resolution",
+                        "workflow.id": self.__workflow_id,
+                        "event": "snap.generic_container.rejected",
+                        **self.__action_snapshot(action=action),
+                        "iou.floor": LABEL_BBOX_AGREEMENT_FLOOR,
+                        "reason": "generic_visual_container_requires_perception",
+                        "iou.label_vs_bbox": round(iou, 4) if iou is not None else None,
+                        "element": self.__element_snapshot(element=info, label_id=action.label_id),
+                    },
+                )
+                return ResolveResult.unresolved(
+                    action=action,
+                    kind=UnresolvedKind.GENERIC_CONTAINER,
+                    reason=(
+                        f"label_id '{action.label_id}' is a generic visual container; "
+                        "perception-backed localization is required"
+                    ),
+                )
 
         bounds_str = str(info.get("bounds", ""))
         if not bounds_str:
             return ResolveResult.unresolved(
                 action=action,
+                kind=UnresolvedKind.MISSING_BOUNDS,
                 reason=(f"label_id '{action.label_id}' has no bounds; element is not snappable"),
             )
 
@@ -248,6 +273,7 @@ class ReferenceResolutionService:
 
             return ResolveResult.unresolved(
                 action=action,
+                kind=UnresolvedKind.INVALID_BOUNDS,
                 reason=(f"label_id '{action.label_id}' has unparsable bounds '{bounds_str}'"),
             )
 
@@ -264,6 +290,7 @@ class ReferenceResolutionService:
             if width <= 0 or height <= 0:
                 return ResolveResult.unresolved(
                     action=action,
+                    kind=UnresolvedKind.INVALID_BOUNDS,
                     reason=(
                         f"label_id '{action.label_id}' bounds collapse to zero "
                         f"after viewport clamp (raw={bounds_str})"
@@ -335,6 +362,7 @@ class ReferenceResolutionService:
             )
             return ResolveResult.unresolved(
                 action=action,
+                kind=UnresolvedKind.OTHER,
                 reason=f"snap failed for label_id '{action.label_id}': {exception}",
             )
 
@@ -369,6 +397,62 @@ class ReferenceResolutionService:
                 "manifest.bounds": (element or {}).get("bounds"),
             },
         )
+
+    def __label_bbox_iou(self, *, action: Action, element: Dict[str, Any]) -> Optional[float]:
+        """
+        Return IoU between an element's manifest bounds and the action's LLM bbox.
+
+        Returns None when either the element has no parseable bounds or the action has no bounds.
+        Caller treats None as "no agreement signal" and falls back to the default rejection path.
+        """
+
+        if action.bounds is None:
+            return None
+
+        bounds_str = str(element.get("bounds", ""))
+        if not bounds_str:
+            return None
+
+        match = self.__bounds_pattern.match(bounds_str)
+        if match is None:
+            return None
+
+        try:
+            raw_x1, raw_y1, raw_x2, raw_y2 = (int(value) for value in match.groups())
+        except ValueError:
+            return None
+
+        label_x1 = max(0, raw_x1)
+        label_y1 = max(0, raw_y1)
+        label_x2 = max(0, raw_x2)
+        label_y2 = max(0, raw_y2)
+
+        label_w = label_x2 - label_x1
+        label_h = label_y2 - label_y1
+
+        if label_w <= 0 or label_h <= 0:
+            return None
+
+        bbox_x1 = action.bounds.x
+        bbox_y1 = action.bounds.y
+        bbox_x2 = bbox_x1 + action.bounds.width
+        bbox_y2 = bbox_y1 + action.bounds.height
+
+        if action.bounds.width <= 0 or action.bounds.height <= 0:
+            return None
+
+        intersect_w = max(0, min(label_x2, bbox_x2) - max(label_x1, bbox_x1))
+        intersect_h = max(0, min(label_y2, bbox_y2) - max(label_y1, bbox_y1))
+
+        intersection = intersect_w * intersect_h
+        if intersection == 0:
+            return 0.0
+
+        union = label_w * label_h + action.bounds.width * action.bounds.height - intersection
+        if union <= 0:
+            return 0.0
+
+        return intersection / union
 
     @staticmethod
     def __element_has_semantic_descriptor(*, element: Dict[str, Any]) -> bool:

@@ -1,11 +1,3 @@
-"""
-Domain-level unit pins for :class:`CompletionGate`.
-
-These tests exercise the gate in isolation against the per-kind threshold
-policy (ACTION 3-of-3, VALIDATION asserted-short-circuit + 2-of-3 fallback)
-and the diagnostic :class:`RetainReason` mapping.
-"""
-
 from __future__ import annotations
 
 import unittest
@@ -39,19 +31,19 @@ class CompletionGateActionTest(unittest.TestCase):
     @staticmethod
     def __evidence(
         *,
+        evolved: bool,
         asserted: bool,
         justified: bool,
         dispatched: bool,
-        evolved: bool,
     ) -> CompletionEvidence:
         """
         Build a CompletionEvidence with the requested signal truth table.
         """
 
         return CompletionEvidence(
-            claim=ClaimEvidence(asserted=asserted, justified=justified),
-            action=ActionEvidence(dispatched=dispatched),
             screen=ScreenEvidence(evolved=evolved),
+            action=ActionEvidence(dispatched=dispatched),
+            claim=ClaimEvidence(asserted=asserted, justified=justified),
         )
 
     def test_all_signals_advance(self) -> None:
@@ -60,13 +52,13 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=True),
             sub_goal=self.__sub_goal(),
             action_kind=ActionKind.NAVIGATION,
+            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=True),
         )
 
-        self.assertEqual(decision.outcome, GateOutcome.ADVANCE)
         self.assertIsNone(decision.retain_reason)
+        self.assertEqual(decision.outcome, GateOutcome.ADVANCE)
 
     def test_missing_claim_retains_with_diagnostic(self) -> None:
         """
@@ -74,9 +66,9 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(asserted=False, justified=True, dispatched=True, evolved=True),
             sub_goal=self.__sub_goal(),
             action_kind=ActionKind.NAVIGATION,
+            evidence=self.__evidence(asserted=False, justified=True, dispatched=True, evolved=True),
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
@@ -88,9 +80,9 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(asserted=True, justified=False, dispatched=True, evolved=True),
             sub_goal=self.__sub_goal(),
             action_kind=ActionKind.NAVIGATION,
+            evidence=self.__evidence(asserted=True, justified=False, dispatched=True, evolved=True),
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
@@ -102,9 +94,9 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(asserted=True, justified=True, dispatched=False, evolved=True),
             sub_goal=self.__sub_goal(),
             action_kind=ActionKind.NAVIGATION,
+            evidence=self.__evidence(asserted=True, justified=True, dispatched=False, evolved=True),
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
@@ -116,9 +108,9 @@ class CompletionGateActionTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False),
             sub_goal=self.__sub_goal(),
             action_kind=ActionKind.NAVIGATION,
+            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False),
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
@@ -138,8 +130,8 @@ class CompletionGateValidationTest(unittest.TestCase):
 
         return SubGoal(
             index=0,
-            description="Validate Jars & Containers visible",
             kind=SubGoalKind.VALIDATION,
+            description="Validate Jars & Containers visible",
         )
 
     def test_asserted_claim_alone_advances(self) -> None:
@@ -148,9 +140,9 @@ class CompletionGateValidationTest(unittest.TestCase):
         """
 
         evidence = CompletionEvidence(
-            claim=ClaimEvidence(asserted=True, justified=False),
-            action=ActionEvidence(dispatched=False),
             screen=ScreenEvidence(evolved=False),
+            action=ActionEvidence(dispatched=False),
+            claim=ClaimEvidence(asserted=True, justified=False),
         )
 
         decision = CompletionGate().adjudicate(
@@ -167,9 +159,9 @@ class CompletionGateValidationTest(unittest.TestCase):
         """
 
         evidence = CompletionEvidence(
-            claim=ClaimEvidence(asserted=False, justified=True),
-            action=ActionEvidence(dispatched=True),
             screen=ScreenEvidence(evolved=True),
+            action=ActionEvidence(dispatched=True),
+            claim=ClaimEvidence(asserted=False, justified=True),
         )
 
         decision = CompletionGate().adjudicate(
@@ -186,9 +178,9 @@ class CompletionGateValidationTest(unittest.TestCase):
         """
 
         evidence = CompletionEvidence(
-            claim=ClaimEvidence(asserted=False, justified=True),
-            action=ActionEvidence(dispatched=False),
             screen=ScreenEvidence(evolved=False),
+            action=ActionEvidence(dispatched=False),
+            claim=ClaimEvidence(asserted=False, justified=True),
         )
 
         decision = CompletionGate().adjudicate(
@@ -211,10 +203,10 @@ class CompletionGateCriterionAdditiveTest(unittest.TestCase):
         """
 
         evidence = CompletionEvidence(
-            claim=ClaimEvidence(asserted=False, justified=False),
-            action=ActionEvidence(dispatched=False),
             screen=ScreenEvidence(evolved=False),
+            action=ActionEvidence(dispatched=False),
             criterion=CriterionEvidence(observed=True),
+            claim=ClaimEvidence(asserted=False, justified=False),
         )
         sub_goal = SubGoal(index=0, description="Tap on X", kind=SubGoalKind.ACTION)
 
@@ -226,23 +218,24 @@ class CompletionGateCriterionAdditiveTest(unittest.TestCase):
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
 
-    def test_criterion_observed_false_does_not_veto_iahtk_replay(self) -> None:
+    def test_action_subgoal_advances_when_criterion_unobserved_but_claim_conclusive(
+        self,
+    ) -> None:
         """
-        IahTk replay at the Domain level: criterion observed False (the post-tap
-        screen no longer contains the criterion tokens) does NOT veto an
-        otherwise-conclusive ACTION sub-goal decision.
+        Criterion observed False on an ACTION sub-goal must NOT veto an
+        otherwise-conclusive claim + dispatched-action + evolved-screen verdict.
         """
 
         evidence = CompletionEvidence(
-            claim=ClaimEvidence(asserted=True, justified=True),
-            action=ActionEvidence(dispatched=True),
             screen=ScreenEvidence(evolved=True),
+            action=ActionEvidence(dispatched=True),
             criterion=CriterionEvidence(observed=False),
+            claim=ClaimEvidence(asserted=True, justified=True),
         )
         sub_goal = SubGoal(
             index=0,
-            description="Tap on Confirm location and continue button",
             kind=SubGoalKind.ACTION,
+            description="Tap on Confirm location and continue button",
         )
 
         decision = CompletionGate().adjudicate(
@@ -251,8 +244,8 @@ class CompletionGateCriterionAdditiveTest(unittest.TestCase):
             action_kind=ActionKind.NAVIGATION,
         )
 
-        self.assertEqual(decision.outcome, GateOutcome.ADVANCE)
         self.assertIsNone(decision.retain_reason)
+        self.assertEqual(decision.outcome, GateOutcome.ADVANCE)
 
 
 class CompletionGateValidateEscapeTest(unittest.TestCase):
@@ -268,8 +261,8 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
 
         return SubGoal(
             index=0,
-            description="Tap on confirm and proceed",
             kind=SubGoalKind.ACTION,
+            description="Tap on confirm and proceed",
         )
 
     @staticmethod
@@ -281,9 +274,9 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
         """
 
         return CompletionEvidence(
-            claim=ClaimEvidence(asserted=asserted, justified=justified),
-            action=ActionEvidence(dispatched=dispatched),
             screen=ScreenEvidence(evolved=evolved),
+            action=ActionEvidence(dispatched=dispatched),
+            claim=ClaimEvidence(asserted=asserted, justified=justified),
         )
 
     def test_validate_kind_advances_when_asserted_and_dispatched(self) -> None:
@@ -292,15 +285,15 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
+            sub_goal=self.__sub_goal(),
+            action_kind=ActionKind.VALIDATION,
             evidence=self.__evidence(
                 asserted=True, justified=False, dispatched=True, evolved=False
             ),
-            sub_goal=self.__sub_goal(),
-            action_kind=ActionKind.VALIDATION,
         )
 
-        self.assertEqual(decision.outcome, GateOutcome.ADVANCE)
         self.assertIsNone(decision.retain_reason)
+        self.assertEqual(decision.outcome, GateOutcome.ADVANCE)
 
     def test_validate_kind_retains_when_claim_not_asserted(self) -> None:
         """
@@ -308,11 +301,11 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
+            sub_goal=self.__sub_goal(),
+            action_kind=ActionKind.VALIDATION,
             evidence=self.__evidence(
                 asserted=False, justified=True, dispatched=True, evolved=False
             ),
-            sub_goal=self.__sub_goal(),
-            action_kind=ActionKind.VALIDATION,
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
@@ -323,11 +316,11 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
+            sub_goal=self.__sub_goal(),
+            action_kind=ActionKind.VALIDATION,
             evidence=self.__evidence(
                 asserted=True, justified=True, dispatched=False, evolved=False
             ),
-            sub_goal=self.__sub_goal(),
-            action_kind=ActionKind.VALIDATION,
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
@@ -338,9 +331,9 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False),
             sub_goal=self.__sub_goal(),
             action_kind=ActionKind.NAVIGATION,
+            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False),
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
@@ -351,9 +344,9 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False),
             sub_goal=self.__sub_goal(),
             action_kind=ActionKind.INPUT,
+            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False),
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
@@ -364,9 +357,9 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
         """
 
         decision = CompletionGate().adjudicate(
-            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False),
             sub_goal=self.__sub_goal(),
             action_kind=ActionKind.OBSERVATION,
+            evidence=self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False),
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)

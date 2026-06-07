@@ -1,6 +1,24 @@
 from __future__ import annotations
 
+from enum import StrEnum
+
 from fathom.constants.execution import VISUAL_HASH_LENGTH
+
+
+class ScreenKind(StrEnum):
+    """
+    Coarse classification of a screen by the hierarchy backing its surface.
+    Used to route perception around hierarchy-blind frames where XML
+    cannot expose actionable interior elements.
+    """
+
+    NATIVE = "NATIVE"
+    WEBVIEW = "WEBVIEW"
+    GAME_SURFACE = "GAME_SURFACE"
+
+
+WEBVIEW_AREA_FLOOR: float = 0.30
+GAME_SURFACE_AREA_FLOOR: float = 0.80
 
 ZERO_HASH: str = "0" * VISUAL_HASH_LENGTH
 
@@ -14,10 +32,7 @@ BOUNDS_DIGEST_LENGTH: int = 6
 INTERACTION_TEXT_PREVIEW_LENGTH: int = 30
 
 # Repeated-decorative-text suppression: when more than this many
-# elements share an identical lowercase text label after stripping,
-# keep only the first occurrence. Targets noisy XML patterns where
-# the same StaticText ("•", "Adyar", rating numbers) is emitted once
-# per card and balloons the manifest without adding semantic info.
+# elements share an identical lowercase text label after stripping, keep only the first occurrence.
 REPEATED_TEXT_SUPPRESSION_THRESHOLD: int = 2
 
 ACTION_EFFECT_SSIM_THRESHOLD: float = 0.98
@@ -25,11 +40,9 @@ ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD: int = 4
 ACTION_EFFECT_SCROLL_DISTANCE_THRESHOLD_PX: float = 5.0
 ACTION_EFFECT_CONTENT_DIFF_RATIO_THRESHOLD: float = 0.005
 
-# When two frames register as effectively identical (very high SSIM
-# combined with negligible content-pixel diff), :func:`cv2.phaseCorrelate`
-# can still return a small non-zero shift from DC-noise. We gate the
-# scroll computation behind these thresholds so the comparator returns
-# a clean zero translation instead of bogus scroll evidence.
+# When two frames register as effectively identical (very high SSIM combined with negligible content-pixel diff),
+# :func:`cv2.phaseCorrelate` can still return a small non-zero shift from DC-noise. We gate the scroll computation
+# behind these thresholds so the comparator returns a clean zero translation instead of bogus scroll evidence.
 SCROLL_IDENTICAL_FRAME_SSIM_THRESHOLD: float = 0.999
 SCROLL_IDENTICAL_FRAME_CONTENT_DIFF_RATIO_THRESHOLD: float = 0.001
 

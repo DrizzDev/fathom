@@ -270,20 +270,71 @@ class SourceFilteredPerceptionRenderer(ArtifactRendererPort):
 
     def __filtered(self, *, observation: ScreenObservation) -> Tuple[PerceivedElement, ...]:
         """
-        Project the observation to elements from this renderer's source.
+        Project to this source; drop tokens covered by a line/paragraph of the same source.
         """
 
-        return tuple(element for element in observation.elements if element.source is self.__source)
+        same_source = tuple(
+            element for element in observation.elements if element.source is self.__source
+        )
+
+        phrases = tuple(
+            element for element in same_source if self.__is_phrase_identifier(element=element)
+        )
+        if not phrases:
+            return same_source
+
+        return tuple(
+            element
+            for element in same_source
+            if element in phrases or not self.__contained_in_any(element=element, parents=phrases)
+        )
+
+    @staticmethod
+    def __is_phrase_identifier(*, element: PerceivedElement) -> bool:
+        """
+        Return whether ``element`` is a row- or paragraph-level OCR phrase.
+        """
+
+        identifier = element.identifier or ""
+        return "_line_" in identifier or "_paragraph_" in identifier
+
+    @classmethod
+    def __contained_in_any(
+        cls, *, element: PerceivedElement, parents: Tuple[PerceivedElement, ...]
+    ) -> bool:
+        """
+        Return whether the element's bounds are fully inside any parent's bounds.
+        """
+
+        for parent in parents:
+            if parent is element:
+                continue
+
+            if cls.__contains(outer=parent, inner=element):
+                return True
+
+        return False
+
+    @staticmethod
+    def __contains(*, outer: PerceivedElement, inner: PerceivedElement) -> bool:
+        """
+        Return whether ``inner``'s bounds lie inside ``outer``'s bounds.
+        """
+
+        return (
+            outer.bounds.x <= inner.bounds.x
+            and outer.bounds.y <= inner.bounds.y
+            and outer.bounds.x + outer.bounds.width >= inner.bounds.x + inner.bounds.width
+            and outer.bounds.y + outer.bounds.height >= inner.bounds.y + inner.bounds.height
+        )
 
 
 class OverlayPerceptionRenderer(ArtifactRendererPort):
     """
     Renders the overlay-only debug image.
 
-    Projects :class:`OverlayObservation` rectangles from the screen
-    observation; perceived elements are not drawn. Overlay shape is
-    distinct from per-element rendering so this renderer cannot share
-    :class:`SourceFilteredPerceptionRenderer`.
+    Projects :class:`OverlayObservation` rectangles from the screen observation; perceived elements are not drawn.
+    Overlay shape is distinct from per-element rendering so this renderer cannot share :class:`SourceFilteredPerceptionRenderer`.
     """
 
     def __init__(self, *, drawer: Optional[BoxDrawer] = None) -> None:

@@ -348,12 +348,32 @@ class FathomRunner:
                 step_results=strategy.step_results,
             )
 
+            terminal_event = (
+                FathomEvent.WORKFLOW_CANCELLED if is_cancelled else FathomEvent.WORKFLOW_COMPLETED
+            )
+            terminal_message = "Run cancelled by operator." if is_cancelled else "All wrapped up."
+
+            logger.info(
+                "Workflow outcome resolved",
+                extra={
+                    "event": "workflow.outcome.resolved",
+                    "duration": duration,
+                    "workflow.id": workflow_id,
+                    "steps.taken": result.steps_taken,
+                    "completion.reason": completion_reason,
+                    "outcome": "cancelled"
+                    if is_cancelled
+                    else ("completed" if result.success else "failed"),
+                },
+            )
+
             await self.__telemetry.info(
-                "All wrapped up.",
+                terminal_message,
                 duration=duration,
+                type=terminal_event,
                 success=result.success,
                 steps_taken=result.steps_taken,
-                type=FathomEvent.WORKFLOW_COMPLETED,
+                completion_reason=completion_reason,
             )
 
             return result

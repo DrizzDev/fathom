@@ -13,9 +13,9 @@ from fathom.base.phase import AbandonablePhase, BoundedPhase
 from fathom.constants.events import FathomEvent
 from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.graph import NodeName
-from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey, RunOutcome
 from fathom.core.config import RuntimeConfigLoader
-from fathom.core.exceptions import FinalizationTimeoutError
+from fathom.core.exceptions import FinalizationTimeoutError, WorkflowCancelledError
 from fathom.core.services.decomposer import IntentDecomposer
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.interfaces.checkpoint import CheckpointStore, LangGraphCheckpointer
@@ -133,13 +133,13 @@ class IntentStrategy:
             package_name=package_name,
             path_manager=path_manager,
             configuration=configuration,
-            perception_configuration=assembly.perception_configuration,
             ocr=assembly.ocr(),
             icons=assembly.icons(),
-            pixel_overlay=assembly.overlay(),
+            journal=assembly.journal(),
             ensemble=assembly.ensemble(),
             embedder=assembly.embedder(),
-            journal=assembly.journal(),
+            pixel_overlay=assembly.overlay(),
+            perception_configuration=assembly.perception_configuration,
             artifact_pipeline=assembly.pipeline(
                 path_manager=path_manager,
                 storage_configuration=configuration.storage,
@@ -168,9 +168,10 @@ class IntentStrategy:
 
         start_time = time.time()
         prewarm_task: Optional["asyncio.Task[None]"] = None
+        abort_warmup_task: Optional["asyncio.Task[None]"] = None
 
-        executor_failed = False
         final_state: Optional[Any] = None
+        run_outcome: RunOutcome = RunOutcome.COMPLETED
         assembler = self.__ResultAssembler(workflow_id=self.__workflow_id, started_at=start_time)
 
         stack = AsyncExitStack()
@@ -186,6 +187,7 @@ class IntentStrategy:
             )
 
             prewarm_task = asyncio.create_task(self.__graph_context.vision.prewarm())
+            abort_warmup_task = asyncio.create_task(self.__graph_context.abort_detector.warmup())
 
             logger.info(f"[IntentStrategy] Decomposing intent: {self.__intent}")
             decomposer = IntentDecomposer.with_configuration(
@@ -231,52 +233,20 @@ class IntentStrategy:
                 invalidate_on_injection=self.__graph_context.realignment.immediate,
                 has_interrupts=self.__graph_context.signal.supports_interruption(),
             )
-            executor_failed = await self.__run_executor(executor=executor)
+            run_outcome = await self.__run_executor(executor=executor)
 
-            if not executor_failed:
-                await self.__run_finalization_phase(
+            if run_outcome is not RunOutcome.FAILED:
+                final_state = await self.__finalize_run(
+                    budgets=budgets,
                     assembler=assembler,
-                    timeout=budgets.history.flush,
-                    phase=FinalizationPhase.HISTORY_FLUSH,
-                    awaitable=self.__graph_context.history.flush_pending_operations(),
-                )
-                script_data = await self.__run_finalization_phase(
-                    assembler=assembler,
-                    timeout=budgets.history.script,
-                    phase=FinalizationPhase.HISTORY_SCRIPT,
-                    awaitable=self.__graph_context.history.get_current_script(
-                        intent=self.__intent,
-                        step_number=self.__graph_context.agent_state.step_count,
-                    ),
-                )
-                if script_data:
-                    await self.__graph_context.telemetry.info(
-                        script_data,
-                        type=FathomEvent.SCRIPT_GENERATED,
-                        step=self.__graph_context.agent_state.step_count,
-                    )
-                elif assembler.failed_phase is None:
-                    logger.warning(
-                        "Final script generation returned empty data; cannot publish "
-                        "SCRIPT_GENERATED event"
-                    )
-
-                if self.__graph is None:
-                    raise RuntimeError("Intent graph is not initialized")
-
-                config: RunnableConfig = {"configurable": {"thread_id": self.__workflow_id}}
-                final_state = await self.__run_finalization_phase(
-                    assembler=assembler,
-                    timeout=budgets.graph.state_read,
-                    phase=FinalizationPhase.GRAPH_STATE_READ,
-                    awaitable=self.__graph.aget_state(config),
+                    run_outcome=run_outcome,
                 )
         except asyncio.CancelledError:
             raise
 
         except Exception as exception:
             logger.exception("Intent strategy execution failed: %s", exception)
-            executor_failed = True
+            run_outcome = RunOutcome.FAILED
             self.__try_recover_step_results()
 
         finally:
@@ -298,15 +268,24 @@ class IntentStrategy:
 
             await AbandonablePhase(
                 workflow_id=self.__workflow_id,
+                phase=FinalizationPhase.BACKGROUND_DRAIN,
+                timeout=budgets.runtime.background_drain,
+            ).execute(
+                awaitable=self.__cleanup_background_task(
+                    task=abort_warmup_task, task_name="abort detector warmup"
+                )
+            )
+
+            await AbandonablePhase(
+                workflow_id=self.__workflow_id,
                 phase=FinalizationPhase.CONTEXT_SHUTDOWN,
                 timeout=budgets.runtime.context_shutdown,
             ).execute(awaitable=self.__shutdown_graph_context())
 
         result = assembler.assemble(
+            run_outcome=run_outcome,
             final_state=final_state,
-            executor_failed=executor_failed,
             agent_state=self.__graph_context.agent_state,
-            is_cancelled=self.__graph_context.is_cancelled,
         )
 
         self.__completion_reason = assembler.completion_reason
@@ -316,9 +295,65 @@ class IntentStrategy:
 
         return result
 
-    async def __run_executor(self, *, executor: Any) -> bool:
+    async def __finalize_run(
+        self,
+        *,
+        budgets: Any,
+        run_outcome: RunOutcome,
+        assembler: "IntentStrategy.__ResultAssembler",
+    ) -> Optional[Any]:
         """
-        Run the graph executor with start/completed/failed observability; return True on failure.
+        Drain history, emit partial script + SCRIPT_GENERATED, and read final graph state.
+        Runs on both successful completion and operator-driven cancellation paths.
+        """
+
+        logger.info(
+            "Intent strategy finalization started",
+            extra={
+                "event": "fathom.intent.finalization.started",
+                "workflow.id": self.__workflow_id,
+                "run.outcome": run_outcome.value,
+                "steps.taken": self.__graph_context.agent_state.step_count,
+            },
+        )
+
+        await self.__run_finalization_phase(
+            assembler=assembler,
+            timeout=budgets.history.flush,
+            phase=FinalizationPhase.HISTORY_FLUSH,
+            awaitable=self.__graph_context.history.flush_pending_operations(),
+        )
+
+        script_data = await self.__run_finalization_phase(
+            assembler=assembler,
+            timeout=budgets.history.script,
+            phase=FinalizationPhase.HISTORY_SCRIPT,
+            awaitable=self.__graph_context.history.get_current_script(
+                intent=self.__intent,
+                step_number=self.__graph_context.agent_state.step_count,
+            ),
+        )
+
+        await self.__emit_script_generated_event(
+            script_data=script_data,
+            run_outcome=run_outcome,
+        )
+
+        if self.__graph is None:
+            raise RuntimeError("Intent graph is not initialized")
+
+        config: RunnableConfig = {"configurable": {"thread_id": self.__workflow_id}}
+
+        return await self.__run_finalization_phase(
+            assembler=assembler,
+            timeout=budgets.graph.state_read,
+            phase=FinalizationPhase.GRAPH_STATE_READ,
+            awaitable=self.__graph.aget_state(config),
+        )
+
+    async def __run_executor(self, *, executor: Any) -> RunOutcome:
+        """
+        Run the graph executor with start/completed/failed observability.
         """
 
         workflow_id = self.__workflow_id
@@ -335,6 +370,18 @@ class IntentStrategy:
         except asyncio.CancelledError:
             raise
 
+        except WorkflowCancelledError as exception:
+            logger.info(
+                "executor cancelled",
+                extra={
+                    "event": "fathom.intent.executor.cancelled",
+                    "workflow.id": workflow_id,
+                    "cancellation.reason": exception.reason,
+                    "duration": time.perf_counter() - started_at,
+                },
+            )
+            return RunOutcome.CANCELLED
+
         except Exception as exception:
             logger.error(
                 "executor failed: %s",
@@ -348,7 +395,19 @@ class IntentStrategy:
                     "duration": time.perf_counter() - started_at,
                 },
             )
-            return True
+            return RunOutcome.FAILED
+
+        if self.__graph_context.is_cancelled:
+            logger.info(
+                "executor returned with cancellation flag set",
+                extra={
+                    "event": "fathom.intent.executor.cancelled",
+                    "workflow.id": workflow_id,
+                    "duration": time.perf_counter() - started_at,
+                },
+            )
+            return RunOutcome.CANCELLED
+
         logger.info(
             "executor completed",
             extra={
@@ -357,7 +416,7 @@ class IntentStrategy:
                 "duration": time.perf_counter() - started_at,
             },
         )
-        return False
+        return RunOutcome.COMPLETED
 
     async def __run_finalization_phase(
         self,
@@ -416,15 +475,17 @@ class IntentStrategy:
 
         self.__step_results = []
 
-    async def __emit_script_generated_event(self, *, script_data: Optional[str]) -> None:
+    async def __emit_script_generated_event(
+        self,
+        *,
+        run_outcome: RunOutcome,
+        script_data: Optional[str],
+    ) -> None:
         """
-        Emit the SCRIPT_GENERATED terminal event unconditionally.
+        Emit the SCRIPT_GENERATED terminal event whenever the run reaches finalization.
 
-        The exporter can legitimately return empty payloads (launcher-only runs,
-        structured-validation failures, no prior script.txt). The client still
-        needs a terminal signal that the run ended, so the event always fires —
-        an empty payload is flagged via the `is_empty` kwarg so consumers can
-        distinguish "no script" from "script with content."
+        Carries an ``is_empty`` flag so consumers can distinguish "no script" from "script with content" without parsing the payload.
+        ``run_outcome`` tags the event so downstream tooling can correlate empty scripts with operator-aborted runs versus successful completions.
         """
 
         is_empty_script = not bool(script_data and script_data.strip())
@@ -435,9 +496,21 @@ class IntentStrategy:
                 "SCRIPT_GENERATED event so the client still receives a terminal signal"
             )
 
+        logger.info(
+            "Partial script artefact emitted",
+            extra={
+                "event": "workflow.finalization.partial_script.emitted",
+                "is_empty": is_empty_script,
+                "run.outcome": run_outcome.value,
+                "workflow.id": self.__workflow_id,
+                "steps.taken": self.__graph_context.agent_state.step_count,
+            },
+        )
+
         await self.__graph_context.telemetry.info(
             script_data or "",
             is_empty=is_empty_script,
+            run_outcome=run_outcome.value,
             type=FathomEvent.SCRIPT_GENERATED,
             step=self.__graph_context.agent_state.step_count,
         )
@@ -602,8 +675,7 @@ class IntentStrategy:
             self,
             *,
             agent_state: Any,
-            is_cancelled: bool,
-            executor_failed: bool,
+            run_outcome: RunOutcome,
             final_state: Optional[Any],
         ) -> ExecutionResult:
             """
@@ -617,15 +689,26 @@ class IntentStrategy:
                 metadata["finalization.failed_phase"] = self.__failed_phase
 
             duration = int((time.time() - self.__started_at) * 1000)
+            is_cancelled = run_outcome is RunOutcome.CANCELLED
 
-            if executor_failed:
+            if run_outcome is RunOutcome.FAILED:
                 self.__completion_reason = CompletionReason.FAILED.value
                 return ExecutionResult(
                     success=False,
                     duration=duration,
                     metadata=metadata,
-                    is_cancelled=is_cancelled,
+                    is_cancelled=False,
                     error="executor failed before terminal state",
+                )
+
+            if run_outcome is RunOutcome.CANCELLED:
+                self.__completion_reason = CompletionReason.OPERATOR_ABORTED.value
+                return ExecutionResult(
+                    error=None,
+                    success=False,
+                    duration=duration,
+                    metadata=metadata,
+                    is_cancelled=True,
                 )
 
             completion_reason = self.__resolve_completion_reason(

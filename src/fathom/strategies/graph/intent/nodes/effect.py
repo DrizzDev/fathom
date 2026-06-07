@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import time
+from io import BytesIO
 from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from PIL import Image
+
 from fathom.constants import ActionType
+from fathom.constants.perception import ACTION_REGION_HALF_SIDE, ACTION_REGION_STATIC_HAMMING_FLOOR
 from fathom.constants.screen import ZERO_HASH
 from fathom.constants.state import IntentStateKey, PlanMetadataKey
 from fathom.constants.storage import StorageBackend
+from fathom.core.perception.hashing import VisualHashEngine
 from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
 from fathom.schemas.artifacts import (
     ScreenArtifact,
@@ -225,6 +230,12 @@ class PostAction:
                 ),
             )
 
+        self.__observe_action_region(
+            after_image=post_capture.image,
+            trace_emissions=trace_emissions,
+            before_image=before_capture.image,
+        )
+
         elements_start = time.time()
         post_elements = self.__elements(capture=post_capture)
         logger.info(
@@ -354,6 +365,152 @@ class PostAction:
             action_type=ActionType.TAP,
         )
 
+    def __observe_action_region(
+        self,
+        *,
+        after_image: bytes,
+        before_image: bytes,
+        trace_emissions: Tuple[TraceEmission, ...],
+    ) -> None:
+        """
+        Fire-and-forget: pHash the region around each dispatched tap centroid pre/post and log the result.
+        """
+
+        if not before_image or not after_image or not trace_emissions:
+            return
+
+        coords = self.__tap_centroids(trace_emissions=trace_emissions)
+        if not coords:
+            return
+
+        log_context = self.__log_context()
+
+        asyncio.create_task(
+            self.__action_region_worker(
+                coords=coords,
+                log_context=log_context,
+                after_image=after_image,
+                before_image=before_image,
+            ),
+            name="effect.action_region.observer",
+        )
+
+    @staticmethod
+    def __tap_centroids(
+        *,
+        trace_emissions: Tuple[TraceEmission, ...],
+    ) -> Tuple[Tuple[int, int], ...]:
+        """
+        Project every emitted trace event whose coords look like a 2-point tap into ``(x, y)`` pairs.
+        """
+
+        centroids: List[Tuple[int, int]] = []
+
+        for emission in trace_emissions:
+            coords = emission.event.coords
+            if len(coords) < 2:
+                continue
+
+            centroids.append((int(coords[0]), int(coords[1])))
+
+        return tuple(centroids)
+
+    async def __action_region_worker(
+        self,
+        *,
+        after_image: bytes,
+        before_image: bytes,
+        log_context: Dict[str, Any],
+        coords: Tuple[Tuple[int, int], ...],
+    ) -> None:
+        """
+        Crop the region around every centroid in both captures, pHash each, log the Hamming distance.
+        """
+
+        try:
+            await asyncio.to_thread(
+                self.__compute_and_log_action_regions,
+                coords=coords,
+                log_context=log_context,
+                after_image=after_image,
+                before_image=before_image,
+            )
+        except Exception as exception:  # noqa: BLE001 - observation must never raise
+            logger.warning(
+                "Action region observation failed",
+                extra={
+                    **log_context,
+                    "event": "effect.bbox.failed",
+                    "error.kind": type(exception).__name__,
+                },
+            )
+
+    @staticmethod
+    def __compute_and_log_action_regions(
+        *,
+        after_image: bytes,
+        before_image: bytes,
+        log_context: Dict[str, Any],
+        coords: Tuple[Tuple[int, int], ...],
+    ) -> None:
+        """
+        CPU-bound pHash crop + compare loop intentionally executed on a worker thread.
+        """
+
+        engine = VisualHashEngine()
+
+        after = Image.open(BytesIO(after_image)).convert("RGB")
+        before = Image.open(BytesIO(before_image)).convert("RGB")
+
+        width, height = before.size
+        after_width, after_height = after.size
+
+        for index, (centroid_x, centroid_y) in enumerate(coords):
+            half = ACTION_REGION_HALF_SIDE
+
+            x0 = max(0, centroid_x - half)
+            y0 = max(0, centroid_y - half)
+            x1 = min(width, centroid_x + half)
+            y1 = min(height, centroid_y + half)
+
+            after_x1 = min(after_width, centroid_x + half)
+            after_y1 = min(after_height, centroid_y + half)
+
+            if x1 - x0 <= 0 or y1 - y0 <= 0 or after_x1 - x0 <= 0 or after_y1 - y0 <= 0:
+                continue
+
+            before_crop = before.crop((x0, y0, x1, y1))
+            after_crop = after.crop((x0, y0, after_x1, after_y1))
+
+            after_buffer = BytesIO()
+            before_buffer = BytesIO()
+
+            after_crop.save(after_buffer, format="PNG")
+            before_crop.save(before_buffer, format="PNG")
+
+            pre_hash = engine.hash(image=before_buffer.getvalue())
+            post_hash = engine.hash(image=after_buffer.getvalue())
+
+            distance = ScreenState.hamming_distance(left_hash=pre_hash, right_hash=post_hash)
+            static = distance <= ACTION_REGION_STATIC_HAMMING_FLOOR
+
+            logger.info(
+                "Action region pHash comparison",
+                extra={
+                    **log_context,
+                    "event": "effect.bbox.observed",
+                    "trace.index": index,
+                    "region.static": static,
+                    "centroid.x": centroid_x,
+                    "centroid.y": centroid_y,
+                    "region.half_side": half,
+                    "region.pre_hash": pre_hash,
+                    "region.post_hash": post_hash,
+                    "region.hamming.distance": distance,
+                    "region.hamming.floor": ACTION_REGION_STATIC_HAMMING_FLOOR,
+                },
+            )
+
     def __build_before(
         self,
         *,
@@ -362,8 +519,7 @@ class PostAction:
     ) -> Optional[ScreenArtifact]:
         """
         Build the pre-action :class:`ScreenArtifact` from the raw screen
-        bytes carried on ``capture.image``, with the optional storage
-        URI stamped earlier by :class:`PerceptionService`.
+        bytes carried on ``capture.image``, with the optional storage URI stamped earlier by :class:`PerceptionService`.
         """
 
         if not capture.image and not capture.screenshot_uri:

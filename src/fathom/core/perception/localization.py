@@ -20,6 +20,7 @@ from fathom.schemas.localization import (
     RegionalEvidenceVerdict,
 )
 from fathom.schemas.observation import ElementSource, PerceivedElement, ScreenObservation
+from fathom.schemas.resolution import UnresolvedKind
 from fathom.schemas.screens import ScreenCapture
 
 logger = getLogger(__name__)
@@ -62,9 +63,10 @@ class TargetLocalizationService:
         budget: LocalizationBudget,
         observation: ScreenObservation,
         capture: Optional[ScreenCapture] = None,
+        snap_outcome: Optional[UnresolvedKind] = None,
     ) -> LocalizationResult:
         """
-        Localize one action against the current screen observation.
+        Resolve an action's target into executable coordinates against the screen observation.
         """
 
         _ = image
@@ -97,7 +99,9 @@ class TargetLocalizationService:
             )
             return result
 
-        if action.label_id:
+        label_unreliable = snap_outcome is UnresolvedKind.GENERIC_CONTAINER
+
+        if action.label_id and not label_unreliable:
             label_result = self.__by_identifier(action=action, observation=observation)
             self.__log_localization_result(
                 action=action,
@@ -107,6 +111,16 @@ class TargetLocalizationService:
             )
             if label_result.status == LocalizationStatus.RESOLVED:
                 return label_result
+
+        elif action.label_id and label_unreliable and snap_outcome is not None:
+            logger.info(
+                "Localization label_id stage skipped on unreliable upstream snap",
+                extra={
+                    **self.__log_context(action=action, activity=observation.activity),
+                    "event": "localization.label_id.skipped",
+                    "snap.outcome": snap_outcome.value,
+                },
+            )
 
         target_result = self.__by_target_identifier(action=action, observation=observation)
         self.__log_localization_result(
@@ -164,6 +178,15 @@ class TargetLocalizationService:
         )
 
         if blind_result.status == LocalizationStatus.RESOLVED:
+            logger.info(
+                "Localization resolved via planner-supplied bbox fallback",
+                extra={
+                    **self.__log_context(action=action, activity=observation.activity),
+                    "event": "localization.blind_model_bounds.fired",
+                    "localization.confidence": blind_result.confidence,
+                    "localization.bounds": self.__bounds_snapshot(bounds=blind_result.bounds),
+                },
+            )
             return blind_result
 
         result = LocalizationResult(

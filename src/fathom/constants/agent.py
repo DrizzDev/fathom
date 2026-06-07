@@ -6,11 +6,10 @@ from typing import Final
 
 class DirectiveKind(StrEnum):
     """
-    Classification of an operator-issued directive (HITL response or
-    remote-operator instruction) used to bypass autonomous-mode guards.
+    Classification of an operator-issued directive.
     """
 
-    COMPLETE = "COMPLETE"
+    ABORT = "ABORT"
     NAVIGATE = "NAVIGATE"
     FREE_FORM = "FREE_FORM"
     RETRY_ACTION = "RETRY_ACTION"
