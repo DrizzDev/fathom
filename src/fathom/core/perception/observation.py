@@ -483,21 +483,18 @@ class ScreenObservationService:
     @classmethod
     def __should_run_ocr(cls, *, elements: Tuple[PerceivedElement, ...]) -> bool:
         """
-        Decide whether OCR should run on a NATIVE frame whose hierarchy parsed.
-
-        Bias is asymmetric: a false-negative (skipping OCR when it was needed)
-        leaves the planner blind and triggers self-loops; a false-positive
-        (running OCR when the hierarchy already had everything) costs a couple
-        of seconds and tokens. So OCR runs unless ALL signals say the manifest
-        is already rich: enough total elements, enough text-bearing elements,
-        and enough coverage of those elements with text labels.
+        Run OCR unless the manifest is rich on all three axes (size, text-bearing
+        count, coverage). Skipping when needed blinds the planner; running when
+        redundant costs seconds — so the gate biases toward running.
         """
 
         if len(elements) < OCR_TRIGGER_MIN_MANIFEST_SIZE:
             return True
+
         text_bearing = sum(1 for element in elements if element.text)
         if text_bearing < OCR_TRIGGER_MIN_TEXT_BEARING_ELEMENTS:
             return True
+
         coverage = cls.__manifest_text_coverage(elements=elements)
         return coverage < OCR_TRIGGER_MANIFEST_TEXT_COVERAGE
 

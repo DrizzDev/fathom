@@ -610,7 +610,7 @@ class PostAction:
                     created=int(time.time() * 1000),
                     session_id=self.__context.workflow_id,
                     payload=ScreenshotPayload(capture=capture),
-                    step_number=self.__context.agent_state.step_count,
+                    step_number=self.__context.agent_state.step_count + 1,
                 ),
             )
         except Exception as exception:

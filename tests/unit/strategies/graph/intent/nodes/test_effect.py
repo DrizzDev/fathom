@@ -406,7 +406,7 @@ class PostActionArtifactBuildersTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_after_emits_screenshot_payload_and_stamps_uri(self) -> None:
         """
-        The pipeline receives one ScreenshotPayload record and the staged path becomes the after artifact URI.
+        Post-action artifact carries ``step_count + 1`` (1-based step number).
         """
 
         pipeline = MagicMock()
@@ -429,7 +429,7 @@ class PostActionArtifactBuildersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(record.payload, ScreenshotPayload)
         self.assertEqual(record.session_id, "wf-1")
         self.assertEqual(record.package_name, "com.test.app")
-        self.assertEqual(record.step_number, 4)
+        self.assertEqual(record.step_number, 5)
 
     async def test_after_carries_bytes_when_pipeline_missing(self) -> None:
         """
