@@ -230,14 +230,14 @@ class LoopDetector(BaseModel):
             effect_status.value if effect_status is not None else "",
         )
 
-        logger.debug(
+        logger.info(
             "LoopDetector recorded turn",
             extra={
                 "component": "schemas.state.loop_detector",
                 "event": "loop_detector.record",
-                "screen.visual_hash": screen.visual_hash[:8],
-                "action.identifier": identifier,
                 "action.type": action_type,
+                "action.identifier": identifier,
+                "screen.visual_hash": screen.visual_hash[:8],
                 "action.effect": effect_status.value if effect_status is not None else None,
             },
         )
@@ -482,7 +482,7 @@ class LoopDetector(BaseModel):
             if count >= self.threshold:
                 unique_actions = len(set(self.__recent_actions))
                 if unique_actions >= self.threshold:
-                    logger.debug(
+                    logger.info(
                         "LoopDetector.detect_repetition: screen-repeat detected but action diversity high; not flagging stuck",
                         extra={
                             "component": "loop.detector",
@@ -508,7 +508,7 @@ class LoopDetector(BaseModel):
                 )
                 return True
 
-        logger.debug(
+        logger.info(
             "LoopDetector.detect_repetition=False no_screen_reached_threshold",
             extra={
                 "threshold": self.threshold,

@@ -187,8 +187,8 @@ class GroundNode:
 
             elements = None
 
-            logger.debug(
-                f"[DEBUG: GROUND] Config use_xml={self.__provider.context.use_xml}, xml_content present={xml is not None}"
+            logger.info(
+                f"[GROUND] Config use_xml={self.__provider.context.use_xml}, xml_content present={xml is not None}"
             )
 
             if self.__provider.context.use_xml and xml:

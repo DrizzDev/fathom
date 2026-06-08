@@ -1,20 +1,3 @@
-"""
-Integration replay of the production HITL false-positive trail.
-
-Reproduces the after_validation_bug_fix scenario step-by-step:
-
-    Step 10  validate srp page         (validation short-circuit advances sub-goal 5)
-    Step 11  validate srp visibility   (validation short-circuit advances sub-goal 6)
-    Step 12  sub-goal 7 active, still on same screen
-             -> LoopDetector says "stuck via inert action repetition"
-             -> Old code: planner-synthesized ASK_USER ("Loop detected (Screen repeating)")
-             -> New code: gate defers because contributing tail is validate-only
-
-Asserts the full chain end-to-end against the real :class:`StepPlanner`,
-:class:`EscalationGate`, :class:`StuckSourceResolver`, :class:`AgentState`,
-and :class:`LoopDetector`.
-"""
-
 from __future__ import annotations
 
 import unittest

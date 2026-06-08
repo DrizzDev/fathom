@@ -1,11 +1,3 @@
-"""
-Unit pins for the multi-signal :class:`SubGoalEvaluator`.
-
-Covers the completion-gate decision matrix per sub-goal kind (ACTION vs
-VALIDATION), the criterion observer's additive-only role, and the four
-documented bug-replay scenarios (IahTk, qMrGC profile tap, 12258b13).
-"""
-
 from __future__ import annotations
 
 import unittest

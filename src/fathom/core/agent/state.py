@@ -184,6 +184,14 @@ class AgentState:
         return self.__last_action_type
 
     @property
+    def last_action_description(self) -> Optional[str]:
+        """
+        Descriptor of the most recently executed action, if any.
+        """
+
+        return self.__last_action_description
+
+    @property
     def is_stuck(self) -> bool:
         """
         Whether the agent is stuck in a loop.

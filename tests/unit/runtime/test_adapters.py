@@ -189,13 +189,7 @@ class AdapterAssemblyTest(unittest.TestCase):
         self.assertEqual(assembly.ensemble().members, ())
 
     def test_ensemble_builds_configured_members(self) -> None:
-        """
-        Enabled ensemble with a member list yields the matching localizer
-        instances. ``document_ai_layout`` consumes OCR tokens and is
-        therefore only assembled when OCR is fully configured — the
-        fixture supplies Document AI credentials so the member is built
-        instead of silently dropped.
-        """
+        """Enabled ensemble with a member list yields the matching localizer instances."""
 
         assembly = self.__assemble(
             ensemble_localizer_enabled=True,

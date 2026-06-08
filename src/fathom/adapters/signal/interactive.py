@@ -94,7 +94,7 @@ class InteractiveSignal(SignalPort):
             loop.add_reader(sys.stdin.fileno(), cls.__on_tty_readiness)
             cls.__listener_active = True
         except (RuntimeError, ValueError) as exception:
-            logger.debug("Interactive stdin reader unavailable: %s", exception)
+            logger.warning("Interactive stdin reader unavailable: %s", exception)
 
     @classmethod
     def __on_tty_readiness(cls) -> None:
@@ -111,7 +111,8 @@ class InteractiveSignal(SignalPort):
                 loop.remove_reader(sys.stdin.fileno())
                 cls.__listener_active = False
             except Exception as exception:  # nosec
-                logger.debug("Failed to remove stdin reader: %s", exception)
+                logger.warning("Failed to remove stdin reader: %s", exception)
+
             return
 
         if line is not None:
@@ -134,7 +135,7 @@ class InteractiveSignal(SignalPort):
         if self.__pause_requested:
             return
 
-        logger.debug("Waiting for pause command...")
+        logger.info("Waiting for pause command...")
 
         while True:
             cmd = await self.__input_bus.get()

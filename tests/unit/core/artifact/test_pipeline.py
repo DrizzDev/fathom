@@ -66,26 +66,28 @@ class _RecordingSink(ArtifactSinkPort):
         optional error-injection flag for the failure-path test.
         """
 
-        self.calls: List[Tuple[ArtifactMetadata, bytes]] = []
         self.__cleanup = cleanup
         self.__raise = raise_error
+        self.calls: List[Tuple[ArtifactMetadata, bytes]] = []
 
     async def persist(
         self,
         *,
-        metadata: ArtifactMetadata,
         content: bytes,
+        metadata: ArtifactMetadata,
     ) -> ArtifactReceipt:
         """
         Record the call and return the configured receipt.
         """
 
         self.calls.append((metadata, content))
+
         if self.__raise:
             raise RuntimeError("sink failure")
+
         return ArtifactReceipt(
-            identifier="recorded" if self.__cleanup else "kept",
             local_cleanup=self.__cleanup,
+            identifier="recorded" if self.__cleanup else "kept",
         )
 
 
@@ -132,17 +134,17 @@ def _record(*, step: int = 0, created: int = 1) -> ArtifactRecord:
     """
 
     return ArtifactRecord(
-        session_id="run-test",
-        package_name="app",
-        step_number=step,
         created=created,
+        step_number=step,
+        package_name="app",
+        session_id="run-test",
         payload=ScreenshotPayload(
             capture=ScreenCapture(
                 width=4,
                 height=4,
+                timestamp=0,
                 activity="app",
                 image=_png_bytes(),
-                timestamp=0,
             ),
         ),
     )
@@ -161,21 +163,20 @@ def _pipeline(
     return ArtifactPipeline(
         config=config or PipelineConfiguration(),
         renderers={
-            ArtifactKind.SCREENSHOT: PassthroughRenderer(kind=ArtifactKind.SCREENSHOT),
             ArtifactKind.PERCEPTION: PerceptionRenderer(),
+            ArtifactKind.SCREENSHOT: PassthroughRenderer(kind=ArtifactKind.SCREENSHOT),
         },
         sink=sink,
-        path_manager=_path_manager(tmp=tmp),
         workflow_id="run-test",
+        path_manager=_path_manager(tmp=tmp),
     )
 
 
 class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
     """
-    Pins the synchronous EFS-staging behaviour of :meth:`ArtifactPipeline.emit`.
+    Pins the synchronous EFS-staging behavior of :meth:`ArtifactPipeline.emit`.
 
-    The staging write IS the durability boundary — emit must not return
-    until the payload bytes are on disk.
+    The staging write IS the durability boundary — emit must not return until the payload bytes are on disk.
     """
 
     async def test_emit_writes_payload_to_efs(self) -> None:
@@ -193,6 +194,7 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
 
             screenshot_dir = tmp_path / "screenshot"
             payloads = list(screenshot_dir.rglob("step-000__screenshot__*.png"))
+
             self.assertEqual(len(payloads), 1)
             self.assertTrue(payloads[0].read_bytes())
 
@@ -210,15 +212,15 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
                     ArtifactKind.OCR_RAW: PassthroughRenderer(kind=ArtifactKind.OCR_RAW),
                 },
                 sink=sink,
-                path_manager=_path_manager(tmp=tmp_path),
                 workflow_id="run-test",
+                path_manager=_path_manager(tmp=tmp_path),
             )
 
             await pipeline.emit(
                 record=ArtifactRecord(
-                    session_id="run-test",
-                    package_name="app",
                     step_number=0,
+                    package_name="app",
+                    session_id="run-test",
                     created=1_700_000_000_000,
                     payload=OcrRawPayload(content='{"text": "Swiggy"}'),
                 )
@@ -226,6 +228,7 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
             await pipeline.drain()
 
             payloads = list(tmp_path.rglob("xmls/**/step-000__ocr_raw__*.json"))
+
             self.assertEqual(len(payloads), 1)
             self.assertEqual(payloads[0].read_text(), '{"text": "Swiggy"}')
 
@@ -239,11 +242,11 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp)
             sink = _RecordingSink(cleanup=False)
             pipeline = ArtifactPipeline(
-                config=PipelineConfiguration(),
-                renderers={},
                 sink=sink,
-                path_manager=_path_manager(tmp=tmp_path),
+                renderers={},
                 workflow_id="run-test",
+                config=PipelineConfiguration(),
+                path_manager=_path_manager(tmp=tmp_path),
             )
 
             await pipeline.emit(record=_record())
@@ -254,19 +257,18 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_emit_swallows_renderer_failures(self) -> None:
         """
-        A renderer that raises must not propagate; the record is dropped
-        and no EFS file is written.
+        A renderer that raises must not propagate; the record is dropped and no EFS file is written.
         """
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             sink = _RecordingSink(cleanup=False)
             pipeline = ArtifactPipeline(
-                config=PipelineConfiguration(),
-                renderers={ArtifactKind.SCREENSHOT: _BadRenderer()},
                 sink=sink,
-                path_manager=_path_manager(tmp=tmp_path),
                 workflow_id="run-test",
+                config=PipelineConfiguration(),
+                path_manager=_path_manager(tmp=tmp_path),
+                renderers={ArtifactKind.SCREENSHOT: _BadRenderer()},
             )
 
             await pipeline.emit(record=_record())
@@ -331,10 +333,8 @@ class ArtifactPipelineLocalRetentionPolicyTest(unittest.IsolatedAsyncioTestCase)
     """
     Pins the ``PipelineConfiguration.local.cleanup`` gate.
 
-    Hosts that consume the EFS-staged path after the sink ack disable
-    this flag and own a fallback sweep; the pipeline must skip the
-    unlink whenever the policy is off, even if the sink reports
-    cleanup-safe.
+    Hosts that consume the EFS-staged path after the sink ack disable this flag and own a fallback sweep;
+    the pipeline must skip the unlink whenever the policy is off, even if the sink reports cleanup-safe.
     """
 
     async def test_policy_off_keeps_efs_when_sink_acks_cleanup(self) -> None:
@@ -346,8 +346,8 @@ class ArtifactPipelineLocalRetentionPolicyTest(unittest.IsolatedAsyncioTestCase)
             tmp_path = Path(tmp)
             sink = _RecordingSink(cleanup=True)
             pipeline = _pipeline(
-                tmp=tmp_path,
                 sink=sink,
+                tmp=tmp_path,
                 config=PipelineConfiguration(local=LocalArtifactPolicy(cleanup=False)),
             )
 
@@ -365,8 +365,8 @@ class ArtifactPipelineLocalRetentionPolicyTest(unittest.IsolatedAsyncioTestCase)
             tmp_path = Path(tmp)
             sink = _RecordingSink(cleanup=True)
             pipeline = _pipeline(
-                tmp=tmp_path,
                 sink=sink,
+                tmp=tmp_path,
                 config=PipelineConfiguration(local=LocalArtifactPolicy(cleanup=True)),
             )
 

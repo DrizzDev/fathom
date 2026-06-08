@@ -171,9 +171,25 @@ class AdapterAssembly:
             )
             return None
 
-        return GeminiEmbeddingAdapter(
+        adapter = GeminiEmbeddingAdapter(
             client=client,
             workflow_id=self.__workflow_id,
+        )
+        self.__log_embedder_wired(adapter=adapter)
+        return adapter
+
+    def __log_embedder_wired(self, *, adapter: EmbeddingPort) -> None:
+        """
+        Emit the ``factory.embedder.wired`` event for the wired embedding adapter.
+        """
+
+        logger.info(
+            "Embedding adapter wired",
+            extra={
+                **self.__log_context(),
+                "event": "factory.embedder.wired",
+                "embedder.kind": type(adapter).__name__,
+            },
         )
 
     def ensemble(self) -> EnsembleLocalizerService:
@@ -231,21 +247,6 @@ class AdapterAssembly:
             ArtifactKind.OCR_RAW: PassthroughRenderer(kind=ArtifactKind.OCR_RAW),
             ArtifactKind.SCRIPT: PassthroughRenderer(kind=ArtifactKind.SCRIPT),
             ArtifactKind.PERCEPTION: PerceptionRenderer(drawer=drawer),
-            ArtifactKind.OCR_PERCEPTION: SourceFilteredPerceptionRenderer(
-                drawer=drawer,
-                source=ElementSource.OCR,
-                kind=ArtifactKind.OCR_PERCEPTION,
-            ),
-            ArtifactKind.CV_PERCEPTION: SourceFilteredPerceptionRenderer(
-                drawer=drawer,
-                source=ElementSource.CV,
-                kind=ArtifactKind.CV_PERCEPTION,
-            ),
-            ArtifactKind.ICON_PERCEPTION: SourceFilteredPerceptionRenderer(
-                drawer=drawer,
-                source=ElementSource.ICON,
-                kind=ArtifactKind.ICON_PERCEPTION,
-            ),
             ArtifactKind.VISION_PERCEPTION: SourceFilteredPerceptionRenderer(
                 drawer=drawer,
                 source=ElementSource.VISION,
@@ -253,8 +254,31 @@ class AdapterAssembly:
             ),
             ArtifactKind.TRACE: TraceRenderer(),
             ArtifactKind.VERIFICATION: VerificationRenderer(),
-            ArtifactKind.OVERLAY_PERCEPTION: OverlayPerceptionRenderer(drawer=drawer),
         }
+
+        if self.__perception.cv.enabled:
+            renderers[ArtifactKind.CV_PERCEPTION] = SourceFilteredPerceptionRenderer(
+                drawer=drawer,
+                source=ElementSource.CV,
+                kind=ArtifactKind.CV_PERCEPTION,
+            )
+
+        if self.__perception.ocr.enabled:
+            renderers[ArtifactKind.OCR_PERCEPTION] = SourceFilteredPerceptionRenderer(
+                drawer=drawer,
+                source=ElementSource.OCR,
+                kind=ArtifactKind.OCR_PERCEPTION,
+            )
+
+        if self.__perception.icon.enabled:
+            renderers[ArtifactKind.ICON_PERCEPTION] = SourceFilteredPerceptionRenderer(
+                drawer=drawer,
+                source=ElementSource.ICON,
+                kind=ArtifactKind.ICON_PERCEPTION,
+            )
+
+        if self.__perception.overlay.enabled:
+            renderers[ArtifactKind.OVERLAY_PERCEPTION] = OverlayPerceptionRenderer(drawer=drawer)
 
         logger.info(
             "Artifact pipeline assembled",

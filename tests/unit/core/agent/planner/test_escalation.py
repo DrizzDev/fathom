@@ -76,7 +76,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         through so vision.analyze gets another chance.
         """
 
-        context = AgentFixtures.context_manager_stub()
+        context = AgentFixtures.context_manager()
         vision = self.__vision_with_navigation_action()
         state = self.__validate_only_stuck_state()
 
@@ -121,7 +121,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         reasoner.select_best_action.return_value = vision.analyze.return_value.action
         planner = StepPlanner(vision_tool=vision)
 
-        context = AgentFixtures.context_manager_stub()
+        context = AgentFixtures.context_manager()
         await planner.plan_step(
             state=state,
             screen_width=100,
@@ -152,7 +152,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             screen_height=200,
             prompt_if_stuck=True,
             capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager_stub(),
+            context_manager=AgentFixtures.context_manager(),
         )
 
         self.assertIsNotNone(result.step)
@@ -168,7 +168,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         without invoking the gate.
         """
 
-        context = AgentFixtures.context_manager_stub(user_guidance=[Mock(active=True)])
+        context = AgentFixtures.context_manager(user_guidance=[Mock(active=True)])
         state = self.__validate_only_stuck_state()
 
         vision = self.__vision_with_navigation_action()
@@ -206,7 +206,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             screen_height=200,
             prompt_if_stuck=True,
             capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager_stub(),
+            context_manager=AgentFixtures.context_manager(),
         )
 
         self.assertIsNotNone(result.step)
@@ -225,7 +225,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False))
         )
 
-        context = AgentFixtures.context_manager_stub()
+        context = AgentFixtures.context_manager()
         vision = self.__vision_with_navigation_action()
 
         reasoner = Mock()
@@ -315,7 +315,7 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
             reasoner=reasoner,
             prompt_if_stuck=False,
             capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager_stub(),
+            context_manager=AgentFixtures.context_manager(),
         )
 
         self.assertIsNotNone(result.step)
@@ -343,7 +343,7 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
         reasoner.select_best_action.return_value = analysis.action
 
         planner = StepPlanner(vision_tool=vision)
-        context = AgentFixtures.context_manager_stub(user_guidance=[Mock(active=True)])
+        context = AgentFixtures.context_manager(user_guidance=[Mock(active=True)])
 
         result = await planner.plan_step(
             state=state,

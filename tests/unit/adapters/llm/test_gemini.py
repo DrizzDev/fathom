@@ -180,13 +180,7 @@ class GeminiLLMTest(unittest.TestCase):
         self.assertEqual(config.thinking_config.thinking_level, types.ThinkingLevel.LOW)
 
     def test_async_timeout_does_not_match_cancelled_classifier(self) -> None:
-        """
-        Regression: asyncio.wait_for raises asyncio.TimeoutError when the
-        per-attempt budget expires. That exception has no status code and its
-        message does not contain "cancelled", so the cancelled classifier must
-        return False — letting the GENERIC retry path engage instead of
-        immediately propagating as a cancellation.
-        """
+        """Regression: asyncio.wait_for raises asyncio.TimeoutError when the per-attempt budget expires."""
 
         timeout_message = str(asyncio.TimeoutError()).casefold()
         result = GeminiLLM._GeminiLLM__is_cancelled_error(status_code=None, text=timeout_message)

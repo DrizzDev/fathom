@@ -1,11 +1,3 @@
-"""
-Unit pins for :meth:`LoopDetector.evidence` and the ``since_progress`` walk.
-
-Covers reason classification, the contributing-tail bound (the load-bearing
-distinction that prevents historical no-progress turns from unlocking escalation),
-and the typed snapshot shape consumed by the escalation gate.
-"""
-
 from __future__ import annotations
 
 import unittest

@@ -459,9 +459,22 @@ class ToolRegistry:
                         "type": "BOOLEAN",
                         "description": "True if the overall goal is FULLY completed based on screen state.",
                     },
+                    "goal_completion_reason": {
+                        "type": "STRING",
+                        "description": "Explicit reason why the goal is complete (e.g., 'Order placed successfully', 'Login screen visible as requested'). Required when goal_completed=true.",
+                    },
                     "sub_goal_completed": {
                         "type": "BOOLEAN",
                         "description": "True if the current sub-goal is completed based on screen state.",
+                    },
+                    "subgoal_completion_reason": {
+                        "type": "STRING",
+                        "description": "Explicit reason why the sub-goal is complete (e.g., 'Product page rendered after tapping result'). Required when sub_goal_completed=true.",
+                    },
+                    "completion_criteria_met": {
+                        "type": "ARRAY",
+                        "description": "List of observable criteria that triggered completion (e.g., ['title_visible', 'price_visible']). Optional; use for multi-condition completions.",
+                        "items": {"type": "STRING"},
                     },
                     "current_screen": {
                         "type": "STRING",

@@ -363,3 +363,66 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
+
+
+class CompletionGateValidationMirrorRegressionTest(unittest.TestCase):
+    """
+    Locks the VALIDATION fallback path against silent drift.
+
+    The fallback advances a VALIDATION sub-goal on
+    ``claim.justified AND action.dispatched AND screen.evolved`` even without an
+    asserted claim. This is intentional — some validations are operated by UI
+    action (e.g. tapping a confirm dialog or dismissing an offerwall) — but is
+    the mirror surface of the original verify-during-act bug, so the behavior
+    is pinned in both directions.
+    """
+
+    @staticmethod
+    def __sub_goal() -> SubGoal:
+        """
+        Build a VALIDATION sub-goal fixture for the mirror regression.
+        """
+
+        return SubGoal(
+            index=0,
+            kind=SubGoalKind.VALIDATION,
+            description="Validate offerwall is displayed",
+        )
+
+    def test_validation_advances_on_justified_dispatched_screen_evolution(self) -> None:
+        """
+        Justified + dispatched + screen evolved advances the VALIDATION sub-goal even without a claim.
+        """
+
+        evidence = CompletionEvidence(
+            claim=ClaimEvidence(asserted=False, justified=True),
+            action=ActionEvidence(dispatched=True),
+            screen=ScreenEvidence(evolved=True),
+        )
+
+        decision = CompletionGate().adjudicate(
+            evidence=evidence,
+            sub_goal=self.__sub_goal(),
+            action_kind=ActionKind.NAVIGATION,
+        )
+
+        self.assertEqual(decision.outcome, GateOutcome.ADVANCE)
+
+    def test_validation_does_not_advance_on_unjustified_dispatched_evolution(self) -> None:
+        """
+        Dispatched + screen evolved alone, without justification, does NOT advance a VALIDATION sub-goal.
+        """
+
+        evidence = CompletionEvidence(
+            claim=ClaimEvidence(asserted=False, justified=False),
+            action=ActionEvidence(dispatched=True),
+            screen=ScreenEvidence(evolved=True),
+        )
+
+        decision = CompletionGate().adjudicate(
+            evidence=evidence,
+            sub_goal=self.__sub_goal(),
+            action_kind=ActionKind.NAVIGATION,
+        )
+
+        self.assertEqual(decision.outcome, GateOutcome.RETAIN)

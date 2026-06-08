@@ -85,7 +85,7 @@ class Ledger(ILedger):
                 )
                 await db.commit()
 
-            logger.debug(f"[LEDGER] SET | key={key} | value_length={len(value)}")
+            logger.info(f"[LEDGER] SET | key={key} | value_length={len(value)}")
         except Exception as exception:
             logger.error(f"[LEDGER] SET FAILED | key={key} | error={exception}")
             raise
@@ -104,7 +104,7 @@ class Ledger(ILedger):
             row = await cursor.fetchone()
             result = row[0] if row else None
 
-        logger.debug(f"[LEDGER] GET | key={key} | found={result is not None}")
+        logger.info(f"[LEDGER] GET | key={key} | found={result is not None}")
         return result
 
     async def get_all(self) -> Dict[str, str]:
@@ -122,7 +122,7 @@ class Ledger(ILedger):
             async for row in cursor:
                 result[row[0]] = row[1]
 
-        logger.debug(f"[LEDGER] GET_ALL | total_entries={len(result)} | keys={list(result.keys())}")
+        logger.info(f"[LEDGER] GET_ALL | total_entries={len(result)} | keys={list(result.keys())}")
         return result
 
     async def health_check(self) -> Dict[str, Any]:

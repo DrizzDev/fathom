@@ -135,7 +135,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: List[pytest.Item
 
 
 @pytest.fixture
-async def live_llm() -> "AsyncIterator[LLMPort]":
+async def llm() -> "AsyncIterator[LLMPort]":
     """
     Provide a real LLM adapter for explicitly gated live tests.
     """

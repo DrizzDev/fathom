@@ -38,12 +38,7 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         self.assertEqual(configuration.credentials, "/fake/credentials.json")
 
     def test_qualifier_knobs_flow_into_llm_configuration(self) -> None:
-        """
-        Inference knobs on QualifierConfiguration must reach the LLMConfiguration
-        so the dedicated qualifier LLM behaves deterministically. Constructs
-        via QualifierConfiguration.evolve so untouched fields keep the
-        qualifier-tuned defaults rather than being silently set to zero.
-        """
+        """Inference knobs on QualifierConfiguration must reach the LLMConfiguration so the dedicated qualifier LLM behaves deterministically."""
 
         assembly = RunAssemblyBuilder(settings=FathomSettings(gemini_api_key="x"))
         configuration = assembly.build_qualifier_model_configuration(
@@ -52,13 +47,7 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         self.assertEqual(configuration.thinking_level, "minimal")
 
     def test_qualifier_model_defaults_to_constant(self) -> None:
-        """
-        The qualifier owns its model selection — it must not silently inherit the
-        planner's GEMINI_MODEL setting (a known prod regression: preview model
-        leaking through). Resolved default must equal the constant in
-        fathom.constants.qualification so the eval-validated choice is the only
-        source of truth.
-        """
+        """The qualifier owns its model selection — it must not silently inherit the planner's GEMINI_MODEL setting (a known prod regression: preview model leaking through)."""
 
         assembly = RunAssemblyBuilder(
             settings=FathomSettings(

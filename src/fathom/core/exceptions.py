@@ -33,6 +33,12 @@ class FathomError(Exception):
         return fallback
 
 
+class InvariantViolation(FathomError):
+    """
+    Raised when an internal invariant is broken — a programmer error, never a runtime condition.
+    """
+
+
 class StrategyError(FathomError):
     """
     Exception raised by strategy execution.

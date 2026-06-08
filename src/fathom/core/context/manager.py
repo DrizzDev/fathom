@@ -112,7 +112,7 @@ class ContextManager:
                 # Ledger is reserved for user-actionable memory only.
                 # If you need GCC persistence, implement separate context storage
                 # by replacing the no-op below with serialization + memory.set.
-                logger.debug(
+                logger.info(
                     "[ContextManager] skipping GCC persistence to Ledger",
                     extra={
                         "component": "context",

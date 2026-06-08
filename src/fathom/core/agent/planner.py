@@ -6,12 +6,14 @@ from typing import Any, Dict, List, Literal, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason, PlanMetadataKey
+from fathom.constants.tools import TurnMode
 from fathom.core.agent.escalation_gate import EscalationGate
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.agent.stuck_source import StuckSourceResolver
-from fathom.core.agent.tools import ToolScope
+from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
 from fathom.core.context.manager import ContextManager
+from fathom.core.prompts.escalation import EscalationPromptBuilder
 from fathom.core.runtime.identity import TargetIdentity
 from fathom.core.services.vision import SubGoalContext, VisionService
 from fathom.schemas.actions import Action
@@ -20,7 +22,9 @@ from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
+from fathom.schemas.subgoal import SubGoal, SubGoalKind
 from fathom.schemas.supervision import BlockReason
+from fathom.schemas.tools import AllowedTools, ToolPolicyContext
 
 # Generic recovery hint injected when the escalation gate defers HITL. The
 # model is told what the graph observed and what behaviors are still safe;
@@ -54,9 +58,9 @@ class StepPlanner:
         stuck_source_resolver: Optional[StuckSourceResolver] = None,
     ) -> None:
         self.__vision = vision_tool
-        self.__tool_scope = tool_scope or ToolScope()
+        self.__tool_scope = tool_scope or ToolScope(policies=DEFAULT_TOOL_POLICIES)
         self.__escalation_gate = escalation_gate or EscalationGate(
-            policy=escalation_policy or EscalationPolicy(),
+            policy=escalation_policy or EscalationPolicy()
         )
         self.__stuck_source_resolver = stuck_source_resolver or StuckSourceResolver()
 
@@ -158,14 +162,19 @@ class StepPlanner:
                                 "escalation.stuck_source": decision.stuck_source.value,
                             },
                         )
+                        prompt = EscalationPromptBuilder.build(
+                            source=escalation_source,
+                            current_sub_goal=state.get_current_sub_goal(),
+                            last_action_description=state.last_action_description,
+                        )
                         return PlanResult(
                             step=self.__build_step(
                                 action=Action(
                                     confidence=1.0,
                                     target="Request user assistance",
                                     action_type=ActionType.ASK_USER,
-                                    rationale="Loop detected (Screen repeating). Requesting human intervention.",
-                                    text="I have detected a loop and I'm repeating the same screen state. How should I proceed to break this cycle?",
+                                    rationale=prompt.rationale,
+                                    text=prompt.question,
                                 ),
                                 capture=capture,
                                 is_recovery=True,
@@ -229,10 +238,7 @@ class StepPlanner:
                 "description": current_sub_goal.description,
             }
 
-        allowed_tools = self.__tool_scope.compute(
-            intent=state.intent,
-            capabilities=state.capabilities,
-        )
+        allowed_tools = self.__resolve_tools(state=state, current_sub_goal=current_sub_goal)
         analysis = await self.__vision.analyze(
             use_xml=use_xml,
             capture=capture,
@@ -252,6 +258,7 @@ class StepPlanner:
             visual_hash=self.__compute_simple_hash(capture=capture),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
+        self.__audit_kind_emission(analysis=analysis, current_sub_goal=current_sub_goal)
 
         # Use-bounded signals: rejection history and verifier feedback
         # are one-turn channels. Human guidance ages through a short TTL
@@ -767,6 +774,79 @@ class StepPlanner:
             is_valid_action=action.is_valid,
             validation_reasoning=action.validation_reason,
             reason=action.rationale or ("Step planned" if not is_recovery else "Recovery step"),
+        )
+
+    def __resolve_tools(
+        self,
+        *,
+        state: AgentState,
+        current_sub_goal: Optional[SubGoal],
+    ) -> AllowedTools:
+        """
+        Build the tool-scope context for this turn and emit its observability event.
+        """
+
+        modes: frozenset[TurnMode] = (
+            frozenset({TurnMode.VERIFY})
+            if current_sub_goal is not None and current_sub_goal.kind == SubGoalKind.VALIDATION
+            else frozenset()
+        )
+        context = ToolPolicyContext(capabilities=state.capabilities, modes=modes)
+        allowed = self.__tool_scope.compute(context=context)
+        self.__log_tool_scope_resolved(
+            modes=modes, allowed=allowed, current_sub_goal=current_sub_goal
+        )
+        return allowed
+
+    @staticmethod
+    def __audit_kind_emission(
+        *,
+        analysis: AnalysisResult,
+        current_sub_goal: Optional[SubGoal],
+    ) -> None:
+        """
+        Emit a structured warning when the emitted action_type contradicts the active sub-goal kind.
+        """
+
+        if current_sub_goal is None or analysis.action is None:
+            return
+        action_type = analysis.action.action_type
+        if current_sub_goal.kind == SubGoalKind.ACTION and action_type in (
+            ActionType.VALIDATE,
+            ActionType.COMPLETE,
+        ):
+            logger.warning(
+                "Sub-goal kind/action mismatch: ACTION sub-goal received validate/complete",
+                extra={
+                    "component": "core.agent.planner",
+                    "event": "planner.kind_mismatch.observed",
+                    "sub_goal.index": current_sub_goal.index,
+                    "sub_goal.kind": current_sub_goal.kind.value,
+                    "action.type": action_type.value,
+                },
+            )
+
+    @staticmethod
+    def __log_tool_scope_resolved(
+        *,
+        modes: frozenset[TurnMode],
+        allowed: AllowedTools,
+        current_sub_goal: Optional[SubGoal],
+    ) -> None:
+        """
+        Emit the structured ``tool_scope.resolved`` event for the resolved tool set.
+        """
+
+        logger.info(
+            "Tool scope resolved",
+            extra={
+                "component": "core.agent.planner",
+                "event": "tool_scope.resolved",
+                "tool_scope.modes": sorted(mode.value for mode in modes),
+                "tool_scope.tools_allowed": sorted(name.value for name in allowed.names),
+                "sub_goal.index": current_sub_goal.index if current_sub_goal else None,
+                "sub_goal.kind": current_sub_goal.kind.value if current_sub_goal else None,
+            },
         )
 
     def __build_step(

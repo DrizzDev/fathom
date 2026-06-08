@@ -1,16 +1,3 @@
-"""
-Unit pins for the bounded-timeout hardening of :class:`ADBDevice`.
-
-Covers the guards added after the wedged-emulator hang:
-
-- best-effort ``get_snapshot`` hierarchy timeout via ``snapshot_timeout``
-- ``dump_hierarchy`` lock acquire timeout via ``hierarchy_lock_timeout``
-- post-kill subprocess reap cap via ``subprocess_cleanup_timeout``
-
-Each test patches the underlying primitive directly so the hardening can
-be verified without spawning real subprocesses or depending on a device.
-"""
-
 from __future__ import annotations
 
 import asyncio

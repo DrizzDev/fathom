@@ -159,14 +159,7 @@ class ScreenObservationServiceOverlayDedupTest(unittest.IsolatedAsyncioTestCase)
         self.assertIsInstance(observation.overlays[0], OverlayObservation)
 
     async def test_cv_attribute_maps_to_cv_element_source(self) -> None:
-        """
-        A :class:`LabeledElement` carrying ``attributes["source"] == "cv"``
-        — produced by :class:`VisualControlLabeler` — must surface in the
-        resulting :class:`ScreenObservation` with ``ElementSource.CV``,
-        not ``ElementSource.VISION``. Mis-routing this tag back to
-        VISION poisons downstream telemetry (a real iOS run was mis-
-        reporting CV-only buttons as vision-localized).
-        """
+        """A :class:`LabeledElement` carrying ``attributes["source"] == "cv"`` — produced by :class:`VisualControlLabeler` — must surface in the resulting :class:`ScreenObservation` with ``ElementSource.CV``, not ``ElementSource.VISION``."""
 
         manifest = (
             LabeledElement(

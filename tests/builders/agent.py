@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Iterable, Optional, cast
+from typing import Iterable, Optional
 from unittest.mock import AsyncMock, Mock
 
 from tests.builders.screens import ScreenFixtures
@@ -60,25 +59,25 @@ class AgentFixtures:
         return state
 
     @classmethod
-    def context_manager_stub(
+    def context_manager(
         cls,
         *,
         inject_user_guidance_async: bool = True,
         user_guidance: Optional[Iterable[object]] = None,
     ) -> ContextManager:
         """
-        Build a duck-typed :class:`ContextManager` stub exposing the helpers
-        planner and HITL surfaces consume; safe to cast for typed call sites.
+        Build a typed :class:`ContextManager` stub exposing the helpers planner and HITL surfaces consume.
         """
 
         inject = AsyncMock() if inject_user_guidance_async else Mock()
         guidance = list(user_guidance) if user_guidance is not None else []
 
-        stub = SimpleNamespace(
-            clear_user_guidance=Mock(),
-            inject_user_guidance=inject,
-            consume_user_guidance=Mock(),
-            clear_verifier_feedback=Mock(),
-            get_user_guidance=Mock(return_value=guidance),
-        )
-        return cast("ContextManager", stub)
+        stub = Mock(spec=ContextManager)
+
+        stub.clear_user_guidance = Mock()
+        stub.inject_user_guidance = inject
+        stub.consume_user_guidance = Mock()
+        stub.clear_verifier_feedback = Mock()
+        stub.get_user_guidance = Mock(return_value=guidance)
+
+        return stub

@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from typing import List, Optional
 from unittest.mock import AsyncMock
 
+from tests.builders.agent import AgentFixtures
+
 from fathom.constants import ActionType
 from fathom.constants.agent import DirectiveKind
 from fathom.constants.state import CompletionReason
@@ -206,9 +208,7 @@ class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
                 step_count=step_count,
                 record_hitl_intervention=lambda: None,
             ),
-            context_manager=SimpleNamespace(
-                inject_user_guidance=AsyncMock(),
-            ),
+            context_manager=AgentFixtures.context_manager(),
         )
 
     async def test_no_hitl_service_short_circuits(self) -> None:
@@ -368,9 +368,7 @@ class HitlAskTest(unittest.IsolatedAsyncioTestCase):
                 set_operator_directive=__set_directive,
                 record_hitl_intervention=lambda: interventions.append(True),
             ),
-            context_manager=SimpleNamespace(
-                inject_user_guidance=AsyncMock(),
-            ),
+            context_manager=AgentFixtures.context_manager(),
             _directives=directives,
             _interventions=interventions,
         )
@@ -507,9 +505,7 @@ class _SpyContext(SimpleNamespace):
                 record_hitl_intervention=lambda: None,
                 set_operator_directive=record_directive,
             ),
-            context_manager=SimpleNamespace(
-                inject_user_guidance=AsyncMock(),
-            ),
+            context_manager=AgentFixtures.context_manager(),
         )
 
     def cancel(self) -> None:

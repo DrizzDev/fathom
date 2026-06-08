@@ -215,7 +215,9 @@ class IOSDevice(DevicePort):
                 )
             else:
                 if requested_speed is not None:
-                    logger.debug("Ignoring swipe speed for iOS simctl adapter: %s", requested_speed)
+                    logger.warning(
+                        "Ignoring swipe speed for iOS simctl adapter: %s", requested_speed
+                    )
 
                 device_identifier = await self.__resolve_device_identifier()
                 await self.__run_simctl(
@@ -519,7 +521,7 @@ class IOSDevice(DevicePort):
                 await self.get_dimensions()
                 return True
             except Exception as exception:
-                logger.debug("Device readiness check pending: %s", exception)
+                logger.info("Device readiness check pending: %s", exception)
                 await asyncio.sleep(self.__adapter_defaults.device_ready_poll_seconds)
 
         return False
@@ -859,7 +861,7 @@ class IOSDevice(DevicePort):
                     process.kill()
                     await process.wait()
                 except ProcessLookupError:
-                    logger.debug("Subprocess already terminated before cleanup completed.")
+                    logger.info("Subprocess already terminated before cleanup completed.")
                 except Exception as cleanup_exception:
                     logger.warning("Failed to cleanup subprocess: %s", cleanup_exception)
 

@@ -1,11 +1,3 @@
-"""
-Pins for :class:`SubGoal` schema changes introduced in Phase 1C.
-
-The active concern is the per-sub-goal step budget: the schema must
-expose a ``max_steps`` field with a sensible default without requiring
-decomposer changes.
-"""
-
 from __future__ import annotations
 
 import pytest

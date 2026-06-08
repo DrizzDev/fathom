@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
@@ -240,42 +241,93 @@ class SubGoalEvaluator:
         cache = self.__context.embedding_cache
         embedder = self.__context.embedder
         if cache is None or embedder is None:
+            logger.info(
+                "Semantic similarity unavailable; embedder or cache missing",
+                extra={
+                    "component": "graph.intent.completion",
+                    "event": "completion.semantic_similarity.unavailable",
+                    "cache.present": cache is not None,
+                    "embedder.present": embedder is not None,
+                },
+            )
             return None
 
         rationale = (analysis.subgoal_completion_reason or analysis.reasoning or "").strip()
         if not rationale:
+            logger.info(
+                "Semantic similarity skipped; rationale text is empty",
+                extra={
+                    "component": "graph.intent.completion",
+                    "event": "completion.semantic_similarity.empty_rationale",
+                    "sub_goal.index": sub_goal.index,
+                },
+            )
             return None
 
         try:
             sub_goal_vector = await cache.get(text=sub_goal.description)
             if sub_goal_vector is None:
+                logger.info(
+                    "Sub-goal embedding cache miss",
+                    extra={
+                        "component": "graph.intent.completion",
+                        "event": "completion.semantic_similarity.cache_miss",
+                        "sub_goal.index": sub_goal.index,
+                    },
+                )
                 return None
             rationale_result = await embedder.embed(texts=(rationale,))
-        except Exception as exception:  # noqa: BLE001 - logged below
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:  # noqa: BLE001 - logged with kind + message
             logger.warning(
                 "Semantic similarity scoring failed; falling back to legacy verifier",
                 extra={
                     "component": "graph.intent.completion",
                     "event": "completion.semantic_similarity.error",
                     "error.kind": type(exception).__name__,
+                    "error.message": str(exception),
+                    "sub_goal.index": sub_goal.index,
                 },
             )
             return None
 
         if not rationale_result.vectors:
+            logger.warning(
+                "Rationale embedding returned no vectors",
+                extra={
+                    "component": "graph.intent.completion",
+                    "event": "completion.semantic_similarity.empty_result",
+                    "sub_goal.index": sub_goal.index,
+                },
+            )
             return None
 
         try:
-            return float(sub_goal_vector.cosine(other=rationale_result.vectors[0]))
-        except ValueError:
+            score = float(sub_goal_vector.cosine(other=rationale_result.vectors[0]))
+        except ValueError as exception:
             logger.warning(
                 "Embedding vector dimension mismatch",
                 extra={
                     "component": "graph.intent.completion",
                     "event": "completion.semantic_similarity.dimension_mismatch",
+                    "error.message": str(exception),
+                    "sub_goal.index": sub_goal.index,
                 },
             )
             return None
+
+        logger.info(
+            "Semantic similarity resolved",
+            extra={
+                "component": "graph.intent.completion",
+                "event": "completion.semantic_similarity.resolved",
+                "sub_goal.index": sub_goal.index,
+                "similarity.score": score,
+                "rationale.length": len(rationale),
+            },
+        )
+        return score
 
     def __advance_or_complete(
         self,

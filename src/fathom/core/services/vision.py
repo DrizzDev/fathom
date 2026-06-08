@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Optional, Set, TypedDict
 
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
-from fathom.core.agent.tools import ToolScope
+from fathom.constants.tools import TurnMode
+from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.prompts.factory import PromptFactory
@@ -25,7 +26,7 @@ from fathom.schemas.conversation import ConversationTurn, TurnPart
 from fathom.schemas.observation import LoopObservation, ScreenObservation
 from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
-from fathom.schemas.tools import AllowedTools
+from fathom.schemas.tools import AllowedTools, ToolPolicyContext
 from fathom.schemas.vision import PastActionEntry
 from fathom.utils.image import ImageProcessor
 
@@ -72,14 +73,17 @@ class VisionService:
         self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
         self.__capabilities = capabilities
-        self.__tool_scope = tool_scope or ToolScope()
+        self.__tool_scope = tool_scope or ToolScope(policies=DEFAULT_TOOL_POLICIES)
 
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
 
     async def prewarm(self) -> None:
-        """Prewarm the LLM cache with the canonical tool variants for the live runtime."""
+        """
+        Prewarm the LLM cache with the canonical tool variants for the live runtime.
+        """
 
         start = time.time()
+
         for variant in self.__prewarm_variants():
             instruction = self.__builder.build(tools=variant)
             payload = ToolRegistry.definitions(names=variant.names)
@@ -87,17 +91,21 @@ class VisionService:
 
         await self.__telemetry.debug(
             "Latency phase completed",
-            duration=time.time() - start,
             phase="planner.prewarm",
+            duration=time.time() - start,
             type=FathomEvent.PHASE_HEARTBEAT,
         )
 
     def __prewarm_variants(self) -> List[AllowedTools]:
-        """Return canonical tool variants matched to the runtime capabilities."""
+        """
+        Return canonical tool variants matched to the runtime capabilities.
+        """
 
         return [
-            self.__tool_scope.compute(intent=intent, capabilities=self.__capabilities)
-            for intent in ("interact", "verify")
+            self.__tool_scope.compute(
+                context=ToolPolicyContext(capabilities=self.__capabilities, modes=modes),
+            )
+            for modes in (frozenset(), frozenset({TurnMode.VERIFY}))
         ]
 
     async def analyze(
@@ -188,7 +196,7 @@ class VisionService:
             guidance_count=len(context_manager.get_user_guidance()),
         )
 
-        logger.debug(
+        logger.info(
             f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
         )
 
@@ -197,7 +205,7 @@ class VisionService:
         # Sub-goal context (if provided by caller) - SINGLE FOCUS MODE
         # Only current sub-goal is passed to Gemini to prevent skip-ahead behavior.
         if sub_goal_info:
-            logger.debug(
+            logger.info(
                 f"[Vision] Single sub-goal focus mode: step [{sub_goal_info['index'] + 1}/{sub_goal_info['total']}] | "
                 f"Task: {sub_goal_info['description'][:60]}"
             )
@@ -245,7 +253,7 @@ class VisionService:
         if screen_observation is not None:
             dynamic_context += self.__render_screen_observation(observation=screen_observation)
 
-        logger.debug(
+        logger.info(
             f"[H3] Dynamic Context Built | "
             f"has_memory={bool(all_memory)} | "
             f"memory_keys={list(all_memory.keys()) if all_memory else []} | "

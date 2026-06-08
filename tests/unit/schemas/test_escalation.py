@@ -1,9 +1,3 @@
-"""
-Unit pins for the escalation schema surface.
-
-Covers default values, frozen-ness, enum stability, and decision-shape invariants.
-"""
-
 from __future__ import annotations
 
 import unittest

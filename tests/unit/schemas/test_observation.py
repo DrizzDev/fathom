@@ -1,10 +1,3 @@
-"""
-Pins for the :class:`LoopObservation` schema. The observation is the
-structured input the ANALYZE prompt renders into
-``<SYSTEM_OBSERVATION>`` — pin its shape so prompt assembly remains
-stable across refactors.
-"""
-
 from __future__ import annotations
 
 import pytest

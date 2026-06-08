@@ -227,12 +227,7 @@ class DocumentAiOcrAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(kwargs["credentials"])
 
     def test_build_client_materializes_inline_dict_credentials(self) -> None:
-        """
-        Inline dict credentials are materialized into a
-        :class:`service_account.Credentials` instance via
-        ``from_service_account_info`` and passed to the gRPC client.
-        Mirrors the path the Gemini adapter uses for the same payload.
-        """
+        """Inline dict credentials are materialized into a :class:`service_account.Credentials` instance via ``from_service_account_info`` and passed to the gRPC client."""
 
         configuration = DocumentAiConfiguration(
             project="vision-478905",
@@ -259,12 +254,7 @@ class DocumentAiOcrAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(fake_client_class.call_args.kwargs["credentials"], fake_credentials)
 
     def test_build_client_materializes_file_path_credentials(self) -> None:
-        """
-        A file-path credentials value resolves through
-        ``from_service_account_file`` and is forwarded to the gRPC
-        client. The on-disk existence check goes through a patched
-        :class:`Path` so the test does not write to the filesystem.
-        """
+        """A file-path credentials value resolves through ``from_service_account_file`` and is forwarded to the gRPC client."""
 
         configuration = DocumentAiConfiguration(
             project="vision-478905",

@@ -16,8 +16,8 @@ class NoopSink(ArtifactSinkPort):
     async def persist(
         self,
         *,
-        metadata: ArtifactMetadata,
         content: bytes,
+        metadata: ArtifactMetadata,
     ) -> ArtifactReceipt:
         """
         Acknowledge the call and leave the local copy in place.

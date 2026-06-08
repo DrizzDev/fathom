@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import FrozenSet
+from typing import Final
 
 
 class ToolName(StrEnum):
-    """Canonical tool identifiers exposed to the language model."""
+    """
+    Canonical tool identifiers exposed to the language model.
+    """
 
     ASK_USER = "ask_user"
     EXECUTE_UI = "execute_ui"
@@ -15,10 +17,18 @@ class ToolName(StrEnum):
     VALIDATE_STATE = "validate_state"
 
 
-BASE_TOOLS: FrozenSet[ToolName] = frozenset(
+class TurnMode(StrEnum):
+    """
+    Per-turn flag controlling which optional tool group the LLM may invoke.
+
+    Multiple flags can be active simultaneously. Action tools live in
+    :data:`BASE_TOOLS` and are always available regardless of any mode flag;
+    the mode set is purely an *additive* exposure signal for optional groups.
+    """
+
+    VERIFY = "verify"
+
+
+BASE_TOOLS: Final[frozenset[ToolName]] = frozenset(
     {ToolName.EXECUTE_UI, ToolName.STORE_MEMORY, ToolName.RECALL_MEMORY}
 )
-
-VERIFICATION_TOOLS: FrozenSet[ToolName] = frozenset({ToolName.VERIFY_GOAL, ToolName.VALIDATE_STATE})
-
-VERIFICATION_KEYWORDS: FrozenSet[str] = frozenset({"verify", "check", "confirm", "validate"})

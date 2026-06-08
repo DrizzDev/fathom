@@ -181,6 +181,7 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --tb=short --import-mode=importlib"
 markers = [
     "release: calls a real LLM provider for staging or production release gating",
+    "slow: opt-in long-running tests (e.g. full-corpus live replays); skipped by default",
 ]
 
 [tool.coverage.run]

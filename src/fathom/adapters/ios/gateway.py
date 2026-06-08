@@ -278,7 +278,7 @@ class IOSAutomationGateway:
             )
         except Exception as exception:
             if self.__is_missing_actions_release(exception=exception):
-                logger.debug(
+                logger.warning(
                     "Ignoring missing iOS automation actions release at %s: %s",
                     actions_path,
                     exception,

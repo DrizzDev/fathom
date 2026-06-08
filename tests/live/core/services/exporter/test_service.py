@@ -118,12 +118,12 @@ class TestScriptExporter:
     Live LLM checks for ScriptExporter.
     """
 
-    async def test_varo_trace_export_keeps_required_actions(self, live_llm: LLMPort) -> None:
+    async def test_varo_trace_export_keeps_required_actions(self, llm: LLMPort) -> None:
         """
         Varo export must include launch, login credentials, onboarding, and final validation.
         """
 
-        exporter = ScriptExporter(llm=live_llm, use_cache=False)
+        exporter = ScriptExporter(llm=llm, use_cache=False)
 
         script = await exporter.export_with_llm(
             step_results=StepResultFactory.varo_onboarding_trace(),

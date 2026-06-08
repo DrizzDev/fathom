@@ -381,7 +381,7 @@ class GeminiLLM(LLMPort):
         ):
             metrics[metric_name] = float(getattr(usage, attribute, 0) or 0)
 
-        logger.debug(
+        logger.info(
             "Gemini usage recorded",
             extra={
                 "component": "adapters.llm.gemini",

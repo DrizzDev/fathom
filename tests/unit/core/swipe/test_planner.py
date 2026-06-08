@@ -143,13 +143,7 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
         self.assertGreaterEqual(len(sequence.accepted), 1)
 
     def test_short_travel_original_is_dispatched_cGJoU_replay(self) -> None:
-        """
-        cGJoU replay: a gesture whose travel would have triggered the legacy
-        MINIMUM_TRAVEL_VIOLATED pre-dispatch reject is now dispatched. The
-        decision of whether the swipe was effective happens post-dispatch by
-        observing screen evolution; the coordinator falls through to shifted
-        candidates only when the original produces no visual change.
-        """
+        """cGJoU replay: a gesture whose travel would have triggered the legacy MINIMUM_TRAVEL_VIOLATED pre-dispatch reject is now dispatched."""
 
         policy = SwipeRetryPolicy(enabled=False, minimum_travel=300)
         sequence = SwipeRetryPlanner().candidates(

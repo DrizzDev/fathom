@@ -231,7 +231,7 @@ class DocumentAiOcr(OcrPort):
                     indent=2,
                 )
             except Exception:
-                logger.debug(
+                logger.warning(
                     "Document AI protobuf JSON serialization failed; falling back to plain JSON",
                     exc_info=True,
                     extra={
@@ -248,7 +248,7 @@ class DocumentAiOcr(OcrPort):
                 sort_keys=True,
             )
         except Exception:
-            logger.debug(
+            logger.warning(
                 "Document AI raw response serialization failed",
                 exc_info=True,
                 extra={

@@ -1,12 +1,3 @@
-"""
-Unit pins for :class:`LoopDetector` inert-action-repetition detection.
-
-Detects the HmrHD-class stuck pattern: the agent re-proposes the same
-action across consecutive turns while the effect classifier reports
-NO_PROGRESS. Independent of the screen-history thresholds so the
-planner can pivot one wasted action earlier than the classic detectors.
-"""
-
 from __future__ import annotations
 
 from fathom.constants.runtime import DEFAULT_INERT_REPETITION_THRESHOLD

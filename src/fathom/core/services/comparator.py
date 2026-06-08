@@ -173,7 +173,7 @@ class ScreenComparator:
 
             return cast("ImageMatrix", decoded_image)
         except Exception as exception:
-            logger.debug("Image decode failed: %s", exception)
+            logger.warning("Image decode failed: %s", exception)
             return None
 
     @staticmethod
@@ -244,7 +244,7 @@ class ScreenComparator:
                 before_image=self.__get_content_region(image=image_before),
             )
         except Exception as exception:
-            logger.debug("SSIM failed: %s", exception)
+            logger.warning("SSIM failed: %s", exception)
             return None
 
     def __compute_ssim_map_mean(
@@ -343,7 +343,7 @@ class ScreenComparator:
             changed_pixels = int(numpy.sum(diff > PIXEL_CHANGE_THRESHOLD))
             return float(changed_pixels) / float(total_pixels)
         except Exception as exception:
-            logger.debug("Pixel diff failed: %s", exception)
+            logger.warning("Pixel diff failed: %s", exception)
             return None
 
     def __compute_changed_regions(self, *, before: bytes, after: bytes) -> List[ScreenChangeRegion]:
@@ -393,7 +393,7 @@ class ScreenComparator:
 
             return regions
         except Exception as exception:
-            logger.debug("Changed region detection failed: %s", exception)
+            logger.warning("Changed region detection failed: %s", exception)
             return []
 
     @staticmethod
@@ -448,5 +448,5 @@ class ScreenComparator:
                 dy=float(shift[1]),
             )
         except Exception as exception:
-            logger.debug("Phase correlation failed: %s", exception)
+            logger.warning("Phase correlation failed: %s", exception)
             return None

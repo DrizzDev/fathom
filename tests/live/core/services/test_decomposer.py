@@ -48,12 +48,12 @@ class TestIntentDecomposer:
     Live LLM checks for IntentDecomposer.
     """
 
-    async def test_varo_onboarding_intent_preserves_required_steps(self, live_llm: LLMPort) -> None:
+    async def test_varo_onboarding_intent_preserves_required_steps(self, llm: LLMPort) -> None:
         """
         Varo onboarding must decompose into ordered, executable sub-goals.
         """
 
-        decomposer = IntentDecomposer(llm=live_llm)
+        decomposer = IntentDecomposer(llm=llm)
 
         sub_goals = await decomposer.decompose(intent=VARO_ONBOARDING_INTENT)
         descriptions = DecompositionAssertions.joined_descriptions(sub_goals=sub_goals)
@@ -69,12 +69,12 @@ class TestIntentDecomposer:
             phrases=("launch", "login", "password", "home"),
         )
 
-    async def test_compound_scroll_and_select_intent_stays_atomic(self, live_llm: LLMPort) -> None:
+    async def test_compound_scroll_and_select_intent_stays_atomic(self, llm: LLMPort) -> None:
         """
         Compound navigation-to-action wording must not be over-split.
         """
 
-        decomposer = IntentDecomposer(llm=live_llm)
+        decomposer = IntentDecomposer(llm=llm)
 
         sub_goals = await decomposer.decompose(
             intent="Scroll to labs section and select any category"

@@ -218,18 +218,7 @@ class ContextManagerShutdownTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_commit_does_not_grow_persist_queue(self) -> None:
-        """
-        Regression for the unbounded-queue leak in __enqueue_persist.
-
-        Every step of every workflow calls commit(); commit() calls
-        __enqueue_persist(). If __enqueue_persist still pushes to
-        __persist_queue while the persistence worker is disabled, the queue
-        grows by one entry per step for the worker process lifetime — a real
-        memory leak in long-running Temporal workers.
-
-        Per the disabled-persistence design, __enqueue_persist must return
-        early without touching the queue.
-        """
+        """Regression for the unbounded-queue leak in __enqueue_persist."""
 
         manager = ContextManager(memory=MagicMock())
 

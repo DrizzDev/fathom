@@ -4,7 +4,6 @@ import asyncio
 from logging import getLogger
 from typing import Any, Dict, Tuple
 
-from fathom.constants.artifact import ArtifactComponent
 from fathom.interfaces.artifact import ArtifactSinkPort
 from fathom.schemas.artifact import ArtifactMetadata, ArtifactReceipt
 
@@ -15,10 +14,8 @@ class CompositeSink(ArtifactSinkPort):
     """
     Decorator that fans one persist call out to many sinks.
 
-    Each downstream sink runs concurrently. The composite reports
-    ``local_cleanup=True`` only when **every** downstream sink agrees;
-    a single dissenting receipt keeps the local copy in place so no
-    sink ever loses access to the artifact prematurely.
+    Each downstream sink runs concurrently. The composite reports ``local_cleanup=True`` only when **every** downstream sink agrees;
+    a single dissenting receipt keeps the local copy in place so no sink ever loses access to the artifact prematurely.
     """
 
     def __init__(self, *, sinks: Tuple[ArtifactSinkPort, ...]) -> None:
@@ -31,8 +28,8 @@ class CompositeSink(ArtifactSinkPort):
     async def persist(
         self,
         *,
-        metadata: ArtifactMetadata,
         content: bytes,
+        metadata: ArtifactMetadata,
     ) -> ArtifactReceipt:
         """
         Dispatch to every downstream sink concurrently and aggregate receipts.
@@ -50,23 +47,22 @@ class CompositeSink(ArtifactSinkPort):
                 logger.warning(
                     "Composite sink branch raised; leaving local copy in place",
                     extra={
-                        "component": ArtifactComponent.SINK_CLOUD,
-                        "event": "artifact.composite.branch_failed",
-                        "artifact.kind": metadata.kind.value,
                         "error.message": str(receipt),
+                        "artifact.kind": metadata.kind.value,
+                        "component": "artifact.sink.cloud",
+                        "event": "artifact.composite.branch_failed",
                     },
                 )
                 cleanup_safe = False
                 continue
+
             if not receipt.local_cleanup:
                 cleanup_safe = False
+
             if receipt.identifier:
                 identifiers.append(receipt.identifier)
 
-        return ArtifactReceipt(
-            identifier=",".join(identifiers),
-            local_cleanup=cleanup_safe,
-        )
+        return ArtifactReceipt(local_cleanup=cleanup_safe, identifier=",".join(identifiers))
 
     @property
     def downstream_count(self) -> int:
@@ -82,4 +78,4 @@ class CompositeSink(ArtifactSinkPort):
         Structured-logging component identifier for this composite.
         """
 
-        return {"component": ArtifactComponent.SINK_CLOUD}
+        return {"component": "artifact.sink.cloud"}

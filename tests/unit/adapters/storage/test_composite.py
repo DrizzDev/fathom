@@ -1,13 +1,3 @@
-"""
-Pins :class:`CompositeStorage` failure-surface and observability.
-
-The composite fans out to every configured backend and returns the
-first successful identifier. The "every backend failed" path used to
-silently return an empty string; the current implementation logs
-``storage.composite.save.all_failed`` at ERROR and still returns the
-empty string so callers can detect the silent loss.
-"""
-
 from __future__ import annotations
 
 import unittest

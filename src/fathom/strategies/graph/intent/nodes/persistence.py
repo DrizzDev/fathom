@@ -38,7 +38,7 @@ class GraphStatePersistence:
         )
 
         if checkpoint and isinstance(checkpoint, dict):
-            logger.debug(
+            logger.info(
                 "Restoring agent state from graph checkpoint",
                 extra={
                     **self.__log_context(),
@@ -55,7 +55,7 @@ class GraphStatePersistence:
             return
 
         if current_index > 0:
-            logger.debug(
+            logger.info(
                 "Restoring sub-goal index from graph state",
                 extra={
                     **self.__log_context(),
@@ -76,7 +76,7 @@ class GraphStatePersistence:
         checkpoint = self.__context.agent_state.to_checkpoint()
         current_index = self.__context.agent_state.current_sub_goal_index
 
-        logger.debug(
+        logger.info(
             "Persisting agent state to graph",
             extra={
                 **self.__log_context(),

@@ -80,7 +80,7 @@ class DocumentAiMapper:
         These counts answer whether paragraphs / lines / blocks carry merge structure the mapper is currently discarding.
         """
 
-        logger.debug(
+        logger.info(
             "Document AI page layout levels",
             extra={
                 "component": "adapter.ocr.document.mapper",

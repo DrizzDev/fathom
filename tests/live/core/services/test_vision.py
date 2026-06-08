@@ -126,7 +126,7 @@ class TestVisionService:
 
     async def test_user_guidance_prevents_retyping_filled_email(
         self,
-        live_llm: LLMPort,
+        llm: LLMPort,
         memory_port_stub: MemoryPort,
     ) -> None:
         """
@@ -139,7 +139,7 @@ class TestVisionService:
             step=1,
         )
         service = VisionService(
-            llm=live_llm,
+            llm=llm,
             memory=memory_port_stub,
             telemetry=NoopTelemetry(),
             use_cache=False,

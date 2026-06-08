@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import datetime
 from logging import getLogger
 from typing import Any, Dict, Optional
@@ -59,13 +58,16 @@ class GCSImageStorage(IImageStorage):
 
                 meta = extract_metadata(metadata or {})
 
+                if not meta.filename:
+                    raise VisionError(
+                        "GCS upload requires a canonical filename in metadata; "
+                        "callers must supply step-NNN__kind__iso.<ext>"
+                    )
+
                 storage_bucket = client.bucket(bucket)
 
                 folder = datetime.now().strftime("%Y-%m-%d")
-                computed_name = meta.filename or self.__fallback_filename(
-                    category=meta.category, activity=meta.activity, package=meta.package
-                )
-                filename = f"{meta.category}/{folder}/{meta.session}/{computed_name}"
+                filename = f"{meta.category}/{folder}/{meta.session}/{meta.filename}"
 
                 content_type = self.__content_type_for(filename=filename)
 
@@ -73,39 +75,13 @@ class GCSImageStorage(IImageStorage):
                 blob.upload_from_string(data, content_type=content_type)
 
                 uri = f"gs://{bucket}/{filename}"
-                logger.debug(f"Uploaded image to GCS: {uri}")
+                logger.info(f"Uploaded image to GCS: {uri}")
                 return uri
             except Exception as exception:
                 logger.warning(f"Failed to upload to GCS: {exception}")
                 raise VisionError(f"GCS upload failed: {exception}") from exception
 
         return await asyncio.to_thread(__upload_sync)
-
-    @staticmethod
-    def __fallback_filename(*, category: str, activity: str, package: str) -> str:
-        """
-        Build a category-aware filename when the caller did not supply one.
-        Package is embedded so multi-package sessions do not collide.
-        """
-
-        extension = GCSImageStorage.__extension_for(category=category)
-
-        timestamp = int(time.time() * 1000)
-        return f"{timestamp}__{package}__{activity}{extension}"
-
-    @staticmethod
-    def __extension_for(*, category: str) -> str:
-        """
-        Resolve the file extension for an artifact category.
-        """
-
-        if category == "xmls":
-            return ".xml"
-
-        if category == "history":
-            return ".txt"
-
-        return ".png"
 
     @staticmethod
     def __content_type_for(*, filename: str) -> str:

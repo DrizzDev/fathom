@@ -121,7 +121,7 @@ class WorkflowSignalState:
                 self.__metrics.context_consumptions += 1
                 remaining = len(self.__contexts)
 
-                logger.debug(
+                logger.info(
                     f"[signal-state] workflow={self.__workflow_id} event=context_dequeued "
                     f"remaining={remaining} context_length={len(context)}"
                 )

@@ -100,7 +100,7 @@ class GeminiPromptBuilder(PromptBuilder):
                     f"4. The system will automatically advance to the next step\n"
                     f"</CURRENT_STEP>"
                 )
-                logger.debug(
+                logger.info(
                     f"[H3] Single Sub-goal Focus | step={index + 1}/{total} | "
                     f"task={(description or '')[:50]}"
                 )
@@ -117,7 +117,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 f"3. Signal completion/focus goals directly via completion flags\n"
                 f"</APP_LAUNCH_SEMANTICS>"
             )
-            logger.debug(f"[H3] App Launch Semantics | package={pkg}")
+            logger.info(f"[H3] App Launch Semantics | package={pkg}")
 
         # 1. Memory Ledger (Factual Memory - PERSISTENT ACROSS SCREENS)
         if ledger := self.__get_ledger_segment(memory=memory):
@@ -127,9 +127,9 @@ class GeminiPromptBuilder(PromptBuilder):
                 f"{ledger}\n"
                 f"</MEMORY_LEDGER>"
             )
-            logger.debug(f"[H3] Memory Ledger Added | ledger_length={len(ledger)}")
+            logger.info(f"[H3] Memory Ledger Added | ledger_length={len(ledger)}")
         else:
-            logger.debug("[H3] No Memory Ledger | memory is empty or None")
+            logger.info("[H3] No Memory Ledger | memory is empty or None")
 
         # 2. Roadmap & Milestones (Tier 2 Context)
         if milestones := context.get("milestones", []):

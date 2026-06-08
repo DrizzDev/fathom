@@ -176,12 +176,7 @@ class AgentStateLastActionPersistenceTest(unittest.TestCase):
         )
 
     def test_last_action_round_trips_through_checkpoint(self) -> None:
-        """
-        ``to_checkpoint`` / ``from_checkpoint`` must preserve
-        ``__last_action_type`` and ``__last_action_description`` so a
-        graph-state restore between nodes does not wipe the descriptor the
-        LoopDetector will consume on the next ``update_screen``.
-        """
+        """``to_checkpoint`` / ``from_checkpoint`` must preserve ``__last_action_type`` and ``__last_action_description`` so a graph-state restore between nodes does not wipe the descriptor the LoopDetector will consume on the next ``update_screen``."""
 
         state = AgentState(intent="test", capabilities=self.__caps())
 
@@ -247,20 +242,36 @@ class AgentStateLastActionPersistenceTest(unittest.TestCase):
         )
 
         self.assertEqual(state.last_action_type, "tap")
-        self.assertEqual(
-            state._AgentState__last_action_description,  # type: ignore[attr-defined]
-            "Tap on Submit",
+        self.assertEqual(state.last_action_description, "Tap on Submit")
+
+    def test_last_action_description_returns_none_when_no_action_recorded(self) -> None:
+        """
+        ``last_action_description`` must surface ``None`` on a fresh state with no recorded action.
+        """
+
+        state = AgentState(intent="test", capabilities=self.__caps())
+
+        self.assertIsNone(state.last_action_description)
+
+    def test_last_action_description_survives_checkpoint_round_trip(self) -> None:
+        """
+        ``last_action_description`` must round-trip through the checkpoint so a graph-state restore inherits the descriptor.
+        """
+
+        state = AgentState(intent="test", capabilities=self.__caps())
+        state.record_attempt(
+            reason="low_confidence",
+            action=self.__tap_action(target="Continue"),
         )
+
+        payload = state.to_checkpoint()
+        restored = AgentState.from_checkpoint(data=payload, capabilities=self.__caps())
+
+        self.assertEqual(restored.last_action_description, "Tap on Continue")
 
     def test_record_blocked_action_trips_loop_detector(self) -> None:
         """
-        Reproduces Bug C from run 05e17bda step 12: the planner's
-        ``repeated_current_screen`` guard previously fired ``should_retry=True``
-        without feeding the rejected attempt into the LoopDetector, so the
-        detector's ``is_stuck`` never tripped and the workflow looped silently
-        until ``max_steps``. ``record_blocked_action`` must now route through
-        ``record_attempt`` so four blocks of the same target flip ``is_stuck``
-        and let the planner's escalation gate emit ``ASK_USER``.
+        Four blocks of the same target must flip ``is_stuck`` via the LoopDetector.
         """
 
         state = AgentState(intent="test", capabilities=self.__caps())
@@ -277,11 +288,7 @@ class AgentStateLastActionPersistenceTest(unittest.TestCase):
 
     def test_record_blocked_action_preserves_failure_context(self) -> None:
         """
-        The historical responsibilities of ``record_blocked_action`` — pushing
-        a failed action into history, recording a failure for prompt context,
-        and surfacing the block reason via ``last_error`` — must continue to
-        hold after wiring the LoopDetector feed. This test pins those exact
-        side effects so a future refactor that drops them is caught here.
+        ``record_blocked_action`` must still push history, record failure context, and set ``last_error``.
         """
 
         state = AgentState(intent="test", capabilities=self.__caps())

@@ -1,7 +1,3 @@
-"""
-Pins for the bounded and abandonable phase primitives used by post-terminal finalization.
-"""
-
 from __future__ import annotations
 
 import asyncio

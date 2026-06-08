@@ -8,18 +8,15 @@ class EfsSink(ArtifactSinkPort):
     """
     Sink that explicitly retains the EFS-staged copy.
 
-    The pipeline stages bytes to EFS before invoking any sink. This
-    sink reports success without doing any remote work and asks the
-    pipeline to keep the local file, distinguishing the "local-only by
-    design" path from :class:`NoopSink` (which represents "drop
-    everything; tests don't care about artifacts").
+    The pipeline stages bytes to EFS before invoking any sink. This sink reports success without doing any remote work and asks the pipeline to keep the local file,
+    distinguishing the "local-only by design" path from :class:`NoopSink` (which represents "drop everything; tests don't care about artifacts").
     """
 
     async def persist(
         self,
         *,
-        metadata: ArtifactMetadata,
         content: bytes,
+        metadata: ArtifactMetadata,
     ) -> ArtifactReceipt:
         """
         Acknowledge the call and request that local files stay in place.

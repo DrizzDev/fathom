@@ -1,7 +1,3 @@
-"""
-Unit pins for :class:`EscalationGate.decide` covering the full decision matrix.
-"""
-
 from __future__ import annotations
 
 import unittest

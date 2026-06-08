@@ -1,7 +1,3 @@
-"""
-Contract tests for :mod:`fathom.strategies.graph.state`.
-"""
-
 from __future__ import annotations
 
 import ast

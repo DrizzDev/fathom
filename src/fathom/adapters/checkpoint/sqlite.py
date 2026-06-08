@@ -89,7 +89,7 @@ class SqliteCheckpointSweeper:
         elapsed_since_last = now - SqliteCheckpointSweeper.__last_swept_at
 
         if elapsed_since_last < self.__sweep_min_interval:
-            logger.debug(
+            logger.info(
                 "checkpoint sweep skipped",
                 extra={
                     "reason": "throttled",

@@ -17,14 +17,14 @@ class _FixedSink(ArtifactSinkPort):
         Bind this sink to one frozen receipt.
         """
 
-        self.__receipt = receipt
         self.calls: int = 0
+        self.__receipt = receipt
 
     async def persist(
         self,
         *,
-        metadata: ArtifactMetadata,
         content: bytes,
+        metadata: ArtifactMetadata,
     ) -> ArtifactReceipt:
         """
         Increment the call counter and return the bound receipt.
@@ -43,8 +43,8 @@ class _RaisingSink(ArtifactSinkPort):
     async def persist(
         self,
         *,
-        metadata: ArtifactMetadata,
         content: bytes,
+        metadata: ArtifactMetadata,
     ) -> ArtifactReceipt:
         """
         Raise to drive the composite's branch-failure path.
@@ -66,11 +66,12 @@ class CompositeSinkTest(unittest.IsolatedAsyncioTestCase):
         """
 
         return ArtifactMetadata(
-            kind=ArtifactKind.SCREENSHOT,
-            session_id="run-test",
-            package_name="app",
-            step_number=0,
             created=1,
+            step_number=0,
+            package_name="app",
+            session_id="run-test",
+            kind=ArtifactKind.SCREENSHOT,
+            filename="step-000__screenshot__2026-01-01T00-00-00Z-000.png",
         )
 
     async def test_all_cleanup_safe_branches_clear_local(self) -> None:
@@ -85,7 +86,10 @@ class CompositeSinkTest(unittest.IsolatedAsyncioTestCase):
         )
         composite = CompositeSink(sinks=tuple(_FixedSink(receipt=r) for r in receipts))
 
-        outcome = await composite.persist(metadata=self.__metadata(), content=b"PNG")
+        outcome = await composite.persist(
+            content=b"PNG",
+            metadata=self.__metadata(),
+        )
 
         self.assertTrue(outcome.local_cleanup)
         self.assertIn("cloud://a", outcome.identifier)
@@ -102,7 +106,10 @@ class CompositeSinkTest(unittest.IsolatedAsyncioTestCase):
         )
         composite = CompositeSink(sinks=tuple(_FixedSink(receipt=r) for r in receipts))
 
-        outcome = await composite.persist(metadata=self.__metadata(), content=b"PNG")
+        outcome = await composite.persist(
+            content=b"PNG",
+            metadata=self.__metadata(),
+        )
 
         self.assertFalse(outcome.local_cleanup)
 
@@ -119,6 +126,9 @@ class CompositeSinkTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        outcome = await composite.persist(metadata=self.__metadata(), content=b"PNG")
+        outcome = await composite.persist(
+            content=b"PNG",
+            metadata=self.__metadata(),
+        )
 
         self.assertFalse(outcome.local_cleanup)

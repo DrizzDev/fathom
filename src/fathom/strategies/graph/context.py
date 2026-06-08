@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.journal.noop import NoopRuntimeJournal
@@ -10,10 +10,11 @@ from fathom.adapters.ocr.noop import NoopOcr
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
 from fathom.base.paths import SharedPathManager
 from fathom.constants.platform import DevicePlatform
+from fathom.constants.tools import TurnMode
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
-from fathom.core.agent.tools import ToolScope
+from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.context.manager import ContextManager
 from fathom.core.embedding.cache import EmbeddingCache
@@ -60,6 +61,7 @@ from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.perception import PerceptionConfiguration  # noqa: TC001
 from fathom.schemas.run import RealignmentPolicy
+from fathom.schemas.tools import ToolPolicyContext
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +163,8 @@ class GraphContext:
                 system_back_supported=self.__resolve_supports_back(device=device),
             ),
         )
-        self.__tool_scope = ToolScope()
+        self.__tool_scope = ToolScope(policies=DEFAULT_TOOL_POLICIES)
+        self.__log_tool_scope_matrix()
 
         self.__reasoner = reasoner or Reasoner(intent=intent)
         self.__agent_state = agent_state or AgentState(
@@ -280,6 +283,49 @@ class GraphContext:
             return True
 
         return runtime.platform is not DevicePlatform.IOS
+
+    def __log_tool_scope_matrix(self) -> None:
+        """
+        Dump every (mode-set, hitl) → tool-set expansion at construction time.
+        """
+
+        logger.info(
+            "Tool scope matrix resolved at boot",
+            extra={
+                "component": "strategies.graph.context",
+                "event": "tool_scope.matrix.resolved",
+                "tool_scope.expansions": self.__matrix_expansions(),
+            },
+        )
+
+    def __matrix_expansions(self) -> list[dict[str, Any]]:
+        """
+        Compute one expansion entry per (mode-set, hitl) combination for the boot log.
+        """
+
+        return [
+            self.__expansion(modes=modes, hitl=hitl)
+            for modes in (frozenset(), frozenset({TurnMode.VERIFY}))
+            for hitl in (False, True)
+        ]
+
+    def __expansion(self, *, modes: frozenset[TurnMode], hitl: bool) -> dict[str, Any]:
+        """
+        Resolve one matrix entry for the given mode set and HITL capability.
+        """
+
+        capabilities = RuntimeCapabilities(
+            hitl=HITLCapability(enabled=hitl),
+            device=self.__capabilities.device,
+        )
+        result = self.__tool_scope.compute(
+            context=ToolPolicyContext(capabilities=capabilities, modes=modes),
+        )
+        return {
+            "modes": sorted(mode.value for mode in modes),
+            "hitl": hitl,
+            "tools_allowed": sorted(name.value for name in result.names),
+        }
 
     @property
     def intent(self) -> str:

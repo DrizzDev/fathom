@@ -1,7 +1,3 @@
-"""
-Unit pins for :class:`PastActionEntry` and the action-kind derivation helpers.
-"""
-
 from __future__ import annotations
 
 import unittest

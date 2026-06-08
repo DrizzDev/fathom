@@ -152,5 +152,78 @@ class EmbeddingCacheTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(embedder.calls), 1)
 
 
+class EmbeddingCacheObservabilityTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Covers the structured-logging events emitted by :class:`EmbeddingCache` so
+    grep-driven RCA can rely on stable identifiers.
+    """
+
+    async def test_warm_emits_warmup_requested_event(self) -> None:
+        """
+        ``warm`` must emit the ``embedding.cache.warmup.requested`` event with text count.
+        """
+
+        vector = EmbeddingVector(values=(0.1,))
+        embedder = _StubEmbedder(responses=[(vector,)])
+        cache = EmbeddingCache(embedder=embedder)
+
+        with self.assertLogs("fathom.core.embedding.cache", level="INFO") as captured:
+            cache.warm(texts=("hello",))
+            await asyncio.sleep(0)
+
+        events = [record.__dict__.get("event") for record in captured.records]
+        self.assertIn("embedding.cache.warmup.requested", events)
+
+    async def test_warmup_emits_completed_event_on_success(self) -> None:
+        """
+        Successful warmup emits ``embedding.cache.warmup.completed``.
+        """
+
+        vector = EmbeddingVector(values=(0.1,))
+        embedder = _StubEmbedder(responses=[(vector,)])
+        cache = EmbeddingCache(embedder=embedder)
+
+        with self.assertLogs("fathom.core.embedding.cache", level="INFO") as captured:
+            cache.warm(texts=("hello",))
+            await cache.get(text="hello")
+
+        events = [record.__dict__.get("event") for record in captured.records]
+        self.assertIn("embedding.cache.warmup.completed", events)
+
+    async def test_cache_hit_emits_hit_event(self) -> None:
+        """
+        A served cached value emits the ``embedding.cache.hit`` event.
+        """
+
+        vector = EmbeddingVector(values=(0.1,))
+        embedder = _StubEmbedder(responses=[(vector,)])
+        cache = EmbeddingCache(embedder=embedder)
+
+        cache.warm(texts=("hello",))
+        await cache.get(text="hello")
+
+        with self.assertLogs("fathom.core.embedding.cache", level="INFO") as captured:
+            await cache.get(text="hello")
+
+        events = [record.__dict__.get("event") for record in captured.records]
+        self.assertIn("embedding.cache.hit", events)
+
+    async def test_warmup_task_name_uses_constant(self) -> None:
+        """
+        The background warmup task name comes from the :class:`EmbeddingTaskName` constant.
+        """
+
+        from fathom.constants.embedding import EmbeddingTaskName
+
+        vector = EmbeddingVector(values=(0.1,))
+        embedder = _StubEmbedder(responses=[(vector,)], delay_seconds=0.01)
+        cache = EmbeddingCache(embedder=embedder)
+
+        cache.warm(texts=("hello",))
+        named_tasks = [task.get_name() for task in asyncio.all_tasks()]
+        self.assertIn(EmbeddingTaskName.CACHE_WARMUP.value, named_tasks)
+        await cache.get(text="hello")
+
+
 if __name__ == "__main__":
     unittest.main()

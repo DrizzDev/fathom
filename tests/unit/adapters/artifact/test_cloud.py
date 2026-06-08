@@ -49,8 +49,7 @@ class CloudSinkTest(unittest.IsolatedAsyncioTestCase):
     Pins :class:`CloudSink` upload + receipt semantics.
 
     Success path returns ``local_cleanup=True`` so the pipeline removes
-    the EFS staging files. Failure path returns ``local_cleanup=False``
-    so the next ``replay()`` can retry uploading.
+    the EFS staging files. Failure path returns ``local_cleanup=False`` so the next ``replay()`` can retry uploading.
     """
 
     @staticmethod
@@ -61,55 +60,125 @@ class CloudSinkTest(unittest.IsolatedAsyncioTestCase):
 
         return ArtifactMetadata(
             kind=ArtifactKind.SCREENSHOT,
-            session_id="run-test",
-            package_name="app",
-            step_number=0,
             created=1,
+            step_number=0,
+            package_name="app",
+            session_id="run-test",
+            filename="step-000__screenshot__2026-01-01T00-00-00Z-000.png",
         )
 
     async def test_successful_upload_returns_cleanup_receipt(self) -> None:
         """
-        On a successful upload the cloud sink returns the cloud
-        identifier and clears the local copy.
+        On a successful upload the cloud sink returns the cloud identifier and clears the local copy.
         """
 
         storage = _RecordingStorage(identifier="cloud://artifact/42")
         sink = CloudSink(storage=storage, workflow_id="run-test")
 
-        receipt = await sink.persist(metadata=self.__metadata(), content=b"PNG")
+        receipt = await sink.persist(
+            content=b"PNG",
+            metadata=self.__metadata(),
+        )
 
         self.assertTrue(receipt.local_cleanup)
-        self.assertEqual(receipt.identifier, "cloud://artifact/42")
         self.assertEqual(len(storage.calls), 1)
+        self.assertEqual(receipt.identifier, "cloud://artifact/42")
         self.assertEqual(storage.calls[0]["metadata"]["category"], "screenshot")
 
     async def test_failed_upload_keeps_local_copy_for_replay(self) -> None:
         """
-        Any provider exception must surface as
-        ``local_cleanup=False`` so the pipeline preserves the EFS file
-        for the next replay scan.
+        Any provider exception must surface as ``local_cleanup=False`` so the pipeline preserves the EFS file for the next replay scan.
         """
 
         sink = CloudSink(storage=_RaisingStorage(), workflow_id="run-test")
 
-        receipt = await sink.persist(metadata=self.__metadata(), content=b"PNG")
+        receipt = await sink.persist(
+            content=b"PNG",
+            metadata=self.__metadata(),
+        )
 
         self.assertFalse(receipt.local_cleanup)
         self.assertEqual(receipt.identifier, "")
 
     async def test_empty_identifier_is_treated_as_silent_failure(self) -> None:
         """
-        When the underlying storage returns an empty identifier (the
-        composite-storage signal for "all backends failed"), the sink
-        treats it as a failure and preserves the EFS copy. This guards
-        against the historical bug where a cloud backend was configured
-        but artifacts silently went missing.
+        When the underlying storage returns an empty identifier (the composite-storage signal for "all backends failed"),
+        the sink treats it as a failure and preserves the EFS copy. This guards against the historical bug where a cloud backend was configured but artifacts silently went missing.
         """
 
         storage = _RecordingStorage(identifier="")
         sink = CloudSink(storage=storage, workflow_id="run-test")
 
-        receipt = await sink.persist(metadata=self.__metadata(), content=b"PNG")
+        receipt = await sink.persist(
+            metadata=self.__metadata(),
+            content=b"PNG",
+        )
 
         self.assertFalse(receipt.local_cleanup)
         self.assertEqual(receipt.identifier, "")
+
+    async def test_canonical_filename_is_forwarded_to_storage(self) -> None:
+        """
+        The canonical ``step-NNN__kind__iso`` filename must flow into storage metadata.
+        """
+
+        storage = _RecordingStorage()
+        sink = CloudSink(storage=storage, workflow_id="run-test")
+
+        canonical = "step-007__screenshot__2026-06-08T01-02-03Z-456.png"
+        metadata = ArtifactMetadata(
+            kind=ArtifactKind.SCREENSHOT,
+            session_id="run-test",
+            package_name="app",
+            step_number=7,
+            created=1,
+            filename=canonical,
+        )
+        await sink.persist(content=b"PNG", metadata=metadata)
+
+        self.assertEqual(storage.calls[0]["metadata"]["filename"], canonical)
+
+
+class CloudSinkPerKindCategoryTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins the per-:class:`ArtifactKind` category routing exposed via storage metadata.
+    """
+
+    @staticmethod
+    def __metadata(*, kind: ArtifactKind) -> ArtifactMetadata:
+        """
+        Build a minimal :class:`ArtifactMetadata` parameterized on artifact kind.
+        """
+
+        return ArtifactMetadata(
+            kind=kind,
+            created=1,
+            step_number=0,
+            package_name="app",
+            session_id="run-test",
+            filename="step-000__screenshot__2026-01-01T00-00-00Z-000.png",
+        )
+
+    async def test_perception_kinds_route_to_per_kind_subdirectory(self) -> None:
+        """
+        OCR/vision/overlay/cv/icon perception artifacts each land in their own GCS subdir.
+        """
+
+        cases = {
+            ArtifactKind.CV_PERCEPTION: "cv_perception",
+            ArtifactKind.OCR_PERCEPTION: "ocr_perception",
+            ArtifactKind.ICON_PERCEPTION: "icon_perception",
+            ArtifactKind.VISION_PERCEPTION: "vision_perception",
+            ArtifactKind.OVERLAY_PERCEPTION: "overlay_perception",
+        }
+        for kind, expected_category in cases.items():
+            with self.subTest(kind=kind):
+                storage = _RecordingStorage()
+                sink = CloudSink(storage=storage, workflow_id="run-test")
+
+                await sink.persist(
+                    metadata=self.__metadata(kind=kind),
+                    content=b"PNG",
+                )
+
+                self.assertEqual(storage.calls[0]["metadata"]["category"], expected_category)

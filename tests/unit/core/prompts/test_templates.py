@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from fathom.constants.tools import BASE_TOOLS, VERIFICATION_TOOLS, ToolName
+from fathom.constants.tools import BASE_TOOLS, ToolName
 from fathom.core.prompts.templates import build_tool_guidance
 from fathom.schemas.tools import AllowedTools
+
+_VERIFY_TOOLS = frozenset({ToolName.VERIFY_GOAL, ToolName.VALIDATE_STATE})
 
 
 class ToolGuidanceTest(unittest.TestCase):
@@ -18,7 +20,7 @@ class ToolGuidanceTest(unittest.TestCase):
         Allowed tool set for an HITL-capable runtime.
         """
 
-        return AllowedTools(names=BASE_TOOLS | VERIFICATION_TOOLS | {ToolName.ASK_USER})
+        return AllowedTools(names=BASE_TOOLS | _VERIFY_TOOLS | {ToolName.ASK_USER})
 
     @staticmethod
     def __autonomous_tools() -> AllowedTools:
@@ -26,7 +28,7 @@ class ToolGuidanceTest(unittest.TestCase):
         Allowed tool set for an autonomous runtime (no ASK_USER).
         """
 
-        return AllowedTools(names=BASE_TOOLS | VERIFICATION_TOOLS)
+        return AllowedTools(names=BASE_TOOLS | _VERIFY_TOOLS)
 
     def test_omits_legacy_tool_names(self) -> None:
         """

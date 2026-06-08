@@ -1,31 +1,3 @@
-"""
-End-to-end integration tests for coordinate dispatch.
-
-For every fixture in ``tests/fixtures/coordinate/<platform>/<action>/NNN/``:
-
-  1. Production :class:`BoundsGenerator` parses the captured XML against
-     the captured screenshot to produce the labelled manifest exactly as
-     the deployed pipeline would.
-
-  2. Each manifest element is fed through two converters:
-
-       * legacy  — reproduces the pre-fix behaviour (clamping
-         device-pixel bounds against the logical screen dimensions).
-       * current — the current :class:`CoordinateConverter` honouring
-         :class:`CoordinateSystem`.
-
-  3. The current converter must dispatch every element to a logical
-     coordinate that falls inside that element's logical bbox. This is
-     the strong-property assertion the bug used to violate.
-
-  4. The harness then renders three outputs per case using the
-     production primitives (:class:`BoxDrawer` for the manifest;
-     :class:`TraceRenderer` for the per-element tap circle, invoked
-     once per element on a chained canvas). The two trace images make
-     the legacy vs current divergence visually obvious; the assertion
-     above is the load-bearing pin.
-"""
-
 from __future__ import annotations
 
 import io
@@ -286,12 +258,7 @@ class IosTapDispatchTest(unittest.TestCase):
     """
 
     def test_every_element_dispatches_inside_its_bbox(self) -> None:
-        """
-        For every manifest element on every fixture screen, the current
-        :class:`CoordinateConverter` must dispatch to a logical coord
-        inside that element's logical bbox. The pinned case-specific
-        coordinate from ``case.yaml`` is also asserted as a sanity pin.
-        """
+        """For every manifest element on every fixture screen, the current :class:`CoordinateConverter` must dispatch to a logical coord inside that element's logical bbox."""
 
         loader = CoordinateDispatchCaseLoader(root=FIXTURES)
         cases = loader.discover(platform="ios", action="tap")

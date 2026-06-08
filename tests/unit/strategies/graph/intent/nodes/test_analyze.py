@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock
 
+from tests.builders.agent import AgentFixtures
+
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.agent.state import AgentState
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
@@ -48,7 +50,7 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 workflow_id="run-test",
                 max_steps=10,
                 agent_state=agent_state,
-                context_manager=SimpleNamespace(get_user_guidance=Mock(return_value=[])),
+                context_manager=AgentFixtures.context_manager(),
                 device=SimpleNamespace(get_dimensions=AsyncMock(return_value=(100, 200))),
                 signal=SimpleNamespace(supports_interruption=Mock(return_value=False)),
                 configuration=SimpleNamespace(intent=SimpleNamespace(prompt_user_if_stuck=False)),
@@ -118,7 +120,7 @@ class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
                 workflow_id="run-test",
                 max_steps=10,
                 agent_state=agent_state,
-                context_manager=SimpleNamespace(get_user_guidance=Mock(return_value=[])),
+                context_manager=AgentFixtures.context_manager(),
                 device=SimpleNamespace(get_dimensions=AsyncMock(return_value=(1080, 2340))),
                 signal=SimpleNamespace(supports_interruption=Mock(return_value=False)),
                 configuration=SimpleNamespace(intent=SimpleNamespace(prompt_user_if_stuck=False)),

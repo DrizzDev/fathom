@@ -65,7 +65,7 @@ class LocalImageStorage(IImageStorage):
             )
 
             self.__write(path=path, data=data)
-            logger.debug("Saved local %s artifact: %s", category, path)
+            logger.info("Saved local %s artifact: %s", category, path)
             return str(path.absolute())
         except Exception as exception:
             logger.warning("Failed to save local artifact: %s", exception)

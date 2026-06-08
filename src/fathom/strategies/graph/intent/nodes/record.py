@@ -157,7 +157,7 @@ class RecordNode:
                     current_activity=current_activity,
                     execution_activity=execution_activity,
                 )
-                logger.debug(
+                logger.info(
                     f"Recording step to history. Observed={current_activity}",
                     extra={
                         "component": "graph.intent.record",
@@ -257,7 +257,7 @@ class RecordNode:
                     visual_hash=step_result.pre_hash,
                 )
 
-            logger.debug(
+            logger.info(
                 f"[H3] Committing to trace | thought={step_result.step.action.rationale[:50]}..."
             )
 

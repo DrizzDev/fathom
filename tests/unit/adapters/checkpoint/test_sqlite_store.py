@@ -1,7 +1,3 @@
-"""
-Pins for the per-workflow SQLite checkpoint store path layout and sanitization rules.
-"""
-
 from __future__ import annotations
 
 import tempfile

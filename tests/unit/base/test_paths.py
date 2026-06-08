@@ -92,7 +92,7 @@ class SharedPathManagerLayoutTest(unittest.TestCase):
         path = self.__manager.get_artifact_path(
             session_id="session__1",
             kind=ArtifactKind.HIERARCHY_XML,
-            filename="step-001__hierarchy_xml__2026-06-04T18-00-00Z-000.xml",
+            filename="dump.xml",
         )
 
         self.assertEqual(path.parts[-3], self.__today())

@@ -1,12 +1,3 @@
-"""
-Pin the backwards-compatibility shim for the deleted adaptive-scroll subsystem.
-
-Older hosts (enricher's healing bridge) still construct
-``ScrollInteractionPolicy.AdaptivePolicy(...)``. The shim must accept the
-legacy kwargs without raising so those hosts continue to boot while they
-migrate.
-"""
-
 from __future__ import annotations
 
 import logging

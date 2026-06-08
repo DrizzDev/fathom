@@ -124,7 +124,7 @@ class AnalyzeNode:
             state_injected = state.get(IntentStateKey.INJECTED_CONTEXT)
             guidance_snapshot = self.__provider.context.context_manager.get_user_guidance()
 
-            logger.debug(
+            logger.info(
                 f"[H3] Analysis Context | Step: {current_step} | "
                 f"Active Guidance: {len(guidance_snapshot)} items | "
                 f"State Injected: {state_injected is not None}"

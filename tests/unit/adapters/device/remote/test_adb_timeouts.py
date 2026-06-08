@@ -1,13 +1,3 @@
-"""
-Unit pins for :class:`RemoteDeviceConfiguration.request_timeout` wiring.
-
-Remote runs route every device interaction (screenshot, hierarchy dump,
-action dispatch) through HTTP, so the per-request budget is the only
-control surface for hangs there. These tests verify that the configured
-value reaches :class:`httpx.AsyncClient` at construction time and that
-the documented default is preserved.
-"""
-
 from __future__ import annotations
 
 import unittest

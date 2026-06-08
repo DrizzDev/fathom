@@ -197,7 +197,7 @@ class TemporalSignalAdapter(SignalPort):
         consumed = self.__state.dequeue_context()
 
         if consumed is not None:
-            logger.debug(
+            logger.info(
                 f"[signal-adapter] workflow={self.__workflow_id} event=consume_context "
                 f"context_length={len(consumed)}"
             )

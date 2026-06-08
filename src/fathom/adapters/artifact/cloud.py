@@ -5,7 +5,6 @@ import time
 from logging import getLogger
 from typing import Any, Dict
 
-from fathom.constants.artifact import ArtifactComponent, ArtifactEvent
 from fathom.interfaces.artifact import ArtifactSinkPort
 from fathom.interfaces.storage import StoragePort
 from fathom.schemas.artifact import ArtifactCategory, ArtifactMetadata, ArtifactReceipt
@@ -15,19 +14,17 @@ logger = getLogger(__name__)
 
 class CloudSink(ArtifactSinkPort):
     """
-    Sink that uploads to the configured :class:`StoragePort` and
-    requests local cleanup when the upload succeeds.
+    Sink that uploads to the configured :class:`StoragePort` and requests local cleanup when the upload succeeds.
 
-    On any upload failure (network, throttling, auth), the sink reports
-    ``local_cleanup=False`` so the pipeline leaves the EFS file in
-    place. The next process's ``replay()`` will pick it up.
+    On any upload failure (network, throttling, auth), the sink reports ``local_cleanup=False``
+    so the pipeline leaves the EFS file in place. The next process's ``replay()`` will pick it up.
     """
 
     def __init__(
         self,
         *,
-        storage: StoragePort,
         workflow_id: str,
+        storage: StoragePort,
     ) -> None:
         """
         Bind this sink to the cloud :class:`StoragePort` and run context.
@@ -39,8 +36,8 @@ class CloudSink(ArtifactSinkPort):
     async def persist(
         self,
         *,
-        metadata: ArtifactMetadata,
         content: bytes,
+        metadata: ArtifactMetadata,
     ) -> ArtifactReceipt:
         """
         Upload the artifact and report whether local cleanup is safe.
@@ -62,7 +59,7 @@ class CloudSink(ArtifactSinkPort):
         }
         logger.info(
             "Cloud upload started",
-            extra={**upload_context, "event": ArtifactEvent.UPLOAD_STARTED},
+            extra={**upload_context, "event": "artifact.upload.started"},
         )
 
         try:
@@ -77,7 +74,7 @@ class CloudSink(ArtifactSinkPort):
                 "Cloud upload failed; leaving EFS copy for replay",
                 extra={
                     **upload_context,
-                    "event": ArtifactEvent.UPLOAD_FAILED,
+                    "event": "artifact.upload.failed",
                     "duration.ms": int((time.monotonic() - started) * 1000),
                 },
             )
@@ -89,7 +86,7 @@ class CloudSink(ArtifactSinkPort):
                 extra={
                     **upload_context,
                     "reason": "None",
-                    "event": ArtifactEvent.UPLOAD_FAILED,
+                    "event": "artifact.upload.failed",
                     "duration.ms": int((time.monotonic() - started) * 1000),
                 },
             )
@@ -99,9 +96,9 @@ class CloudSink(ArtifactSinkPort):
             "Cloud upload succeeded; local copy eligible for cleanup",
             extra={
                 **upload_context,
-                "event": ArtifactEvent.UPLOAD_SUCCEEDED,
-                "duration.ms": int((time.monotonic() - started) * 1000),
                 "artifact.identifier": identifier,
+                "event": "artifact.upload.succeeded",
+                "duration.ms": int((time.monotonic() - started) * 1000),
             },
         )
         return ArtifactReceipt(identifier=identifier, local_cleanup=True)
@@ -113,11 +110,12 @@ class CloudSink(ArtifactSinkPort):
         """
 
         return {
-            "category": ArtifactCategory.for_(kind=metadata.kind),
-            "session_id": metadata.session_id,
-            "package_name": metadata.package_name,
-            "step_number": metadata.step_number,
+            "filename": metadata.filename,
             "created": metadata.created,
+            "session_id": metadata.session_id,
+            "step_number": metadata.step_number,
+            "package_name": metadata.package_name,
+            "category": ArtifactCategory.for_(kind=metadata.kind),
         }
 
     def __log_context(self) -> Dict[str, Any]:
@@ -126,6 +124,6 @@ class CloudSink(ArtifactSinkPort):
         """
 
         return {
-            "component": ArtifactComponent.SINK_CLOUD,
             "workflow.id": self.__workflow_id,
+            "component": "artifact.sink.cloud",
         }

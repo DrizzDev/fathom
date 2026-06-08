@@ -74,7 +74,7 @@ class Reasoner:
         target_goal = (current_sub_goal or self.__intent).lower()
         goal_type = "sub-goal" if current_sub_goal else "intent"
 
-        logger.debug(
+        logger.info(
             f"[Reasoner] Checking {goal_type} completion: '{target_goal}' | "
             f"llm_complete={analysis.is_goal_complete} | "
             f"action_type={analysis.action.action_type}"
@@ -143,7 +143,7 @@ class Reasoner:
         if action_suggests_next_phase:
             llm_confidence = max(llm_confidence, ACTION_NEXT_PHASE_CONFIDENCE)
 
-        logger.debug(
+        logger.info(
             f"[Reasoner] {goal_type.capitalize()} completion: {is_complete} "
             f"(evidence: {'; '.join(evidence_list) if evidence_list else 'none'})"
         )

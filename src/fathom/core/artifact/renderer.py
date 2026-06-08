@@ -490,7 +490,7 @@ class TraceRenderer(ArtifactRendererPort):
             for index in range(0, len(coords) - 1, 2)
             for value in converter.capture_point(x=coords[index], y=coords[index + 1])
         )
-        logger.debug(
+        logger.info(
             "Trace renderer projected coords",
             extra={
                 "workflow.id": session_id,

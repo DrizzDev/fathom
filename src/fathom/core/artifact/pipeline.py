@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from fathom.base.paths import SharedPathManager
-from fathom.constants.artifact import ArtifactComponent, ArtifactEvent, ArtifactFilename
+from fathom.constants.artifact import ArtifactFilename
 from fathom.interfaces.artifact import ArtifactRendererPort, ArtifactSinkPort
 from fathom.schemas.artifact import (
     ArtifactKind,
@@ -60,19 +60,18 @@ class ArtifactPipeline:
         """
         Stage durably and enqueue background upload; never raises.
 
-        Returns the EFS payload path on success so producers can wire
-        the same path into downstream metadata (``storage_id``,
-        ``capture.metadata["path"]``) without performing a second write
-        against :class:`StoragePort`. Returns ``None`` when the record
-        was rejected or the renderer raised.
+        Returns the EFS payload path on success so producers can wire the same path into downstream metadata (``storage_id``, ``capture.metadata["path"]``)
+        without performing a second write against :class:`StoragePort`. Returns ``None`` when the record was rejected or the renderer raised.
         """
 
         content = self.__render(record=record)
         if content is None:
             return None
 
-        metadata = record.metadata()
-        payload_path = await asyncio.to_thread(self.__stage_to_efs, record=record, content=content)
+        metadata = self.__build_metadata(record=record)
+        payload_path = await asyncio.to_thread(
+            self.__stage_to_efs, content=content, metadata=metadata
+        )
         self.__log_staged(metadata=metadata, payload_path=payload_path)
 
         task = asyncio.create_task(
@@ -96,8 +95,10 @@ class ArtifactPipeline:
         if content is None:
             return None
 
-        metadata = record.metadata()
-        payload_path = await asyncio.to_thread(self.__stage_to_efs, record=record, content=content)
+        metadata = self.__build_metadata(record=record)
+        payload_path = await asyncio.to_thread(
+            self.__stage_to_efs, content=content, metadata=metadata
+        )
         self.__log_staged(metadata=metadata, payload_path=payload_path)
 
         return await self.__persist_and_cleanup(
@@ -119,7 +120,7 @@ class ArtifactPipeline:
             extra={
                 **self.__log_context(),
                 "pending.count": len(self.__pending),
-                "event": ArtifactEvent.DRAIN_STARTED,
+                "event": "artifact.drain.started",
             },
         )
         try:
@@ -129,7 +130,7 @@ class ArtifactPipeline:
             )
             logger.info(
                 "Artifact pipeline drain completed",
-                extra={**self.__log_context(), "event": ArtifactEvent.DRAIN_COMPLETED},
+                extra={**self.__log_context(), "event": "artifact.drain.completed"},
             )
         except asyncio.TimeoutError:
             logger.warning(
@@ -137,7 +138,7 @@ class ArtifactPipeline:
                 extra={
                     **self.__log_context(),
                     "pending.count": len(self.__pending),
-                    "event": ArtifactEvent.DRAIN_TIMED_OUT,
+                    "event": "artifact.drain.timed_out",
                 },
             )
 
@@ -145,17 +146,14 @@ class ArtifactPipeline:
         self,
         *,
         content: bytes,
-        record: ArtifactRecord,
+        metadata: ArtifactMetadata,
     ) -> Path:
         """
         Synchronously write the payload bytes to EFS and return the path.
         """
 
-        metadata = record.metadata()
-        filename = self.__filename(record=record, metadata=metadata)
-
         payload_path = self.__path_manager.get_artifact_path(
-            filename=filename,
+            filename=metadata.filename,
             kind=metadata.kind,
             session_id=metadata.session_id,
         )
@@ -191,7 +189,7 @@ class ArtifactPipeline:
                 "No renderer registered for artifact kind; dropping record",
                 extra={
                     **self.__log_context(),
-                    "event": ArtifactEvent.EMIT_REJECTED,
+                    "event": "artifact.emit.rejected",
                     "artifact.kind": record.payload.kind.value,
                 },
             )
@@ -207,7 +205,7 @@ class ArtifactPipeline:
                 extra={
                     **self.__log_context(),
                     "error.message": str(exception),
-                    "event": ArtifactEvent.RENDER_FAILED,
+                    "event": "artifact.render.failed",
                     "artifact.kind": record.payload.kind.value,
                 },
             )
@@ -234,7 +232,7 @@ class ArtifactPipeline:
                 extra={
                     **self.__log_context(),
                     "error.message": str(exception),
-                    "event": ArtifactEvent.UPLOAD_FAILED,
+                    "event": "artifact.upload.failed",
                     "artifact.kind": metadata.kind.value,
                 },
             )
@@ -244,11 +242,11 @@ class ArtifactPipeline:
             return receipt
 
         await asyncio.to_thread(self.__unlink, payload_path=payload_path)
-        logger.debug(
+        logger.info(
             "Local artifact cleanup completed",
             extra={
                 **self.__log_context(),
-                "event": ArtifactEvent.LOCAL_CLEANUP,
+                "event": "artifact.local.cleanup",
                 "artifact.kind": metadata.kind.value,
                 "artifact.payload.path": str(payload_path),
             },
@@ -260,11 +258,11 @@ class ArtifactPipeline:
         Log the durable staging path for one rendered artifact.
         """
 
-        logger.debug(
+        logger.info(
             "Artifact staged on EFS",
             extra={
                 **self.__log_context(),
-                "event": ArtifactEvent.EMIT_STAGED,
+                "event": "artifact.emit.staged",
                 "artifact.kind": metadata.kind.value,
                 "artifact.payload.path": str(payload_path),
             },
@@ -279,31 +277,35 @@ class ArtifactPipeline:
         with contextlib.suppress(FileNotFoundError):
             payload_path.unlink()
 
-    @staticmethod
-    def __filename(*, record: ArtifactRecord, metadata: ArtifactMetadata) -> str:
+    @classmethod
+    def __build_metadata(cls, *, record: ArtifactRecord) -> ArtifactMetadata:
         """
-        Build a stable filename in the canonical artifact grammar.
-
-        Pattern: ``step-NNN__<kind>[__attempt-N]__<iso-timestamp-utc>.<ext>``.
-        Zero-padded step ensures directory listings sort by step.
-        ISO timestamp with hyphenated time (``T18-33-40Z``) keeps the
-        value filesystem-safe across platforms.
+        Project the record onto its sink-facing metadata slice with a resolved canonical filename.
         """
 
-        extension = ArtifactPipeline.__extension_for(kind=metadata.kind)
-        step = str(metadata.step_number).zfill(ArtifactFilename.STEP_DIGITS)
-        timestamp = datetime.fromtimestamp(metadata.created / 1000.0, tz=timezone.utc).strftime(
+        return record.metadata(filename=cls.__filename(record=record))
+
+    @classmethod
+    def __filename(cls, *, record: ArtifactRecord) -> str:
+        """
+        Build a stable filename in the canonical ``step-NNN__kind[__attempt-N]__iso.ext`` grammar.
+        """
+
+        kind = record.payload.kind
+        extension = cls.__extension_for(kind=kind)
+        step = str(record.step_number).zfill(ArtifactFilename.STEP_DIGITS)
+        timestamp = datetime.fromtimestamp(record.created / 1000.0, tz=timezone.utc).strftime(
             ArtifactFilename.TIMESTAMP_FORMAT
         )
-        milliseconds = metadata.created % 1000
+        milliseconds = record.created % 1000
         separator = ArtifactFilename.SEPARATOR
         attempt_suffix = ""
-        if metadata.kind is ArtifactKind.TRACE:
+        if kind is ArtifactKind.TRACE:
             trace_payload = cast("TracePayload", record.payload)
             if trace_payload.attempt is not None:
                 attempt_suffix = f"{separator}attempt-{trace_payload.attempt.index}"
         return (
-            f"step-{step}{separator}{metadata.kind.value}{attempt_suffix}{separator}"
+            f"step-{step}{separator}{kind.value}{attempt_suffix}{separator}"
             f"{timestamp}-{milliseconds:03d}.{extension}"
         )
 
@@ -331,7 +333,7 @@ class ArtifactPipeline:
 
         return {
             "workflow.id": self.__workflow_id,
-            "component": ArtifactComponent.PIPELINE,
+            "component": "artifact.pipeline",
         }
 
     @property

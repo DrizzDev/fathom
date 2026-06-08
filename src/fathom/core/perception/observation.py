@@ -1096,7 +1096,7 @@ class ScreenObservationService:
                     },
                 )
         except Exception:
-            logger.debug(
+            logger.warning(
                 "Could not inspect capture image dimensions; treating capture dimensions as device pixels",
                 extra={
                     "component": "core.observation",
@@ -1362,7 +1362,7 @@ class ScreenObservationService:
         y2 = max(0, min(viewport_height, int(round(bounds.y2))))
 
         if x2 <= x1 or y2 <= y1:
-            logger.debug(
+            logger.warning(
                 "Dropping element outside viewport",
                 extra={
                     "bounds": bounds.model_dump(),

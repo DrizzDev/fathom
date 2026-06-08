@@ -98,3 +98,14 @@ class EscalationDecision(BaseModel):
         default=None,
         description="Human-readable detail for logs and telemetry; not consumed by control flow.",
     )
+
+
+class EscalationPrompt(BaseModel):
+    """
+    Rationale + user-facing question pair emitted when the planner escalates to HITL.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    question: str = Field(min_length=1, description="User-facing question dispatched as ask_user.")
+    rationale: str = Field(min_length=1, description="Short reasoning text shown to the agent log.")

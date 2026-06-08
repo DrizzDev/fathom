@@ -1,9 +1,3 @@
-"""
-Unit tests for :class:`LoopDetectorState` round-tripping. Pins the
-serialization seam that survives checkpoint restore so loop-detection
-evidence is not silently wiped between graph iterations.
-"""
-
 from __future__ import annotations
 
 from fathom.constants.screen import LOOP_DETECTOR_WINDOW_SIZE

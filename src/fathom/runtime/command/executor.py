@@ -97,7 +97,9 @@ class CommandExecutor:
                 loop = asyncio.get_running_loop()
                 loop.add_signal_handler(os_signal, self.__handle_interrupt)
             except (NotImplementedError, ValueError, RuntimeError) as exception:
-                logger.debug("Signal handler registration skipped for %s: %s", os_signal, exception)
+                logger.warning(
+                    "Signal handler registration skipped for %s: %s", os_signal, exception
+                )
 
     def __handle_interrupt(self) -> None:
         """

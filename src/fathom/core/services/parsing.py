@@ -235,21 +235,14 @@ class ToolResponseParser:
         }
         result.metadata.setdefault("raw_completion_flags", raw_flags)
 
-        self.__autofill_completion_reasons(result=result, source_tool=source_tool)
-
-        # Only enforce invariants for terminal COMPLETE actions.
+        # Enforce invariants for terminal COMPLETE actions BEFORE autofill so the
+        # autofill check `if result.is_sub_goal_complete` sees the forced-True flag
+        # and populates a missing subgoal_completion_reason from the rationale.
         if result.action.action_type == ActionType.COMPLETE:
-            # In decomposed flows, COMPLETE may mean "current sub-goal complete" but not
-            # necessarily "intent complete". Do not promote local completion into full
-            # intent completion unless the model explicitly signals goal_completed.
-            #
-            # Policy:
-            # - COMPLETE always implies sub-goal completion.
-            # - Goal completion is respected only when explicitly signaled by the tool flags.
             normalized = {
                 "source_tool": source_tool,
                 "is_sub_goal_complete": True,
-                "is_goal_complete": bool(raw_goal_completed) or bool(result.is_goal_complete),
+                "is_goal_complete": bool(raw_goal_completed) or result.is_goal_complete,
                 "reason": "COMPLETE→sub-goal complete; goal completion requires explicit signal",
             }
 
@@ -265,6 +258,8 @@ class ToolResponseParser:
             object.__setattr__(result, "is_sub_goal_complete", True)
             object.__setattr__(result, "is_goal_complete", normalized["is_goal_complete"])
             result.metadata.setdefault("normalized_completion_flags", normalized)
+
+        self.__autofill_completion_reasons(result=result, source_tool=source_tool)
 
         return result
 

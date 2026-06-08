@@ -216,7 +216,7 @@ class ADBDevice(DevicePort):
         """
 
         if speed is not None:
-            logger.debug("Ignoring swipe speed for ADB adapter: %s", speed)
+            logger.warning("Ignoring swipe speed for ADB adapter: %s", speed)
 
         duration = duration or (
             self.__configuration.interaction.policy.swipe.duration if self.__configuration else 300
@@ -452,7 +452,7 @@ class ADBDevice(DevicePort):
                 capture_stderr=False,
             )
             if stdout_bytes or stderr_bytes:
-                logger.debug("wait-for-device produced subprocess output unexpectedly")
+                logger.warning("wait-for-device produced subprocess output unexpectedly")
             return returncode == 0
         except Exception:
             return False

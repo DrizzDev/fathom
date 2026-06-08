@@ -1,12 +1,3 @@
-"""
-Pins :class:`RuntimeConfigurationInspector` redaction and shape.
-
-The inspector is the single chokepoint converting wired runner state
-into a log-safe payload. Every credential or secret value must be
-replaced with the redaction sentinel; non-sensitive structure is kept
-intact for observability.
-"""
-
 from __future__ import annotations
 
 import unittest

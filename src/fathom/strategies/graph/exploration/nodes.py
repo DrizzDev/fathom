@@ -12,6 +12,7 @@ from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.tools import ToolPolicyContext
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.exploration.state import (
     ExplorationGraphState,
@@ -114,8 +115,7 @@ class ExplorationNodeProvider:
         intent = "Explore this app. Find a unique interactive element."
 
         tools = self.__context.tool_scope.compute(
-            intent=intent,
-            capabilities=self.__context.capabilities,
+            context=ToolPolicyContext(capabilities=self.__context.capabilities),
         )
         analysis = await self.__context.vision.analyze(
             tools=tools,

@@ -13,7 +13,7 @@ def get_event_type(step: Union[StepResult, Dict[str, Any]]) -> str:
     if isinstance(step, StepResult):
         val = getattr(step.step, "event_type", None)
         if not val:
-            logger.debug(
+            logger.warning(
                 "event_type missing on StepResult step %s; defaulting to 'action'.",
                 step.step.step_number,
             )

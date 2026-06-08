@@ -85,14 +85,14 @@ class CacheService:
             approximate_size += len(json.dumps(tools, sort_keys=True))
         if approximate_size < self.__CACHE_CHAR_FLOOR:
             self.__undersized_hashes.add(current_hash)
-            logger.debug(
+            logger.info(
                 "Skipping cache creation (pre-flight size below threshold)",
                 extra={
                     "component": "adapter.llm.cache",
                     "event": "cache.create.pre_flight_skip",
+                    "hash": current_hash[:8],
                     "approximate.size.chars": approximate_size,
                     "threshold.chars": self.__CACHE_CHAR_FLOOR,
-                    "hash": current_hash[:8],
                 },
             )
             return None
@@ -102,7 +102,7 @@ class CacheService:
         # Cache hit: matching entry exists
         if cached_entry:
             self.stats.hits += 1
-            logger.debug(f"Cache hit (hash={current_hash[:8]})")
+            logger.info(f"Cache hit (hash={current_hash[:8]})")
             return str(cached_entry.name)
 
         # Cache miss: hash not present yet
@@ -144,7 +144,7 @@ class CacheService:
         except Exception as exception:
             if "minimum token count" in str(exception):
                 self.__undersized_hashes.add(current_hash)
-                logger.debug(f"Skipping cache (content below minimum token threshold): {exception}")
+                logger.info(f"Skipping cache (content below minimum token threshold): {exception}")
             else:
                 logger.warning(f"Failed to create cache: {exception}")
 
@@ -178,6 +178,8 @@ class CacheService:
             await self.__evict_hash(content_hash=content_hash)
 
     async def __evict_hash(self, *, content_hash: str) -> None:
+        """ """
+
         cached_content = self.__cache_entries.get(content_hash)
         if not cached_content:
             return

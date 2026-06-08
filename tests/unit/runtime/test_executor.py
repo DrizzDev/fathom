@@ -5,6 +5,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+from tests.builders.agent import AgentFixtures
+
 from fathom.constants import SignalType
 from fathom.core.agent.state import AgentState
 from fathom.runtime.executor import GraphExecutor
@@ -28,7 +30,7 @@ class GraphExecutorRealignmentTest(unittest.IsolatedAsyncioTestCase):
         )
         context = SimpleNamespace(
             agent_state=agent_state,
-            context_manager=SimpleNamespace(inject_user_guidance=AsyncMock()),
+            context_manager=AgentFixtures.context_manager(),
         )
         graph = SimpleNamespace(aupdate_state=AsyncMock())
         executor = GraphExecutor(

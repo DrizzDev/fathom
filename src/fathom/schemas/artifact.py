@@ -43,18 +43,18 @@ class ArtifactCategory:
 
     __MAPPING: Final[Mapping[ArtifactKind, str]] = {
         ArtifactKind.TRACE: ArtifactDirectory.TRACES,
+        ArtifactKind.OCR_RAW: ArtifactDirectory.XMLS,
         ArtifactKind.SCRIPT: ArtifactDirectory.HISTORY,
         ArtifactKind.HIERARCHY_XML: ArtifactDirectory.XMLS,
-        ArtifactKind.OCR_RAW: ArtifactDirectory.XMLS,
         ArtifactKind.VERIFICATION: ArtifactDirectory.TRACES,
         ArtifactKind.ANNOTATED: ArtifactDirectory.ANNOTATED,
         ArtifactKind.PERCEPTION: ArtifactDirectory.ANNOTATED,
         ArtifactKind.SCREENSHOT: ArtifactDirectory.SCREENSHOT,
-        ArtifactKind.CV_PERCEPTION: ArtifactDirectory.ANNOTATED,
-        ArtifactKind.OCR_PERCEPTION: ArtifactDirectory.ANNOTATED,
-        ArtifactKind.ICON_PERCEPTION: ArtifactDirectory.ANNOTATED,
-        ArtifactKind.VISION_PERCEPTION: ArtifactDirectory.ANNOTATED,
-        ArtifactKind.OVERLAY_PERCEPTION: ArtifactDirectory.ANNOTATED,
+        ArtifactKind.CV_PERCEPTION: ArtifactDirectory.CV_PERCEPTION,
+        ArtifactKind.OCR_PERCEPTION: ArtifactDirectory.OCR_PERCEPTION,
+        ArtifactKind.ICON_PERCEPTION: ArtifactDirectory.ICON_PERCEPTION,
+        ArtifactKind.VISION_PERCEPTION: ArtifactDirectory.VISION_PERCEPTION,
+        ArtifactKind.OVERLAY_PERCEPTION: ArtifactDirectory.OVERLAY_PERCEPTION,
     }
 
     @classmethod
@@ -165,26 +165,6 @@ class PerceptionPayload(BaseModel):
     )
 
 
-class OcrPerceptionPayload(BaseModel):
-    """
-    OCR-only debug image — same shape as :class:`PerceptionPayload`
-    but routed to a renderer that filters the observation to elements whose ``source`` is :attr:`ElementSource.OCR`.
-
-    Kept as a distinct payload (rather than a flag on PerceptionPayload) so the renderer registry stays a flat strategy map keyed by kind.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    kind: Literal[ArtifactKind.OCR_PERCEPTION] = Field(
-        default=ArtifactKind.OCR_PERCEPTION,
-        description="Discriminator value routing the record to the OCR-only renderer.",
-    )
-    capture: ScreenCapture = Field(description="Capture used as the rendering canvas.")
-    observation: ScreenObservation = Field(
-        description="Observation; the renderer projects to OCR-source elements only.",
-    )
-
-
 class CvPerceptionPayload(BaseModel):
     """
     CV-only debug image projecting :attr:`ElementSource.CV` elements only.
@@ -216,6 +196,26 @@ class IconPerceptionPayload(BaseModel):
     capture: ScreenCapture = Field(description="Capture used as the rendering canvas.")
     observation: ScreenObservation = Field(
         description="Observation; the renderer projects to ICON-source elements only.",
+    )
+
+
+class OcrPerceptionPayload(BaseModel):
+    """
+    OCR-only debug image — same shape as :class:`PerceptionPayload`
+    but routed to a renderer that filters the observation to elements whose ``source`` is :attr:`ElementSource.OCR`.
+
+    Kept as a distinct payload (rather than a flag on PerceptionPayload) so the renderer registry stays a flat strategy map keyed by kind.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal[ArtifactKind.OCR_PERCEPTION] = Field(
+        default=ArtifactKind.OCR_PERCEPTION,
+        description="Discriminator value routing the record to the OCR-only renderer.",
+    )
+    capture: ScreenCapture = Field(description="Capture used as the rendering canvas.")
+    observation: ScreenObservation = Field(
+        description="Observation; the renderer projects to OCR-source elements only.",
     )
 
 
@@ -366,6 +366,10 @@ class ArtifactMetadata(BaseModel):
     package_name: str = Field(min_length=1, description="Active package the record belongs to.")
 
     created: int = Field(ge=0, description="Epoch milliseconds at emit time.")
+    filename: str = Field(
+        min_length=1,
+        description="Canonical filename used by every storage backend for this artifact.",
+    )
 
 
 class ArtifactRecord(BaseModel):
@@ -385,9 +389,9 @@ class ArtifactRecord(BaseModel):
     created: int = Field(ge=0, description="Epoch milliseconds at emit time.")
     payload: ArtifactPayload = Field(description="Typed payload describing the artifact contents.")
 
-    def metadata(self) -> ArtifactMetadata:
+    def metadata(self, *, filename: str) -> ArtifactMetadata:
         """
-        Project this record onto its sink-facing identity slice.
+        Project this record onto its sink-facing identity slice with the resolved filename.
         """
 
         return ArtifactMetadata(
@@ -396,6 +400,7 @@ class ArtifactRecord(BaseModel):
             session_id=self.session_id,
             step_number=self.step_number,
             package_name=self.package_name,
+            filename=filename,
         )
 
 

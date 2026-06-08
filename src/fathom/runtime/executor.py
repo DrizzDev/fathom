@@ -65,10 +65,11 @@ class GraphExecutor:
                     if self.__context.is_cancelled:
                         logger.warning("Executor: Workflow cancelled during execution")
                         break
+
                     # Log node transitions
                     if isinstance(event, dict):
                         for node, _output in event.items():
-                            logger.debug(f"Executor: Node '{node}' completed")
+                            logger.info(f"Executor: Node '{node}' completed")
             except Exception as exception:
                 logger.error(f"Executor: Graph execution failed: {exception}")
                 raise
@@ -145,7 +146,7 @@ class GraphExecutor:
             # Log node transitions for visibility
             if isinstance(event, dict):
                 for node, _output in event.items():
-                    logger.debug(f"Executor: Node '{node}' completed")
+                    logger.info(f"Executor: Node '{node}' completed")
 
     def __create_task(self, *, operation: Coroutine[object, object, None]) -> asyncio.Task[None]:
         """
@@ -253,7 +254,7 @@ class GraphExecutor:
         Processes HITL signals at graph breakpoints.
         """
 
-        logger.debug(f"Executor: Checking signal at interrupt ({source})")
+        logger.info(f"Executor: Checking signal at interrupt ({source})")
 
         signal_type = await self.__context.hitl.check_signal()
 
@@ -326,7 +327,7 @@ class GraphExecutor:
                     f"Graph is_complete={graph_is_complete}, Context is_complete={context_is_complete}"
                 )
 
-            logger.debug(
+            logger.info(
                 f"Executor [{checkpoint}]: State validation - "
                 f"next_nodes={snapshot.next}, graph_keys={list(snapshot.values.keys())}"
             )

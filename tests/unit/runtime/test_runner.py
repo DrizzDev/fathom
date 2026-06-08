@@ -192,13 +192,7 @@ class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
     async def test_blocking_verdict_dual_emits_workflow_completed_for_legacy_consumers(
         self,
     ) -> None:
-        """
-        Backward-compat: rejection must also emit WORKFLOW_COMPLETED so legacy
-        consumers (Genymotion, Temporal activity result handlers) that key off
-        the terminal event still get a completion signal. Payload mirrors the
-        success-path terminal event shape: success=False, steps_taken=0,
-        duration present.
-        """
+        """Backward-compat: rejection must also emit WORKFLOW_COMPLETED so legacy consumers (Genymotion, Temporal activity result handlers) that key off the terminal event still get a completion signal."""
 
         qualifier = BlockingQualifier(message="custom-rejection-message")
         runner, telemetry = RunnerHarness.build(qualifier=qualifier)

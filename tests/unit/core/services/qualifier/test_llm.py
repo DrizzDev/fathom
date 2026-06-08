@@ -321,12 +321,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
 
     async def test_unknown_probably_executable_string_fails_open(self) -> None:
-        """
-        QualificationLabel is binary. Any non-binary label string (e.g. a stale
-        prompt response still emitting "PROBABLY_EXECUTABLE") must fail open as
-        EXECUTABLE with QUALIFIER_ERROR — the gate must never block on a parse
-        failure.
-        """
+        """QualificationLabel is binary."""
 
         llm = ScriptedLLM(
             contents=[

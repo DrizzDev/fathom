@@ -14,9 +14,7 @@ class ArtifactRendererPort(ABC):
     """
     Strategy that turns one typed :class:`ArtifactRecord` into byte form.
 
-    One concrete renderer per :class:`ArtifactKind`. Adding a new kind
-    means adding one renderer and registering it at the composition
-    root — no existing renderer needs to change.
+    One concrete renderer per :class:`ArtifactKind`. Adding a new kind means adding one renderer and registering it at the composition root no existing renderer needs to change.
     """
 
     @property
@@ -42,17 +40,16 @@ class ArtifactSinkPort(ABC):
     Persistence boundary for artifact bytes that have already been
     staged onto EFS by the pipeline.
 
-    Sinks receive the metadata slice — never the bytes-heavy typed
-    payload — so the persistence boundary stays cheap to serialise and
-    the same contract works for image, XML, and text artifacts alike.
+    Sinks receive the metadata slice — never the bytes-heavy typed payload
+    so the persistence boundary stays cheap to serialize and the same contract works for image, XML, and text artifacts alike.
     """
 
     @abstractmethod
     async def persist(
         self,
         *,
-        metadata: ArtifactMetadata,
         content: bytes,
+        metadata: ArtifactMetadata,
     ) -> ArtifactReceipt:
         """
         Persist the rendered bytes and report whether local cleanup is safe.

@@ -1,7 +1,3 @@
-"""
-Unit pins for :class:`fathom.schemas.state.ActionHistory` query helpers.
-"""
-
 from __future__ import annotations
 
 from fathom.constants import ActionType

@@ -366,16 +366,7 @@ class LLMIntentQualifierLiveTest(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_every_intent_classifies_correctly(self) -> None:
-        """
-        Run the corpus through the real qualifier wiring and report per-intent
-        and aggregate outcomes. The corpus is invoked through the same code
-        path production uses: assembly → composer → composition.qualifier.
-
-        The model the qualifier resolves to is asserted against the eval-validated
-        default so a regression that points the qualifier back at the planner's
-        model (e.g. an old preview model) fails this test loudly instead of
-        silently slipping into production.
-        """
+        """Run the corpus through the real qualifier wiring and report per-intent and aggregate outcomes."""
 
         cases = IntentCorpus.cases()
         configuration = QualifierConfiguration()

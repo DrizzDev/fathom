@@ -95,7 +95,7 @@ class CoordinateConverter:
         x, y, width, height = self.to_pixels(bounds=bounds)
         center_x, center_y = x + width // 2, y + height // 2
 
-        logger.debug(
+        logger.info(
             "CoordinateConverter.center_to_pixels",
             extra={
                 "component": "utils.coordinates",
@@ -169,8 +169,8 @@ class CoordinateConverter:
             y=y,
             width=width,
             height=height,
-            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
             source=region.source,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
         )
 
     def capture_point(self, *, x: int, y: int) -> tuple[int, int]:

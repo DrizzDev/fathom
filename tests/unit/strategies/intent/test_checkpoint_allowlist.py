@@ -1,32 +1,3 @@
-"""
-Verify CHECKPOINT_ALLOWED_*_MODULES tracks every Pydantic / Enum class
-transitively reachable through :class:`IntentGraphState`.
-
-Why this exists:
-    LangGraph's checkpoint serializer (``JsonPlusSerializer``) refuses
-    to deserialize unregistered Pydantic types, falling back to a
-    ``dict`` and emitting a warning. In the intent graph the missing
-    class then arrives at downstream nodes as a plain ``dict``, the
-    ``isinstance(...)`` guards fail, and the run unwinds through the
-    silent SUPERVISE → EXECUTE → OBSERVE → RECORD cascade — the bug
-    that surfaced on staging as "Record node received no valid step
-    result".
-
-What this enforces:
-    1. Every Pydantic ``BaseModel`` and ``enum.Enum`` reachable through
-       :class:`IntentGraphState` annotations (transitively, including
-       ``Optional``, ``List``, ``Dict``, ``Union`` arms, and nested
-       Pydantic field types) must appear in
-       :data:`CHECKPOINT_ALLOWED_JSON_MODULES`.
-    2. The msgpack variant must equal the json variant.
-    3. Every listed entry must resolve to a real importable class —
-       catches typos / renames / stale entries.
-
-Adding a new typed field to :class:`IntentGraphState` (or a new field
-to any reachable schema) breaks (1) and forces a maintainer to extend
-the allow-list explicitly. That is the entire point.
-"""
-
 from __future__ import annotations
 
 import enum
@@ -114,12 +85,7 @@ class CheckpointAllowlistTest(unittest.TestCase):
         )
 
     def test_msgpack_allowlist_matches_json_allowlist(self) -> None:
-        """
-        The msgpack and json allow-lists must stay in sync. The
-        serializer applies one or the other depending on the encoded
-        payload format, so a divergence corrupts replay for the
-        diverging types.
-        """
+        """The msgpack and json allow-lists must stay in sync."""
 
         self.assertEqual(
             CHECKPOINT_ALLOWED_MSGPACK_MODULES,

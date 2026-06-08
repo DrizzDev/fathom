@@ -4,6 +4,7 @@ import asyncio
 from logging import getLogger
 from typing import Dict, Optional, Tuple
 
+from fathom.constants.embedding import EmbeddingTaskName
 from fathom.core.exceptions import EmbeddingError
 from fathom.interfaces.embedding import EmbeddingPort
 from fathom.schemas.embedding import EmbeddingVector
@@ -36,9 +37,17 @@ class EmbeddingCache:
         if not unique:
             return
 
+        logger.info(
+            "Embedding cache warmup requested",
+            extra={
+                "component": "core.embedding.cache",
+                "event": "embedding.cache.warmup.requested",
+                "text.count": len(unique),
+            },
+        )
         self.__warmup_task = asyncio.create_task(
             self.__warmup(texts=unique),
-            name="embedding_cache_warmup",
+            name=EmbeddingTaskName.CACHE_WARMUP.value,
         )
 
     async def get(self, *, text: str) -> Optional[EmbeddingVector]:
@@ -47,21 +56,40 @@ class EmbeddingCache:
         """
 
         key = self.__key(text=text)
+
         if not key:
+            logger.info(
+                "Embedding cache get called with empty key; skipping",
+                extra={
+                    "component": "core.embedding.cache",
+                    "event": "embedding.cache.get.empty_key",
+                },
+            )
             return None
+
         if key in self.__cache:
+            logger.info(
+                "Embedding cache hit",
+                extra={
+                    "event": "embedding.cache.hit",
+                    "component": "core.embedding.cache",
+                },
+            )
             return self.__cache[key]
 
         if self.__warmup_task is not None and not self.__warmup_task.done():
             try:
                 await self.__warmup_task
-            except Exception as exception:  # noqa: BLE001 - logged below
+            except asyncio.CancelledError:
+                raise
+            except EmbeddingError as exception:
                 logger.warning(
                     "Embedding cache warmup raised; falling back to lazy embed",
                     extra={
                         "component": "core.embedding.cache",
                         "event": "embedding.cache.warmup.failed",
                         "error.kind": type(exception).__name__,
+                        "error.message": str(exception),
                     },
                 )
 
@@ -81,15 +109,18 @@ class EmbeddingCache:
     @classmethod
     def __deduplicate(cls, *, texts: Tuple[str, ...]) -> Tuple[str, ...]:
         """
-        Return non-empty input texts deduplicated by normalised key.
+        Return non-empty input texts deduplicated by normalized key.
         """
 
         seen: Dict[str, str] = {}
+
         for text in texts:
             key = cls.__key(text=text)
             if not key or key in seen:
                 continue
+
             seen[key] = text
+
         return tuple(seen.values())
 
     async def __warmup(self, *, texts: Tuple[str, ...]) -> None:
@@ -105,8 +136,9 @@ class EmbeddingCache:
                 extra={
                     "component": "core.embedding.cache",
                     "event": "embedding.cache.warmup.error",
-                    "error.kind": type(exception).__name__,
                     "text.count": len(texts),
+                    "error.kind": type(exception).__name__,
+                    "error.message": str(exception),
                 },
             )
             return
@@ -126,6 +158,15 @@ class EmbeddingCache:
         for text, vector in zip(texts, result.vectors, strict=True):
             self.__cache[self.__key(text=text)] = vector
 
+        logger.info(
+            "Embedding cache warmup completed",
+            extra={
+                "component": "core.embedding.cache",
+                "event": "embedding.cache.warmup.completed",
+                "text.count": len(texts),
+            },
+        )
+
     async def __lazy(self, *, text: str) -> Optional[EmbeddingVector]:
         """
         On cache miss embed one text and store the result; return None on failure.
@@ -133,10 +174,19 @@ class EmbeddingCache:
 
         sanitized = (text or "").strip()
         if not sanitized:
+            logger.info(
+                "Lazy embed skipped; sanitised text is empty",
+                extra={
+                    "component": "core.embedding.cache",
+                    "event": "embedding.cache.lazy.empty_text",
+                },
+            )
             return None
 
         try:
             result = await self.__embedder.embed(texts=(sanitized,))
+        except asyncio.CancelledError:
+            raise
         except EmbeddingError as exception:
             logger.warning(
                 "Lazy embedding failed",
@@ -144,13 +194,33 @@ class EmbeddingCache:
                     "component": "core.embedding.cache",
                     "event": "embedding.cache.lazy.error",
                     "error.kind": type(exception).__name__,
+                    "error.message": str(exception),
+                },
+            )
+            return None
+        except Exception as exception:
+            logger.exception(
+                "Lazy embedding raised unexpected exception",
+                extra={
+                    "component": "core.embedding.cache",
+                    "event": "embedding.cache.lazy.unexpected_error",
+                    "error.kind": type(exception).__name__,
+                    "error.message": str(exception),
                 },
             )
             return None
 
         if not result.vectors:
+            logger.warning(
+                "Lazy embedding returned no vectors",
+                extra={
+                    "component": "core.embedding.cache",
+                    "event": "embedding.cache.lazy.empty_result",
+                },
+            )
             return None
 
         vector = result.vectors[0]
         self.__cache[self.__key(text=sanitized)] = vector
+
         return vector

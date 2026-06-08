@@ -1,7 +1,3 @@
-"""
-Unit pins for :attr:`SubGoal.deferral_count` field shape and checkpoint compatibility.
-"""
-
 from __future__ import annotations
 
 import unittest

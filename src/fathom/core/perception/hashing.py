@@ -49,7 +49,7 @@ class VisualHashEngine:
         if not OPENCV_AVAILABLE or cv2 is None or numpy is None:
             raise MissingDependencyError(dependency="opencv-python", feature="pHash computation")
 
-        logger.debug("Computing pHash using OpenCV")
+        logger.info("Computing pHash using OpenCV")
 
         image_array = numpy.frombuffer(image_data, numpy.uint8)
         decoded_image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
@@ -78,7 +78,7 @@ class VisualHashEngine:
         Compute a lightweight fallback perceptual hash using Pillow.
         """
 
-        logger.debug("Computing fallback perceptual hash using Pillow")
+        logger.info("Computing fallback perceptual hash using Pillow")
 
         with Image.open(io.BytesIO(image_data)) as pillow_image:
             grayscale_image = pillow_image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)

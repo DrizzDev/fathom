@@ -38,12 +38,7 @@ class SwipeDirectionLabelTest(unittest.TestCase):
         self.assertEqual(swipe_direction_label(action_type="swipe_down"), "Scroll down")
 
     def test_bare_scroll_defaults_to_scroll_up(self) -> None:
-        """
-        A direction-less ``"scroll"`` action resolves to ``"Scroll up"``.
-        This is the documented default the planner intends when it does not
-        specify a direction; the historical default of ``"Scroll down"`` was
-        the wrong half of the inversion that motivated this fix.
-        """
+        """A direction-less ``"scroll"`` action resolves to ``"Scroll up"``."""
 
         self.assertEqual(swipe_direction_label(action_type="scroll"), "Scroll up")
 
@@ -64,22 +59,12 @@ class SwipeDirectionLabelTest(unittest.TestCase):
         self.assertEqual(swipe_direction_label(action_type="swipe_right"), "Swipe right")
 
     def test_unknown_action_type_defaults_to_scroll_up(self) -> None:
-        """
-        Any action type the mapping does not enumerate must still produce a
-        valid script line; falling back to ``"Scroll up"`` keeps the default
-        aligned with the bare-``scroll`` convention rather than emitting a
-        direction-less ``"Scroll"`` token the replay engine would reject.
-        """
+        """Any action type the mapping does not enumerate must still produce a valid script line; falling back to ``"Scroll up"`` keeps the default aligned with the bare-``scroll`` convention rather than emitting a direction-less ``"Scroll"`` token the replay engine would reject."""
 
         self.assertEqual(swipe_direction_label(action_type="unknown_gesture"), "Scroll up")
 
     def test_every_swipe_action_constant_is_mapped(self) -> None:
-        """
-        ``swipe_direction_label`` must explicitly map every member of
-        :data:`SWIPE_ACTIONS` so that adding a new gesture to the constants
-        without updating this mapping cannot silently fall back to the
-        generic default and ship a wrong direction into a script.
-        """
+        """``swipe_direction_label`` must explicitly map every member of :data:`SWIPE_ACTIONS` so that adding a new gesture to the constants without updating this mapping cannot silently fall back to the generic default and ship a wrong direction into a script."""
 
         for action_type in SWIPE_ACTIONS:
             with self.subTest(action_type=action_type):

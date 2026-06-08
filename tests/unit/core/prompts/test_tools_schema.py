@@ -124,3 +124,41 @@ class ToolRegistryTest(unittest.TestCase):
 
         self.assertIn("EXACT visible text", target_name["description"])
         self.assertIn("Do NOT append interaction-kind suffixes", target_name["description"])
+
+    def test_verify_goal_schema_exposes_completion_reason_fields(self) -> None:
+        """
+        The verify_goal schema must surface goal_completion_reason, subgoal_completion_reason,
+        and completion_criteria_met so the LLM can populate them when claiming completion.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        verify_goal = next(
+            definition for definition in definitions if definition["name"] == "verify_goal"
+        )
+        properties = verify_goal["parameters"]["properties"]
+
+        self.assertIn("goal_completion_reason", properties)
+        self.assertIn("subgoal_completion_reason", properties)
+        self.assertIn("completion_criteria_met", properties)
+
+    def test_verify_goal_completion_reason_descriptions_signal_required_when_complete(
+        self,
+    ) -> None:
+        """
+        Reason field descriptions must communicate the implicit "required when complete" contract.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        verify_goal = next(
+            definition for definition in definitions if definition["name"] == "verify_goal"
+        )
+        properties = verify_goal["parameters"]["properties"]
+
+        self.assertIn(
+            "Required when goal_completed=true",
+            properties["goal_completion_reason"]["description"],
+        )
+        self.assertIn(
+            "Required when sub_goal_completed=true",
+            properties["subgoal_completion_reason"]["description"],
+        )
