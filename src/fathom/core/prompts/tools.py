@@ -279,7 +279,7 @@ class ToolRegistry:
                             # Universally-required fields only. Conditionally-required
                             # fields (bbox, export_target, scroll_target, wait_subject,
                             # validation_subject) are enforced by the Pydantic validators
-                            # on ExecuteAction in fathom.schemas.gemini_tools, keyed off
+                            # on ExecuteAction in fathom.schemas.tool_args, keyed off
                             # action_type. Keeping them out of the schema-level 'required'
                             # list prevents Gemini from inventing placeholder values
                             # (e.g. all-zero bbox, 'none' export_target) for actions that
