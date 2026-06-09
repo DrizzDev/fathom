@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from logging import getLogger
 from typing import Any, Dict, Optional
 
 from google.cloud import storage
 
+from fathom.constants.artifact import ArtifactDirectory
 from fathom.core.exceptions import VisionError
 from fathom.infrastructure.storage.metadata import extract_metadata
 from fathom.interfaces import IImageStorage
@@ -58,16 +59,15 @@ class GCSImageStorage(IImageStorage):
 
                 meta = extract_metadata(metadata or {})
 
-                if not meta.filename:
-                    raise VisionError(
-                        "GCS upload requires a canonical filename in metadata; "
-                        "callers must supply step-NNN__kind__iso.<ext>"
-                    )
-
                 storage_bucket = client.bucket(bucket)
 
                 folder = datetime.now().strftime("%Y-%m-%d")
-                filename = f"{meta.category}/{folder}/{meta.session}/{meta.filename}"
+                resolved_name = meta.filename or self.__fallback_filename(
+                    package=meta.package,
+                    category=meta.category,
+                    activity=meta.activity,
+                )
+                filename = f"{meta.category}/{folder}/{meta.session}/{resolved_name}"
 
                 content_type = self.__content_type_for(filename=filename)
 
@@ -105,3 +105,27 @@ class GCSImageStorage(IImageStorage):
             return "application/xml"
 
         return "application/octet-stream"
+
+    @staticmethod
+    def __fallback_filename(*, category: str, activity: str, package: str) -> str:
+        """
+        Build a storage filename when the caller did not provide a canonical artifact name.
+        """
+
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+        extension = GCSImageStorage.__extension_for(category=category)
+        return f"{timestamp}__{package}__{activity}{extension}"
+
+    @staticmethod
+    def __extension_for(*, category: str) -> str:
+        """
+        Resolve the default file extension for a storage category.
+        """
+
+        if category == ArtifactDirectory.XMLS:
+            return ".xml"
+
+        if category == ArtifactDirectory.HISTORY:
+            return ".txt"
+
+        return ".png"

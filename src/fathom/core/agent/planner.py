@@ -786,11 +786,11 @@ class StepPlanner:
         Build the tool-scope context for this turn and emit its observability event.
         """
 
-        modes: frozenset[TurnMode] = (
-            frozenset({TurnMode.VERIFY})
-            if current_sub_goal is not None and current_sub_goal.kind == SubGoalKind.VALIDATION
-            else frozenset()
-        )
+        modes: frozenset[TurnMode] = frozenset()
+        if not state.has_sub_goals() or (
+            current_sub_goal is not None and current_sub_goal.kind == SubGoalKind.VALIDATION
+        ):
+            modes = frozenset({TurnMode.VERIFY})
         context = ToolPolicyContext(capabilities=state.capabilities, modes=modes)
         allowed = self.__tool_scope.compute(context=context)
         self.__log_tool_scope_resolved(

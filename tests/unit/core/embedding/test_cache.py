@@ -21,6 +21,7 @@ class _StubEmbedder(EmbeddingPort):
         *,
         responses: List[Tuple[EmbeddingVector, ...]],
         raise_first: bool = False,
+        first_exception: Exception | None = None,
         delay_seconds: float = 0.0,
     ) -> None:
         """
@@ -29,6 +30,7 @@ class _StubEmbedder(EmbeddingPort):
 
         self.__responses = list(responses)
         self.__raise_first = raise_first
+        self.__first_exception = first_exception
         self.__delay = delay_seconds
         self.calls: List[Tuple[str, ...]] = []
 
@@ -38,6 +40,10 @@ class _StubEmbedder(EmbeddingPort):
         """
 
         self.calls.append(texts)
+        if self.__first_exception is not None:
+            exception = self.__first_exception
+            self.__first_exception = None
+            raise exception
         if self.__raise_first:
             self.__raise_first = False
             raise EmbeddingError("stubbed failure")
@@ -102,6 +108,24 @@ class EmbeddingCacheTest(unittest.IsolatedAsyncioTestCase):
 
         cache.warm(texts=("Pay the bill",))
         result = await cache.get(text="Pay the bill")
+
+        self.assertEqual(result, vector)
+        self.assertGreaterEqual(len(embedder.calls), 2)
+
+    async def test_unexpected_warmup_failure_falls_back_to_lazy_embed(self) -> None:
+        """
+        Non-domain provider exceptions during warmup must not block lazy recovery.
+        """
+
+        vector = EmbeddingVector(values=(0.4,))
+        embedder = _StubEmbedder(
+            responses=[(vector,)],
+            first_exception=RuntimeError("provider transport failed"),
+        )
+        cache = EmbeddingCache(embedder=embedder)
+
+        cache.warm(texts=("Validate checkout",))
+        result = await cache.get(text="Validate checkout")
 
         self.assertEqual(result, vector)
         self.assertGreaterEqual(len(embedder.calls), 2)

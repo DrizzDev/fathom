@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, FrozenSet
+from typing import FrozenSet, Iterable, Sequence, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from fathom.constants.tools import ToolName, TurnMode
 from fathom.schemas.capabilities import RuntimeCapabilities
@@ -40,11 +40,46 @@ class ToolPolicyContext(BaseModel):
 
     @field_validator("modes", mode="before")
     @classmethod
-    def __coerce_modes(cls, value: Any) -> FrozenSet[TurnMode]:
+    def __coerce_modes(cls, value: object) -> FrozenSet[TurnMode]:
         """
-        Accept any iterable of :class:`TurnMode` from callers and normalise to a frozen set.
+        Accept any iterable of :class:`TurnMode` from callers and normalize to a frozen set.
         """
+
+        if value is None:
+            return frozenset()
+
+        if isinstance(value, TurnMode):
+            return frozenset({value})
 
         if isinstance(value, frozenset):
             return value
-        return frozenset(value)
+
+        return frozenset(cast("Iterable[TurnMode]", value))
+
+
+class ToolScopeMatrixExpansion(BaseModel):
+    """
+    One boot-time tool-scope expansion for observability.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    modes: FrozenSet[TurnMode] = Field(description="Active mode flags for this expansion.")
+    hitl: bool = Field(description="Whether HITL is available for this expansion.")
+    tools_allowed: FrozenSet[ToolName] = Field(description="Tools exposed for this expansion.")
+
+    @field_serializer("modes")
+    def __serialize_modes(self, value: FrozenSet[TurnMode]) -> Sequence[str]:
+        """
+        Serialize mode flags in deterministic order.
+        """
+
+        return sorted(mode.value for mode in value)
+
+    @field_serializer("tools_allowed")
+    def __serialize_tools(self, value: FrozenSet[ToolName]) -> Sequence[str]:
+        """
+        Serialize tool names in deterministic order.
+        """
+
+        return sorted(name.value for name in value)

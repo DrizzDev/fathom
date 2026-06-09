@@ -130,6 +130,8 @@ class EmbeddingCache:
 
         try:
             result = await self.__embedder.embed(texts=texts)
+        except asyncio.CancelledError:
+            raise
         except EmbeddingError as exception:
             logger.warning(
                 "Embedding cache warmup failed",
@@ -139,6 +141,18 @@ class EmbeddingCache:
                     "text.count": len(texts),
                     "error.kind": type(exception).__name__,
                     "error.message": str(exception),
+                },
+            )
+            return
+        except Exception as exception:
+            logger.exception(
+                "Embedding cache warmup raised unexpected exception",
+                extra={
+                    "component": "core.embedding.cache",
+                    "event": "embedding.cache.warmup.unexpected_error",
+                    "text.count": len(texts),
+                    "error.message": str(exception),
+                    "error.kind": type(exception).__name__,
                 },
             )
             return

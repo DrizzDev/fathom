@@ -33,7 +33,9 @@ class TraceDrawing:
     LINE_WIDTH: Final[int] = 10
     TAP_RADIUS: Final[int] = 40
     CENTER_DOT_RADIUS: Final[int] = 5
-    ARROW_HALF: Final[int] = 20
+    SWIPE_START_RADIUS: Final[int] = 15
+    ARROW_HEAD_LENGTH: Final[int] = 24
+    ARROW_HEAD_ANGLE_DEGREES: Final[int] = 30
 
 
 class SourceColor:

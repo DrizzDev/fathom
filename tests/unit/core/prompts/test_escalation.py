@@ -83,6 +83,19 @@ class EscalationPromptBuilderTest(unittest.TestCase):
         self.assertNotIn("None", prompt.question)
         self.assertTrue(prompt.question.endswith("?"))
 
+    def test_blank_action_descriptor_is_omitted(self) -> None:
+        """
+        Whitespace-only action descriptors must not leave a dangling action clause.
+        """
+
+        prompt = EscalationPromptBuilder.build(
+            current_sub_goal=None,
+            last_action_description="   ",
+            source=StuckSource.LOOP_DETECTOR,
+        )
+
+        self.assertNotIn("after repeatedly trying", prompt.question)
+
 
 if __name__ == "__main__":
     unittest.main()

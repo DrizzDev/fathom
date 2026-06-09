@@ -48,7 +48,7 @@ class ArtifactCategory:
         ArtifactKind.HIERARCHY_XML: ArtifactDirectory.XMLS,
         ArtifactKind.VERIFICATION: ArtifactDirectory.TRACES,
         ArtifactKind.ANNOTATED: ArtifactDirectory.ANNOTATED,
-        ArtifactKind.PERCEPTION: ArtifactDirectory.ANNOTATED,
+        ArtifactKind.PERCEPTION: ArtifactDirectory.PERCEPTION,
         ArtifactKind.SCREENSHOT: ArtifactDirectory.SCREENSHOT,
         ArtifactKind.CV_PERCEPTION: ArtifactDirectory.CV_PERCEPTION,
         ArtifactKind.OCR_PERCEPTION: ArtifactDirectory.OCR_PERCEPTION,

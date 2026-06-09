@@ -159,17 +159,17 @@ class CloudSinkPerKindCategoryTest(unittest.IsolatedAsyncioTestCase):
             filename="step-000__screenshot__2026-01-01T00-00-00Z-000.png",
         )
 
-    async def test_perception_kinds_route_to_per_kind_subdirectory(self) -> None:
+    async def test_perception_kinds_route_to_annotated_category(self) -> None:
         """
-        OCR/vision/overlay/cv/icon perception artifacts each land in their own GCS subdir.
+        OCR/vision/overlay/cv/icon perception artifacts all land in the annotated GCS category.
         """
 
         cases = {
-            ArtifactKind.CV_PERCEPTION: "cv_perception",
-            ArtifactKind.OCR_PERCEPTION: "ocr_perception",
-            ArtifactKind.ICON_PERCEPTION: "icon_perception",
-            ArtifactKind.VISION_PERCEPTION: "vision_perception",
-            ArtifactKind.OVERLAY_PERCEPTION: "overlay_perception",
+            ArtifactKind.CV_PERCEPTION: "annotated",
+            ArtifactKind.OCR_PERCEPTION: "annotated",
+            ArtifactKind.ICON_PERCEPTION: "annotated",
+            ArtifactKind.VISION_PERCEPTION: "annotated",
+            ArtifactKind.OVERLAY_PERCEPTION: "annotated",
         }
         for kind, expected_category in cases.items():
             with self.subTest(kind=kind):
@@ -177,8 +177,8 @@ class CloudSinkPerKindCategoryTest(unittest.IsolatedAsyncioTestCase):
                 sink = CloudSink(storage=storage, workflow_id="run-test")
 
                 await sink.persist(
-                    metadata=self.__metadata(kind=kind),
                     content=b"PNG",
+                    metadata=self.__metadata(kind=kind),
                 )
 
                 self.assertEqual(storage.calls[0]["metadata"]["category"], expected_category)

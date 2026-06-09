@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import math
 from logging import getLogger
 from typing import Optional, Tuple, cast
 
@@ -536,22 +537,57 @@ class TraceRenderer(ArtifactRendererPort):
         x1, y1, x2, y2 = coords[0], coords[1], coords[2], coords[3]
 
         draw.line([x1, y1, x2, y2], fill=SourceColor.ACTION, width=TraceDrawing.LINE_WIDTH)
+        start_radius = TraceDrawing.SWIPE_START_RADIUS
+
         draw.ellipse(
-            [x1 - 15, y1 - 15, x1 + 15, y1 + 15],
+            [x1 - start_radius, y1 - start_radius, x1 + start_radius, y1 + start_radius],
             fill=SourceColor.ACTION,
         )
 
-        half = TraceDrawing.ARROW_HALF
+        arrow_head = TraceRenderer.__arrow_head(start=(x1, y1), end=(x2, y2))
+        if arrow_head is None:
+            return
 
-        draw.line(
-            [x2 - half, y2 - half, x2 + half, y2 + half],
+        draw.polygon(
+            [(x2, y2), arrow_head[0], arrow_head[1]],
             fill=SourceColor.ACTION,
-            width=TraceDrawing.LINE_WIDTH,
         )
-        draw.line(
-            [x2 + half, y2 - half, x2 - half, y2 + half],
-            fill=SourceColor.ACTION,
-            width=TraceDrawing.LINE_WIDTH,
+
+    @staticmethod
+    def __arrow_head(
+        *, start: Tuple[int, int], end: Tuple[int, int]
+    ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """
+        Resolve the two base points for a directional arrowhead at the swipe endpoint.
+        """
+
+        end_x, end_y = end
+        start_x, start_y = start
+
+        delta_x = end_x - start_x
+        delta_y = end_y - start_y
+
+        length = math.hypot(delta_x, delta_y)
+        if length == 0:
+            return None
+
+        unit_x = delta_x / length
+        unit_y = delta_y / length
+
+        perpendicular_x = -unit_y
+        perpendicular_y = unit_x
+
+        angle = math.radians(TraceDrawing.ARROW_HEAD_ANGLE_DEGREES)
+        head_length = TraceDrawing.ARROW_HEAD_LENGTH
+
+        back_x = end_x - unit_x * head_length * math.cos(angle)
+        back_y = end_y - unit_y * head_length * math.cos(angle)
+        offset_x = perpendicular_x * head_length * math.sin(angle)
+        offset_y = perpendicular_y * head_length * math.sin(angle)
+
+        return (
+            (round(back_x + offset_x), round(back_y + offset_y)),
+            (round(back_x - offset_x), round(back_y - offset_y)),
         )
 
     @staticmethod

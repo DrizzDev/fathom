@@ -306,14 +306,21 @@ class TraceRendererTest(unittest.TestCase):
 
     def test_swipe_action_draws_arrow(self) -> None:
         """
-        Swipe actions render an arrow stroke and arrowhead.
+        Swipe actions render a directional arrowhead instead of an endpoint cross.
         """
 
+        capture = ScreenCapture(
+            width=100,
+            height=100,
+            activity="app",
+            image=_Fixtures.png(width=100, height=100, color=(0, 0, 0)),
+            timestamp=0,
+        )
         payload = TracePayload(
-            capture=_Fixtures.capture(),
-            coords=(10, 10, 50, 50),
+            capture=capture,
+            coords=(20, 50, 80, 50),
             action=Action(
-                action_type=ActionType.SWIPE_UP,
+                action_type=ActionType.SWIPE_RIGHT,
                 target="x",
                 rationale="t",
                 confidence=1.0,
@@ -322,7 +329,10 @@ class TraceRendererTest(unittest.TestCase):
 
         rendered = TraceRenderer().render(record=_Fixtures.record(payload=payload))
 
-        Image.open(io.BytesIO(rendered))
+        decoded = Image.open(io.BytesIO(rendered)).convert("RGB")
+        self.assertEqual(decoded.getpixel((80, 50)), (255, 59, 48))
+        self.assertEqual(decoded.getpixel((60, 40)), (255, 59, 48))
+        self.assertEqual(decoded.getpixel((65, 35)), (0, 0, 0))
 
     def test_tap_logical_coords_project_into_retina_canvas(self) -> None:
         """

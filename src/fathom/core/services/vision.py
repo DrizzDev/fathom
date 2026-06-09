@@ -197,7 +197,13 @@ class VisionService:
         )
 
         logger.info(
-            f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
+            "Vision input context prepared",
+            extra={
+                "component": "core.services.vision",
+                "event": "vision.input_context.prepared",
+                "guidance.present": guidance is not None,
+                "trace.count": len(full_context.get("trace", [])),
+            },
         )
 
         instruction = self.__builder.build(tools=tools)
@@ -206,8 +212,14 @@ class VisionService:
         # Only current sub-goal is passed to Gemini to prevent skip-ahead behavior.
         if sub_goal_info:
             logger.info(
-                f"[Vision] Single sub-goal focus mode: step [{sub_goal_info['index'] + 1}/{sub_goal_info['total']}] | "
-                f"Task: {sub_goal_info['description'][:60]}"
+                "Vision single-sub-goal focus mode enabled",
+                extra={
+                    "component": "core.services.vision",
+                    "event": "vision.sub_goal_focus.enabled",
+                    "sub_goal.index": sub_goal_info["index"],
+                    "sub_goal.total": sub_goal_info["total"],
+                    "sub_goal.description.length": len(sub_goal_info["description"]),
+                },
             )
 
         # Pass ALL persistent memory (not just screen-specific)
@@ -254,10 +266,14 @@ class VisionService:
             dynamic_context += self.__render_screen_observation(observation=screen_observation)
 
         logger.info(
-            f"[H3] Dynamic Context Built | "
-            f"has_memory={bool(all_memory)} | "
-            f"memory_keys={list(all_memory.keys()) if all_memory else []} | "
-            f"context_length={len(dynamic_context)}"
+            "Vision dynamic context built",
+            extra={
+                "component": "core.services.vision",
+                "event": "vision.dynamic_context.built",
+                "memory.present": bool(all_memory),
+                "context.length": len(dynamic_context),
+                "memory.count": len(all_memory) if all_memory else 0,
+            },
         )
 
         tool_scope_start = time.time()

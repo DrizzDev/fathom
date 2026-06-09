@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
-from typing import Any, Optional
+from typing import Optional, Sequence
 
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.journal.noop import NoopRuntimeJournal
@@ -61,7 +62,7 @@ from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.perception import PerceptionConfiguration  # noqa: TC001
 from fathom.schemas.run import RealignmentPolicy
-from fathom.schemas.tools import ToolPolicyContext
+from fathom.schemas.tools import ToolPolicyContext, ToolScopeMatrixExpansion
 
 logger = logging.getLogger(__name__)
 
@@ -294,22 +295,38 @@ class GraphContext:
             extra={
                 "component": "strategies.graph.context",
                 "event": "tool_scope.matrix.resolved",
-                "tool_scope.expansions": self.__matrix_expansions(),
+                "tool_scope.expansions": [
+                    expansion.model_dump(mode="json") for expansion in self.__matrix_expansions()
+                ],
             },
         )
 
-    def __matrix_expansions(self) -> list[dict[str, Any]]:
+    def __matrix_expansions(self) -> Sequence[ToolScopeMatrixExpansion]:
         """
         Compute one expansion entry per (mode-set, hitl) combination for the boot log.
         """
 
-        return [
+        return tuple(
             self.__expansion(modes=modes, hitl=hitl)
-            for modes in (frozenset(), frozenset({TurnMode.VERIFY}))
+            for modes in self.__mode_subsets()
             for hitl in (False, True)
-        ]
+        )
 
-    def __expansion(self, *, modes: frozenset[TurnMode], hitl: bool) -> dict[str, Any]:
+    @staticmethod
+    def __mode_subsets() -> Sequence[frozenset[TurnMode]]:
+        """
+        Enumerate every active mode-set combination supported by :class:`TurnMode`.
+        """
+
+        modes = tuple(TurnMode)
+
+        return tuple(
+            frozenset(combo)
+            for size in range(len(modes) + 1)
+            for combo in itertools.combinations(modes, size)
+        )
+
+    def __expansion(self, *, modes: frozenset[TurnMode], hitl: bool) -> ToolScopeMatrixExpansion:
         """
         Resolve one matrix entry for the given mode set and HITL capability.
         """
@@ -321,11 +338,11 @@ class GraphContext:
         result = self.__tool_scope.compute(
             context=ToolPolicyContext(capabilities=capabilities, modes=modes),
         )
-        return {
-            "modes": sorted(mode.value for mode in modes),
-            "hitl": hitl,
-            "tools_allowed": sorted(name.value for name in result.names),
-        }
+        return ToolScopeMatrixExpansion(
+            modes=modes,
+            hitl=hitl,
+            tools_allowed=result.names,
+        )
 
     @property
     def intent(self) -> str:

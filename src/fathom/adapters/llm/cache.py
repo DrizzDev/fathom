@@ -178,7 +178,9 @@ class CacheService:
             await self.__evict_hash(content_hash=content_hash)
 
     async def __evict_hash(self, *, content_hash: str) -> None:
-        """ """
+        """
+        Delete one tracked remote cache entry and remove its local index.
+        """
 
         cached_content = self.__cache_entries.get(content_hash)
         if not cached_content:

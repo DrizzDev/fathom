@@ -2,34 +2,46 @@ from __future__ import annotations
 
 import unittest
 
-from fathom.core.exceptions import VisionError
 from fathom.infrastructure.storage.cloud import GCSImageStorage
-from fathom.schemas.configuration import StorageConfiguration
 
 
-class GCSFilenameContractTest(unittest.IsolatedAsyncioTestCase):
-    """Pins that GCS uploads require a canonical filename and reject missing ones."""
+class GCSFilenameFallbackTest(unittest.TestCase):
+    """Pins generated filenames for direct storage callers."""
 
-    async def test_missing_filename_raises_vision_error(self) -> None:
-        """A save call without ``meta.filename`` must fail fast with a VisionError."""
+    def test_xmls_category_uses_xml_extension(self) -> None:
+        """Hierarchy XML uploads without a caller filename still land as XML."""
 
-        storage = GCSImageStorage(
-            configuration=StorageConfiguration(
-                project_id="proj",
-                storage_bucket="bucket",
-                credentials=None,
-            )
+        filename = GCSImageStorage._GCSImageStorage__fallback_filename(  # type: ignore[attr-defined]
+            category="xmls",
+            activity="MainActivity",
+            package="com.example",
         )
 
-        with self.assertRaises(VisionError):
-            await storage.save(
-                data=b"PNG",
-                metadata={
-                    "session_id": "sess",
-                    "package_name": "pkg",
-                    "category": "screenshot",
-                },
-            )
+        self.assertTrue(filename.endswith("__com.example__MainActivity.xml"))
+
+    def test_history_category_uses_text_extension(self) -> None:
+        """History uploads without a caller filename still land as text."""
+
+        filename = GCSImageStorage._GCSImageStorage__fallback_filename(  # type: ignore[attr-defined]
+            category="history",
+            activity="MainActivity",
+            package="com.example",
+        )
+
+        self.assertTrue(filename.endswith("__com.example__MainActivity.txt"))
+
+    def test_image_categories_default_to_png_extension(self) -> None:
+        """Image-bearing categories without a caller filename still land as PNG."""
+
+        for category in ("screenshot", "annotated", "traces"):
+            with self.subTest(category=category):
+                filename = GCSImageStorage._GCSImageStorage__fallback_filename(  # type: ignore[attr-defined]
+                    category=category,
+                    activity="MainActivity",
+                    package="com.example",
+                )
+
+                self.assertTrue(filename.endswith("__com.example__MainActivity.png"))
 
 
 class GCSContentTypeTest(unittest.TestCase):

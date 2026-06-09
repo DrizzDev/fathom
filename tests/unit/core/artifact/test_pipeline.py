@@ -20,6 +20,7 @@ from fathom.core.artifact.renderer import (
 from fathom.interfaces.artifact import ArtifactRendererPort, ArtifactSinkPort
 from fathom.interfaces.storage import StoragePort
 from fathom.schemas.artifact import (
+    AnnotatedPayload,
     ArtifactKind,
     ArtifactMetadata,
     ArtifactReceipt,
@@ -164,6 +165,7 @@ def _pipeline(
         config=config or PipelineConfiguration(),
         renderers={
             ArtifactKind.PERCEPTION: PerceptionRenderer(),
+            ArtifactKind.ANNOTATED: PassthroughRenderer(kind=ArtifactKind.ANNOTATED),
             ArtifactKind.SCREENSHOT: PassthroughRenderer(kind=ArtifactKind.SCREENSHOT),
         },
         sink=sink,
@@ -194,6 +196,40 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
 
             screenshot_dir = tmp_path / "screenshot"
             payloads = list(screenshot_dir.rglob("step-000__screenshot__*.png"))
+
+            self.assertEqual(len(payloads), 1)
+            self.assertTrue(payloads[0].read_bytes())
+
+    async def test_emit_writes_annotated_payloads_to_annotated_directory(self) -> None:
+        """
+        Every annotated-image payload lands under the flat annotated asset root.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sink = _RecordingSink(cleanup=False)
+            pipeline = _pipeline(tmp=tmp_path, sink=sink)
+            capture = ScreenCapture(
+                width=4,
+                height=4,
+                timestamp=0,
+                activity="app",
+                image=_png_bytes(),
+                annotated_image=_png_bytes(),
+            )
+
+            await pipeline.emit(
+                record=ArtifactRecord(
+                    created=1,
+                    step_number=7,
+                    package_name="app",
+                    session_id="run-test",
+                    payload=AnnotatedPayload(capture=capture),
+                )
+            )
+            await pipeline.drain()
+
+            payloads = list(tmp_path.rglob("annotated/**/step-007__annotated__*.png"))
 
             self.assertEqual(len(payloads), 1)
             self.assertTrue(payloads[0].read_bytes())

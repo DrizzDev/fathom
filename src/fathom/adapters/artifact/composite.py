@@ -49,7 +49,7 @@ class CompositeSink(ArtifactSinkPort):
                     extra={
                         "error.message": str(receipt),
                         "artifact.kind": metadata.kind.value,
-                        "component": "artifact.sink.cloud",
+                        "component": "artifact.sink.composite",
                         "event": "artifact.composite.branch_failed",
                     },
                 )
@@ -78,4 +78,4 @@ class CompositeSink(ArtifactSinkPort):
         Structured-logging component identifier for this composite.
         """
 
-        return {"component": "artifact.sink.cloud"}
+        return {"component": "artifact.sink.composite"}

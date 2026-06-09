@@ -7,6 +7,7 @@ from tests.builders import ActionFixtures, AgentFixtures, ScreenFixtures, SubGoa
 
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason
+from fathom.constants.tools import ToolName
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.state import AgentState
 from fathom.schemas.results import AnalysisResult
@@ -141,6 +142,78 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(result.step)
         self.assertFalse(result.should_retry)
+
+
+class StepPlannerToolScopeTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins planner-to-tool-scope mapping for decomposed and non-decomposed turns.
+    """
+
+    async def test_no_sub_goal_turn_exposes_verification_tools(self) -> None:
+        """
+        Non-decomposed planner turns retain whole-goal verification capability.
+        """
+
+        action = ActionFixtures.make(rationale="Tap visible continue button.")
+        analysis = AnalysisResult(
+            action=action,
+            reasoning="Continue is visible.",
+            screen_description="Onboarding",
+            metadata={"tool_args": {}},
+        )
+        vision = Mock()
+        vision.analyze = AsyncMock(return_value=analysis)
+
+        reasoner = Mock()
+        reasoner.select_best_action.return_value = action
+        reasoner.analyze_completion.return_value = Mock(is_complete=False)
+
+        await StepPlanner(vision_tool=vision).plan_step(
+            state=AgentFixtures.state(intent="verify offerwall is open"),
+            reasoner=reasoner,
+            capture=ScreenFixtures.capture(activity="app"),
+            context_manager=AgentFixtures.context_manager(),
+            screen_width=100,
+            screen_height=200,
+        )
+
+        tools = vision.analyze.call_args.kwargs["tools"]
+        self.assertIn(ToolName.VERIFY_GOAL, tools.names)
+        self.assertIn(ToolName.VALIDATE_STATE, tools.names)
+
+    async def test_action_sub_goal_turn_hides_verification_tools(self) -> None:
+        """
+        ACTION sub-goals keep verification tools hidden even when the intent says verify.
+        """
+
+        action = ActionFixtures.make(rationale="Tap Play.")
+        analysis = AnalysisResult(
+            action=action,
+            reasoning="Play is visible.",
+            screen_description="Game home",
+            metadata={"tool_args": {}},
+        )
+        vision = Mock()
+        vision.analyze = AsyncMock(return_value=analysis)
+
+        state = AgentFixtures.state(intent="open the game and verify offerwall")
+        state.set_sub_goals([SubGoalFixtures.make(description="Press Play")])
+
+        reasoner = Mock()
+        reasoner.select_best_action.return_value = action
+
+        await StepPlanner(vision_tool=vision).plan_step(
+            state=state,
+            reasoner=reasoner,
+            capture=ScreenFixtures.capture(activity="app"),
+            context_manager=AgentFixtures.context_manager(),
+            screen_width=100,
+            screen_height=200,
+        )
+
+        tools = vision.analyze.call_args.kwargs["tools"]
+        self.assertNotIn(ToolName.VERIFY_GOAL, tools.names)
+        self.assertNotIn(ToolName.VALIDATE_STATE, tools.names)
 
 
 class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestCase):

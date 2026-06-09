@@ -86,4 +86,8 @@ class EscalationPromptBuilder:
         if not last_action_description:
             return ""
 
-        return cls.__ACTION_CLAUSE.format(descriptor=last_action_description.strip())
+        descriptor = last_action_description.strip()
+        if not descriptor:
+            return ""
+
+        return cls.__ACTION_CLAUSE.format(descriptor=descriptor)

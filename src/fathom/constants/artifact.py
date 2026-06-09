@@ -15,19 +15,21 @@ class ArtifactQueue:
 class ArtifactDirectory:
     """
     Canonical asset directory names beneath ``assets/``.
+    Every annotation payload (merged or per-kind) shares the flat ``annotated/`` root;
+    the filename grammar ``step-NNN__<kind>__<iso>.png`` already disambiguates them.
     """
 
     XMLS: Final[str] = "xmls"
     TRACES: Final[str] = "traces"
     HISTORY: Final[str] = "history"
     ANNOTATED: Final[str] = "annotated"
-    PERCEPTION: Final[str] = "perception"
     SCREENSHOT: Final[str] = "screenshot"
-    CV_PERCEPTION: Final[str] = "cv_perception"
-    OCR_PERCEPTION: Final[str] = "ocr_perception"
-    ICON_PERCEPTION: Final[str] = "icon_perception"
-    VISION_PERCEPTION: Final[str] = "vision_perception"
-    OVERLAY_PERCEPTION: Final[str] = "overlay_perception"
+    PERCEPTION: Final[str] = "annotated"
+    CV_PERCEPTION: Final[str] = "annotated"
+    OCR_PERCEPTION: Final[str] = "annotated"
+    ICON_PERCEPTION: Final[str] = "annotated"
+    VISION_PERCEPTION: Final[str] = "annotated"
+    OVERLAY_PERCEPTION: Final[str] = "annotated"
 
 
 class StorageBackend:
