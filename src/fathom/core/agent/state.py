@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from fathom.constants import ActionExecutionKind, ActionType
 from fathom.constants.agent import DIRECTIVE_DEFAULT_TTL_TURNS, DirectiveKind
 from fathom.constants.recovery import AUTONOMOUS_RECOVERY_ACTIVE_KINDS
+from fathom.constants.retries import MIN_RETRY_CAP, RetryBranch, RetryKind
 from fathom.constants.runtime import (
     DEFAULT_CONTEXT_WINDOW,
     DEFAULT_LOOP_THRESHOLD,
@@ -30,6 +31,7 @@ from fathom.schemas.effect import ActionEffect
 from fathom.schemas.loop import LoopEvidence
 from fathom.schemas.observation import LoopObservation, ScreenRelation
 from fathom.schemas.reasoning import SubGoalCompletionSignal
+from fathom.schemas.retries import RetryAttempt, RetryCounter, RetryLimits, RetryState
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import (
     ActionHistory,
@@ -64,23 +66,31 @@ class AgentState:
         *,
         capabilities: RuntimeCapabilities,
         max_steps: int = DEFAULT_MAX_STEPS,
+        retries: Optional[RetryLimits] = None,
         loop_threshold: int = DEFAULT_LOOP_THRESHOLD,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         realignment_budget: int = DEFAULT_REALIGNMENT_BUDGET,
     ) -> None:
-        """Initialize agent state with the goal and live runtime capabilities."""
+        """
+        Initialize agent state with the goal and live runtime capabilities.
+        """
 
         self.__step_count = 0
         self.__intent = intent
         self.__max_steps = max_steps
         self.__capabilities = capabilities
 
+        self.__retries = self.__build_retry_state(
+            max_steps=max_steps,
+            limits=retries or RetryLimits(),
+        )
+
         self.__interaction_tracker = InteractionTracker()
         self.__action_history = ActionHistory(max_size=context_window)
 
         self.__runtime = RuntimeState.create(
-            loop_threshold=loop_threshold,
             loop_window=context_window,
+            loop_threshold=loop_threshold,
             realignment_budget=realignment_budget,
         )
 
@@ -134,6 +144,18 @@ class AgentState:
         # before rejecting the matching action — so a human override
         # cannot be silently re-blocked by autonomous-mode heuristics.
         self.__operator_directive: Optional[OperatorDirective] = None
+
+        self.__last_retry_attempt: Optional[RetryAttempt] = None
+
+    @staticmethod
+    def __build_retry_state(*, limits: RetryLimits, max_steps: int) -> RetryState:
+        """
+        Clamp every per-kind cap to ``max_steps`` so a misconfigured limit cannot outrun the workflow.
+        """
+
+        return RetryState(
+            planner=RetryCounter(cap=max(MIN_RETRY_CAP, min(limits.planner, max_steps))),
+        )
 
     @property
     def intent(self) -> str:
@@ -383,6 +405,9 @@ class AgentState:
         if self.__step_count >= self.__max_steps:
             return False
 
+        if self.__retries.planner.exhausted:
+            return False
+
         if self.is_stuck:
             if self.__capabilities.hitl.enabled:
                 return not self.__runtime.realignment.exhausted()
@@ -514,6 +539,12 @@ class AgentState:
         """
 
         self.__step_count += 1
+
+        # Per-step budget: only a SUCCESSFUL dispatch resets the planner-retry counter.
+        # A recorded step with ``result.success=False`` represents a failed dispatch / observation
+        # and must not refill the budget — that would let the silent-rejection loop reset endlessly.
+        if result.success:
+            self.clear_planner_retries()
 
         self.tick_operator_directive()
 
@@ -1217,6 +1248,76 @@ class AgentState:
         return self.__action_history.has_repeated_failure(action=action)
 
     @property
+    def retries(self) -> RetryState:
+        """
+        Read-only view of all retry budgets; access via ``retries.planner.count`` / ``.cap`` / ``.exhausted``.
+        """
+
+        return self.__retries
+
+    @property
+    def last_retry_attempt(self) -> Optional[RetryAttempt]:
+        """
+        Diagnostic snapshot of the most recently consumed retry attempt.
+        """
+
+        return self.__last_retry_attempt
+
+    def tick_planner_retry(
+        self,
+        *,
+        kind: RetryKind,
+        branch: RetryBranch,
+        action: Optional[str] = None,
+    ) -> int:
+        """
+        Increment the planner-retry counter for budget-bearing kinds; return the new count.
+        """
+
+        if not self.__planner_retry_consumes(kind=kind):
+            return self.__retries.planner.count
+
+        screen = self.__runtime.screen.current
+        self.__last_retry_attempt = RetryAttempt(
+            kind=kind,
+            branch=branch,
+            action=action,
+            activity=screen.activity if screen is not None else None,
+            screen=screen.visual_hash if screen is not None else None,
+        )
+        next_planner = self.__retries.planner.model_copy(
+            update={"count": self.__retries.planner.count + 1},
+        )
+        self.__retries = self.__retries.model_copy(update={"planner": next_planner})
+
+        return self.__retries.planner.count
+
+    def clear_planner_retries(self) -> None:
+        """
+        Clear the planner-retry counter and last-attempt diagnostic on successful EXECUTE dispatch.
+        """
+
+        self.__last_retry_attempt = None
+
+        if self.__retries.planner.count == 0:
+            return
+
+        next_planner = self.__retries.planner.model_copy(update={"count": 0})
+        self.__retries = self.__retries.model_copy(update={"planner": next_planner})
+
+    def __planner_retry_consumes(self, *, kind: RetryKind) -> bool:
+        """
+        Return whether the given retry kind counts against the planner budget on this state.
+        """
+
+        if kind in (RetryKind.SILENT_REJECTION, RetryKind.LLM_FEEDBACK):
+            return True
+
+        # ESCALATION_DEFERRED is normally bounded by per-sub-goal ``deferral_count`` —
+        # but that is a no-op without an active sub-goal, so fall through here.
+        return kind is RetryKind.ESCALATION_DEFERRED and self.get_current_sub_goal() is None
+
+    @property
     def rejection_history(self) -> Optional[List[ConversationTurn]]:
         """
         Returns stored multi-turn rejection history for cross-iteration feedback.
@@ -1346,6 +1447,12 @@ class AgentState:
             ),
             "last_action_type": self.__last_action_type,
             "last_action_description": self.__last_action_description,
+            "retries": self.__retries.model_dump(mode="json"),
+            "last_retry_attempt": (
+                self.__last_retry_attempt.model_dump(mode="json")
+                if self.__last_retry_attempt is not None
+                else None
+            ),
             # Diagnostic snapshot retained for backward-compatibility with
             # external checkpoint readers. Not consumed during restore.
             "action_stats": self.__action_history.get_stats(),
@@ -1372,6 +1479,8 @@ class AgentState:
         realignment_state: Optional[Dict[str, Any]] = None,
         last_action_type: Optional[str] = None,
         last_action_description: Optional[str] = None,
+        retries: Optional[Dict[str, Any]] = None,
+        last_retry_attempt: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Restore internal state from checkpoint data.
@@ -1382,6 +1491,12 @@ class AgentState:
         self.__completion_reason = completion_reason
         self.__consecutive_complete_deferrals = max(0, consecutive_complete_deferrals)
         self.__verification_loop = verification_loop
+
+        if retries is not None:
+            self.__retries = RetryState.model_validate(retries)
+
+        if last_retry_attempt is not None:
+            self.__last_retry_attempt = RetryAttempt.model_validate(last_retry_attempt)
 
         if realignment_state is not None:
             self.__runtime.realignment.load_state(state=realignment_state)
@@ -1541,6 +1656,14 @@ class AgentState:
             last_action_description_raw if isinstance(last_action_description_raw, str) else None
         )
 
+        retries_raw = data.get("retries")
+        retries_dict = dict(retries_raw) if isinstance(retries_raw, dict) else None
+
+        last_retry_attempt_raw = data.get("last_retry_attempt")
+        last_retry_attempt_dict = (
+            dict(last_retry_attempt_raw) if isinstance(last_retry_attempt_raw, dict) else None
+        )
+
         state.__restore_from_data(
             sub_goals=sub_goals,
             step_count=step_count,
@@ -1559,6 +1682,8 @@ class AgentState:
             verification_loop=verification_loop,
             last_action_type=last_action_type,
             last_action_description=last_action_description,
+            retries=retries_dict,
+            last_retry_attempt=last_retry_attempt_dict,
         )
 
         return state

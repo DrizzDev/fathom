@@ -172,6 +172,7 @@ class GraphContext:
             intent=intent,
             max_steps=max_steps,
             capabilities=self.__capabilities,
+            retries=configuration.intent.retries,
             realignment_budget=self.__realignment.budget,
         )
 

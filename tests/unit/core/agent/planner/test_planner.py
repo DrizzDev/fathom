@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import unittest
+from typing import Tuple
 from unittest.mock import AsyncMock, Mock
 
 from tests.builders import ActionFixtures, AgentFixtures, ScreenFixtures, SubGoalFixtures
 
 from fathom.constants import ActionType
+from fathom.constants.retries import RetryBranch, RetryKind, RetryMetadataField
 from fathom.constants.state import CompletionReason
 from fathom.constants.tools import ToolName
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.state import AgentState
-from fathom.schemas.results import AnalysisResult
+from fathom.schemas.actions import Action
+from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.supervision import BlockReason
 
 
 class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
@@ -95,8 +99,8 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.should_retry)
         self.assertEqual(result.reason, CompletionReason.ACTION_BLOCKED.value)
         self.assertEqual(
-            result.metadata.get("block_reason"),
-            "repeated_current_screen_action",
+            result.metadata.get(RetryMetadataField.BLOCK_REASON.value),
+            BlockReason.REPEATED_CURRENT_SCREEN_ACTION.value,
         )
 
     async def test_does_not_block_persistent_screen_memory(self) -> None:
@@ -299,3 +303,222 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
         self.assertIsNone(result.step)
         self.assertTrue(result.is_complete)
         self.assertEqual(result.reason, CompletionReason.INTERVENTION_REQUIRED.value)
+
+
+class StepPlannerSilentRejectionBranchTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins the should_avoid_action branch — the production loop on PFTXN run 77873149 returned should_retry=True from here 30 times with no LLM feedback and no budget consumption; both must now be present.
+    """
+
+    @staticmethod
+    def __seed_failed_action(*, state: AgentState, descriptor_target: str) -> None:
+        """
+        Seed a same-target failure via the public ``record_repeated_action_failure`` helper so should_avoid_action returns True without reaching into private fields.
+        """
+
+        failed = Action(
+            target=descriptor_target,
+            confidence=1.0,
+            rationale="seeded failure",
+            action_type=ActionType.SWIPE_LEFT,
+        )
+        state.record_repeated_action_failure(action=failed)
+
+    async def __plan(
+        self,
+        *,
+        descriptor_target: str,
+        rejection_history_return: object,
+    ) -> Tuple[PlanResult, AgentState, Mock]:
+        """
+        Drive one ``plan_step`` round with a vision stub that surfaces the rejected action and a pre-seeded failure history.
+        """
+
+        action = ActionFixtures.make(
+            target=descriptor_target,
+            natural_language_target=descriptor_target,
+            rationale="Scroll left to find Gourmet delights.",
+            action_type=ActionType.SWIPE_LEFT,
+        )
+        analysis = AnalysisResult(
+            action=action,
+            reasoning="The carousel needs to scroll left.",
+            screen_description="Home feed",
+            metadata={"tool_args": {}},
+        )
+        vision = Mock()
+        vision.analyze = AsyncMock(return_value=analysis)
+        vision.build_rejection_history_from_analysis = Mock(return_value=rejection_history_return)
+
+        state = AgentFixtures.state(intent="Find Gourmet delights")
+        state.set_sub_goals(
+            [SubGoalFixtures.make(description="Scroll left to find Gourmet delights")]
+        )
+        self.__seed_failed_action(state=state, descriptor_target=descriptor_target)
+
+        reasoner = Mock()
+        reasoner.select_best_action.return_value = action
+        planner = StepPlanner(vision_tool=vision)
+
+        result = await planner.plan_step(
+            state=state,
+            reasoner=reasoner,
+            capture=ScreenFixtures.capture(activity="app"),
+            context_manager=AgentFixtures.context_manager(),
+            screen_width=100,
+            screen_height=200,
+            prompt_if_stuck=False,
+        )
+
+        return result, state, vision
+
+    async def test_should_avoid_action_returns_should_retry_with_no_step(self) -> None:
+        """
+        The silent branch must surface should_retry=True with step=None so the graph routes back to GROUND.
+        """
+
+        rejection_payload = ["seeded-turn"]
+        result, _, _ = await self.__plan(
+            descriptor_target="More on Swiggy widget",
+            rejection_history_return=rejection_payload,
+        )
+
+        self.assertIsNone(result.step)
+        self.assertTrue(result.should_retry)
+        self.assertFalse(result.is_complete)
+
+    async def test_should_avoid_action_writes_rejection_history(self) -> None:
+        """
+        The branch must seed conversation rejection_history so the next LLM turn sees its proposal was rejected; without this the LLM re-proposes the same action.
+        """
+
+        rejection_payload = ["seeded-turn"]
+        _, state, vision = await self.__plan(
+            descriptor_target="More on Swiggy widget",
+            rejection_history_return=rejection_payload,
+        )
+
+        self.assertEqual(state.rejection_history, rejection_payload)
+        vision.build_rejection_history_from_analysis.assert_called_once()
+        kwargs = vision.build_rejection_history_from_analysis.call_args.kwargs
+        self.assertIn("REJECTED", kwargs["rejection_reason"])
+        # AgentFixtures.state defaults HITL off; non-interactive guidance must not advertise ask_user.
+        self.assertNotIn("ask_user", kwargs["rejection_reason"])
+
+    async def test_should_avoid_action_stamps_retry_metadata(self) -> None:
+        """
+        analyze.py routes the planner-retry budget off the metadata kind/branch keys; missing or stale values would route the wrong budget.
+        """
+
+        result, _, _ = await self.__plan(
+            descriptor_target="More on Swiggy widget",
+            rejection_history_return=["x"],
+        )
+
+        self.assertEqual(
+            result.metadata.get(RetryMetadataField.KIND.value),
+            RetryKind.SILENT_REJECTION.value,
+        )
+        self.assertEqual(
+            result.metadata.get(RetryMetadataField.BRANCH.value),
+            RetryBranch.SHOULD_AVOID_ACTION.value,
+        )
+        self.assertIn(
+            "More on Swiggy widget",
+            str(result.metadata.get(RetryMetadataField.BLOCKED_ACTION.value, "")),
+        )
+
+    async def test_should_avoid_action_does_not_advance_step_count(self) -> None:
+        """
+        The whole bug class hinges on ``step_count`` not advancing when the planner silently retries; this test pins that invariant.
+        """
+
+        before = AgentFixtures.state(intent="x").step_count
+        _, state, _ = await self.__plan(
+            descriptor_target="More on Swiggy widget",
+            rejection_history_return=["x"],
+        )
+        self.assertEqual(state.step_count, before)
+
+
+class StepPlannerTerminalReasonResolutionTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins that the planner surfaces the state's authoritative completion_reason when the state has already been marked complete by a non-success path (FAILED/CANCELLED/MAX_STEPS).
+    """
+
+    async def __plan(self, *, state: AgentState) -> PlanResult:
+        """
+        Drive a single ``plan_step`` against the supplied state with a benign vision stub.
+        """
+
+        planner = StepPlanner(vision_tool=Mock())
+        return await planner.plan_step(
+            state=state,
+            reasoner=Mock(),
+            capture=ScreenFixtures.capture(activity="app"),
+            context_manager=AgentFixtures.context_manager(),
+            screen_width=100,
+            screen_height=200,
+            prompt_if_stuck=False,
+        )
+
+    async def test_state_marked_cancelled_preserves_cancelled_reason(self) -> None:
+        """
+        A state already marked complete with CANCELLED must not be reported back to the router as SUCCESS.
+        """
+
+        state = AgentFixtures.state(intent="x")
+        state.mark_complete(reason=CompletionReason.CANCELLED.value)
+
+        result = await self.__plan(state=state)
+
+        self.assertTrue(result.is_complete)
+        self.assertEqual(result.reason, CompletionReason.CANCELLED.value)
+
+    async def test_state_marked_failed_preserves_failed_reason(self) -> None:
+        """
+        A state already marked complete with FAILED must not be masked as SUCCESS by the terminal-reason resolver.
+        """
+
+        state = AgentFixtures.state(intent="x")
+        state.mark_complete(reason=CompletionReason.FAILED.value)
+
+        result = await self.__plan(state=state)
+
+        self.assertTrue(result.is_complete)
+        self.assertEqual(result.reason, CompletionReason.FAILED.value)
+
+    async def test_pre_exhausted_retry_state_marks_agent_state_complete(self) -> None:
+        """
+        A checkpoint restored with an already-exhausted planner-retry budget short-circuits at ``can_continue=False``; the planner must mark the AgentState complete so the next persist/restore does not see an incomplete workflow that would try to continue.
+        """
+
+        state = AgentFixtures.state(intent="x")
+        for _ in range(state.retries.planner.cap):
+            state.tick_planner_retry(
+                kind=RetryKind.SILENT_REJECTION,
+                branch=RetryBranch.SHOULD_AVOID_ACTION,
+                action="Swipe left",
+            )
+        self.assertTrue(state.retries.planner.exhausted)
+        self.assertFalse(state.is_complete)
+
+        result = await self.__plan(state=state)
+
+        self.assertTrue(result.is_complete)
+        self.assertEqual(result.reason, CompletionReason.RETRY_BUDGET_EXHAUSTED.value)
+        self.assertTrue(state.is_complete)
+        self.assertEqual(state.completion_reason, CompletionReason.RETRY_BUDGET_EXHAUSTED.value)
+
+    async def test_state_marked_complete_without_reason_defaults_to_success(self) -> None:
+        """
+        Backward-compat: a state marked complete with no explicit reason defaults to SUCCESS.
+        """
+
+        state = AgentFixtures.state(intent="x")
+        state.mark_complete(reason="")
+
+        result = await self.__plan(state=state)
+
+        self.assertTrue(result.is_complete)
+        self.assertEqual(result.reason, CompletionReason.SUCCESS.value)

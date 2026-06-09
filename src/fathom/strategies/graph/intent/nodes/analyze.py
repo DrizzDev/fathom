@@ -6,8 +6,20 @@ import time
 from typing import Any, Dict, Optional, cast
 
 from fathom.constants import FathomEvent
+from fathom.constants.retries import (
+    PLANNER_RETRY_CONSUMED,
+    PLANNER_RETRY_EXHAUSTED,
+    PLANNER_RETRY_METADATA_INVALID,
+    RetryBranch,
+    RetryKind,
+    RetryMetadataField,
+)
 from fathom.constants.runtime import DEFAULT_COMPLETE_DEFERRAL_BUDGET
-from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.state import (
+    CommonStateKey,
+    CompletionReason,
+    IntentStateKey,
+)
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
@@ -105,15 +117,7 @@ class AnalyzeNode:
         screen_capture = state.get(CommonStateKey.CAPTURE)
 
         if not screen_capture or not isinstance(screen_capture, ScreenCapture):
-            logger.error(
-                "No valid screen capture found, setting should_retry=True",
-                extra={
-                    "event": "analyze.log",
-                    "component": "graph.intent.analyze",
-                    "workflow.id": self.__provider.context.workflow_id,
-                },
-            )
-            return cast("IntentGraphState", {IntentStateKey.SHOULD_RETRY: True})
+            return self.__handle_no_capture()
 
         capture: ScreenCapture = screen_capture
 
@@ -230,6 +234,7 @@ class AnalyzeNode:
 
             if (
                 plan.is_complete
+                and completion_reason == CompletionReason.SUCCESS.value
                 and agent_state.has_sub_goals()
                 and not agent_state.all_sub_goals_complete()
             ):
@@ -301,6 +306,14 @@ class AnalyzeNode:
                 )
 
             elif plan.should_retry:
+                terminate_result = self.__consume_planner_retry(
+                    base_result=result,
+                    plan_metadata=plan.metadata,
+                )
+                if terminate_result is not None:
+                    self.__provider.persistence.persist(result=terminate_result)
+                    return terminate_result
+
                 logger.info(
                     "-> Will route to GROUND (should_retry=True)",
                     extra={
@@ -367,3 +380,167 @@ class AnalyzeNode:
             self.__provider.persistence.persist(result=result)
 
             return result
+
+    def __handle_no_capture(self) -> IntentGraphState:
+        """
+        Terminate the workflow when GROUND cannot produce a valid ScreenCapture.
+        """
+
+        agent_state = self.__provider.context.agent_state
+
+        logger.error(
+            "No valid screen capture from GROUND; terminating workflow",
+            extra={
+                "event": "analyze.no_capture",
+                "component": "graph.intent.analyze",
+                "workflow.id": self.__provider.context.workflow_id,
+            },
+        )
+        agent_state.mark_complete(reason=CompletionReason.FAILED.value)
+        terminate = cast(
+            "IntentGraphState",
+            {
+                CommonStateKey.IS_COMPLETE: True,
+                IntentStateKey.SHOULD_RETRY: False,
+                IntentStateKey.INJECTED_CONTEXT: None,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                CommonStateKey.FAILURE_DIAGNOSTIC: (
+                    "GROUND produced no valid ScreenCapture; transient capture "
+                    "retries belong inside the device adapter, not here."
+                ),
+            },
+        )
+        self.__provider.persistence.persist(result=terminate)
+        return terminate
+
+    def __consume_planner_retry(
+        self,
+        *,
+        base_result: IntentGraphState,
+        plan_metadata: Optional[Dict[str, Any]],
+    ) -> Optional[IntentGraphState]:
+        """
+        Consume planner-retry budget; return a terminal state on exhaustion or None to continue.
+        """
+
+        metadata = plan_metadata or {}
+        agent_state = self.__provider.context.agent_state
+
+        kind = self.__coerce_retry_kind(raw=metadata.get(RetryMetadataField.KIND.value))
+        branch = self.__coerce_retry_branch(raw=metadata.get(RetryMetadataField.BRANCH.value))
+
+        # ESCALATION_DEFERRED is bounded by the per-sub-goal ``deferral_count``
+        # when a sub-goal is active; bypass the planner-retry budget in that
+        # case. With no active sub-goal there's no deferral_count to bound it,
+        # so fall through to ``tick_planner_retry`` (which knows to count it).
+        if kind is RetryKind.ESCALATION_DEFERRED and agent_state.get_current_sub_goal() is not None:
+            return None
+
+        action = metadata.get(RetryMetadataField.BLOCKED_ACTION.value)
+        action = action if isinstance(action, str) else None
+
+        count = agent_state.tick_planner_retry(kind=kind, branch=branch, action=action)
+        planner = agent_state.retries.planner
+
+        logger.info(
+            "Planner-retry budget consumed",
+            extra={
+                "event": PLANNER_RETRY_CONSUMED,
+                "component": "graph.intent.analyze",
+                "retry.kind": kind.value,
+                "action.descriptor": action,
+                "retry.branch": branch.value,
+                "retries.planner.count": count,
+                "retries.planner.cap": planner.cap,
+                "step.count": agent_state.step_count,
+                "workflow.id": self.__provider.context.workflow_id,
+            },
+        )
+
+        if not planner.exhausted:
+            return None
+
+        logger.error(
+            "Planner-retry budget exhausted; terminating workflow",
+            extra={
+                "event": PLANNER_RETRY_EXHAUSTED,
+                "component": "graph.intent.analyze",
+                "retry.kind": kind.value,
+                "retry.branch": branch.value,
+                "retries.planner.count": count,
+                "retries.planner.cap": planner.cap,
+                "step.count": agent_state.step_count,
+                "workflow.id": self.__provider.context.workflow_id,
+            },
+        )
+        agent_state.mark_complete(reason=CompletionReason.RETRY_BUDGET_EXHAUSTED.value)
+        terminate = dict(base_result)
+
+        terminate[CommonStateKey.IS_COMPLETE] = True
+        terminate[IntentStateKey.SHOULD_RETRY] = False
+        terminate[CommonStateKey.COMPLETION_REASON] = CompletionReason.RETRY_BUDGET_EXHAUSTED.value
+
+        return cast("IntentGraphState", terminate)
+
+    def __coerce_retry_kind(self, *, raw: object) -> RetryKind:
+        """
+        Map planner-stamped KIND metadata onto :class:`RetryKind`; warn and default to ``SILENT_REJECTION`` on missing or unrecognized values.
+        """
+
+        if isinstance(raw, str):
+            try:
+                return RetryKind(raw)
+            except ValueError:
+                self.__log_invalid_metadata(
+                    raw=raw,
+                    field=RetryMetadataField.KIND.value,
+                    default=RetryKind.SILENT_REJECTION.value,
+                )
+                return RetryKind.SILENT_REJECTION
+
+        self.__log_invalid_metadata(
+            raw=raw,
+            field=RetryMetadataField.KIND.value,
+            default=RetryKind.SILENT_REJECTION.value,
+        )
+        return RetryKind.SILENT_REJECTION
+
+    def __coerce_retry_branch(self, *, raw: object) -> RetryBranch:
+        """
+        Map planner-stamped BRANCH metadata onto :class:`RetryBranch`; warn and default to ``UNKNOWN`` on missing or unrecognized values.
+        """
+
+        if isinstance(raw, str):
+            try:
+                return RetryBranch(raw)
+            except ValueError:
+                self.__log_invalid_metadata(
+                    raw=raw,
+                    default=RetryBranch.UNKNOWN.value,
+                    field=RetryMetadataField.BRANCH.value,
+                )
+                return RetryBranch.UNKNOWN
+
+        self.__log_invalid_metadata(
+            raw=raw,
+            default=RetryBranch.UNKNOWN.value,
+            field=RetryMetadataField.BRANCH.value,
+        )
+        return RetryBranch.UNKNOWN
+
+    def __log_invalid_metadata(self, *, field: str, raw: object, default: str) -> None:
+        """
+        Emit a structured warning whenever planner-retry metadata is missing or unrecognized so contract drift surfaces in logs.
+        """
+
+        logger.warning(
+            "Invalid planner-retry metadata; falling back to default",
+            extra={
+                "event": PLANNER_RETRY_METADATA_INVALID,
+                "component": "graph.intent.analyze",
+                "metadata.field": field,
+                "metadata.raw": repr(raw),
+                "metadata.default": default,
+                "workflow.id": self.__provider.context.workflow_id,
+            },
+        )

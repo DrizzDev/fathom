@@ -5,6 +5,11 @@ from logging import getLogger
 from typing import Any, Dict, List, Literal, Optional, cast
 
 from fathom.constants import ActionType
+from fathom.constants.retries import (
+    RetryBranch,
+    RetryKind,
+    RetryMetadataField,
+)
 from fathom.constants.state import CompletionReason, PlanMetadataKey
 from fathom.constants.tools import TurnMode
 from fathom.core.agent.escalation_gate import EscalationGate
@@ -14,6 +19,7 @@ from fathom.core.agent.stuck_source import StuckSourceResolver
 from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
 from fathom.core.context.manager import ContextManager
 from fathom.core.prompts.escalation import EscalationPromptBuilder
+from fathom.core.prompts.rejection import RepeatedFailureRejectionPromptBuilder
 from fathom.core.runtime.identity import TargetIdentity
 from fathom.core.services.vision import SubGoalContext, VisionService
 from fathom.schemas.actions import Action
@@ -93,29 +99,26 @@ class StepPlanner:
         interactive_mode = state.capabilities.hitl.enabled
 
         if not state.can_continue:
-            if state.is_complete:
-                return PlanResult(
-                    step=None, is_complete=True, reason=CompletionReason.SUCCESS.value
-                )
 
-            # TERMINAL FAIL: If we reach here, it means max_steps or budgets are hit.
-            # We must stop immediately to avoid infinite HITL loops.
+            terminal_reason = self.__resolve_terminal_reason(state=state)
+            if not state.is_complete:
+                state.mark_complete(reason=terminal_reason)
+
             return PlanResult(
                 step=None,
                 is_complete=True,
-                reason=CompletionReason.STUCK.value
-                if state.is_stuck
-                else CompletionReason.FAILED.value,
+                reason=terminal_reason,
             )
 
         # Default tracking note
         current_tracking_note = state.tracking_note
 
         # IMMEDIATE RECOVERY
+
         # NATIVE INTERCEPT: Yield to HITL if enabled before attempting aggressive auto-recovery.
         # The HITL path widens the trigger to ``StuckSourceResolver`` so that sub-goal budget
         # exhaustion can also reach the gate. The autonomous-recovery path below stays scoped
-        # to the original ``state.is_stuck`` signal to preserve existing non-interactive behaviour.
+        # to the original ``state.is_stuck`` signal to preserve existing non-interactive behavior.
         if interactive_mode and prompt_if_stuck:
             escalation_source = self.__stuck_source_resolver.resolve(agent_state=state)
 
@@ -343,6 +346,8 @@ class StepPlanner:
                         "escalation.suppressed": True,
                         "escalation.reason": llm_decision.reason.value,
                         "escalation.stuck_source": llm_decision.stuck_source.value,
+                        RetryMetadataField.KIND.value: RetryKind.ESCALATION_DEFERRED.value,
+                        RetryMetadataField.BRANCH.value: RetryBranch.ESCALATION_DEFERRED.value,
                     },
                 )
             if llm_decision is not None and llm_decision.allow:
@@ -371,14 +376,50 @@ class StepPlanner:
                 )
 
         if state.should_avoid_action(action=action):
+            current_sub_goal = state.get_current_sub_goal()
+            logger.warning(
+                "[Planner] Blocking repeated-failure action: %s",
+                action.to_description()[:80],
+                extra={
+                    "component": "core.agent.planner",
+                    "event": "planner.block.should_avoid_action",
+                    "step.count": state.step_count,
+                    "action.label_id": action.label_id,
+                    "action.type": action.action_type.value,
+                    "loop_detector.is_stuck": state.is_stuck,
+                    "retries.planner.cap": state.retries.planner.cap,
+                    "retries.planner.count": state.retries.planner.count,
+                    "action.target": (action.target or action.natural_language_target or "")[:80],
+                    "sub_goal.index": (
+                        current_sub_goal.index if current_sub_goal is not None else None
+                    ),
+                    "sub_goal.description": (
+                        current_sub_goal.description[:80] if current_sub_goal is not None else None
+                    ),
+                },
+            )
+            state.set_rejection_history(
+                self.__vision.build_rejection_history_from_analysis(
+                    analysis=analysis,
+                    rejection_reason=RepeatedFailureRejectionPromptBuilder.build(
+                        interactive=interactive_mode,
+                        action_descriptor=action.to_description(),
+                    ),
+                )
+            )
             return PlanResult(
                 step=None,
                 is_complete=False,
                 should_retry=True,
                 metrics=analysis.metrics,
-                metadata=analysis.metadata,
                 memories=analysis.memories,
                 reason=CompletionReason.FAILED.value,
+                metadata={
+                    **(analysis.metadata or {}),
+                    RetryMetadataField.KIND.value: RetryKind.SILENT_REJECTION.value,
+                    RetryMetadataField.BLOCKED_ACTION.value: action.to_description(),
+                    RetryMetadataField.BRANCH.value: RetryBranch.SHOULD_AVOID_ACTION.value,
+                },
             )
 
         current_screen_repeat = self.__current_screen_repeat_reason(
@@ -456,8 +497,10 @@ class StepPlanner:
                 reason=CompletionReason.ACTION_BLOCKED.value,
                 metadata={
                     **(analysis.metadata or {}),
-                    "blocked_action": action.to_description(),
-                    "block_reason": BlockReason.REPEATED_CURRENT_SCREEN_ACTION.value,
+                    RetryMetadataField.KIND.value: RetryKind.LLM_FEEDBACK.value,
+                    RetryMetadataField.BLOCKED_ACTION.value: action.to_description(),
+                    RetryMetadataField.BRANCH.value: RetryBranch.CURRENT_SCREEN_REPEAT.value,
+                    RetryMetadataField.BLOCK_REASON.value: BlockReason.REPEATED_CURRENT_SCREEN_ACTION.value,
                 },
             )
 
@@ -499,7 +542,9 @@ class StepPlanner:
                 reason=CompletionReason.ACTION_BLOCKED.value,
                 metadata={
                     **(analysis.metadata or {}),
-                    "blocked_action": repeated_desc,
+                    RetryMetadataField.BLOCKED_ACTION.value: repeated_desc,
+                    RetryMetadataField.KIND.value: RetryKind.LLM_FEEDBACK.value,
+                    RetryMetadataField.BRANCH.value: RetryBranch.IS_ACTION_REPEATING_ON_SCREEN.value,
                 },
             )
 
@@ -672,6 +717,23 @@ class StepPlanner:
             evidence=state.loop_evidence(),
             deferrals=state.deferral_count,
         )
+
+    @staticmethod
+    def __resolve_terminal_reason(*, state: AgentState) -> str:
+        """
+        Pick the most specific CompletionReason for a non-continuing state.
+        """
+
+        if state.is_complete:
+            return state.completion_reason or CompletionReason.SUCCESS.value
+
+        if state.retries.planner.exhausted:
+            return CompletionReason.RETRY_BUDGET_EXHAUSTED.value
+
+        if state.is_stuck:
+            return CompletionReason.STUCK.value
+
+        return CompletionReason.FAILED.value
 
     @staticmethod
     def __current_screen_repeat_reason(

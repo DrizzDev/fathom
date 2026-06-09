@@ -26,6 +26,7 @@ from fathom.schemas.checkpoint import (
 )
 from fathom.schemas.escalation import EscalationPolicy
 from fathom.schemas.finalization import FinalizationBudgetPolicy
+from fathom.schemas.retries import RetryLimits
 from fathom.schemas.swipe import SwipeRetryPolicy
 from fathom.schemas.telemetry import PhaseMessage
 
@@ -448,7 +449,13 @@ class IntentConfiguration(BaseModel):
     Configuration for intent-based execution strategy.
     """
 
-    max_steps: int = Field(default=100, description="Step limit for goal achievement")
+    max_steps: int = Field(default=100, ge=1, description="Step limit for goal achievement")
+
+    retries: RetryLimits = Field(
+        default_factory=RetryLimits,
+        description="Per-kind retry caps; nested so new retry kinds are additive without changing call sites.",
+    )
+
     use_xml_grounding: bool = Field(default=False, description="Enable structured XML analysis")
     prompt_user_if_stuck: bool = Field(
         default=True,
@@ -652,7 +659,7 @@ class TelemetryConfiguration(BaseModel):
         default_factory=PhaseMessage,
         description=(
             "Client-facing phase messages and heartbeat budget; configurable per "
-            "deployment so message strings can be localised without code changes."
+            "deployment so message strings can be localized without code changes."
         ),
     )
 

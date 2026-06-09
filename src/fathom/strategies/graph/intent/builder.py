@@ -8,7 +8,11 @@ from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from fathom.constants.graph import NodeName, RouteCause
-from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.state import (
+    TERMINAL_COMPLETION_REASONS,
+    CommonStateKey,
+    IntentStateKey,
+)
 from fathom.interfaces.graph import GraphBuilder
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.nodes.factory import IntentGraphFactory
@@ -124,11 +128,7 @@ class IntentGraphBuilder(GraphBuilder):
             logger.info(f"[ROUTING] After GROUND: is_complete=True, reason={reason}")
 
             # Fatal/terminal reasons should end immediately
-            if reason in {
-                CompletionReason.FAILED.value,
-                CompletionReason.MAX_STEPS.value,
-                CompletionReason.CANCELLED.value,
-            }:
+            if reason in TERMINAL_COMPLETION_REASONS:
                 logger.info(f"[ROUTING] -> END ({reason})")
                 return NodeName.END
 
@@ -160,11 +160,7 @@ class IntentGraphBuilder(GraphBuilder):
             reason = state.get(cast("str", CommonStateKey.COMPLETION_REASON), "")
 
             # If it completed due to a fatal error or max steps, do not verify, just end
-            if reason in {
-                CompletionReason.FAILED.value,
-                CompletionReason.MAX_STEPS.value,
-                CompletionReason.CANCELLED.value,
-            }:
+            if reason in TERMINAL_COMPLETION_REASONS:
                 logger.info(f"[ROUTING] -> END (Fatal Error / Max Steps: {reason})")
                 return NodeName.END
 
@@ -212,7 +208,9 @@ class IntentGraphBuilder(GraphBuilder):
         return NodeName.EXECUTE
 
     def __route_after_execute(self, state: IntentGraphState) -> str:
-        """Route after execute: cancellation > terminal completion > retry > observe."""
+        """
+        Route after execute: cancellation > terminal completion > retry > observe.
+        """
 
         if self.__context.is_cancelled:
             return self.__log_execute_route(
@@ -221,20 +219,18 @@ class IntentGraphBuilder(GraphBuilder):
             )
 
         if state.get(cast("str", CommonStateKey.IS_COMPLETE)):
-            if (reason := str(state.get(cast("str", CommonStateKey.COMPLETION_REASON), ""))) in {
-                CompletionReason.FAILED.value,
-                CompletionReason.MAX_STEPS.value,
-                CompletionReason.CANCELLED.value,
-            }:
+            if (
+                reason := str(state.get(cast("str", CommonStateKey.COMPLETION_REASON), ""))
+            ) in TERMINAL_COMPLETION_REASONS:
                 return self.__log_execute_route(
+                    completion_reason=reason,
                     destination=NodeName.END,
                     cause=RouteCause.TERMINAL_COMPLETION,
-                    completion_reason=reason,
                 )
             return self.__log_execute_route(
+                completion_reason=reason,
                 destination=NodeName.VERIFY,
                 cause=RouteCause.NON_TERMINAL_COMPLETION,
-                completion_reason=reason,
             )
 
         if state.get(cast("str", IntentStateKey.SHOULD_RETRY)):
@@ -244,8 +240,8 @@ class IntentGraphBuilder(GraphBuilder):
             )
 
         return self.__log_execute_route(
-            destination=NodeName.OBSERVE,
             cause=RouteCause.DEFAULT,
+            destination=NodeName.OBSERVE,
         )
 
     @staticmethod
@@ -255,15 +251,18 @@ class IntentGraphBuilder(GraphBuilder):
         cause: RouteCause,
         completion_reason: Optional[str] = None,
     ) -> str:
-        """Emit the structured route event and return the destination."""
+        """
+        Emit the structured route event and return the destination.
+        """
 
         extra: Dict[str, object] = {
-            "event": "route.after_execute",
-            "destination": destination,
             "cause": cause.value,
+            "destination": destination,
+            "event": "route.after_execute",
         }
         if completion_reason is not None:
             extra["completion.reason"] = completion_reason
+
         logger.info("Route after execute resolved", extra=extra)
         return destination
 
@@ -282,11 +281,7 @@ class IntentGraphBuilder(GraphBuilder):
             return NodeName.END
 
         if is_complete:
-            if reason in {
-                CompletionReason.FAILED.value,
-                CompletionReason.MAX_STEPS.value,
-                CompletionReason.CANCELLED.value,
-            }:
+            if reason in TERMINAL_COMPLETION_REASONS:
                 logger.info(f"[ROUTING] -> END (verification terminal reason: {reason})")
                 return NodeName.END
             logger.info("[ROUTING] -> END (verification passed)")
@@ -308,11 +303,7 @@ class IntentGraphBuilder(GraphBuilder):
 
             # Check if completion was due to Max Steps - if so, fail/end instead of verifying
             reason = state.get(cast("str", CommonStateKey.COMPLETION_REASON))
-            if reason in {
-                CompletionReason.FAILED.value,
-                CompletionReason.MAX_STEPS.value,
-                CompletionReason.CANCELLED.value,
-            }:
+            if reason in TERMINAL_COMPLETION_REASONS:
                 logger.info(f"[ROUTING] -> END (terminal reason: {reason})")
                 return NodeName.END
 

@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Final, FrozenSet
+from typing import Final, FrozenSet, Tuple
 
 LOOP_BACK_CONFIDENCE: Final[float] = 0.9
 LOOP_SCROLL_CONFIDENCE: Final[float] = 0.8
@@ -36,7 +36,18 @@ class CompletionReason(StrEnum):
     INTERVENTION_REQUIRED = "Human intervention required"
     USER_DIRECTIVE = "Marked complete via user directive"
     NOT_EXECUTABLE = "Request is not an executable UI task"
+    RETRY_BUDGET_EXHAUSTED = "Planner retry budget exhausted"
     ACTION_BLOCKED = "Action blocked: repeated without progress"
+
+
+# Completion reasons that must terminate the graph immediately (route to END, never to VERIFY) and surface as ``RunOutcome.FAILED`` to callers.
+# The router in ``builder.py`` and the outcome assembler in ``intent.py`` MUST both consult this single source so new fatal reasons cannot be missed in one place but not the other.
+TERMINAL_COMPLETION_REASONS: Final[Tuple[str, ...]] = (
+    CompletionReason.FAILED.value,
+    CompletionReason.MAX_STEPS.value,
+    CompletionReason.CANCELLED.value,
+    CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
+)
 
 
 class RunOutcome(StrEnum):

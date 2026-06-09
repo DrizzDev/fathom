@@ -799,4 +799,5 @@ class IntentStrategy:
                 CompletionReason.MAX_STEPS.value,
                 CompletionReason.USER_DIRECTIVE.value,
                 CompletionReason.INTERVENTION_REQUIRED.value,
+                CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
             }

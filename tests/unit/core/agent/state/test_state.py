@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import unittest
 
+from tests.builders import SubGoalFixtures
+
 from fathom.constants import ActionType
+from fathom.constants.retries import (
+    DEFAULT_PLANNER_RETRY_LIMIT,
+    RetryBranch,
+    RetryKind,
+)
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
+from fathom.schemas.retries import RetryLimits
 from fathom.schemas.screens import ScreenState
+from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.supervision import BlockReason
 
 
@@ -305,3 +314,373 @@ class AgentStateLastActionPersistenceTest(unittest.TestCase):
             "Action already succeeded on this screen.",
         )
         self.assertEqual(state.last_action_type, "tap")
+
+
+class AgentStatePlannerRetryBudgetTest(unittest.TestCase):
+    """
+    Pins the per-step planner-retry budget — the bug class missed in production on PFTXN run 77873149 where 55 consecutive should_retry=True returns never bounded the workflow.
+    """
+
+    @staticmethod
+    def __caps() -> RuntimeCapabilities:
+        """
+        Return autonomous capabilities; HITL toggle is irrelevant for budget arithmetic.
+        """
+
+        return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+
+    @staticmethod
+    def __state(*, cap: int = 5) -> AgentState:
+        """
+        Build an AgentState with the requested planner-retry cap.
+        """
+
+        return AgentState(
+            intent="x",
+            capabilities=AgentStatePlannerRetryBudgetTest.__caps(),
+            max_steps=10,
+            retries=RetryLimits(planner=cap),
+        )
+
+    @staticmethod
+    def __tap_action(*, target: str = "More on Swiggy") -> Action:
+        """
+        Tap action used to exercise the budget reset on EXECUTE dispatch.
+        """
+
+        return Action(
+            target=target,
+            confidence=1.0,
+            rationale="test fixture",
+            action_type=ActionType.TAP,
+        )
+
+    def test_initial_budget_count_is_zero(self) -> None:
+        """
+        A freshly-built AgentState starts with no consumed retries.
+        """
+
+        state = self.__state(cap=5)
+
+        self.assertEqual(state.retries.planner.count, 0)
+        self.assertEqual(state.retries.planner.cap, 5)
+        self.assertFalse(state.retries.planner.exhausted)
+
+    def test_cap_is_clamped_by_caller_max_steps(self) -> None:
+        """
+        Caller-passed max_steps is the hard bound; retries.planner must not silently exceed it.
+        """
+
+        state = AgentState(
+            intent="x",
+            capabilities=self.__caps(),
+            max_steps=1,
+            retries=RetryLimits(planner=5),
+        )
+
+        self.assertEqual(state.retries.planner.cap, 1)
+
+    def test_cap_clamp_defends_against_internal_callers_passing_zero(self) -> None:
+        """
+        Schema validators reject ``max_steps=0`` at the boundary; but internal callers that bypass the schema must still get a working budget (cap >= 1) instead of a Pydantic error.
+        """
+
+        state = AgentState(
+            intent="x",
+            capabilities=self.__caps(),
+            max_steps=0,
+            retries=RetryLimits(planner=5),
+        )
+
+        self.assertEqual(state.retries.planner.cap, 1)
+
+    def test_can_continue_returns_false_when_planner_retries_exhausted(self) -> None:
+        """
+        ``can_continue`` is the central termination gate consulted by the planner; it must honor an exhausted planner-retry budget.
+        """
+
+        state = self.__state(cap=2)
+        for _ in range(2):
+            state.tick_planner_retry(
+                kind=RetryKind.SILENT_REJECTION,
+                branch=RetryBranch.SHOULD_AVOID_ACTION,
+                action="Swipe left",
+            )
+
+        self.assertTrue(state.retries.planner.exhausted)
+        self.assertFalse(state.can_continue)
+
+    def test_silent_rejection_consumes_budget(self) -> None:
+        """
+        Silent-rejection retries are the bug class under audit; they must increment the counter.
+        """
+
+        state = self.__state(cap=3)
+
+        for index in range(3):
+            count = state.tick_planner_retry(
+                kind=RetryKind.SILENT_REJECTION,
+                branch=RetryBranch.SHOULD_AVOID_ACTION,
+                action="Swipe left",
+            )
+            self.assertEqual(count, index + 1)
+
+        self.assertTrue(state.retries.planner.exhausted)
+
+    def test_llm_feedback_consumes_budget(self) -> None:
+        """
+        Feedback-bearing retries (current_screen_repeat / is_action_repeating) also count.
+        """
+
+        state = self.__state(cap=2)
+
+        state.tick_planner_retry(
+            kind=RetryKind.LLM_FEEDBACK,
+            branch=RetryBranch.CURRENT_SCREEN_REPEAT,
+            action="Tap Continue",
+        )
+        state.tick_planner_retry(
+            kind=RetryKind.LLM_FEEDBACK,
+            branch=RetryBranch.IS_ACTION_REPEATING_ON_SCREEN,
+            action="Tap Continue",
+        )
+
+        self.assertEqual(state.retries.planner.count, 2)
+        self.assertTrue(state.retries.planner.exhausted)
+
+    def test_escalation_deferred_does_not_consume_budget_with_active_sub_goal(self) -> None:
+        """
+        With an active sub-goal, escalation-deferred is bounded by ``deferral_count``; planner budget must stay clean.
+        """
+
+        state = self.__state(cap=5)
+        state.set_sub_goals([SubGoalFixtures.make(description="Open settings")])
+
+        for _ in range(20):
+            state.tick_planner_retry(
+                kind=RetryKind.ESCALATION_DEFERRED,
+                branch=RetryBranch.ESCALATION_DEFERRED,
+            )
+
+        self.assertEqual(state.retries.planner.count, 0)
+        self.assertFalse(state.retries.planner.exhausted)
+
+    def test_escalation_deferred_consumes_budget_without_active_sub_goal(self) -> None:
+        """
+        Without an active sub-goal there is no ``deferral_count`` to bound escalation; the planner-retry budget must catch the loop.
+        """
+
+        state = self.__state(cap=3)
+        # No sub-goals — non-decomposed run; deferral_count is a no-op here.
+
+        for index in range(3):
+            count = state.tick_planner_retry(
+                kind=RetryKind.ESCALATION_DEFERRED,
+                branch=RetryBranch.ESCALATION_DEFERRED,
+            )
+            self.assertEqual(count, index + 1)
+
+        self.assertTrue(state.retries.planner.exhausted)
+
+    def test_clear_resets_counter(self) -> None:
+        """
+        ``clear_planner_retries`` resets the count to zero without altering ``cap``.
+        """
+
+        state = self.__state(cap=5)
+
+        state.tick_planner_retry(
+            kind=RetryKind.SILENT_REJECTION,
+            branch=RetryBranch.SHOULD_AVOID_ACTION,
+            action="Swipe left",
+        )
+        state.clear_planner_retries()
+
+        self.assertEqual(state.retries.planner.count, 0)
+        self.assertEqual(state.retries.planner.cap, 5)
+
+    def test_record_step_clears_counter_on_success(self) -> None:
+        """
+        A SUCCESSFUL EXECUTE→RECORD round-trip is the load-bearing reset signal.
+        """
+
+        state = self.__state(cap=5)
+
+        for _ in range(3):
+            state.tick_planner_retry(
+                kind=RetryKind.SILENT_REJECTION,
+                branch=RetryBranch.SHOULD_AVOID_ACTION,
+                action="Swipe left",
+            )
+        self.assertEqual(state.retries.planner.count, 3)
+
+        result = StepResult(
+            step=Step(action=self.__tap_action(), step_number=1, screen_hash="b" * 16),
+            error=None,
+            success=True,
+            duration=10,
+            pre_hash="b" * 16,
+            post_hash="c" * 16,
+            screen_changed=True,
+        )
+        state.record_step(result=result)
+
+        self.assertEqual(state.retries.planner.count, 0)
+        self.assertEqual(state.step_count, 1)
+
+    def test_record_step_does_not_clear_counter_on_failure(self) -> None:
+        """
+        A failed-dispatch ``record_step`` must NOT reset the counter; otherwise the silent-rejection loop would reset endlessly when a flaky dispatch fails.
+        """
+
+        state = self.__state(cap=5)
+
+        for _ in range(3):
+            state.tick_planner_retry(
+                kind=RetryKind.SILENT_REJECTION,
+                branch=RetryBranch.SHOULD_AVOID_ACTION,
+                action="Swipe left",
+            )
+
+        failed_result = StepResult(
+            step=Step(action=self.__tap_action(), step_number=1, screen_hash="b" * 16),
+            error="dispatch error",
+            success=False,
+            duration=10,
+            pre_hash="b" * 16,
+            post_hash="b" * 16,
+            screen_changed=False,
+        )
+        state.record_step(result=failed_result)
+
+        self.assertEqual(state.retries.planner.count, 3)
+        self.assertEqual(state.step_count, 1)
+
+    def test_last_attempt_snapshot_captures_branch_and_action(self) -> None:
+        """
+        ``last_attempt`` reflects the most recent tick so observability has structured branch / action context.
+        """
+
+        state = self.__state(cap=5)
+
+        state.tick_planner_retry(
+            kind=RetryKind.SILENT_REJECTION,
+            branch=RetryBranch.SHOULD_AVOID_ACTION,
+            action="Swipe left on More on Swiggy",
+        )
+
+        attempt = state.last_retry_attempt
+        self.assertIsNotNone(attempt)
+        assert attempt is not None
+        self.assertIs(attempt.kind, RetryKind.SILENT_REJECTION)
+        self.assertIs(attempt.branch, RetryBranch.SHOULD_AVOID_ACTION)
+        self.assertEqual(attempt.action, "Swipe left on More on Swiggy")
+
+
+class AgentStatePlannerRetryCheckpointTest(unittest.TestCase):
+    """
+    Pins that the planner-retry budget survives the persist/restore round-trip — the original RCA flagged this as a separate bug class on the cozy-orbiting-sonnet plan.
+    """
+
+    @staticmethod
+    def __caps() -> RuntimeCapabilities:
+        """
+        Return autonomous capabilities.
+        """
+
+        return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+
+    def test_count_round_trips_through_checkpoint(self) -> None:
+        """
+        Count must survive ``to_checkpoint`` / ``from_checkpoint`` so a graph restore mid-loop cannot wipe progress toward the cap.
+        """
+
+        state = AgentState(intent="x", capabilities=self.__caps(), retries=RetryLimits(planner=5))
+        for _ in range(3):
+            state.tick_planner_retry(
+                kind=RetryKind.SILENT_REJECTION,
+                branch=RetryBranch.SHOULD_AVOID_ACTION,
+                action="Swipe left",
+            )
+
+        checkpoint = state.to_checkpoint()
+        restored = AgentState.from_checkpoint(checkpoint, capabilities=self.__caps())
+
+        self.assertEqual(restored.retries.planner.count, 3)
+        self.assertEqual(restored.retries.planner.cap, 5)
+        self.assertFalse(restored.retries.planner.exhausted)
+
+    def test_legacy_checkpoint_without_retries_restores_with_defaults(self) -> None:
+        """
+        Old checkpoints written before this change have no ``retries`` key; restore must default to zero with the constant cap.
+        """
+
+        state = AgentState(intent="x", capabilities=self.__caps())
+        payload = state.to_checkpoint()
+        payload.pop("retries")
+
+        restored = AgentState.from_checkpoint(payload, capabilities=self.__caps())
+
+        self.assertEqual(restored.retries.planner.count, 0)
+        self.assertEqual(restored.retries.planner.cap, DEFAULT_PLANNER_RETRY_LIMIT)
+
+    def test_exhausted_state_round_trips_through_checkpoint(self) -> None:
+        """
+        Exhaustion must survive restore so a resumed workflow does not get a free retry budget after the ceiling fired.
+        """
+
+        state = AgentState(intent="x", capabilities=self.__caps(), retries=RetryLimits(planner=2))
+        for _ in range(2):
+            state.tick_planner_retry(
+                kind=RetryKind.SILENT_REJECTION,
+                branch=RetryBranch.SHOULD_AVOID_ACTION,
+                action="Swipe left",
+            )
+        self.assertTrue(state.retries.planner.exhausted)
+
+        checkpoint = state.to_checkpoint()
+        restored = AgentState.from_checkpoint(checkpoint, capabilities=self.__caps())
+
+        self.assertTrue(restored.retries.planner.exhausted)
+
+    def test_last_retry_attempt_round_trips_through_checkpoint(self) -> None:
+        """
+        Diagnostic ``last_retry_attempt`` must survive restore so observability does not lose the most recent rejection on resume.
+        """
+
+        state = AgentState(intent="x", capabilities=self.__caps(), retries=RetryLimits(planner=5))
+
+        state.tick_planner_retry(
+            action="Swipe left on More",
+            kind=RetryKind.SILENT_REJECTION,
+            branch=RetryBranch.SHOULD_AVOID_ACTION,
+        )
+
+        restored = AgentState.from_checkpoint(state.to_checkpoint(), capabilities=self.__caps())
+
+        self.assertIsNotNone(restored.last_retry_attempt)
+        attempt = restored.last_retry_attempt
+
+        assert attempt is not None
+        self.assertEqual(attempt.action, "Swipe left on More")
+        self.assertEqual(attempt.kind, RetryKind.SILENT_REJECTION)
+        self.assertEqual(attempt.branch, RetryBranch.SHOULD_AVOID_ACTION)
+
+    def test_clear_planner_retries_drops_last_attempt(self) -> None:
+        """
+        ``clear_planner_retries`` is called on successful EXECUTE dispatch; stale diagnostics from the prior cycle must not survive into the next step.
+        """
+
+        state = AgentState(intent="x", capabilities=self.__caps(), retries=RetryLimits(planner=5))
+
+        state.tick_planner_retry(
+            action="Swipe left on More",
+            kind=RetryKind.SILENT_REJECTION,
+            branch=RetryBranch.SHOULD_AVOID_ACTION,
+        )
+        self.assertIsNotNone(state.last_retry_attempt)
+
+        state.clear_planner_retries()
+
+        self.assertIsNone(state.last_retry_attempt)
+        self.assertEqual(state.retries.planner.count, 0)

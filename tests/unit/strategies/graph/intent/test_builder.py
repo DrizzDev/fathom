@@ -218,6 +218,30 @@ class TestIntentGraphBuilderRoutes(unittest.TestCase):
 
         self.assertEqual(route, NodeName.END)
 
+    def test_terminal_completion_after_analyze_routes_to_end(self) -> None:
+        """
+        Every terminal completion reason emitted by ANALYZE must route to END, not VERIFY. The reviewer caught this when RETRY_BUDGET_EXHAUSTED was missing from the router's fatal set.
+        """
+
+        builder = IntentGraphBuilder(
+            context=SimpleNamespace(is_cancelled=False),  # type: ignore[arg-type]
+        )
+
+        for reason in (
+            CompletionReason.FAILED.value,
+            CompletionReason.MAX_STEPS.value,
+            CompletionReason.CANCELLED.value,
+            CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
+        ):
+            with self.subTest(reason=reason):
+                route = builder._IntentGraphBuilder__route_after_analyze(  # type: ignore[attr-defined]
+                    {
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: reason,
+                    },
+                )
+                self.assertEqual(route, NodeName.END)
+
 
 class TestRouteAfterExecute(unittest.TestCase):
     """Pins routing decisions for the new conditional edge after EXECUTE."""
@@ -246,6 +270,7 @@ class TestRouteAfterExecute(unittest.TestCase):
             CompletionReason.FAILED.value,
             CompletionReason.MAX_STEPS.value,
             CompletionReason.CANCELLED.value,
+            CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
         ):
             with self.subTest(reason=reason):
                 route = self.__builder()._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
