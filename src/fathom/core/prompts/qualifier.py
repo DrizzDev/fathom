@@ -56,6 +56,14 @@ class GeminiQualifierPromptBuilder(QualifierPromptBuilder):
             "      'Check my settings', 'Submit a form', 'Add item to cart',\n"
             "      'Find my invoices', 'Login', 'Upload a PDF'). These are\n"
             "      EXECUTABLE; the agent will ground or fail on the device.\n"
+            "    - an outcome-verb imperative naming a workflow the strategy\n"
+            "      should drive to completion ('Complete the onboarding flow',\n"
+            "      'Finish checkout', 'Get me logged in', 'Proceed with payment',\n"
+            "      'Go through onboarding'). Constraints attached to the goal\n"
+            "      ('without a device', 'as a new user', 'using UPI') NARROW\n"
+            "      the path; they do not strip the grounding. Do not confuse\n"
+            "      these with passive declarative's — see the NOT_EXECUTABLE\n"
+            "      bullet below for that contrast.\n"
             "    - the same kind of command phrased politely as a question\n"
             "      ('Can you open Swiggy?', 'Could you scroll down?', 'Can\n"
             "      you tap Continue?'). Polite question form ≠ answer-seeking.\n"
@@ -73,6 +81,11 @@ class GeminiQualifierPromptBuilder(QualifierPromptBuilder):
             "      'why', 'how', 'what', 'should'), not a UI action.\n"
             "    - pure conversational chatter with no operative UI verb\n"
             "      ('can you handle this?', 'can you do this for me?').\n"
+            "    - passive declarative's stating a fact or wish, without an\n"
+            "      imperative ('Login is complete', 'Order should be confirmed',\n"
+            "      'The page is loaded'). Outcome VERB imperatives ('Complete\n"
+            "      the onboarding flow') belong to EXECUTABLE; passive\n"
+            "      declarative's belong here.\n"
             "\n"
             "QUESTION-FORM HEURISTIC (important)\n"
             "  A question mark does NOT mean block. Read past politeness and\n"
@@ -143,6 +156,33 @@ class GeminiQualifierPromptBuilder(QualifierPromptBuilder):
             '{"label": "EXECUTABLE", "confidence": 0.8, '
             '"rationale": {"category": "ui_task", '
             '"reasoning": "Under-specified UI action; the strategy grounds the form on the current screen or fails meaningfully."}}\n'
+            "\n"
+            "OUTCOME-VERB IMPERATIVE — PAIRED EXAMPLES\n"
+            "\n"
+            'Intent: "Complete the onboarding flow"\n'
+            '{"label": "EXECUTABLE", "confidence": 0.9, '
+            '"rationale": {"category": "ui_task", '
+            '"reasoning": "Outcome-verb imperative naming a workflow; the strategy drives it to completion."}}\n'
+            "\n"
+            'Intent: "Complete the onboarding flow without a device"\n'
+            '{"label": "EXECUTABLE", "confidence": 0.9, '
+            '"rationale": {"category": "ui_task", '
+            '"reasoning": "Outcome-verb imperative with a path constraint; constraint narrows the route, not the grounding."}}\n'
+            "\n"
+            'Intent: "Finish checkout using UPI"\n'
+            '{"label": "EXECUTABLE", "confidence": 0.9, '
+            '"rationale": {"category": "ui_task", '
+            '"reasoning": "Outcome-verb imperative on a concrete workflow with a payment-method constraint."}}\n'
+            "\n"
+            'Intent: "Login is complete"\n'
+            '{"label": "NOT_EXECUTABLE", "confidence": 0.95, '
+            '"rationale": {"category": "conversational", '
+            '"reasoning": "Passive declarative stating a fact; no imperative verb."}}\n'
+            "\n"
+            'Intent: "Order should be confirmed"\n'
+            '{"label": "NOT_EXECUTABLE", "confidence": 0.95, '
+            '"rationale": {"category": "conversational", '
+            '"reasoning": "Passive wish/assertion; no imperative verb."}}\n'
             "\n"
             "POLITE QUESTION FORM — PAIRED EXAMPLES\n"
             "\n"
