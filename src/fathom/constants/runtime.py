@@ -34,6 +34,7 @@ DEFAULT_REALIGNMENT_BUDGET: Final[int] = 3
 # claim avoids a ground-loop and lets VERIFY adjudicate the final outcome.
 DEFAULT_COMPLETE_DEFERRAL_BUDGET: Final[int] = 2
 
-# VERIFY does not record an action step when it rejects completion, so
-# max_steps cannot bound a frozen VERIFY -> GROUND -> ANALYZE loop.
-DEFAULT_VERIFICATION_REJECTION_LIMIT: Final[int] = 3
+# Stop on the second consecutive same-screen verifier rejection. A repeated
+# rejection means the planner failed to execute the verifier's corrective
+# feedback and is likely stuck in a validate/claim-complete loop.
+DEFAULT_VERIFICATION_REJECTION_LIMIT: Final[int] = 2

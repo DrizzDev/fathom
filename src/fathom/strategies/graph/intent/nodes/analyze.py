@@ -16,6 +16,7 @@ from fathom.constants.retries import (
 )
 from fathom.constants.runtime import DEFAULT_COMPLETE_DEFERRAL_BUDGET
 from fathom.constants.state import (
+    TERMINAL_COMPLETION_REASONS,
     CommonStateKey,
     CompletionReason,
     IntentStateKey,
@@ -23,6 +24,7 @@ from fathom.constants.state import (
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
+from fathom.strategies.graph.intent.verification import VerificationModePolicy
 from fathom.strategies.graph.state import IntentGraphState
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ class AnalyzeNode:
         """
 
         self.__provider = provider
+        self.__verification_modes = VerificationModePolicy()
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -78,11 +81,14 @@ class AnalyzeNode:
             self.__provider.context.agent_state.mark_complete(
                 reason=CompletionReason.CANCELLED.value
             )
+            self.__provider.context.agent_state.reset_complete_deferrals()
 
             result = cast(
                 "IntentGraphState",
                 {
+                    IntentStateKey.VERIFY_MODE: None,
                     CommonStateKey.IS_COMPLETE: True,
+                    IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
                 },
             )
@@ -103,10 +109,13 @@ class AnalyzeNode:
             self.__provider.context.agent_state.mark_complete(
                 reason=CompletionReason.MAX_STEPS.value
             )
+            self.__provider.context.agent_state.reset_complete_deferrals()
             result = cast(
                 "IntentGraphState",
                 {
+                    IntentStateKey.VERIFY_MODE: None,
                     CommonStateKey.IS_COMPLETE: True,
+                    IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.MAX_STEPS.value,
                 },
             )
@@ -221,8 +230,10 @@ class AnalyzeNode:
                 f"has_step={plan.step is not None}"
             )
 
-            completion_reason = (
-                plan.reason if plan.is_complete else state.get(CommonStateKey.COMPLETION_REASON)
+            completion_reason = self.__completion_reason(
+                plan_reason=plan.reason,
+                plan_complete=plan.is_complete,
+                graph_reason=state.get(CommonStateKey.COMPLETION_REASON),
             )
             # Bounded-retry deferral when sub-goals are still open. Owned by
             # ANALYZE (not the router) so the counter increment lands inside
@@ -231,6 +242,7 @@ class AnalyzeNode:
             effective_is_complete = plan.is_complete
             effective_completion_reason = completion_reason
             agent_state = self.__provider.context.agent_state
+            completion_deferred = False
 
             if (
                 plan.is_complete
@@ -252,6 +264,7 @@ class AnalyzeNode:
                     )
                     agent_state.reset_completion()
                     effective_is_complete = False
+                    completion_deferred = True
                     effective_completion_reason = None
                 else:
                     logger.warning(
@@ -275,9 +288,17 @@ class AnalyzeNode:
                     IntentStateKey.PLAN: plan,
                     IntentStateKey.ELEMENTS: elements,
                     IntentStateKey.INJECTED_CONTEXT: None,
-                    IntentStateKey.PLANNED_STEP: plan.step,
+                    IntentStateKey.VERIFY_MODE: self.__verify_mode(
+                        is_complete=effective_is_complete,
+                        completion_reason=effective_completion_reason,
+                    ),
+                    IntentStateKey.PLANNED_STEP: None if completion_deferred else plan.step,
                     CommonStateKey.ANALYSIS_DURATION: duration,
-                    IntentStateKey.SHOULD_RETRY: plan.should_retry,
+                    IntentStateKey.SHOULD_RETRY: (
+                        True
+                        if completion_deferred
+                        else (False if effective_is_complete else plan.should_retry)
+                    ),
                     CommonStateKey.IS_COMPLETE: effective_is_complete,
                     CommonStateKey.COMPLETION_REASON: effective_completion_reason,
                     CommonStateKey.SCREEN_OBSERVATION: state.get(CommonStateKey.SCREEN_OBSERVATION),
@@ -286,10 +307,15 @@ class AnalyzeNode:
 
             # Log what will happen next based on routing logic
             if effective_is_complete:
+                destination = self.__completion_destination(
+                    completion_reason=effective_completion_reason
+                )
                 logger.info(
-                    "-> Will route to VERIFY (is_complete=True)",
+                    "Analyze completion route selected",
                     extra={
                         "event": "analyze.log",
+                        "route.destination": destination,
+                        "completion.reason": effective_completion_reason,
                         "component": "graph.intent.analyze",
                         "workflow.id": self.__provider.context.workflow_id,
                     },
@@ -366,15 +392,17 @@ class AnalyzeNode:
                 step=self.__provider.context.agent_state.step_count + 1,
             )
             self.__provider.context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
+            diagnostic = f"Analysis failed: {exception}"[:500]
             result = cast(
                 "IntentGraphState",
                 {
+                    IntentStateKey.VERIFY_MODE: None,
                     IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.ANALYSIS_DURATION: 0.0,
                     IntentStateKey.INJECTED_CONTEXT: None,
                     CommonStateKey.IS_COMPLETE: True,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
-                    CommonStateKey.FAILURE_DIAGNOSTIC: f"Analysis failed: {exception}",
+                    CommonStateKey.FAILURE_DIAGNOSTIC: diagnostic,
                 },
             )
             self.__provider.persistence.persist(result=result)
@@ -397,9 +425,11 @@ class AnalyzeNode:
             },
         )
         agent_state.mark_complete(reason=CompletionReason.FAILED.value)
+        agent_state.reset_complete_deferrals()
         terminate = cast(
             "IntentGraphState",
             {
+                IntentStateKey.VERIFY_MODE: None,
                 CommonStateKey.IS_COMPLETE: True,
                 IntentStateKey.SHOULD_RETRY: False,
                 IntentStateKey.INJECTED_CONTEXT: None,
@@ -412,6 +442,47 @@ class AnalyzeNode:
         )
         self.__provider.persistence.persist(result=terminate)
         return terminate
+
+    def __verify_mode(
+        self,
+        *,
+        is_complete: bool,
+        completion_reason: Optional[str],
+    ) -> Optional[str]:
+        """
+        Return the VERIFY mode only for non-terminal completion routing.
+        """
+
+        if not is_complete or completion_reason in TERMINAL_COMPLETION_REASONS:
+            return None
+
+        return self.__verification_modes.mode_for_producer(
+            agent_state=self.__provider.context.agent_state
+        ).value
+
+    @staticmethod
+    def __completion_reason(
+        *, plan_reason: str, plan_complete: bool, graph_reason: object
+    ) -> Optional[str]:
+        """
+        Return the typed completion reason for this analyze result.
+        """
+
+        if plan_complete:
+            return plan_reason
+
+        return graph_reason if isinstance(graph_reason, str) else None
+
+    @staticmethod
+    def __completion_destination(*, completion_reason: Optional[str]) -> str:
+        """
+        Return the router destination label for a completion reason.
+        """
+
+        if completion_reason in TERMINAL_COMPLETION_REASONS:
+            return "END"
+
+        return "VERIFY"
 
     def __consume_planner_retry(
         self,
@@ -477,6 +548,7 @@ class AnalyzeNode:
         terminate = dict(base_result)
 
         terminate[CommonStateKey.IS_COMPLETE] = True
+        terminate[IntentStateKey.VERIFY_MODE] = None
         terminate[IntentStateKey.SHOULD_RETRY] = False
         terminate[CommonStateKey.COMPLETION_REASON] = CompletionReason.RETRY_BUDGET_EXHAUSTED.value
 

@@ -38,6 +38,24 @@ class HeuristicAbortDetectorAbortPhrasesTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(decision.aborted)
 
+    async def test_end_this_test_run_is_abort(self) -> None:
+        """
+        Production injected-context phrase is classified as aborted.
+        """
+
+        decision = await self.__detector.aborted(response="end this test run")
+
+        self.assertTrue(decision.aborted)
+
+    async def test_stop_this_test_run_is_abort(self) -> None:
+        """
+        Manual pause variant is classified as aborted.
+        """
+
+        decision = await self.__detector.aborted(response="stop this test run")
+
+        self.assertTrue(decision.aborted)
+
     async def test_terminate_the_workflow_is_abort(self) -> None:
         """
         Variant 'terminate the workflow' is classified as aborted.
@@ -151,6 +169,15 @@ class HeuristicAbortDetectorEdgeCaseTest(unittest.IsolatedAsyncioTestCase):
         """
 
         decision = await self.__detector.aborted(response="the button is in the top right")
+
+        self.assertFalse(decision.aborted)
+
+    async def test_done_here_continuation_is_not_abort(self) -> None:
+        """
+        Ambiguous continuation guidance must not be classified as an abort.
+        """
+
+        decision = await self.__detector.aborted(response="we are done here, let's move to step 3")
 
         self.assertFalse(decision.aborted)
 

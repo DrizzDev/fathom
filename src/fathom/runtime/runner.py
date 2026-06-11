@@ -348,10 +348,14 @@ class FathomRunner:
                 step_results=strategy.step_results,
             )
 
-            terminal_event = (
-                FathomEvent.WORKFLOW_CANCELLED if is_cancelled else FathomEvent.WORKFLOW_COMPLETED
+            terminal_event = self.__terminal_event(
+                is_cancelled=is_cancelled,
+                success=result.success,
             )
-            terminal_message = "Run cancelled by operator." if is_cancelled else "All wrapped up."
+            terminal_message = self.__terminal_message(
+                event=terminal_event,
+                completion_reason=completion_reason,
+            )
 
             logger.info(
                 "Workflow outcome resolved",
@@ -381,6 +385,35 @@ class FathomRunner:
         finally:
             await self.__phase.shutdown()
             self.__current_strategy = None
+
+    @staticmethod
+    def __terminal_event(*, is_cancelled: bool, success: bool) -> FathomEvent:
+        """
+        Return the terminal workflow event matching the resolved outcome.
+        """
+
+        if is_cancelled:
+            return FathomEvent.WORKFLOW_CANCELLED
+
+        if success:
+            return FathomEvent.WORKFLOW_COMPLETED
+
+        return FathomEvent.WORKFLOW_FAILED
+
+    @staticmethod
+    def __terminal_message(*, event: FathomEvent, completion_reason: str) -> str:
+        """
+        Return the user-facing terminal workflow message.
+        """
+
+        if event is FathomEvent.WORKFLOW_CANCELLED:
+            return "Run cancelled by operator."
+
+        if event is FathomEvent.WORKFLOW_FAILED:
+            reason = completion_reason.strip() or CompletionReason.FAILED.value
+            return f"Run failed: {reason}"
+
+        return "All wrapped up."
 
     async def run_exploration(
         self,

@@ -482,6 +482,70 @@ class RunnerWorkflowCancelledEmitTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(cancelled_calls), 0)
         self.assertEqual(len(completed_calls), 1)
 
+    async def test_failed_run_emits_workflow_failed_event(self) -> None:
+        """
+        Failed strategy outcomes must not be announced as WORKFLOW_COMPLETED.
+        """
+
+        qualifier = PassingQualifier()
+        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
+
+        strategy_instance = MagicMock()
+        strategy_instance.execute = AsyncMock(
+            return_value=MagicMock(
+                error="Planner retry budget exhausted",
+                success=False,
+                duration=100,
+                is_cancelled=False,
+            )
+        )
+        strategy_instance.get_progress = MagicMock(
+            return_value={
+                "step_count": 7,
+                "completion_reason": CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
+            }
+        )
+
+        strategy_instance.step_results = []
+        strategy_instance.get_metrics = MagicMock(return_value=None)
+        strategy_instance.completion_reason = CompletionReason.RETRY_BUDGET_EXHAUSTED.value
+        strategy_instance.get_subgoal_execution_audit = MagicMock(return_value=([], [], 0))
+
+        with (
+            patch("fathom.runtime.runner.ContextManager"),
+            patch("fathom.runtime.runner.IntentStrategy", return_value=strategy_instance),
+            patch.object(
+                FathomRunner,
+                "_FathomRunner__get_memory_summary",
+                AsyncMock(return_value={}),
+            ),
+        ):
+            result = await runner.run_intent(intent="Search for biryani")
+
+        failed_calls = [
+            call
+            for call in telemetry.info.call_args_list
+            if call.kwargs.get("type") == FathomEvent.WORKFLOW_FAILED
+        ]
+        completed_calls = [
+            call
+            for call in telemetry.info.call_args_list
+            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
+        ]
+
+        self.assertEqual(len(failed_calls), 1)
+        self.assertEqual(len(completed_calls), 0)
+        self.assertFalse(result.success)
+
+        terminal = failed_calls[0]
+        self.assertEqual(terminal.args[0], "Run failed: Planner retry budget exhausted")
+        self.assertEqual(terminal.kwargs["success"], False)
+        self.assertEqual(terminal.kwargs["steps_taken"], 7)
+        self.assertEqual(
+            terminal.kwargs["completion_reason"],
+            CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

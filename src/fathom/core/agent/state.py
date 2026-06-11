@@ -795,6 +795,13 @@ class AgentState:
 
         return self.__sub_goals[self.__current_sub_goal_index]
 
+    def has_active_final_sub_goal(self) -> bool:
+        """
+        Return whether the active cursor points at the terminal sub-goal.
+        """
+
+        return bool(self.__sub_goals) and self.__current_sub_goal_index == len(self.__sub_goals) - 1
+
     def set_current_sub_goal_index(self, index: int) -> None:
         """
         Set the current sub-goal index (used for checkpoint restore).

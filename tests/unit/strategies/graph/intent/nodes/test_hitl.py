@@ -57,6 +57,38 @@ class _StubAborter(AbortDetectorPort):
         self.warmup_calls += 1
 
 
+class _SequenceAborter(AbortDetectorPort):
+    """
+    Abort detector double returning scripted decisions in order.
+    """
+
+    def __init__(self, *, decisions: List[AbortDecision]) -> None:
+        """
+        Bind the ordered decisions.
+        """
+
+        self.__decisions = list(decisions)
+        self.calls: List[str] = []
+
+    async def aborted(self, *, response: str) -> AbortDecision:
+        """
+        Return the next scripted decision for the response.
+        """
+
+        self.calls.append(response)
+        if self.__decisions:
+            return self.__decisions.pop(0)
+
+        return AbortDecision(aborted=False, confidence=0.0, fallback=True)
+
+    async def warmup(self) -> None:
+        """
+        Sequence detector has no resources to warm.
+        """
+
+        return
+
+
 class _FakeHitlService(HITLService):
     """
     :class:`HITLService` test double driving pause/resume and ASK_USER.
@@ -271,6 +303,80 @@ class HitlPromptTest(unittest.IsolatedAsyncioTestCase):
         # Each consumed context records one HITL intervention so the
         # realignment budget tracks them.
         self.assertEqual(len(recorded_interventions), 2)
+
+    async def test_paused_run_abort_context_cancels_without_injecting_guidance(self) -> None:
+        """
+        Injected operator stop text must cancel before it becomes planner guidance.
+        """
+
+        fake = _FakeHitlService(
+            pause_requested=True,
+            injected_contexts=["end this test run"],
+        )
+        context_manager = SimpleNamespace(inject_user_guidance=AsyncMock())
+        ctx = SimpleNamespace(
+            hitl=fake,
+            workflow_id="run-test",
+            is_cancelled=False,
+            cancel=lambda: setattr(ctx, "is_cancelled", True),
+            agent_state=SimpleNamespace(
+                step_count=7,
+                record_hitl_intervention=lambda: None,
+            ),
+            context_manager=context_manager,
+        )
+        aborter = _StubAborter(aborted=True, confidence=0.97)
+        helper = Hitl(context=ctx, aborter=aborter)  # type: ignore[arg-type]
+
+        with self.assertRaises(WorkflowCancelledError):
+            await helper.prompt(step=7)
+
+        self.assertTrue(ctx.is_cancelled)
+        self.assertEqual(fake.consume_calls, 1)
+        self.assertEqual(aborter.calls, ["end this test run"])
+        context_manager.inject_user_guidance.assert_not_awaited()
+
+    async def test_paused_run_abort_second_context_does_not_inject_abort_text(self) -> None:
+        """
+        A later abort context must be consumed and must not become planner guidance.
+        """
+
+        fake = _FakeHitlService(
+            pause_requested=True,
+            injected_contexts=["tap Continue first", "end this test run"],
+        )
+        context_manager = SimpleNamespace(inject_user_guidance=AsyncMock())
+        recorded_interventions: List[bool] = []
+        ctx = SimpleNamespace(
+            hitl=fake,
+            workflow_id="run-test",
+            is_cancelled=False,
+            cancel=lambda: setattr(ctx, "is_cancelled", True),
+            agent_state=SimpleNamespace(
+                step_count=8,
+                record_hitl_intervention=lambda: recorded_interventions.append(True),
+            ),
+            context_manager=context_manager,
+        )
+        aborter = _SequenceAborter(
+            decisions=[
+                AbortDecision(aborted=False, confidence=0.0, fallback=True),
+                AbortDecision(aborted=True, confidence=0.98, fallback=False),
+            ]
+        )
+        helper = Hitl(context=ctx, aborter=aborter)  # type: ignore[arg-type]
+
+        with self.assertRaises(WorkflowCancelledError):
+            await helper.prompt(step=8)
+
+        self.assertTrue(ctx.is_cancelled)
+        self.assertEqual(fake.consume_calls, 2)
+        self.assertEqual(aborter.calls, ["tap Continue first", "end this test run"])
+        context_manager.inject_user_guidance.assert_awaited_once_with(
+            guidance="tap Continue first",
+            step=8,
+        )
+        self.assertEqual(len(recorded_interventions), 1)
 
     async def test_paused_run_stops_waiting_when_context_is_cancelled(self) -> None:
         """

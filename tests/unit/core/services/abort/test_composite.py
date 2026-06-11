@@ -38,6 +38,34 @@ class _ScriptedDetector(AbortDetectorPort):
         self.warmup_calls += 1
 
 
+class _FailingDetector(AbortDetectorPort):
+    """
+    Detector double that raises during classification.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize call tracking.
+        """
+
+        self.calls: List[str] = []
+
+    async def aborted(self, *, response: str) -> AbortDecision:
+        """
+        Raise after recording the attempted response.
+        """
+
+        self.calls.append(response)
+        raise RuntimeError("detector unavailable")
+
+    async def warmup(self) -> None:
+        """
+        No-op warmup for the failing detector double.
+        """
+
+        pass
+
+
 class CompositeAbortDetectorRoutingTest(unittest.IsolatedAsyncioTestCase):
     """
     Pins the composite's primary-vs-fallback routing policy.
@@ -80,6 +108,42 @@ class CompositeAbortDetectorRoutingTest(unittest.IsolatedAsyncioTestCase):
         decision = await composite.aborted(response="please cancel")
 
         self.assertTrue(decision.aborted)
+        self.assertTrue(decision.fallback)
+        self.assertEqual(primary.calls, ["please cancel"])
+        self.assertEqual(fallback.calls, ["please cancel"])
+
+    async def test_primary_exception_consults_fallback(self) -> None:
+        """
+        Primary detector failure must not crash pause/resume cancellation handling.
+        """
+
+        primary = _FailingDetector()
+        fallback = _ScriptedDetector(
+            decision=AbortDecision(aborted=True, confidence=0.9, fallback=True)
+        )
+        composite = CompositeAbortDetector(primary=primary, fallback=fallback)
+
+        decision = await composite.aborted(response="please cancel")
+
+        self.assertTrue(decision.aborted)
+        self.assertTrue(decision.fallback)
+        self.assertEqual(primary.calls, ["please cancel"])
+        self.assertEqual(fallback.calls, ["please cancel"])
+
+    async def test_fallback_exception_returns_safe_non_abort(self) -> None:
+        """
+        Fallback detector failure returns a safe non-abort decision instead of raising.
+        """
+
+        primary = _ScriptedDetector(
+            decision=AbortDecision(aborted=False, confidence=0.0, fallback=True)
+        )
+        fallback = _FailingDetector()
+        composite = CompositeAbortDetector(primary=primary, fallback=fallback)
+
+        decision = await composite.aborted(response="please cancel")
+
+        self.assertFalse(decision.aborted)
         self.assertTrue(decision.fallback)
         self.assertEqual(primary.calls, ["please cancel"])
         self.assertEqual(fallback.calls, ["please cancel"])

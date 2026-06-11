@@ -40,12 +40,26 @@ class CompletionReason(StrEnum):
     ACTION_BLOCKED = "Action blocked: repeated without progress"
 
 
+class VerifyMode(StrEnum):
+    """
+    Verification prompt and acceptance contract for a VERIFY turn.
+    """
+
+    SUB_GOAL = "SUB_GOAL"
+    FULL_INTENT = "FULL_INTENT"
+    PENDING_FINAL_COMMIT = "PENDING_FINAL_COMMIT"
+
+
 # Completion reasons that must terminate the graph immediately (route to END, never to VERIFY) and surface as ``RunOutcome.FAILED`` to callers.
 # The router in ``builder.py`` and the outcome assembler in ``intent.py`` MUST both consult this single source so new fatal reasons cannot be missed in one place but not the other.
 TERMINAL_COMPLETION_REASONS: Final[Tuple[str, ...]] = (
+    CompletionReason.STUCK.value,
     CompletionReason.FAILED.value,
     CompletionReason.MAX_STEPS.value,
     CompletionReason.CANCELLED.value,
+    CompletionReason.ACTION_BLOCKED.value,
+    CompletionReason.OPERATOR_ABORTED.value,
+    CompletionReason.INTERVENTION_REQUIRED.value,
     CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
 )
 
@@ -104,6 +118,7 @@ class IntentStateKey(StrEnum):
     # Execution
     SHOULD_RETRY = "SHOULD_RETRY"
     INJECTED_CONTEXT = "INJECTED_CONTEXT"
+    VERIFY_MODE = "VERIFY_MODE"
 
     # Artifacts
     ELEMENTS = "ELEMENTS"

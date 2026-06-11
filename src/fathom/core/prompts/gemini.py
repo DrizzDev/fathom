@@ -14,6 +14,8 @@ from fathom.schemas.tools import AllowedTools
 
 logger = logging.getLogger(__name__)
 
+MAX_VERIFIER_FEEDBACK_PROMPT_CHARS = 500
+
 
 class GeminiPromptBuilder(PromptBuilder):
     """
@@ -181,13 +183,23 @@ class GeminiPromptBuilder(PromptBuilder):
 
         # 5. Verifier Feedback (system-internal rejection — adjust the next action)
         if verifier_feedback := context.get("verifier_feedback", []):
-            entries = [f"- {item}" for item in verifier_feedback]
+            entries = [
+                f"- {str(item)[:MAX_VERIFIER_FEEDBACK_PROMPT_CHARS]}" for item in verifier_feedback
+            ]
+            description = (
+                str(sub_goal_info.get("description"))
+                if isinstance(sub_goal_info, dict) and sub_goal_info.get("description")
+                else None
+            )
+            sub_goal_clause = (
+                f"\nContinue working on the active sub-goal: {description}." if description else ""
+            )
             parts.append(
                 "<VERIFIER_FEEDBACK>\n"
                 "Your previous completion claim was rejected by the verifier. "
-                "Address these issues with the next concrete UI action, then attempt completion again only when resolved.\n"
-                + "\n".join(entries)
-                + "\n"
+                "Take the next concrete UI action requested by the verifier. "
+                "Do not claim completion again until that action has executed."
+                f"{sub_goal_clause}\n" + "\n".join(entries) + "\n"
                 "</VERIFIER_FEEDBACK>"
             )
 

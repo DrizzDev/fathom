@@ -8,13 +8,14 @@ from fathom.constants import FathomEvent
 from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.constants.gcc import GCC_BRANCHING_ACTIVE_COUNT
 from fathom.constants.messages import RECORDING_FAILURE_MESSAGE
-from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey, VerifyMode
 from fathom.core.exceptions import FathomError
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import StepResult
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
+from fathom.strategies.graph.intent.verification import VerificationModePolicy
 from fathom.strategies.graph.state import IntentGraphState
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class RecordNode:
         """
 
         self.__provider = provider
+        self.__verification_modes = VerificationModePolicy()
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -68,13 +70,17 @@ class RecordNode:
                 reason=CompletionReason.CANCELLED.value
             )
 
-            return cast(
+            result = cast(
                 "IntentGraphState",
                 {
+                    IntentStateKey.VERIFY_MODE: None,
                     CommonStateKey.IS_COMPLETE: True,
+                    IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.CANCELLED.value,
                 },
             )
+            self.__provider.persistence.persist(result=result)
+            return result
 
         recorded_step = state.get(CommonStateKey.STEP_RESULT)
         if not isinstance(recorded_step, StepResult):
@@ -93,6 +99,7 @@ class RecordNode:
             result = cast(
                 "IntentGraphState",
                 {
+                    IntentStateKey.VERIFY_MODE: None,
                     IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.IS_COMPLETE: True,
                     CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
@@ -285,8 +292,8 @@ class RecordNode:
                     extra={
                         "component": "graph.intent.record",
                         "event": "record.gcc.branch",
-                        "workflow.id": self.__provider.context.workflow_id,
                         "active.count": active_count,
+                        "workflow.id": self.__provider.context.workflow_id,
                     },
                 )
                 await self.__provider.context.context_manager.branch()
@@ -294,24 +301,34 @@ class RecordNode:
             execution_plan = state.get(IntentStateKey.PLAN)
 
             if isinstance(execution_plan, PlanResult) and execution_plan.is_complete:
+                verify_mode = self.__verification_modes.mode_for_verify(
+                    state=state,
+                    agent_state=self.__provider.context.agent_state,
+                )
                 logger.info(
                     "Plan indicates completion. This is the final step.",
                     extra={
                         "component": "graph.intent.record",
                         "event": "record.log",
+                        "verify.mode": verify_mode.value,
                         "workflow.id": self.__provider.context.workflow_id,
                     },
                 )
-                self.__provider.context.agent_state.mark_complete(
-                    reason=execution_plan.reason or "Completed"
-                )
+
+                self.__provider.context.agent_state.clear_verification_loop()
+                self.__provider.context.agent_state.reset_complete_deferrals()
+                completion_reason = self.__completion_claim_reason(reason=execution_plan.reason)
+                if verify_mode is VerifyMode.FULL_INTENT:
+                    self.__provider.context.agent_state.mark_complete(reason=completion_reason)
 
                 result = cast(
                     "IntentGraphState",
                     {
                         CommonStateKey.IS_COMPLETE: True,
-                        CommonStateKey.COMPLETION_REASON: execution_plan.reason,
+                        IntentStateKey.SHOULD_RETRY: False,
+                        IntentStateKey.VERIFY_MODE: verify_mode.value,
                         IntentStateKey.STEP_RESULTS: accumulated_step_results,
+                        CommonStateKey.COMPLETION_REASON: completion_reason,
                     },
                 )
                 self.__provider.persistence.persist(result=result)
@@ -359,7 +376,10 @@ class RecordNode:
 
             result = cast(
                 "IntentGraphState",
-                {IntentStateKey.STEP_RESULTS: accumulated_step_results},
+                {
+                    IntentStateKey.VERIFY_MODE: None,
+                    IntentStateKey.STEP_RESULTS: accumulated_step_results,
+                },
             )
             self.__provider.persistence.persist(result=result)
             return result
@@ -389,6 +409,27 @@ class RecordNode:
             existing_step_results = cast(
                 "List[StepResult]", state.get(IntentStateKey.STEP_RESULTS) or []
             )
-            result = cast("IntentGraphState", {IntentStateKey.STEP_RESULTS: existing_step_results})
+            self.__provider.context.agent_state.mark_complete(reason=CompletionReason.FAILED.value)
+            self.__provider.context.agent_state.clear_verification_loop()
+            self.__provider.context.agent_state.reset_complete_deferrals()
+            result = cast(
+                "IntentGraphState",
+                {
+                    IntentStateKey.VERIFY_MODE: None,
+                    IntentStateKey.SHOULD_RETRY: False,
+                    IntentStateKey.STEP_RESULTS: existing_step_results,
+                    CommonStateKey.IS_COMPLETE: True,
+                    CommonStateKey.FAILURE_DIAGNOSTIC: display_error,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                },
+            )
             self.__provider.persistence.persist(result=result)
             return result
+
+    @staticmethod
+    def __completion_claim_reason(*, reason: Optional[str]) -> str:
+        """
+        Return a non-empty completion claim reason for graph state and AgentState.
+        """
+
+        return (reason or "").strip() or CompletionReason.SUCCESS.value

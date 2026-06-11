@@ -299,6 +299,19 @@ class GraphExecutor:
             processed_count += 1
             logger.info(f"Executor: Processing context {processed_count}: '{context[:50]}...'")
 
+            if await self.__cancel_for_operator_context(content=context):
+                await self.__context.hitl.consume_context()
+                logger.info(
+                    "Executor: Operator context requested cancellation",
+                    extra={
+                        "event": "operator.context.cancelled",
+                        "source": source,
+                        "thread.id": self.__thread_id,
+                    },
+                )
+                await self.__guarded_phase_shutdown(reason="operator_context_abort")
+                return
+
             # Inject into system (resets loop state internally)
             await self.__inject_context(content=context)
 
@@ -309,6 +322,33 @@ class GraphExecutor:
             logger.info(f"Executor: Processed {processed_count} user contexts")
 
         logger.info("Executor: Resuming execution")
+
+    async def __cancel_for_operator_context(self, *, content: str) -> bool:
+        """
+        Cancel when injected operator context is an abort directive.
+        """
+
+        decision = await self.__context.abort_detector.aborted(response=content)
+        logger.info(
+            "Executor: Operator context classified",
+            extra={
+                "event": "operator.context.classified",
+                "source": "executor_injected_context",
+                "aborted": decision.aborted,
+                "content.preview": content[:120],
+                "abort.fallback": decision.fallback,
+                "abort.confidence": round(decision.confidence, 4),
+            },
+        )
+
+        if not decision.aborted:
+            return False
+
+        self.__context.cancel()
+        await self.__context.telemetry.info(
+            "Stopping the run.", type=FathomEvent.WORKFLOW_CANCELLED
+        )
+        return True
 
     async def __validate_state_sync(self, checkpoint: str) -> None:
         """

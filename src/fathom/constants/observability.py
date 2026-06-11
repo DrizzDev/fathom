@@ -11,6 +11,7 @@ class CompletionEvent(StrEnum):
     SUBGOAL_ADVANCED = "completion.subgoal.advanced"
     SUBGOAL_RETAINED = "completion.subgoal.retained"
     INTENT_COMPLETED = "completion.intent.completed"
+    INTENT_PENDING = "completion.intent.pending"
     GATE_ADJUDICATED = "completion.gate.adjudicated"
     EVIDENCE_ASSESSED = "completion.evidence.assessed"
     CRITERION_OBSERVED = "completion.criterion.observed"

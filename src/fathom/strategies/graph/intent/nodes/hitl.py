@@ -219,6 +219,15 @@ class Hitl:
             if not context:
                 break
 
+            decision = await self.__aborter.aborted(response=context)
+            if decision.aborted:
+                await hitl.consume_context()
+                await self.__trigger_workflow_cancellation(
+                    response=context,
+                    step=self.__context.agent_state.step_count,
+                    decision=decision,
+                )
+
             consumed += 1
             logger.info(
                 "HITL injected context applied",

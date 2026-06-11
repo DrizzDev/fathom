@@ -10,12 +10,15 @@ from fathom.constants.retries import (
     RetryBranch,
     RetryKind,
 )
+from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
+from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.retries import RetryLimits
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.supervision import BlockReason
 
 
@@ -143,6 +146,78 @@ class AgentStateContinuationTest(unittest.TestCase):
 
         self.assertTrue(state.is_stuck)
         self.assertFalse(state.can_continue)
+
+
+class AgentStateSubGoalCursorTest(unittest.TestCase):
+    """
+    Pins sub-goal cursor helpers used by VERIFY handoff logic.
+    """
+
+    @staticmethod
+    def __caps() -> RuntimeCapabilities:
+        """
+        Return autonomous runtime capabilities for cursor tests.
+        """
+
+        return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+
+    @staticmethod
+    def __completion_signal() -> SubGoalCompletionSignal:
+        """
+        Return a valid completion signal for advancing the cursor.
+        """
+
+        return SubGoalCompletionSignal(
+            llm_confidence=1.0,
+            screen_verified=True,
+            action_executed=True,
+            flagged_complete=True,
+            rationale_verified=True,
+            evidence="unit test",
+        )
+
+    def test_current_sub_goal_final_is_false_without_sub_goals(self) -> None:
+        """
+        Empty sub-goal plans are never treated as final active work.
+        """
+
+        state = AgentState(intent="finish checkout", capabilities=self.__caps())
+
+        self.assertFalse(state.has_active_final_sub_goal())
+
+    def test_current_sub_goal_final_tracks_cursor_before_and_after_advance(self) -> None:
+        """
+        The helper is true only when the active cursor points at the terminal sub-goal.
+        """
+
+        state = AgentState(intent="finish checkout", capabilities=self.__caps())
+        state.set_sub_goals(
+            [
+                SubGoal(index=0, description="Open cart"),
+                SubGoal(index=1, description="Confirm checkout"),
+            ]
+        )
+
+        self.assertFalse(state.has_active_final_sub_goal())
+
+        state.mark_current_sub_goal_complete(completion_signal=self.__completion_signal())
+
+        self.assertTrue(state.has_active_final_sub_goal())
+
+    def test_current_sub_goal_final_is_false_after_all_sub_goals_complete(self) -> None:
+        """
+        Once the cursor moves past the terminal sub-goal, no active final sub-goal remains.
+        """
+
+        state = AgentState(intent="finish checkout", capabilities=self.__caps())
+        state.set_sub_goals([SubGoal(index=0, description="Confirm checkout")])
+
+        self.assertTrue(state.has_active_final_sub_goal())
+
+        state.mark_current_sub_goal_complete(completion_signal=self.__completion_signal())
+
+        self.assertIsNone(state.get_current_sub_goal())
+        self.assertFalse(state.has_active_final_sub_goal())
 
 
 class AgentStateLastActionPersistenceTest(unittest.TestCase):
@@ -555,6 +630,89 @@ class AgentStatePlannerRetryBudgetTest(unittest.TestCase):
 
         self.assertEqual(state.retries.planner.count, 3)
         self.assertEqual(state.step_count, 1)
+
+    def test_verifier_rejection_streak_survives_recorded_validate_steps(self) -> None:
+        """
+        Gate-routed verifier loops execute and record validate steps between VERIFY rejections; same-screen rejections must still accumulate.
+        """
+
+        state = self.__state(cap=5)
+        screen = ScreenState(
+            activity="save-account",
+            activity_hash="a" * 16,
+            visual_hash="1" * 16,
+            timestamp=1,
+        )
+
+        first = state.record_verify_rejection(screen=screen, activity="save-account")
+        self.assertEqual(first.consecutive_rejections, 1)
+
+        for step_number in range(1, DEFAULT_VERIFICATION_REJECTION_LIMIT):
+            result = StepResult(
+                step=Step(
+                    action=self.__tap_action(target="validate"),
+                    step_number=step_number,
+                    screen_hash="b" * 16,
+                ),
+                error=None,
+                success=True,
+                duration=10,
+                pre_hash="b" * 16,
+                post_hash="b" * 16,
+                screen_changed=False,
+            )
+            state.record_step(result=result)
+            loop_state = state.record_verify_rejection(screen=screen, activity="save-account")
+
+        self.assertEqual(state.step_count, DEFAULT_VERIFICATION_REJECTION_LIMIT - 1)
+        self.assertEqual(loop_state.recorded_step_count, 0)
+        self.assertEqual(
+            loop_state.consecutive_rejections,
+            DEFAULT_VERIFICATION_REJECTION_LIMIT,
+        )
+
+    def test_verifier_rejection_streak_does_not_use_activity_without_screen(self) -> None:
+        """
+        Activity alone is not enough evidence to continue a verifier rejection streak.
+        """
+
+        state = self.__state(cap=5)
+
+        first = state.record_verify_rejection(screen=None, activity="save-account")
+        second = state.record_verify_rejection(screen=None, activity="save-account")
+
+        self.assertEqual(first.consecutive_rejections, 1)
+        self.assertEqual(second.consecutive_rejections, 1)
+
+    def test_verifier_rejection_streak_resets_on_screen_progress_same_activity(self) -> None:
+        """
+        Same activity is not enough to continue a verifier streak when screen identity changes.
+        """
+
+        state = self.__state(cap=5)
+
+        first = state.record_verify_rejection(
+            screen=ScreenState(
+                activity="save-account",
+                activity_hash="a" * 16,
+                visual_hash="1" * 16,
+                timestamp=1,
+            ),
+            activity="save-account",
+        )
+        self.assertEqual(first.consecutive_rejections, 1)
+
+        second = state.record_verify_rejection(
+            screen=ScreenState(
+                activity="save-account",
+                activity_hash="a" * 16,
+                visual_hash="f" * 16,
+                timestamp=2,
+            ),
+            activity="save-account",
+        )
+
+        self.assertEqual(second.consecutive_rejections, 1)
 
     def test_last_attempt_snapshot_captures_branch_and_action(self) -> None:
         """

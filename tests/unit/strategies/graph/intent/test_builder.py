@@ -9,9 +9,15 @@ from unittest.mock import MagicMock, patch
 
 from fathom.constants.graph import NodeName
 from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
-from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.state import (
+    TERMINAL_COMPLETION_REASONS,
+    CommonStateKey,
+    CompletionReason,
+    IntentStateKey,
+)
 from fathom.core.agent.state import AgentState
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
+from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import VerificationLoopState
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 from fathom.strategies.graph.intent.nodes.factory import IntentGraphFactory
@@ -227,12 +233,7 @@ class TestIntentGraphBuilderRoutes(unittest.TestCase):
             context=SimpleNamespace(is_cancelled=False),  # type: ignore[arg-type]
         )
 
-        for reason in (
-            CompletionReason.FAILED.value,
-            CompletionReason.MAX_STEPS.value,
-            CompletionReason.CANCELLED.value,
-            CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
-        ):
+        for reason in TERMINAL_COMPLETION_REASONS:
             with self.subTest(reason=reason):
                 route = builder._IntentGraphBuilder__route_after_analyze(  # type: ignore[attr-defined]
                     {
@@ -266,12 +267,7 @@ class TestRouteAfterExecute(unittest.TestCase):
     def test_terminal_completion_routes_to_end(self) -> None:
         """A terminal completion reason routes to END."""
 
-        for reason in (
-            CompletionReason.FAILED.value,
-            CompletionReason.MAX_STEPS.value,
-            CompletionReason.CANCELLED.value,
-            CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
-        ):
+        for reason in TERMINAL_COMPLETION_REASONS:
             with self.subTest(reason=reason):
                 route = self.__builder()._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
                     {
@@ -310,6 +306,51 @@ class TestRouteAfterExecute(unittest.TestCase):
         )
 
         self.assertEqual(route, NodeName.OBSERVE)
+
+
+class TestRouteAfterRecord(unittest.TestCase):
+    """
+    Pins routing decisions after RECORD.
+    """
+
+    @staticmethod
+    def __builder(*, is_cancelled: bool = False) -> IntentGraphBuilder:
+        """
+        Build a routing-only IntentGraphBuilder bound to a minimal context.
+        """
+
+        return IntentGraphBuilder(
+            context=SimpleNamespace(is_cancelled=is_cancelled),  # type: ignore[arg-type]
+        )
+
+    def test_terminal_completion_routes_to_end(self) -> None:
+        """
+        All shared terminal completion reasons route to END.
+        """
+
+        for reason in TERMINAL_COMPLETION_REASONS:
+            with self.subTest(reason=reason):
+                route = self.__builder()._IntentGraphBuilder__route_after_record(  # type: ignore[attr-defined]
+                    {
+                        CommonStateKey.IS_COMPLETE: True,
+                        CommonStateKey.COMPLETION_REASON: reason,
+                    },
+                )
+                self.assertEqual(route, NodeName.END)
+
+    def test_non_terminal_completion_routes_to_verify(self) -> None:
+        """
+        Successful completion still routes to VERIFY.
+        """
+
+        route = self.__builder()._IntentGraphBuilder__route_after_record(  # type: ignore[attr-defined]
+            {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.SUCCESS.value,
+            },
+        )
+
+        self.assertEqual(route, NodeName.VERIFY)
 
 
 class TestIntentGraphBuilderDestinations:
@@ -495,6 +536,27 @@ class TestIntentGraphBuilderVerifyLoop:
     Covers compiled builder behavior for repeated VERIFY rejections.
     """
 
+    def test_stuck_completion_routes_to_end_without_verify(self) -> None:
+        """
+        STUCK is a terminal completion reason and must never enter VERIFY.
+        """
+
+        context = MagicMock(name="GraphContext")
+        context.is_cancelled = False
+        context.agent_state.is_complete = False
+        builder = IntentGraphBuilder(context=context)
+
+        route = builder._IntentGraphBuilder__route_after_analyze(  # type: ignore[attr-defined]
+            {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.STUCK.value,
+                IntentStateKey.SHOULD_RETRY: False,
+                IntentStateKey.PLANNED_STEP: None,
+            }
+        )
+
+        assert route == NodeName.END
+
     def test_frozen_verify_loop_terminates_after_same_epoch_rejections(self) -> None:
         """
         The compiled graph must stop when VERIFY rejects the same epoch repeatedly.
@@ -513,6 +575,12 @@ class TestIntentGraphBuilderVerifyLoop:
         context.max_steps = 10
 
         verify_calls = {"count": 0}
+        screen = ScreenState(
+            activity="save-account",
+            activity_hash="a" * 16,
+            visual_hash="1" * 16,
+            timestamp=1,
+        )
 
         def ground(_state: IntentGraphState) -> Dict[str, object]:
             return {}
@@ -528,7 +596,7 @@ class TestIntentGraphBuilderVerifyLoop:
             verify_calls["count"] += 1
 
             loop_state = agent_state.record_verify_rejection(
-                screen=None,
+                screen=screen,
                 activity="save-account",
             )
 
@@ -568,6 +636,6 @@ class TestIntentGraphBuilderVerifyLoop:
         assert agent_state.verification_loop == VerificationLoopState(
             recorded_step_count=5,
             activity="save-account",
-            screen=None,
+            screen=screen,
             consecutive_rejections=DEFAULT_VERIFICATION_REJECTION_LIMIT,
         )

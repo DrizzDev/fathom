@@ -33,7 +33,7 @@ logger = getLogger(__name__)
 
 class VerificationLoopState(BaseModel):
     """
-    Serializable verifier-loop state for one same-screen, same-step rejection streak.
+    Serializable verifier-loop state for one same-screen verifier rejection streak.
     """
 
     recorded_step_count: int = Field(
@@ -64,13 +64,15 @@ class VerificationLoopState(BaseModel):
         Return whether a new verifier rejection belongs to this streak.
         """
 
-        if recorded_step_count != self.recorded_step_count:
+        _ = recorded_step_count
+
+        if activity != self.activity:
             return False
 
         if self.screen is not None and screen is not None:
             return self.screen.is_same_screen(other=screen)
 
-        return self.activity == activity
+        return False
 
     def next_rejection(
         self,

@@ -26,7 +26,19 @@ class CompositeAbortDetector(AbortDetectorPort):
         Try the primary first and route to the fallback when the primary signals abstention.
         """
 
-        decision = await self.__primary.aborted(response=response)
+        try:
+            decision = await self.__primary.aborted(response=response)
+        except Exception as exception:
+            logger.exception(
+                "Primary abort detector failed; consulting fallback",
+                extra={
+                    "event": "abort.composite.primary_failed",
+                    "component": "core.services.abort.composite",
+                    "response.preview": response,
+                    "error.kind": type(exception).__name__,
+                },
+            )
+            decision = AbortDecision(aborted=False, confidence=0.0, fallback=True)
 
         if not decision.fallback:
             return decision
@@ -36,10 +48,22 @@ class CompositeAbortDetector(AbortDetectorPort):
             extra={
                 "event": "abort.composite.fallback_invoked",
                 "component": "core.services.abort.composite",
-                "response.preview": response[:120],
+                "response.preview": response,
             },
         )
-        return await self.__fallback.aborted(response=response)
+        try:
+            return await self.__fallback.aborted(response=response)
+        except Exception as exception:
+            logger.exception(
+                "Fallback abort detector failed; returning safe non-abort decision",
+                extra={
+                    "event": "abort.composite.fallback_failed",
+                    "component": "core.services.abort.composite",
+                    "response.preview": response,
+                    "error.kind": type(exception).__name__,
+                },
+            )
+            return AbortDecision(aborted=False, confidence=0.0, fallback=True)
 
     async def warmup(self) -> None:
         """

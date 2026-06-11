@@ -6,8 +6,9 @@ from typing import Any, Dict, List, Optional, cast
 
 from fathom.constants.completion import AdvanceReason, GateOutcome
 from fathom.constants.observability import CompletionEvent
-from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey
+from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey, VerifyMode
 from fathom.core.agent.completion import CompletionGate
+from fathom.core.exceptions import InvariantViolation
 from fathom.core.services.criterion import CriterionObserver
 from fathom.schemas.completion import CompletionEvidence, GateDecision
 from fathom.schemas.criterion import CriterionDecision
@@ -339,10 +340,19 @@ class SubGoalEvaluator:
         signal: SubGoalCompletionSignal,
     ) -> IntentGraphState:
         """
-        Mark the current sub-goal complete; route to next sub-goal or VERIFY.
+        Mark non-final sub-goals complete; defer final commit to VERIFY.
         """
 
         agent_state = self.__context.agent_state
+
+        if agent_state.has_active_final_sub_goal():
+            return self.__route_final_sub_goal_to_verify(
+                kind=kind,
+                current=current,
+                evidence=evidence,
+                accumulated=accumulated,
+            )
+
         has_more = agent_state.mark_current_sub_goal_complete(completion_signal=signal)
 
         if has_more:
@@ -350,8 +360,8 @@ class SubGoalEvaluator:
                 current=current, evidence=evidence, accumulated=accumulated, kind=kind
             )
 
-        return self.__route_to_verify(
-            current=current, evidence=evidence, accumulated=accumulated, kind=kind
+        raise InvariantViolation(
+            "Sub-goal cursor drift: non-final cursor reported no remaining sub-goals."
         )
 
     def __retry_for_next_sub_goal(
@@ -367,6 +377,9 @@ class SubGoalEvaluator:
         """
 
         agent_state = self.__context.agent_state
+
+        agent_state.clear_verification_loop()
+        agent_state.reset_complete_deferrals()
         next_sub_goal = agent_state.get_current_sub_goal()
 
         logger.info(
@@ -389,12 +402,13 @@ class SubGoalEvaluator:
         return cast(
             "IntentGraphState",
             {
+                IntentStateKey.VERIFY_MODE: None,
                 IntentStateKey.SHOULD_RETRY: True,
                 IntentStateKey.STEP_RESULTS: accumulated,
             },
         )
 
-    def __route_to_verify(
+    def __route_final_sub_goal_to_verify(
         self,
         *,
         current: SubGoal,
@@ -403,32 +417,34 @@ class SubGoalEvaluator:
         accumulated: List[StepResult],
     ) -> IntentGraphState:
         """
-        Mark intent complete and route to VERIFY when the last sub-goal advances.
+        Route to VERIFY while keeping the final sub-goal active until acceptance.
         """
 
-        agent_state = self.__context.agent_state
-        completion_reason = "All sub-goals completed sequentially"
-
-        agent_state.mark_complete(reason=completion_reason)
+        completion_reason = "All sub-goals advanced; pending final adjudication"
+        self.__context.agent_state.clear_verification_loop()
+        self.__context.agent_state.reset_complete_deferrals()
 
         logger.info(
-            "All sub-goals advanced; routing to VERIFY for final adjudication",
+            "Final sub-goal satisfied by gate; routing to VERIFY without commit",
             extra={
                 **self.__log_context(),
                 "kind": kind.value,
                 "sub_goal.index": current.index,
                 "sub_goal.kind": current.kind.value,
                 "evidence.notes": list(evidence.notes),
-                "event": CompletionEvent.INTENT_COMPLETED.value,
+                "event": CompletionEvent.INTENT_PENDING.value,
                 "sub_goal.description": current.description[:80],
+                "verify.mode": VerifyMode.PENDING_FINAL_COMMIT.value,
             },
         )
         return cast(
             "IntentGraphState",
             {
                 CommonStateKey.IS_COMPLETE: True,
+                IntentStateKey.SHOULD_RETRY: False,
                 IntentStateKey.STEP_RESULTS: accumulated,
                 CommonStateKey.COMPLETION_REASON: completion_reason,
+                IntentStateKey.VERIFY_MODE: VerifyMode.PENDING_FINAL_COMMIT.value,
             },
         )
 

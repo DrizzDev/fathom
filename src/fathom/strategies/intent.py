@@ -797,7 +797,9 @@ class IntentStrategy:
                 CompletionReason.FAILED.value,
                 CompletionReason.CANCELLED.value,
                 CompletionReason.MAX_STEPS.value,
+                CompletionReason.ACTION_BLOCKED.value,
                 CompletionReason.USER_DIRECTIVE.value,
+                CompletionReason.OPERATOR_ABORTED.value,
                 CompletionReason.INTERVENTION_REQUIRED.value,
                 CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
             }

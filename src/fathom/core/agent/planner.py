@@ -99,7 +99,6 @@ class StepPlanner:
         interactive_mode = state.capabilities.hitl.enabled
 
         if not state.can_continue:
-
             terminal_reason = self.__resolve_terminal_reason(state=state)
             if not state.is_complete:
                 state.mark_complete(reason=terminal_reason)

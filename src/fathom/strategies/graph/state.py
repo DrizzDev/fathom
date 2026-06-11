@@ -20,6 +20,7 @@ class IntentGraphState(TypedDict, total=False):
     STEP_NUMBER: int
     IS_COMPLETE: bool
     SHOULD_RETRY: bool
+    VERIFY_MODE: Optional[str]
     INJECTED_CONTEXT: Optional[str]
     COMPLETION_REASON: Optional[str]
     FAILURE_DIAGNOSTIC: Optional[str]

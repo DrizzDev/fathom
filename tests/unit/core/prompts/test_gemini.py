@@ -34,3 +34,22 @@ class GeminiPromptBuilderTest(unittest.TestCase):
             system_prompt,
         )
         self.assertIn("Otherwise ground the action visually via bbox", system_prompt)
+
+    def test_verifier_feedback_requires_corrective_action_before_completion(self) -> None:
+        """Verifier feedback must require action before another completion claim."""
+
+        user_context = GeminiPromptBuilder().build_user_context(
+            history={
+                "verifier_feedback": [
+                    "Tap Yes, continue first",
+                    {"reason": "modal still visible"},
+                ]
+            },
+            sub_goal_info={"description": "Confirm SalarySe office address"},
+        )
+
+        self.assertIn("Take the next concrete UI action", user_context)
+        self.assertIn("Do not claim completion again until that action has executed", user_context)
+        self.assertIn("Continue working on the active sub-goal", user_context)
+        self.assertIn("{'reason': 'modal still visible'}", user_context)
+        self.assertNotIn("when the screen still needs a change", user_context)

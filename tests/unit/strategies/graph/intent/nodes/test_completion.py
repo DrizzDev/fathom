@@ -6,7 +6,8 @@ from unittest.mock import MagicMock
 
 from fathom.constants import ActionType
 from fathom.constants.observation import KeyboardVisibility
-from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey
+from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey, VerifyMode
+from fathom.core.exceptions import InvariantViolation
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.completion import (
     ActionEvidence,
@@ -274,6 +275,7 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         context.agent_state.get_current_sub_goal.return_value = sub_goal
         context.agent_state.has_sub_goals.return_value = True
         context.agent_state.last_delta_score = None
+        context.agent_state.has_active_final_sub_goal.return_value = not has_more
         context.agent_state.mark_current_sub_goal_complete.return_value = has_more
         context.reasoner = _StubReasoner(evidence=evidence, signal=signal)
         return context
@@ -292,8 +294,9 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         checker = _StubCriterionChecker(
             decisions=(self.__decision(verdict=CriterionVerdict.UNSATISFIED),),
         )
+        context = self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal)
         evaluator = SubGoalEvaluator(
-            context=self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal),
+            context=context,
             criterion_observer=checker,
         )
 
@@ -307,6 +310,7 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+        context.agent_state.reset_complete_deferrals.assert_called_once()
 
     async def test_action_subgoal_advances_when_criterion_observer_unsatisfied(
         self,
@@ -430,12 +434,10 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         checker = _StubCriterionChecker(
             decisions=(self.__decision(verdict=CriterionVerdict.SATISFIED),),
         )
-        evaluator = SubGoalEvaluator(
-            context=self.__context(
-                sub_goal=sub_goal, evidence=evidence, signal=signal, has_more=False
-            ),
-            criterion_observer=checker,
+        context = self.__context(
+            sub_goal=sub_goal, evidence=evidence, signal=signal, has_more=False
         )
+        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
 
         result = await evaluator.evaluate(
             plan=self.__plan_with_analysis(),
@@ -447,7 +449,44 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertEqual(
+            result.get(IntentStateKey.VERIFY_MODE),
+            VerifyMode.PENDING_FINAL_COMMIT.value,
+        )
+        self.assertFalse(result.get(IntentStateKey.SHOULD_RETRY))
         self.assertIn("All sub-goals", str(result.get(CommonStateKey.COMPLETION_REASON)))
+        context.agent_state.mark_current_sub_goal_complete.assert_not_called()
+        context.agent_state.clear_verification_loop.assert_called_once()
+        context.agent_state.reset_complete_deferrals.assert_called_once()
+
+    async def test_non_final_cursor_reporting_no_remaining_subgoals_fails_fast(self) -> None:
+        """
+        Cursor accounting drift must not be masked as final verification.
+        """
+
+        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION, description="Done")
+        evidence = self.__evidence(asserted=True)
+        signal = self.__signal(flagged_complete=True)
+        checker = _StubCriterionChecker(
+            decisions=(self.__decision(verdict=CriterionVerdict.SATISFIED),),
+        )
+        context = self.__context(
+            sub_goal=sub_goal,
+            evidence=evidence,
+            signal=signal,
+            has_more=True,
+        )
+        context.agent_state.has_active_final_sub_goal.return_value = False
+        context.agent_state.mark_current_sub_goal_complete.return_value = False
+        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
+
+        with self.assertRaises(InvariantViolation):
+            await evaluator.evaluate(
+                plan=self.__plan_with_analysis(),
+                step_result=self.__step_result(action_type=ActionType.TAP),
+                accumulated=[],
+                observation=self.__observation(),
+            )
 
     async def test_step_failed_skips_evaluation(self) -> None:
         """
