@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+import asyncio
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from fathom.adapters.checkpoint import SqliteCheckpointStore
 from fathom.adapters.signal.noop import NoopSignal
@@ -8,6 +10,7 @@ from fathom.adapters.storage.local import LocalStorage
 from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.interaction import SwipeSpeed
+from fathom.core.exceptions import WorkflowCancelledError
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -107,9 +110,9 @@ class RecordingTelemetry(TelemetryPort):
         self.events.append({"level": level, "message": message, **context})
 
 
-class DeviceBoundary(DevicePort):
+class DeterministicDevicePort(DevicePort):
     """
-    Device boundary double used because real adapters require a live device/session.
+    Deterministic device port for tests that cannot require a live device session.
     """
 
     @property
@@ -186,7 +189,7 @@ class DeviceBoundary(DevicePort):
         Return placeholder screenshot bytes.
         """
 
-        return b"fake"
+        return b"placeholder-screen"
 
     async def dump_hierarchy(self) -> Optional[str]:
         """
@@ -200,7 +203,7 @@ class DeviceBoundary(DevicePort):
         Return placeholder screenshot and no hierarchy.
         """
 
-        return b"fake", None
+        return b"placeholder-screen", None
 
     async def get_dimensions(self) -> Tuple[int, int]:
         """
@@ -218,9 +221,9 @@ class DeviceBoundary(DevicePort):
         return True
 
 
-class PerceptionBoundary(PerceptionPort):
+class DeterministicPerceptionPort(PerceptionPort):
     """
-    Perception boundary double used because real perception captures a live screen.
+    Deterministic perception port for tests that cannot capture a live screen.
     """
 
     @property
@@ -236,12 +239,18 @@ class PerceptionBoundary(PerceptionPort):
         Return a placeholder screen capture.
         """
 
-        return ScreenCapture(width=100, height=200, activity="Main", image=b"fake", timestamp=0)
+        return ScreenCapture(
+            width=100,
+            height=200,
+            timestamp=0,
+            activity="Main",
+            image=b"placeholder-screen",
+        )
 
 
-class SummarizerBoundary(SummarizationPort):
+class DeterministicSummarizationPort(SummarizationPort):
     """
-    Summarizer boundary double for constructor completeness.
+    Deterministic summarization port for constructor-complete strategy tests.
     """
 
     async def summarize_trace(self, trace: List[Dict[str, Any]]) -> str:
@@ -253,9 +262,9 @@ class SummarizerBoundary(SummarizationPort):
         return "summary"
 
 
-class DecomposerBoundary:
+class DeterministicDecomposer:
     """
-    Decomposer boundary that returns deterministic sub-goals without an LLM call.
+    Deterministic decomposer that avoids an LLM call.
     """
 
     async def decompose(self, *, intent: str) -> list[Any]:
@@ -267,66 +276,65 @@ class DecomposerBoundary:
         return []
 
 
-class TerminalGraph:
+class TerminalIntentGraph:
     """
-    Terminal graph boundary for finalization tests.
+    Deterministic graph stream that exercises the real GraphExecutor lifecycle.
     """
+
+    def __init__(self, *, stream_exception: Optional[BaseException] = None) -> None:
+        """
+        Initialize the graph stream outcome.
+        """
+
+        self.__stream_exception = stream_exception
+
+    @classmethod
+    def completed(cls) -> TerminalIntentGraph:
+        """
+        Build a graph that streams to completion.
+        """
+
+        return cls()
+
+    @classmethod
+    def workflow_cancelled(cls) -> TerminalIntentGraph:
+        """
+        Build a graph that surfaces cooperative workflow cancellation.
+        """
+
+        return cls(stream_exception=WorkflowCancelledError(workflow_id="workflow-cancelled-script"))
+
+    @classmethod
+    def host_cancelled(cls) -> TerminalIntentGraph:
+        """
+        Build a graph that surfaces host task cancellation.
+        """
+
+        return cls(stream_exception=asyncio.CancelledError())
+
+    async def astream(self, input_value: Any, *, config: Any) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Stream a deterministic terminal graph outcome.
+        """
+
+        _ = (input_value, config)
+
+        if self.__stream_exception is not None:
+            raise self.__stream_exception
+
+        if False:
+            yield {}
 
     async def aget_state(self, config: Any) -> Any:
         """
         Return a terminal graph snapshot.
         """
 
-        from types import SimpleNamespace
-
         _ = config
         return SimpleNamespace(next=(), values={})
 
 
-class CancelledExecutor:
-    """
-    Executor boundary that emits the existing cancellation acknowledgement and cancels context.
-    """
-
-    def __init__(self, *, context: Any, graph: Any, thread_id: str, **_: Any) -> None:
-        """
-        Capture the graph context passed by IntentStrategy.
-        """
-
-        self.__context = context
-        self.__graph = graph
-        self.__thread_id = thread_id
-
-    async def run(self) -> None:
-        """
-        Simulate cooperative cancellation from the executor layer.
-        """
-
-        _ = (self.__graph, self.__thread_id)
-        self.__context.cancel()
-        await self.__context.telemetry.info(
-            "Stopping the run.",
-            type=FathomEvent.WORKFLOW_CANCELLED,
-        )
-
-
-class CompletedExecutor:
-    """
-    Executor boundary that finishes without cancelling context.
-    """
-
-    def __init__(self, **_: Any) -> None:
-        """
-        Accept GraphExecutor constructor arguments.
-        """
-
-    async def run(self) -> None:
-        """
-        Complete normally.
-        """
-
-
-class IntentHarness:
+class IntentStrategyHarness:
     """
     Intent strategy plus recording telemetry for one test run.
     """
@@ -340,72 +348,86 @@ class IntentHarness:
         self.telemetry = telemetry
 
 
-def build_intent_strategy(
-    *,
-    tmp_path: Path,
-    llm: LLMPort,
-    memory: MemoryPort,
-    configuration: FathomConfiguration,
-) -> IntentHarness:
+class IntentStrategyHarnessBuilder:
     """
-    Build IntentStrategy with real safe adapters and controlled external boundaries.
+    Builds IntentStrategy with real application infrastructure and controlled external ports.
     """
 
-    telemetry = RecordingTelemetry()
-    path_manager = SharedPathManager(settings=FathomSettings(assets_path=tmp_path / "assets"))
-    strategy = IntentStrategy(
-        intent="Cancel after collecting a partial script",
-        llm=llm,
-        device=DeviceBoundary(),
-        memory=memory,
-        signal=NoopSignal(),
-        storage=LocalStorage(path_manager=path_manager),
-        telemetry=telemetry,
-        perception=PerceptionBoundary(),
-        summarizer=SummarizerBoundary(),
-        configuration=configuration,
-        use_xml=False,
-        max_steps=5,
-        package_name="com.example",
-        workflow_id="workflow-cancelled-script",
-        path_manager=path_manager,
-        checkpoint_store=SqliteCheckpointStore(
-            directory=path_manager.get_checkpoint_directory(),
-            policy=SqliteCheckpointPolicy(),
-        ),
-    )
-    return IntentHarness(strategy=strategy, telemetry=telemetry)
+    @staticmethod
+    def build(
+        *,
+        llm: LLMPort,
+        tmp_path: Path,
+        memory: MemoryPort,
+        configuration: FathomConfiguration,
+    ) -> IntentStrategyHarness:
+        """
+        Build an IntentStrategy harness for cancellation finalization tests.
+        """
+
+        telemetry = RecordingTelemetry()
+        intent = "Cancel after collecting a partial script"
+        path_manager = SharedPathManager(settings=FathomSettings(assets_path=tmp_path / "assets"))
+
+        strategy = IntentStrategy(
+            llm=llm,
+            max_steps=5,
+            intent=intent,
+            memory=memory,
+            use_xml=False,
+            telemetry=telemetry,
+            signal=NoopSignal(),
+            path_manager=path_manager,
+            package_name="com.example",
+            configuration=configuration,
+            device=DeterministicDevicePort(),
+            workflow_id="workflow-cancelled-script",
+            perception=DeterministicPerceptionPort(),
+            summarizer=DeterministicSummarizationPort(),
+            storage=LocalStorage(path_manager=path_manager),
+            checkpoint_store=SqliteCheckpointStore(
+                policy=SqliteCheckpointPolicy(),
+                directory=path_manager.get_checkpoint_directory(),
+            ),
+        )
+        return IntentStrategyHarness(strategy=strategy, telemetry=telemetry)
 
 
-def cancellation_configuration(
-    *,
-    script_timeout: float = 1.0,
-    heartbeat_threshold: float = 0.5,
-) -> FathomConfiguration:
+class IntentCancellationConfigurationBuilder:
     """
-    Build the short-budget configuration used by cancellation-finalization tests.
+    Builds cancellation-finalization configuration for IntentStrategy tests.
     """
 
-    finalization = FinalizationBudgetPolicy(
-        history=HistoryFinalizationBudget(flush=10.0, script=script_timeout),
-        graph=GraphFinalizationBudget(state_read=1.0),
-        runtime=RuntimeFinalizationBudget(
-            cleanup=1.0,
-            context_shutdown=1.0,
-            background_drain=1.0,
-            memory_summary=1.0,
-        ),
-    )
-    return FathomConfiguration(
-        intent=IntentConfiguration(finalization=finalization),
-        telemetry=TelemetryConfiguration(
-            phase=PhaseMessage(
-                heartbeat=HeartbeatBudget(
-                    threshold=heartbeat_threshold,
-                    limit=5,
-                    message="Still working...",
-                    script_finalization="Finalizing the script...",
+    @staticmethod
+    def build(
+        *,
+        script_timeout: float = 1.0,
+        heartbeat_threshold: float = 0.5,
+    ) -> FathomConfiguration:
+        """
+        Build the short-budget configuration used by cancellation-finalization tests.
+        """
+
+        finalization = FinalizationBudgetPolicy(
+            graph=GraphFinalizationBudget(state_read=1.0),
+            history=HistoryFinalizationBudget(flush=10.0, script=script_timeout),
+            runtime=RuntimeFinalizationBudget(
+                cleanup=1.0,
+                memory_summary=1.0,
+                context_shutdown=1.0,
+                background_drain=1.0,
+            ),
+        )
+        return FathomConfiguration(
+            intent=IntentConfiguration(finalization=finalization),
+            telemetry=TelemetryConfiguration(
+                phase=PhaseMessage(
+                    heartbeat=HeartbeatBudget(
+                        limit=5,
+                        message="Still working...",
+                        threshold=heartbeat_threshold,
+                        script_finalization="Finalizing the script...",
+                    )
                 )
-            )
-        ),
-    )
+            ),
+        )

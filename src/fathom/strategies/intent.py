@@ -246,6 +246,11 @@ class IntentStrategy:
                     run_outcome=run_outcome,
                 )
         except asyncio.CancelledError:
+            self.__graph_context.cancel()
+            final_state = await self.__finalize_cancelled_run(
+                budgets=budgets,
+                assembler=assembler,
+            )
             raise
 
         except Exception as exception:
@@ -360,6 +365,47 @@ class IntentStrategy:
             phase=FinalizationPhase.GRAPH_STATE_READ,
             awaitable=self.__graph.aget_state(config),
         )
+
+    async def __finalize_cancelled_run(
+        self,
+        *,
+        budgets: FinalizationBudgetPolicy,
+        assembler: "IntentStrategy.__ResultAssembler",
+    ) -> Optional[Any]:
+        """
+        Best-effort finalization for host-level cancellation before re-raising cancellation.
+        """
+
+        if self.__graph is None:
+            logger.warning(
+                "Skipping cancelled-run finalization because graph was not initialized",
+                extra={
+                    "event": "fathom.intent.cancelled_finalization.skipped",
+                    "workflow.id": self.__workflow_id,
+                    "reason": "graph_not_initialized",
+                },
+            )
+            return None
+
+        try:
+            return await self.__finalize_run(
+                budgets=budgets,
+                assembler=assembler,
+                run_outcome=RunOutcome.CANCELLED,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:
+            logger.exception(
+                "Cancelled-run finalization failed",
+                extra={
+                    "event": "fathom.intent.cancelled_finalization.failed",
+                    "workflow.id": self.__workflow_id,
+                    "exception.message": str(exception),
+                    "exception.type": type(exception).__name__,
+                },
+            )
+            return None
 
     async def __run_executor(self, *, executor: Any) -> RunOutcome:
         """
