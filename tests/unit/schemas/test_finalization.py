@@ -15,16 +15,24 @@ class HistoryFinalizationBudgetScriptBoundsTest(unittest.TestCase):
     silently shrink the budget back below operationally observed minimums.
     """
 
-    def test_default_covers_multi_step_synthesis(self) -> None:
+    def test_default_script_budget_covers_multi_step_synthesis(self) -> None:
         """
-        Default of 45 seconds replaces the historical 5-second value that
-        timed out on every multi-step run; 45s is the operationally observed
-        floor for stag-scale script generation including LLM round-trip.
+        Default of 60 seconds covers the operational p99 plus headroom for
+        cancelled-run partial script delivery without holding cancellation indefinitely.
         """
 
         budget = HistoryFinalizationBudget()
 
-        self.assertEqual(budget.script, 45.0)
+        self.assertEqual(budget.script, 60.0)
+
+    def test_default_flush_budget_remains_short(self) -> None:
+        """
+        History flush keeps the existing 10-second budget; script generation is the only lifted default.
+        """
+
+        budget = HistoryFinalizationBudget()
+
+        self.assertEqual(budget.flush, 10.0)
 
     def test_upper_bound_accepts_long_synthesis(self) -> None:
         """

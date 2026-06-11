@@ -4,7 +4,7 @@ import asyncio
 import time
 from contextlib import AsyncExitStack
 from logging import getLogger
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Awaitable, Dict, List, Optional, Tuple, TypeVar, cast
 
 from langchain_core.runnables import RunnableConfig
 
@@ -28,6 +28,7 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
+from fathom.schemas.finalization import FinalizationBudgetPolicy
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.run import RealignmentPolicy
@@ -36,6 +37,9 @@ from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 
 logger = getLogger(name=__name__)
+
+_FinalizationResult = TypeVar("_FinalizationResult")
+_CANCELLED_SCRIPT_HEARTBEAT_FAILURE_LIMIT = 3
 
 
 # Backward-compatible re-exports for legacy callers (tests/unit/strategies/test_checkpoint_allowlist.py).
@@ -182,7 +186,7 @@ class IntentStrategy:
                 self.__checkpoint_store.open(workflow_id=self.__workflow_id)
             )
             self.__graph = self.__graph_builder.build(
-                checkpointer=checkpointer,
+                checkpointer=cast("Any", checkpointer),
                 interrupt_before=self.__interrupt_nodes,
             )
 
@@ -298,8 +302,8 @@ class IntentStrategy:
     async def __finalize_run(
         self,
         *,
-        budgets: Any,
         run_outcome: RunOutcome,
+        budgets: FinalizationBudgetPolicy,
         assembler: "IntentStrategy.__ResultAssembler",
     ) -> Optional[Any]:
         """
@@ -324,20 +328,26 @@ class IntentStrategy:
             awaitable=self.__graph_context.history.flush_pending_operations(),
         )
 
-        script_data = await self.__run_finalization_phase(
-            assembler=assembler,
-            timeout=budgets.history.script,
-            phase=FinalizationPhase.HISTORY_SCRIPT,
-            awaitable=self.__graph_context.history.get_current_script(
-                intent=self.__intent,
-                step_number=self.__graph_context.agent_state.step_count,
-            ),
-        )
+        if run_outcome is RunOutcome.CANCELLED:
+            await self.__publish_cancelled_run_script(
+                budgets=budgets,
+                assembler=assembler,
+            )
+        else:
+            script_data = await self.__run_finalization_phase(
+                assembler=assembler,
+                timeout=budgets.history.script,
+                phase=FinalizationPhase.HISTORY_SCRIPT,
+                awaitable=self.__graph_context.history.get_current_script(
+                    intent=self.__intent,
+                    step_number=self.__graph_context.agent_state.step_count,
+                ),
+            )
 
-        await self.__emit_script_generated_event(
-            script_data=script_data,
-            run_outcome=run_outcome,
-        )
+            await self.__emit_script_generated_event(
+                script_data=script_data,
+                run_outcome=run_outcome,
+            )
 
         if self.__graph is None:
             raise RuntimeError("Intent graph is not initialized")
@@ -422,20 +432,20 @@ class IntentStrategy:
         self,
         *,
         timeout: float,
-        awaitable: Any,
         phase: FinalizationPhase,
+        awaitable: Awaitable[_FinalizationResult],
         assembler: "IntentStrategy.__ResultAssembler",
-    ) -> Any:
+    ) -> Optional[_FinalizationResult]:
         """
         Wrap one finalization await with BoundedPhase; record phase identity on timeout but never raise.
         """
 
         try:
-            return await BoundedPhase(
+            return await self.__await_finalization_phase(
                 phase=phase,
                 timeout=timeout,
-                workflow_id=self.__workflow_id,
-            ).execute(awaitable=awaitable)
+                awaitable=awaitable,
+            )
         except FinalizationTimeoutError as exception:
             assembler.record_finalization_failure(phase=exception.phase)
             logger.warning(
@@ -448,6 +458,161 @@ class IntentStrategy:
                 },
             )
             return None
+
+    async def __publish_cancelled_run_script(
+        self,
+        *,
+        budgets: FinalizationBudgetPolicy,
+        assembler: "IntentStrategy.__ResultAssembler",
+    ) -> None:
+        """
+        Publish the best-effort partial script for a cancelled run.
+
+        The cancelled-run failure catches wrap only the script generation step.
+        Flush failures must surface; they are not absorbed into empty-script delivery.
+        """
+
+        script_task = asyncio.create_task(
+            self.__await_finalization_phase(
+                timeout=budgets.history.script,
+                phase=FinalizationPhase.HISTORY_SCRIPT,
+                awaitable=self.__graph_context.history.get_current_script(
+                    intent=self.__intent,
+                    step_number=self.__graph_context.agent_state.step_count,
+                ),
+            ),
+            name=FinalizationPhase.HISTORY_SCRIPT.value,
+        )
+        heartbeat_task = asyncio.create_task(
+            self.__emit_cancelled_script_heartbeats(script_task=script_task),
+            name=f"{FinalizationPhase.HISTORY_SCRIPT.value}.heartbeat",
+        )
+
+        started_at = time.perf_counter()
+
+        try:
+            script_data = await script_task
+        except FinalizationTimeoutError as exception:
+            assembler.record_finalization_failure(phase=exception.phase)
+            logger.warning(
+                "cancelled-run script finalization timed out",
+                extra={
+                    "event": f"{FinalizationPhase.HISTORY_SCRIPT.value}.cancelled.partial",
+                    "timeout": budgets.history.script,
+                    "workflow.id": self.__workflow_id,
+                    "duration": time.perf_counter() - started_at,
+                    "phase": FinalizationPhase.HISTORY_SCRIPT.value,
+                },
+            )
+            await self.__emit_script_generated_event(
+                script_data="",
+                run_outcome=RunOutcome.CANCELLED,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:
+            assembler.record_finalization_failure(phase=FinalizationPhase.HISTORY_SCRIPT.value)
+            logger.exception(
+                "cancelled-run script finalization failed",
+                extra={
+                    "event": f"{FinalizationPhase.HISTORY_SCRIPT.value}.cancelled.failed",
+                    "workflow.id": self.__workflow_id,
+                    "exception.message": str(exception),
+                    "exception.type": type(exception).__name__,
+                    "duration": time.perf_counter() - started_at,
+                    "phase": FinalizationPhase.HISTORY_SCRIPT.value,
+                },
+            )
+            await self.__emit_script_generated_event(
+                script_data="",
+                run_outcome=RunOutcome.CANCELLED,
+            )
+        else:
+            await self.__emit_script_generated_event(
+                script_data=script_data,
+                run_outcome=RunOutcome.CANCELLED,
+            )
+        finally:
+            heartbeat_task.cancel()
+            try:  # noqa: SIM105 - keep cancellation handling explicit for finalization auditability.
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception(
+                    "cancelled-run script heartbeat task failed during shutdown",
+                    extra={
+                        "event": f"{FinalizationPhase.HISTORY_SCRIPT.value}.heartbeat.failed",
+                        "workflow.id": self.__workflow_id,
+                    },
+                )
+
+    async def __await_finalization_phase(
+        self,
+        *,
+        timeout: float,
+        phase: FinalizationPhase,
+        awaitable: Awaitable[_FinalizationResult],
+    ) -> _FinalizationResult:
+        """
+        Await one finalization phase under its typed timeout and preserve failures for the caller.
+        """
+
+        return await BoundedPhase[_FinalizationResult](
+            phase=phase,
+            timeout=timeout,
+            workflow_id=self.__workflow_id,
+        ).execute(awaitable=awaitable)
+
+    async def __emit_cancelled_script_heartbeats(
+        self,
+        *,
+        script_task: "asyncio.Task[str]",
+    ) -> None:
+        """
+        Emit bounded client heartbeats while cancelled-run script generation is still running.
+
+        The script task has its own finalization timeout, currently shorter than the
+        heartbeat ceiling; this loop exits on task completion and is cancelled in
+        the publisher's ``finally`` so heartbeat can never outlive script finalization.
+        """
+
+        heartbeat = self.__graph_context.configuration.telemetry.phase.heartbeat
+        failed_heartbeat_emits = 0
+
+        for _ in range(heartbeat.limit):
+            done, _ = await asyncio.wait({script_task}, timeout=heartbeat.threshold)
+
+            if script_task in done:
+                return
+
+            try:
+                await self.__graph_context.telemetry.info(
+                    heartbeat.script_finalization,
+                    intent=self.__intent,
+                    run_outcome=RunOutcome.CANCELLED.value,
+                    step=self.__graph_context.agent_state.step_count,
+                    workflow_id=self.__workflow_id,
+                    type=FathomEvent.PHASE_HEARTBEAT,
+                    phase=FinalizationPhase.HISTORY_SCRIPT.value,
+                )
+                failed_heartbeat_emits = 0
+            except Exception:
+                failed_heartbeat_emits += 1
+                extra = {
+                    "workflow.id": self.__workflow_id,
+                    "phase": FinalizationPhase.HISTORY_SCRIPT.value,
+                    "event": f"{FinalizationPhase.HISTORY_SCRIPT.value}.heartbeat.failed",
+                    "failure.count": failed_heartbeat_emits,
+                }
+
+                if failed_heartbeat_emits == 1:
+                    logger.exception("cancelled-run script heartbeat emit failed", extra=extra)
+                else:
+                    logger.warning("cancelled-run script heartbeat emit failed", extra=extra)
+
+                if failed_heartbeat_emits >= _CANCELLED_SCRIPT_HEARTBEAT_FAILURE_LIMIT:
+                    return
 
     async def __shutdown_graph_context(self) -> None:
         """
@@ -513,6 +678,7 @@ class IntentStrategy:
             run_outcome=run_outcome.value,
             type=FathomEvent.SCRIPT_GENERATED,
             step=self.__graph_context.agent_state.step_count,
+            workflow_id=self.__workflow_id,
         )
 
     async def __cleanup_background_task(

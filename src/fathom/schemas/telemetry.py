@@ -68,6 +68,10 @@ class HeartbeatBudget(BaseModel):
         default="Still working...",
         description="Heartbeat message rendered by the client for long-running phases.",
     )
+    script_finalization: str = Field(
+        default="Finalizing the script...",
+        description="Heartbeat message rendered while a cancelled run finalizes its partial script.",
+    )
 
 
 class PhaseMessage(BaseModel):

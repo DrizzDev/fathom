@@ -23,7 +23,7 @@ class HistoryFinalizationBudget(BaseModel):
     script: float = Field(
         ge=0.1,
         le=300.0,
-        default=45.0,
+        default=60.0,
         description="Maximum wait in seconds for the script export to complete",
     )
 
