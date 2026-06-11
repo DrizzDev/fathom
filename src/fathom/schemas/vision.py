@@ -31,7 +31,6 @@ __ACTION_KIND_BY_TYPE: dict[ActionType, ActionKind] = {
     ActionType.TAP: ActionKind.NAVIGATION,
     ActionType.BACK: ActionKind.NAVIGATION,
     ActionType.HOME: ActionKind.NAVIGATION,
-    ActionType.ENTER: ActionKind.NAVIGATION,
     ActionType.LONG_PRESS: ActionKind.NAVIGATION,
     ActionType.SWIPE: ActionKind.NAVIGATION,
     ActionType.SWIPE_UP: ActionKind.NAVIGATION,

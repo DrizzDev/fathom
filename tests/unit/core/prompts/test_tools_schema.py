@@ -97,6 +97,17 @@ class ToolRegistryTest(unittest.TestCase):
             },
         )
 
+    def test_action_type_enum_omits_legacy_enter(self) -> None:
+        """The execute_ui action_type enum must not advertise the deprecated 'enter' action."""
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        execute_ui = next(
+            definition for definition in definitions if definition["name"] == "execute_ui"
+        )
+        action_type = execute_ui["parameters"]["properties"]["action"]["properties"]["action_type"]
+
+        self.assertNotIn("enter", action_type["enum"])
+
     def test_bbox_description_demands_tight_visible_extent(self) -> None:
         """
         The bbox schema description must instruct the planner to hug visible glyph extent only.

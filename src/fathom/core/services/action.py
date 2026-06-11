@@ -413,7 +413,6 @@ class ActionExecutor:
             ),
             ActionType.BACK: self.__execute_back,
             ActionType.HOME: self.__execute_home,
-            ActionType.ENTER: self.__execute_enter,
             ActionType.HIDE_KEYBOARD: self.__execute_hide_keyboard,
         }
 
@@ -457,30 +456,6 @@ class ActionExecutor:
             coords=None,
             swipe_execution=None,
             action=await self.__device.home(),
-        )
-
-    async def __execute_enter(
-        self,
-    ) -> PrimitiveExecution:
-        """
-        Execute the keyboard enter/search primitive when the provider supports it.
-        """
-
-        if not hasattr(self.__device, "enter"):
-            return PrimitiveExecution(
-                action=ActionResult(
-                    duration=0,
-                    success=False,
-                    error="Device does not support enter action",
-                ),
-                coords=None,
-                swipe_execution=None,
-            )
-
-        return PrimitiveExecution(
-            coords=None,
-            swipe_execution=None,
-            action=await self.__device.enter(),
         )
 
     async def __execute_hide_keyboard(

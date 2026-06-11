@@ -238,13 +238,6 @@ class ADBDevice(DevicePort):
 
         return await self.__keyevent(keycode=3)
 
-    async def enter(self) -> ActionResult:
-        """
-        Press the Android enter/search keyboard key.
-        """
-
-        return await self.__keyevent(keycode=AndroidKeycode.ENTER)
-
     async def __run_safe_subprocess(
         self,
         arguments: List[str],

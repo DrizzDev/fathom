@@ -92,9 +92,6 @@ class Normalizer:
         if kind in ("home", "press_home"):
             return "Press home button"
 
-        if kind == "enter":
-            return "Press enter"
-
         if kind == "wait":
             duration_str = ""
             if wait_duration is not None:

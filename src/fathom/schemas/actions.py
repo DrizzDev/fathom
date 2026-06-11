@@ -496,9 +496,6 @@ class Action(BaseModel):
         if self.action_type == ActionType.HOME:
             return "Press home button"
 
-        if self.action_type == ActionType.ENTER:
-            return "Press enter"
-
         if self.action_type == ActionType.WAIT:
             if self.wait_duration:
                 return f"Wait for {self.wait_duration} seconds"

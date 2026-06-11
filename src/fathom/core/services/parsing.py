@@ -478,7 +478,19 @@ class ToolResponseParser:
             except Exception:
                 logger.warning("Ignoring malformed bbox payload from GeminiBBox: %s", data.bbox)
 
-        raw_action_type_str = str(data.action_type or "").strip().lower()
+        raw_action_type_str = (data.action_type or "").strip().lower()
+        if raw_action_type_str == "enter":
+            raise ToolValidationError(
+                ToolErrorFeedback(
+                    tool_name="execute_ui",
+                    tool_call_id=None,
+                    error_kind="validation",
+                    message=(
+                        "action_type='enter' is not a supported execute_ui action_type. "
+                        "Choose a supported value from the execute_ui tool schema."
+                    ),
+                )
+            )
         try:
             action_type = ActionType(raw_action_type_str or "wait")
         except ValueError:

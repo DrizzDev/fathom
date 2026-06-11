@@ -237,16 +237,6 @@ class ADBRemoteDeviceAdapter(DevicePort):
         )
         return await self.__send_command(request)
 
-    async def enter(self) -> ActionResult:
-        """
-        Execute remote keyboard enter/search.
-        """
-
-        request = RemoteInteractionRequest(
-            action=InteractionAction.ENTER, execution_id=self.__execution_id
-        )
-        return await self.__send_command(request)
-
     async def swipe(
         self,
         *,

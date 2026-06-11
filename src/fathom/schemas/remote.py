@@ -14,7 +14,7 @@ class RemoteInteractionRequest(BaseModel):
     """
 
     action: str = Field(
-        description="Action type (TAP, TYPE, ENTER, SWIPE, SCROLL, DRAG, BACK, HOME, PINCH, GET_DIMENSIONS, GET_XML, GET_SCREENSHOT, GET_CURRENT_PACKAGE)"
+        description="Action type (TAP, TYPE, SWIPE, SCROLL, DRAG, BACK, HOME, PINCH, GET_DIMENSIONS, GET_XML, GET_SCREENSHOT, GET_CURRENT_PACKAGE)"
     )
     execution_id: Optional[str] = Field(
         default=None, description="The unique ID for the current execution/workflow."

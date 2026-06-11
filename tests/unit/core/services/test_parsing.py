@@ -179,9 +179,10 @@ class ToolResponseParserExecuteUiTest(unittest.TestCase):
         self.assertEqual(result.action.target, "main scrollable area")
         self.assertEqual(result.action.scroll_target, "Asha Tiffin")
 
-    def test_parses_enter_action_without_wait_fallback(self) -> None:
+    def test_rejects_legacy_enter_action_with_tool_validation_error(self) -> None:
         """
-        The prompt schema exposes enter, so the parser must preserve it.
+        The deprecated 'enter' action_type from VLM output must raise ToolValidationError
+        with neutral feedback pointing the planner back at the execute_ui schema.
         """
 
         parser = ToolResponseParser()
@@ -203,10 +204,17 @@ class ToolResponseParserExecuteUiTest(unittest.TestCase):
             ]
         )
 
-        result = parser.parse(response=response)
+        with self.assertRaises(ToolValidationError) as context:
+            parser.parse(response=response)
 
-        self.assertEqual(result.action.action_type, ActionType.ENTER)
-        self.assertEqual(result.action.target, "Search button on keyboard")
+        feedback = context.exception.feedback
+        self.assertEqual(feedback.tool_name, "execute_ui")
+        self.assertEqual(feedback.error_kind, "validation")
+        self.assertIn("action_type='enter' is not a supported", feedback.message)
+        self.assertIn("execute_ui tool schema", feedback.message)
+        for biased_term in ("hide_keyboard", "Search/Done/Submit", "keyboard", "tap "):
+            with self.subTest(term=biased_term):
+                self.assertNotIn(biased_term, feedback.message)
 
 
 class ToolResponseParserCompletionReasonAutofillTest(unittest.TestCase):

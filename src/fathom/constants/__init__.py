@@ -53,7 +53,6 @@ class ActionType(StrEnum):
     HOME = "home"
     WAIT = "wait"
 
-    ENTER = "enter"
     HIDE_KEYBOARD = "hide_keyboard"
 
     SWIPE = "swipe"
@@ -127,7 +126,6 @@ NEXT_PHASE_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
         ActionType.TAP,
         ActionType.WAIT,
         ActionType.TYPE,
-        ActionType.ENTER,
         ActionType.SWIPE,
         ActionType.SCROLL,
         ActionType.VALIDATE,
@@ -143,7 +141,6 @@ ACTION_EXECUTED_TYPES: FrozenSet[ActionType] = frozenset(
     {
         ActionType.TAP,
         ActionType.TYPE,
-        ActionType.ENTER,
         ActionType.SWIPE,
         ActionType.SCROLL,
         ActionType.COMPLETE,

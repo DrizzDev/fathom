@@ -66,13 +66,6 @@ class IOSRemoteDeviceAdapter(DevicePort):
             text=text, locator=locator, replace=replace, prefilled=prefilled
         )
 
-    async def enter(self) -> ActionResult:
-        """
-        Delegate remote keyboard enter/search.
-        """
-
-        return await self.__delegate.enter()
-
     async def swipe(
         self,
         *,

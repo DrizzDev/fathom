@@ -131,7 +131,6 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             "  long_press   -> 'Long press X', 'Hold X', 'Press and hold X'\n"
             "  back         -> 'Go back', 'Press back', 'Navigate back'\n"
             "  home         -> 'Go to home', 'Press home'\n"
-            "  enter        -> 'Press enter', 'Submit', 'Confirm via keyboard'\n"
             "  hide_keyboard-> 'Dismiss keyboard', 'Hide keyboard'\n"
             "  ask_user     -> Explicit 'Ask user for X' steps\n"
             "\n"
@@ -198,8 +197,7 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             '      "criterion":   "<observable screen state when the step is complete>",\n'
             '      "directive":   "<one of: tap | type | validate | swipe_up | swipe_down |\n'
             "                                 swipe_left | swipe_right | scroll | wait |\n"
-            "                                 long_press | back | home | enter |\n"
-            '                                 hide_keyboard | ask_user>"\n'
+            '                                 long_press | back | home | hide_keyboard | ask_user>"\n'
             "    }\n"
             "  ],\n"
             '  "confidence": 0.9\n'

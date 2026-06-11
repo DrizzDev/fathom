@@ -66,7 +66,6 @@ class FakeDevice(DevicePort):
         self.__tap_calls: List[Tuple[int, int]] = []
         self.__type_calls: List[Dict[str, Any]] = []
         self.__swipe_calls: List[Dict[str, Any]] = []
-        self.__enter_calls = 0
 
         self.__dimensions = dimensions
         self.__configuration = device_configuration or FAST_TYPE_POLICY
@@ -96,14 +95,6 @@ class FakeDevice(DevicePort):
         """
 
         return self.__swipe_calls
-
-    @property
-    def enter_calls(self) -> int:
-        """
-        Recorded enter invocations.
-        """
-
-        return self.__enter_calls
 
     @property
     def configuration(self) -> Optional[DeviceRuntimeConfiguration]:
@@ -184,14 +175,6 @@ class FakeDevice(DevicePort):
         Return success for home action.
         """
 
-        return ActionResult(success=True, duration=1)
-
-    async def enter(self) -> ActionResult:
-        """
-        Record enter and return success.
-        """
-
-        self.__enter_calls += 1
         return ActionResult(success=True, duration=1)
 
     async def get_current_package(self) -> str:
@@ -346,31 +329,6 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(device.type_calls), 1)
         self.assertEqual(device.type_calls[0]["text"], "chennai adyar")
         self.assertEqual(device.type_calls[0]["locator"], "com.app:id/searchField")
-
-    async def test_enter_executes_device_enter_without_coordinate_fallback(self) -> None:
-        """
-        ENTER must dispatch the keyboard primitive instead of becoming WAIT.
-        """
-
-        device = FakeDevice()
-        executor = self.__build_executor(device)
-        action = Action(
-            action_type=ActionType.ENTER,
-            target="Search button on keyboard",
-            rationale="submit search",
-            confidence=0.9,
-        )
-
-        result = await executor.act(
-            session_id="session__1",
-            package_name="com.test.app",
-            step=self.__build_step(action),
-            pre_capture=self.__build_capture(),
-        )
-
-        self.assertTrue(result.success)
-        self.assertEqual(device.enter_calls, 1)
-        self.assertEqual(device.tap_calls, [])
 
     async def test_type_sets_replace_when_prefilled_present(self) -> None:
         """

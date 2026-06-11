@@ -32,7 +32,6 @@ class ActionKindDerivationTest(unittest.TestCase):
             ActionType.LONG_PRESS,
             ActionType.BACK,
             ActionType.HOME,
-            ActionType.ENTER,
             ActionType.HIDE_KEYBOARD,
         ):
             with self.subTest(action_type=action_type):

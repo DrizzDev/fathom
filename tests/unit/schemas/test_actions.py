@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from fathom.schemas.actions import CoordinateSource
+from pydantic import ValidationError
+
+from fathom.constants import ActionType
+from fathom.schemas.actions import Action, CoordinateSource
 
 
 class CoordinateSourceTest(unittest.TestCase):
@@ -42,6 +45,70 @@ class CoordinateSourceTest(unittest.TestCase):
 
         for member in CoordinateSource:
             self.assertEqual(CoordinateSource(member.value), member)
+
+
+class ActionLegacyEnterRejectionTest(unittest.TestCase):
+    """
+    Pins that the deprecated 'enter' action_type is rejected, never silently coerced.
+    """
+
+    def test_action_type_enum_does_not_expose_enter(self) -> None:
+        """
+        The ENTER member must no longer be reachable through ActionType.
+        """
+
+        self.assertFalse(hasattr(ActionType, "ENTER"))
+        with self.assertRaises(ValueError):
+            ActionType("enter")
+
+    def test_model_validate_rejects_legacy_enter_payload(self) -> None:
+        """
+        A historical Action payload with action_type='enter' must fail validation.
+        """
+
+        with self.assertRaises(ValidationError):
+            Action.model_validate(
+                {
+                    "action_type": "enter",
+                    "target": "Search",
+                    "rationale": "submit search",
+                    "confidence": 0.9,
+                }
+            )
+
+    def test_model_validate_rejects_legacy_enter_payload_with_anchors(self) -> None:
+        """
+        Even with label_id/bounds present, 'enter' must not deserialize into a TAP.
+        """
+
+        with self.assertRaises(ValidationError):
+            Action.model_validate(
+                {
+                    "action_type": "ENTER",
+                    "target": "Search",
+                    "rationale": "submit search",
+                    "label_id": "149",
+                    "confidence": 0.9,
+                }
+            )
+
+    def test_model_validate_accepts_supported_action_types(self) -> None:
+        """
+        Supported action_types still deserialize cleanly after the shim removal.
+        """
+
+        action = Action.model_validate(
+            {
+                "action_type": "tap",
+                "target": "Login",
+                "rationale": "submit login",
+                "label_id": "12",
+                "confidence": 1.0,
+            }
+        )
+
+        self.assertIs(action.action_type, ActionType.TAP)
+        self.assertEqual(action.label_id, "12")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,6 @@ class InteractionAction(StrEnum):
 
     TAP = "TAP"
     TYPE = "TYPE"
-    ENTER = "ENTER"
     DRAG = "DRAG"
     SWIPE = "SWIPE"
     SCROLL = "SCROLL"
