@@ -8,12 +8,15 @@ import asyncio
 import inspect
 from unittest.mock import AsyncMock, MagicMock
 
+from fathom.constants import ActionType
 from fathom.graph.exploration_graph import build_exploration_graph
 from fathom.graph.exploration_nodes import (
+    DfsNavigator,
     ExplorationNodeContext,
     ExplorationRouter,
     build_exploration_nodes,
 )
+from fathom.schemas.actions import Action
 
 
 class TestExplorationNodeFactory:
@@ -107,3 +110,45 @@ class TestExplorationRouter:
 
     def test_after_record_continues_while_running(self) -> None:
         assert self.__router().after_record({}) == "ground"
+
+
+class TestDfsNavigator:
+    """
+    Pure BACK/forward navigation computation.
+    """
+
+    @staticmethod
+    def __action(target: str) -> Action:
+        return Action(action_type=ActionType.TAP, rationale="r", target=target)
+
+    def test_forward_only_when_target_extends_current(self) -> None:
+        a = self.__action("a")
+        b = self.__action("b")
+        nav = DfsNavigator.compute_navigation(
+            current_path=[("s0", a)], target_path=[("s0", a), ("s1", b)]
+        )
+        assert [x.action_type for x in nav] == [ActionType.TAP]
+        assert nav[0].target == "b"
+
+    def test_back_only_when_target_is_ancestor(self) -> None:
+        a = self.__action("a")
+        b = self.__action("b")
+        nav = DfsNavigator.compute_navigation(current_path=[("s0", a), ("s1", b)], target_path=[])
+        assert [x.action_type for x in nav] == [ActionType.BACK, ActionType.BACK]
+
+    def test_ascend_then_descend_on_divergence(self) -> None:
+        a = self.__action("a")
+        b = self.__action("b")
+        c = self.__action("c")
+        nav = DfsNavigator.compute_navigation(
+            current_path=[("s0", a), ("s1", b)],
+            target_path=[("s0", a), ("s2", c)],
+        )
+        assert nav[0].action_type == ActionType.BACK
+        assert nav[-1].target == "c"
+        assert len(nav) == 2
+
+    def test_identical_paths_need_no_actions(self) -> None:
+        a = self.__action("a")
+        nav = DfsNavigator.compute_navigation(current_path=[("s0", a)], target_path=[("s0", a)])
+        assert nav == []

@@ -208,6 +208,8 @@ class ExplorationNode(ABC):
 
     def __init__(self, *, context: ExplorationNodeContext) -> None:
         self._context = context
+        self._navigator = DfsNavigator(context=context)
+        self._tracer = ExplorationTracer(context=context)
 
     @abstractmethod
     async def run(self, state: ExplorationGraphState) -> ExplorationGraphState:
@@ -620,7 +622,7 @@ class NavigateNode(ExplorationNode):
         # Determine action
         if ctx.phase == BFSPhase.BACKTRACK:
             if not ctx.current_path:
-                orphans = _find_orphaned_screens(ctx)
+                orphans = self._navigator.find_orphaned_screens()
                 if orphans:
                     for entry in orphans:
                         ctx.bfs_queue.append(entry)
@@ -634,7 +636,7 @@ class NavigateNode(ExplorationNode):
                         while entry.screen_hash in ctx.fully_scanned and ctx.bfs_queue:
                             entry = ctx.bfs_queue.popleft()
                         if entry.screen_hash not in ctx.fully_scanned:
-                            ctx.pending_nav = _compute_navigation(
+                            ctx.pending_nav = self._navigator.compute_navigation(
                                 current_path=ctx.current_path,
                                 target_path=entry.path_from_root,
                             )
@@ -697,7 +699,7 @@ class NavigateNode(ExplorationNode):
                 }
 
             # Compute navigation to orphaned screen
-            ctx.pending_nav = _compute_navigation(
+            ctx.pending_nav = self._navigator.compute_navigation(
                 current_path=ctx.current_path,
                 target_path=entry.path_from_root,
             )
@@ -784,7 +786,9 @@ class NavigateNode(ExplorationNode):
         # Tracing (fire-and-forget — non-blocking)
         if capture:
             coordinates = await get_action_coordinates(ctx.device, action)
-            asyncio.create_task(_trace_exploration(ctx, action, capture.image, coordinates))
+            asyncio.create_task(
+                self._tracer.trace(action=action, image_data=capture.image, coordinates=coordinates)
+            )
 
         action_result = await execute_device_action(device=ctx.device, action=action)
         execution_duration = time.time() - step_start
@@ -942,7 +946,9 @@ class ExecuteNode(ExplorationNode):
         # Tracing (fire-and-forget — non-blocking)
         try:
             coordinates = await get_action_coordinates(ctx.device, action)
-            asyncio.create_task(_trace_exploration(ctx, action, capture.image, coordinates))
+            asyncio.create_task(
+                self._tracer.trace(action=action, image_data=capture.image, coordinates=coordinates)
+            )
 
             action_result = await execute_device_action(device=ctx.device, action=action)
         except Exception as exc:
@@ -1223,7 +1229,7 @@ class RecordNode(ExplorationNode):
             else:
                 # At root level, everything on the DFS path is scanned.
                 # Check KG for orphaned unexplored screens.
-                orphans = _find_orphaned_screens(ctx)
+                orphans = self._navigator.find_orphaned_screens()
                 if orphans:
                     for entry in orphans:
                         ctx.bfs_queue.append(entry)
@@ -1245,7 +1251,7 @@ class RecordNode(ExplorationNode):
                 # Ran out of nav actions — start scanning wherever we landed
                 ctx.phase = BFSPhase.SCAN
                 ctx.scanning_hash = post_hash
-                ctx.current_path = _path_to_screen(ctx, post_hash)
+                ctx.current_path = self._navigator.path_to_screen(post_hash)
                 logger.debug("Nav exhausted, scanning landed screen %s", post_hash[:8])
 
         # Check step limit (merge with DFS completion signal)
@@ -1383,144 +1389,160 @@ class ExplorationRouter:
         return "ground"
 
 
-# ── Private helpers ─────────────────────────────────────────────────────
+# ── Collaborators ────────────────────────────────────────────────────────
 
 
-def _path_to_screen(
-    ctx: ExplorationNodeContext,
-    screen_hash: Optional[str],
-) -> List[Tuple[str, Action]]:
-    """Best-effort path reconstruction for a screen we've already visited."""
-    if not screen_hash or screen_hash == ctx.root_hash:
-        return []
-    # Check the recovery queue for any entry targeting this screen
-    for entry in ctx.bfs_queue:
-        if entry.screen_hash == screen_hash:
-            return list(entry.path_from_root)
-    # Fallback: current_path minus last hop
-    return list(ctx.current_path[:-1])
-
-
-def _find_orphaned_screens(
-    ctx: ExplorationNodeContext,
-) -> List[BFSQueueEntry]:
-    """Find screens in the KG that are not in ``fully_scanned`` and have a
-    known inbound transition so we can attempt to navigate to them.
-
-    Used as a DFS recovery mechanism when BACKTRACK reaches root but the
-    knowledge graph contains screens that were discovered (via transitions)
-    but never fully scanned -- typically caused by BACK overshooting or
-    navigating to an already-scanned screen that had unexplored neighbours.
+class DfsNavigator:
+    """
+    DFS navigation computations over the exploration context and graph.
     """
 
-    kg = ctx.knowledge_graph
-    orphans: List[BFSQueueEntry] = []
+    def __init__(self, *, context: ExplorationNodeContext) -> None:
+        self.__context = context
 
-    for visual_hash in kg.nodes:
-        if visual_hash in ctx.fully_scanned:
-            continue
-        if visual_hash == ctx.root_hash:
-            continue
+    def path_to_screen(self, screen_hash: Optional[str]) -> List[Tuple[str, Action]]:
+        """Best-effort path reconstruction for a screen we've already visited."""
 
-        result = kg.get_inbound_edge(visual_hash)
-        if result is None:
-            continue
-        source_hash, edge = result
+        ctx = self.__context
+        if not screen_hash or screen_hash == ctx.root_hash:
+            return []
+        # Check the recovery queue for any entry targeting this screen
+        for entry in ctx.bfs_queue:
+            if entry.screen_hash == screen_hash:
+                return list(entry.path_from_root)
+        # Fallback: current_path minus last hop
+        return list(ctx.current_path[:-1])
 
-        try:
-            resolved_action_type = ActionType(edge.action_type)
-        except (ValueError, KeyError):
-            resolved_action_type = ActionType.TAP
+    def find_orphaned_screens(self) -> List[BFSQueueEntry]:
+        """
+        Find KG screens not in ``fully_scanned`` that have a known inbound
+        transition, so the DFS can recover and navigate to them.
 
-        action = Action(
-            confidence=1.0,
-            target=edge.action_target or "orphan recovery",
-            action_type=resolved_action_type,
-            rationale=f"DFS recovery: navigate to orphaned screen via {resolved_action_type.value}",
-        )
-        orphans.append(
-            BFSQueueEntry(
-                screen_hash=visual_hash,
-                parent_hash=source_hash,
-                action_from_parent=action,
-                depth=1,
-                path_from_root=[(source_hash, action)],
-            )
-        )
+        Used when BACKTRACK reaches root but the knowledge graph still holds
+        screens discovered via transitions yet never fully scanned -- typically
+        caused by BACK overshooting or landing on an already-scanned screen
+        that had unexplored neighbours.
+        """
 
-    return orphans
+        ctx = self.__context
+        kg = ctx.knowledge_graph
+        orphans: List[BFSQueueEntry] = []
 
+        for visual_hash in kg.nodes:
+            if visual_hash in ctx.fully_scanned:
+                continue
+            if visual_hash == ctx.root_hash:
+                continue
 
-def _compute_navigation(
-    current_path: List[Tuple[str, Action]],
-    target_path: List[Tuple[str, Action]],
-) -> List[Action]:
-    """
-    Compute BACK + forward actions to navigate from current_path to
-    target_path using the simple-BACK strategy.
-    """
+            result = kg.get_inbound_edge(visual_hash)
+            if result is None:
+                continue
+            source_hash, edge = result
 
-    common_len = 0
-    for i in range(min(len(current_path), len(target_path))):
-        c_screen, c_action = current_path[i]
-        t_screen, t_action = target_path[i]
-        if c_screen == t_screen and c_action == t_action:
-            common_len = i + 1
-        else:
-            break
+            try:
+                resolved_action_type = ActionType(edge.action_type)
+            except (ValueError, KeyError):
+                resolved_action_type = ActionType.TAP
 
-    actions: List[Action] = []
-
-    # BACK actions to ascend
-    backs_needed = len(current_path) - common_len
-    for _ in range(backs_needed):
-        actions.append(
-            Action(
+            action = Action(
                 confidence=1.0,
-                target="back navigation",
-                action_type=ActionType.BACK,
-                rationale="DFS recovery: navigating to common ancestor",
+                target=edge.action_target or "orphan recovery",
+                action_type=resolved_action_type,
+                rationale=f"DFS recovery: navigate to orphaned screen via {resolved_action_type.value}",
             )
-        )
+            orphans.append(
+                BFSQueueEntry(
+                    screen_hash=visual_hash,
+                    parent_hash=source_hash,
+                    action_from_parent=action,
+                    depth=1,
+                    path_from_root=[(source_hash, action)],
+                )
+            )
 
-    # Forward actions from common ancestor to target
-    for i in range(common_len, len(target_path)):
-        _, forward_action = target_path[i]
-        actions.append(forward_action)
+        return orphans
 
-    return actions
+    @staticmethod
+    def compute_navigation(
+        *,
+        current_path: List[Tuple[str, Action]],
+        target_path: List[Tuple[str, Action]],
+    ) -> List[Action]:
+        """
+        Compute BACK + forward actions to navigate from ``current_path`` to
+        ``target_path`` using the simple-BACK strategy.
+        """
+
+        common_len = 0
+        for i in range(min(len(current_path), len(target_path))):
+            c_screen, c_action = current_path[i]
+            t_screen, t_action = target_path[i]
+            if c_screen == t_screen and c_action == t_action:
+                common_len = i + 1
+            else:
+                break
+
+        actions: List[Action] = []
+
+        # BACK actions to ascend
+        backs_needed = len(current_path) - common_len
+        for _ in range(backs_needed):
+            actions.append(
+                Action(
+                    confidence=1.0,
+                    target="back navigation",
+                    action_type=ActionType.BACK,
+                    rationale="DFS recovery: navigating to common ancestor",
+                )
+            )
+
+        # Forward actions from common ancestor to target
+        for i in range(common_len, len(target_path)):
+            _, forward_action = target_path[i]
+            actions.append(forward_action)
+
+        return actions
 
 
-async def _trace_exploration(
-    ctx: ExplorationNodeContext,
-    action: Action,
-    image_data: bytes,
-    coordinates: Tuple[int, ...],
-) -> None:
-    """Write a visual trace image in a background thread (fire-and-forget).
-
-    The synchronous PIL work (decode, annotate, save) is offloaded to the
-    default ``ThreadPoolExecutor`` so it never blocks the event loop.
+class ExplorationTracer:
+    """
+    Writes fire-and-forget visual trace images for executed actions.
     """
 
-    if not coordinates:
-        return
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    filename = (
-        f"explore__{ctx.agent_state.step_count + 1}__{action.action_type.value}__{timestamp}.png"
-    )
-    path = f"assets/traces/{filename}"
-    loop = asyncio.get_running_loop()
-    try:
-        await loop.run_in_executor(
-            None,
-            lambda: ImageAnnotator.trace(
-                output_path=path,
-                coords=coordinates,
-                image_data=image_data,
-                label=action.to_description(),
-                action_type=action.action_type.value,
-            ),
-        )
-    except Exception as exc:
-        logger.debug("Trace write failed (non-critical): %s", exc)
+    def __init__(self, *, context: ExplorationNodeContext) -> None:
+        self.__context = context
+
+    async def trace(
+        self,
+        *,
+        action: Action,
+        image_data: bytes,
+        coordinates: Tuple[int, ...],
+    ) -> None:
+        """
+        Write a visual trace image in a background thread (fire-and-forget).
+
+        The synchronous PIL work (decode, annotate, save) is offloaded to the
+        default ``ThreadPoolExecutor`` so it never blocks the event loop.
+        """
+
+        ctx = self.__context
+        if not coordinates:
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        filename = f"explore__{ctx.agent_state.step_count + 1}__{action.action_type.value}__{timestamp}.png"
+        path = f"assets/traces/{filename}"
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: ImageAnnotator.trace(
+                    output_path=path,
+                    coords=coordinates,
+                    image_data=image_data,
+                    label=action.to_description(),
+                    action_type=action.action_type.value,
+                ),
+            )
+        except Exception as exc:
+            logger.debug("Trace write failed (non-critical): %s", exc)
