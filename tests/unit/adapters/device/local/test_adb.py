@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from fathom.adapters.device.local.adb import ADBDevice
 from fathom.constants.platform import AndroidClearStrategy, AndroidKeycode
+from fathom.core.exceptions import DeviceError
 from fathom.schemas.results import ActionResult
 
 
@@ -310,3 +311,45 @@ class ADBDeviceHierarchyDumpTest(unittest.IsolatedAsyncioTestCase):
                 for command in commands
             )
         )
+
+
+class ADBDeviceLaunchPackageTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Cover launching an application by package via the monkey launcher intent.
+    """
+
+    def __build_device(self) -> ADBDevice:
+        """
+        Build a local ADB device with default configuration.
+        """
+
+        return ADBDevice(serial="emulator-5554")
+
+    async def test_launch_issues_monkey_launcher_intent(self) -> None:
+        """
+        Launching a package shells a monkey launcher-category intent for it.
+        """
+
+        device = self.__build_device()
+        with patch.object(
+            device,
+            "_ADBDevice__shell",
+            new_callable=AsyncMock,
+            return_value=ActionResult(success=True, duration=1),
+        ) as mock_shell:
+            result = await device.launch_package(package_name="ai.hangjam.app")
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            mock_shell.await_args.kwargs["command"],
+            "monkey -p ai.hangjam.app -c android.intent.category.LAUNCHER 1",
+        )
+
+    async def test_launch_rejects_shell_unsafe_identifier(self) -> None:
+        """
+        A package identifier that is not a dotted token is rejected before shelling.
+        """
+
+        device = self.__build_device()
+        with self.assertRaises(DeviceError):
+            await device.launch_package(package_name="com.evil; rm -rf /")

@@ -286,6 +286,15 @@ class ADBRemoteDeviceAdapter(DevicePort):
         )
         return await self.__send_command(request)
 
+    async def launch_package(self, *, package_name: str) -> ActionResult:
+        """
+        Launch an application by identifier; unsupported by the remote interaction gateway.
+        """
+
+        raise DeviceError(
+            f"Launch package '{package_name}' is not supported by the remote device backend."
+        )
+
     async def get_dimensions(self) -> Tuple[int, int]:
         """
         Get screen dimensions.

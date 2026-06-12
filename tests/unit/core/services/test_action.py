@@ -177,6 +177,14 @@ class FakeDevice(DevicePort):
 
         return ActionResult(success=True, duration=1)
 
+    async def launch_package(self, *, package_name: str) -> ActionResult:
+        """
+        Return success for launch-package action.
+        """
+
+        _ = package_name
+        return ActionResult(success=True, duration=1)
+
     async def get_current_package(self) -> str:
         """
         Return a stable package name.

@@ -177,6 +177,14 @@ class DeterministicDevicePort(DevicePort):
 
         return ActionResult(success=True, duration=0)
 
+    async def launch_package(self, *, package_name: str) -> ActionResult:
+        """
+        Return a successful no-op launch result.
+        """
+
+        _ = package_name
+        return ActionResult(success=True, duration=0)
+
     async def get_current_package(self) -> str:
         """
         Return deterministic package name.

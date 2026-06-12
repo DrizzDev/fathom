@@ -8,12 +8,15 @@ from typing import List, Optional, Tuple
 from fathom.constants.interaction import SwipeSpeed
 from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.platform import (
+    ANDROID_LAUNCH_EVENT_COUNT,
+    ANDROID_LAUNCHER_INTENT_CATEGORY,
     ANDROID_UIAUTOMATION_ACTIVE_MARKER,
     ANDROID_UIAUTOMATION_DUMP_PATH,
     ANDROID_UIAUTOMATION_INSTRUMENTATION_MARKER,
     ANDROID_UIAUTOMATION_PROCESS_NAME,
     ANDROID_UIAUTOMATION_TIMEOUT_MARKER,
     ANDROID_UIAUTOMATION_UIAUTOMATOR_MARKER,
+    APP_IDENTIFIER_PATTERN,
     AndroidClearStrategy,
     AndroidKeycode,
     DevicePlatform,
@@ -237,6 +240,21 @@ class ADBDevice(DevicePort):
         """
 
         return await self.__keyevent(keycode=3)
+
+    async def launch_package(self, *, package_name: str) -> ActionResult:
+        """
+        Launch the application's main activity by package identifier.
+        """
+
+        if not re.fullmatch(APP_IDENTIFIER_PATTERN, package_name):
+            raise DeviceError(f"Launch package: invalid package identifier '{package_name}'")
+
+        return await self.__shell(
+            command=(
+                f"monkey -p {package_name} "
+                f"-c {ANDROID_LAUNCHER_INTENT_CATEGORY} {ANDROID_LAUNCH_EVENT_COUNT}"
+            )
+        )
 
     async def __run_safe_subprocess(
         self,

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform
-from fathom.core.exceptions import DeviceConnectionClosedError
+from fathom.core.exceptions import DeviceConnectionClosedError, DeviceError
 from fathom.schemas.configuration import DeviceConfiguration, RemoteDeviceConfiguration
 
 
@@ -104,3 +104,16 @@ class ADBRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
         client_factory.assert_called_once()
         self.assertEqual(client_factory.call_args.kwargs["timeout"], 60.0)
         client.request.assert_awaited_once_with("POST", "snapshot", params={})
+
+    async def test_launch_package_is_unsupported(self) -> None:
+        """
+        The remote backend exposes no app-launch channel and fails explicitly.
+        """
+
+        client = Mock()
+        client.is_closed = False
+        with patch("fathom.adapters.device.remote.adb.httpx.AsyncClient", return_value=client):
+            adapter = ADBRemoteDeviceAdapter(configuration=self.__build_configuration())
+
+        with self.assertRaises(DeviceError):
+            await adapter.launch_package(package_name="com.example.app")

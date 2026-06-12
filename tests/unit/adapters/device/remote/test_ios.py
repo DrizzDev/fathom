@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 from typing import List, Optional, Tuple, cast
+from unittest.mock import AsyncMock, Mock
 
 from PIL import Image
 
@@ -216,3 +217,23 @@ class IOSRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
         await adapter.tap(x=585, y=1266)
 
         self.assertEqual(delegate.tap_calls, [(195, 422)])
+
+    async def test_launch_package_delegates(self) -> None:
+        """
+        Launch-package is forwarded to the underlying remote delegate unchanged.
+        """
+
+        delegate = Mock()
+        delegate.launch_package = AsyncMock(return_value=ActionResult(success=True, duration=1))
+        adapter = IOSRemoteDeviceAdapter(
+            configuration=DeviceConfiguration(
+                type=DeviceConnectionType.REMOTE,
+                platform=DevicePlatform.IOS,
+            ),
+            delegate=cast("ADBRemoteDeviceAdapter", delegate),
+        )
+
+        result = await adapter.launch_package(package_name="com.example.app")
+
+        self.assertTrue(result.success)
+        delegate.launch_package.assert_awaited_once_with(package_name="com.example.app")

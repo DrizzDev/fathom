@@ -106,6 +106,13 @@ class IOSRemoteDeviceAdapter(DevicePort):
 
         return await self.__delegate.home()
 
+    async def launch_package(self, *, package_name: str) -> ActionResult:
+        """
+        Delegate remote launch-package action.
+        """
+
+        return await self.__delegate.launch_package(package_name=package_name)
+
     async def get_current_package(self) -> str:
         """
         Delegate current package lookup.

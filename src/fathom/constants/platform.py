@@ -55,6 +55,15 @@ ANDROID_UIAUTOMATION_PROCESS_NAME = "app_process"
 ANDROID_UIAUTOMATION_TIMEOUT_MARKER = "timed out"
 ANDROID_UIAUTOMATION_UIAUTOMATOR_MARKER = "com.android.commands.uiautomator"
 
+# Launch-by-package: the launcher intent category and event count handed to the
+# Android `monkey` tool to bring an application's main activity to the foreground.
+ANDROID_LAUNCHER_INTENT_CATEGORY = "android.intent.category.LAUNCHER"
+ANDROID_LAUNCH_EVENT_COUNT = 1
+
+# A well-formed Android package / iOS bundle identifier (dotted reverse-DNS
+# segments). Used to reject shell-unsafe input before it reaches the device.
+APP_IDENTIFIER_PATTERN = r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+"
+
 
 class IOSClearStrategy(IntEnum):
     """

@@ -277,6 +277,27 @@ class IOSDevice(DevicePort):
                 duration=int((time.time() - start_time) * 1000),
             )
 
+    async def launch_package(self, *, package_name: str) -> ActionResult:
+        """
+        Launch the application identified by its bundle identifier.
+        """
+
+        start_time = time.time()
+
+        try:
+            device_identifier = await self.__resolve_device_identifier()
+            await self.__run_simctl(
+                parts=["launch", device_identifier, package_name],
+                timeout=self.__configuration.command_timeout,
+            )
+            return ActionResult(success=True, duration=int((time.time() - start_time) * 1000))
+        except Exception as exception:
+            return ActionResult(
+                success=False,
+                error=str(exception),
+                duration=int((time.time() - start_time) * 1000),
+            )
+
     async def get_dimensions(self) -> Tuple[int, int]:
         """
         Get current simulator dimensions by parsing screenshot PNG headers.

@@ -84,6 +84,14 @@ class DevicePort(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def launch_package(self, *, package_name: str) -> ActionResult:
+        """
+        Bring the named application to the foreground.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
     async def get_current_package(self) -> str:
         """
         Get the current foreground application identifier.
