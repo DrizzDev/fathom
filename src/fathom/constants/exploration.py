@@ -53,6 +53,11 @@ class RecommendationLevel(StrEnum):
     WARNING = "warning"
 
 
+# The default exploration goal used when no specific focus is requested; a
+# generic goal keeps the model in broad-coverage mode rather than steering it
+# toward one flow (see EXPLORATION_FOCUS_DIRECTIVE).
+DEFAULT_EXPLORATION_INTENT: str = "Explore application structure"
+
 # Longest screen label rendered in a diagram before it is truncated.
 MAX_SCREEN_LABEL_LENGTH: int = 48
 

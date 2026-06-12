@@ -437,7 +437,8 @@ class CommandExecutor:
 
         console.print(
             Panel.fit(
-                "[bold blue]Fathom Explorer[/bold blue]\n[cyan]Goal:[/cyan] Map application structure",
+                f"[bold blue]Fathom Explorer[/bold blue]\n"
+                f"[cyan]Goal:[/cyan] {escape(request.objective.intent)}",
                 border_style="blue",
             )
         )
@@ -459,6 +460,7 @@ class CommandExecutor:
                     max_steps=request.objective.max_steps,
                     request_id=request.runtime.session_id,
                     package_name=request.objective.package_name,
+                    intent=request.objective.intent,
                 )
 
             table = Table(title="Exploration Results", border_style="green")

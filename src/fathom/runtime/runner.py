@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, cast
 from fathom.base.paths import SharedPathManager
 from fathom.base.phase import AbandonablePhase
 from fathom.constants import ContextScope, FathomEvent
+from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT
 from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.state import CompletionReason
@@ -423,6 +424,7 @@ class FathomRunner:
         max_steps: int = 100,
         request_id: Optional[str] = None,
         package_name: Optional[str] = None,
+        intent: Optional[str] = None,
     ) -> ExplorationResult:
         """
         Execute exploration workflow.
@@ -459,7 +461,8 @@ class FathomRunner:
 
         # Initialize context
         self.__context_manager = ContextManager(memory=self.__memory, workflow_id=workflow_id)
-        self.__context_manager.set_roadmap(intent="Explore application structure")
+        effective_intent = intent or DEFAULT_EXPLORATION_INTENT
+        self.__context_manager.set_roadmap(intent=effective_intent)
 
         strategy = ExplorationStrategy(
             llm=self.__llm,
@@ -477,6 +480,7 @@ class FathomRunner:
             timeout=float(self.__config.exploration.timeout),
             max_steps=max_steps or self.__config.exploration.max_steps,
             runtime_configuration=self.__runtime_configuration,
+            intent=effective_intent,
         )
 
         self.__current_strategy = strategy

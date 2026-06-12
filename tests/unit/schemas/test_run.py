@@ -1,6 +1,7 @@
 import unittest
 
 from fathom.constants import ContextScope, DeviceConnectionType, DevicePlatform, ExecutionMode
+from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT
 from fathom.constants.run import SignalAdapterType, TargetKind
 from fathom.schemas.run import (
     ExplorationObjectiveConfiguration,
@@ -141,7 +142,7 @@ class TestRunRequest(unittest.TestCase):
 
         self.assertFalse(request.objective.use_xml)
         self.assertEqual(request.objective.mode, ExecutionMode.EXPLORATION)
-        self.assertEqual(request.objective.intent, "Explore application structure")
+        self.assertEqual(request.objective.intent, DEFAULT_EXPLORATION_INTENT)
         self.assertEqual(
             request.interaction.execution_configuration.workflow.exploration.timeout_floor,
             120,

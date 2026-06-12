@@ -5,6 +5,7 @@ from typing import List, Tuple
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fathom.constants.events import FathomEvent
+from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT
 from fathom.constants.qualification import QualificationLabel, RationaleCategory
 from fathom.constants.state import CompletionReason
 from fathom.interfaces.qualifier import IntentQualifierPort
@@ -606,6 +607,52 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
 
         runner.device.get_current_package.assert_awaited_once()
         runner.device.launch_package.assert_not_called()
+
+    async def test_focus_intent_forwarded_to_strategy(self) -> None:
+        """
+        A provided intent reaches both the strategy and the context roadmap.
+        """
+
+        runner, _ = RunnerHarness.build(qualifier=PassingQualifier())
+
+        with (
+            patch(
+                "fathom.runtime.runner.ExplorationStrategy", return_value=self.__strategy()
+            ) as strategy_cls,
+            patch("fathom.runtime.runner.ContextManager") as context_manager_cls,
+            patch.object(FathomRunner, "_FathomRunner__export_graph", AsyncMock(return_value={})),
+            patch.object(FathomRunner, "_FathomRunner__write_artifacts", AsyncMock()),
+        ):
+            await runner.run_exploration(
+                max_steps=1, request_id="wf", intent="Focus on the checkout flow"
+            )
+
+        self.assertEqual(strategy_cls.call_args.kwargs["intent"], "Focus on the checkout flow")
+        context_manager_cls.return_value.set_roadmap.assert_called_once_with(
+            intent="Focus on the checkout flow"
+        )
+
+    async def test_absent_intent_defaults_to_constant(self) -> None:
+        """
+        Without an intent, the strategy and roadmap fall back to the default goal.
+        """
+
+        runner, _ = RunnerHarness.build(qualifier=PassingQualifier())
+
+        with (
+            patch(
+                "fathom.runtime.runner.ExplorationStrategy", return_value=self.__strategy()
+            ) as strategy_cls,
+            patch("fathom.runtime.runner.ContextManager") as context_manager_cls,
+            patch.object(FathomRunner, "_FathomRunner__export_graph", AsyncMock(return_value={})),
+            patch.object(FathomRunner, "_FathomRunner__write_artifacts", AsyncMock()),
+        ):
+            await runner.run_exploration(max_steps=1, request_id="wf")
+
+        self.assertEqual(strategy_cls.call_args.kwargs["intent"], DEFAULT_EXPLORATION_INTENT)
+        context_manager_cls.return_value.set_roadmap.assert_called_once_with(
+            intent=DEFAULT_EXPLORATION_INTENT
+        )
 
 
 if __name__ == "__main__":

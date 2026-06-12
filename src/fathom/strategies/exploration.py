@@ -6,7 +6,7 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.base.paths import SharedPathManager
-from fathom.constants.exploration import DISABLED_LOOP_THRESHOLD
+from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT, DISABLED_LOOP_THRESHOLD
 from fathom.core.agent.state import AgentState
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
@@ -53,11 +53,12 @@ class ExplorationStrategy:
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
         runtime_configuration: Optional["RuntimeConfigLoader"] = None,
+        intent: Optional[str] = None,
     ) -> None:
         self.__seed = seed
         self.__timeout = timeout
         self.__max_steps = max_steps
-        intent = "Explore application"
+        effective_intent = intent or DEFAULT_EXPLORATION_INTENT
 
         # Exploration strategy doesn't use XML grounding (uses visual-only approach)
         from fathom.core.config.loader import RuntimeConfigLoader
@@ -77,7 +78,7 @@ class ExplorationStrategy:
         self.__graph_context = GraphContext(
             llm=llm,
             phase=phase,
-            intent=intent,
+            intent=effective_intent,
             use_xml=False,
             device=device,
             signal=signal,
@@ -98,7 +99,7 @@ class ExplorationStrategy:
         # graph context supplies the live runtime capabilities for the agent.
         self.__graph_context.set_agent_state(
             AgentState(
-                intent=intent,
+                intent=effective_intent,
                 max_steps=max_steps,
                 capabilities=self.__graph_context.capabilities,
                 loop_threshold=DISABLED_LOOP_THRESHOLD,

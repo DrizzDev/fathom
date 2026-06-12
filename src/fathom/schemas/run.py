@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from fathom.constants import ContextScope, ExecutionMode
+from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT
 from fathom.constants.run import SignalAdapterType, TargetKind
 from fathom.schemas.configuration import (
     DeviceConfiguration,
@@ -60,7 +61,7 @@ class ExplorationObjectiveConfiguration(BaseModel):
     mode: ExecutionMode = Field(default=ExecutionMode.EXPLORATION)
 
     intent: str = Field(
-        default="Explore application structure",
+        default=DEFAULT_EXPLORATION_INTENT,
         description="Logical exploration goal used for workflow metadata",
     )
     package_name: Optional[str] = Field(
