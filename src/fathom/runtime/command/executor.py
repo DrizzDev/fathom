@@ -458,6 +458,7 @@ class CommandExecutor:
                 result = await self.__runner.run_exploration(
                     max_steps=request.objective.max_steps,
                     request_id=request.runtime.session_id,
+                    package_name=request.objective.package_name,
                 )
 
             table = Table(title="Exploration Results", border_style="green")

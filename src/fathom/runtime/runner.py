@@ -14,6 +14,7 @@ from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleC
 from fathom.constants.state import CompletionReason
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
+from fathom.core.exceptions import DeviceError
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.core.services.exporter import ExplorationArtifactWriter
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
@@ -436,8 +437,11 @@ class FathomRunner:
         if hasattr(telemetry_with_identity, "update_identity"):
             telemetry_with_identity.update_identity(identity=workflow_id)
 
-        # Use provided package name or fetch from device
-        if not package_name:
+        # An explicit target is launched to the foreground; otherwise explore
+        # whatever application is currently in front of the device.
+        if package_name:
+            await self.__ensure_target_package(package_name=package_name)
+        else:
             package_name = await self.__device.get_current_package()
 
         if self.__device.configuration:
@@ -937,6 +941,25 @@ class FathomRunner:
                 "total_screens": 0,
                 "experience_count": 0,
             }
+
+    async def __ensure_target_package(self, *, package_name: str) -> None:
+        """
+        Bring the requested package to the foreground before exploration starts.
+
+        Best-effort: a backend that cannot launch, or a failed launch, is logged
+        and exploration proceeds against whatever screen is foreground.
+        """
+
+        try:
+            result = await self.__device.launch_package(package_name=package_name)
+        except DeviceError as exception:
+            await self.__telemetry.warning(f"Could not launch {package_name}: {exception}")
+            return
+
+        if not result.success:
+            await self.__telemetry.warning(
+                f"Launch of {package_name} did not succeed: {result.error}"
+            )
 
     async def __write_artifacts(
         self, *, graph: KnowledgeGraph, workflow_id: str, package_name: str, duration: float

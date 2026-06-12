@@ -10,6 +10,7 @@ from fathom.constants.state import CompletionReason
 from fathom.interfaces.qualifier import IntentQualifierPort
 from fathom.runtime.runner import FathomRunner
 from fathom.schemas.qualification import QualificationVerdict, Rationale
+from fathom.schemas.results import ActionResult
 
 
 class BlockingQualifier(IntentQualifierPort):
@@ -545,6 +546,66 @@ class RunnerWorkflowCancelledEmitTest(unittest.IsolatedAsyncioTestCase):
             terminal.kwargs["completion_reason"],
             CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
         )
+
+
+class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
+    """
+    run_exploration launches an explicitly requested package before exploring.
+    """
+
+    @staticmethod
+    def __strategy() -> MagicMock:
+        """
+        Build a mock exploration strategy that completes immediately.
+        """
+
+        strategy = MagicMock()
+        strategy.execute = AsyncMock(
+            return_value=MagicMock(success=True, error=None, duration=1, is_cancelled=False)
+        )
+        strategy.get_progress = MagicMock(return_value={"stats": {}, "steps": 0})
+        strategy.graph = MagicMock(nodes={})
+        return strategy
+
+    async def test_explicit_package_is_launched_not_queried(self) -> None:
+        """
+        A provided package is launched to the foreground; the foreground is not queried.
+        """
+
+        runner, _ = RunnerHarness.build(qualifier=PassingQualifier())
+        runner.device.launch_package = AsyncMock(  # type: ignore[attr-defined]
+            return_value=ActionResult(success=True, duration=1)
+        )
+
+        with (
+            patch("fathom.runtime.runner.ExplorationStrategy", return_value=self.__strategy()),
+            patch.object(FathomRunner, "_FathomRunner__export_graph", AsyncMock(return_value={})),
+            patch.object(FathomRunner, "_FathomRunner__write_artifacts", AsyncMock()),
+        ):
+            await runner.run_exploration(
+                max_steps=1, request_id="wf", package_name="ai.hangjam.app"
+            )
+
+        runner.device.launch_package.assert_awaited_once_with(package_name="ai.hangjam.app")
+        runner.device.get_current_package.assert_not_called()  # type: ignore[attr-defined]
+
+    async def test_absent_package_falls_back_to_foreground(self) -> None:
+        """
+        Without a package, the foreground application is queried and not launched.
+        """
+
+        runner, _ = RunnerHarness.build(qualifier=PassingQualifier())
+        runner.device.launch_package = AsyncMock()  # type: ignore[attr-defined]
+
+        with (
+            patch("fathom.runtime.runner.ExplorationStrategy", return_value=self.__strategy()),
+            patch.object(FathomRunner, "_FathomRunner__export_graph", AsyncMock(return_value={})),
+            patch.object(FathomRunner, "_FathomRunner__write_artifacts", AsyncMock()),
+        ):
+            await runner.run_exploration(max_steps=1, request_id="wf")
+
+        runner.device.get_current_package.assert_awaited_once()
+        runner.device.launch_package.assert_not_called()
 
 
 if __name__ == "__main__":
