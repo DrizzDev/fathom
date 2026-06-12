@@ -16,15 +16,8 @@ from fathom.schemas.actions import Action, Bounds
 
 @pytest.fixture
 def knowledge_graph():
-    """Create a KnowledgeGraph instance with mocked SQLite provider."""
-    kg = KnowledgeGraph()
-    kg._KnowledgeGraph__provider = AsyncMock()
-    # Pre-populate in-memory graph nodes for testing
-    kg._KnowledgeGraph__nodes = {}
-    kg._KnowledgeGraph__edges = {}
-    kg._KnowledgeGraph__hash_aliases = {}
-    kg._KnowledgeGraph__loaded = True
-    return kg
+    """Create a KnowledgeGraph with an injected mock provider."""
+    return KnowledgeGraph(provider=AsyncMock())
 
 
 def add_test_nodes(kg, node_hashes):

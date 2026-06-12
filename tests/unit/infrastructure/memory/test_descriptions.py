@@ -44,13 +44,7 @@ class TestDescriptionPreservation:
 
     @staticmethod
     def __kg() -> KnowledgeGraph:
-        graph = KnowledgeGraph()
-        graph._KnowledgeGraph__provider = AsyncMock()
-        graph._KnowledgeGraph__nodes = {}
-        graph._KnowledgeGraph__edges = {}
-        graph._KnowledgeGraph__hash_aliases = {}
-        graph._KnowledgeGraph__loaded = True
-        return graph
+        return KnowledgeGraph(provider=AsyncMock())
 
     @staticmethod
     def __state(hash_: str, activity: str = "com.example.app/.X") -> ScreenState:

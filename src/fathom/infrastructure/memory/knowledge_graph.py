@@ -92,8 +92,15 @@ class KnowledgeGraph:
     read-through cache that is loaded on startup and updated on writes.
     """
 
-    def __init__(self, database_path: str = "assets/memory/knowledge.db") -> None:
-        self.__provider = SQLiteMemoryProvider(database_path=database_path)
+    def __init__(
+        self,
+        database_path: str = "assets/memory/knowledge.db",
+        *,
+        provider: Optional[SQLiteMemoryProvider] = None,
+    ) -> None:
+        self.__provider: SQLiteMemoryProvider = provider or SQLiteMemoryProvider(
+            database_path=database_path
+        )
         self.__nodes: Dict[str, GraphNode] = {}
         self.__edges: Dict[str, List[GraphEdge]] = {}  # source_hash -> edges
         self.__hash_aliases: Dict[str, str] = {}  # raw_hash -> canonical_hash
