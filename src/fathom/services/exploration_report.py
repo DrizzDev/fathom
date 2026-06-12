@@ -509,7 +509,7 @@ class ExplorationReportGenerator:
         filename = f"screen_translations_{workflow_id}_{timestamp}.md"
         filepath = app_dir / filename
 
-        lines = [f"# Activity Design Blueprints: {workflow_id}\n"]
+        lines = [f"# Screen Descriptions: {workflow_id}\n"]
         meta = report.get("metadata", {})
         lines.append(f"**Generated:** {meta.get('generated_at', 'unknown')}")
         lines.append(f"**Package:** `{meta.get('target_package', 'unknown')}`")
@@ -605,7 +605,7 @@ class ExplorationReportGenerator:
 
             # Custom styles
             title_style = ParagraphStyle(
-                "BlueprintTitle",
+                "ScreenTitle",
                 parent=styles["Title"],
                 fontSize=18,
                 spaceAfter=6,
@@ -653,7 +653,7 @@ class ExplorationReportGenerator:
 
             # Title
             meta = report.get("metadata", {})
-            story.append(Paragraph(f"Activity Design Blueprints: {workflow_id}", title_style))
+            story.append(Paragraph(f"Screen Descriptions: {workflow_id}", title_style))
             story.append(
                 Paragraph(
                     f"Package: {meta.get('target_package', 'unknown')} &nbsp;|&nbsp; "

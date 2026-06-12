@@ -17,6 +17,7 @@ from fathom.prompts.factory import PromptFactory
 from fathom.prompts.modes import PromptMode
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.tool_requests import ScreenTranslation
 from fathom.tools.definitions import ToolRegistry
 from fathom.tools.vision.base import VisionTool
 from fathom.utils.image import ImageProcessor
@@ -238,27 +239,9 @@ class GeminiVisionTool(VisionTool):
 
     @staticmethod
     def __format_translation(data: Dict[str, Any]) -> str:
-        """
-        Formats the structured describe_screen tool call args into a
-        design-blueprint markdown document.
-        """
+        """Format describe_screen tool args into the screen-description markdown."""
 
-        activity = data.get("activity_name", "")
-        sections = [
-            ("Purpose", data.get("screen_purpose", "")),
-            ("Layout Blueprint", data.get("layout_blueprint", "")),
-            ("Component Inventory", data.get("component_inventory", "")),
-            ("Design Tokens", data.get("design_tokens", "")),
-        ]
-
-        parts = []
-        if activity:
-            parts.append(f"**Activity:** `{activity}`")
-        for heading, body in sections:
-            if body:
-                parts.append(f"## {heading}\n{body}")
-
-        return "\n\n".join(parts)
+        return ScreenTranslation.model_validate(data).to_markdown()
 
     async def check_completion(self, intent: str, capture: ScreenCapture) -> bool:
         """

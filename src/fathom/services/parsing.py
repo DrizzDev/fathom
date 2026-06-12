@@ -10,7 +10,7 @@ from fathom.exceptions import VisionError
 from fathom.interfaces import IResponseParser
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.results import AnalysisResult
-from fathom.schemas.tool_requests import ExploreUIRequest
+from fathom.schemas.tool_requests import ExploreUIRequest, ScreenTranslation
 
 logger = getLogger(__name__)
 
@@ -221,21 +221,9 @@ class ToolResponseParser(IResponseParser):
 
     @staticmethod
     def __format_translation(data: Dict[str, Any]) -> str:
-        """Format describe_screen tool args into a design-blueprint markdown document."""
-        activity = data.get("activity_name", "")
-        sections = [
-            ("Purpose", data.get("screen_purpose", "")),
-            ("Layout Blueprint", data.get("layout_blueprint", "")),
-            ("Component Inventory", data.get("component_inventory", "")),
-            ("Design Tokens", data.get("design_tokens", "")),
-        ]
-        parts = []
-        if activity:
-            parts.append(f"**Activity:** `{activity}`")
-        for heading, body in sections:
-            if body:
-                parts.append(f"## {heading}\n{body}")
-        return "\n\n".join(parts)
+        """Format describe_screen tool args into the screen-description markdown."""
+
+        return ScreenTranslation.model_validate(data).to_markdown()
 
     def __create_fallback_result(self, message: str, completed: bool = False) -> AnalysisResult:
         """

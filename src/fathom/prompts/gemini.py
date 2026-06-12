@@ -189,28 +189,27 @@ class GeminiPromptBuilder(PromptBuilder):
 
     def __build_screen_translation_prompt(self) -> str:
         """
-        Screen Translation Mode: design-blueprint description of an activity
-        screen, detailed enough for an LLM to recreate the screen image.
+        Screen Translation Mode: a rich functional description of an activity
+        screen — what is on it, what each element does, and what a user can
+        achieve here.
 
         Uses the ``describe_screen`` tool to return structured sections.
         """
         return (
-            "You are a mobile UI design analyst producing a design blueprint. "
-            "Given a screenshot, describe it in enough detail that another LLM "
-            "could recreate the screen image purely from your text.\n\n"
-            "CRITICAL: Focus on DESIGN, never runtime DATA.\n"
-            "- Use GENERIC element names: 'Search bar', 'Product card', 'Price label'\n"
-            "- NEVER use runtime content: 'Search for Cake', '99 Slice Pizza', '₹717'\n"
-            "- If an element shows dynamic text, describe the element TYPE only.\n\n"
+            "You are a mobile app analyst. Given a screenshot, describe what is on the "
+            "screen so a reader understands it without seeing it: each element, what it "
+            "does, and what a user can achieve here.\n\n"
+            "CRITICAL: Use STABLE labels, not volatile data.\n"
+            "- Capture meaningful labels: button/tab/section names, what a card represents.\n"
+            "- Do NOT include volatile runtime content: specific prices, individual item "
+            "names ('99 Slice Pizza', '₹717'). Describe the element TYPE and its function.\n\n"
             "You MUST call the describe_screen tool with:\n\n"
             "- activity_name: The Android activity this screen belongs to.\n"
-            "- screen_purpose: 1-2 sentences on what this screen is for.\n"
-            "- layout_blueprint: Top-to-bottom spatial map — for each region: "
-            "position, approximate height %, background color (hex), contents.\n"
-            "- component_inventory: One component per line, format:\n"
-            "  [Region] type | generic-label | position | size | colors | shape | state\n"
-            "  NO prose. NO data content. One line per component.\n"
-            "- design_tokens: Color palette, font sizes, corner radii, "
-            "elevation/shadow patterns, spacing rhythm, icon style.\n\n"
-            "Be exhaustive on components — every icon, divider, badge, and label."
+            "- screen_purpose: 1-2 sentences on what this screen is for and the primary "
+            "tasks available here.\n"
+            "- elements: Every element, one per line, grouped by region — what it is, its "
+            "stable label, and what it does or where it leads.\n"
+            "- achievable_actions: The concrete things a user can accomplish on this screen, "
+            "one per line.\n\n"
+            "Be exhaustive on elements — every icon, tab, field, card type, and button."
         )

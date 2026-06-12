@@ -241,18 +241,19 @@ class ToolRegistry:
         """
         Definition for describe_screen tool.
 
-        Design-blueprint description of a unique activity screen.  The output
-        must be detailed enough for another LLM to recreate the screen
-        image purely from the text — exact colors, sizes, positions, and
-        element inventory.
+        Rich functional description of a unique activity screen — what is on
+        it, what each element does, and what a user can achieve here.  Uses
+        stable, meaningful labels and excludes volatile runtime data so the
+        per-activity description stays stable across revisits.
         """
 
         return {
             "name": "describe_screen",
             "description": (
-                "Produce a design-blueprint description of the current activity screen. "
-                "The description must be detailed enough for an LLM to recreate the "
-                "screen image purely from this text. Focus on DESIGN, not data."
+                "Describe what is on the current activity screen: each element and what it "
+                "does, and what a user can achieve here. Use stable, meaningful labels "
+                "(button/tab/section names, what a card represents); do NOT include volatile "
+                "content (specific prices, individual item names)."
             ),
             "parameters": {
                 "type": "OBJECT",
@@ -269,61 +270,43 @@ class ToolRegistry:
                     "screen_purpose": {
                         "type": "STRING",
                         "description": (
-                            "1-2 sentences: what this activity screen is for, "
-                            "which app section it belongs to, and the primary user task."
+                            "1-2 sentences: what this screen is for, which app section it "
+                            "belongs to, and the primary tasks a user can do here."
                         ),
                     },
-                    "layout_blueprint": {
+                    "elements": {
                         "type": "STRING",
                         "description": (
-                            "Top-to-bottom spatial blueprint of the screen. For each region describe: "
-                            "position (top/middle/bottom, left/right/center/full-width), "
-                            "approximate height as percentage of screen, "
-                            "background color (hex or name), "
-                            "and what it contains. "
-                            "Example: 'Top 8%: status bar (dark, system icons). "
-                            'Next 6%: white app bar with back arrow (left), title "Menu" (center bold 18sp), '
-                            "cart icon with red badge (right). "
-                            "Next 30%: hero image carousel (full-width, 16:9 aspect). "
-                            "Remaining: scrollable content on #F5F5F5 background.'"
+                            "Every interactive or informative element on the screen, one per "
+                            "line, grouped by region (Top bar, Content, Bottom nav, etc). For "
+                            "each: what it is + its stable label + what it does or where it leads.\n"
+                            "Format:  [Region] element — label — what it does\n"
+                            "GOOD: 'Top bar: Cart icon with item-count badge — opens the cart'; "
+                            "'Content: Restaurant card — opens that restaurant's menu'; "
+                            "'Bottom nav: Orders tab — switches to order history'.\n"
+                            "Use stable labels (button/tab/section names, what a card represents). "
+                            "Do NOT include volatile content (specific prices, individual item "
+                            "names like '99 Slice Pizza' or '₹717') — describe the element TYPE "
+                            "and its function instead.\n"
+                            "Be exhaustive — every icon, tab, field, card type, and button."
                         ),
                     },
-                    "component_inventory": {
+                    "achievable_actions": {
                         "type": "STRING",
                         "description": (
-                            "One component per line using this format:\n"
-                            "  [Region] type | generic-label | position | size | colors | shape | state\n\n"
-                            "RULES:\n"
-                            "- generic-label: Use the GENERIC element name, NEVER runtime data.\n"
-                            "  GOOD: Search bar, Product card, Category chip, Add to cart button, "
-                            "Restaurant card, Price label, Rating badge\n"
-                            "  BAD: Search for Cake, 99 Slice by Olio Pizza, 5 items | ₹717, Tim Hortons\n"
-                            "- If an element shows dynamic text (placeholder, price, name), "
-                            "describe the element TYPE only: 'Search bar with placeholder' not 'Search for Sweets'.\n"
-                            "- Group lines by region (Top bar, Content area, Bottom nav, etc).\n"
-                            "- One line per component. No prose sentences.\n"
-                            "- Be exhaustive — every icon, divider, badge, and label."
-                        ),
-                    },
-                    "design_tokens": {
-                        "type": "STRING",
-                        "description": (
-                            "Visual design system tokens observed: "
-                            "primary color, accent color, background colors, "
-                            "text colors (heading/body/caption/link), "
-                            "font sizes (heading/subheading/body/caption approximate sp), "
-                            "corner radii, elevation/shadow patterns, "
-                            "spacing rhythm (padding/margin patterns), "
-                            "icon style (outlined/filled/rounded, approximate size)."
+                            "The concrete things a user can accomplish on this screen, one per "
+                            "line. Focus on outcomes and tasks, not individual taps.\n"
+                            "Example: 'Search for restaurants'; 'Filter results by cuisine'; "
+                            "'Open a restaurant to view its menu'; 'Switch to Orders or Profile "
+                            "via the bottom navigation'."
                         ),
                     },
                 },
                 "required": [
                     "activity_name",
                     "screen_purpose",
-                    "layout_blueprint",
-                    "component_inventory",
-                    "design_tokens",
+                    "elements",
+                    "achievable_actions",
                 ],
             },
         }

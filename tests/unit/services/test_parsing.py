@@ -204,3 +204,34 @@ class TestToolResponseParser:
         result = parser.parse(response)
         assert result.action.action_type.value == "wait"
         assert "Content filtered" in result.reasoning
+
+    def test_describe_screen_call_yields_functional_rich_description(self) -> None:
+        parser = ToolResponseParser()
+        explore = self.__call(
+            "explore_ui",
+            {
+                "action": {"action_type": "tap", "rationale": "r", "target_name": "Home tab"},
+                "assistant_message": "m",
+                "screen_description": "s",
+            },
+        )
+        describe = self.__call(
+            "describe_screen",
+            {
+                "activity_name": "com.x/.Home",
+                "screen_purpose": "Home feed",
+                "elements": "Top bar: Cart icon — opens cart",
+                "achievable_actions": "Search for restaurants",
+            },
+        )
+        response = MockResponse(
+            [
+                MockCandidate(
+                    MockContent([MockPart(function_call=explore), MockPart(function_call=describe)])
+                )
+            ]
+        )
+        rich = parser.parse(response).metadata["rich_description"]
+        assert "## Elements" in rich
+        assert "## What You Can Do" in rich
+        assert "Design Tokens" not in rich
