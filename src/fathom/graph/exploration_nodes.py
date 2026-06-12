@@ -1301,30 +1301,29 @@ def build_exploration_nodes(
     }
 
 
-# ── Routing functions ───────────────────────────────────────────────────
+# ── Routing ──────────────────────────────────────────────────────────────
 
 
-def make_route_after_ground(
-    ctx: ExplorationNodeContext,
-) -> Callable[[ExplorationGraphState], str]:
-    """Router after ground: proceed to bfs_route or bail out."""
+class ExplorationRouter:
+    """Conditional-edge routing for the exploration graph."""
 
-    def route(state: ExplorationGraphState) -> str:
+    def __init__(self, *, context: ExplorationNodeContext) -> None:
+        self.__context = context
+
+    def after_ground(self, state: ExplorationGraphState) -> str:
+        """Route after ground: proceed to bfs_route or bail out."""
+
+        ctx = self.__context
         if ctx.is_cancelled:
             return "done"
         if state.get("capture") is None:
             return "done"
         return "bfs_route"
 
-    return route
+    def after_bfs_route(self, state: ExplorationGraphState) -> str:
+        """Route after bfs_route: dispatch by exploration phase."""
 
-
-def make_route_after_bfs_route(
-    ctx: ExplorationNodeContext,
-) -> Callable[[ExplorationGraphState], str]:
-    """Router after dfs_route: dispatch by exploration phase."""
-
-    def route(state: ExplorationGraphState) -> str:
+        ctx = self.__context
         if ctx.is_cancelled:
             return "done"
 
@@ -1343,15 +1342,10 @@ def make_route_after_bfs_route(
 
         return "done"
 
-    return route
+    def after_scan(self, state: ExplorationGraphState) -> str:
+        """Route after scan: execute action or loop back if exhausted."""
 
-
-def make_route_after_scan(
-    ctx: ExplorationNodeContext,
-) -> Callable[[ExplorationGraphState], str]:
-    """Router after scan: execute action or loop back if exhausted."""
-
-    def route(state: ExplorationGraphState) -> str:
+        ctx = self.__context
         if ctx.is_cancelled:
             return "done"
 
@@ -1364,15 +1358,10 @@ def make_route_after_scan(
 
         return "execute"
 
-    return route
+    def after_record(self, state: ExplorationGraphState) -> str:
+        """Route after record: continue or terminate."""
 
-
-def make_route_after_record(
-    ctx: ExplorationNodeContext,
-) -> Callable[[ExplorationGraphState], str]:
-    """Router after record: continue or terminate."""
-
-    def route(state: ExplorationGraphState) -> str:
+        ctx = self.__context
         if ctx.is_cancelled:
             return "done"
 
@@ -1391,8 +1380,6 @@ def make_route_after_record(
             return "done"
 
         return "ground"
-
-    return route
 
 
 # ── Private helpers ─────────────────────────────────────────────────────

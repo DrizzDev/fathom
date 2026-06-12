@@ -37,11 +37,8 @@ from langgraph.graph import END, StateGraph
 from fathom.constants.events import ExplorationEvent
 from fathom.graph.exploration_nodes import (
     ExplorationNodeContext,
+    ExplorationRouter,
     build_exploration_nodes,
-    make_route_after_bfs_route,
-    make_route_after_ground,
-    make_route_after_record,
-    make_route_after_scan,
 )
 from fathom.graph.exploration_state import ExplorationGraphState
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
@@ -119,8 +116,9 @@ def build_exploration_graph(
         event_bus=event_bus,
     )
 
-    # ── 2. Build node functions ────────────────────────────────────
+    # ── 2. Build node callables and router ─────────────────────────
     nodes = build_exploration_nodes(ctx)
+    router = ExplorationRouter(context=ctx)
 
     # ── 3. Assemble the graph ──────────────────────────────────────
     graph = StateGraph(ExplorationGraphState)
@@ -137,19 +135,19 @@ def build_exploration_graph(
 
     graph.add_conditional_edges(
         "ground",
-        make_route_after_ground(ctx),
+        router.after_ground,
         {"bfs_route": "bfs_route", "done": END},
     )
 
     graph.add_conditional_edges(
         "bfs_route",
-        make_route_after_bfs_route(ctx),
+        router.after_bfs_route,
         {"scan": "scan", "navigate": "navigate", "done": END},
     )
 
     graph.add_conditional_edges(
         "scan",
-        make_route_after_scan(ctx),
+        router.after_scan,
         {"execute": "execute", "bfs_route": "bfs_route", "done": END},
     )
 
@@ -158,7 +156,7 @@ def build_exploration_graph(
 
     graph.add_conditional_edges(
         "record",
-        make_route_after_record(ctx),
+        router.after_record,
         {"ground": "ground", "done": END},
     )
 
