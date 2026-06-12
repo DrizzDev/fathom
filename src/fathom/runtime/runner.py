@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime
 from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
@@ -14,6 +15,7 @@ from fathom.constants.state import CompletionReason
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
+from fathom.core.services.exporter import ExplorationArtifactWriter
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
@@ -518,6 +520,13 @@ class FathomRunner:
                 status="completed" if execution_result.success else "failed",
             )
 
+            await self.__write_artifacts(
+                graph=graph,
+                workflow_id=workflow_id,
+                package_name=package_name,
+                duration=duration,
+            )
+
             await self.__telemetry.info(
                 "Exploration workflow completed",
                 duration=duration,
@@ -928,6 +937,31 @@ class FathomRunner:
                 "total_screens": 0,
                 "experience_count": 0,
             }
+
+    async def __write_artifacts(
+        self, *, graph: KnowledgeGraph, workflow_id: str, package_name: str, duration: float
+    ) -> None:
+        """
+        Write the graph exports and analysis report; failures are non-fatal.
+        """
+
+        try:
+            directory = self.__path_manager.get_report_directory(session_id=workflow_id)
+            written = ExplorationArtifactWriter().write(
+                graph=graph,
+                directory=directory,
+                workflow=workflow_id,
+                package=package_name,
+                generated_at=datetime.now().isoformat(),
+                duration=duration,
+            )
+            await self.__telemetry.info(
+                "Exploration artifacts written",
+                count=len(written),
+                directory=str(directory),
+            )
+        except Exception as exception:
+            await self.__telemetry.warning(f"Failed to write exploration artifacts: {exception}")
 
     async def __export_graph(self, graph: KnowledgeGraph) -> Dict[str, Any]:
         """

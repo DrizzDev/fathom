@@ -6,6 +6,8 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.base.paths import SharedPathManager
+from fathom.constants.exploration import DISABLED_LOOP_THRESHOLD
+from fathom.core.agent.state import AgentState
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.interfaces.device import DevicePort
@@ -21,6 +23,8 @@ from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.exploration.builder import ExplorationGraphBuilder
 
 if TYPE_CHECKING:
+    from langchain_core.runnables import RunnableConfig
+
     from fathom.core.config.loader import RuntimeConfigLoader
 
 logger = getLogger(name=__name__)
@@ -52,6 +56,7 @@ class ExplorationStrategy:
     ) -> None:
         self.__seed = seed
         self.__timeout = timeout
+        self.__max_steps = max_steps
         intent = "Explore application"
 
         # Exploration strategy doesn't use XML grounding (uses visual-only approach)
@@ -88,6 +93,18 @@ class ExplorationStrategy:
             perception_configuration=loader.perception(),
         )
 
+        # DFS exploration revisits screens by design, so loop detection (which
+        # would otherwise flag the agent as stuck) is disabled for the run. The
+        # graph context supplies the live runtime capabilities for the agent.
+        self.__graph_context.set_agent_state(
+            AgentState(
+                intent=intent,
+                max_steps=max_steps,
+                capabilities=self.__graph_context.capabilities,
+                loop_threshold=DISABLED_LOOP_THRESHOLD,
+            )
+        )
+
         builder = ExplorationGraphBuilder(context=self.__graph_context)
         self.__graph = builder.build()
 
@@ -99,11 +116,21 @@ class ExplorationStrategy:
         start_time = time.time()
 
         try:
+            # Hydrate cross-run knowledge before exploring.
+            await self.__graph_context.exploration_graph.load()
+
+            # Each exploration step walks several nodes (ground -> route -> scan
+            # -> execute -> record), so the LangGraph super-step budget must scale
+            # with max_steps -- the default of 25 would abort almost immediately.
+            config: RunnableConfig = {"recursion_limit": self.__max_steps * 10 + 100}
+
             # Execute with timeout if configured
             if self.__timeout > 0:
-                await asyncio.wait_for(self.__graph.ainvoke({}), timeout=self.__timeout)
+                await asyncio.wait_for(
+                    self.__graph.ainvoke({}, config=config), timeout=self.__timeout
+                )
             else:
-                await self.__graph.ainvoke({})
+                await self.__graph.ainvoke({}, config=config)
 
             duration = int((time.time() - start_time) * 1000)
             return ExecutionResult(success=True, duration=duration)
