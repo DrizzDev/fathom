@@ -515,7 +515,7 @@ class FathomRunner:
                 coverage_percentage=coverage_percentage,
                 completion_reason="Exploration completed",
                 discovered_activities=discovered_activities,
-                total_actions=stats.get("total_actions", 0),
+                total_actions=progress.get("steps", 0),
                 total_transitions=stats.get("total_transitions", 0),
                 status="completed" if execution_result.success else "failed",
             )

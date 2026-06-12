@@ -11,6 +11,7 @@ from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
+from fathom.core.exceptions import DeviceError
 from fathom.core.exploration.config import ExplorationPolicyConfig
 from fathom.core.exploration.dedup import ActionKey, DedupPolicy
 from fathom.core.exploration.depth import DepthFloorPolicy
@@ -836,13 +837,14 @@ class ExplorationNodeProvider:
         if not target or target == "unknown":
             return None
 
-        if await ctx.device.get_current_package() == target:
+        current = await self.__current_package()
+        if current is None or current == target:
             return None
 
         for _ in range(PACKAGE_RECOVERY_BACK_LIMIT):
             await ctx.device.back()
             await stability_wait(ctx.configuration)
-            if await ctx.device.get_current_package() == target:
+            if await self.__current_package() == target:
                 dfs = self.__dfs
                 dfs.pending_nav.clear()
                 dfs.current_path = []
@@ -852,6 +854,21 @@ class ExplorationNodeProvider:
 
         logger.error("Left target package %s and could not recover", target)
         return f"Left target package {target} and could not recover"
+
+    async def __current_package(self) -> Optional[str]:
+        """
+        Returns the foreground package, or None when the device cannot report it.
+
+        A transient unparseable focus (mid-launch animation, lock screen, empty
+        focus) must not abort exploration, so an indeterminate read is treated as
+        a package that cannot be confirmed rather than a scope violation.
+        """
+
+        try:
+            return await self.__context.device.get_current_package()
+        except DeviceError:
+            logger.debug("Foreground package indeterminate; skipping scope check this step")
+            return None
 
     # ── State helpers ────────────────────────────────────────────────────────
 

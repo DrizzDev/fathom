@@ -9,6 +9,7 @@ from fathom.constants.exploration import BFSPhase
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
+from fathom.core.exceptions import DeviceError
 from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisResult, ExecutionResult
 from fathom.schemas.screens import ScreenState
@@ -429,6 +430,55 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
             )
 
         context.device.back.assert_awaited_once()
+        self.assertFalse(result[CKey.IS_COMPLETE])
+        graph.record_transition.assert_awaited_once()
+
+    async def test_indeterminate_package_read_does_not_abort(self) -> None:
+        # A transient unparseable focus (e.g. mCurrentFocus=null mid-launch) makes
+        # get_current_package raise DeviceError; the scope check must swallow it,
+        # attempt no recovery, and let the run keep exploring.
+        graph = _graph_mock(resolve_hash=Mock(side_effect=lambda value: value))
+        context = Mock(
+            is_cancelled=False,
+            max_steps=100,
+            workflow_id="wf",
+            package_name="com.app",
+            configuration=Mock(),
+            device=Mock(
+                get_current_package=AsyncMock(side_effect=DeviceError("focus null")),
+                back=AsyncMock(),
+            ),
+            exploration_graph=graph,
+            memory=Mock(store_experience=AsyncMock()),
+            history=Mock(enqueue_save_step=Mock()),
+            agent_state=Mock(record_step=Mock(), step_count=1),
+        )
+        context.perception = Mock(
+            perceive=AsyncMock(return_value=Mock()),
+            build_state=Mock(return_value=_screen_state("post")),
+        )
+        step = Step(action=_action(), screen_hash="pre", step_number=1)
+        state: Dict[str, Any] = {
+            EKey.ACTION: _action(),
+            CKey.SCREEN_STATE: _screen_state("pre"),
+            CKey.STEP_RESULT: StepResult(
+                step=step,
+                success=True,
+                duration=1,
+                screen_changed=True,
+                pre_hash="pre",
+                post_hash="0",
+            ),
+        }
+        dfs = DfsState(phase=BFSPhase.SCAN, current_path=[("root", _action())])
+
+        with patch("fathom.strategies.graph.exploration.nodes.stability_wait", new=AsyncMock()):
+            result = await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).record(
+                state
+            )
+
+        # No drift was confirmed, so no recovery BACK and the run continues.
+        context.device.back.assert_not_awaited()
         self.assertFalse(result[CKey.IS_COMPLETE])
         graph.record_transition.assert_awaited_once()
 
