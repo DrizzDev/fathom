@@ -6,6 +6,7 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fathom.infrastructure.memory.algorithms import GraphAlgorithms
+from fathom.infrastructure.memory.canonical import ScreenCanonicalizer
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
@@ -27,13 +28,6 @@ def _has_meaningful_description(desc: Optional[str]) -> bool:
     if not desc:
         return False
     return desc.strip().lower() not in _USELESS_DESCRIPTIONS
-
-
-# Maximum Hamming distance (in bits, out of 256 for a 16×16 dHash) for two
-# visual hashes to be considered the same logical screen.  12 bits ≈ 95%
-# similarity — safely merges minor pixel variations (status-bar clock, cursor
-# blink, animation frames) while keeping genuinely different screens apart.
-HAMMING_THRESHOLD = 12
 
 
 def normalize_activity(activity: str) -> str:
@@ -107,85 +101,23 @@ class KnowledgeGraph:
 
     # ── Fuzzy hash resolution ─────────────────────────────────────
 
-    @staticmethod
-    def _hamming_distance(hash1: str, hash2: str) -> int:
-        if len(hash1) != len(hash2):
-            return 256
-        try:
-            return bin(int(hash1, 16) ^ int(hash2, 16)).count("1")
-        except ValueError:
-            return 256
-
     def _resolve_canonical(self, visual_hash: str) -> str:
         """Map *visual_hash* to an existing node within HAMMING_THRESHOLD."""
-        if visual_hash in self.__nodes:
-            return visual_hash
-        if visual_hash in self.__hash_aliases:
-            return self.__hash_aliases[visual_hash]
 
-        best_hash: Optional[str] = None
-        best_distance = HAMMING_THRESHOLD + 1
-
-        for existing_hash in self.__nodes:
-            d = self._hamming_distance(visual_hash, existing_hash)
-            if d < best_distance:
-                best_distance = d
-                best_hash = existing_hash
-
-        if best_hash is not None and best_distance <= HAMMING_THRESHOLD:
-            self.__hash_aliases[visual_hash] = best_hash
-            return best_hash
-
-        return visual_hash
-
-    @staticmethod
-    def _is_meaningful_hash(value: Optional[str]) -> bool:
-        """True when *value* is a usable hash (not None, empty, or all-zero)."""
-
-        if not value:
-            return False
-        return any(c not in ("0", " ") for c in value)
+        return ScreenCanonicalizer.resolve(
+            visual_hash=visual_hash, nodes=self.__nodes, aliases=self.__hash_aliases
+        )
 
     def _resolve_canonical_for_state(self, state: ScreenState) -> str:
-        """Layered MLSIA dedup: prefer structural identity, fall back to Hamming.
+        """
+        Layered MLSIA dedup: prefer structural identity, fall back to Hamming.
 
-        Order (mirrors :meth:`ScreenState.is_same_screen`):
-          1. ``state.visual_hash`` already a canonical or alias.
-          2. Same ``activity_hash`` AND same ``structural_hash`` (both meaningful).
-          3. Same ``activity_hash`` AND same ``xml_hash`` (both meaningful).
-          4. Same ``activity_hash`` AND same ``interaction_hash`` (both meaningful).
-          5. Hamming-on-``visual_hash`` ≤ ``HAMMING_THRESHOLD`` fallback.
-
-        Each match records an alias so subsequent visual-hash-only lookups
-        short-circuit without re-running the search.
+        Records an alias on match so later visual-hash-only lookups short-circuit.
         """
 
-        vh = state.visual_hash
-        if vh in self.__nodes:
-            return vh
-        if vh in self.__hash_aliases:
-            return self.__hash_aliases[vh]
-
-        if self._is_meaningful_hash(state.activity_hash):
-            for field, candidate in (
-                ("structural_hash", state.structural_hash),
-                ("xml_hash", state.xml_hash),
-                ("interaction_hash", state.interaction_hash),
-            ):
-                if not self._is_meaningful_hash(candidate):
-                    continue
-                for existing_hash, node in self.__nodes.items():
-                    if not self._is_meaningful_hash(getattr(node, field, None)):
-                        continue
-                    if node.activity_hash != state.activity_hash:
-                        continue
-                    if getattr(node, field) != candidate:
-                        continue
-                    self.__hash_aliases[vh] = existing_hash
-                    return existing_hash
-
-        # Visual-hash Hamming fallback (existing behaviour).
-        return self._resolve_canonical(vh)
+        return ScreenCanonicalizer.resolve_for_state(
+            state=state, nodes=self.__nodes, aliases=self.__hash_aliases
+        )
 
     @property
     def provider(self) -> SQLiteMemoryProvider:
