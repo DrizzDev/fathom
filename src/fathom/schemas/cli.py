@@ -140,6 +140,9 @@ class ExploreCommandInput(LocalCommandInput):
     package_name: Optional[str] = Field(
         default=None, description="Application identifier to launch and explore"
     )
+    focus: Optional[str] = Field(
+        default=None, description="Steer exploration toward a specific flow or feature"
+    )
 
     @field_validator("package_name", mode="before")
     @classmethod
@@ -159,3 +162,16 @@ class ExploreCommandInput(LocalCommandInput):
             raise ValueError(f"Invalid package identifier: {normalized!r}")
 
         return normalized
+
+    @field_validator("focus", mode="before")
+    @classmethod
+    def __normalize_focus(cls, value: object) -> Optional[str]:
+        """
+        Normalize the optional exploration focus into a trimmed string or None.
+        """
+
+        if value is None:
+            return None
+
+        normalized = str(value).strip()
+        return normalized or None

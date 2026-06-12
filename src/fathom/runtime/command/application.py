@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from fathom.base.logger import BaseLogger
+from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT
 from fathom.constants.run import SignalAdapterType, TargetKind
 from fathom.core.exceptions import FathomError
 from fathom.runtime.command.executor import CommandExecutor
@@ -216,6 +217,13 @@ class CommandApplication:
             help="Application package/bundle identifier to launch and explore",
         )
         explore_parser.add_argument(
+            "--focus",
+            type=str,
+            default=None,
+            dest="focus",
+            help="Steer exploration toward a specific flow or feature",
+        )
+        explore_parser.add_argument(
             "--platform",
             type=str,
             default=None,
@@ -363,6 +371,7 @@ class CommandApplication:
             objective=ExplorationObjectiveConfiguration(
                 max_steps=command_input.max_steps,
                 package_name=command_input.package_name,
+                intent=command_input.focus or DEFAULT_EXPLORATION_INTENT,
             ),
             runtime=RuntimeConfiguration(
                 interactive=False,
