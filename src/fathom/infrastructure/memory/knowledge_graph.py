@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import time
-from collections import deque
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from fathom.infrastructure.memory.algorithms import GraphAlgorithms
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.schemas.actions import Action
 from fathom.schemas.screens import ScreenState
@@ -891,46 +891,13 @@ class KnowledgeGraph:
             Path as [(node, edge_taken), ...] or None if unreachable.
             Edge is None for the start node.
         """
-        start_hash = self._resolve_canonical(start_hash)
-        end_hash = self._resolve_canonical(end_hash)
-
-        if start_hash not in self.__nodes:
-            logger.warning(f"Start hash {start_hash} not in graph")
-            return None
-
-        if end_hash not in self.__nodes:
-            logger.warning(f"End hash {end_hash} not in graph")
-            return None
-
-        if start_hash == end_hash:
-            return [(start_hash, None)]
-
-        # BFS queue: (current_hash, path_to_current)
-        queue: deque[Tuple[str, List[Tuple[str, Optional[GraphEdge]]]]] = deque()
-        visited: Set[str] = set()
-
-        initial_path: List[Tuple[str, Optional[GraphEdge]]] = [(start_hash, None)]
-        queue.append((start_hash, initial_path))
-        visited.add(start_hash)
-
-        while queue:
-            current, path = queue.popleft()
-
-            if len(path) > max_depth:
-                continue
-
-            for edge in self.__edges.get(current, []):
-                next_hash = edge.destination_hash
-
-                if next_hash == end_hash:
-                    return path + [(next_hash, edge)]
-
-                if next_hash not in visited:
-                    visited.add(next_hash)
-                    new_path = path + [(next_hash, edge)]
-                    queue.append((next_hash, new_path))
-
-        return None
+        return GraphAlgorithms.find_path(
+            nodes=self.__nodes,
+            edges=self.__edges,
+            start_hash=self._resolve_canonical(start_hash),
+            end_hash=self._resolve_canonical(end_hash),
+            max_depth=max_depth,
+        )
 
     def find_all_paths(
         self,
@@ -958,42 +925,13 @@ class KnowledgeGraph:
         List[List[Tuple[str, Optional[GraphEdge]]]]
             All found paths, or empty list if none exist.
         """
-        start_hash = self._resolve_canonical(start_hash)
-        end_hash = self._resolve_canonical(end_hash)
-
-        if start_hash not in self.__nodes or end_hash not in self.__nodes:
-            return []
-
-        all_paths: List[List[Tuple[str, Optional[GraphEdge]]]] = []
-
-        def dfs(
-            current: str,
-            target: str,
-            path: List[Tuple[str, Optional[GraphEdge]]],
-            visited: Set[str],
-            depth: int,
-        ) -> None:
-            if depth > max_depth:
-                return
-
-            if current == target:
-                all_paths.append(path[:])
-                return
-
-            for edge in self.__edges.get(current, []):
-                next_hash = edge.destination_hash
-                if next_hash not in visited:
-                    visited.add(next_hash)
-                    path.append((next_hash, edge))
-                    dfs(next_hash, target, path, visited, depth + 1)
-                    path.pop()
-                    visited.remove(next_hash)
-
-        initial_path: List[Tuple[str, Optional[GraphEdge]]] = [(start_hash, None)]
-        visited_set: Set[str] = {start_hash}
-        dfs(start_hash, end_hash, initial_path, visited_set, 0)
-
-        return all_paths
+        return GraphAlgorithms.find_all_paths(
+            nodes=self.__nodes,
+            edges=self.__edges,
+            start_hash=self._resolve_canonical(start_hash),
+            end_hash=self._resolve_canonical(end_hash),
+            max_depth=max_depth,
+        )
 
     def is_reachable(self, start_hash: str, end_hash: str, max_depth: int = 100) -> bool:
         """
@@ -1037,45 +975,13 @@ class KnowledgeGraph:
         List[List[str]]
             List of cycles found, each cycle is a list of node hashes.
         """
-        cycles: List[List[str]] = []
-        visited: Set[str] = set()
-        rec_stack: Set[str] = set()
-        parent_map: Dict[str, str] = {}
-
-        def dfs_visit(node: str, path: List[str]) -> None:
-            visited.add(node)
-            rec_stack.add(node)
-            path.append(node)
-
-            for edge in self.__edges.get(node, []):
-                next_node = edge.destination_hash
-
-                if next_node not in visited:
-                    parent_map[next_node] = node
-                    dfs_visit(next_node, path)
-                elif next_node in rec_stack:
-                    # Found a cycle: extract it from the path
-                    cycle_start_idx = path.index(next_node)
-                    cycle = path[cycle_start_idx:] + [next_node]
-                    cycles.append(cycle)
-
-            path.pop()
-            rec_stack.remove(node)
-
-        # Determine which nodes to start from
-        start_nodes: List[str] = []
         if start_hash:
             resolved = self._resolve_canonical(start_hash)
-            if resolved in self.__nodes:
-                start_nodes = [resolved]
+            start_nodes = [resolved] if resolved in self.__nodes else []
         else:
             start_nodes = list(self.__nodes.keys())
 
-        for node in start_nodes:
-            if node not in visited:
-                dfs_visit(node, [])
-
-        return cycles
+        return GraphAlgorithms.detect_cycles(edges=self.__edges, start_nodes=start_nodes)
 
     def get_connected_component(self, start_hash: str) -> Set[str]:
         """
@@ -1096,20 +1002,7 @@ class KnowledgeGraph:
         start_hash = self._resolve_canonical(start_hash)
         if start_hash not in self.__nodes:
             return set()
-
-        reachable: Set[str] = set()
-        queue: deque[str] = deque([start_hash])
-        reachable.add(start_hash)
-
-        while queue:
-            current = queue.popleft()
-            for edge in self.__edges.get(current, []):
-                next_node = edge.destination_hash
-                if next_node not in reachable:
-                    reachable.add(next_node)
-                    queue.append(next_node)
-
-        return reachable
+        return GraphAlgorithms.connected_component(edges=self.__edges, start_hash=start_hash)
 
     def get_reverse_connected_component(self, end_hash: str) -> Set[str]:
         """
@@ -1130,27 +1023,7 @@ class KnowledgeGraph:
         end_hash = self._resolve_canonical(end_hash)
         if end_hash not in self.__nodes:
             return set()
-
-        # Build reverse edge map
-        reverse_edges: Dict[str, List[str]] = {}
-        for source, edges in self.__edges.items():
-            for edge in edges:
-                dest = edge.destination_hash
-                reverse_edges.setdefault(dest, []).append(source)
-
-        # BFS backward from end_hash
-        can_reach: Set[str] = set()
-        queue: deque[str] = deque([end_hash])
-        can_reach.add(end_hash)
-
-        while queue:
-            current = queue.popleft()
-            for source in reverse_edges.get(current, []):
-                if source not in can_reach:
-                    can_reach.add(source)
-                    queue.append(source)
-
-        return can_reach
+        return GraphAlgorithms.reverse_connected_component(edges=self.__edges, end_hash=end_hash)
 
     def get_graph_diameter(self) -> Optional[int]:
         """
@@ -1164,21 +1037,7 @@ class KnowledgeGraph:
         int or None
             The graph diameter, or None if not computable.
         """
-        if not self.__nodes:
-            return None
-
-        nodes = list(self.__nodes.keys())
-        max_distance = 0
-
-        for start in nodes:
-            for end in nodes:
-                if start != end:
-                    path = self.find_path(start, end)
-                    if path:
-                        distance = len(path) - 1
-                        max_distance = max(max_distance, distance)
-
-        return max_distance if max_distance > 0 else None
+        return GraphAlgorithms.diameter(nodes=self.__nodes, edges=self.__edges)
 
     def get_visualization_context(self, visual_hash: str, depth: int = 2) -> Dict[str, Any]:
         """
