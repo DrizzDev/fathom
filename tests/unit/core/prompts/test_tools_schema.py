@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any, Dict, List
 
 from fathom.constants.tools import ToolName
 from fathom.core.prompts.tools import ToolRegistry
@@ -173,3 +174,61 @@ class ToolRegistryTest(unittest.TestCase):
             "Required when sub_goal_completed=true",
             properties["subgoal_completion_reason"]["description"],
         )
+
+
+class ExplorationToolDefinitionsTest(unittest.TestCase):
+    """
+    Pins the explore_ui and describe_screen schemas used by the exploration scan.
+    """
+
+    @staticmethod
+    def __names(definitions: Dict[str, Any]) -> List[str]:
+        """
+        Extracts the declared tool names from a function-declarations payload.
+        """
+
+        return [declaration["name"] for declaration in definitions["function_declarations"]]
+
+    def test_exploration_definitions_expose_both_tools(self) -> None:
+        """
+        The exploration payload exposes explore_ui then describe_screen, in order.
+        """
+
+        self.assertEqual(
+            self.__names(ToolRegistry.get_exploration_definitions()),
+            ["explore_ui", "describe_screen"],
+        )
+
+    def test_translation_definitions_expose_describe_screen(self) -> None:
+        """
+        The standalone translation payload exposes only describe_screen.
+        """
+
+        self.assertEqual(
+            self.__names(ToolRegistry.get_translation_definitions()),
+            ["describe_screen"],
+        )
+
+    def test_explore_ui_requires_action_and_carries_exploration_grounding(self) -> None:
+        """
+        explore_ui requires the action and assistant_message and grounds region/category.
+        """
+
+        explore = ToolRegistry.get_exploration_definitions()["function_declarations"][0]
+
+        self.assertIn("action", explore["parameters"]["required"])
+        self.assertIn("assistant_message", explore["parameters"]["required"])
+
+        action_properties = explore["parameters"]["properties"]["action"]["properties"]
+        self.assertIn("element_category", action_properties)
+        self.assertIn("region", action_properties)
+
+    def test_describe_screen_requires_functional_fields(self) -> None:
+        """
+        describe_screen requires the activity, purpose, elements, and actions fields.
+        """
+
+        describe = ToolRegistry.get_translation_definitions()["function_declarations"][0]
+
+        for field in ("activity_name", "screen_purpose", "elements", "achievable_actions"):
+            self.assertIn(field, describe["parameters"]["required"])
