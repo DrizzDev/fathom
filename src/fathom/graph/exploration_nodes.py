@@ -27,6 +27,13 @@ from fathom.agent.state import AgentState
 from fathom.agent.strategies.exploration import BFSPhase, BFSQueueEntry
 from fathom.constants import ActionType
 from fathom.constants.events import ExplorationEvent
+from fathom.domain.exploration import (
+    ActionKey,
+    DedupPolicy,
+    DepthFloorConfig,
+    DepthFloorPolicy,
+    ExplorationPolicyConfig,
+)
 from fathom.graph.exploration_state import ExplorationGraphState
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.infrastructure.memory.ledger import Ledger
@@ -56,10 +63,10 @@ logger = getLogger(__name__)
 
 
 # Minimum DFS path length (in edges traversed from root) before the agent
-# is allowed to honour a VLM ``content_exhausted=True`` flag.  Below this
-# floor we veto the exhaustion *once* per screen and re-prompt the VLM
-# with a stronger directive so long flows have a chance to develop.
-MIN_DFS_DEPTH: int = 4
+# is allowed to honour a VLM ``content_exhausted=True`` flag.  The canonical
+# home for this value is :class:`DepthFloorConfig.minimum`; it is mirrored
+# here as a module constant for backward-compatible imports.
+MIN_DFS_DEPTH: int = DepthFloorConfig().minimum
 
 
 # ── Context ─────────────────────────────────────────────────────────────
@@ -90,6 +97,7 @@ class ExplorationNodeContext:
         target_package: Optional[str] = None,
         focus: Optional[str] = None,
         event_bus: Optional[Callable[[ExplorationEvent, Dict[str, Any]], None]] = None,
+        policy_config: Optional[ExplorationPolicyConfig] = None,
     ) -> None:
         self.device = device
         self.capture_tool = capture
@@ -106,6 +114,12 @@ class ExplorationNodeContext:
         self._event_bus: Callable[[ExplorationEvent, Dict[str, Any]], None] = (
             event_bus if event_bus is not None else (lambda _event, _ctx: None)
         )
+
+        # Injected decision policies (pure domain rules — no I/O).
+        config = policy_config or ExplorationPolicyConfig()
+        self.policy_config = config
+        self.depth_floor_policy = DepthFloorPolicy(config=config.depth)
+        self.dedup_policy = DedupPolicy(dedup=config.dedup, sampling=config.sampling)
 
         # Focused exploration: when `focus` is set, bias the agent toward the
         # named section via the cached-prompt GOAL; otherwise fall back to the
@@ -311,8 +325,9 @@ def build_exploration_nodes(
         # and (b) the VLM has already declared this screen exhausted at
         # least once.  The injected directive nudges the model to find any
         # untried element on the retry pass.
-        depth_floor_active = (
-            len(ctx.current_path) < MIN_DFS_DEPTH and ctx.exhaustion_retries.get(fingerprint, 0) > 0
+        depth_floor_active = ctx.depth_floor_policy.is_active(
+            depth=len(ctx.current_path),
+            retries=ctx.exhaustion_retries.get(fingerprint, 0),
         )
         kg_context = ctx.knowledge_graph.build_exploration_context(
             current_hash=fingerprint,
@@ -321,7 +336,7 @@ def build_exploration_nodes(
             fully_scanned_count=len(ctx.fully_scanned),
             recent_steps=recent_steps,
             depth_floor_active=depth_floor_active,
-            min_dfs_depth=MIN_DFS_DEPTH,
+            min_dfs_depth=ctx.depth_floor_policy.minimum,
             focus=ctx.focus,
         )
 
@@ -340,55 +355,32 @@ def build_exploration_nodes(
         # Keyed on (action_type, coord_bucket) — stable across LLM label drift.
         # Falls back to (action_type, target_name) for legacy edges persisted
         # before coord_bucket was recorded.
-        tried_set = {
-            (atype.lower(), (bucket or atarget).lower())
+        tried_keys = {
+            ActionKey(kind=atype.lower(), label=(bucket or atarget).lower())
             for atype, atarget, bucket, _ in ctx.knowledge_graph.get_tried_actions(fingerprint)
         }
 
-        def _action_key(action: Any) -> Tuple[str, str]:
-            bucket = action.bounds.coord_bucket() if action.bounds else None
-            label = bucket or (action.natural_language_target or action.target or "")
-            return (action.action_type.value.lower(), label.lower())
-
-        # Repeatable actions are exempt from dedup: scrolling a feed three times
-        # legitimately reveals three chunks of content, and each swipe of a
-        # carousel exposes more items. BACK is also unconditionally allowed as
-        # an escape hatch from any state.
-        _REPEATABLE_ACTIONS = {
-            ActionType.BACK,
-            ActionType.SCROLL,
-            ActionType.SWIPE,
-            ActionType.SWIPE_UP,
-            ActionType.SWIPE_DOWN,
-            ActionType.SWIPE_LEFT,
-            ActionType.SWIPE_RIGHT,
-        }
-
-        # Categories subject to sampling (LIST SAMPLING rule): cap content_item
-        # taps per screen so the agent can't enumerate a 50-restaurant list.
-        # filter_or_category chips can also be long ribbons — cap them too.
-        _CATEGORY_SAMPLE_LIMIT = {
-            "content_item": 3,
-            "filter_or_category": 4,
-        }
-
-        _MAX_DEDUP_RETRIES = 2
-        for _retry in range(_MAX_DEDUP_RETRIES):
+        # Repeatability, per-category sampling caps, and the retry budget are
+        # owned by the injected DedupPolicy (see fathom.domain.exploration).
+        for _retry in range(ctx.dedup_policy.retries):
             if not analysis.action or analysis.content_exhausted:
                 break
-            if analysis.action.action_type in _REPEATABLE_ACTIONS:
+            if ctx.dedup_policy.is_repeatable(analysis.action):
                 break
 
             # Category-sampling guard — fires when freeform target_name would
             # otherwise let the LLM enumerate a list (every card has a
             # distinct bucket + label, so coord-bucket dedup doesn't catch it).
             proposed_category = analysis.action.element_category
-            if proposed_category in _CATEGORY_SAMPLE_LIMIT:
+            category_limit = ctx.dedup_policy.limit_for(proposed_category)
+            if proposed_category is not None and category_limit is not None:
                 already_sampled = ctx.knowledge_graph.count_category_taps(
                     fingerprint, proposed_category
                 )
-                limit = _CATEGORY_SAMPLE_LIMIT[proposed_category]
-                if already_sampled >= limit:
+                if ctx.dedup_policy.is_over_sampled(
+                    category=proposed_category, sampled=already_sampled
+                ):
+                    limit = category_limit
                     logger.warning(
                         "Sampling guard: %s already sampled %d×/%d on screen %s — rejecting",
                         proposed_category,
@@ -413,8 +405,8 @@ def build_exploration_nodes(
                     )
                     continue  # re-check the fresh analysis from the top
 
-            action_key = _action_key(analysis.action)
-            if action_key not in tried_set:
+            action_key = ctx.dedup_policy.key_for(analysis.action)
+            if ctx.dedup_policy.is_novel(action=analysis.action, tried=tried_keys):
                 break  # Novel action — proceed
 
             logger.warning(
@@ -422,13 +414,15 @@ def build_exploration_nodes(
                 action_key,
                 fingerprint[:8],
                 _retry + 1,
-                _MAX_DEDUP_RETRIES,
+                ctx.dedup_policy.retries,
             )
             repeated_label = (
-                analysis.action.natural_language_target or analysis.action.target or action_key[1]
+                analysis.action.natural_language_target
+                or analysis.action.target
+                or action_key.label
             )
             dedup_failures = [
-                f'You already tried {action_key[0]} "{repeated_label}" — pick a DIFFERENT untried element.'
+                f'You already tried {action_key.kind} "{repeated_label}" — pick a DIFFERENT untried element.'
             ]
             analysis = await ctx.vision.analyze(
                 intent=ctx.agent_state.intent,
@@ -445,8 +439,8 @@ def build_exploration_nodes(
             if (
                 analysis.action
                 and not analysis.content_exhausted
-                and analysis.action.action_type not in _REPEATABLE_ACTIONS
-                and _action_key(analysis.action) in tried_set
+                and not ctx.dedup_policy.is_repeatable(analysis.action)
+                and not ctx.dedup_policy.is_novel(action=analysis.action, tried=tried_keys)
             ):
                 logger.warning(
                     "Dedup guard exhausted retries on screen %s — forcing content_exhausted",
@@ -504,14 +498,14 @@ def build_exploration_nodes(
             # Depth-floor veto: on a fresh shallow screen, give the VLM one
             # more chance to pick an element before we backtrack.  The retry
             # pass triggers the DEPTH FLOOR directive in the kg_context.
-            if depth < MIN_DFS_DEPTH and retries_so_far == 0:
+            if ctx.depth_floor_policy.should_veto(depth=depth, retries=retries_so_far):
                 ctx.exhaustion_retries[fingerprint] = retries_so_far + 1
                 logger.info(
                     "Depth-floor veto: screen %s exhausted at depth %d (< %d); "
                     "re-prompting with DEPTH FLOOR directive",
                     fingerprint[:8],
                     depth,
-                    MIN_DFS_DEPTH,
+                    ctx.depth_floor_policy.minimum,
                 )
                 ctx.emit(
                     ExplorationEvent.PHASE_TRANSITION,
