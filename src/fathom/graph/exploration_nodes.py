@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from abc import ABC, abstractmethod
 from collections import deque
 from datetime import datetime
 from logging import getLogger
@@ -192,21 +193,33 @@ class ExplorationNodeContext:
             logger.debug("event bus raised for %s", event, exc_info=True)
 
 
-# ── Node factory ────────────────────────────────────────────────────────
+# ── Nodes ────────────────────────────────────────────────────────────────
 
 
-def build_exploration_nodes(
-    ctx: ExplorationNodeContext,
-) -> Dict[str, Callable[..., Any]]:
+class ExplorationNode(ABC):
     """
-    Return a dict of ``{node_name: async_callable}`` for the exploration
-    graph.  All nodes close over *ctx*.
+    Base for exploration graph nodes sharing the run context.
+
+    Subclasses implement :meth:`run`; the bound method is registered as the
+    LangGraph node callable. A bound async method is used (not ``__call__``)
+    so the framework's ``inspect.iscoroutinefunction`` check detects it.
     """
 
-    # ── ground ──────────────────────────────────────────────────────
+    def __init__(self, *, context: ExplorationNodeContext) -> None:
+        self._context = context
 
-    async def ground_node(state: ExplorationGraphState) -> ExplorationGraphState:
+    @abstractmethod
+    async def run(self, state: ExplorationGraphState) -> ExplorationGraphState:
+        """Execute this node against the graph state and return the update."""
+
+
+class GroundNode(ExplorationNode):
+    """Ground node: capture and compute the current screen state."""
+
+    async def run(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """Capture the screen and compute the screen state."""
+
+        ctx = self._context
 
         if ctx.is_cancelled:
             logger.info("exploration ground_node: cancelled")
@@ -255,13 +268,17 @@ def build_exploration_nodes(
             "content_exhausted": False,
         }
 
-    # ── bfs_route ───────────────────────────────────────────────────
 
-    async def bfs_route_node(state: ExplorationGraphState) -> ExplorationGraphState:
+class BfsRouteNode(ExplorationNode):
+    """Route node: publish the current DFS phase into the graph state."""
+
+    async def run(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
         Read the current DFS phase from the context and propagate it
         into the graph state for the conditional router to inspect.
         """
+
+        ctx = self._context
 
         screen_state: Optional[ScreenState] = state.get("screen_state")
         fingerprint = (
@@ -279,13 +296,17 @@ def build_exploration_nodes(
             "bfs_phase": ctx.phase.value,
         }
 
-    # ── scan ────────────────────────────────────────────────────────
 
-    async def scan_node(state: ExplorationGraphState) -> ExplorationGraphState:
+class ScanNode(ExplorationNode):
+    """Scan node: pick the next untried interactive element via the VLM."""
+
+    async def run(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
         SCAN phase: use VLM to identify the next untried interactive
         element on the current screen.
         """
+
+        ctx = self._context
 
         if ctx.is_cancelled:
             return {
@@ -575,14 +596,18 @@ def build_exploration_nodes(
             "analysis_duration": analysis_duration,
         }
 
-    # ── navigate ────────────────────────────────────────────────────
 
-    async def navigate_node(state: ExplorationGraphState) -> ExplorationGraphState:
+class NavigateNode(ExplorationNode):
+    """Navigate node: execute BACKTRACK or ADVANCE navigation actions."""
+
+    async def run(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
         Execute navigation actions for BACKTRACK (BACK) or ADVANCE
         (recovery path replay) phases.  Synthesises a BACK action for
         BACKTRACK; consumes from ``ctx.pending_nav`` for ADVANCE.
         """
+
+        ctx = self._context
 
         if ctx.is_cancelled:
             return {
@@ -789,14 +814,18 @@ def build_exploration_nodes(
             "execution_duration": execution_duration,
         }
 
-    # ── execute ─────────────────────────────────────────────────────
 
-    async def execute_node(state: ExplorationGraphState) -> ExplorationGraphState:
+class ExecuteNode(ExplorationNode):
+    """Execute node: perform the VLM-recommended action from the scan phase."""
+
+    async def run(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
         Execute the VLM-recommended action from the SCAN phase.
         Includes coordinate conversion, tracing, and metrics — identical
         to the intent graph's execute_node.
         """
+
+        ctx = self._context
 
         if ctx.is_cancelled:
             return {
@@ -949,13 +978,17 @@ def build_exploration_nodes(
             "execution_duration": execution_duration,
         }
 
-    # ── record ──────────────────────────────────────────────────────
 
-    async def record_node(state: ExplorationGraphState) -> ExplorationGraphState:
+class RecordNode(ExplorationNode):
+    """Record node: persist the step result and drive DFS phase transitions."""
+
+    async def run(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
         Record the step result: update knowledge graph, agent state,
         history, audit, and determine DFS phase transitions.
         """
+
+        ctx = self._context
 
         if ctx.is_cancelled:
             return {
@@ -1247,13 +1280,24 @@ def build_exploration_nodes(
             "completion_reason": completion_reason,
         }
 
+
+def build_exploration_nodes(
+    ctx: ExplorationNodeContext,
+) -> Dict[str, Callable[..., Any]]:
+    """
+    Assemble the exploration graph's node callables.
+
+    Returns ``{node_name: bound async method}`` -- bound methods are used so
+    LangGraph detects each node as asynchronous via inspect.iscoroutinefunction.
+    """
+
     return {
-        "ground": ground_node,
-        "bfs_route": bfs_route_node,
-        "scan": scan_node,
-        "navigate": navigate_node,
-        "execute": execute_node,
-        "record": record_node,
+        "ground": GroundNode(context=ctx).run,
+        "bfs_route": BfsRouteNode(context=ctx).run,
+        "scan": ScanNode(context=ctx).run,
+        "navigate": NavigateNode(context=ctx).run,
+        "execute": ExecuteNode(context=ctx).run,
+        "record": RecordNode(context=ctx).run,
     }
 
 
