@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from fathom.constants.platform import DevicePlatform, IOSAutomationBackend
+from fathom.constants.platform import APP_IDENTIFIER_PATTERN, DevicePlatform, IOSAutomationBackend
 
 
 class LocalCommandInput(BaseModel):
@@ -136,3 +137,25 @@ class ExploreCommandInput(LocalCommandInput):
     command: Literal["explore"] = Field(default="explore")
     max_steps: int = Field(default=50, ge=1)
     verbose: bool = Field(default=False)
+    package_name: Optional[str] = Field(
+        default=None, description="Application identifier to launch and explore"
+    )
+
+    @field_validator("package_name", mode="before")
+    @classmethod
+    def __validate_package_name(cls, value: object) -> Optional[str]:
+        """
+        Normalize and validate the optional target application identifier.
+        """
+
+        if value is None:
+            return None
+
+        normalized = str(value).strip()
+        if not normalized:
+            return None
+
+        if not re.fullmatch(APP_IDENTIFIER_PATTERN, normalized):
+            raise ValueError(f"Invalid package identifier: {normalized!r}")
+
+        return normalized

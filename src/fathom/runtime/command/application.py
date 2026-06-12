@@ -209,6 +209,13 @@ class CommandApplication:
             help="Maximum steps allowed",
         )
         explore_parser.add_argument(
+            "--package",
+            type=str,
+            default=None,
+            dest="package_name",
+            help="Application package/bundle identifier to launch and explore",
+        )
+        explore_parser.add_argument(
             "--platform",
             type=str,
             default=None,
@@ -355,6 +362,7 @@ class CommandApplication:
         return ExplorationRunRequest(
             objective=ExplorationObjectiveConfiguration(
                 max_steps=command_input.max_steps,
+                package_name=command_input.package_name,
             ),
             runtime=RuntimeConfiguration(
                 interactive=False,
