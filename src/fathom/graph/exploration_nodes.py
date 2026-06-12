@@ -25,11 +25,12 @@ from logging import getLogger
 from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
 
 from fathom.agent.state import AgentState
-from fathom.agent.strategies.exploration import BFSPhase, BFSQueueEntry
 from fathom.constants import ActionType
 from fathom.constants.events import ExplorationEvent
 from fathom.domain.exploration import (
     ActionKey,
+    BFSPhase,
+    BFSQueueEntry,
     DedupPolicy,
     DepthFloorConfig,
     DepthFloorPolicy,

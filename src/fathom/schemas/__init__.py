@@ -14,7 +14,6 @@ from fathom.schemas.results import (
     ExecutionResult,
     ExplorationResult,
     PlanResult,
-    StrategyResult,
     WorkflowResult,
 )
 from fathom.schemas.screens import ScreenCapture, ScreenState
@@ -39,7 +38,6 @@ __all__ = [
     "Step",
     "StepRecord",
     "StepResult",
-    "StrategyResult",
     "UIBounds",
     "WorkflowConfig",
     "WorkflowResult",

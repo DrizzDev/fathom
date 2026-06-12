@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
 from fathom.schemas.delta import GeminiDeltaSignal, ScreenDeltaSignal
 from fathom.schemas.steps import Step, StepResult
@@ -44,22 +43,6 @@ class AnalysisResult(BaseModel):
         default=None,
         description="Optional Gemini-provided semantic change hints",
     )
-
-
-class StrategyResult(BaseModel):
-    """
-    Result from strategy execution.
-    """
-
-    step_result: Optional[StepResult] = Field(default=None, description="Result of the step")
-    status: StrategyStatus = Field(description="Execution status")
-    message: str = Field(description="Status message")
-    should_checkpoint: bool = Field(default=False, description="Whether to save state")
-
-    @property
-    def is_terminal(self) -> bool:
-        """Checks if status is terminal."""
-        return self.status in (StrategyStatus.COMPLETE, StrategyStatus.ERROR)
 
 
 class WorkflowResult(BaseModel):

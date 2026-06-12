@@ -18,10 +18,13 @@ from fathom.domain.exploration.dedup import (
     DedupPolicy,
 )
 from fathom.domain.exploration.depth import DepthFloorPolicy
+from fathom.domain.exploration.dfs import BFSPhase, BFSQueueEntry
 
 __all__ = [
     "REPEATABLE_ACTION_TYPES",
     "ActionKey",
+    "BFSPhase",
+    "BFSQueueEntry",
     "DedupConfig",
     "DedupPolicy",
     "DepthFloorConfig",
