@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.base.paths import SharedPathManager
 from fathom.core.services.telemetry import PhaseAnnouncer
+from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -15,7 +16,6 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import FathomConfiguration
-from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.results import ExecutionResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.exploration.builder import ExplorationGraphBuilder
@@ -127,7 +127,7 @@ class ExplorationStrategy:
                 )
 
     @property
-    def graph(self) -> ExplorationGraph:
+    def graph(self) -> KnowledgeGraph:
         """
         Get the exploration graph.
         """

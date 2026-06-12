@@ -1,66 +1,112 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, TypedDict, cast
 
 from fathom.constants.state import CommonStateKey, ExplorationStateKey
 from fathom.schemas.actions import Action
+from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import StepResult
 
 
-# TypedDict-compatible state for LangGraph StateGraph type checking
-class ExplorationGraphState(dict[str, Any]):
+class ExplorationGraphState(TypedDict, total=False):
     """
-    State schema flowing through the Exploration Graph.
-    Must be dict-based for StateGraph compatibility.
-    """
+    State flowing through the exploration graph; strictly typed and serialisable.
 
-    pass
-
-
-def get_capture(state: dict[str, Any]) -> Optional[ScreenCapture]:
-    """
-    Get capture from state.
+    The keys mirror the CommonStateKey/ExplorationStateKey values so the nodes
+    can read and write them through those enums; declaring them here registers
+    each as a LangGraph channel that persists across nodes.
     """
 
-    return state.get(CommonStateKey.CAPTURE)
+    CAPTURE: Optional[ScreenCapture]
+    SCREEN_STATE: Optional[ScreenState]
+    IS_NEW_SCREEN: bool
+
+    ANALYSIS: Optional[AnalysisResult]
+    ACTION: Optional[Action]
+    CONTENT_EXHAUSTED: bool
+
+    STEP_RESULT: Optional[StepResult]
+    STEP_RESULTS: List[StepResult]
+
+    BFS_PHASE: str
+
+    IS_COMPLETE: bool
+    COMPLETION_REASON: Optional[str]
+    STEP_NUMBER: int
+
+    GROUNDING_DURATION: float
+    ANALYSIS_DURATION: float
+    EXECUTION_DURATION: float
 
 
-def get_screen_state(state: dict[str, Any]) -> Optional[ScreenState]:
+def __values(state: ExplorationGraphState) -> Dict[str, Any]:
     """
-    Get screen state from state.
-    """
-
-    return state.get(CommonStateKey.SCREEN_STATE)
-
-
-def get_action(state: dict[str, Any]) -> Optional[Action]:
-    """
-    Get action from state.
-    """
-
-    return state.get(ExplorationStateKey.ACTION)
-
-
-def get_step_result(state: dict[str, Any]) -> Optional[StepResult]:
-    """
-    Get step result from state.
-    """
-
-    return state.get(CommonStateKey.STEP_RESULT)
-
-
-def is_complete(state: dict[str, Any]) -> bool:
-    """
-    Check if execution is complete.
+    Views the typed state as a plain mapping for enum-keyed access.
     """
 
-    return bool(state.get(CommonStateKey.IS_COMPLETE, False))
+    return cast("Dict[str, Any]", state)
 
 
-def is_content_exhausted(state: dict[str, Any]) -> bool:
+def get_capture(state: ExplorationGraphState) -> Optional[ScreenCapture]:
     """
-    Check if content is exhausted.
+    Get the captured screen from state, if present.
     """
 
-    return bool(state.get(ExplorationStateKey.CONTENT_EXHAUSTED, False))
+    return __values(state).get(CommonStateKey.CAPTURE)
+
+
+def get_screen_state(state: ExplorationGraphState) -> Optional[ScreenState]:
+    """
+    Get the computed screen state, if present.
+    """
+
+    return __values(state).get(CommonStateKey.SCREEN_STATE)
+
+
+def get_action(state: ExplorationGraphState) -> Optional[Action]:
+    """
+    Get the action chosen for this step, if any.
+    """
+
+    return __values(state).get(ExplorationStateKey.ACTION)
+
+
+def get_step_result(state: ExplorationGraphState) -> Optional[StepResult]:
+    """
+    Get the result of the executed step, if any.
+    """
+
+    return __values(state).get(CommonStateKey.STEP_RESULT)
+
+
+def get_step_results(state: ExplorationGraphState) -> List[StepResult]:
+    """
+    Get the accumulated step results.
+    """
+
+    return cast("List[StepResult]", __values(state).get(ExplorationStateKey.STEP_RESULTS, []))
+
+
+def get_bfs_phase(state: ExplorationGraphState, default: str) -> str:
+    """
+    Get the published DFS phase, falling back to a default.
+    """
+
+    return cast("str", __values(state).get(ExplorationStateKey.BFS_PHASE, default))
+
+
+def is_complete(state: ExplorationGraphState) -> bool:
+    """
+    Whether the run has been marked complete.
+    """
+
+    return bool(__values(state).get(CommonStateKey.IS_COMPLETE, False))
+
+
+def is_content_exhausted(state: ExplorationGraphState) -> bool:
+    """
+    Whether the current screen has been fully scanned.
+    """
+
+    return bool(__values(state).get(ExplorationStateKey.CONTENT_EXHAUSTED, False))

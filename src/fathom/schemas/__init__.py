@@ -23,7 +23,6 @@ from fathom.schemas.configuration import (
     WorkflowHostPolicyConfiguration,
 )
 from fathom.schemas.decomposition import DecompositionSchema
-from fathom.schemas.exploration import ActionGenerator, ExplorationGraph, ScreenNode
 from fathom.schemas.llm import GeminiExceptionKind, GeminiExceptionMetadata
 from fathom.schemas.orchestration import (
     ExecutionContext,
@@ -64,7 +63,6 @@ from fathom.schemas.ui import LabeledElement, UIBounds
 __all__ = [
     "ADBConfiguration",
     "Action",
-    "ActionGenerator",
     "ActionResult",
     "AnalysisResult",
     "Bounds",
@@ -77,7 +75,6 @@ __all__ = [
     "ExplorationConfiguration",
     "ExplorationWorkflowHostPolicyConfiguration",
     "ExplorationRunRequest",
-    "ExplorationGraph",
     "ExplorationResult",
     "ExploreCommandInput",
     "FathomConfiguration",
@@ -108,7 +105,6 @@ __all__ = [
     "ScreenArtifact",
     "ScreenArtifactBundle",
     "ScreenCapture",
-    "ScreenNode",
     "ScreenState",
     "Step",
     "StepArtifacts",

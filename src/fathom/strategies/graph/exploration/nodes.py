@@ -1,381 +1,907 @@
 from __future__ import annotations
 
-import hashlib
+import asyncio
 import logging
 import time
-from typing import Any, Callable, Dict, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
-from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.constants.exploration import BFSPhase
+from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
+from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
+from fathom.core.exploration.config import ExplorationPolicyConfig
+from fathom.core.exploration.dedup import ActionKey, DedupPolicy
+from fathom.core.exploration.depth import DepthFloorPolicy
+from fathom.core.services.exploration import ExplorationVisionService
 from fathom.schemas.actions import Action
+from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.tools import ToolPolicyContext
 from fathom.strategies.graph.context import GraphContext
+from fathom.strategies.graph.exploration.dfs import DfsNavigator, DfsState
 from fathom.strategies.graph.exploration.state import (
     ExplorationGraphState,
     get_action,
+    get_bfs_phase,
     get_capture,
     get_screen_state,
     get_step_result,
+    get_step_results,
+    is_complete,
     is_content_exhausted,
 )
 from fathom.utils.wait import stability_wait
 
 logger = logging.getLogger(__name__)
 
+_DFS_COMPLETE = "DFS complete - all reachable screens scanned"
+
+# Hardware BACK presses attempted to climb back into the target package when the
+# device drifts out of it (e.g. a share sheet or permission prompt) before the
+# run is abandoned as out-of-scope.
+PACKAGE_RECOVERY_BACK_LIMIT = 3
+
 
 class ExplorationNodeProvider:
     """
-    Provides LangGraph nodes for application exploration.
-    Encapsulates dependencies and shared private logic.
+    Provides the LangGraph nodes and routers for DFS application exploration.
+
+    Owns the mutable DFS bookkeeping (:class:`DfsState`) for the lifetime of a
+    run, the navigator that plans recovery paths over the knowledge graph, and
+    the decision policies (depth-floor, dedup, sampling) that guard the scan.
+    The bound node methods drive a depth-first walk; the router methods steer
+    the conditional edges between them.
     """
 
-    def __init__(self, context: GraphContext) -> None:
+    def __init__(
+        self,
+        context: GraphContext,
+        *,
+        vision: Optional[ExplorationVisionService] = None,
+        policy: Optional[ExplorationPolicyConfig] = None,
+        dfs: Optional[DfsState] = None,
+    ) -> None:
         """
-        Initialize provider with shared context.
+        Initialize with shared context, the vision service, and DFS policies.
         """
 
         self.__context = context
+        self.__vision = vision or ExplorationVisionService(
+            llm=context.llm, use_cache=context.configuration.llm.use_cache
+        )
+        self.__policy = policy or ExplorationPolicyConfig()
+        self.__dfs = dfs or DfsState()
+        self.__navigator = DfsNavigator(dfs=self.__dfs, knowledge_graph=context.exploration_graph)
+        self.__depth_floor = DepthFloorPolicy(config=self.__policy.depth)
+        self.__dedup = DedupPolicy(dedup=self.__policy.dedup, sampling=self.__policy.sampling)
+
+    # ── Nodes ──────────────────────────────────────────────────────────────
 
     async def ground(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
-        Capture screen and update state.
+        Capture the screen, compute its MLSIA state, and reset per-step fields.
         """
 
-        if self.__context.is_cancelled:
-            result = cast("Dict[str, Any]", dict(state))
-            result[CKey.IS_COMPLETE] = True
-            result[CKey.COMPLETION_REASON] = "Cancelled"
-            return cast("ExplorationGraphState", result)
+        ctx = self.__context
+
+        if ctx.is_cancelled:
+            return self.__complete(state, reason=CompletionReason.CANCELLED)
+
+        interrupt_reason = await self.__check_interrupts()
+        if interrupt_reason is not None:
+            return self.__complete(state, reason=interrupt_reason)
 
         start_time = time.time()
 
         try:
-            screen = await self.__context.perception.perceive(
-                session_id=self.__context.workflow_id,
-                step_number=self.__context.agent_state.step_count + 1,
+            screen = await ctx.perception.perceive(
+                session_id=ctx.workflow_id, step_number=ctx.agent_state.step_count
             )
-
-            visual_hash = self.__context.perception.compute_visual_hash(capture=screen)
-
-            screen_state = ScreenState(
-                visual_hash=visual_hash,
-                activity=screen.activity,
-                timestamp=screen.timestamp,
-                activity_hash=hashlib.md5(
-                    screen.activity.encode(), usedforsecurity=False
-                ).hexdigest()[:VISUAL_HASH_LENGTH],
-            )
+            screen_state = ctx.perception.build_state(capture=screen)
             screen = screen.model_copy(update={"state": screen_state})
+            is_new = ctx.agent_state.update_screen(screen=screen_state)
 
-            is_new = self.__context.agent_state.update_screen(screen=screen_state)
-
-            result = cast("Dict[str, Any]", dict(state))
-
-            result[EKey.ACTION] = None
+            result = self.__mutable(state)
             result[CKey.CAPTURE] = screen
-            result[CKey.STEP_RESULT] = None
-            result[CKey.IS_NEW_SCREEN] = is_new
             result[CKey.SCREEN_STATE] = screen_state
+            result[CKey.IS_NEW_SCREEN] = is_new
             result[CKey.GROUNDING_DURATION] = time.time() - start_time
+            # Reset per-step fields so a stale action never leaks across steps.
+            result[EKey.ACTION] = None
+            result[CKey.ANALYSIS] = None
+            result[CKey.STEP_RESULT] = None
+            result[EKey.CONTENT_EXHAUSTED] = False
             return cast("ExplorationGraphState", result)
 
         except Exception as exception:
             logger.error(f"Exploration grounding failed: {exception}")
-            result = cast("Dict[str, Any]", dict(state))
-
+            result = self.__mutable(state)
+            result[CKey.CAPTURE] = None
             result[CKey.IS_COMPLETE] = True
             result[CKey.COMPLETION_REASON] = "Capture failed"
-
             return cast("ExplorationGraphState", result)
+
+    async def bfs_route(self, state: ExplorationGraphState) -> ExplorationGraphState:
+        """
+        Establish the root on the first step and publish the current DFS phase.
+        """
+
+        ctx = self.__context
+        dfs = self.__dfs
+
+        screen_state = get_screen_state(state)
+        fingerprint = (
+            ctx.exploration_graph.resolve_hash(screen_state.visual_hash) if screen_state else None
+        )
+
+        if dfs.root_hash is None and fingerprint:
+            dfs.root_hash = fingerprint
+            dfs.scanning_hash = fingerprint
+            dfs.phase = BFSPhase.SCAN
+
+        result = self.__mutable(state)
+        result[EKey.BFS_PHASE] = dfs.phase.value
+        return cast("ExplorationGraphState", result)
 
     async def scan(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
-        Scan the screen using Vision Service to find next action.
+        Pick the next untried interactive element via the exploration vision.
+
+        Guards the proposal against already-tried actions and over-sampled
+        categories, and applies the depth-floor veto before honouring a
+        content-exhaustion signal.
         """
 
-        if self.__context.is_cancelled:
-            result = cast("Dict[str, Any]", {})
-            result[CKey.IS_COMPLETE] = True
-            return cast("ExplorationGraphState", result)
+        ctx = self.__context
+        dfs = self.__dfs
+
+        if ctx.is_cancelled:
+            return self.__complete(state, reason=CompletionReason.CANCELLED)
 
         capture = get_capture(state)
-        if not capture:
-            result = cast("Dict[str, Any]", dict(state))
+        screen_state = get_screen_state(state)
+        if not capture or not screen_state:
+            result = self.__mutable(state)
+            result[EKey.ACTION] = None
             result[EKey.CONTENT_EXHAUSTED] = True
+            result[CKey.ANALYSIS_DURATION] = 0.0
             return cast("ExplorationGraphState", result)
 
+        fingerprint = ctx.exploration_graph.resolve_hash(screen_state.visual_hash)
+        dfs.scanning_hash = fingerprint
+
+        depth = dfs.depth
+        retries = dfs.exhaustion_retries.get(fingerprint, 0)
+        knowledge_context = ctx.exploration_graph.build_exploration_context(
+            current_hash=fingerprint,
+            depth=depth,
+            parent_description=self.__parent_description(),
+            fully_scanned_count=len(dfs.fully_scanned),
+            depth_floor_active=self.__depth_floor.is_active(depth=depth, retries=retries),
+            min_dfs_depth=self.__depth_floor.minimum,
+        )
+
         start = time.time()
-        width = capture.width
-        height = capture.height
-
-        intent = "Explore this app. Find a unique interactive element."
-
-        tools = self.__context.tool_scope.compute(
-            context=ToolPolicyContext(capabilities=self.__context.capabilities),
+        analysis = await self.__vision.scan(
+            capture=capture, knowledge_context=knowledge_context, intent=ctx.intent
         )
-        analysis = await self.__context.vision.analyze(
-            tools=tools,
-            intent=intent,
+        analysis = await self.__guard_against_repeats(
+            analysis=analysis,
             capture=capture,
-            tracking_note=None,
-            screen_width=width,
-            screen_height=height,
-            context_manager=self.__context.context_manager,
-            visual_hash=capture.state.visual_hash if capture.state is not None else "",
+            knowledge_context=knowledge_context,
+            fingerprint=fingerprint,
         )
+        analysis_duration = time.time() - start
+        ctx.metrics.record(operation="analysis", duration=analysis_duration)
 
-        if (
-            analysis.is_goal_complete
-            or not analysis.action
-            or analysis.action.action_type == ActionType.COMPLETE
-        ):
-            exhausted = True
-        else:
-            exhausted = False
+        # Register the screen and persist the VLM description in one call, then
+        # append any NEW rich observations to the activity description.
+        await ctx.exploration_graph.add_screen(
+            state=screen_state, description=analysis.screen_description
+        )
+        rich_text = analysis.metadata.get("rich_description", "")
+        if rich_text and rich_text.strip():
+            await ctx.exploration_graph.append_activity_description(
+                activity=screen_state.activity, observation=rich_text
+            )
 
-        result = cast("Dict[str, Any]", dict(state))
+        if analysis.content_exhausted:
+            return self.__handle_exhaustion(
+                state=state,
+                analysis=analysis,
+                fingerprint=fingerprint,
+                analysis_duration=analysis_duration,
+            )
+
+        # A usable action was picked: clear the exhaustion-retry counter so a
+        # future stall on this screen is not pre-empted by a stale veto.
+        dfs.exhaustion_retries.pop(fingerprint, None)
+        action = analysis.action
+        if action.action_type == ActionType.BACK:
+            action = action.model_copy(update={"bounds": None})
+
+        result = self.__mutable(state)
+        result[EKey.ACTION] = action
         result[CKey.ANALYSIS] = analysis
-        result[EKey.CONTENT_EXHAUSTED] = exhausted
-        result[CKey.ANALYSIS_DURATION] = time.time() - start
-        result[EKey.ACTION] = analysis.action if not exhausted else None
-
+        result[EKey.CONTENT_EXHAUSTED] = False
+        result[CKey.ANALYSIS_DURATION] = analysis_duration
         return cast("ExplorationGraphState", result)
 
     async def execute(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
-        Execute the action via ActionExecutor.
+        Execute the scan-recommended action via the ActionExecutor.
         """
 
-        if self.__context.is_cancelled:
-            result = cast("Dict[str, Any]", {})
-            result[CKey.IS_COMPLETE] = True
-            return cast("ExplorationGraphState", result)
+        ctx = self.__context
+
+        if ctx.is_cancelled:
+            return self.__complete(state, reason=CompletionReason.CANCELLED)
 
         action = get_action(state)
         capture = get_capture(state)
-
         if not action or not capture:
-            return state
-
-        start_time = time.time()
-
-        # Step construction for ActionExecutor
-        step = Step(
-            action=action,
-            screen_hash="0",
-            step_number=self.__context.agent_state.step_count,
-        )
+            result = self.__mutable(state)
+            result[CKey.STEP_RESULT] = None
+            result[CKey.EXECUTION_DURATION] = 0.0
+            return cast("ExplorationGraphState", result)
 
         screen_state = get_screen_state(state)
-
-        if screen_state and screen_state.activity:
-            package_name = screen_state.activity
-        else:
-            package_name = "unknown"
-
-        # Delegate to ActionExecutor for consistent retries and tracing
-        execution_result = await self.__context.action_executor.act(
-            step=step,
-            pre_capture=capture,
-            package_name=package_name,
-            session_id=self.__context.workflow_id,
+        step_result, duration = await self.__execute_action(
+            action=action, capture=capture, screen_state=screen_state
         )
 
-        # Post-action stability wait with hard cap for consistency.
-        await stability_wait(self.__context.configuration)
-
-        duration = time.time() - start_time
-
-        step_result = StepResult(
-            step=step,
-            post_hash="0",
-            screen_changed=True,
-            duration=int(duration * 1000),
-            success=execution_result.success,
-            pre_hash=screen_state.visual_hash if screen_state else "0",
-        )
-
-        result = cast("Dict[str, Any]", dict(state))
+        result = self.__mutable(state)
         result[CKey.STEP_RESULT] = step_result
         result[CKey.EXECUTION_DURATION] = duration
+        return cast("ExplorationGraphState", result)
 
+    async def navigate(self, state: ExplorationGraphState) -> ExplorationGraphState:
+        """
+        Drive BACKTRACK (hardware BACK) or ADVANCE (recovery replay) navigation.
+        """
+
+        ctx = self.__context
+        dfs = self.__dfs
+
+        if ctx.is_cancelled:
+            return self.__complete(state, reason=CompletionReason.CANCELLED)
+
+        outcome = self.__next_navigation_action()
+        if outcome.is_complete:
+            return self.__complete(state, reason=outcome.reason or _DFS_COMPLETE)
+        if outcome.action is None:
+            # Arrived at the recovery target with nothing to replay -> scan it.
+            result = self.__mutable(state)
+            result[EKey.BFS_PHASE] = dfs.phase.value
+            return cast("ExplorationGraphState", result)
+
+        capture = get_capture(state)
+        if not capture:
+            dfs.phase = BFSPhase.SCAN
+            result = self.__mutable(state)
+            result[EKey.BFS_PHASE] = dfs.phase.value
+            return cast("ExplorationGraphState", result)
+
+        screen_state = get_screen_state(state)
+        step_result, duration = await self.__execute_action(
+            action=outcome.action, capture=capture, screen_state=screen_state
+        )
+
+        result = self.__mutable(state)
+        result[EKey.ACTION] = outcome.action
+        result[CKey.ANALYSIS] = None
+        result[CKey.STEP_RESULT] = step_result
+        result[CKey.EXECUTION_DURATION] = duration
         return cast("ExplorationGraphState", result)
 
     async def record(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
-        Record result and update queues.
+        Persist the step outcome, record the transition, and advance the DFS phase.
         """
 
-        if self.__context.is_cancelled:
-            result = cast("Dict[str, Any]", {})
-            result[CKey.IS_COMPLETE] = True
-            return cast("ExplorationGraphState", result)
+        ctx = self.__context
+        dfs = self.__dfs
+
+        if ctx.is_cancelled:
+            return self.__complete(state, reason=CompletionReason.CANCELLED)
 
         step_result = get_step_result(state)
+        action = get_action(state)
+        screen_state = get_screen_state(state)
         if not step_result:
             return state
 
-        screen_state = get_screen_state(state)
-        if isinstance(screen_state, ScreenState):
-            self.__context.exploration_graph.add_screen(screen_state)
+        # Keep the walk inside the target package before recording the step.
+        scope_reason = await self.__enforce_package_scope()
+        if scope_reason is not None:
+            ctx.agent_state.record_step(result=step_result)
+            return self.__complete(state, reason=scope_reason)
 
-        if step_result.success and step_result.pre_hash and step_result.step.action:
-            self.__context.exploration_graph.record_transition(
-                destination="0",
-                origin=step_result.pre_hash,
-                action=step_result.step.action.to_description(),
-            )
+        # Re-capture the post-action screen to resolve the destination hash.
+        post_capture = await ctx.perception.perceive(
+            session_id=ctx.workflow_id, step_number=ctx.agent_state.step_count
+        )
+        post_state = ctx.perception.build_state(capture=post_capture)
+        post_hash = ctx.exploration_graph.resolve_hash(post_state.visual_hash)
+        pre_hash = ctx.exploration_graph.resolve_hash(step_result.pre_hash)
 
-        self.__context.agent_state.record_step(result=step_result)
-        current_screen = state.get(CKey.SCREEN_STATE)
-        current_activity = (
-            current_screen.activity
-            if isinstance(current_screen, ScreenState) and current_screen.activity
+        step_result = step_result.model_copy(
+            update={"post_hash": post_hash, "screen_changed": pre_hash != post_hash}
+        )
+        ctx.agent_state.record_step(result=step_result)
+
+        post_is_new = not ctx.exploration_graph.has_screen(visual_hash=post_hash)
+        await ctx.exploration_graph.add_screen(state=post_state)
+
+        await self.__persist_transition(
+            action=action,
+            pre_hash=pre_hash,
+            post_hash=post_hash,
+            success=step_result.success,
+        )
+
+        activity = (
+            screen_state.activity
+            if isinstance(screen_state, ScreenState) and screen_state.activity
             else None
         )
-
-        self.__context.history.enqueue_save_step(
-            result=step_result,
-            intent="exploration",
-            package_name=current_activity,
+        ctx.history.enqueue_save_step(
+            result=step_result, intent="exploration", package_name=activity
         )
 
-        if self.__context.agent_state.step_count >= self.__context.max_steps:
-            result = cast("Dict[str, Any]", dict(state))
-            result[CKey.IS_COMPLETE] = True
-            result[CKey.COMPLETION_REASON] = "Max steps"
-            return cast("ExplorationGraphState", result)
+        results = list(get_step_results(state))
+        results.append(step_result)
 
-        return state
+        is_complete = self.__advance_phase(
+            action=action, pre_hash=pre_hash, post_hash=post_hash, post_is_new=post_is_new
+        )
+        is_complete = is_complete or ctx.agent_state.step_count >= ctx.max_steps
 
-    async def navigate(self, state: ExplorationGraphState) -> ExplorationGraphState:
+        result = self.__mutable(state)
+        result[CKey.STEP_RESULT] = step_result
+        result[EKey.STEP_RESULTS] = results
+        result[CKey.STEP_NUMBER] = ctx.agent_state.step_count
+        result[EKey.BFS_PHASE] = dfs.phase.value
+        result[CKey.IS_COMPLETE] = is_complete
+        if ctx.agent_state.step_count >= ctx.max_steps:
+            result[CKey.COMPLETION_REASON] = CompletionReason.MAX_STEPS
+        elif is_complete:
+            result[CKey.COMPLETION_REASON] = _DFS_COMPLETE
+        return cast("ExplorationGraphState", result)
+
+    # ── Routers ────────────────────────────────────────────────────────────
+
+    def after_ground(self, state: ExplorationGraphState) -> NodeName:
         """
-        Navigate to target screen using BFS path.
-        Executes actions from pending_nav queue to reach unexplored screens.
+        Proceed to phase routing, or end when cancelled or capture failed.
+        """
+
+        if self.__context.is_cancelled or get_capture(state) is None:
+            return NodeName.END
+        return NodeName.BFS_ROUTE
+
+    def after_bfs_route(self, state: ExplorationGraphState) -> NodeName:
+        """
+        Dispatch to scan or navigate by the published DFS phase.
+        """
+
+        dfs = self.__dfs
+        if self.__context.is_cancelled:
+            return NodeName.END
+
+        phase = get_bfs_phase(state, BFSPhase.SCAN.value)
+        if phase == BFSPhase.SCAN.value:
+            return NodeName.SCAN
+        if phase == BFSPhase.BACKTRACK.value:
+            return NodeName.NAVIGATE
+        if phase == BFSPhase.ADVANCE.value:
+            if not dfs.bfs_queue and not dfs.pending_nav:
+                return NodeName.END
+            return NodeName.NAVIGATE
+        return NodeName.END
+
+    def after_scan(self, state: ExplorationGraphState) -> NodeName:
+        """
+        Execute the chosen action, or loop back to routing when exhausted.
         """
 
         if self.__context.is_cancelled:
-            result = cast("Dict[str, Any]", dict(state))
-            result[CKey.IS_COMPLETE] = True
-            return cast("ExplorationGraphState", result)
+            return NodeName.END
+        if is_content_exhausted(state) or get_action(state) is None:
+            return NodeName.BFS_ROUTE
+        return NodeName.EXECUTE
 
-        pending_nav = state.get(EKey.PENDING_NAV, [])
+    def after_record(self, state: ExplorationGraphState) -> NodeName:
+        """
+        Loop back to grounding, or end when complete or unable to continue.
+        """
 
-        # If no pending navigation, we're done with this path
-        if not pending_nav:
-            result = cast("Dict[str, Any]", dict(state))
-            result[EKey.BFS_PHASE] = "scan"
-            return cast("ExplorationGraphState", result)
+        ctx = self.__context
+        if ctx.is_cancelled or is_complete(state):
+            return NodeName.END
+        if not ctx.agent_state.can_continue:
+            return NodeName.END
+        return NodeName.GROUND
 
-        # Pop the next action to execute
-        action_dict = pending_nav[0]
-        remaining_nav = pending_nav[1:]
+    def node_callables(self) -> Dict[str, Callable[..., Any]]:
+        """
+        Maps node names to this provider's bound async node methods.
+        """
 
-        action = Action(**action_dict)
+        return {
+            NodeName.GROUND: self.ground,
+            NodeName.BFS_ROUTE: self.bfs_route,
+            NodeName.SCAN: self.scan,
+            NodeName.EXECUTE: self.execute,
+            NodeName.NAVIGATE: self.navigate,
+            NodeName.RECORD: self.record,
+        }
 
-        # Execute the navigation action
-        step = Step(
-            action=action,
-            screen_hash="0",
-            step_number=self.__context.agent_state.step_count,
+    # ── Scan helpers ─────────────────────────────────────────────────────────
+
+    def __parent_description(self) -> Optional[str]:
+        """
+        Description of the parent screen on the current DFS path, if known.
+        """
+
+        dfs = self.__dfs
+        if not dfs.current_path:
+            return None
+        parent_hash = dfs.current_path[-1][0]
+        parent_node = self.__context.exploration_graph.get_screen(visual_hash=parent_hash)
+        return parent_node.description if parent_node else None
+
+    async def __guard_against_repeats(
+        self,
+        *,
+        analysis: AnalysisResult,
+        capture: Any,
+        knowledge_context: str,
+        fingerprint: str,
+    ) -> AnalysisResult:
+        """
+        Re-prompt until the model picks a novel action or the retry budget runs out.
+
+        Rejects actions already tried on this screen and categories sampled past
+        their per-screen cap, forcing content-exhaustion if the budget is spent.
+        """
+
+        ctx = self.__context
+        dedup = self.__dedup
+        tried_keys = {
+            ActionKey(kind=action_type.lower(), label=(bucket or target).lower())
+            for action_type, target, bucket, _ in ctx.exploration_graph.get_tried_actions(
+                visual_hash=fingerprint
+            )
+        }
+
+        for retry in range(dedup.retries):
+            if analysis.content_exhausted or dedup.is_repeatable(analysis.action):
+                break
+
+            failures = self.__sampling_rejection(action=analysis.action, fingerprint=fingerprint)
+            if failures is not None:
+                analysis = await self.__vision.scan(
+                    capture=capture,
+                    knowledge_context=knowledge_context,
+                    intent=ctx.intent,
+                    failures=failures,
+                )
+                continue
+
+            if dedup.is_novel(action=analysis.action, tried=tried_keys):
+                break
+
+            action_key = dedup.key_for(analysis.action)
+            logger.warning(
+                "Dedup guard: repeated %s on screen %s (retry %d/%d)",
+                action_key,
+                fingerprint[:8],
+                retry + 1,
+                dedup.retries,
+            )
+            label = (
+                analysis.action.natural_language_target
+                or analysis.action.target
+                or action_key.label
+            )
+            analysis = await self.__vision.scan(
+                capture=capture,
+                knowledge_context=knowledge_context,
+                intent=ctx.intent,
+                failures=[
+                    f'You already tried {action_key.kind} "{label}" - '
+                    "pick a DIFFERENT untried element."
+                ],
+            )
+        else:
+            if (
+                not analysis.content_exhausted
+                and not dedup.is_repeatable(analysis.action)
+                and not dedup.is_novel(action=analysis.action, tried=tried_keys)
+            ):
+                logger.warning(
+                    "Dedup guard exhausted retries on screen %s - forcing content_exhausted",
+                    fingerprint[:8],
+                )
+                analysis.content_exhausted = True
+
+        return analysis
+
+    def __sampling_rejection(self, *, action: Action, fingerprint: str) -> Optional[List[str]]:
+        """
+        Returns rejection feedback when the action's category is over-sampled.
+        """
+
+        category = action.element_category
+        limit = self.__dedup.limit_for(category)
+        if category is None or limit is None:
+            return None
+
+        sampled = self.__context.exploration_graph.count_category_taps(
+            visual_hash=fingerprint, category=category
         )
+        if not self.__dedup.is_over_sampled(category=category, sampled=sampled):
+            return None
 
-        capture = get_capture(state)
-        if not capture:
-            result = cast("Dict[str, Any]", dict(state))
-            result[EKey.BFS_PHASE] = "scan"
-            return cast("ExplorationGraphState", result)
+        logger.warning(
+            "Sampling guard: %s sampled %d/%d on screen %s - rejecting",
+            category,
+            sampled,
+            limit,
+            fingerprint[:8],
+        )
+        return [
+            f"You have already sampled {sampled} {category} elements on this screen "
+            f"(limit {limit}). Per LIST SAMPLING, the rest are effectively tried - pick a "
+            "DIFFERENT category (P1 global_navigation, P2 primary_action, P5 secondary_control) "
+            "or press BACK."
+        ]
 
-        await self.__context.action_executor.act(
+    def __handle_exhaustion(
+        self,
+        *,
+        state: ExplorationGraphState,
+        analysis: AnalysisResult,
+        fingerprint: str,
+        analysis_duration: float,
+    ) -> ExplorationGraphState:
+        """
+        Apply the depth-floor veto or commit to backtracking from this screen.
+        """
+
+        dfs = self.__dfs
+        retries = dfs.exhaustion_retries.get(fingerprint, 0)
+        depth = dfs.depth
+
+        if self.__depth_floor.should_veto(depth=depth, retries=retries):
+            dfs.exhaustion_retries[fingerprint] = retries + 1
+            logger.info(
+                "Depth-floor veto: screen %s exhausted at depth %d (< %d); re-prompting",
+                fingerprint[:8],
+                depth,
+                self.__depth_floor.minimum,
+            )
+            exhausted = False
+        else:
+            dfs.fully_scanned.add(fingerprint)
+            dfs.phase = BFSPhase.BACKTRACK
+            logger.info("Screen %s fully scanned, backtracking (depth=%d)", fingerprint[:8], depth)
+            exhausted = True
+
+        result = self.__mutable(state)
+        result[EKey.ACTION] = None
+        result[CKey.ANALYSIS] = analysis
+        result[EKey.CONTENT_EXHAUSTED] = exhausted
+        result[CKey.ANALYSIS_DURATION] = analysis_duration
+        result[EKey.BFS_PHASE] = dfs.phase.value
+        return cast("ExplorationGraphState", result)
+
+    # ── Execution + persistence helpers ──────────────────────────────────────
+
+    async def __execute_action(
+        self, *, action: Action, capture: Any, screen_state: Optional[ScreenState]
+    ) -> tuple[StepResult, float]:
+        """
+        Run one action through the ActionExecutor and build its StepResult.
+        """
+
+        ctx = self.__context
+        pre_hash = screen_state.visual_hash if screen_state else "0"
+        step = Step(action=action, screen_hash=pre_hash, step_number=ctx.agent_state.step_count)
+
+        start_time = time.time()
+        execution_result = await ctx.action_executor.act(
             step=step,
             pre_capture=capture,
-            session_id=self.__context.workflow_id,
-            package_name=self.__context.package_name,
+            package_name=ctx.package_name,
+            session_id=ctx.workflow_id,
         )
+        # Settle the screen before record re-captures the post-action state.
+        await stability_wait(ctx.configuration)
+        duration = time.time() - start_time
+        ctx.metrics.record(operation="action", duration=duration)
 
-        # Wait for stability with hard cap for consistency.
-        await stability_wait(self.__context.configuration)
+        step_result = StepResult(
+            step=step,
+            error=execution_result.error,
+            pre_hash=pre_hash,
+            success=execution_result.success,
+            duration=int(duration * 1000),
+            post_hash="0",  # Filled in by record after re-capture.
+            screen_changed=True,
+        )
+        return step_result, duration
 
-        # Update state with remaining navigation
-        result = cast("Dict[str, Any]", dict(state))
-        result[EKey.PENDING_NAV] = remaining_nav
-        result[EKey.BFS_PHASE] = "scan" if not remaining_nav else "navigate"
+    async def __persist_transition(
+        self, *, action: Optional[Action], pre_hash: str, post_hash: str, success: bool
+    ) -> None:
+        """
+        Record the screen transition and the action experience in parallel.
+        """
 
+        if action is None:
+            return
+
+        ctx = self.__context
+        writes: List[Any] = []
+        if pre_hash != "0":
+            writes.append(
+                ctx.exploration_graph.record_transition(
+                    source_hash=pre_hash, action=action, destination_hash=post_hash
+                )
+            )
+        writes.append(
+            ctx.memory.store_experience(visual_hash=pre_hash, action=action, success=success)
+        )
+        await asyncio.gather(*writes, return_exceptions=True)
+
+    # ── DFS transition logic ─────────────────────────────────────────────────
+
+    def __advance_phase(
+        self, *, action: Optional[Action], pre_hash: str, post_hash: str, post_is_new: bool
+    ) -> bool:
+        """
+        Drive the SCAN/BACKTRACK/ADVANCE transition after an action lands.
+
+        Returns whether the DFS has exhausted all reachable screens.
+        """
+
+        dfs = self.__dfs
+
+        if dfs.phase == BFSPhase.SCAN:
+            self.__advance_from_scan(action=action, pre_hash=pre_hash, post_hash=post_hash)
+            return False
+        if dfs.phase == BFSPhase.BACKTRACK:
+            return self.__advance_from_backtrack(post_hash=post_hash)
+        if dfs.phase == BFSPhase.ADVANCE:
+            self.__advance_from_recovery(post_hash=post_hash)
+            return False
+        return False
+
+    def __advance_from_scan(
+        self, *, action: Optional[Action], pre_hash: str, post_hash: str
+    ) -> None:
+        """
+        After a scan action: descend onto the new screen or backtrack if revisited.
+        """
+
+        dfs = self.__dfs
+        if pre_hash == post_hash:
+            return  # Stayed on the same screen; remain in SCAN.
+
+        if action is not None and action.action_type == ActionType.BACK:
+            if dfs.current_path:
+                dfs.current_path = dfs.current_path[:-1]
+        elif action is not None:
+            dfs.current_path = [*dfs.current_path, (pre_hash, action)]
+
+        if post_hash in dfs.fully_scanned:
+            dfs.phase = BFSPhase.BACKTRACK
+        else:
+            dfs.phase = BFSPhase.SCAN
+
+    def __advance_from_backtrack(self, *, post_hash: str) -> bool:
+        """
+        After a BACK press: scan the landed screen, keep climbing, or recover.
+        """
+
+        dfs = self.__dfs
+        if dfs.current_path:
+            dfs.current_path = dfs.current_path[:-1]
+
+        if post_hash not in dfs.fully_scanned:
+            dfs.phase = BFSPhase.SCAN
+            dfs.scanning_hash = post_hash
+            return False
+        if dfs.current_path:
+            dfs.phase = BFSPhase.BACKTRACK
+            return False
+
+        orphans = self.__navigator.find_orphaned_screens()
+        if orphans:
+            dfs.bfs_queue.extend(orphans)
+            dfs.phase = BFSPhase.ADVANCE
+            return False
+        return True
+
+    def __advance_from_recovery(self, *, post_hash: str) -> None:
+        """
+        After a recovery hop: scan on arrival or when the replay runs out.
+        """
+
+        dfs = self.__dfs
+        if post_hash == dfs.scanning_hash:
+            dfs.pending_nav.clear()
+            dfs.phase = BFSPhase.SCAN
+        elif not dfs.pending_nav:
+            dfs.phase = BFSPhase.SCAN
+            dfs.scanning_hash = post_hash
+            dfs.current_path = self.__navigator.path_to_screen(screen_hash=post_hash)
+
+    def __next_navigation_action(self) -> _NavigationOutcome:
+        """
+        Resolve the next BACKTRACK/ADVANCE action, dequeuing recovery targets.
+        """
+
+        dfs = self.__dfs
+
+        if dfs.phase == BFSPhase.BACKTRACK:
+            if dfs.current_path:
+                return _NavigationOutcome(
+                    action=Action(
+                        action_type=ActionType.BACK,
+                        confidence=1.0,
+                        target="back navigation",
+                        rationale="DFS: backtracking from exhausted screen",
+                    )
+                )
+            # At the root with an exhausted path: switch to recovery.
+            orphans = self.__navigator.find_orphaned_screens()
+            if not orphans:
+                return _NavigationOutcome(is_complete=True, reason=_DFS_COMPLETE)
+            dfs.bfs_queue.extend(orphans)
+            dfs.phase = BFSPhase.ADVANCE
+            return self.__begin_recovery()
+
+        if dfs.pending_nav:
+            return _NavigationOutcome(action=dfs.pending_nav.pop(0))
+
+        return self.__begin_recovery()
+
+    def __begin_recovery(self) -> _NavigationOutcome:
+        """
+        Dequeue the next unscanned recovery target and plan navigation to it.
+        """
+
+        dfs = self.__dfs
+        entry = self.__next_recovery_entry()
+        if entry is None:
+            return _NavigationOutcome(is_complete=True, reason=_DFS_COMPLETE)
+
+        dfs.pending_nav = self.__navigator.compute_navigation(
+            current_path=dfs.current_path, target_path=entry.path_from_root
+        )
+        dfs.scanning_hash = entry.screen_hash
+        dfs.current_path = list(entry.path_from_root)
+
+        if not dfs.pending_nav:
+            dfs.phase = BFSPhase.SCAN
+            return _NavigationOutcome()
+        return _NavigationOutcome(action=dfs.pending_nav.pop(0))
+
+    def __next_recovery_entry(self) -> Optional[Any]:
+        """
+        Pop the next recovery-queue entry that has not been fully scanned.
+        """
+
+        dfs = self.__dfs
+        while dfs.bfs_queue:
+            entry = dfs.bfs_queue.popleft()
+            if entry.screen_hash not in dfs.fully_scanned:
+                return entry
+        return None
+
+    # ── Interrupt + scope helpers ────────────────────────────────────────────
+
+    async def __check_interrupts(self) -> Optional[str]:
+        """
+        Honour external pause/cancel signals before grounding the next step.
+
+        Returns a completion reason when the run was cancelled, else None.
+        """
+
+        ctx = self.__context
+        if await ctx.hitl.check_signal() == "CANCELLED":
+            return CompletionReason.CANCELLED
+        if await ctx.hitl.is_pause_requested():
+            logger.info("[HITL] exploration %s paused; awaiting resume", ctx.workflow_id)
+            await ctx.hitl.wait_for_resume()
+        return None
+
+    async def __enforce_package_scope(self) -> Optional[str]:
+        """
+        Keep exploration within the target package, recovering transient drift.
+
+        Presses BACK up to ``PACKAGE_RECOVERY_BACK_LIMIT`` times to dismiss
+        out-of-app overlays (share sheets, permission prompts). On recovery the
+        DFS navigation state is reset so the next step re-orients; if the device
+        stays outside the package, returns a terminal completion reason.
+        """
+
+        ctx = self.__context
+        target = ctx.package_name
+        if not target or target == "unknown":
+            return None
+
+        if await ctx.device.get_current_package() == target:
+            return None
+
+        for _ in range(PACKAGE_RECOVERY_BACK_LIMIT):
+            await ctx.device.back()
+            await stability_wait(ctx.configuration)
+            if await ctx.device.get_current_package() == target:
+                dfs = self.__dfs
+                dfs.pending_nav.clear()
+                dfs.current_path = []
+                dfs.phase = BFSPhase.SCAN
+                logger.info("Recovered to target package %s; DFS navigation reset", target)
+                return None
+
+        logger.error("Left target package %s and could not recover", target)
+        return f"Left target package {target} and could not recover"
+
+    # ── State helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def __mutable(state: ExplorationGraphState) -> Dict[str, Any]:
+        """
+        Returns a shallow mutable copy of the graph state for in-place updates.
+        """
+
+        return cast("Dict[str, Any]", dict(state))
+
+    def __complete(self, state: ExplorationGraphState, *, reason: str) -> ExplorationGraphState:
+        """
+        Returns a terminal state carrying the completion reason.
+        """
+
+        result = self.__mutable(state)
+        result[CKey.IS_COMPLETE] = True
+        result[CKey.COMPLETION_REASON] = reason
         return cast("ExplorationGraphState", result)
 
-    async def bfs_route(self, state: ExplorationGraphState) -> ExplorationGraphState:
-        """
-        Decide next BFS phase based on exploration state.
-        Routes between scanning current screen, returning to parent, or advancing to new screen.
-        """
 
-        if self.__context.is_cancelled:
-            result = cast("Dict[str, Any]", dict(state))
-            result[CKey.IS_COMPLETE] = True
-            return cast("ExplorationGraphState", result)
+class _NavigationOutcome:
+    """
+    The next navigation step: an action to run, a no-op, or DFS completion.
+    """
 
-        # Get BFS state
-        visited_hashes = state.get(EKey.VISITED_HASHES, set())
+    __slots__ = ("action", "is_complete", "reason")
 
-        # If current screen is exhausted, try to find next unexplored screen
-        if is_content_exhausted(state):
-            # Look for unexplored screens in the graph
-            unexplored = []
-            for hash_val, node in self.__context.exploration_graph.nodes.items():
-                if hash_val not in visited_hashes and node.should_explore():
-                    unexplored.append(hash_val)
-
-            if unexplored:
-                # Pick the first unexplored screen
-                target_hash = unexplored[0]
-
-                # Find path to target (simplified - just mark as visited)
-                # In a full implementation, this would use BFS to find the shortest path
-                visited_hashes.add(target_hash)
-
-                result = cast("Dict[str, Any]", dict(state))
-                result[EKey.SCANNING_HASH] = target_hash
-                result[EKey.VISITED_HASHES] = visited_hashes
-                result[EKey.BFS_PHASE] = "navigate"
-                result[EKey.PENDING_NAV] = []  # Would contain path actions in full implementation
-                return cast("ExplorationGraphState", result)
-            else:
-                # No more screens to explore
-                result = cast("Dict[str, Any]", dict(state))
-                result[CKey.IS_COMPLETE] = True
-                result[CKey.COMPLETION_REASON] = "All screens explored"
-                return cast("ExplorationGraphState", result)
-
-        # Continue scanning current screen
-        result = cast("Dict[str, Any]", dict(state))
-        result[EKey.BFS_PHASE] = "scan"
-        return cast("ExplorationGraphState", result)
+    def __init__(
+        self,
+        *,
+        action: Optional[Action] = None,
+        is_complete: bool = False,
+        reason: Optional[str] = None,
+    ) -> None:
+        self.action = action
+        self.is_complete = is_complete
+        self.reason = reason
 
 
 class ExplorationGraphFactory:
     """
-    Factory for building the Exploration Node functions.
+    Factory for the exploration node provider.
     """
 
     @staticmethod
-    def build(context: GraphContext) -> Dict[str, Callable[..., Any]]:
+    def build(context: GraphContext) -> ExplorationNodeProvider:
         """
-        Builds the node functions for the exploration graph.
+        Builds the provider that supplies the exploration nodes and routers.
         """
 
-        from fathom.constants.graph import NodeName
-
-        provider = ExplorationNodeProvider(context=context)
-
-        return {
-            NodeName.SCAN: provider.scan,
-            NodeName.RECORD: provider.record,
-            NodeName.GROUND: provider.ground,
-            NodeName.EXECUTE: provider.execute,
-            NodeName.NAVIGATE: provider.navigate,
-            NodeName.BFS_ROUTE: provider.bfs_route,
-        }
+        return ExplorationNodeProvider(context=context)

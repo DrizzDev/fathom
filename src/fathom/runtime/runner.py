@@ -16,6 +16,7 @@ from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.core.services.telemetry import PhaseAnnouncer
+from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
@@ -28,7 +29,6 @@ from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
 from fathom.runtime.inspection import RuntimeConfigurationInspector
 from fathom.schemas.configuration import FathomConfiguration
-from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.qualification import QualificationVerdict
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
@@ -929,25 +929,29 @@ class FathomRunner:
                 "experience_count": 0,
             }
 
-    async def __export_graph(self, graph: ExplorationGraph) -> Dict[str, Any]:
+    async def __export_graph(self, graph: KnowledgeGraph) -> Dict[str, Any]:
         """
         Export exploration graph to dictionary.
         """
 
         try:
-            nodes_dict = {}
-
-            for fingerprint, node in graph.nodes.items():
-                nodes_dict[fingerprint] = {
-                    "visits": node.visits,
+            nodes_dict = {
+                fingerprint: {
+                    "visits": node.visit_count,
                     "activity": node.activity,
-                    "actions": list(node.actions),
-                    "transitions": node.transitions,
+                    "description": node.description,
                 }
+                for fingerprint, node in graph.nodes.items()
+            }
 
             edges_list = [
-                {"origin": origin, "action": action, "destination": dest}
-                for origin, action, dest in graph.edges
+                {
+                    "origin": edge.source_hash,
+                    "action": edge.action_target or edge.action_type,
+                    "destination": edge.destination_hash,
+                }
+                for edges in graph.edges.values()
+                for edge in edges
             ]
 
             return {

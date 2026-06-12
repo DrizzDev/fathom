@@ -36,6 +36,8 @@ from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
+from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
+from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.interfaces.abort import AbortDetectorPort
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.embedding import EmbeddingPort
@@ -58,7 +60,6 @@ from fathom.schemas.capabilities import (
     RuntimeCapabilities,
 )
 from fathom.schemas.configuration import FathomConfiguration
-from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.perception import PerceptionConfiguration  # noqa: TC001
 from fathom.schemas.run import RealignmentPolicy
@@ -114,7 +115,7 @@ class GraphContext:
         action_executor: Optional[ActionExecutor] = None,
         pixel_overlay: Optional[OverlayDetectorPort] = None,
         ensemble: Optional[EnsembleLocalizerService] = None,
-        exploration_graph: Optional[ExplorationGraph] = None,
+        exploration_graph: Optional[KnowledgeGraph] = None,
         perception_service: Optional[PerceptionService] = None,
         resolution: Optional[ReferenceResolutionService] = None,
         screen_observer: Optional[ScreenObservationService] = None,
@@ -143,7 +144,9 @@ class GraphContext:
         self.__telemetry = telemetry
         self.__path_manager = path_manager
 
-        self.__exploration_graph = exploration_graph or ExplorationGraph()
+        self.__exploration_graph = exploration_graph or KnowledgeGraph(
+            provider=SQLiteMemoryProvider(database_path=path_manager.get_knowledge_db_path())
+        )
 
         self.__use_xml = use_xml
         self.__max_steps = max_steps
@@ -556,12 +559,9 @@ class GraphContext:
         self.__cancel_event.set()
 
     @property
-    def exploration_graph(self) -> ExplorationGraph:
+    def exploration_graph(self) -> KnowledgeGraph:
         """
-        Returns the ExplorationGraph instance.
-
-        Note: ExplorationGraph is designed to be mutated.
-        If immutability is needed, implement copy() method on ExplorationGraph.
+        Returns the canonicalizing KnowledgeGraph backing the exploration run.
         """
 
         return self.__exploration_graph
