@@ -6,6 +6,7 @@ from typing import Any, Dict, Literal, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fathom.constants import CONTROL_ACTION_TYPES, ActionExecutionKind, ActionType
+from fathom.constants.exploration import COORD_BUCKET_GRID_SIZE
 
 
 class CoordinateSource(StrEnum):
@@ -195,6 +196,15 @@ class Bounds(BaseModel):
 
         return self.y + self.height // 2
 
+    def coord_bucket(self, *, grid: int = COORD_BUCKET_GRID_SIZE) -> str:
+        """
+        Quantized centre on the coordinate grid for stable element dedup.
+        """
+
+        center_x = self.center_x if self.width > 0 else self.x
+        center_y = self.center_y if self.height > 0 else self.y
+        return f"{center_x // grid}_{center_y // grid}"
+
     def to_logical_dispatch(
         self,
         *,
@@ -368,6 +378,27 @@ class Action(BaseModel):
     overlay_detected: bool = Field(
         default=False,
         description="True when this action is specifically handling an overlay/popup blocker.",
+    )
+
+    # Exploration grounding (VLM-provided; optional; consumed by the exploration strategy)
+    region: Optional[
+        Literal["top_bar", "bottom_nav", "content", "modal", "overlay", "fab", "footer"]
+    ] = Field(
+        default=None,
+        description="Screen region the element lives in, for stable grouping and dedup.",
+    )
+    element_category: Optional[
+        Literal[
+            "global_navigation",
+            "primary_action",
+            "content_item",
+            "filter_or_category",
+            "secondary_control",
+            "overlay_dismiss",
+        ]
+    ] = Field(
+        default=None,
+        description="Priority-bucketed element category (P1-P5 / overlay_dismiss) for sampling.",
     )
 
     # Script export classification (VLM-provided; optional; fallback is TargetClassifier)

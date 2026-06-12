@@ -15,7 +15,7 @@ from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.storage import StoragePort
 from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
-from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.ui import LabeledElement
 
 if TYPE_CHECKING:
@@ -210,6 +210,29 @@ class PerceptionService:
         except Exception as exception:
             logger.warning(f"Could not compute interaction_hash: {exception}")
             return ZERO_HASH
+
+    def build_state(
+        self,
+        *,
+        capture: ScreenCapture,
+        elements: Optional[List[LabeledElement]] = None,
+    ) -> ScreenState:
+        """
+        Composes a full MLSIA screen state (activity, visual, xml, interaction hashes).
+        """
+
+        activity_hash = hashlib.md5(capture.activity.encode(), usedforsecurity=False).hexdigest()[
+            :VISUAL_HASH_LENGTH
+        ]
+
+        return ScreenState(
+            activity=capture.activity,
+            timestamp=capture.timestamp,
+            activity_hash=activity_hash,
+            visual_hash=self.compute_visual_hash(capture=capture),
+            xml_hash=self.compute_xml_hash(capture=capture),
+            interaction_hash=self.compute_interaction_hash(elements=elements),
+        )
 
     def __extract_element_identities(self, elements: List[LabeledElement]) -> List[str]:
         """

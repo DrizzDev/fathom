@@ -274,6 +274,12 @@ class ScriptExportError(FathomError):
     """
 
 
+class GraphExportError(FathomError):
+    """
+    Exploration graph export failed.
+    """
+
+
 class HITLNotAvailableError(FathomError):
     """
     Raised when HITL is requested on a runtime with no human available.

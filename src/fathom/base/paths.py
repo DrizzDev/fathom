@@ -70,6 +70,13 @@ class SharedPathManager:
 
         return self.__get_category_root("history", session_id)
 
+    def get_report_directory(self, *, session_id: str) -> Path:
+        """
+        Get directory for exploration graph exports and reports.
+        """
+
+        return self.__get_category_root("reports", session_id)
+
     def get_annotated_path(self, *, session_id: str, filename: str) -> Path:
         """
         Get the full path for an annotated image.
