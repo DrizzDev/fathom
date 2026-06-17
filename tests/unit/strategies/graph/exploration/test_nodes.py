@@ -47,9 +47,11 @@ def _graph_mock(**overrides: Any) -> Mock:
         get_screen=Mock(return_value=None),
         count_category_taps=Mock(return_value=0),
         has_screen=Mock(return_value=False),
+        exhausted_hashes=Mock(return_value=set()),
         add_screen=AsyncMock(),
         append_activity_description=AsyncMock(),
         record_transition=AsyncMock(),
+        mark_exhausted=AsyncMock(),
     )
     for key, value in overrides.items():
         setattr(graph, key, value)
@@ -192,6 +194,20 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         _args, kwargs = graph.build_exploration_context.call_args
         self.assertEqual(kwargs["fully_scanned"], {"h1", "h2"})
 
+    async def test_persists_exhaustion_past_the_depth_floor(self) -> None:
+        graph = _graph_mock()
+        vision = Mock(
+            scan=AsyncMock(return_value=_analysis(action=_action(), content_exhausted=True))
+        )
+        context = self.__context(graph)
+        deep_path: List[Tuple[str, Action]] = [(f"h{i}", _action()) for i in range(4)]
+        dfs = DfsState(current_path=deep_path)
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("scr")}
+
+        await ExplorationNodeProvider(context=context, vision=vision, dfs=dfs).scan(state)
+
+        graph.mark_exhausted.assert_awaited_once_with(visual_hash="scr")
+
     async def test_dedup_guard_reprompts_when_action_already_tried(self) -> None:
         tried = _action("Home")
         fresh = _action("Search")
@@ -315,6 +331,29 @@ class TestBfsRouteNode(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(dfs.root_hash, "root")
         self.assertEqual(result[EKey.BFS_PHASE], BFSPhase.SCAN.value)
+
+    async def test_seeds_fully_scanned_and_backtracks_exhausted_root(self) -> None:
+        context = Mock(exploration_graph=_graph_mock(exhausted_hashes=Mock(return_value={"root"})))
+        dfs = DfsState()
+        state = {CKey.SCREEN_STATE: _screen_state("root")}
+
+        result = await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).bfs_route(
+            state
+        )
+
+        self.assertIn("root", dfs.fully_scanned)
+        self.assertEqual(dfs.phase, BFSPhase.BACKTRACK)
+        self.assertEqual(result[EKey.BFS_PHASE], BFSPhase.BACKTRACK.value)
+
+    async def test_seeds_frontier_but_scans_unexhausted_root(self) -> None:
+        context = Mock(exploration_graph=_graph_mock(exhausted_hashes=Mock(return_value={"other"})))
+        dfs = DfsState()
+        state = {CKey.SCREEN_STATE: _screen_state("root")}
+
+        await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).bfs_route(state)
+
+        self.assertEqual(dfs.fully_scanned, {"other"})
+        self.assertEqual(dfs.phase, BFSPhase.SCAN)
 
 
 class TestRouters(unittest.TestCase):

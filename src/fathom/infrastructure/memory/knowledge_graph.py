@@ -44,6 +44,7 @@ class GraphNode:
     activity_hash: Optional[str] = None
     xml_hash: Optional[str] = None
     interaction_hash: Optional[str] = None
+    exhausted: bool = False
 
 
 @dataclass
@@ -202,6 +203,8 @@ class KnowledgeGraph:
                 existing.description = screen["description"]
             if not existing.rich_description and screen.get("rich_description"):
                 existing.rich_description = screen["rich_description"]
+            if screen.get("exhausted"):
+                existing.exhausted = True
             self.__backfill_hashes(node=existing, source=screen)
             return
 
@@ -216,6 +219,7 @@ class KnowledgeGraph:
             activity_hash=screen.get("activity_hash"),
             xml_hash=screen.get("xml_hash"),
             interaction_hash=screen.get("interaction_hash"),
+            exhausted=bool(screen.get("exhausted", False)),
         )
 
     def __hydrate_transition(self, *, transition: Dict[str, Any]) -> None:
@@ -357,6 +361,17 @@ class KnowledgeGraph:
             visual_hash=canonical, rich_description=rich_description
         )
 
+    async def mark_exhausted(self, *, visual_hash: str) -> None:
+        """
+        Records that a screen is fully explored, in memory and in persistence.
+        """
+
+        canonical = self.__resolve(visual_hash)
+        node = self.__nodes.get(canonical)
+        if node:
+            node.exhausted = True
+        await self.__provider.mark_exhausted(visual_hash=canonical)
+
     async def append_activity_description(self, *, activity: str, observation: str) -> None:
         """
         Appends a new observation to the activity's accumulated rich description.
@@ -487,6 +502,13 @@ class KnowledgeGraph:
         """
 
         return [node for node in self.__nodes.values() if node.visit_count < max_visits]
+
+    def exhausted_hashes(self) -> Set[str]:
+        """
+        Canonical hashes of screens already marked fully explored.
+        """
+
+        return {hash_value for hash_value, node in self.__nodes.items() if node.exhausted}
 
     def get_screen(self, *, visual_hash: str) -> Optional[GraphNode]:
         """

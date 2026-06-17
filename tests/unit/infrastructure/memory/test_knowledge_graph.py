@@ -29,6 +29,9 @@ class _FakeProvider:
     async def update_rich_description(self, visual_hash: str, rich_description: str) -> None:
         return None
 
+    async def mark_exhausted(self, visual_hash: str) -> None:
+        return None
+
     async def store_transition(
         self, source_hash: str, action: Action, destination_hash: str
     ) -> None:
@@ -168,6 +171,34 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         stats = self.__graph.get_stats()
         self.assertEqual(stats["unique_screens"], 2)
         self.assertEqual(stats["total_transitions"], 1)
+
+    async def test_mark_exhausted_flags_node(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+        await self.__graph.mark_exhausted(visual_hash="aaaaaaaaaaaaaaaa")
+
+        node = self.__graph.get_screen(visual_hash="aaaaaaaaaaaaaaaa")
+        assert node is not None
+        self.assertTrue(node.exhausted)
+        self.assertEqual(self.__graph.exhausted_hashes(), {"aaaaaaaaaaaaaaaa"})
+
+    async def test_load_restores_exhausted_flag(self) -> None:
+        row = {
+            "visual_hash": "aaaaaaaaaaaaaaaa",
+            "activity": "com.app/.Feed",
+            "description": "Feed",
+            "first_seen": 1,
+            "last_seen": 2,
+            "visit_count": 1,
+            "rich_description": None,
+            "activity_hash": "act",
+            "xml_hash": None,
+            "interaction_hash": None,
+            "exhausted": True,
+        }
+        graph = KnowledgeGraph(provider=_FakeProvider(screens=[row]))
+        await graph.load()
+
+        self.assertIn("aaaaaaaaaaaaaaaa", graph.exhausted_hashes())
 
     async def test_build_exploration_context_lists_tried_and_forbidden(self) -> None:
         await self.__graph.add_screen(

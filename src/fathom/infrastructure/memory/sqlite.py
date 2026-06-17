@@ -136,6 +136,10 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute("ALTER TABLE screens ADD COLUMN rich_description TEXT")
             migrated = True
 
+        if "exhausted" not in screen_columns:
+            await db.execute("ALTER TABLE screens ADD COLUMN exhausted INTEGER DEFAULT 0")
+            migrated = True
+
         for column in ("activity_hash", "xml_hash", "interaction_hash"):
             if column not in screen_columns:
                 await db.execute(f"ALTER TABLE screens ADD COLUMN {column} TEXT")
@@ -212,6 +216,22 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute(
                 "UPDATE screens SET rich_description = ? WHERE visual_hash = ?",
                 (rich_description, visual_hash),
+            )
+            await db.commit()
+
+    async def mark_exhausted(self, visual_hash: str) -> None:
+        """
+        Flags a screen as fully explored so a later run can skip re-scanning it.
+        """
+
+        if self.__readonly:
+            return
+
+        await self.__initialize()
+
+        async with aiosqlite.connect(self.__path) as db:
+            await db.execute(
+                "UPDATE screens SET exhausted = 1 WHERE visual_hash = ?", (visual_hash,)
             )
             await db.commit()
 
@@ -393,7 +413,8 @@ class SQLiteMemoryProvider(IMemoryProvider):
             aiosqlite.connect(self.__path) as db,
             db.execute(
                 "SELECT visual_hash, activity, description, first_seen, last_seen, "
-                "visit_count, rich_description, activity_hash, xml_hash, interaction_hash "
+                "visit_count, rich_description, activity_hash, xml_hash, interaction_hash, "
+                "exhausted "
                 "FROM screens ORDER BY last_seen DESC"
             ) as cursor,
         ):
@@ -410,6 +431,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         "activity_hash": row[7],
                         "xml_hash": row[8],
                         "interaction_hash": row[9],
+                        "exhausted": bool(row[10]),
                     }
                 )
 

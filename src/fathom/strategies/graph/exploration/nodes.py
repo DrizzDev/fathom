@@ -139,9 +139,15 @@ class ExplorationNodeProvider:
         )
 
         if dfs.root_hash is None and fingerprint:
+            # First step of the run: restore the exhaustion frontier from the
+            # persisted graph so a relaunch resumes instead of re-treading
+            # screens it already fully explored in an earlier run.
+            dfs.fully_scanned |= ctx.exploration_graph.exhausted_hashes()
             dfs.root_hash = fingerprint
             dfs.scanning_hash = fingerprint
-            dfs.phase = BFSPhase.SCAN
+            # An entry screen already exhausted last run is not worth re-scanning;
+            # backtrack straight into frontier recovery instead of SCAN.
+            dfs.phase = BFSPhase.BACKTRACK if fingerprint in dfs.fully_scanned else BFSPhase.SCAN
 
         result = self.__mutable(state)
         result[EKey.BFS_PHASE] = dfs.phase.value
@@ -212,7 +218,7 @@ class ExplorationNodeProvider:
             )
 
         if analysis.content_exhausted:
-            return self.__handle_exhaustion(
+            return await self.__handle_exhaustion(
                 state=state,
                 analysis=analysis,
                 fingerprint=fingerprint,
@@ -576,7 +582,7 @@ class ExplorationNodeProvider:
             "or press BACK."
         ]
 
-    def __handle_exhaustion(
+    async def __handle_exhaustion(
         self,
         *,
         state: ExplorationGraphState,
@@ -603,6 +609,7 @@ class ExplorationNodeProvider:
             exhausted = False
         else:
             dfs.fully_scanned.add(fingerprint)
+            await self.__context.exploration_graph.mark_exhausted(visual_hash=fingerprint)
             dfs.phase = BFSPhase.BACKTRACK
             logger.info("Screen %s fully scanned, backtracking (depth=%d)", fingerprint[:8], depth)
             exhausted = True

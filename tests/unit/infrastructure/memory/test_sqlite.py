@@ -114,6 +114,31 @@ class TestSQLiteMemoryProvider(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(screens[0]["rich_description"], "## Elements\nCard")
 
+    async def test_mark_exhausted_persists(self) -> None:
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+        await self.__provider.mark_exhausted(visual_hash="a1b2c3d4e5f60718")
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertTrue(screens[0]["exhausted"])
+
+    async def test_screens_default_to_not_exhausted(self) -> None:
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertFalse(screens[0]["exhausted"])
+
+    async def test_revisit_preserves_exhausted_flag(self) -> None:
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+        await self.__provider.mark_exhausted(visual_hash="a1b2c3d4e5f60718")
+        # A later visit upserts the row but must not clear the exhaustion flag.
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertTrue(screens[0]["exhausted"])
+
     async def test_readonly_provider_drops_writes(self) -> None:
         readonly = SQLiteMemoryProvider(
             database_path=Path(self.__tmp.name) / "readonly.db", readonly=True
