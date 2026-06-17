@@ -112,6 +112,9 @@ class DfsNavigator:
                 )
             )
 
+        # Recover the screens closest to the root first: fewer hops to replay and
+        # less BACK/forward churn than diving into the deepest branch immediately.
+        orphans.sort(key=lambda entry: entry.depth)
         return orphans
 
     def __path_from_root(self, *, screen_hash: str) -> List[Tuple[str, Action]]:

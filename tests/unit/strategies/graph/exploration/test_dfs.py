@@ -116,6 +116,26 @@ class TestFindOrphanedScreens(unittest.TestCase):
         self.assertEqual(entry.parent_hash, "mid")
         self.assertEqual(entry.action_from_parent.target, "Open leaf")
 
+    def test_orders_frontier_nearest_to_root_first(self) -> None:
+        near = self.__edge(source="root", destination="near", action_target="Open near")
+        first = self.__edge(source="root", destination="a", action_target="a")
+        second = self.__edge(source="a", destination="b", action_target="b")
+        third = self.__edge(source="b", destination="far", action_target="far")
+        knowledge_graph = self.__knowledge_graph(
+            # 'far' precedes 'near' in node order, to prove the result is re-ordered.
+            nodes=["root", "far", "near"],
+            paths={
+                "far": [("root", None), ("a", first), ("b", second), ("far", third)],
+                "near": [("root", None), ("near", near)],
+            },
+        )
+        dfs = DfsState(root_hash="root")
+
+        orphans = DfsNavigator(dfs=dfs, knowledge_graph=knowledge_graph).find_orphaned_screens()
+
+        self.assertEqual([entry.screen_hash for entry in orphans], ["near", "far"])
+        self.assertEqual([entry.depth for entry in orphans], [1, 3])
+
     def test_falls_back_to_inbound_edge_when_no_rooted_path(self) -> None:
         edge = self.__edge(source="src", destination="child", action_target="Open child")
         knowledge_graph = self.__knowledge_graph(nodes=["child"], inbound={"child": ("src", edge)})
