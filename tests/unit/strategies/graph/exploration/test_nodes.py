@@ -11,6 +11,7 @@ from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.core.exceptions import DeviceError
 from fathom.schemas.actions import Action
+from fathom.schemas.exploration import TriedAction
 from fathom.schemas.results import AnalysisResult, ExecutionResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
@@ -179,13 +180,31 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([outcome.target for outcome in recent], ["b", "c", "d"])
         self.assertFalse(recent[1].screen_changed)
 
+    async def test_scan_passes_fully_scanned_set_to_context(self) -> None:
+        vision = Mock(scan=AsyncMock(return_value=_analysis(action=_action("Home"))))
+        graph = _graph_mock()
+        context = self.__context(graph)
+        dfs = DfsState(fully_scanned={"h1", "h2"})
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state()}
+
+        await ExplorationNodeProvider(context=context, vision=vision, dfs=dfs).scan(state)
+
+        _args, kwargs = graph.build_exploration_context.call_args
+        self.assertEqual(kwargs["fully_scanned"], {"h1", "h2"})
+
     async def test_dedup_guard_reprompts_when_action_already_tried(self) -> None:
         tried = _action("Home")
         fresh = _action("Search")
         vision = Mock(
             scan=AsyncMock(side_effect=[_analysis(action=tried), _analysis(action=fresh)])
         )
-        graph = _graph_mock(get_tried_actions=Mock(return_value=[("tap", "Home", None, None)]))
+        graph = _graph_mock(
+            get_tried_actions=Mock(
+                return_value=[
+                    TriedAction(action_type="tap", target="Home", destination_hash="dest")
+                ]
+            )
+        )
         context = self.__context(graph)
         state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state()}
 

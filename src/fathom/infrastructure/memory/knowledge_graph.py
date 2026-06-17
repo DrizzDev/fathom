@@ -3,14 +3,14 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import AbstractSet, Any, Dict, List, Optional, Set, Tuple
 
 from fathom.constants import ActionType
 from fathom.infrastructure.memory.algorithms import GraphAlgorithms
 from fathom.infrastructure.memory.canonical import ScreenCanonicalizer
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.actions import Action
-from fathom.schemas.exploration import ActionOutcome
+from fathom.schemas.exploration import ActionOutcome, TriedAction
 from fathom.schemas.screens import ScreenState
 
 logger = getLogger(__name__)
@@ -549,21 +549,24 @@ class KnowledgeGraph:
             if edge.element_category == category and edge.action_type in SAMPLING_ACTION_TYPES
         )
 
-    def get_tried_actions(
-        self, *, visual_hash: str
-    ) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
+    def get_tried_actions(self, *, visual_hash: str) -> List[TriedAction]:
         """
-        Returns (action_type, target, coord_bucket, destination_description) per tried edge.
+        Returns the actions already exercised on a screen and where each led.
         """
 
-        result: List[Tuple[str, str, Optional[str], Optional[str]]] = []
+        result: List[TriedAction] = []
         for edge in self.__edges.get(self.__resolve(visual_hash), []):
             if edge.action_type == ActionType.BACK.value:
                 continue
             destination = self.__nodes.get(edge.destination_hash)
-            destination_description = destination.description if destination else None
             result.append(
-                (edge.action_type, edge.action_target, edge.coord_bucket, destination_description)
+                TriedAction(
+                    action_type=edge.action_type,
+                    target=edge.action_target,
+                    coord_bucket=edge.coord_bucket,
+                    destination_hash=edge.destination_hash,
+                    destination_description=destination.description if destination else None,
+                )
             )
         return result
 
@@ -574,6 +577,7 @@ class KnowledgeGraph:
         depth: Optional[int] = None,
         parent_description: Optional[str] = None,
         fully_scanned_count: Optional[int] = None,
+        fully_scanned: Optional[Set[str]] = None,
         recent_actions: Optional[List[ActionOutcome]] = None,
         depth_floor_active: bool = False,
         min_dfs_depth: int = 0,
@@ -627,7 +631,9 @@ class KnowledgeGraph:
                 )
 
         if current_hash:
-            self.__append_tried_actions(lines=lines, current_hash=current_hash)
+            self.__append_tried_actions(
+                lines=lines, current_hash=current_hash, fully_scanned=fully_scanned
+            )
 
         self.__append_recent_discoveries(lines=lines)
 
@@ -694,7 +700,9 @@ class KnowledgeGraph:
                 "out and find a different entry point."
             )
 
-    def __append_tried_actions(self, *, lines: List[str], current_hash: str) -> None:
+    def __append_tried_actions(
+        self, *, lines: List[str], current_hash: str, fully_scanned: Optional[Set[str]] = None
+    ) -> None:
         """
         Adds the already-tried actions and forbidden targets for the current screen.
         """
@@ -704,15 +712,16 @@ class KnowledgeGraph:
             lines.append("ALREADY TRIED ON THIS SCREEN: (none -- this screen is fresh)")
             return
 
+        explored: AbstractSet[str] = fully_scanned or frozenset()
         lines.append("ALREADY TRIED ON THIS SCREEN:")
-        for action_type, action_target, _bucket, destination_description in tried[
-            :MAX_TRIED_IN_CONTEXT
-        ]:
-            entry = f"- {action_type}"
-            if action_target:
-                entry += f' "{action_target}"'
-            if destination_description:
-                entry += f" -> {destination_description}"
+        for action in tried[:MAX_TRIED_IN_CONTEXT]:
+            entry = f"- {action.action_type}"
+            if action.target:
+                entry += f' "{action.target}"'
+            if action.destination_description:
+                entry += f" -> {action.destination_description}"
+            if action.destination_hash in explored:
+                entry += " [already fully explored - low value]"
             lines.append(entry)
 
         excess = len(tried) - MAX_TRIED_IN_CONTEXT
@@ -720,7 +729,7 @@ class KnowledgeGraph:
             lines.append(f"... and {excess} more tried")
         lines.append(f"ACTIONS TRIED: {len(tried)}")
 
-        forbidden = sorted({target for _, target, _, _ in tried if target})
+        forbidden = sorted({action.target for action in tried if action.target})
         if forbidden:
             lines.append(
                 "FORBIDDEN TARGETS (do NOT select any of these): "

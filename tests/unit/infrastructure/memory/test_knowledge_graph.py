@@ -134,7 +134,7 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         tried = self.__graph.get_tried_actions(visual_hash="aaaaaaaaaaaaaaaa")
 
         self.assertEqual(len(tried), 1)
-        self.assertEqual(tried[0][1], "Card")
+        self.assertEqual(tried[0].target, "Card")
 
     async def test_count_category_taps_aggregates_activity(self) -> None:
         await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
@@ -240,6 +240,26 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         )
         # An in-place prediction must not trigger the inert warning.
         self.assertIn('tap "Toggle" (expected in_screen_change) -> ok, NO screen change', context)
+
+    async def test_tried_action_flagged_when_destination_fully_explored(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+        await self.__graph.add_screen(
+            state=self.__screen(visual_hash="bbbbbbbbbbbbbbbb", activity_hash="actB")
+        )
+        await self.__graph.record_transition(
+            source_hash="aaaaaaaaaaaaaaaa",
+            action=self.__tap(target="Home tab"),
+            destination_hash="bbbbbbbbbbbbbbbb",
+        )
+
+        flagged = self.__graph.build_exploration_context(
+            current_hash="aaaaaaaaaaaaaaaa", fully_scanned={"bbbbbbbbbbbbbbbb"}
+        )
+        unflagged = self.__graph.build_exploration_context(current_hash="aaaaaaaaaaaaaaaa")
+
+        self.assertIn('tap "Home tab"', flagged)
+        self.assertIn("already fully explored", flagged)
+        self.assertNotIn("already fully explored", unflagged)
 
     async def test_build_exploration_context_omits_recent_actions_when_empty(self) -> None:
         await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))

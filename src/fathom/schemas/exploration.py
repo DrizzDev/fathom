@@ -55,6 +55,24 @@ class ActionOutcome(BaseModel):
         )
 
 
+class TriedAction(BaseModel):
+    """
+    An action already exercised on a screen and the screen it led to.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    action_type: str = Field(description="Action type that was tried")
+    target: str = Field(default="", description="Element the action addressed")
+    coord_bucket: Optional[str] = Field(
+        default=None, description="Coordinate bucket of the tap, when grounded"
+    )
+    destination_hash: str = Field(description="Canonical hash of the resulting screen")
+    destination_description: Optional[str] = Field(
+        default=None, description="Description of the resulting screen, when known"
+    )
+
+
 class ExploredScreen(BaseModel):
     """
     A single screen discovered during exploration.

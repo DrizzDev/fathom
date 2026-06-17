@@ -181,6 +181,7 @@ class ExplorationNodeProvider:
             depth=depth,
             parent_description=self.__parent_description(),
             fully_scanned_count=len(dfs.fully_scanned),
+            fully_scanned=dfs.fully_scanned,
             recent_actions=self.__recent_actions(state=state),
             depth_floor_active=self.__depth_floor.is_active(depth=depth, retries=retries),
             min_dfs_depth=self.__depth_floor.minimum,
@@ -485,10 +486,11 @@ class ExplorationNodeProvider:
         ctx = self.__context
         dedup = self.__dedup
         tried_keys = {
-            ActionKey(kind=action_type.lower(), label=(bucket or target).lower())
-            for action_type, target, bucket, _ in ctx.exploration_graph.get_tried_actions(
-                visual_hash=fingerprint
+            ActionKey(
+                kind=tried.action_type.lower(),
+                label=(tried.coord_bucket or tried.target).lower(),
             )
+            for tried in ctx.exploration_graph.get_tried_actions(visual_hash=fingerprint)
         }
 
         for retry in range(dedup.retries):
