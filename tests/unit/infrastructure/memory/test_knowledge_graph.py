@@ -4,6 +4,7 @@ import unittest
 from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
+from fathom.constants.exploration import ExpectedOutcome
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.exploration import ActionOutcome
@@ -209,6 +210,36 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         self.assertIn('tap "Home tab" -> ok, new screen', context)
         self.assertIn('tap "Filter" -> ok, NO screen change', context)
         self.assertIn('tap "Dead" -> FAILED', context)
+
+    async def test_recent_action_feedback_renders_expected_and_flags_inert(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+        recent = [
+            ActionOutcome(
+                kind=ActionType.TAP,
+                target="Buy",
+                success=True,
+                screen_changed=False,
+                expected=ExpectedOutcome.NEW_SCREEN,
+            ),
+            ActionOutcome(
+                kind=ActionType.TAP,
+                target="Toggle",
+                success=True,
+                screen_changed=False,
+                expected=ExpectedOutcome.IN_SCREEN_CHANGE,
+            ),
+        ]
+
+        context = self.__graph.build_exploration_context(
+            current_hash="aaaaaaaaaaaaaaaa", recent_actions=recent
+        )
+
+        # A transition-implying prediction that produced no change is flagged inert.
+        self.assertIn(
+            'tap "Buy" (expected new_screen) -> NO change despite expecting a transition', context
+        )
+        # An in-place prediction must not trigger the inert warning.
+        self.assertIn('tap "Toggle" (expected in_screen_change) -> ok, NO screen change', context)
 
     async def test_build_exploration_context_omits_recent_actions_when_empty(self) -> None:
         await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))

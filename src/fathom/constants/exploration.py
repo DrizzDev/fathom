@@ -53,6 +53,39 @@ class RecommendationLevel(StrEnum):
     WARNING = "warning"
 
 
+class ExpectedOutcome(StrEnum):
+    """
+    The screen effect the model predicts an action will produce.
+    """
+
+    NEW_SCREEN = "new_screen"
+    IN_SCREEN_CHANGE = "in_screen_change"
+    DIALOG_OR_POPUP = "dialog_or_popup"
+    SCROLL_CONTENT = "scroll_content"
+    DISMISS_OVERLAY = "dismiss_overlay"
+    GO_BACK = "go_back"
+
+    @property
+    def implies_transition(self) -> bool:
+        """
+        Whether the prediction expects the screen to visibly change.
+        """
+
+        return self in _TRANSITION_OUTCOMES
+
+
+# Predictions that should leave the device on a visibly different screen; a tap
+# that claims one of these yet leaves the screen unchanged is likely inert.
+_TRANSITION_OUTCOMES: frozenset[ExpectedOutcome] = frozenset(
+    {
+        ExpectedOutcome.NEW_SCREEN,
+        ExpectedOutcome.DIALOG_OR_POPUP,
+        ExpectedOutcome.DISMISS_OVERLAY,
+        ExpectedOutcome.GO_BACK,
+    }
+)
+
+
 # The default exploration goal used when no specific focus is requested; a
 # generic goal keeps the model in broad-coverage mode rather than steering it
 # toward one flow (see EXPLORATION_FOCUS_DIRECTIVE).

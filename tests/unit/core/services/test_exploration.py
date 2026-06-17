@@ -4,6 +4,7 @@ import unittest
 from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock
 
+from fathom.constants.exploration import ExpectedOutcome
 from fathom.core.services.exploration import ExplorationResponseParser, ExplorationVisionService
 from fathom.schemas.results import GenerateResult
 
@@ -91,6 +92,36 @@ class TestExplorationResponseParser(unittest.TestCase):
         )
 
         self.assertIsNone(self.__parser.parse(response).action.region)
+
+    def test_parses_expected_outcome_onto_action(self) -> None:
+        response = self.__explore(
+            action={
+                "action_type": "tap",
+                "rationale": "r",
+                "target_name": "Checkout",
+                "tap_target": {"x": 1, "y": 1},
+                "expected_outcome": "new_screen",
+            },
+            assistant_message="m",
+        )
+
+        self.assertEqual(
+            self.__parser.parse(response).action.expected_outcome, ExpectedOutcome.NEW_SCREEN
+        )
+
+    def test_unknown_expected_outcome_is_dropped(self) -> None:
+        response = self.__explore(
+            action={
+                "action_type": "tap",
+                "rationale": "r",
+                "target_name": "x",
+                "tap_target": {"x": 1, "y": 1},
+                "expected_outcome": "teleport",
+            },
+            assistant_message="m",
+        )
+
+        self.assertIsNone(self.__parser.parse(response).action.expected_outcome)
 
     def test_attaches_rich_description_from_describe_screen(self) -> None:
         response = GenerateResult(

@@ -6,7 +6,7 @@ from typing import Any, Dict, Literal, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fathom.constants import CONTROL_ACTION_TYPES, ActionExecutionKind, ActionType
-from fathom.constants.exploration import COORD_BUCKET_GRID_SIZE
+from fathom.constants.exploration import COORD_BUCKET_GRID_SIZE, ExpectedOutcome
 
 
 class CoordinateSource(StrEnum):
@@ -399,6 +399,10 @@ class Action(BaseModel):
     ] = Field(
         default=None,
         description="Priority-bucketed element category (P1-P5 / overlay_dismiss) for sampling.",
+    )
+    expected_outcome: Optional[ExpectedOutcome] = Field(
+        default=None,
+        description="Predicted screen effect of the action, used to verify it against the result.",
     )
 
     # Script export classification (VLM-provided; optional; fallback is TargetClassifier)

@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import ActionType
+from fathom.constants.exploration import ExpectedOutcome
 from fathom.schemas.actions import Action
 from fathom.schemas.steps import StepResult
 
@@ -34,6 +35,9 @@ class ActionOutcome(BaseModel):
     target: str = Field(default="", description="Element the action addressed")
     success: bool = Field(description="Whether the device reported the action succeeded")
     screen_changed: bool = Field(description="Whether the screen changed after the action")
+    expected: Optional[ExpectedOutcome] = Field(
+        default=None, description="Screen effect the action predicted, for verification"
+    )
 
     @classmethod
     def from_step_result(cls, *, result: StepResult) -> "ActionOutcome":
@@ -47,6 +51,7 @@ class ActionOutcome(BaseModel):
             target=action.natural_language_target or action.target or "",
             success=result.success,
             screen_changed=result.screen_changed,
+            expected=action.expected_outcome,
         )
 
 

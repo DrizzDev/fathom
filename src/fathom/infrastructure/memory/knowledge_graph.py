@@ -641,14 +641,25 @@ class KnowledgeGraph:
 
         lines = []
         for outcome in recent_actions:
-            if outcome.success and outcome.screen_changed:
-                indicator = "ok, new screen"
-            elif outcome.success:
-                indicator = "ok, NO screen change"
-            else:
-                indicator = "FAILED"
-            lines.append(f'- {outcome.kind.value} "{outcome.target}" -> {indicator}')
+            label = f'- {outcome.kind.value} "{outcome.target}"'
+            if outcome.expected is not None:
+                label += f" (expected {outcome.expected.value})"
+            lines.append(f"{label} -> {KnowledgeGraph.__outcome_indicator(outcome=outcome)}")
         return "RECENT ACTIONS (oldest to newest):\n" + "\n".join(lines)
+
+    @staticmethod
+    def __outcome_indicator(*, outcome: ActionOutcome) -> str:
+        """
+        Describes how an action's result compares to what it predicted.
+        """
+
+        if not outcome.success:
+            return "FAILED"
+        if outcome.screen_changed:
+            return "ok, new screen"
+        if outcome.expected is not None and outcome.expected.implies_transition:
+            return "NO change despite expecting a transition - element may be inert, do not retap"
+        return "ok, NO screen change"
 
     def __append_activity_coverage(
         self, *, lines: List[str], current_hash: Optional[str], node: Optional[GraphNode]

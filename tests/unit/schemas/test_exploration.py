@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from fathom.constants import ActionType
+from fathom.constants.exploration import ExpectedOutcome
 from fathom.schemas.actions import Action
 from fathom.schemas.exploration import ActionOutcome
 from fathom.schemas.steps import Step, StepResult
@@ -60,6 +61,25 @@ class TestActionOutcome(unittest.TestCase):
 
         self.assertFalse(outcome.success)
         self.assertFalse(outcome.screen_changed)
+
+    def test_carries_expected_outcome(self) -> None:
+        action = Action(
+            action_type=ActionType.TAP,
+            rationale="r",
+            natural_language_target="Checkout",
+            expected_outcome=ExpectedOutcome.NEW_SCREEN,
+        )
+
+        outcome = ActionOutcome.from_step_result(result=self.__result(action=action))
+
+        self.assertEqual(outcome.expected, ExpectedOutcome.NEW_SCREEN)
+
+    def test_expected_defaults_to_none_when_unset(self) -> None:
+        action = Action(action_type=ActionType.TAP, rationale="r", natural_language_target="Card")
+
+        outcome = ActionOutcome.from_step_result(result=self.__result(action=action))
+
+        self.assertIsNone(outcome.expected)
 
     def test_is_immutable(self) -> None:
         action = Action(action_type=ActionType.TAP, rationale="r", natural_language_target="Card")

@@ -8,6 +8,7 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
+from fathom.constants.exploration import ExpectedOutcome
 from fathom.core.exceptions import VisionError
 from fathom.core.prompts.exploration import ExplorationPromptBuilder
 from fathom.core.prompts.tools import ToolRegistry
@@ -133,8 +134,22 @@ class ExplorationResponseParser:
             overlay_detected=bool(data.get("overlay_detected", False)),
             region=raw_region if raw_region in REGIONS else None,
             element_category=raw_category if raw_category in ELEMENT_CATEGORIES else None,
+            expected_outcome=ExplorationResponseParser.__parse_expected(
+                data.get("expected_outcome")
+            ),
             text=str(raw_text) if raw_text else None,
         )
+
+    @staticmethod
+    def __parse_expected(value: Any) -> Optional[ExpectedOutcome]:
+        """
+        Coerces a raw expected-outcome string into the enum, or None when invalid.
+        """
+
+        try:
+            return ExpectedOutcome(value)
+        except ValueError:
+            return None
 
     @staticmethod
     def __attach_translation(*, result: AnalysisResult, arguments: Dict[str, Any]) -> None:
