@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from fathom.constants import ActionType
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.exploration import ActionOutcome
 from fathom.schemas.screens import ScreenState
 
 
@@ -189,6 +190,34 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         context = self.__graph.build_exploration_context(current_hash="aaaaaaaaaaaaaaaa")
 
         self.assertIn("this screen is fresh", context)
+
+    async def test_build_exploration_context_renders_recent_action_feedback(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+        recent = [
+            ActionOutcome(
+                kind=ActionType.TAP, target="Home tab", success=True, screen_changed=True
+            ),
+            ActionOutcome(kind=ActionType.TAP, target="Filter", success=True, screen_changed=False),
+            ActionOutcome(kind=ActionType.TAP, target="Dead", success=False, screen_changed=False),
+        ]
+
+        context = self.__graph.build_exploration_context(
+            current_hash="aaaaaaaaaaaaaaaa", recent_actions=recent
+        )
+
+        self.assertIn("RECENT ACTIONS (oldest to newest):", context)
+        self.assertIn('tap "Home tab" -> ok, new screen', context)
+        self.assertIn('tap "Filter" -> ok, NO screen change', context)
+        self.assertIn('tap "Dead" -> FAILED', context)
+
+    async def test_build_exploration_context_omits_recent_actions_when_empty(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+
+        context = self.__graph.build_exploration_context(
+            current_hash="aaaaaaaaaaaaaaaa", recent_actions=[]
+        )
+
+        self.assertNotIn("RECENT ACTIONS", context)
 
     async def test_find_path_across_transitions(self) -> None:
         for visual_hash, activity_hash in (

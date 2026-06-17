@@ -86,6 +86,12 @@ MAX_REPORTED_CYCLES: int = 20
 DISABLED_LOOP_THRESHOLD: int = 1_000_000
 
 
+# Most recent executed actions surfaced back into the scan context so the model
+# can see whether its latest moves advanced exploration (new screen / no-op /
+# failed) and avoid re-issuing ineffective taps the per-screen dedup cannot catch.
+RECENT_ACTION_WINDOW: int = 3
+
+
 # Quantization cell (on the normalized 0-1000 grid) for coordinate-bucket dedup:
 # two taps aimed at the same visual element land in the same bucket despite label drift.
 COORD_BUCKET_GRID_SIZE: int = 50

@@ -6,7 +6,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import BFSPhase
+from fathom.constants.exploration import RECENT_ACTION_WINDOW, BFSPhase
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
@@ -17,6 +17,7 @@ from fathom.core.exploration.dedup import ActionKey, DedupPolicy
 from fathom.core.exploration.depth import DepthFloorPolicy
 from fathom.core.services.exploration import ExplorationVisionService
 from fathom.schemas.actions import Action
+from fathom.schemas.exploration import ActionOutcome
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
@@ -180,6 +181,7 @@ class ExplorationNodeProvider:
             depth=depth,
             parent_description=self.__parent_description(),
             fully_scanned_count=len(dfs.fully_scanned),
+            recent_actions=self.__recent_actions(state=state),
             depth_floor_active=self.__depth_floor.is_active(depth=depth, retries=retries),
             min_dfs_depth=self.__depth_floor.minimum,
         )
@@ -441,6 +443,17 @@ class ExplorationNodeProvider:
         }
 
     # ── Scan helpers ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def __recent_actions(*, state: ExplorationGraphState) -> List[ActionOutcome]:
+        """
+        Project the last few executed steps into outcomes the scan can react to.
+        """
+
+        return [
+            ActionOutcome.from_step_result(result=result)
+            for result in get_step_results(state)[-RECENT_ACTION_WINDOW:]
+        ]
 
     def __parent_description(self) -> Optional[str]:
         """

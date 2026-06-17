@@ -149,6 +149,36 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dfs.phase, BFSPhase.SCAN)
         self.assertEqual(dfs.exhaustion_retries["abc"], 1)
 
+    async def test_threads_windowed_recent_action_feedback(self) -> None:
+        action = _action("Home")
+        vision = Mock(scan=AsyncMock(return_value=_analysis(action=action)))
+        graph = _graph_mock()
+        context = self.__context(graph)
+        priors = [
+            StepResult(
+                step=Step(action=_action(name), screen_hash="pre", step_number=index),
+                success=True,
+                duration=1,
+                screen_changed=(name != "c"),
+                pre_hash="pre",
+                post_hash="post",
+            )
+            for index, name in enumerate(["a", "b", "c", "d"])
+        ]
+        state = {
+            CKey.CAPTURE: Mock(),
+            CKey.SCREEN_STATE: _screen_state(),
+            EKey.STEP_RESULTS: priors,
+        }
+
+        await ExplorationNodeProvider(context=context, vision=vision).scan(state)
+
+        _args, kwargs = graph.build_exploration_context.call_args
+        recent = kwargs["recent_actions"]
+        # Only the most recent window is surfaced, oldest ("a") dropped.
+        self.assertEqual([outcome.target for outcome in recent], ["b", "c", "d"])
+        self.assertFalse(recent[1].screen_changed)
+
     async def test_dedup_guard_reprompts_when_action_already_tried(self) -> None:
         tried = _action("Home")
         fresh = _action("Search")

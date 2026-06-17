@@ -10,6 +10,7 @@ from fathom.infrastructure.memory.algorithms import GraphAlgorithms
 from fathom.infrastructure.memory.canonical import ScreenCanonicalizer
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.actions import Action
+from fathom.schemas.exploration import ActionOutcome
 from fathom.schemas.screens import ScreenState
 
 logger = getLogger(__name__)
@@ -573,7 +574,7 @@ class KnowledgeGraph:
         depth: Optional[int] = None,
         parent_description: Optional[str] = None,
         fully_scanned_count: Optional[int] = None,
-        recent_steps: Optional[List[Dict[str, Any]]] = None,
+        recent_actions: Optional[List[ActionOutcome]] = None,
         depth_floor_active: bool = False,
         min_dfs_depth: int = 0,
         focus: Optional[str] = None,
@@ -587,8 +588,8 @@ class KnowledgeGraph:
         if focus and focus.strip():
             lines.append(f"FOCUS: {focus.strip()}")
 
-        if recent_steps:
-            lines.append(self.__format_recent_steps(recent_steps=recent_steps))
+        if recent_actions:
+            lines.append(self.__format_recent_actions(recent_actions=recent_actions))
 
         scanned = (
             f", {fully_scanned_count} fully explored" if fully_scanned_count is not None else ""
@@ -633,23 +634,21 @@ class KnowledgeGraph:
         return "\n".join(lines)
 
     @staticmethod
-    def __format_recent_steps(*, recent_steps: List[Dict[str, Any]]) -> str:
+    def __format_recent_actions(*, recent_actions: List[ActionOutcome]) -> str:
         """
         Renders recent action outcomes as reactive feedback for the prompt.
         """
 
-        step_lines = []
-        for step in recent_steps:
-            action = step.get("type", "")
-            target = step.get("target", "")
-            if step.get("success", True) and step.get("screen_changed", True):
+        lines = []
+        for outcome in recent_actions:
+            if outcome.success and outcome.screen_changed:
                 indicator = "ok, new screen"
-            elif step.get("success", True):
+            elif outcome.success:
                 indicator = "ok, NO screen change"
             else:
                 indicator = "FAILED"
-            step_lines.append(f'- {action} "{target}" -> {indicator}')
-        return "RECENT ACTIONS (oldest to newest):\n" + "\n".join(step_lines)
+            lines.append(f'- {outcome.kind.value} "{outcome.target}" -> {indicator}')
+        return "RECENT ACTIONS (oldest to newest):\n" + "\n".join(lines)
 
     def __append_activity_coverage(
         self, *, lines: List[str], current_hash: Optional[str], node: Optional[GraphNode]

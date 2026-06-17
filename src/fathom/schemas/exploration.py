@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.constants import ActionType
 from fathom.schemas.actions import Action
+from fathom.schemas.steps import StepResult
 
 
 class BFSQueueEntry(BaseModel):
@@ -19,6 +21,33 @@ class BFSQueueEntry(BaseModel):
     depth: int
     action_from_parent: Action
     path_from_root: List[Tuple[str, Action]]
+
+
+class ActionOutcome(BaseModel):
+    """
+    Outcome of a recently executed action, fed back into the scan as feedback.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: ActionType = Field(description="Action type that was executed")
+    target: str = Field(default="", description="Element the action addressed")
+    success: bool = Field(description="Whether the device reported the action succeeded")
+    screen_changed: bool = Field(description="Whether the screen changed after the action")
+
+    @classmethod
+    def from_step_result(cls, *, result: StepResult) -> "ActionOutcome":
+        """
+        Projects an executed step result into a compact feedback outcome.
+        """
+
+        action = result.step.action
+        return cls(
+            kind=action.action_type,
+            target=action.natural_language_target or action.target or "",
+            success=result.success,
+            screen_changed=result.screen_changed,
+        )
 
 
 class ExploredScreen(BaseModel):
