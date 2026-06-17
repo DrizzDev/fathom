@@ -105,6 +105,51 @@ class ADBRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client_factory.call_args.kwargs["timeout"], 60.0)
         client.request.assert_awaited_once_with("POST", "snapshot", params={})
 
+    async def test_authentication_token_sent_as_x_token_header(self) -> None:
+        """
+        Route the provider token through the core service's internal ``X-Token`` header.
+        """
+
+        configuration = DeviceConfiguration(
+            type=DeviceConnectionType.REMOTE,
+            platform=DevicePlatform.ANDROID,
+            remote=RemoteDeviceConfiguration(
+                session_id="session-id",
+                provider_url="https://example.test/v1/internal",
+                authentication_token="internal-token",
+            ),
+        )
+
+        client = Mock()
+        client.is_closed = False
+
+        with patch(
+            "fathom.adapters.device.remote.adb.httpx.AsyncClient",
+            return_value=client,
+        ) as client_factory:
+            ADBRemoteDeviceAdapter(configuration=configuration)
+
+        self.assertEqual(
+            client_factory.call_args.kwargs["headers"],
+            {"X-Token": "internal-token"},
+        )
+
+    async def test_no_authentication_header_without_token(self) -> None:
+        """
+        Omit the auth header entirely for client-routed runs that carry no token.
+        """
+
+        client = Mock()
+        client.is_closed = False
+
+        with patch(
+            "fathom.adapters.device.remote.adb.httpx.AsyncClient",
+            return_value=client,
+        ) as client_factory:
+            ADBRemoteDeviceAdapter(configuration=self.__build_configuration())
+
+        self.assertEqual(client_factory.call_args.kwargs["headers"], {})
+
     async def test_launch_package_is_unsupported(self) -> None:
         """
         The remote backend exposes no app-launch channel and fails explicitly.

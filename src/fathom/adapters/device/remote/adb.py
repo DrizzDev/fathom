@@ -49,6 +49,12 @@ class ADBRemoteDeviceAdapter(DevicePort):
 
     __ACTION_FAILURE_MESSAGE = "Failed to execute the action on the remote device. Please retry."
 
+    # Header carrying the remote provider's access token. The core service's
+    # internal device-control route (``/v1/internal/...``) authenticates with
+    # ``X-Token`` rather than ``Authorization: Bearer``; the token is supplied
+    # by the host via ``RemoteDeviceConfiguration.authentication_token``.
+    __AUTHENTICATION_HEADER = "X-Token"
+
     def __init__(self, configuration: DeviceConfiguration) -> None:
         """
         Initialize remote device adapter.
@@ -96,7 +102,7 @@ class ADBRemoteDeviceAdapter(DevicePort):
             http2=True,
             base_url=base_url,
             timeout=remote.request_timeout,
-            headers={"Authorization": f"Bearer {self.__token}"} if self.__token else {},
+            headers={self.__AUTHENTICATION_HEADER: self.__token} if self.__token else {},
         )
 
         self.__cached_dimensions: Optional[Tuple[int, int]] = None
