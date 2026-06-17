@@ -53,50 +53,86 @@ class TestComputeNavigation(unittest.TestCase):
 
 
 class TestFindOrphanedScreens(unittest.TestCase):
-    """Recovery discovery of unscanned screens with a known inbound edge."""
+    """Recovery discovery of unscanned screens with a replayable path from root."""
 
     @staticmethod
-    def __knowledge_graph(inbound: dict[str, Optional[Tuple[str, GraphEdge]]]) -> Mock:
+    def __knowledge_graph(
+        *,
+        nodes: List[str],
+        paths: Optional[dict[str, Optional[List[Tuple[str, Optional[GraphEdge]]]]]] = None,
+        inbound: Optional[dict[str, Optional[Tuple[str, GraphEdge]]]] = None,
+    ) -> Mock:
         knowledge_graph = Mock()
-        knowledge_graph.nodes = {key: Mock() for key in inbound}
-
-        def _get_inbound_edge(*, destination_hash: str) -> Optional[Tuple[str, GraphEdge]]:
-            return inbound.get(destination_hash)
-
-        knowledge_graph.get_inbound_edge = Mock(side_effect=_get_inbound_edge)
+        knowledge_graph.nodes = {key: Mock() for key in nodes}
+        knowledge_graph.find_path = Mock(
+            side_effect=lambda *, end_hash, **_: (paths or {}).get(end_hash)
+        )
+        knowledge_graph.get_inbound_edge = Mock(
+            side_effect=lambda *, destination_hash: (inbound or {}).get(destination_hash)
+        )
         return knowledge_graph
 
-    def test_returns_only_reachable_unscanned_non_root_screens(self) -> None:
-        edge = GraphEdge(
-            source_hash="root",
-            destination_hash="child",
-            action_type="tap",
-            action_target="Open child",
+    @staticmethod
+    def __edge(
+        *, source: str, destination: str, action_target: str, action_type: str = "tap"
+    ) -> GraphEdge:
+        return GraphEdge(
+            source_hash=source,
+            destination_hash=destination,
+            action_type=action_type,
+            action_target=action_target,
         )
+
+    def test_returns_only_reachable_unscanned_non_root_screens(self) -> None:
+        edge = self.__edge(source="root", destination="child", action_target="Open child")
         knowledge_graph = self.__knowledge_graph(
-            {
-                "root": ("x", edge),  # skipped: is root
-                "child": ("root", edge),  # orphan
-                "lonely": None,  # skipped: no inbound edge
-                "done": ("root", edge),  # skipped: already fully scanned
-            }
+            nodes=["root", "child", "lonely", "done"],
+            paths={"child": [("root", None), ("child", edge)]},
         )
         dfs = DfsState(root_hash="root", fully_scanned={"done"})
 
         orphans = DfsNavigator(dfs=dfs, knowledge_graph=knowledge_graph).find_orphaned_screens()
 
+        # root excluded; done is fully scanned; lonely has no rooted path or inbound edge.
         self.assertEqual([entry.screen_hash for entry in orphans], ["child"])
         self.assertEqual(orphans[0].parent_hash, "root")
+        self.assertEqual(orphans[0].depth, 1)
         self.assertEqual(orphans[0].action_from_parent.action_type, ActionType.TAP)
 
-    def test_unknown_edge_action_type_falls_back_to_tap(self) -> None:
-        edge = GraphEdge(
-            source_hash="root",
-            destination_hash="child",
-            action_type="not-a-real-action",
-            action_target="",
+    def test_builds_full_path_for_deep_frontier_screen(self) -> None:
+        first = self.__edge(source="root", destination="mid", action_target="Open mid")
+        second = self.__edge(source="mid", destination="leaf", action_target="Open leaf")
+        knowledge_graph = self.__knowledge_graph(
+            nodes=["root", "leaf"],
+            paths={"leaf": [("root", None), ("mid", first), ("leaf", second)]},
         )
-        knowledge_graph = self.__knowledge_graph({"child": ("root", edge)})
+        dfs = DfsState(root_hash="root")
+
+        orphans = DfsNavigator(dfs=dfs, knowledge_graph=knowledge_graph).find_orphaned_screens()
+
+        entry = next(item for item in orphans if item.screen_hash == "leaf")
+        self.assertEqual(entry.depth, 2)
+        self.assertEqual([hop[0] for hop in entry.path_from_root], ["root", "mid"])
+        self.assertEqual(entry.parent_hash, "mid")
+        self.assertEqual(entry.action_from_parent.target, "Open leaf")
+
+    def test_falls_back_to_inbound_edge_when_no_rooted_path(self) -> None:
+        edge = self.__edge(source="src", destination="child", action_target="Open child")
+        knowledge_graph = self.__knowledge_graph(nodes=["child"], inbound={"child": ("src", edge)})
+        dfs = DfsState(root_hash="root")
+
+        orphans = DfsNavigator(dfs=dfs, knowledge_graph=knowledge_graph).find_orphaned_screens()
+
+        self.assertEqual(orphans[0].parent_hash, "src")
+        self.assertEqual(orphans[0].depth, 1)
+
+    def test_unknown_edge_action_type_falls_back_to_tap(self) -> None:
+        edge = self.__edge(
+            source="root", destination="child", action_target="", action_type="not-a-real-action"
+        )
+        knowledge_graph = self.__knowledge_graph(
+            nodes=["root", "child"], paths={"child": [("root", None), ("child", edge)]}
+        )
         dfs = DfsState(root_hash="root")
 
         orphans = DfsNavigator(dfs=dfs, knowledge_graph=knowledge_graph).find_orphaned_screens()

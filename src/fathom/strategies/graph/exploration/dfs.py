@@ -19,7 +19,7 @@ from typing import Deque, Dict, List, Optional, Set, Tuple
 
 from fathom.constants import ActionType
 from fathom.constants.exploration import BFSPhase
-from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
+from fathom.infrastructure.memory.knowledge_graph import GraphEdge, KnowledgeGraph
 from fathom.schemas.actions import Action
 from fathom.schemas.exploration import BFSQueueEntry
 
@@ -81,49 +81,86 @@ class DfsNavigator:
 
     def find_orphaned_screens(self) -> List[BFSQueueEntry]:
         """
-        Discover unscanned screens reachable via a known inbound transition.
+        Discover unscanned screens, each with a replayable path from the root.
 
         Used when backtracking reaches the root but the knowledge graph still
-        holds screens that were discovered via transitions yet never fully
-        scanned -- typically caused by BACK overshooting or landing on an
-        already-scanned screen that had unexplored neighbours.
+        holds screens that were never fully scanned -- including, on a relaunch,
+        the whole persisted frontier. Each entry carries the full root-anchored
+        action path so recovery can navigate to a deep screen, not just a child
+        of the current one.
         """
 
         dfs = self.__dfs
-        knowledge_graph = self.__knowledge_graph
         orphans: List[BFSQueueEntry] = []
 
-        for visual_hash in knowledge_graph.nodes:
+        for visual_hash in self.__knowledge_graph.nodes:
             if visual_hash in dfs.fully_scanned or visual_hash == dfs.root_hash:
                 continue
 
-            inbound = knowledge_graph.get_inbound_edge(destination_hash=visual_hash)
-            if inbound is None:
+            path = self.__path_from_root(screen_hash=visual_hash)
+            if not path:
                 continue
-            source_hash, edge = inbound
 
-            try:
-                action_type = ActionType(edge.action_type)
-            except ValueError:
-                action_type = ActionType.TAP
-
-            action = Action(
-                action_type=action_type,
-                confidence=1.0,
-                target=edge.action_target or "orphan recovery",
-                rationale=f"DFS recovery: navigate to orphaned screen via {action_type.value}",
-            )
+            source_hash, action = path[-1]
             orphans.append(
                 BFSQueueEntry(
                     screen_hash=visual_hash,
                     parent_hash=source_hash,
                     action_from_parent=action,
-                    depth=1,
-                    path_from_root=[(source_hash, action)],
+                    depth=len(path),
+                    path_from_root=path,
                 )
             )
 
         return orphans
+
+    def __path_from_root(self, *, screen_hash: str) -> List[Tuple[str, Action]]:
+        """
+        Best-effort replayable path from the run's root to a screen.
+
+        Prefers a root-anchored shortest path so recovery can be replayed from
+        anywhere; falls back to the single known inbound hop when no rooted path
+        exists. Returns an empty list when the screen is unreachable.
+        """
+
+        dfs = self.__dfs
+        knowledge_graph = self.__knowledge_graph
+
+        if dfs.root_hash:
+            graph_path = knowledge_graph.find_path(start_hash=dfs.root_hash, end_hash=screen_hash)
+            if graph_path and len(graph_path) > 1:
+                hops: List[Tuple[str, Action]] = []
+                for index in range(1, len(graph_path)):
+                    source_hash = graph_path[index - 1][0]
+                    edge = graph_path[index][1]
+                    if edge is None:
+                        continue
+                    hops.append((source_hash, self.__edge_action(edge=edge)))
+                return hops
+
+        inbound = knowledge_graph.get_inbound_edge(destination_hash=screen_hash)
+        if inbound is None:
+            return []
+        source_hash, edge = inbound
+        return [(source_hash, self.__edge_action(edge=edge))]
+
+    @staticmethod
+    def __edge_action(*, edge: GraphEdge) -> Action:
+        """
+        Builds a target-grounded replay action from a transition edge.
+        """
+
+        try:
+            action_type = ActionType(edge.action_type)
+        except ValueError:
+            action_type = ActionType.TAP
+
+        return Action(
+            action_type=action_type,
+            confidence=1.0,
+            target=edge.action_target or "frontier recovery",
+            rationale=f"DFS recovery: navigate to frontier via {action_type.value}",
+        )
 
     @staticmethod
     def compute_navigation(
