@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import unittest
 
+from pydantic import ValidationError
+
 from fathom.constants import ActionType
-from fathom.constants.exploration import ExpectedOutcome
+from fathom.constants.exploration import BFSPhase, ExpectedOutcome
 from fathom.schemas.actions import Action
-from fathom.schemas.exploration import ActionOutcome
+from fathom.schemas.exploration import ActionOutcome, ExplorationProgress, TokenUsage
 from fathom.schemas.steps import Step, StepResult
 
 
@@ -88,6 +90,37 @@ class TestActionOutcome(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             outcome.target = "Other"  # type: ignore[misc]
+
+
+class TestExplorationProgress(unittest.TestCase):
+    """ExplorationProgress and TokenUsage default sanely and validate bounds."""
+
+    def test_defaults_are_zeroed(self) -> None:
+        progress = ExplorationProgress()
+
+        self.assertEqual(progress.step, 0)
+        self.assertEqual(progress.phase, BFSPhase.SCAN)
+        self.assertEqual(progress.tokens.prompt, 0)
+        self.assertIsNone(progress.status)
+
+    def test_holds_a_populated_snapshot(self) -> None:
+        progress = ExplorationProgress(
+            step=5,
+            max_steps=25,
+            phase=BFSPhase.ADVANCE,
+            unique_screens=12,
+            coverage=48.0,
+            tokens=TokenUsage(prompt=2000, completion=400, cached=100),
+            status="navigating",
+        )
+
+        self.assertEqual(progress.phase, BFSPhase.ADVANCE)
+        self.assertEqual(progress.tokens.completion, 400)
+        self.assertEqual(progress.coverage, 48.0)
+
+    def test_coverage_above_one_hundred_is_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            ExplorationProgress(coverage=150.0)
 
 
 if __name__ == "__main__":

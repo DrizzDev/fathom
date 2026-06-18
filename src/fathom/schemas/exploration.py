@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import ExpectedOutcome
+from fathom.constants.exploration import BFSPhase, ExpectedOutcome
 from fathom.schemas.actions import Action
 from fathom.schemas.steps import StepResult
 
@@ -71,6 +71,36 @@ class TriedAction(BaseModel):
     destination_description: Optional[str] = Field(
         default=None, description="Description of the resulting screen, when known"
     )
+
+
+class TokenUsage(BaseModel):
+    """
+    Cumulative LLM token counts for a run.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    prompt: int = Field(default=0, ge=0, description="Prompt tokens consumed")
+    completion: int = Field(default=0, ge=0, description="Completion tokens produced")
+    cached: int = Field(default=0, ge=0, description="Prompt tokens served from cache")
+
+
+class ExplorationProgress(BaseModel):
+    """
+    Live snapshot of an exploration run for progress display.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    step: int = Field(default=0, ge=0, description="Completed exploration steps")
+    max_steps: int = Field(default=0, ge=0, description="Step budget for the run")
+    phase: BFSPhase = Field(default=BFSPhase.SCAN, description="Active DFS phase")
+    unique_screens: int = Field(default=0, ge=0, description="Distinct screens discovered")
+    coverage: float = Field(
+        default=0.0, ge=0.0, le=100.0, description="Explored fraction as a percentage"
+    )
+    tokens: TokenUsage = Field(default_factory=TokenUsage, description="Cumulative token usage")
+    status: Optional[str] = Field(default=None, description="Short human-readable run status")
 
 
 class ExploredScreen(BaseModel):
