@@ -286,6 +286,11 @@ class CommandApplication:
             action="store_true",
             help="Enable verbose output",
         )
+        explore_parser.add_argument(
+            "--tui",
+            action="store_true",
+            help="Render the run in a live full-screen exploration UI",
+        )
 
     def __build_device_configuration(
         self,
@@ -520,10 +525,37 @@ class CommandApplication:
                 settings=settings,
                 command_input=explore_command_input,
             )
+            if explore_command_input.tui:
+                return self.__run_exploration_tui(executor=executor, request=exploration_request)
             return asyncio.run(executor.explore(request=exploration_request))
 
         self.__parser.print_help()
         return 0
+
+    @staticmethod
+    def __run_exploration_tui(*, executor: CommandExecutor, request: ExplorationRunRequest) -> int:
+        """
+        Launch the full-screen explorer UI, driving the run on its worker thread.
+
+        Console logging is detached first so engine logs cannot corrupt the
+        Textual display; the activity log surfaces the run instead.
+        """
+
+        from fathom.runtime.command.explorer_tui import ExplorerApp
+
+        BaseLogger.silence_console()
+
+        async def workflow() -> bool:
+            return await executor.explore(request=request, view=app) == 0
+
+        app = ExplorerApp(
+            package=request.objective.package_name or "",
+            max_steps=request.objective.max_steps,
+            workflow=workflow,
+            on_cancel=executor.cancel,
+        )
+        app.run()
+        return app.exit_code
 
     def run(self) -> int:
         """

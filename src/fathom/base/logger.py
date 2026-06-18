@@ -110,6 +110,20 @@ class BaseLogger:
         getLogger().addHandler(file_handler)
 
     @classmethod
+    def silence_console(cls) -> None:
+        """
+        Detach console stream handlers so logs cannot corrupt a full-screen UI.
+
+        File handlers (e.g. ``--log-file``) are kept, so the run is still
+        recorded even when its console output is suppressed for the TUI.
+        """
+
+        root_logger = getLogger()
+        for handler in list(root_logger.handlers):
+            if isinstance(handler, StreamHandler) and not isinstance(handler, FileHandler):
+                root_logger.removeHandler(handler)
+
+    @classmethod
     def __build_json_formatter(cls) -> Formatter:
         """
         Build a structlog-backed formatter that renders JSON; never adds colors.

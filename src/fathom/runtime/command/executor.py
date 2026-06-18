@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from fathom.adapters.telemetry.console import ConsoleTelemetryAdapter
+from fathom.adapters.telemetry.tui import ProgressView, TuiTelemetryAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.exceptions import FathomError
@@ -25,6 +26,7 @@ from fathom.interfaces.factory import (
 )
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.signal import SignalPort
+from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
 from fathom.runtime.command.resolver import (
@@ -42,7 +44,7 @@ from fathom.runtime.qualifier import QualifierComposer
 from fathom.runtime.runner import FathomRunner
 from fathom.schemas.composition import RunnerComposition
 from fathom.schemas.configuration import DeviceConfiguration
-from fathom.schemas.results import IntentResult
+from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import ExplorationRunRequest, IntentRunRequest, RunRequest
 from fathom.settings.env import FathomSettings
 
@@ -139,7 +141,11 @@ class CommandExecutor:
         return signal_adapter
 
     async def __create_runner(
-        self, *, request: RunRequest, signal_adapter: SignalPort
+        self,
+        *,
+        request: RunRequest,
+        signal_adapter: SignalPort,
+        view: Optional[ProgressView] = None,
     ) -> RunnerComposition:
         """
         Build configured runtime runner and bundle it with owned resources.
@@ -179,10 +185,14 @@ class CommandExecutor:
             llm_adapter = self.__llm_factory.create(configuration=llm_configuration)
             partial_resources.append(llm_adapter)
 
-            telemetry_adapter = ConsoleTelemetryAdapter(
-                console=console,
-                inner=self.__telemetry_factory.create(configuration=telemetry_configuration),
-            )
+            telemetry_adapter: TelemetryPort
+            if view is not None:
+                telemetry_adapter = TuiTelemetryAdapter(view=view)
+            else:
+                telemetry_adapter = ConsoleTelemetryAdapter(
+                    console=console,
+                    inner=self.__telemetry_factory.create(configuration=telemetry_configuration),
+                )
             partial_resources.append(telemetry_adapter)
 
             builder = (
@@ -428,20 +438,37 @@ class CommandExecutor:
         finally:
             await self.__cleanup_runner()
 
-    async def explore(self, *, request: ExplorationRunRequest) -> int:
+    def cancel(self) -> None:
+        """
+        Request cancellation of the active runner (invoked by the TUI cancel key).
+        """
+
+        self.__cancelled = True
+        if self.__runner is not None:
+            self.__runner.cancel()
+
+    async def explore(
+        self, *, request: ExplorationRunRequest, view: Optional[ProgressView] = None
+    ) -> int:
         """
         Execute exploration command flow.
+
+        When ``view`` is provided the run drives that progress view (the TUI):
+        telemetry routes to it and all console output is suppressed so it cannot
+        corrupt the full-screen UI.
         """
 
-        self.__setup_signals()
+        with_tui = view is not None
 
-        console.print(
-            Panel.fit(
-                f"[bold blue]Fathom Explorer[/bold blue]\n"
-                f"[cyan]Goal:[/cyan] {escape(request.objective.intent)}",
-                border_style="blue",
+        if not with_tui:
+            self.__setup_signals()
+            console.print(
+                Panel.fit(
+                    f"[bold blue]Fathom Explorer[/bold blue]\n"
+                    f"[cyan]Goal:[/cyan] {escape(request.objective.intent)}",
+                    border_style="blue",
+                )
             )
-        )
 
         start_time = time.time()
 
@@ -451,36 +478,58 @@ class CommandExecutor:
                 signal_type=request.runtime.signal_type.value,
             )
             self.__composition = await self.__create_runner(
-                request=request, signal_adapter=signal_adapter
+                request=request, signal_adapter=signal_adapter, view=view
             )
             self.__runner = cast("FathomRunner", self.__composition.runner)
 
-            with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
-                result = await self.__runner.run_exploration(
-                    max_steps=request.objective.max_steps,
-                    request_id=request.runtime.session_id,
-                    package_name=request.objective.package_name,
-                    intent=request.objective.intent,
-                )
+            result = await self.__invoke_exploration(request=request, with_tui=with_tui)
 
-            table = Table(title="Exploration Results", border_style="green")
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="magenta")
-            table.add_row("Unique Screens", str(result.unique_screens))
-            table.add_row("Total Actions", str(result.total_actions))
-            table.add_row("Total Transitions", str(result.total_transitions))
-            table.add_row("Coverage", f"{result.coverage_percentage:.1f}%")
-            table.add_row("Duration", f"{(time.time() - start_time):.2f}s")
-            console.print(table)
+            if not with_tui:
+                table = Table(title="Exploration Results", border_style="green")
+                table.add_column("Metric", style="cyan")
+                table.add_column("Value", style="magenta")
+                table.add_row("Unique Screens", str(result.unique_screens))
+                table.add_row("Total Actions", str(result.total_actions))
+                table.add_row("Total Transitions", str(result.total_transitions))
+                table.add_row("Coverage", f"{result.coverage_percentage:.1f}%")
+                table.add_row("Duration", f"{(time.time() - start_time):.2f}s")
+                console.print(table)
 
             return 0
 
         except (asyncio.CancelledError, KeyboardInterrupt):
-            console.print("\n[bold red]Exploration cancelled by user.[/bold red]")
+            if not with_tui:
+                console.print("\n[bold red]Exploration cancelled by user.[/bold red]")
             return 1
         except Exception as exception:
             logger.exception("Unexpected exploration error")
-            console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")
+            if not with_tui:
+                console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")
             return 1
         finally:
             await self.__cleanup_runner()
+
+    async def __invoke_exploration(
+        self, *, request: ExplorationRunRequest, with_tui: bool
+    ) -> ExplorationResult:
+        """
+        Run the exploration, wrapping it in a console spinner unless the TUI owns the screen.
+        """
+
+        if self.__runner is None:
+            raise FathomError("Runner is not initialized")
+
+        runner = self.__runner
+
+        async def _run() -> ExplorationResult:
+            return await runner.run_exploration(
+                max_steps=request.objective.max_steps,
+                request_id=request.runtime.session_id,
+                package_name=request.objective.package_name,
+                intent=request.objective.intent,
+            )
+
+        if with_tui:
+            return await _run()
+        with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
+            return await _run()

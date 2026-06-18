@@ -69,3 +69,17 @@ class ExploreCommandInputTest(unittest.TestCase):
         )
 
         self.assertEqual(command_input.focus, "Focus on the checkout flow, then settings.")
+
+    def test_tui_defaults_to_false(self) -> None:
+        """
+        The run is headless unless --tui is requested.
+        """
+
+        self.assertFalse(ExploreCommandInput().tui)
+
+    def test_tui_flag_is_accepted(self) -> None:
+        """
+        The --tui flag selects the live exploration UI.
+        """
+
+        self.assertTrue(ExploreCommandInput.model_validate({"tui": True}).tui)

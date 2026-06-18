@@ -137,6 +137,7 @@ class ExploreCommandInput(LocalCommandInput):
     command: Literal["explore"] = Field(default="explore")
     max_steps: int = Field(default=50, ge=1)
     verbose: bool = Field(default=False)
+    tui: bool = Field(default=False, description="Render the run in the live exploration TUI")
     package_name: Optional[str] = Field(
         default=None, description="Application identifier to launch and explore"
     )
