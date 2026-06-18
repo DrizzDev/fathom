@@ -17,6 +17,7 @@ class CheckpointSerdeFactory:
         ("fathom.constants", "ActionType"),
         ("fathom.constants.command", "CommandScopeKind"),
         ("fathom.constants.exploration", "ExpectedOutcome"),
+        ("fathom.constants.exploration", "FocusRelevance"),
         ("fathom.constants.observation", "KeyboardVisibility"),
         ("fathom.constants.scroll", "ScrollEvidenceSource"),
         ("fathom.constants.storage", "StorageBackend"),

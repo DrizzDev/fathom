@@ -140,6 +140,10 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute("ALTER TABLE screens ADD COLUMN exhausted INTEGER DEFAULT 0")
             migrated = True
 
+        if "relevance" not in screen_columns:
+            await db.execute("ALTER TABLE screens ADD COLUMN relevance TEXT DEFAULT 'unscoped'")
+            migrated = True
+
         for column in ("activity_hash", "xml_hash", "interaction_hash"):
             if column not in screen_columns:
                 await db.execute(f"ALTER TABLE screens ADD COLUMN {column} TEXT")
@@ -232,6 +236,23 @@ class SQLiteMemoryProvider(IMemoryProvider):
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
                 "UPDATE screens SET exhausted = 1 WHERE visual_hash = ?", (visual_hash,)
+            )
+            await db.commit()
+
+    async def set_relevance(self, visual_hash: str, relevance: str) -> None:
+        """
+        Persists how a screen relates to the focus so a later run keeps focus-awareness.
+        """
+
+        if self.__readonly:
+            return
+
+        await self.__initialize()
+
+        async with aiosqlite.connect(self.__path) as db:
+            await db.execute(
+                "UPDATE screens SET relevance = ? WHERE visual_hash = ?",
+                (relevance, visual_hash),
             )
             await db.commit()
 
@@ -414,7 +435,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
             db.execute(
                 "SELECT visual_hash, activity, description, first_seen, last_seen, "
                 "visit_count, rich_description, activity_hash, xml_hash, interaction_hash, "
-                "exhausted "
+                "exhausted, relevance "
                 "FROM screens ORDER BY last_seen DESC"
             ) as cursor,
         ):
@@ -432,6 +453,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         "xml_hash": row[8],
                         "interaction_hash": row[9],
                         "exhausted": bool(row[10]),
+                        "relevance": row[11],
                     }
                 )
 

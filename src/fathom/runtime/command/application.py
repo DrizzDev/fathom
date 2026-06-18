@@ -377,6 +377,7 @@ class CommandApplication:
                 max_steps=command_input.max_steps,
                 package_name=command_input.package_name,
                 intent=command_input.focus or DEFAULT_EXPLORATION_INTENT,
+                focus=command_input.focus,
             ),
             runtime=RuntimeConfiguration(
                 interactive=False,

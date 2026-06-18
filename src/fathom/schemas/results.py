@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
+from fathom.constants.exploration import FocusRelevance
 from fathom.schemas.actions import Action
 from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.delta import DeltaSignal
@@ -74,6 +75,10 @@ class AnalysisResult(BaseModel):
     )
     delta: Optional[DeltaSignal] = Field(
         default=None, description="Optional model-provided semantic delta hints"
+    )
+    focus_relevance: Optional[FocusRelevance] = Field(
+        default=None,
+        description="How this screen relates to the exploration focus; None when the model did not classify.",
     )
 
     outcome: AnalysisOutcome = Field(

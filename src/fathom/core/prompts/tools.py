@@ -247,6 +247,21 @@ class ToolRegistry:
                             "are visible."
                         ),
                     },
+                    "focus_relevance": {
+                        "type": "STRING",
+                        "description": (
+                            "When GOAL names a focus, classify how THIS screen relates to it: "
+                            "'on_focus' if part of the focused section/flow, 'leads_toward' if it "
+                            "routes toward it, 'off_focus' if unrelated. Use 'unscoped' when GOAL is "
+                            "generic or absent."
+                        ),
+                        "enum": [
+                            "on_focus",
+                            "leads_toward",
+                            "off_focus",
+                            "unscoped",
+                        ],
+                    },
                 },
                 "required": ["assistant_message", "action", "screen_description"],
             },

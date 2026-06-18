@@ -4,7 +4,7 @@ import unittest
 from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import ExpectedOutcome
+from fathom.constants.exploration import ExpectedOutcome, FocusRelevance
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.exploration import ActionOutcome
@@ -30,6 +30,9 @@ class _FakeProvider:
         return None
 
     async def mark_exhausted(self, visual_hash: str) -> None:
+        return None
+
+    async def set_relevance(self, visual_hash: str, relevance: str) -> None:
         return None
 
     async def store_transition(
@@ -199,6 +202,69 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         await graph.load()
 
         self.assertIn("aaaaaaaaaaaaaaaa", graph.exhausted_hashes())
+
+    async def test_record_relevance_sets_node_and_defaults_unscoped(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+        self.assertEqual(
+            self.__graph.relevance_of(visual_hash="aaaaaaaaaaaaaaaa"), FocusRelevance.UNSCOPED
+        )
+
+        await self.__graph.record_relevance(
+            visual_hash="aaaaaaaaaaaaaaaa", relevance=FocusRelevance.ON_FOCUS
+        )
+
+        self.assertEqual(
+            self.__graph.relevance_of(visual_hash="aaaaaaaaaaaaaaaa"), FocusRelevance.ON_FOCUS
+        )
+
+    async def test_relevance_of_unknown_screen_is_unscoped(self) -> None:
+        self.assertEqual(
+            self.__graph.relevance_of(visual_hash="ffffffffffffffff"), FocusRelevance.UNSCOPED
+        )
+
+    async def test_load_restores_relevance(self) -> None:
+        row = {
+            "visual_hash": "aaaaaaaaaaaaaaaa",
+            "activity": "com.app/.Feed",
+            "description": "Feed",
+            "first_seen": 1,
+            "last_seen": 2,
+            "visit_count": 1,
+            "rich_description": None,
+            "activity_hash": "act",
+            "xml_hash": None,
+            "interaction_hash": None,
+            "exhausted": False,
+            "relevance": "leads_toward",
+        }
+        graph = KnowledgeGraph(provider=_FakeProvider(screens=[row]))
+        await graph.load()
+
+        self.assertEqual(
+            graph.relevance_of(visual_hash="aaaaaaaaaaaaaaaa"), FocusRelevance.LEADS_TOWARD
+        )
+
+    async def test_load_coerces_unknown_relevance_to_unscoped(self) -> None:
+        row = {
+            "visual_hash": "aaaaaaaaaaaaaaaa",
+            "activity": "com.app/.Feed",
+            "description": "Feed",
+            "first_seen": 1,
+            "last_seen": 2,
+            "visit_count": 1,
+            "rich_description": None,
+            "activity_hash": "act",
+            "xml_hash": None,
+            "interaction_hash": None,
+            "exhausted": False,
+            "relevance": "garbage",
+        }
+        graph = KnowledgeGraph(provider=_FakeProvider(screens=[row]))
+        await graph.load()
+
+        self.assertEqual(
+            graph.relevance_of(visual_hash="aaaaaaaaaaaaaaaa"), FocusRelevance.UNSCOPED
+        )
 
     async def test_build_exploration_context_lists_tried_and_forbidden(self) -> None:
         await self.__graph.add_screen(

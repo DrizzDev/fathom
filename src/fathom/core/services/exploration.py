@@ -8,7 +8,7 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import ExpectedOutcome
+from fathom.constants.exploration import ExpectedOutcome, FocusRelevance
 from fathom.core.exceptions import VisionError
 from fathom.core.prompts.exploration import ExplorationPromptBuilder
 from fathom.core.prompts.tools import ToolRegistry
@@ -97,6 +97,7 @@ class ExplorationResponseParser:
             is_goal_complete=False,
             content_exhausted=bool(arguments.get("content_exhausted", False)),
             screen_description=str(arguments.get("screen_description") or "Exploration step"),
+            focus_relevance=self.__parse_relevance(arguments.get("focus_relevance")),
             metadata=metadata,
         )
 
@@ -148,6 +149,17 @@ class ExplorationResponseParser:
 
         try:
             return ExpectedOutcome(value)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def __parse_relevance(value: Any) -> Optional[FocusRelevance]:
+        """
+        Coerces a raw focus-relevance string into the enum, or None when invalid.
+        """
+
+        try:
+            return FocusRelevance(value)
         except ValueError:
             return None
 

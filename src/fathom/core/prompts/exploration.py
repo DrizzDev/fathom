@@ -127,8 +127,11 @@ EXPLORATION_FOCUS_DIRECTIVE = (
     "- Use BACK to escape a branch that doesn't lead toward the target.\n"
     "- Signal content_exhausted=true for an activity once the target section is fully "
     "mapped OR confirmed unreachable from here.\n"
+    "- Classify focus_relevance for the CURRENT SCREEN every turn: 'on_focus' when it is "
+    "part of the target section, 'leads_toward' when it routes toward it, 'off_focus' "
+    "when unrelated.\n"
     "When GOAL is generic ('Explore this app...') or absent, treat every activity as "
-    "in-scope and use the normal P1->P5 priority."
+    "in-scope, use the normal P1->P5 priority, and set focus_relevance='unscoped'."
 )
 
 EXPLORATION_ACTION_PALETTE = (

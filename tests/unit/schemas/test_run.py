@@ -143,7 +143,17 @@ class TestRunRequest(unittest.TestCase):
         self.assertFalse(request.objective.use_xml)
         self.assertEqual(request.objective.mode, ExecutionMode.EXPLORATION)
         self.assertEqual(request.objective.intent, DEFAULT_EXPLORATION_INTENT)
+        self.assertIsNone(request.objective.focus)
         self.assertEqual(
             request.interaction.execution_configuration.workflow.exploration.timeout_floor,
             120,
         )
+
+    def test_exploration_objective_carries_explicit_focus(self) -> None:
+        """
+        An explicit focus is preserved as the discriminator for focused runs.
+        """
+
+        objective = ExplorationObjectiveConfiguration(max_steps=30, focus="checkout flow")
+
+        self.assertEqual(objective.focus, "checkout flow")

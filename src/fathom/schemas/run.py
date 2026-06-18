@@ -64,6 +64,10 @@ class ExplorationObjectiveConfiguration(BaseModel):
         default=DEFAULT_EXPLORATION_INTENT,
         description="Logical exploration goal used for workflow metadata",
     )
+    focus: Optional[str] = Field(
+        default=None,
+        description="Explicit user-supplied focus; None keeps exploration broad-coverage.",
+    )
     package_name: Optional[str] = Field(
         default=None,
         description="Optional application identifier used for routing and storage",

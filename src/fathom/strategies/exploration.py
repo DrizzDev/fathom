@@ -54,6 +54,7 @@ class ExplorationStrategy:
         configuration: FathomConfiguration,
         runtime_configuration: Optional["RuntimeConfigLoader"] = None,
         intent: Optional[str] = None,
+        focus: Optional[str] = None,
     ) -> None:
         self.__seed = seed
         self.__timeout = timeout
@@ -79,6 +80,7 @@ class ExplorationStrategy:
             llm=llm,
             phase=phase,
             intent=effective_intent,
+            focus=focus,
             use_xml=False,
             device=device,
             signal=signal,

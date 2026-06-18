@@ -191,6 +191,7 @@ class ExplorationNodeProvider:
             recent_actions=self.__recent_actions(state=state),
             depth_floor_active=self.__depth_floor.is_active(depth=depth, retries=retries),
             min_dfs_depth=self.__depth_floor.minimum,
+            focus=ctx.focus,
         )
 
         start = time.time()
@@ -215,6 +216,13 @@ class ExplorationNodeProvider:
         if rich_text and rich_text.strip():
             await ctx.exploration_graph.append_activity_description(
                 activity=screen_state.activity, observation=rich_text
+            )
+
+        # On a focused run, record how this screen relates to the focus so the
+        # frontier ordering (F2) and resumed runs stay focus-aware.
+        if ctx.focus and analysis.focus_relevance is not None:
+            await ctx.exploration_graph.record_relevance(
+                visual_hash=fingerprint, relevance=analysis.focus_relevance
             )
 
         if analysis.content_exhausted:

@@ -425,6 +425,7 @@ class FathomRunner:
         request_id: Optional[str] = None,
         package_name: Optional[str] = None,
         intent: Optional[str] = None,
+        focus: Optional[str] = None,
     ) -> ExplorationResult:
         """
         Execute exploration workflow.
@@ -481,6 +482,7 @@ class FathomRunner:
             max_steps=max_steps or self.__config.exploration.max_steps,
             runtime_configuration=self.__runtime_configuration,
             intent=effective_intent,
+            focus=focus,
         )
 
         self.__current_strategy = strategy

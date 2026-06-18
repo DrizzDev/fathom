@@ -124,8 +124,10 @@ class GraphContext:
         embedder: Optional[EmbeddingPort] = None,
         embedding_cache: Optional[EmbeddingCache] = None,
         abort_detector: Optional[AbortDetectorPort] = None,
+        focus: Optional[str] = None,
     ) -> None:
         self.__intent = intent
+        self.__focus = focus
         self.__device = device
         self.__perception_port = perception
         self.__embedder = embedder
@@ -355,6 +357,14 @@ class GraphContext:
         """
 
         return self.__intent
+
+    @property
+    def focus(self) -> Optional[str]:
+        """
+        Returns the explicit exploration focus, or None for broad-coverage runs.
+        """
+
+        return self.__focus
 
     @property
     def device(self) -> DevicePort:

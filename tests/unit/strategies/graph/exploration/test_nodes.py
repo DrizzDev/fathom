@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import EXPLORATION_PROGRESS_EVENT, BFSPhase
+from fathom.constants.exploration import EXPLORATION_PROGRESS_EVENT, BFSPhase, FocusRelevance
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
@@ -32,9 +32,18 @@ def _action(target: str = "Home", action_type: ActionType = ActionType.TAP) -> A
     return Action(action_type=action_type, rationale="r", natural_language_target=target)
 
 
-def _analysis(*, action: Action, content_exhausted: bool = False) -> AnalysisResult:
+def _analysis(
+    *,
+    action: Action,
+    content_exhausted: bool = False,
+    focus_relevance: FocusRelevance | None = None,
+) -> AnalysisResult:
     return AnalysisResult(
-        action=action, reasoning="r", screen_description="s", content_exhausted=content_exhausted
+        action=action,
+        reasoning="r",
+        screen_description="s",
+        content_exhausted=content_exhausted,
+        focus_relevance=focus_relevance,
     )
 
 
@@ -53,6 +62,7 @@ def _graph_mock(**overrides: Any) -> Mock:
         append_activity_description=AsyncMock(),
         record_transition=AsyncMock(),
         mark_exhausted=AsyncMock(),
+        record_relevance=AsyncMock(),
     )
     for key, value in overrides.items():
         setattr(graph, key, value)
@@ -101,10 +111,11 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
     """Scan picks a novel action, honours exhaustion, and applies the depth floor."""
 
     @staticmethod
-    def __context(graph: Mock) -> Mock:
+    def __context(graph: Mock, *, focus: str | None = None) -> Mock:
         return Mock(
             is_cancelled=False,
             intent="Explore application",
+            focus=focus,
             exploration_graph=graph,
             metrics=Mock(record=Mock()),
         )
@@ -194,6 +205,35 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
 
         _args, kwargs = graph.build_exploration_context.call_args
         self.assertEqual(kwargs["fully_scanned"], {"h1", "h2"})
+
+    async def test_focused_scan_passes_focus_and_records_relevance(self) -> None:
+        analysis = _analysis(action=_action("Cart"), focus_relevance=FocusRelevance.ON_FOCUS)
+        vision = Mock(scan=AsyncMock(return_value=analysis))
+        graph = _graph_mock()
+        context = self.__context(graph, focus="checkout flow")
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("abc")}
+
+        await ExplorationNodeProvider(context=context, vision=vision).scan(state)
+
+        _args, kwargs = graph.build_exploration_context.call_args
+        self.assertEqual(kwargs["focus"], "checkout flow")
+        graph.record_relevance.assert_awaited_once_with(
+            visual_hash="abc", relevance=FocusRelevance.ON_FOCUS
+        )
+
+    async def test_unfocused_scan_skips_relevance_recording(self) -> None:
+        # Even if the model returns a relevance, a broad-coverage run records nothing.
+        analysis = _analysis(action=_action("Home"), focus_relevance=FocusRelevance.OFF_FOCUS)
+        vision = Mock(scan=AsyncMock(return_value=analysis))
+        graph = _graph_mock()
+        context = self.__context(graph, focus=None)
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state()}
+
+        await ExplorationNodeProvider(context=context, vision=vision).scan(state)
+
+        _args, kwargs = graph.build_exploration_context.call_args
+        self.assertIsNone(kwargs["focus"])
+        graph.record_relevance.assert_not_awaited()
 
     async def test_persists_exhaustion_past_the_depth_floor(self) -> None:
         graph = _graph_mock()

@@ -86,6 +86,22 @@ _TRANSITION_OUTCOMES: frozenset[ExpectedOutcome] = frozenset(
 )
 
 
+class FocusRelevance(StrEnum):
+    """
+    How a screen relates to the user-supplied exploration focus.
+
+    ON_FOCUS     - The screen is part of the focused section, flow, or feature.
+    LEADS_TOWARD - Not the focus itself, but a route that heads toward it.
+    OFF_FOCUS    - Unrelated to the focus.
+    UNSCOPED     - No focus was configured; exploration is broad-coverage.
+    """
+
+    ON_FOCUS = "on_focus"
+    LEADS_TOWARD = "leads_toward"
+    OFF_FOCUS = "off_focus"
+    UNSCOPED = "unscoped"
+
+
 # The default exploration goal used when no specific focus is requested; a
 # generic goal keeps the model in broad-coverage mode rather than steering it
 # toward one flow (see EXPLORATION_FOCUS_DIRECTIVE).

@@ -6,6 +6,7 @@ from logging import getLogger
 from typing import AbstractSet, Any, Dict, List, Optional, Set, Tuple
 
 from fathom.constants import ActionType
+from fathom.constants.exploration import FocusRelevance
 from fathom.infrastructure.memory.algorithms import GraphAlgorithms
 from fathom.infrastructure.memory.canonical import ScreenCanonicalizer
 from fathom.interfaces import IMemoryProvider
@@ -45,6 +46,7 @@ class GraphNode:
     xml_hash: Optional[str] = None
     interaction_hash: Optional[str] = None
     exhausted: bool = False
+    relevance: FocusRelevance = FocusRelevance.UNSCOPED
 
 
 @dataclass
@@ -205,6 +207,9 @@ class KnowledgeGraph:
                 existing.rich_description = screen["rich_description"]
             if screen.get("exhausted"):
                 existing.exhausted = True
+            persisted_relevance = self.__coerce_relevance(screen.get("relevance"))
+            if persisted_relevance is not FocusRelevance.UNSCOPED:
+                existing.relevance = persisted_relevance
             self.__backfill_hashes(node=existing, source=screen)
             return
 
@@ -220,6 +225,7 @@ class KnowledgeGraph:
             xml_hash=screen.get("xml_hash"),
             interaction_hash=screen.get("interaction_hash"),
             exhausted=bool(screen.get("exhausted", False)),
+            relevance=self.__coerce_relevance(screen.get("relevance")),
         )
 
     def __hydrate_transition(self, *, transition: Dict[str, Any]) -> None:
@@ -371,6 +377,38 @@ class KnowledgeGraph:
         if node:
             node.exhausted = True
         await self.__provider.mark_exhausted(visual_hash=canonical)
+
+    async def record_relevance(self, *, visual_hash: str, relevance: FocusRelevance) -> None:
+        """
+        Records how a screen relates to the focus, in memory and in persistence.
+        """
+
+        canonical = self.__resolve(visual_hash)
+        node = self.__nodes.get(canonical)
+        if node:
+            node.relevance = relevance
+        await self.__provider.set_relevance(visual_hash=canonical, relevance=relevance.value)
+
+    def relevance_of(self, *, visual_hash: str) -> FocusRelevance:
+        """
+        Returns the recorded focus relevance for a screen, UNSCOPED when unknown.
+        """
+
+        node = self.__nodes.get(self.__resolve(visual_hash))
+        return node.relevance if node else FocusRelevance.UNSCOPED
+
+    @staticmethod
+    def __coerce_relevance(value: Optional[str]) -> FocusRelevance:
+        """
+        Coerces a persisted relevance string into the enum, defaulting to UNSCOPED.
+        """
+
+        if value is None:
+            return FocusRelevance.UNSCOPED
+        try:
+            return FocusRelevance(value)
+        except ValueError:
+            return FocusRelevance.UNSCOPED
 
     async def append_activity_description(self, *, activity: str, observation: str) -> None:
         """

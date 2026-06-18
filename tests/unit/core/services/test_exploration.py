@@ -4,7 +4,7 @@ import unittest
 from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock
 
-from fathom.constants.exploration import ExpectedOutcome
+from fathom.constants.exploration import ExpectedOutcome, FocusRelevance
 from fathom.core.services.exploration import ExplorationResponseParser, ExplorationVisionService
 from fathom.schemas.results import GenerateResult
 
@@ -122,6 +122,47 @@ class TestExplorationResponseParser(unittest.TestCase):
         )
 
         self.assertIsNone(self.__parser.parse(response).action.expected_outcome)
+
+    def test_parses_focus_relevance_onto_result(self) -> None:
+        response = self.__explore(
+            action={
+                "action_type": "tap",
+                "rationale": "r",
+                "target_name": "Checkout",
+                "tap_target": {"x": 1, "y": 1},
+            },
+            assistant_message="m",
+            focus_relevance="on_focus",
+        )
+
+        self.assertEqual(self.__parser.parse(response).focus_relevance, FocusRelevance.ON_FOCUS)
+
+    def test_unknown_focus_relevance_is_dropped(self) -> None:
+        response = self.__explore(
+            action={
+                "action_type": "tap",
+                "rationale": "r",
+                "target_name": "x",
+                "tap_target": {"x": 1, "y": 1},
+            },
+            assistant_message="m",
+            focus_relevance="somewhere_else",
+        )
+
+        self.assertIsNone(self.__parser.parse(response).focus_relevance)
+
+    def test_absent_focus_relevance_is_none(self) -> None:
+        response = self.__explore(
+            action={
+                "action_type": "tap",
+                "rationale": "r",
+                "target_name": "x",
+                "tap_target": {"x": 1, "y": 1},
+            },
+            assistant_message="m",
+        )
+
+        self.assertIsNone(self.__parser.parse(response).focus_relevance)
 
     def test_attaches_rich_description_from_describe_screen(self) -> None:
         response = GenerateResult(

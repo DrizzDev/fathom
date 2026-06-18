@@ -527,6 +527,7 @@ class CommandExecutor:
                 request_id=request.runtime.session_id,
                 package_name=request.objective.package_name,
                 intent=request.objective.intent,
+                focus=request.objective.focus,
             )
 
         if with_tui:
