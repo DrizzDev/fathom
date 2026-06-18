@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 from unittest.mock import Mock
 
 from fathom.constants import ActionType
+from fathom.constants.exploration import FocusRelevance
 from fathom.infrastructure.memory.knowledge_graph import GraphEdge
 from fathom.schemas.actions import Action
 from fathom.schemas.exploration import BFSQueueEntry
@@ -61,6 +62,7 @@ class TestFindOrphanedScreens(unittest.TestCase):
         nodes: List[str],
         paths: Optional[dict[str, Optional[List[Tuple[str, Optional[GraphEdge]]]]]] = None,
         inbound: Optional[dict[str, Optional[Tuple[str, GraphEdge]]]] = None,
+        relevance: Optional[dict[str, FocusRelevance]] = None,
     ) -> Mock:
         knowledge_graph = Mock()
         knowledge_graph.nodes = {key: Mock() for key in nodes}
@@ -69,6 +71,11 @@ class TestFindOrphanedScreens(unittest.TestCase):
         )
         knowledge_graph.get_inbound_edge = Mock(
             side_effect=lambda *, destination_hash: (inbound or {}).get(destination_hash)
+        )
+        knowledge_graph.relevance_of = Mock(
+            side_effect=lambda *, visual_hash: (relevance or {}).get(
+                visual_hash, FocusRelevance.UNSCOPED
+            )
         )
         return knowledge_graph
 
@@ -135,6 +142,59 @@ class TestFindOrphanedScreens(unittest.TestCase):
 
         self.assertEqual([entry.screen_hash for entry in orphans], ["near", "far"])
         self.assertEqual([entry.depth for entry in orphans], [1, 3])
+
+    def test_recovers_on_focus_frontier_before_nearer_off_focus(self) -> None:
+        near = self.__edge(source="root", destination="near", action_target="Open near")
+        first = self.__edge(source="root", destination="a", action_target="a")
+        second = self.__edge(source="a", destination="b", action_target="b")
+        third = self.__edge(source="b", destination="far", action_target="far")
+        knowledge_graph = self.__knowledge_graph(
+            nodes=["root", "near", "far"],
+            paths={
+                "near": [("root", None), ("near", near)],
+                "far": [("root", None), ("a", first), ("b", second), ("far", third)],
+            },
+            relevance={"near": FocusRelevance.OFF_FOCUS, "far": FocusRelevance.ON_FOCUS},
+        )
+        dfs = DfsState(root_hash="root")
+
+        orphans = DfsNavigator(dfs=dfs, knowledge_graph=knowledge_graph).find_orphaned_screens()
+
+        # 'far' is on-focus, so it is recovered first despite being deeper; the
+        # off-focus 'near' sinks to the bottom but stays reachable.
+        self.assertEqual([entry.screen_hash for entry in orphans], ["far", "near"])
+
+    def test_orders_by_relevance_tier_then_depth(self) -> None:
+        edges = {
+            name: self.__edge(source="root", destination=name, action_target=name)
+            for name in ("on_a", "on_b", "lead", "plain", "off")
+        }
+        knowledge_graph = self.__knowledge_graph(
+            nodes=["root", "off", "plain", "lead", "on_b", "on_a"],
+            paths={
+                "on_a": [("root", None), ("on_a", edges["on_a"])],
+                # A second on-focus screen, one hop deeper, to prove depth breaks ties.
+                "on_b": [("root", None), ("on_a", edges["on_a"]), ("on_b", edges["on_b"])],
+                "lead": [("root", None), ("lead", edges["lead"])],
+                "plain": [("root", None), ("plain", edges["plain"])],
+                "off": [("root", None), ("off", edges["off"])],
+            },
+            relevance={
+                "on_a": FocusRelevance.ON_FOCUS,
+                "on_b": FocusRelevance.ON_FOCUS,
+                "lead": FocusRelevance.LEADS_TOWARD,
+                "off": FocusRelevance.OFF_FOCUS,
+                # 'plain' is left UNSCOPED via the helper default.
+            },
+        )
+        dfs = DfsState(root_hash="root")
+
+        orphans = DfsNavigator(dfs=dfs, knowledge_graph=knowledge_graph).find_orphaned_screens()
+
+        # on_focus (nearer first) -> leads_toward -> unscoped -> off_focus.
+        self.assertEqual(
+            [entry.screen_hash for entry in orphans], ["on_a", "on_b", "lead", "plain", "off"]
+        )
 
     def test_falls_back_to_inbound_edge_when_no_rooted_path(self) -> None:
         edge = self.__edge(source="src", destination="child", action_target="Open child")

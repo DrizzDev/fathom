@@ -101,6 +101,27 @@ class FocusRelevance(StrEnum):
     OFF_FOCUS = "off_focus"
     UNSCOPED = "unscoped"
 
+    @property
+    def recovery_priority(self) -> int:
+        """
+        Frontier-recovery rank; lower is recovered first (on-focus before off-focus).
+
+        On a broad-coverage run every screen is UNSCOPED, so this collapses to a
+        constant and recovery falls back to pure nearest-first ordering.
+        """
+
+        return _RECOVERY_PRIORITY[self]
+
+
+# Order in which the frontier-recovery pass reaches unscanned screens on a
+# focused run: on-focus first, off-focus last, but every screen stays reachable.
+_RECOVERY_PRIORITY: dict[FocusRelevance, int] = {
+    FocusRelevance.ON_FOCUS: 0,
+    FocusRelevance.LEADS_TOWARD: 1,
+    FocusRelevance.UNSCOPED: 2,
+    FocusRelevance.OFF_FOCUS: 3,
+}
+
 
 # The default exploration goal used when no specific focus is requested; a
 # generic goal keeps the model in broad-coverage mode rather than steering it

@@ -112,10 +112,21 @@ class DfsNavigator:
                 )
             )
 
-        # Recover the screens closest to the root first: fewer hops to replay and
-        # less BACK/forward churn than diving into the deepest branch immediately.
-        orphans.sort(key=lambda entry: entry.depth)
+        # On a focused run, recover on-focus screens before off-focus ones so the
+        # frontier sweep heads toward the target section first; off-focus screens
+        # sink to the bottom but stay reachable. Depth breaks ties, keeping the
+        # nearest-first ordering (and, on a broad-coverage run where every screen
+        # is UNSCOPED, the relevance key is constant so depth alone decides).
+        orphans.sort(key=lambda entry: (self.__recovery_priority(entry=entry), entry.depth))
         return orphans
+
+    def __recovery_priority(self, *, entry: BFSQueueEntry) -> int:
+        """
+        Focus-relevance recovery rank for a frontier screen; lower is recovered first.
+        """
+
+        relevance = self.__knowledge_graph.relevance_of(visual_hash=entry.screen_hash)
+        return relevance.recovery_priority
 
     def __path_from_root(self, *, screen_hash: str) -> List[Tuple[str, Action]]:
         """
