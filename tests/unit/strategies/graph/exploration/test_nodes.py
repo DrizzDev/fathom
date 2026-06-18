@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import BFSPhase
+from fathom.constants.exploration import EXPLORATION_PROGRESS_EVENT, BFSPhase
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
@@ -48,6 +48,7 @@ def _graph_mock(**overrides: Any) -> Mock:
         count_category_taps=Mock(return_value=0),
         has_screen=Mock(return_value=False),
         exhausted_hashes=Mock(return_value=set()),
+        node_count=0,
         add_screen=AsyncMock(),
         append_activity_description=AsyncMock(),
         record_transition=AsyncMock(),
@@ -245,6 +246,7 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
             memory=Mock(store_experience=AsyncMock()),
             history=Mock(enqueue_save_step=Mock()),
             agent_state=Mock(record_step=Mock(), step_count=1),
+            telemetry=Mock(info=AsyncMock()),
         )
         context.perception = Mock(
             perceive=AsyncMock(return_value=Mock()),
@@ -276,6 +278,10 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dfs.current_path, [("pre", action)])
         self.assertEqual(result[EKey.BFS_PHASE], BFSPhase.SCAN.value)
         self.assertFalse(result[CKey.IS_COMPLETE])
+        # The step published a progress snapshot for live observers.
+        progress_call = context.telemetry.info.await_args
+        self.assertEqual(progress_call.args[0], EXPLORATION_PROGRESS_EVENT)
+        self.assertEqual(progress_call.kwargs["step"], 1)
 
 
 class TestNavigateNode(unittest.IsolatedAsyncioTestCase):
@@ -492,6 +498,7 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
             memory=Mock(store_experience=AsyncMock()),
             history=Mock(enqueue_save_step=Mock()),
             agent_state=Mock(record_step=Mock(), step_count=1),
+            telemetry=Mock(info=AsyncMock()),
         )
         context.perception = Mock(
             perceive=AsyncMock(return_value=Mock()),
@@ -540,6 +547,7 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
             memory=Mock(store_experience=AsyncMock()),
             history=Mock(enqueue_save_step=Mock()),
             agent_state=Mock(record_step=Mock(), step_count=1),
+            telemetry=Mock(info=AsyncMock()),
         )
         context.perception = Mock(
             perceive=AsyncMock(return_value=Mock()),

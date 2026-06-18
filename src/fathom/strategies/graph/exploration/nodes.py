@@ -6,7 +6,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import RECENT_ACTION_WINDOW, BFSPhase
+from fathom.constants.exploration import EXPLORATION_PROGRESS_EVENT, RECENT_ACTION_WINDOW, BFSPhase
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
@@ -379,6 +379,8 @@ class ExplorationNodeProvider:
             result[CKey.COMPLETION_REASON] = CompletionReason.MAX_STEPS
         elif is_complete:
             result[CKey.COMPLETION_REASON] = _DFS_COMPLETE
+
+        await self.__emit_progress(action=action)
         return cast("ExplorationGraphState", result)
 
     # ── Routers ────────────────────────────────────────────────────────────
@@ -680,6 +682,36 @@ class ExplorationNodeProvider:
             ctx.memory.store_experience(visual_hash=pre_hash, action=action, success=success)
         )
         await asyncio.gather(*writes, return_exceptions=True)
+
+    async def __emit_progress(self, *, action: Optional[Action]) -> None:
+        """
+        Publish a per-step progress snapshot for live observers (e.g. the TUI).
+        """
+
+        ctx = self.__context
+        dfs = self.__dfs
+        screens = ctx.exploration_graph.node_count
+        coverage = round(len(dfs.fully_scanned) / screens * 100.0, 1) if screens else 0.0
+        await ctx.telemetry.info(
+            EXPLORATION_PROGRESS_EVENT,
+            step=ctx.agent_state.step_count,
+            max_steps=ctx.max_steps,
+            phase=dfs.phase.value,
+            unique_screens=screens,
+            coverage=coverage,
+            action=self.__action_summary(action=action),
+        )
+
+    @staticmethod
+    def __action_summary(*, action: Optional[Action]) -> str:
+        """
+        Short human-readable label for the action that drove a step.
+        """
+
+        if action is None:
+            return "navigation"
+        label = action.natural_language_target or action.target or ""
+        return f"{action.action_type.value} {label}".strip()
 
     # ── DFS transition logic ─────────────────────────────────────────────────
 

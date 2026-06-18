@@ -91,6 +91,11 @@ _TRANSITION_OUTCOMES: frozenset[ExpectedOutcome] = frozenset(
 # toward one flow (see EXPLORATION_FOCUS_DIRECTIVE).
 DEFAULT_EXPLORATION_INTENT: str = "Explore application structure"
 
+# Telemetry event name carrying a per-step exploration progress snapshot; the
+# TUI telemetry adapter renders it as live header state, the console adapter
+# logs it as a structured line.
+EXPLORATION_PROGRESS_EVENT: str = "exploration.progress"
+
 # Longest screen label rendered in a diagram before it is truncated.
 MAX_SCREEN_LABEL_LENGTH: int = 48
 

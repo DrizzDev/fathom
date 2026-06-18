@@ -108,6 +108,7 @@ class TestExplorationWorkflowEndToEnd(unittest.IsolatedAsyncioTestCase):
                 check_signal=AsyncMock(return_value=None),
                 is_pause_requested=AsyncMock(return_value=False),
             ),
+            telemetry=Mock(info=AsyncMock()),
         )
 
     async def test_run_completes_and_writes_artifacts(self) -> None:
