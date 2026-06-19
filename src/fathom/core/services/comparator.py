@@ -4,7 +4,10 @@ import time
 from logging import getLogger
 from typing import List, Optional, Tuple, TypeAlias, cast
 
-import cv2
+try:
+    import cv2
+except ModuleNotFoundError:  # pragma: no cover - dependency enforced at runtime
+    cv2 = None
 import numpy
 from numpy.typing import NDArray
 
@@ -15,6 +18,8 @@ from fathom.constants.screen import (
     MIN_CHANGED_REGION_AREA_PX,
     NAVIGATION_BAR_HEIGHT_PX,
     PIXEL_CHANGE_THRESHOLD,
+    SCROLL_IDENTICAL_FRAME_CONTENT_DIFF_RATIO_THRESHOLD,
+    SCROLL_IDENTICAL_FRAME_SSIM_THRESHOLD,
     SSIM_GAUSSIAN_KERNEL_SIZE,
     SSIM_GAUSSIAN_SIGMA,
     SSIM_K1,
@@ -52,6 +57,9 @@ class ScreenComparator:
         Compare two captures and return a rich diff object.
         """
 
+        if cv2 is None:
+            raise RuntimeError("OpenCV is required to compare screen captures.")
+
         compare_start = time.time()
 
         structural_signals = self.__resolve_structural_signals(
@@ -72,7 +80,14 @@ class ScreenComparator:
         logger.info("[ScreenDiff] Changed regions completed in %.2fs", time.time() - regions_start)
 
         scroll_start = time.time()
-        scroll = self.__compute_scroll_translation(after=after.image, before=before.image)
+        scroll: Optional[ScreenScrollTranslation]
+        if self.__frames_effectively_identical(ssim_score=ssim_score, pixel_diff=pixel_diff):
+            # Phase correlation on near-identical frames returns small
+            # DC-noise shifts (~0.5 px). Short-circuit to zero translation
+            # so no-op actions do not produce bogus scroll evidence.
+            scroll = ScreenScrollTranslation(dx=0.0, dy=0.0)
+        else:
+            scroll = self.__compute_scroll_translation(after=after.image, before=before.image)
         logger.info(
             "[ScreenDiff] Scroll translation completed in %.2fs", time.time() - scroll_start
         )
@@ -158,7 +173,7 @@ class ScreenComparator:
 
             return cast("ImageMatrix", decoded_image)
         except Exception as exception:
-            logger.debug("Image decode failed: %s", exception)
+            logger.warning("Image decode failed: %s", exception)
             return None
 
     @staticmethod
@@ -229,7 +244,7 @@ class ScreenComparator:
                 before_image=self.__get_content_region(image=image_before),
             )
         except Exception as exception:
-            logger.debug("SSIM failed: %s", exception)
+            logger.warning("SSIM failed: %s", exception)
             return None
 
     def __compute_ssim_map_mean(
@@ -328,7 +343,7 @@ class ScreenComparator:
             changed_pixels = int(numpy.sum(diff > PIXEL_CHANGE_THRESHOLD))
             return float(changed_pixels) / float(total_pixels)
         except Exception as exception:
-            logger.debug("Pixel diff failed: %s", exception)
+            logger.warning("Pixel diff failed: %s", exception)
             return None
 
     def __compute_changed_regions(self, *, before: bytes, after: bytes) -> List[ScreenChangeRegion]:
@@ -378,8 +393,30 @@ class ScreenComparator:
 
             return regions
         except Exception as exception:
-            logger.debug("Changed region detection failed: %s", exception)
+            logger.warning("Changed region detection failed: %s", exception)
             return []
+
+    @staticmethod
+    def __frames_effectively_identical(
+        *,
+        ssim_score: Optional[float],
+        pixel_diff: Optional[float],
+    ) -> bool:
+        """
+        Whether two captures are so similar that a non-zero scroll
+        translation can only be DC-noise from phase correlation.
+
+        Returns ``False`` when either signal is unavailable — without
+        both, we cannot prove identity, so the scroll computation must
+        run as the unbiased fallback.
+        """
+
+        if ssim_score is None or pixel_diff is None:
+            return False
+        return (
+            ssim_score >= SCROLL_IDENTICAL_FRAME_SSIM_THRESHOLD
+            and pixel_diff <= SCROLL_IDENTICAL_FRAME_CONTENT_DIFF_RATIO_THRESHOLD
+        )
 
     def __compute_scroll_translation(
         self, *, before: bytes, after: bytes
@@ -411,5 +448,5 @@ class ScreenComparator:
                 dy=float(shift[1]),
             )
         except Exception as exception:
-            logger.debug("Phase correlation failed: %s", exception)
+            logger.warning("Phase correlation failed: %s", exception)
             return None

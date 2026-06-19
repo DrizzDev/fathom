@@ -1,0 +1,26 @@
+platform: ios
+label_id: "47"
+target_text: "Food tab"
+description: |
+  Header tab icon near the top-left of the screen. XML logical bounds
+  (16, 120, 88, 82); device-pixel (48, 359, 264, 247). Pixel y=359 is
+  inside the logical screen height (932) so the clamp does NOT fire,
+  but production still dispatched (180, 482) — a pixel-space coord
+  interpreted as logical, landing in the deals carousel mid-screen.
+  Demonstrates the bug fires even without clamp activation.
+screen:
+  logical:
+    width: 430
+    height: 932
+expected:
+  resolved_pixel_bounds:
+    x: 48
+    y: 359
+    width: 264
+    height: 247
+  dispatched_logical:
+    x: 60
+    y: 160
+  observed_buggy_dispatched_logical:
+    x: 180
+    y: 482

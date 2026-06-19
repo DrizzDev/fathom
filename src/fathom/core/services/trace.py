@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from logging import getLogger
 from typing import Any, Tuple
 
 from fathom.base.paths import SharedPathManager
+from fathom.constants.artifact import ArtifactFilename
 from fathom.processing.annotator import ImageAnnotator
+from fathom.schemas.artifact import ArtifactKind
 
 logger = getLogger(__name__)
 
@@ -13,6 +15,14 @@ logger = getLogger(__name__)
 class TraceService:
     """
     Service for generating and persisting annotated action traces.
+
+    .. deprecated::
+        Trace persistence moved to
+        :class:`fathom.core.artifact.pipeline.ArtifactPipeline` via
+        :class:`fathom.schemas.artifact.TracePayload`. The action
+        executor emits trace records directly through the pipeline.
+        This service is kept for ad-hoc tooling; do not introduce new
+        callers.
     """
 
     def __init__(self, path_manager: SharedPathManager) -> None:
@@ -30,25 +40,41 @@ class TraceService:
     ) -> None:
         """
         Save an annotated trace image to the session directory.
+
+        Filenames follow the canonical artifact grammar
+        ``step-NNN__<kind>__<iso-timestamp-utc>.<ext>`` so even ad-hoc
+        traces written through this deprecated path interleave
+        correctly in directory listings with pipeline-written
+        artifacts.
+
+        .. deprecated::
+            Emit a :class:`fathom.schemas.artifact.TracePayload` via
+            :class:`ArtifactPipeline` instead.
         """
 
+        import warnings
+
+        warnings.warn(
+            "TraceService.save is deprecated; emit a TracePayload via ArtifactPipeline instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             action_type = getattr(action, "action_type", "unknown")
 
-            # Convert enum to string if needed
-            action_type_str = (
-                action_type.value
-                if hasattr(action_type, "value") and not isinstance(action_type, str)
-                else str(action_type)
-            )
+            separator = ArtifactFilename.SEPARATOR
+            step = str(step_number).zfill(ArtifactFilename.STEP_DIGITS)
+            timestamp = datetime.now(tz=timezone.utc).strftime(ArtifactFilename.TIMESTAMP_FORMAT)
 
-            filename = f"step_{step_number}_{action_type_str}_{timestamp}.png"
+            filename = (
+                f"step-{step}{separator}{ArtifactKind.TRACE.value}"
+                f"{separator}{package_name}{separator}{timestamp}.png"
+            )
 
             path = self.__path_manager.get_trace_path(
                 filename=filename,
                 session_id=session_id,
-                package_name=package_name,
             )
 
             # ImageAnnotator handles the actual drawing and saving

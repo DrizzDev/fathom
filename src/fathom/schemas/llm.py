@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Optional
+from typing import Optional, Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class StructuredOutput(BaseModel):
+    """
+    Vendor-neutral specification for constrained-decoding LLM output.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    payload: Type[BaseModel] = Field(
+        description="Pydantic model the emitted response must conform to.",
+    )
 
 
 class GeminiExceptionKind(StrEnum):

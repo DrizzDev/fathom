@@ -70,16 +70,3 @@ class HierarchyElementExtraction(BaseModel):
         default_factory=dict,
         description="Rendered element manifest keyed by label for prompt grounding",
     )
-
-
-class ResolvedHierarchyScreenshot(BaseModel):
-    """
-    Typed source screenshot reference used during hierarchy processing.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    path: str = Field(description="Filesystem path of the screenshot used for parsing")
-    created_temporary_file: bool = Field(
-        description="Whether the screenshot path points to a temporary file that must be removed"
-    )

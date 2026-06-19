@@ -225,13 +225,7 @@ class QualifierComposerTest(unittest.IsolatedAsyncioTestCase):
         dedicated_llm.cleanup.assert_awaited_once_with()
 
     async def test_post_construction_compose_cancellation_cleans_dedicated_llm(self) -> None:
-        """
-        Regression: CancelledError is BaseException-derived in Python 3.8+, so
-        catching only Exception would leak the dedicated qualifier LLM if a
-        future refactor introduces an await inside compose()'s try block and
-        the activity is cancelled at that point. The composer must drain its
-        unreturned dedicated LLM under cancellation too.
-        """
+        """Regression: CancelledError is BaseException-derived in Python 3.8+, so catching only Exception would leak the dedicated qualifier LLM if a future refactor introduces an await inside compose()'s try block and the activity is cancelled at that point."""
 
         dedicated_llm = MagicMock(spec=LLMPort)
         dedicated_llm.cleanup = AsyncMock()

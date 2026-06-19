@@ -6,10 +6,12 @@ import hashlib
 import json
 import time
 from logging import getLogger
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, Set, TypedDict
 
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.constants.tools import TurnMode
+from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.prompts.factory import PromptFactory
@@ -19,9 +21,13 @@ from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.schemas.capabilities import RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn, TurnPart
+from fathom.schemas.observation import LoopObservation, ScreenObservation
 from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
+from fathom.schemas.tools import AllowedTools, ToolPolicyContext
+from fathom.schemas.vision import PastActionEntry
 from fathom.utils.image import ImageProcessor
 
 logger = getLogger(__name__)
@@ -49,12 +55,12 @@ class VisionService:
         telemetry: TelemetryPort,
         *,
         use_cache: bool,
+        capabilities: RuntimeCapabilities,
+        tool_scope: Optional[ToolScope] = None,
         session_id: str = "",
         auditor: Optional[AuditService] = None,
     ) -> None:
-        """
-        Initialize vision service.
-        """
+        """Initialize vision service with the live runtime capabilities."""
 
         self.__llm = llm
         self.__memory = memory
@@ -64,55 +70,48 @@ class VisionService:
         self.__use_cache = use_cache
         self.__session_id = session_id
         self.__parser = ToolResponseParser()
-        self.__background_tasks: set[asyncio.Task[Any]] = set()
+        self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
-        # Use the original prompt builder factory
+        self.__capabilities = capabilities
+        self.__tool_scope = tool_scope or ToolScope(policies=DEFAULT_TOOL_POLICIES)
+
         self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
-        self.__tool_definitions = ToolRegistry.get_all_definitions()
 
     async def prewarm(self) -> None:
         """
-        Prewarm the planner prompt cache for the known planner tool variants.
-
-        Called concurrently with intent decomposition to reduce first-call latency.
-        Each variant creates a separate cached content entry in the provider.
+        Prewarm the LLM cache with the canonical tool variants for the live runtime.
         """
 
-        instruction = self.__builder.build()
-
         start = time.time()
-        for tools in self.__planner_tool_variants():
-            await self.__llm.prewarm(tools=tools, system_instruction=instruction)
 
-        duration = time.time() - start
+        for variant in self.__prewarm_variants():
+            instruction = self.__builder.build(tools=variant)
+            payload = ToolRegistry.definitions(names=variant.names)
+            await self.__llm.prewarm(tools=payload, system_instruction=instruction)
 
         await self.__telemetry.debug(
             "Latency phase completed",
-            phase="planner_prewarm",
-            duration=duration,
-            type=FathomEvent.LATENCY_PHASE,
+            phase="planner.prewarm",
+            duration=time.time() - start,
+            type=FathomEvent.PHASE_HEARTBEAT,
         )
 
-    def __planner_tool_variants(self) -> List[Dict[str, Any]]:
+    def __prewarm_variants(self) -> List[AllowedTools]:
         """
-        Return the small fixed set of planner tool variants worth prewarming.
+        Return canonical tool variants matched to the runtime capabilities.
         """
 
-        try:
-            definitions = self.__tool_definitions["function_declarations"]
-            by_name = {definition["name"]: definition for definition in definitions}
-
-            return [
-                {"function_declarations": [by_name["execute_ui"]]},
-                {"function_declarations": [by_name["execute_ui"], by_name["verify_goal"]]},
-            ]
-        except KeyError as exception:
-            logger.warning("[VisionService] Tool definition missing for prewarm: %s", exception)
-            return []
+        return [
+            self.__tool_scope.compute(
+                context=ToolPolicyContext(capabilities=self.__capabilities, modes=modes),
+            )
+            for modes in (frozenset(), frozenset({TurnMode.VERIFY}))
+        ]
 
     async def analyze(
         self,
         intent: str,
+        tools: AllowedTools,
         capture: ScreenCapture,
         context_manager: ContextManager,
         *,
@@ -126,7 +125,8 @@ class VisionService:
         failures: Optional[List[str]] = None,
         elements: Optional[Dict[str, Any]] = None,
         sub_goal_info: Optional[SubGoalContext] = None,
-        delta_context: Optional[Dict[str, object]] = None,
+        loop_observation: Optional[LoopObservation] = None,
+        screen_observation: Optional[ScreenObservation] = None,
         prior_rejection_history: Optional[List[ConversationTurn]] = None,
     ) -> AnalysisResult:
         """
@@ -196,18 +196,30 @@ class VisionService:
             guidance_count=len(context_manager.get_user_guidance()),
         )
 
-        logger.debug(
-            f"[H3] Vision Input Context | guidance={guidance} | trace_len={len(full_context.get('trace', []))}"
+        logger.info(
+            "Vision input context prepared",
+            extra={
+                "component": "core.services.vision",
+                "event": "vision.input_context.prepared",
+                "guidance.present": guidance is not None,
+                "trace.count": len(full_context.get("trace", [])),
+            },
         )
 
-        instruction = self.__builder.build()
+        instruction = self.__builder.build(tools=tools)
 
         # Sub-goal context (if provided by caller) - SINGLE FOCUS MODE
         # Only current sub-goal is passed to Gemini to prevent skip-ahead behavior.
         if sub_goal_info:
-            logger.debug(
-                f"[Vision] Single sub-goal focus mode: step [{sub_goal_info['index'] + 1}/{sub_goal_info['total']}] | "
-                f"Task: {sub_goal_info['description'][:60]}"
+            logger.info(
+                "Vision single-sub-goal focus mode enabled",
+                extra={
+                    "component": "core.services.vision",
+                    "event": "vision.sub_goal_focus.enabled",
+                    "sub_goal.index": sub_goal_info["index"],
+                    "sub_goal.total": sub_goal_info["total"],
+                    "sub_goal.description.length": len(sub_goal_info["description"]),
+                },
             )
 
         # Pass ALL persistent memory (not just screen-specific)
@@ -226,7 +238,9 @@ class VisionService:
             current_screen_hash=fingerprint[:8],
         )
 
-        if is_stuck:
+        if loop_observation is not None:
+            dynamic_context += self.__render_loop_observation(observation=loop_observation)
+        elif is_stuck:
             dynamic_context += (
                 "\n\n<SYSTEM_ALERT>\n"
                 "Loop risk detected; avoid repeating the same ineffective action."
@@ -248,20 +262,22 @@ class VisionService:
                 f"\n\n<LAST_ACTION>\nMost recent action: {last_action}\n</LAST_ACTION>"
             )
 
-        if delta_context:
-            dynamic_context += (
-                f"\n\n<DELTA_CONTEXT>\n{json.dumps(delta_context, default=str)}\n</DELTA_CONTEXT>"
-            )
+        if screen_observation is not None:
+            dynamic_context += self.__render_screen_observation(observation=screen_observation)
 
-        logger.debug(
-            f"[H3] Dynamic Context Built | "
-            f"has_memory={bool(all_memory)} | "
-            f"memory_keys={list(all_memory.keys()) if all_memory else []} | "
-            f"context_length={len(dynamic_context)}"
+        logger.info(
+            "Vision dynamic context built",
+            extra={
+                "component": "core.services.vision",
+                "event": "vision.dynamic_context.built",
+                "memory.present": bool(all_memory),
+                "context.length": len(dynamic_context),
+                "memory.count": len(all_memory) if all_memory else 0,
+            },
         )
 
         tool_scope_start = time.time()
-        tools = self.__scope_tools(intent=intent)
+        allowed_tools = ToolRegistry.definitions(names=tools.names)
         tool_scope_duration = time.time() - tool_scope_start
 
         # 3. CONTENT ASSEMBLY
@@ -319,8 +335,8 @@ class VisionService:
         for attempt in range(max_validation_retries + 1):
             commence = time.time()
             response = await self.__llm.generate(
-                tools=tools,
                 prompt=payload,
+                tools=allowed_tools,
                 use_cache=self.__use_cache,
                 system_instruction=instruction,
                 conversation_history=conversation_history if conversation_history else None,
@@ -367,8 +383,11 @@ class VisionService:
                     # correction instruction (the history already contains the original prompt).
                     payload = [
                         f"Your previous tool call was rejected: {message}\n"
-                        "You MUST call the tool again with a DIFFERENT action. "
-                        "Choose an alternative approach to achieve the same goal."
+                        "You MUST call the tool again with corrected fields that satisfy "
+                        "the schema. Keep the same intended UI action when it is still "
+                        "the right next step; choose a different action only if the "
+                        "current screen or validation feedback proves the original "
+                        "intent was wrong."
                     ]
                     continue
 
@@ -389,6 +408,12 @@ class VisionService:
             for item in original_payload
         ]
         analysis.metadata["system_instruction"] = instruction
+        analysis.metadata["current_workflow_screen_actions"] = (
+            self.__current_workflow_screen_actions(
+                trace=full_context.get("trace", []),
+                current_screen_hash=fingerprint[:8],
+            )
+        )
 
         analysis.memories = len(knowledge.get("previous_actions", []))
         analysis.metrics["llm_analysis"] = duration
@@ -415,6 +440,50 @@ class VisionService:
         )
 
         return analysis
+
+    @staticmethod
+    def __current_workflow_screen_actions(
+        *,
+        trace: Any,
+        current_screen_hash: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return successful actions from this workflow on the current screen.
+        """
+
+        if not isinstance(trace, list):
+            return []
+
+        actions: List[Dict[str, Any]] = []
+        for entry in trace:
+            if not isinstance(entry, dict):
+                continue
+            observation = str(entry.get("observation") or "")
+            if not observation.startswith("Screen: "):
+                continue
+            parts = observation.split(" ")
+            entry_hash = parts[1][:8] if len(parts) > 1 else ""
+            if entry_hash != current_screen_hash:
+                continue
+            action = entry.get("action")
+            if not isinstance(action, dict):
+                continue
+            target = (
+                action.get("natural_language_target")
+                or action.get("target")
+                or action.get("label_id")
+            )
+            if not target:
+                continue
+            actions.append(
+                {
+                    "success": True,
+                    "action": action.get("action_type"),
+                    "target": str(target),
+                }
+            )
+
+        return actions
 
     def build_rejection_history_from_analysis(
         self,
@@ -543,32 +612,6 @@ class VisionService:
 
         return data
 
-    async def check_completion(
-        self,
-        intent: str,
-        visual_hash: str,
-        screen_width: int,
-        screen_height: int,
-        capture: ScreenCapture,
-        context_manager: ContextManager,
-        *,
-        tracking_note: Optional[str] = None,
-    ) -> bool:
-        """
-        Check if intent is complete.
-        """
-
-        result = await self.analyze(
-            intent=intent,
-            capture=capture,
-            visual_hash=visual_hash,
-            screen_width=screen_width,
-            screen_height=screen_height,
-            tracking_note=tracking_note,
-            context_manager=context_manager,
-        )
-        return result.is_goal_complete
-
     def __build_payload(
         self,
         intent: str,
@@ -592,7 +635,12 @@ class VisionService:
             payload.append(f"Screen Info: {knowledge['description']}")
 
         if history := knowledge.get("previous_actions", []):
-            payload.append(f"Past actions on this specific screen: {json.dumps(history)}")
+            annotated = [
+                PastActionEntry.from_raw(entry=entry).model_dump(mode="json")
+                for entry in history
+                if isinstance(entry, dict)
+            ]
+            payload.append(f"Past actions on this specific screen: {json.dumps(annotated)}")
 
         if context:
             payload.append(context)
@@ -610,9 +658,105 @@ class VisionService:
 
         return payload
 
+    def __render_loop_observation(self, *, observation: LoopObservation) -> str:
+        """
+        Render a :class:`LoopObservation` as a structured block in the
+        ANALYZE prompt.
+
+        The block is deliberately framed as an observation, not as an
+        instruction. The agent reads it, may consult it when choosing
+        the next action, and is free to disagree if it has reason. The
+        runtime enforces nothing here; loop-breaking remains a planner
+        concern, not a prompt contract.
+        """
+
+        progress = (
+            ", ".join(f"{score:.3f}" for score in observation.progress_scores)
+            if observation.progress_scores
+            else "(none recorded)"
+        )
+
+        alternatives = (
+            "\n  - " + "\n  - ".join(observation.suggested_alternatives)
+            if observation.suggested_alternatives
+            else " (none)"
+        )
+
+        note_line = f"\nnote: {observation.note}" if observation.note else ""
+
+        return (
+            "\n\n<SYSTEM_OBSERVATION>\n"
+            f"repeated_action: {observation.repeated_action}\n"
+            f"count: {observation.count}\n"
+            f"screen_relation: {observation.screen_relation.value}\n"
+            f"progress_scores (oldest first): {progress}\n"
+            f"alternatives:{alternatives}{note_line}\n"
+            "This is an observation from the runtime, not an instruction. "
+            "Decide the next action yourself; consider whether the current "
+            "approach is working or whether to ask the user.\n"
+            "</SYSTEM_OBSERVATION>"
+        )
+
+    def __render_screen_observation(self, *, observation: ScreenObservation) -> str:
+        """
+        Render compact runtime perception facts into the ANALYZE prompt.
+        """
+
+        calls_to_action = []
+        for element in observation.calls_to_action[:5]:
+            label = element.text or element.identifier
+            calls_to_action.append(
+                f"  - id={element.identifier} text={label} source={element.source.value}"
+            )
+
+        scroll_regions = []
+        for region in observation.scroll[:3]:
+            if region.manifest_label_id:
+                scroll_regions.append(
+                    f"  - manifest_label={region.manifest_label_id} x={region.bounds.x} y={region.bounds.y} "
+                    f"w={region.bounds.width} h={region.bounds.height} axis={region.axis}"
+                )
+                continue
+
+            hint = region.observation_region_id or region.identifier or "observation_scroll_region"
+            scroll_regions.append(
+                f"  - observation_hint={hint} x={region.bounds.x} y={region.bounds.y} "
+                f"w={region.bounds.width} h={region.bounds.height} axis={region.axis} "
+                "(hint only; NOT a manifest label_id)"
+            )
+
+        overlay_lines = []
+        for index, overlay in enumerate(observation.overlays[:3], start=1):
+            overlay_lines.append(
+                f"  - overlay_{index}: candidates={len(overlay.candidates)} "
+                f"x={overlay.bounds.x} y={overlay.bounds.y} "
+                f"w={overlay.bounds.width} h={overlay.bounds.height}"
+            )
+
+        return (
+            "\n\n<SCREEN_OBSERVATION>\n"
+            f"keyboard_visibility: {observation.keyboard.visibility.value.lower()}\n"
+            f"overlay_count: {len(observation.overlays)}\n"
+            "visible_calls_to_action:\n"
+            f"{chr(10).join(calls_to_action) if calls_to_action else '  - none'}\n"
+            "scroll_regions:\n"
+            f"{chr(10).join(scroll_regions) if scroll_regions else '  - none'}\n"
+            "overlays:\n"
+            f"{chr(10).join(overlay_lines) if overlay_lines else '  - none'}\n"
+            "</SCREEN_OBSERVATION>"
+        )
+
     def __format_elements(self, elements: Optional[Dict[str, Any]]) -> str:
         """
-        Converts label map to grounding manifest (strictly mirrored).
+        Convert the drawer label map into a grounding manifest the
+        planner can bind ``label_id`` references against.
+
+        Reads attribute keys from both platform vocabularies — Android
+        (``class``, ``text``, ``content-desc``) and iOS / XCUITest
+        (``type``, ``name``, ``label``, ``value``) — so an element
+        coming out of :class:`IOSParser` (which keeps its raw XML
+        attribute names) renders with its real semantic label instead
+        of an anonymous ``View``.
         """
 
         logger.info(f"Converting {len(elements) if elements else 0} elements into manifest")
@@ -626,13 +770,11 @@ class VisionService:
             if label.startswith("__"):
                 continue
 
-            kind = str(info.get("class", "View")).split(".")[-1]
+            kind = self.__manifest_kind(info=info)
             value = f"[{label}] {kind}"
 
-            # Inject Ground Truth Bounds
             if bounds_str := str(info.get("bounds", "")):
                 with contextlib.suppress(Exception):
-                    # Parse [x1,y1][x2,y2]
                     parts = (
                         bounds_str.replace("][", ",").replace("[", "").replace("]", "").split(",")
                     )
@@ -641,14 +783,8 @@ class VisionService:
                         w, h = x2 - x1, y2 - y1
                         value += f" ({x1},{y1},{w},{h})"
 
-            text = str(info.get("text", "")).strip()
-            detail = str(info.get("content-desc", "")).strip()
-
-            # if str(info.get("enabled", "true")).lower() == "false":
-            #     value += " [DISABLED]"
-
-            # if str(info.get("clickable", "false")).lower() == "true":
-            #     value += " [CLICKABLE]"
+            text = self.__manifest_text(info=info)
+            detail = self.__manifest_detail(info=info)
 
             if text:
                 value += f" | text: '{text}'"
@@ -660,20 +796,38 @@ class VisionService:
 
         return "\n".join(lines) if lines else "No interactive elements found."
 
-    def __scope_tools(self, intent: str) -> Dict[str, Any]:
+    @staticmethod
+    def __manifest_kind(*, info: Dict[str, Any]) -> str:
         """
-        Dynamically selects tools (strictly mirrored).
+        Resolve the element kind label, falling back across Android and
+        iOS attribute names. The iOS ``XCUIElementType`` prefix is
+        stripped so the manifest reads as ``Button`` / ``Icon`` etc.
         """
 
-        allowed = {"execute_ui", "store_memory", "recall_memory"}
-        if any(word in intent.lower() for word in ("verify", "check", "confirm", "validate")):
-            allowed.update({"validate_state", "verify_goal"})
+        raw = str(info.get("class") or info.get("type") or "View")
+        last = raw.split(".")[-1]
+        return last.replace("XCUIElementType", "") or last
 
-        definitions = ToolRegistry.get_all_definitions()
-        return {
-            "function_declarations": [
-                definition
-                for definition in definitions["function_declarations"]
-                if definition["name"] in allowed
-            ]
-        }
+    @staticmethod
+    def __manifest_text(*, info: Dict[str, Any]) -> str:
+        """
+        Resolve the primary text label across both platforms' attribute
+        names. iOS uses ``label`` / ``name``; Android uses ``text``.
+        """
+
+        for key in ("text", "label", "name"):
+            if (raw := info.get(key)) is not None and (stripped := str(raw).strip()):
+                return stripped
+        return ""
+
+    @staticmethod
+    def __manifest_detail(*, info: Dict[str, Any]) -> str:
+        """
+        Resolve the secondary descriptor. iOS uses ``value``; Android
+        uses ``content-desc``.
+        """
+
+        for key in ("content-desc", "value"):
+            if (raw := info.get(key)) is not None and (stripped := str(raw).strip()):
+                return stripped
+        return ""

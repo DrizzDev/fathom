@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING, Any, Dict, List
 if TYPE_CHECKING:
     import xml.etree.ElementTree as ET  # nosec
 
-from fathom.constants import ActionType
+from fathom.constants import GESTURE_ACTION_TYPES, ActionType
+from fathom.constants.screen import REPEATED_TEXT_SUPPRESSION_THRESHOLD
 from fathom.processing.geometry import GeometryUtils
 from fathom.processing.parsers.base import PlatformParser
 from fathom.schemas.hierarchy import NormalizedHierarchyNodeSignature
@@ -288,6 +289,15 @@ class AndroidParser(PlatformParser):
 
                 w, h = x2 - x1, y2 - y1
                 metadata = {key: node.get(key, "") for key in node.attrib}
+                metadata.update(
+                    self.__scroll_metadata(
+                        metadata=metadata,
+                        width=x2 - x1,
+                        height=y2 - y1,
+                        screen_width=width,
+                        screen_height=height,
+                    )
+                )
 
                 if w <= 0 or h <= 0:
                     skips["invalid_size"] += 1
@@ -333,6 +343,66 @@ class AndroidParser(PlatformParser):
         logger.info(f"Found {len(detected)} valid elements. Skips: {skips}")
         return detected
 
+    def __scroll_metadata(
+        self,
+        *,
+        width: int,
+        height: int,
+        screen_width: int,
+        screen_height: int,
+        metadata: Dict[str, Any],
+    ) -> Dict[str, str]:
+        """
+        Attach normalized scroll metadata for downstream scope resolution.
+        """
+
+        kind = str(metadata.get("class", ""))
+        explicitly_scrollable = str(metadata.get("scrollable", "false")).lower() == "true"
+        scrollable = explicitly_scrollable or kind in self.__SCROLLABLE_CLASSES
+        if not scrollable:
+            return {}
+
+        if kind == "android.widget.HorizontalScrollView":
+            axis = "horizontal"
+            scope_kind = "carousel"
+        elif kind in {
+            "androidx.viewpager.widget.ViewPager",
+            "androidx.viewpager2.widget.ViewPager2",
+        }:
+            fills_viewport = width >= int(screen_width * 0.80) and height >= int(
+                screen_height * 0.55
+            )
+            axis = "vertical" if fills_viewport else "horizontal"
+            scope_kind = "viewport" if fills_viewport else "carousel"
+        elif (
+            explicitly_scrollable
+            and width >= int(screen_width * 0.80)
+            and height >= int(screen_height * 0.55)
+        ):
+            axis = "vertical"
+            scope_kind = (
+                "list"
+                if kind
+                in {
+                    "android.widget.ListView",
+                    "android.widget.GridView",
+                    "android.widget.ScrollView",
+                    "android.widget.ExpandableListView",
+                    "androidx.core.widget.NestedScrollView",
+                    "androidx.recyclerview.widget.RecyclerView",
+                }
+                else "viewport"
+            )
+        else:
+            axis = "vertical"
+            scope_kind = "list"
+
+        return {
+            "axis": axis,
+            "kind": scope_kind,
+            "scrollable": "true",
+        }
+
     def filter_and_deduplicate(
         self,
         elements: List[LabeledElement],
@@ -350,27 +420,79 @@ class AndroidParser(PlatformParser):
         suppressed = self.__suppress_overlaps(elements=pruned, threshold=iou_threshold)
 
         meaningful = self.__filter_for_meaningfulness(elements=suppressed)
-        return sorted(meaningful, key=lambda element: element.bounds.area, reverse=True)
+        deduped = self.__suppress_repeated_decorative_text(elements=meaningful)
+        return sorted(deduped, key=lambda element: element.bounds.area, reverse=True)
+
+    @staticmethod
+    def __suppress_repeated_decorative_text(elements: List[LabeledElement]) -> List[LabeledElement]:
+        """
+        Collapse identical decorative-text labels that repeat across cards.
+
+        Mirrors the iOS suppression: keeps the first occurrence of any
+        repeated ``android.widget.TextView`` ``text`` so the planner
+        does not pick the same label twice within the same screen.
+        """
+
+        seen: Dict[str, int] = {}
+        retained: List[LabeledElement] = []
+
+        for element in elements:
+            kind = str(element.attributes.get("class") or "")
+
+            if "TextView" not in kind:
+                retained.append(element)
+                continue
+
+            key = str(element.attributes.get("text") or "").strip().lower()
+            if not key:
+                retained.append(element)
+                continue
+
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] <= REPEATED_TEXT_SUPPRESSION_THRESHOLD - 1:
+                retained.append(element)
+
+        return retained
 
     def filter_by_action(self, elements: List[LabeledElement], action: Any) -> List[LabeledElement]:
         """
         Filters elements relevant to a specific action.
         """
 
-        if action == ActionType.TAP:
-            return [element for element in elements if self.__is_tappable(element=element)]
+        reason = "unchanged"
 
-        if action == ActionType.TEXT or action == ActionType.TYPE:
-            return [
+        if action == ActionType.TAP:
+            reason = "tappable"
+            filtered = [element for element in elements if self.__is_tappable(element=element)]
+
+        elif action == ActionType.TEXT or action == ActionType.TYPE:
+            reason = "typeable_or_tappable"
+            filtered = [
                 element
                 for element in elements
                 if self.__is_typeable(element=element) or self.__is_tappable(element=element)
             ]
 
-        if action == ActionType.SWIPE:
-            return [element for element in elements if self.__is_swipeable(element=element)]
+        elif action in GESTURE_ACTION_TYPES:
+            reason = "swipeable"
+            filtered = [element for element in elements if self.__is_swipeable(element=element)]
 
-        return elements
+        else:
+            filtered = elements
+
+        logger.info(
+            "Filtered Android elements for action",
+            extra={
+                "platform": "android",
+                "filter.reason": reason,
+                "elements.after": len(filtered),
+                "elements.before": len(elements),
+                "event": "parser.filter_by_action",
+                "component": "processing.parsers.android",
+                "action.type": action.value if isinstance(action, ActionType) else str(action),
+            },
+        )
+        return filtered
 
     def __score_element(self, element: LabeledElement) -> float:
         """

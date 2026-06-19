@@ -1,0 +1,401 @@
+from __future__ import annotations
+
+import asyncio
+import unittest
+from typing import Any, Dict, List, Optional, Tuple
+
+from fathom.constants.events import FathomEvent
+from fathom.constants.phase import PhaseKind
+from fathom.core.services.telemetry.announcer import PhaseAnnouncer
+from fathom.interfaces.telemetry import TelemetryPort
+from fathom.schemas.telemetry import HeartbeatBudget, IntentMessage, PhaseMessage
+
+
+class _RecordingTelemetry(TelemetryPort):
+    """
+    Test-only telemetry port that captures every emitted event.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialise the recorder with an empty event list.
+        """
+
+        self.events: List[Tuple[str, FathomEvent, Dict[str, Any]]] = []
+
+    async def info(self, message: str, **context: Any) -> None:
+        """
+        Record the message, event type, and remaining context for later assertions.
+        """
+
+        event_type = context.pop("type")
+        self.events.append((message, event_type, context))
+
+    async def warning(self, message: str, **context: Any) -> None:
+        """
+        Capture warning-level events with the same shape as info.
+        """
+
+        await self.info(message, **context)
+
+    async def error(self, message: str, **context: Any) -> None:
+        """
+        Capture error-level events with the same shape as info.
+        """
+
+        await self.info(message, **context)
+
+    async def debug(self, message: str, **context: Any) -> None:
+        """
+        Capture debug-level events with the same shape as info.
+        """
+
+        await self.info(message, **context)
+
+    async def exception(
+        self,
+        message: str,
+        *,
+        exception: Optional[BaseException] = None,
+        **context: Any,
+    ) -> None:
+        """
+        Capture exception-level events with the same shape as info.
+        """
+
+        await self.info(message, **context)
+
+
+class PhaseAnnouncerStartEventTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins the start events emitted by each announce method.
+    """
+
+    @staticmethod
+    def __build(
+        *,
+        threshold: float = 60.0,
+        limit: int = 1,
+    ) -> Tuple[PhaseAnnouncer, _RecordingTelemetry]:
+        """
+        Build an announcer with a high threshold so the pulse will not fire during the test.
+        """
+
+        telemetry = _RecordingTelemetry()
+        message = PhaseMessage(
+            intent=IntentMessage(
+                qualifying="Reading...",
+                decomposing="Breaking down...",
+                derived="Plan ready.",
+            ),
+            heartbeat=HeartbeatBudget.model_construct(
+                threshold=threshold, limit=limit, message="Beat..."
+            ),
+        )
+        return PhaseAnnouncer(telemetry=telemetry, message=message), telemetry
+
+    async def test_intent_qualifying_emits_start_event(self) -> None:
+        """
+        Calling intent_qualifying emits one INTENT_QUALIFYING event with the configured message and intent.
+        """
+
+        announcer, telemetry = self.__build()
+
+        await announcer.intent_qualifying(intent="open the app")
+        await announcer.shutdown()
+
+        starts = [event for event in telemetry.events if event[1] is FathomEvent.INTENT_QUALIFYING]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0][0], "Reading...")
+        self.assertEqual(starts[0][2]["intent"], "open the app")
+
+    async def test_intent_decomposing_emits_start_event(self) -> None:
+        """
+        Calling intent_decomposing emits one INTENT_DECOMPOSING event with the configured message and intent.
+        """
+
+        announcer, telemetry = self.__build()
+
+        await announcer.intent_decomposing(intent="open the app")
+        await announcer.shutdown()
+
+        starts = [event for event in telemetry.events if event[1] is FathomEvent.INTENT_DECOMPOSING]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0][0], "Breaking down...")
+        self.assertEqual(starts[0][2]["intent"], "open the app")
+
+    async def test_grounding_emits_start_event(self) -> None:
+        """
+        Calling grounding emits one GROUNDING event with the configured step message and intent.
+        """
+
+        announcer, telemetry = self.__build()
+
+        await announcer.grounding(intent="open the app")
+        await announcer.shutdown()
+
+        starts = [event for event in telemetry.events if event[1] is FathomEvent.GROUNDING]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0][2]["intent"], "open the app")
+
+    async def test_plan_synthesized_emits_terminal_event(self) -> None:
+        """
+        plan_synthesized emits PLAN_SYNTHESIZED carrying the sub-goal list and intent.
+        """
+
+        announcer, telemetry = self.__build()
+        sub_goals = [{"index": 0, "directive": "TAP", "description": "tap submit"}]
+
+        await announcer.plan_synthesized(intent="x", sub_goals=sub_goals)
+        await announcer.shutdown()
+
+        terminals = [
+            event for event in telemetry.events if event[1] is FathomEvent.PLAN_SYNTHESIZED
+        ]
+        self.assertEqual(len(terminals), 1)
+        self.assertEqual(terminals[0][0], "Plan ready.")
+        self.assertEqual(terminals[0][2]["intent"], "x")
+        self.assertEqual(terminals[0][2]["sub_goals"], sub_goals)
+
+
+class PhaseAnnouncerPulseTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins the pulse lifecycle: fires at threshold, swap cancels prior pulse,
+    plan_synthesized cancels pulse, shutdown cancels pulse, beat limit bounds the loop.
+    """
+
+    @staticmethod
+    def __build(
+        *,
+        threshold: float,
+        limit: int = 60,
+    ) -> Tuple[PhaseAnnouncer, _RecordingTelemetry]:
+        """
+        Build an announcer with the supplied heartbeat threshold and limit.
+        """
+
+        telemetry = _RecordingTelemetry()
+        message = PhaseMessage(
+            intent=IntentMessage(),
+            heartbeat=HeartbeatBudget.model_construct(
+                threshold=threshold, limit=limit, message="Beat..."
+            ),
+        )
+        return PhaseAnnouncer(telemetry=telemetry, message=message), telemetry
+
+    async def test_pulse_fires_after_threshold(self) -> None:
+        """
+        After the configured threshold elapses, one PHASE_HEARTBEAT is emitted tagged with the active phase.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=1)
+
+        await announcer.intent_qualifying(intent="long task")
+        await asyncio.sleep(0.15)
+        await announcer.shutdown()
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertGreaterEqual(len(beats), 1)
+        self.assertEqual(beats[0][2]["phase"], PhaseKind.QUALIFYING.value)
+        self.assertEqual(beats[0][2]["intent"], "long task")
+
+    async def test_swap_cancels_prior_pulse(self) -> None:
+        """
+        Announcing a new phase cancels the previous pulse so no beats are emitted under the prior phase tag.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.5, limit=1)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.intent_decomposing(intent="x")
+        await asyncio.sleep(0.05)
+        await announcer.shutdown()
+
+        beats_under_qualifying = [
+            event
+            for event in telemetry.events
+            if event[1] is FathomEvent.PHASE_HEARTBEAT
+            and event[2]["phase"] == PhaseKind.QUALIFYING.value
+        ]
+        self.assertEqual(beats_under_qualifying, [])
+
+    async def test_plan_synthesized_cancels_pulse(self) -> None:
+        """
+        plan_synthesized cancels any active pulse before emitting its terminal event.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.5, limit=1)
+
+        await announcer.intent_decomposing(intent="x")
+        await announcer.plan_synthesized(intent="x", sub_goals=[])
+        await asyncio.sleep(0.6)
+        await announcer.shutdown()
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertEqual(beats, [])
+
+    async def test_shutdown_cancels_pulse(self) -> None:
+        """
+        shutdown cancels the active pulse so no beats fire after the workflow terminates.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.5, limit=1)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.shutdown()
+        await asyncio.sleep(0.6)
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertEqual(beats, [])
+
+    async def test_limit_bounds_the_loop(self) -> None:
+        """
+        After ``limit`` beats the pulse stops on its own, even without an external cancel.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.02, limit=3)
+
+        await announcer.intent_qualifying(intent="x")
+        await asyncio.sleep(0.25)
+        await announcer.shutdown()
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertLessEqual(len(beats), 3)
+
+    async def test_shutdown_after_unpaired_phase_open_kills_pulse(self) -> None:
+        """
+        Regression: a phase method that opens a pulse without a paired terminal call (e.g. INTENT_QUALIFYING with no INTENT_QUALIFIED closer)
+        must be cancellable by shutdown. In prod, a leaked QUALIFYING pulse kept firing PHASE_HEARTBEAT events for minutes after the workflow ended — pin shutdown is the safety net.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await asyncio.sleep(0.08)
+        await announcer.shutdown()
+
+        beats_before_shutdown = sum(
+            1 for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT
+        )
+        await asyncio.sleep(0.25)
+        beats_after_shutdown = sum(
+            1 for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT
+        )
+
+        self.assertEqual(beats_after_shutdown, beats_before_shutdown)
+
+    async def test_pause_cancels_pulse_keeps_active_phase_for_resume(self) -> None:
+        """
+        pause cancels the pending beat task but keeps the active phase identity
+        so resume can restart a fresh pulse for the same phase.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="long task")
+        await announcer.pause()
+        await asyncio.sleep(0.25)
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertEqual(beats, [])
+
+    async def test_resume_after_pause_emits_beat_for_kept_phase(self) -> None:
+        """
+        resume schedules a fresh beat tagged with the phase that was active at the time of pause.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="long task")
+        await announcer.pause()
+        await asyncio.sleep(0.1)
+        telemetry.events.clear()
+        await announcer.resume()
+        await asyncio.sleep(0.15)
+        await announcer.shutdown()
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertGreaterEqual(len(beats), 1)
+        self.assertEqual(beats[0][2]["phase"], PhaseKind.QUALIFYING.value)
+        self.assertEqual(beats[0][2]["intent"], "long task")
+
+    async def test_resume_after_shutdown_is_noop(self) -> None:
+        """
+        Once shutdown has cleared the active phase, a subsequent resume must not emit any beats.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.shutdown()
+        await announcer.resume()
+        await asyncio.sleep(0.2)
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertEqual(beats, [])
+
+    async def test_resume_without_prior_pause_is_noop(self) -> None:
+        """
+        Calling resume without a paired pause must not start a second concurrent pulse.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.resume()
+        await asyncio.sleep(0.15)
+        await announcer.shutdown()
+
+        beats_after_quiet = [
+            event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT
+        ]
+        self.assertGreaterEqual(len(beats_after_quiet), 1)
+
+    async def test_double_pause_is_idempotent(self) -> None:
+        """
+        Calling pause twice in a row must not double-cancel or leak; the second is a no-op.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.pause()
+        await announcer.pause()
+        await asyncio.sleep(0.2)
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertEqual(beats, [])
+
+    async def test_pause_resume_cycle_survives_phase_swap(self) -> None:
+        """
+        Opening a new phase after pause should resume normal beats under the new phase tag,
+        not the paused one.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.05, limit=120)
+
+        await announcer.intent_qualifying(intent="x")
+        await announcer.pause()
+        await announcer.intent_decomposing(intent="x")
+        await asyncio.sleep(0.15)
+        await announcer.shutdown()
+
+        beats = [event for event in telemetry.events if event[1] is FathomEvent.PHASE_HEARTBEAT]
+        self.assertGreaterEqual(len(beats), 1)
+        for beat in beats:
+            self.assertEqual(beat[2]["phase"], PhaseKind.DECOMPOSING.value)
+
+    async def test_shutdown_when_no_pulse_active_is_noop(self) -> None:
+        """
+        Calling shutdown without an in-flight phase does not raise and emits no events.
+        """
+
+        announcer, telemetry = self.__build(threshold=0.5, limit=1)
+
+        await announcer.shutdown()
+
+        self.assertEqual(telemetry.events, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

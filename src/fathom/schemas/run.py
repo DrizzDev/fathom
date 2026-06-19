@@ -25,7 +25,7 @@ class RealignmentPolicy(BaseModel):
 
     budget: int = Field(
         default=3,
-        description="Maximum allowed consecutive re-plans before the run is considered exhausted",
+        description="Maximum allowed human course-corrections before the run is considered exhausted",
     )
     immediate: bool = Field(
         default=True,
@@ -44,7 +44,11 @@ class IntentObjectiveConfiguration(BaseModel):
         default=None,
         description="Optional application identifier used for routing and storage",
     )
-    max_steps: int = Field(default=100, description="Maximum steps allowed for the run")
+    max_steps: int = Field(
+        ge=1,
+        default=100,
+        description="Maximum successful EXECUTE dispatches per run; must be >= 1",
+    )
     use_xml: bool = Field(default=True, description="Whether XML grounding should be enabled")
 
 

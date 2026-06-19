@@ -2,32 +2,24 @@ from __future__ import annotations
 
 import asyncio  # noqa: TC003 — used at runtime for Task types
 import hashlib
-import io
 import time
 from logging import getLogger
-from pathlib import Path
-from typing import Any, List, Optional
-
-try:
-    import cv2
-    import numpy
-
-    OPENCV_AVAILABLE = True
-except ImportError:
-    OPENCV_AVAILABLE = False
-    cv2 = None
-    numpy = None
-
-from PIL import Image
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.screen import INTERACTION_TEXT_PREVIEW_LENGTH, ZERO_HASH
-from fathom.core.exceptions import ConfigurationError, MissingDependencyError, VisionError
+from fathom.core.artifact.pipeline import ArtifactPipeline
+from fathom.core.exceptions import ConfigurationError
+from fathom.core.perception.hashing import VisualHashEngine
 from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.storage import StoragePort
 from fathom.processing.parsers.signature import HierarchySignatureBuilder
+from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.ui import LabeledElement
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = getLogger(__name__)
 
@@ -44,154 +36,134 @@ class PerceptionService:
         hierarchy_signature_builder: HierarchySignatureBuilder,
         *,
         session_id: Optional[str] = None,
+        pipeline: Optional[ArtifactPipeline] = None,
+        visual_hash_engine: Optional[VisualHashEngine] = None,
     ) -> None:
         self.__storage = storage
+        self.__pipeline = pipeline
         self.__perception = perception
-        self.__hierarchy_signature_builder = hierarchy_signature_builder
-
         self.__session_id = session_id
+
+        self.__hierarchy_signature_builder = hierarchy_signature_builder
+        self.__visual_hash_engine = visual_hash_engine or VisualHashEngine()
+
         self.__background_tasks: set[asyncio.Task[Any]] = set()
 
-    async def perceive(self, *, session_id: Optional[str] = None) -> ScreenCapture:
+    async def perceive(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        step_number: int,
+    ) -> ScreenCapture:
         """
-        Capture current screen state via DevicePort.
-
-        Returns:
-            ScreenCapture with screenshot data
+        Capture the current screen, emit it through the artifact pipeline,
+        and stamp the staged path onto ``capture.screenshot_uri`` as the
+        canonical handle. Downstream services read the URI off the typed field; raw bytes ride on ``capture.image``.
         """
 
-        effective_session_id = session_id or self.__session_id
-
-        if not effective_session_id:
+        if not (effective_session_id := session_id or self.__session_id):
             raise ConfigurationError("session_id must be provided either in __init__ or perceive()")
 
         capture = await self.__perception.capture()
 
-        # Store screenshot artifact with metadata for structured storage
-        storage_id = await self.__persist_capture(
-            data=capture.image,
-            package_name=capture.activity,
-            activity_name=capture.activity,
+        staged_path = await self.__emit_screenshot_artifact(
+            capture=capture,
             session_id=effective_session_id,
+            step_number=step_number,
+        )
+        if staged_path is None:
+            return await self.__fallback_persist_capture(
+                capture=capture,
+                session_id=effective_session_id,
+            )
+
+        return capture.model_copy(update={"screenshot_uri": str(staged_path)})
+
+    async def __emit_screenshot_artifact(
+        self,
+        *,
+        capture: ScreenCapture,
+        session_id: str,
+        step_number: int,
+    ) -> Optional[Path]:
+        """
+        Stage the screen capture through the artifact pipeline and return the EFS-staged path.
+        Caller stamps the path onto ``capture.screenshot_uri`` so downstream consumers read bytes from local disk.
+        """
+
+        if self.__pipeline is None:
+            return None
+
+        staged_path = await self.__pipeline.emit(
+            record=ArtifactRecord(
+                session_id=session_id,
+                step_number=step_number,
+                package_name=capture.activity,
+                created=int(time.time() * 1000),
+                payload=ScreenshotPayload(capture=capture),
+            ),
         )
 
-        metadata = dict(capture.metadata)
-        metadata["storage_id"] = storage_id
+        if staged_path is None:
+            return None
 
-        if self.__is_local_artifact_path(storage_id=storage_id):
-            metadata["path"] = storage_id
+        logger.info(
+            "Pre-action screenshot artifact staged",
+            extra={
+                "component": "perception.service",
+                "session.id": session_id,
+                "step.number": step_number,
+                "artifact.kind": "screenshot",
+                "artifact.path": str(staged_path),
+                "event": "perception.screenshot.staged",
+            },
+        )
+        return staged_path
 
-        return capture.model_copy(update={"metadata": metadata})
-
-    async def __persist_capture(
-        self, *, data: bytes, session_id: str, package_name: str, activity_name: str
-    ) -> str:
+    async def __fallback_persist_capture(
+        self,
+        *,
+        session_id: str,
+        capture: ScreenCapture,
+    ) -> ScreenCapture:
         """
-        Persists screenshot to storage.
+        Persist via :class:`StoragePort` when no artifact pipeline is wired.
+
+        Production runs always have the pipeline configured; this branch
+        exists so unit tests and minimal embeddings that omit the
+        pipeline still produce a usable storage identifier. The remote
+        identifier returned by :class:`StoragePort` is a stable handle
+        and is stamped onto ``screenshot_uri`` (a typed field) so
+        downstream consumers do not need to peek into ``metadata``.
         """
 
-        return await self.__storage.save(
-            data=data,
+        storage_id = await self.__storage.save(
+            data=capture.image,
             metadata={
                 "type": "screenshot",
                 "phase": "pre_action",
                 "timestamp": time.time(),
                 "session_id": session_id,
-                "package_name": package_name,
-                "activity_name": activity_name,
+                "package_name": capture.activity,
+                "activity_name": capture.activity,
             },
         )
+        metadata = dict(capture.metadata)
+        metadata["storage_id"] = storage_id
 
-    def __is_local_artifact_path(self, *, storage_id: str) -> bool:
-        """
-        Determine whether the storage identifier points to a local filesystem artifact.
-        """
-
-        return Path(storage_id).is_absolute() and Path(storage_id).exists()
+        return capture.model_copy(
+            update={
+                "metadata": metadata,
+                "screenshot_uri": storage_id,
+            }
+        )
 
     def compute_visual_hash(self, *, capture: ScreenCapture) -> str:
         """
-        Compute a robust Perceptual Hash (pHash) for the screen capture.
-        Resilient to minor noise, status bar changes, and compression artifacts.
-        Produces a 64-bit hex string compatible with Hamming distance.
+        Compute a perceptual hash for the screen capture via the injected hash engine.
         """
 
-        try:
-            if OPENCV_AVAILABLE:
-                return self.__compute_phash_opencv(image_data=capture.image)
-
-            return self.__compute_phash_pillow(image_data=capture.image)
-        except Exception as exception:
-            logger.warning(f"Could not compute pHash, falling back to SHA256: {exception}")
-            return hashlib.sha256(capture.image).hexdigest()[:VISUAL_HASH_LENGTH]
-
-    def __compute_phash_opencv(self, *, image_data: bytes) -> str:
-        """
-        Computes pHash using OpenCV and NumPy (Primary).
-        """
-
-        if not OPENCV_AVAILABLE or cv2 is None or numpy is None:
-            raise MissingDependencyError(dependency="opencv-python", feature="pHash computation")
-
-        logger.debug("Computing pHash using OpenCV")
-
-        image_array = numpy.frombuffer(image_data, numpy.uint8)
-        decoded_image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
-
-        if decoded_image is None:
-            raise VisionError("Could not decode image with OpenCV")
-
-        resized_image = cv2.resize(decoded_image, (32, 32), interpolation=cv2.INTER_AREA)
-        float_image = numpy.float32(resized_image)
-        dct_transform = cv2.dct(float_image)
-
-        low_frequencies = dct_transform[0:8, 0:8]
-        average_frequency = (numpy.sum(low_frequencies) - low_frequencies[0, 0]) / 63.0
-
-        hash_integer = 0
-        flattened_frequencies = (low_frequencies > average_frequency).flatten()
-
-        for index, value in enumerate(flattened_frequencies):
-            if value:
-                hash_integer |= 1 << (63 - index)
-
-        return f"{hash_integer:016x}"
-
-    def __compute_phash_pillow(self, *, image_data: bytes) -> str:
-        """
-        Compute a lightweight fallback perceptual hash using Pillow.
-        """
-
-        logger.debug("Computing fallback perceptual hash using Pillow")
-
-        with Image.open(io.BytesIO(image_data)) as pillow_image:
-            grayscale_image = pillow_image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
-            # getdata() returns values that need to be safely converted to int
-            # Values can be int, float, tuple, or None - handle each case
-            pixel_data: List[int] = []
-
-            for pixel_value in grayscale_image.getdata():
-                if isinstance(pixel_value, int):
-                    pixel_data.append(pixel_value)
-
-                elif isinstance(pixel_value, float):
-                    pixel_data.append(int(pixel_value))
-
-                elif isinstance(pixel_value, (tuple, list)) and len(pixel_value) > 0:
-                    pixel_data.append(int(pixel_value[0]))
-
-                else:
-                    pixel_data.append(0)  # Fallback for None or unknown types
-
-            hash_integer = 0
-
-            for row_index in range(8):
-                for col_index in range(8):
-                    pixel_index = row_index * 9 + col_index
-                    if pixel_data[pixel_index] > pixel_data[pixel_index + 1]:
-                        hash_integer |= 1 << (63 - (row_index * 8 + col_index))
-
-            return f"{hash_integer:016x}"
+        return self.__visual_hash_engine.hash(image=capture.image)
 
     def compute_xml_hash(self, *, capture: ScreenCapture) -> str:
         """

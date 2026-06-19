@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, Dict, Optional, Sequence, Union
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.core.services.exporter.constants import (
     EXECUTABLE_ACTION_PREFIXES,
@@ -34,8 +35,7 @@ def _get_field(step: Union[StepResult, Dict[str, Any]], field: str, default: Any
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class CatalogEntry:
+class CatalogEntry(BaseModel):
     """
     A single entry in the action catalog, preserving both the rendered
     description and the structured action kind from the source StepResult.
@@ -43,24 +43,30 @@ class CatalogEntry:
     This avoids re-parsing action types from rendered text downstream.
     """
 
-    description: str  # Rendered action line (e.g. "TAP on 'Add to cart' button")
-    action_kind: str  # Structured action type (e.g. "tap", "type", "scroll", "open_app")
+    model_config = ConfigDict(frozen=True)
+
+    description: str = Field(description="Rendered action line.")
+    action_kind: str = Field(description="Structured action type.")
 
     def __str__(self) -> str:
         return self.description
 
 
-@dataclass(frozen=True)
-class AppLaunchDescriptor:
+class AppLaunchDescriptor(BaseModel):
     """
     Describes how to launch the target app.
 
     Extensible for future launch modes (deep links, intents, etc.).
     """
 
-    command: str  # e.g. "OPEN_APP com.example.app"
-    package: str  # e.g. "com.example.app"
-    skip_steps: int = 0  # Number of leading steps consumed by the launch (launcher taps)
+    model_config = ConfigDict(frozen=True)
+
+    command: str = Field(description="Launch command.")
+    package: str = Field(description="Target package name.")
+    skip_steps: int = Field(
+        default=0,
+        description="Number of leading steps consumed by the launch.",
+    )
 
 
 def resolve_app_launch(

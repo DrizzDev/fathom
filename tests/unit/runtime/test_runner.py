@@ -192,13 +192,7 @@ class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
     async def test_blocking_verdict_dual_emits_workflow_completed_for_legacy_consumers(
         self,
     ) -> None:
-        """
-        Backward-compat: rejection must also emit WORKFLOW_COMPLETED so legacy
-        consumers (Genymotion, Temporal activity result handlers) that key off
-        the terminal event still get a completion signal. Payload mirrors the
-        success-path terminal event shape: success=False, steps_taken=0,
-        duration present.
-        """
+        """Backward-compat: rejection must also emit WORKFLOW_COMPLETED so legacy consumers (Genymotion, Temporal activity result handlers) that key off the terminal event still get a completion signal."""
 
         qualifier = BlockingQualifier(message="custom-rejection-message")
         runner, telemetry = RunnerHarness.build(qualifier=qualifier)
@@ -365,6 +359,192 @@ class RunnerOwnedResourcesCleanupTest(unittest.IsolatedAsyncioTestCase):
         good_first.cleanup.assert_awaited_once_with()
         bad.cleanup.assert_awaited_once_with()
         good_last.cleanup.assert_awaited_once_with()
+
+
+class RunnerWorkflowCancelledEmitTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Runner must emit WORKFLOW_CANCELLED (not WORKFLOW_COMPLETED) when the
+    strategy returns ``is_cancelled=True`` and stamp the OPERATOR_ABORTED completion reason on the published terminal event.
+    """
+
+    async def test_cancelled_run_emits_workflow_cancelled_event(self) -> None:
+        """
+        ``execution_result.is_cancelled=True`` routes the terminal event to WORKFLOW_CANCELLED.
+        """
+
+        qualifier = PassingQualifier()
+        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
+
+        strategy_instance = MagicMock()
+        strategy_instance.execute = AsyncMock(
+            return_value=MagicMock(
+                error=None,
+                duration=42,
+                success=False,
+                is_cancelled=True,
+            )
+        )
+        strategy_instance.get_progress = MagicMock(
+            return_value={
+                "step_count": 9,
+                "completion_reason": CompletionReason.OPERATOR_ABORTED.value,
+            }
+        )
+
+        strategy_instance.step_results = []
+        strategy_instance.get_metrics = MagicMock(return_value=None)
+        strategy_instance.completion_reason = CompletionReason.OPERATOR_ABORTED.value
+        strategy_instance.get_subgoal_execution_audit = MagicMock(return_value=([], [], 0))
+
+        with (
+            patch("fathom.runtime.runner.ContextManager"),
+            patch("fathom.runtime.runner.IntentStrategy", return_value=strategy_instance),
+            patch.object(
+                FathomRunner,
+                "_FathomRunner__get_memory_summary",
+                AsyncMock(return_value={}),
+            ),
+        ):
+            result = await runner.run_intent(intent="Stop me anytime")
+
+        cancelled_calls = [
+            call
+            for call in telemetry.info.call_args_list
+            if call.kwargs.get("type") == FathomEvent.WORKFLOW_CANCELLED
+        ]
+        completed_calls = [
+            call
+            for call in telemetry.info.call_args_list
+            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
+        ]
+
+        self.assertEqual(len(cancelled_calls), 1)
+        self.assertEqual(len(completed_calls), 0)
+
+        terminal = cancelled_calls[0]
+        self.assertEqual(terminal.kwargs["success"], False)
+        self.assertEqual(terminal.kwargs["steps_taken"], 9)
+        self.assertEqual(
+            terminal.kwargs["completion_reason"],
+            CompletionReason.CANCELLED.value,
+        )
+        self.assertFalse(result.success)
+        self.assertEqual(result.completion_reason, CompletionReason.CANCELLED.value)
+
+    async def test_successful_run_still_emits_workflow_completed_event(self) -> None:
+        """
+        Regression guard: a normal completion must keep emitting WORKFLOW_COMPLETED.
+        """
+
+        qualifier = PassingQualifier()
+        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
+
+        strategy_instance = MagicMock()
+        strategy_instance.execute = AsyncMock(
+            return_value=MagicMock(
+                error=None,
+                success=True,
+                duration=100,
+                is_cancelled=False,
+            )
+        )
+        strategy_instance.get_progress = MagicMock(
+            return_value={"step_count": 4, "completion_reason": CompletionReason.SUCCESS.value}
+        )
+
+        strategy_instance.step_results = []
+        strategy_instance.get_metrics = MagicMock(return_value=None)
+        strategy_instance.completion_reason = CompletionReason.SUCCESS.value
+        strategy_instance.get_subgoal_execution_audit = MagicMock(return_value=([], [], 0))
+
+        with (
+            patch("fathom.runtime.runner.ContextManager"),
+            patch("fathom.runtime.runner.IntentStrategy", return_value=strategy_instance),
+            patch.object(
+                FathomRunner,
+                "_FathomRunner__get_memory_summary",
+                AsyncMock(return_value={}),
+            ),
+        ):
+            await runner.run_intent(intent="Search for biryani")
+
+        cancelled_calls = [
+            call
+            for call in telemetry.info.call_args_list
+            if call.kwargs.get("type") == FathomEvent.WORKFLOW_CANCELLED
+        ]
+        completed_calls = [
+            call
+            for call in telemetry.info.call_args_list
+            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
+        ]
+
+        self.assertEqual(len(cancelled_calls), 0)
+        self.assertEqual(len(completed_calls), 1)
+
+    async def test_failed_run_emits_workflow_failed_event(self) -> None:
+        """
+        Failed strategy outcomes must not be announced as WORKFLOW_COMPLETED.
+        """
+
+        qualifier = PassingQualifier()
+        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
+
+        strategy_instance = MagicMock()
+        strategy_instance.execute = AsyncMock(
+            return_value=MagicMock(
+                error="Planner retry budget exhausted",
+                success=False,
+                duration=100,
+                is_cancelled=False,
+            )
+        )
+        strategy_instance.get_progress = MagicMock(
+            return_value={
+                "step_count": 7,
+                "completion_reason": CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
+            }
+        )
+
+        strategy_instance.step_results = []
+        strategy_instance.get_metrics = MagicMock(return_value=None)
+        strategy_instance.completion_reason = CompletionReason.RETRY_BUDGET_EXHAUSTED.value
+        strategy_instance.get_subgoal_execution_audit = MagicMock(return_value=([], [], 0))
+
+        with (
+            patch("fathom.runtime.runner.ContextManager"),
+            patch("fathom.runtime.runner.IntentStrategy", return_value=strategy_instance),
+            patch.object(
+                FathomRunner,
+                "_FathomRunner__get_memory_summary",
+                AsyncMock(return_value={}),
+            ),
+        ):
+            result = await runner.run_intent(intent="Search for biryani")
+
+        failed_calls = [
+            call
+            for call in telemetry.info.call_args_list
+            if call.kwargs.get("type") == FathomEvent.WORKFLOW_FAILED
+        ]
+        completed_calls = [
+            call
+            for call in telemetry.info.call_args_list
+            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
+        ]
+
+        self.assertEqual(len(failed_calls), 1)
+        self.assertEqual(len(completed_calls), 0)
+        self.assertFalse(result.success)
+
+        terminal = failed_calls[0]
+        self.assertEqual(terminal.args[0], "Run failed: Planner retry budget exhausted")
+        self.assertEqual(terminal.kwargs["success"], False)
+        self.assertEqual(terminal.kwargs["steps_taken"], 7)
+        self.assertEqual(
+            terminal.kwargs["completion_reason"],
+            CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
+        )
 
 
 if __name__ == "__main__":

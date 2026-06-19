@@ -1,0 +1,20 @@
+platform: ios
+description: |
+  gtLmU session 1, step 4 capture (pre-search-icon tap). Production
+  dispatched via Perception cascade Stage 2 (vision-localizer), not the
+  XML Stage-1 snap that the dispatch bug afflicts — observed tap was
+  logical (429, 204), workflow gtLmU_s1_h0e936a. The fixture is carried
+  to characterise the converter on a screen whose real production path
+  bypassed the buggy snap altogether: every element parsed from the XML
+  must still dispatch inside its own logical bbox under the current
+  CoordinateConverter, proving the fix is neutral on non-snap surfaces.
+screen:
+  logical:
+    width: 430
+    height: 932
+production_dispatch:
+  source: stage2_vision_localizer
+  workflow_id: gtLmU_s1_h0e936a
+  dispatched_logical:
+    x: 429
+    y: 204

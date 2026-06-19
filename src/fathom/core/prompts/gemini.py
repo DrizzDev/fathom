@@ -8,10 +8,13 @@ from fathom.core.prompts.templates import (
     COMMON_RULES,
     CONFIDENCE_RULES,
     COORD_RULES,
-    TOOL_GUIDANCE,
+    build_tool_guidance,
 )
+from fathom.schemas.tools import AllowedTools
 
 logger = logging.getLogger(__name__)
+
+MAX_VERIFIER_FEEDBACK_PROMPT_CHARS = 500
 
 
 class GeminiPromptBuilder(PromptBuilder):
@@ -19,20 +22,23 @@ class GeminiPromptBuilder(PromptBuilder):
     Structured Gemini prompt builder that formats hierarchical context.
     """
 
-    def build(self) -> str:
-        """
-        Build stable system prompt for tool-based UI execution.
-        """
+    def build(self, *, tools: AllowedTools) -> str:
+        """Build the stable system prompt scoped to the allowed tools."""
 
         parts = [
             self.__get_persona(),
-            TOOL_GUIDANCE,
+            build_tool_guidance(tools=tools),
             COMMON_RULES,
             (
                 "OUTPUT REQUIREMENTS:\n"
                 f"- {COORD_RULES}\n"
                 f"- {CONFIDENCE_RULES}\n"
-                "- REQUIRED: You MUST include 'label_id' from manifest for every interaction.\n"
+                "- REQUIRED: When the manifest already exposes the intended target or scroll container, include its 'label_id'. Otherwise ground the action visually via bbox and keep coordinate_system consistent with the numbers you provide.\n"
+                "- REQUIRED: For swipe/scroll actions, if the manifest exposes a scrollable container, use that container's label_id and describe the intended content in scroll_target.\n"
+                "- REQUIRED: For swipe/scroll actions, target_name must name the surface being swiped (for example 'restaurant list' or 'main scrollable area'). Do NOT put the sought item from scroll_target into target_name.\n"
+                "- REQUIRED: When the task is constrained to a specific section/container/area, fill 'surface' with that exact wording. 'surface' names WHERE the action belongs; 'target_name' names WHAT is being acted on.\n"
+                "- REQUIRED: Never place observation_hint values into 'label_id'; those hints are not manifest ids.\n"
+                "- REQUIRED: Preserve the requested scroll axis exactly and reuse the same container for repeated scroll attempts when it is still valid.\n"
                 "- REQUIRED: For EVERY UI action you MUST fill 'target_name' with a concrete, "
                 "user-facing label (e.g., 'Search box', 'Add to cart button') and/or "
                 "'script_target' with a natural-language phrase (e.g., 'the first search result'). "
@@ -96,7 +102,7 @@ class GeminiPromptBuilder(PromptBuilder):
                     f"4. The system will automatically advance to the next step\n"
                     f"</CURRENT_STEP>"
                 )
-                logger.debug(
+                logger.info(
                     f"[H3] Single Sub-goal Focus | step={index + 1}/{total} | "
                     f"task={(description or '')[:50]}"
                 )
@@ -113,7 +119,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 f"3. Signal completion/focus goals directly via completion flags\n"
                 f"</APP_LAUNCH_SEMANTICS>"
             )
-            logger.debug(f"[H3] App Launch Semantics | package={pkg}")
+            logger.info(f"[H3] App Launch Semantics | package={pkg}")
 
         # 1. Memory Ledger (Factual Memory - PERSISTENT ACROSS SCREENS)
         if ledger := self.__get_ledger_segment(memory=memory):
@@ -123,9 +129,9 @@ class GeminiPromptBuilder(PromptBuilder):
                 f"{ledger}\n"
                 f"</MEMORY_LEDGER>"
             )
-            logger.debug(f"[H3] Memory Ledger Added | ledger_length={len(ledger)}")
+            logger.info(f"[H3] Memory Ledger Added | ledger_length={len(ledger)}")
         else:
-            logger.debug("[H3] No Memory Ledger | memory is empty or None")
+            logger.info("[H3] No Memory Ledger | memory is empty or None")
 
         # 2. Roadmap & Milestones (Tier 2 Context)
         if milestones := context.get("milestones", []):
@@ -160,19 +166,41 @@ class GeminiPromptBuilder(PromptBuilder):
                         "</SCREEN_CHANGE_NOTICE>"
                     )
 
-        # 4. Priority Guidance (HITL) - The "System Override"
+        # 4. User Override (real human instructions — MUST comply)
         if guidance := context.get("guidance", []):
             instructions = [f"- {item}" for item in guidance]
             parts.append(
-                "<SYSTEM_OVERRIDE>\n"
+                "<USER_OVERRIDE>\n"
                 "  <INSTRUCTION>\n" + "\n".join(f"    {inst}" for inst in instructions) + "\n"
                 "  </INSTRUCTION>\n"
                 "  <WARNING>\n"
-                "    This is a meta-instruction for the agent's behavior.\n"
+                "    This is a meta-instruction from the human user.\n"
                 "    Do NOT treat this as content to be typed or searched.\n"
                 "    You MUST adjust your plan to comply with this override.\n"
                 "  </WARNING>\n"
-                "</SYSTEM_OVERRIDE>"
+                "</USER_OVERRIDE>"
+            )
+
+        # 5. Verifier Feedback (system-internal rejection — adjust the next action)
+        if verifier_feedback := context.get("verifier_feedback", []):
+            entries = [
+                f"- {str(item)[:MAX_VERIFIER_FEEDBACK_PROMPT_CHARS]}" for item in verifier_feedback
+            ]
+            description = (
+                str(sub_goal_info.get("description"))
+                if isinstance(sub_goal_info, dict) and sub_goal_info.get("description")
+                else None
+            )
+            sub_goal_clause = (
+                f"\nContinue working on the active sub-goal: {description}." if description else ""
+            )
+            parts.append(
+                "<VERIFIER_FEEDBACK>\n"
+                "Your previous completion claim was rejected by the verifier. "
+                "Take the next concrete UI action requested by the verifier. "
+                "Do not claim completion again until that action has executed."
+                f"{sub_goal_clause}\n" + "\n".join(entries) + "\n"
+                "</VERIFIER_FEEDBACK>"
             )
 
         # 5. Interaction Cadence (Deterministic Repetition Tracking)
@@ -190,8 +218,8 @@ class GeminiPromptBuilder(PromptBuilder):
         return (
             "You are a Mobile UI expert agent.\n"
             "COORDINATE MODE: NORMALIZED by default.\n"
-            "Use normalized coordinates (0-1000) in 'bbox' unless you explicitly set "
-            "coord_system='pixel'.\n"
+            "Use normalized coordinates (0-1000) in 'bbox' only for visually estimated regions. "
+            "When copying manifest or screenshot-space bounds, you must set coordinate_system='pixel'.\n"
             "When using bbox, x/y are TOP-LEFT and width/height extend right/down."
         )
 
@@ -238,7 +266,8 @@ class GeminiPromptBuilder(PromptBuilder):
 
         if any(word in intent.lower() for word in ["type", "enter", "input"]):
             rules.append(
-                "- CRITICAL SEQ: Use 'tap' to gain focus on the input field, followed by 'type'."
+                "- CRITICAL SEQ: If the input field is not already focused, use 'tap' "
+                "to gain focus, followed by 'type'."
             )
 
         return "RULES:\n" + "\n".join(rules) if rules else ""

@@ -6,12 +6,16 @@ from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
 from fathom.base.paths import SharedPathManager
+from fathom.base.phase import AbandonablePhase
 from fathom.constants import ContextScope, FathomEvent
+from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.state import CompletionReason
+from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
+from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
@@ -22,6 +26,7 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
+from fathom.runtime.inspection import RuntimeConfigurationInspector
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.qualification import QualificationVerdict
@@ -29,6 +34,7 @@ from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
+from fathom.version import VersionInfo
 
 logger = getLogger(__name__)
 
@@ -63,17 +69,36 @@ class FathomRunner:
         path_manager: SharedPathManager,
         config: Optional[FathomConfiguration] = None,
         realignment: Optional[RealignmentPolicy] = None,
+        runtime_configuration: Optional[RuntimeConfigLoader] = None,
         owned_resources: Optional[List[LLMPort]] = None,
     ) -> None:
         """
         Initialize runner with all configured ports.
 
-        owned_resources: optional list of LLM ports the runner takes ownership
-        of for cleanup purposes. Used by SDK callers that construct the runner
-        via FathomBuilder with .with_assembly(...) — the builder creates a
-        dedicated qualifier LLM internally and hands it to the runner so the
-        caller doesn't have to track it separately. Temporal / CLI callers use
-        RunnerComposition at the composition root instead and pass nothing here.
+        ``runtime_configuration`` is the application-layer translator that the
+        caller pre-bound to its own :class:`FathomSettings` (in the
+        Temporal worker registry, service bridges, the CLI, ...).
+        It is propagated to :class:`IntentStrategy` and
+        :class:`ExplorationStrategy` so :class:`AdapterAssembly`
+        observes the same settings the caller built — not a fresh
+        ``FathomSettings()`` that only resolves fathom's own env
+        aliases and silently misses deployment-prefixed names like
+        ``DRIZZ_GOOGLE_APPLICATION_CREDENTIALS_JSON``.
+
+        ``owned_resources``: optional list of LLM ports the runner takes
+        ownership of for cleanup purposes. Used by SDK callers that construct
+        the runner via FathomBuilder with .with_assembly(...) — the builder
+        creates a dedicated qualifier LLM internally and hands it to the
+        runner so the caller doesn't have to track it separately. Temporal /
+        CLI callers use RunnerComposition at the composition root instead and
+        pass nothing here.
+
+        Hexagonal note: we deliberately accept the *loader*
+        (Application layer) for runtime_configuration, never the raw
+        :class:`FathomSettings` (Infrastructure). The loader keeps the
+        settings as a private reference; nothing in the runner /
+        strategy can hand the credentials material to a logger or out
+        as a Temporal activity argument.
         """
 
         self.__llm = llm
@@ -88,10 +113,15 @@ class FathomRunner:
         self.__telemetry = telemetry
         self.__qualifier = qualifier
         self.__summarizer = summarizer
+        self.__runtime_configuration = runtime_configuration
         self.__path_manager = path_manager
         self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
         self.__owned_resources: List[LLMPort] = list(owned_resources or [])
+        self.__phase = PhaseAnnouncer(
+            telemetry=telemetry,
+            message=self.__config.telemetry.phase,
+        )
 
         # Wire core components
         self.__engine = ExecutionEngine(
@@ -108,6 +138,41 @@ class FathomRunner:
 
         # Track current workflow for cancellation
         self.__current_strategy: Optional[object] = None
+
+        self.__log_configuration_summary()
+
+    def __log_configuration_summary(self) -> None:
+        """
+        Emit a single structured log line summarizing the wired configuration.
+        """
+
+        inspector = RuntimeConfigurationInspector()
+        snapshot = inspector.project(
+            ports={
+                "llm": self.__llm,
+                "signal": self.__signal,
+                "memory": self.__memory,
+                "device": self.__device,
+                "storage": self.__storage,
+                "knowledge": self.__knowledge,
+                "telemetry": self.__telemetry,
+                "summarizer": self.__summarizer,
+                "perception": self.__perception,
+            },
+            configuration=self.__config,
+            realignment=self.__realignment,
+            path_manager=self.__path_manager,
+        )
+        logger.info(
+            "Fathom runner configured",
+            extra={
+                **snapshot,
+                "component": "runtime.runner",
+                "package": VersionInfo.payload(),
+                "event": "fathom.runner.configured",
+                "runtime_configuration_bound": self.__runtime_configuration is not None,
+            },
+        )
 
     @property
     def engine(self) -> ExecutionEngine:
@@ -211,6 +276,7 @@ class FathomRunner:
             path_manager=self.__path_manager,
             realignment=realignment or self.__realignment,
             max_steps=max_steps or self.__config.intent.max_steps,
+            runtime_configuration=self.__runtime_configuration,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
         )
         self.__current_strategy = strategy
@@ -231,8 +297,14 @@ class FathomRunner:
             strategy_metrics = strategy.get_metrics()
             metrics = strategy_metrics.to_report_dict() if strategy_metrics else {}
 
-            # Get memory summary
-            memory_summary = await self.__get_memory_summary()
+            # Get memory summary under a bounded abandonable phase so a stuck SQLite read
+            # never gates result delivery.
+            raw_memory_summary = await AbandonablePhase(
+                phase=FinalizationPhase.MEMORY_SUMMARY,
+                timeout=self.__config.intent.finalization.runtime.memory_summary,
+                workflow_id=workflow_id,
+            ).execute(awaitable=self.__get_memory_summary())
+            memory_summary: Dict[str, Any] = raw_memory_summary if raw_memory_summary else {}
 
             # Build IntentResult
             duration = time.time() - start_time
@@ -276,18 +348,72 @@ class FathomRunner:
                 step_results=strategy.step_results,
             )
 
+            terminal_event = self.__terminal_event(
+                is_cancelled=is_cancelled,
+                success=result.success,
+            )
+            terminal_message = self.__terminal_message(
+                event=terminal_event,
+                completion_reason=completion_reason,
+            )
+
+            logger.info(
+                "Workflow outcome resolved",
+                extra={
+                    "event": "workflow.outcome.resolved",
+                    "duration": duration,
+                    "workflow.id": workflow_id,
+                    "steps.taken": result.steps_taken,
+                    "completion.reason": completion_reason,
+                    "outcome": "cancelled"
+                    if is_cancelled
+                    else ("completed" if result.success else "failed"),
+                },
+            )
+
             await self.__telemetry.info(
-                "Workflow execution finalized",
+                terminal_message,
                 duration=duration,
+                type=terminal_event,
                 success=result.success,
                 steps_taken=result.steps_taken,
-                type=FathomEvent.WORKFLOW_COMPLETED,
+                completion_reason=completion_reason,
             )
 
             return result
 
         finally:
+            await self.__phase.shutdown()
             self.__current_strategy = None
+
+    @staticmethod
+    def __terminal_event(*, is_cancelled: bool, success: bool) -> FathomEvent:
+        """
+        Return the terminal workflow event matching the resolved outcome.
+        """
+
+        if is_cancelled:
+            return FathomEvent.WORKFLOW_CANCELLED
+
+        if success:
+            return FathomEvent.WORKFLOW_COMPLETED
+
+        return FathomEvent.WORKFLOW_FAILED
+
+    @staticmethod
+    def __terminal_message(*, event: FathomEvent, completion_reason: str) -> str:
+        """
+        Return the user-facing terminal workflow message.
+        """
+
+        if event is FathomEvent.WORKFLOW_CANCELLED:
+            return "Run cancelled by operator."
+
+        if event is FathomEvent.WORKFLOW_FAILED:
+            reason = completion_reason.strip() or CompletionReason.FAILED.value
+            return f"Run failed: {reason}"
+
+        return "All wrapped up."
 
     async def run_exploration(
         self,
@@ -344,6 +470,7 @@ class FathomRunner:
             seed=self.__config.exploration.random_seed,
             timeout=float(self.__config.exploration.timeout),
             max_steps=max_steps or self.__config.exploration.max_steps,
+            runtime_configuration=self.__runtime_configuration,
         )
 
         self.__current_strategy = strategy
@@ -448,52 +575,163 @@ class FathomRunner:
 
     async def cleanup(self) -> None:
         """
-        Cleanup all resources held by the runner and its ports.
+        Cleanup all runner resources via abandonable phases so a stuck step cannot wedge the host.
         """
 
-        # 1. Context manager — drain persist queue, cancel background tasks
-        if self.__context_manager is not None:
+        cleanup_budget = self.__config.intent.finalization.runtime.cleanup
+
+        async def __context_manager_shutdown() -> None:
+            """
+            Context manager shutdown wrapped for capture by AbandonablePhase.
+            """
+
+            if self.__context_manager is None:
+                return
             try:
                 await self.__context_manager.shutdown()
             except Exception as exception:
-                logger.warning(f"[FathomRunner] context_manager shutdown failed: {exception}")
+                logger.warning(
+                    "context_manager shutdown failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.context_manager.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
 
-        # 2. LLM — delete cached content, close clients
-        try:
-            await self.__llm.cleanup()
-        except Exception as exception:
-            logger.warning(f"[FathomRunner] llm cleanup failed: {exception}")
+        async def __phase_shutdown() -> None:
+            """
+            Cancel any in-flight phase pulse so the heartbeat task cannot outlive the workflow.
+            """
 
-        # 2b. Owned resources — dedicated LLMs (e.g. qualifier LLM) that the
-        # SDK builder path handed over for cleanup. Temporal / CLI callers pass
-        # nothing here because they use RunnerComposition.resources at the
-        # composition root; the list is empty in that case.
-        for resource in self.__owned_resources:
             try:
-                await resource.cleanup()
+                await self.__phase.shutdown()
             except Exception as exception:
-                logger.warning(f"[FathomRunner] owned resource cleanup failed: {exception}")
+                logger.warning(
+                    "phase announcer shutdown failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.phase.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
 
-        # 3. Device — close HTTP client (ADB remote, iOS remote)
-        if hasattr(self.__device, "close"):
+        async def __llm_cleanup() -> None:
+            """
+            LLM port cleanup wrapped for capture by AbandonablePhase.
+            """
+
+            try:
+                await self.__llm.cleanup()
+            except Exception as exception:
+                logger.warning(
+                    "llm cleanup failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.llm.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
+
+        async def __owned_resources_cleanup() -> None:
+            """
+            Dedicated LLMs (e.g. qualifier LLM) handed over by the SDK builder path.
+
+            Temporal / CLI callers pass nothing — they manage these via
+            RunnerComposition.resources at the composition root; the list is
+            empty for them.
+            """
+
+            for resource in self.__owned_resources:
+                try:
+                    await resource.cleanup()
+                except Exception as exception:
+                    logger.warning(
+                        "owned resource cleanup failed: %s",
+                        exception,
+                        extra={
+                            "event": "fathom.runner.cleanup.owned_resource.failed",
+                            "exception.type": type(exception).__name__,
+                            "exception.message": str(exception),
+                        },
+                    )
+
+        async def __device_close() -> None:
+            """
+            Device port close wrapped for capture by AbandonablePhase.
+            """
+
+            if not hasattr(self.__device, "close"):
+                return
             try:
                 await self.__device.close()
             except Exception as exception:
-                logger.warning(f"[FathomRunner] device close failed: {exception}")
+                logger.warning(
+                    "device close failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.device.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
 
-        # 4. Telemetry — close Redis connection if applicable
-        if hasattr(self.__telemetry, "close"):
+        async def __telemetry_close() -> None:
+            """
+            Telemetry port close wrapped for capture by AbandonablePhase.
+            """
+
+            if not hasattr(self.__telemetry, "close"):
+                return
             try:
                 await self.__telemetry.close()
             except Exception as exception:
-                logger.warning(f"[FathomRunner] telemetry close failed: {exception}")
+                logger.warning(
+                    "telemetry close failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.telemetry.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
 
-        # 5. Storage — close any open handles
-        if hasattr(self.__storage, "close"):
+        async def __storage_close() -> None:
+            """
+            Storage port close wrapped for capture by AbandonablePhase.
+            """
+
+            if not hasattr(self.__storage, "close"):
+                return
             try:
                 await self.__storage.close()
             except Exception as exception:
-                logger.warning(f"[FathomRunner] storage close failed: {exception}")
+                logger.warning(
+                    "storage close failed: %s",
+                    exception,
+                    extra={
+                        "event": "fathom.runner.cleanup.storage.failed",
+                        "exception.type": type(exception).__name__,
+                        "exception.message": str(exception),
+                    },
+                )
+
+        for awaitable in (
+            __phase_shutdown(),
+            __context_manager_shutdown(),
+            __llm_cleanup(),
+            __owned_resources_cleanup(),
+            __device_close(),
+            __telemetry_close(),
+            __storage_close(),
+        ):
+            await AbandonablePhase(
+                phase=FinalizationPhase.RUNNER_CLEANUP,
+                timeout=cleanup_budget,
+            ).execute(awaitable=awaitable)
 
         logger.info("[FathomRunner] cleanup completed")
 
@@ -517,7 +755,12 @@ class FathomRunner:
         )
 
         qualifier_started_at = time.perf_counter()
-        verdict = await self.__qualifier.qualify(intent=intent)
+        await self.__phase.intent_qualifying(intent=intent)
+
+        try:
+            verdict = await self.__qualifier.qualify(intent=intent)
+        finally:
+            await self.__phase.shutdown()
 
         qualifier_latency = time.perf_counter() - qualifier_started_at
 
@@ -564,7 +807,7 @@ class FathomRunner:
             )
 
         await self.__telemetry.info(
-            "Intent qualified", type=FathomEvent.INTENT_QUALIFIED, **verdict_payload
+            "Got it, getting started...", type=FathomEvent.INTENT_QUALIFIED, **verdict_payload
         )
         logger.info(
             "[FathomRunner] Qualifier allowed the intent, proceeding to execution",
@@ -615,12 +858,19 @@ class FathomRunner:
         # Temporal activity result handlers) that key off the terminal event
         # still receive a completion signal. The run *is* terminating here.
         await self.__telemetry.info(
-            "Workflow execution finalized",
+            "All wrapped up.",
             success=False,
             steps_taken=0,
             duration=duration,
             type=FathomEvent.WORKFLOW_COMPLETED,
         )
+        try:
+            await self.__phase.shutdown()
+        except Exception as exception:
+            logger.warning(
+                "Runner: phase.shutdown after qualifier-reject failed: %s; terminal event already emitted",
+                exception,
+            )
 
         return IntentResult(
             error=None,

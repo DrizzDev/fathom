@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import sys
-from logging import WARNING, StreamHandler, getLogger
-from typing import Optional
+from logging import WARNING, FileHandler, Formatter, StreamHandler, getLogger
+from pathlib import Path  # noqa: TC003 - runtime use in attach_file_handler
+from typing import List, Optional
 
 import structlog
 
@@ -15,6 +16,8 @@ class BaseLogger:
     """
 
     __configured: bool = False
+    __formatter: Optional[Formatter] = None
+    __shared_processors: Optional[List[object]] = None
 
     @classmethod
     def configure(cls, settings: Optional[FathomSettings] = None) -> None:
@@ -37,15 +40,16 @@ class BaseLogger:
         json_format = settings.log_json
         level_name = settings.log_level.upper()
 
-        # Shared processors for both structlog and stdlib logging
+        # Shared processors for both structlog and stdlib logging.
         shared_processors = [
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.add_log_level,
-            structlog.stdlib.PositionalArgumentsFormatter(),
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
+            structlog.stdlib.ExtraAdder(),
             structlog.processors.UnicodeDecoder(),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.stdlib.PositionalArgumentsFormatter(),
         ]
 
         # Configure structlog
@@ -85,3 +89,38 @@ class BaseLogger:
             getLogger(lib).setLevel(WARNING)
 
         cls.__configured = True
+        cls.__formatter = formatter
+        cls.__shared_processors = shared_processors
+
+    @classmethod
+    def attach_file_handler(cls, *, path: Path) -> None:
+        """
+        Tee the configured structured log stream to ``path`` via a stdlib
+        FileHandler that always emits JSON regardless of the console renderer.
+        Safe to call after :meth:`configure`; creates parent dirs.
+        """
+
+        if not cls.__configured or cls.__shared_processors is None:
+            cls.configure()
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = FileHandler(filename=str(path), encoding="utf-8")
+        file_handler.setFormatter(cls.__build_json_formatter())
+
+        getLogger().addHandler(file_handler)
+
+    @classmethod
+    def __build_json_formatter(cls) -> Formatter:
+        """
+        Build a structlog-backed formatter that renders JSON; never adds colors.
+        """
+
+        shared_processors = cls.__shared_processors or []
+        formatter: Formatter = structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=list(shared_processors),
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                structlog.processors.JSONRenderer(),
+            ],
+        )
+        return formatter

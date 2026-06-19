@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Final, Mapping, Optional, Tuple
+
+from PIL import ImageDraw, ImageFont
+
+from fathom.constants.drawing import BoxDrawing, SourceColor
+from fathom.schemas.observation import ElementSource
+
+
+class BoxDrawer:
+    """
+    Single shared primitive for drawing labelled boxes on annotated artifacts.
+
+    Owns font, font size, outline width, label format, and the
+    source-keyed colour palette so every annotated-artifact renderer
+    (manifest, perception, per-source perception) draws boxes in a
+    consistent visual style.
+
+    Label priority is numeric ``label_id`` first, then visible text,
+    then role — the planner reads numeric labels off the manifest, so
+    keeping numeric labels visible on every annotated image is the
+    fastest mental round-trip for human review.
+    """
+
+    __SOURCE_COLOURS: Final[Mapping[ElementSource, str]] = {
+        ElementSource.XML: SourceColor.XML,
+        ElementSource.OCR: SourceColor.OCR,
+        ElementSource.CV: SourceColor.CV,
+        ElementSource.ICON: SourceColor.ICON,
+        ElementSource.MODEL: SourceColor.MODEL,
+        ElementSource.VISION: SourceColor.VISION,
+        ElementSource.ACCESSIBILITY: SourceColor.ACCESSIBILITY,
+    }
+
+    __FONT_SEARCH_PATHS: Final[Tuple[str, ...]] = (
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    )
+
+    def __init__(
+        self,
+        *,
+        line_width: int = BoxDrawing.LINE_WIDTH,
+        font_size: int = BoxDrawing.FONT_SIZE_DEFAULT,
+    ) -> None:
+        """
+        Bind the drawer to its stroke width and label font size.
+        """
+
+        self.__line_width = line_width
+        self.__font_size = font_size
+        self.__font = self.__resolve_font(size=font_size)
+
+    def draw(
+        self,
+        *,
+        canvas: ImageDraw.ImageDraw,
+        bounds: Tuple[int, int, int, int],
+        source: ElementSource,
+        label_id: Optional[str] = None,
+        text: Optional[str] = None,
+        role: Optional[str] = None,
+        color: Optional[str] = None,
+    ) -> None:
+        """
+        Render one outlined rectangle and its label.
+
+        ``color`` overrides the source-keyed palette when set; used by
+        callers that paint non-element overlays (call-to-action,
+        overlays, trace arrows) and want a deterministic colour.
+        """
+
+        outline = color or self.__SOURCE_COLOURS.get(source, SourceColor.FALLBACK)
+        canvas.rectangle(bounds, outline=outline, width=self.__line_width)
+        canvas.text(
+            self.__label_position(bounds=bounds),
+            self.__compose_label(label_id=label_id, text=text, role=role),
+            font=self.__font,
+            fill=outline,
+            stroke_width=BoxDrawing.LABEL_STROKE_WIDTH,
+            stroke_fill=BoxDrawing.LABEL_STROKE_COLOR,
+        )
+
+    def color_for(self, *, source: ElementSource) -> str:
+        """
+        Return the canonical colour for one perception source.
+        """
+
+        return self.__SOURCE_COLOURS.get(source, SourceColor.FALLBACK)
+
+    @staticmethod
+    def __compose_label(
+        *,
+        label_id: Optional[str],
+        text: Optional[str],
+        role: Optional[str],
+    ) -> str:
+        """
+        Pick the most informative label without falling back to noise.
+
+        Numeric label_id is preferred because it matches what the LLM
+        sees in the manifest. Visible text is the next-best identifier
+        for human reviewers. Role is the last-resort marker so empty
+        boxes never go un-labelled.
+        """
+
+        if label_id:
+            return label_id
+        if text and text.strip():
+            return text.strip()[:32]
+        if role:
+            return role
+        return ""
+
+    @staticmethod
+    def __label_position(*, bounds: Tuple[int, int, int, int]) -> Tuple[int, int]:
+        """
+        Anchor the label at the top-left interior of the box.
+
+        Drawing inside the box keeps labels readable on dense screens
+        where boxes are stacked and outside-labels overlap each other.
+        """
+
+        x1, y1, _x2, _y2 = bounds
+        return (
+            x1 + BoxDrawing.LABEL_PADDING,
+            y1 + BoxDrawing.LABEL_PADDING,
+        )
+
+    @classmethod
+    def __resolve_font(cls, *, size: int) -> ImageFont.ImageFont:
+        """
+        Load a TrueType font at the requested size, falling back to the
+        Pillow default when no system font is available.
+
+        ``ImageFont.load_default()`` is used as a guaranteed fallback so
+        rendering never crashes when the runtime environment lacks the
+        usual platform font paths.
+        """
+
+        for path in cls.__FONT_SEARCH_PATHS:
+            if Path(path).exists():
+                try:
+                    return ImageFont.truetype(path, size)
+                except OSError:
+                    continue
+        return ImageFont.load_default()

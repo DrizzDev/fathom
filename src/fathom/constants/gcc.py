@@ -1,4 +1,9 @@
 from enum import StrEnum
+from typing import Final
+
+# Active sub-goal count at which RECORD emits a GCC BRANCH event so the
+# decomposer surfaces parallel work streams instead of a flat list.
+GCC_BRANCHING_ACTIVE_COUNT: Final[int] = 15
 
 
 class GCCTier(StrEnum):

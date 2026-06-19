@@ -5,7 +5,7 @@ import unittest
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
-from fathom.schemas.actions import Bounds
+from fathom.schemas.actions import Bounds, CoordinateSource, CoordinateSystem
 from fathom.utils.coordinates import CoordinateConverter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -22,9 +22,9 @@ class CoordinateConverterTest(unittest.TestCase):
         """
 
         bounds = self.__rolodex_knob_bounds()
-        converter = CoordinateConverter(screen_width=1080, screen_height=2340)
+        converter = CoordinateConverter(logical_width=1080, logical_height=2340)
 
-        region = converter.region_from_bounds(bounds=bounds, source="xml")
+        region = converter.region_from_bounds(bounds=bounds, source=CoordinateSource.XML)
         path = converter.resolve_swipe_path(region=region, direction="right")
 
         self.assertEqual(region.source, "xml")
@@ -39,9 +39,9 @@ class CoordinateConverterTest(unittest.TestCase):
         """
 
         bounds = self.__save_to_draft_bounds()
-        converter = CoordinateConverter(screen_width=1080, screen_height=2340)
+        converter = CoordinateConverter(logical_width=1080, logical_height=2340)
 
-        region = converter.region_from_bounds(bounds=bounds, source="xml")
+        region = converter.region_from_bounds(bounds=bounds, source=CoordinateSource.XML)
         path = converter.resolve_swipe_path(region=region, direction="right")
 
         self.assertEqual(region.source, "xml")
@@ -56,9 +56,9 @@ class CoordinateConverterTest(unittest.TestCase):
         """
 
         width, height = self.__screen_dimensions(
-            PROJECT_ROOT / "tests/fixtures/leadbeam/7e1dae80/20260414_191321.dimensions"
+            PROJECT_ROOT / "tests/fixtures/coordinate/android/swipe/001/dimensions.txt"
         )
-        converter = CoordinateConverter(screen_width=width, screen_height=height)
+        converter = CoordinateConverter(logical_width=width, logical_height=height)
 
         region = converter.viewport_region()
         path = converter.resolve_scroll_path(region=region, direction="down")
@@ -74,10 +74,21 @@ class CoordinateConverterTest(unittest.TestCase):
         Derive a swipe path from a real Gemini bbox when XML is unavailable.
         """
 
-        converter = CoordinateConverter(screen_width=1080, screen_height=2340)
-        bounds = Bounds(x=44, y=1983, width=250, height=116, coord_system="normalized")
+        converter = CoordinateConverter(logical_width=1080, logical_height=2340)
+        # The original fixture stamped these device-pixel values as
+        # "normalized" because the old is_normalized heuristic silently
+        # re-classified them. With explicit coordinate systems the
+        # producer must declare DEVICE_PIXEL when the magnitudes are
+        # already in screen-pixel space.
+        bounds = Bounds(
+            x=44,
+            y=1983,
+            width=250,
+            height=116,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
 
-        region = converter.region_from_bounds(bounds=bounds, source="model")
+        region = converter.region_from_bounds(bounds=bounds, source=CoordinateSource.MODEL)
         path = converter.resolve_swipe_path(region=region, direction="right")
 
         self.assertEqual(region.source, "model")
@@ -85,6 +96,24 @@ class CoordinateConverterTest(unittest.TestCase):
 
         self.assertEqual(path.distance, 210)
         self.assertEqual(path.to_coordinates(), (64, 2041, 274, 2041))
+
+    def test_capture_bounds_scale_logical_region_to_retina_pixels(self) -> None:
+        """
+        Translate a logical viewport region into capture-space pixel bounds.
+        """
+
+        converter = CoordinateConverter(
+            logical_width=430,
+            logical_height=932,
+            pixel_width=1290,
+            pixel_height=2796,
+        )
+
+        region = converter.viewport_region()
+        bounds = converter.capture_bounds(region=region)
+
+        self.assertEqual(bounds.system, CoordinateSystem.DEVICE_PIXEL)
+        self.assertEqual((bounds.x, bounds.y, bounds.width, bounds.height), (0, 0, 1290, 2796))
 
     @staticmethod
     def __screen_dimensions(path: Path) -> tuple[int, int]:
@@ -104,10 +133,10 @@ class CoordinateConverterTest(unittest.TestCase):
     @staticmethod
     def __rolodex_knob_bounds() -> Bounds:
         """
-        Return the real Rolodex knob bounds from workflow 7e1dae80.
+        Return the real Rolodex knob bounds from coordinate fixture 001.
         """
 
-        path = PROJECT_ROOT / "tests/fixtures/leadbeam/7e1dae80" / "20260414_191321.xml"
+        path = PROJECT_ROOT / "tests/fixtures/coordinate/android/swipe/001/hierarchy.xml"
         root = ElementTree.parse(path).getroot()
 
         for node in root.iter("node"):
@@ -131,10 +160,10 @@ class CoordinateConverterTest(unittest.TestCase):
     @staticmethod
     def __save_to_draft_bounds() -> Bounds:
         """
-        Return the real Save to draft button bounds from workflow 52a0bb73.
+        Return the real Save to draft button bounds from coordinate fixture 002.
         """
 
-        path = PROJECT_ROOT / "tests/fixtures/leadbeam/52a0bb73" / "20260414_190109.xml"
+        path = PROJECT_ROOT / "tests/fixtures/coordinate/android/swipe/002/hierarchy.xml"
         root = ElementTree.parse(path).getroot()
 
         for node in root.iter("node"):
@@ -171,5 +200,5 @@ class CoordinateConverterTest(unittest.TestCase):
             y=top,
             width=right - left,
             height=bottom - top,
-            coord_system="pixel",
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
         )

@@ -32,6 +32,7 @@ class AndroidKeycode(IntEnum):
 
     A = 29
     DEL = 67
+    ENTER = 66
     MOVE_END = 123
     DPAD_RIGHT = 22
     CTRL_LEFT = 113
@@ -45,6 +46,14 @@ class AndroidClearStrategy(IntEnum):
     DELETE_COUNT = 150
     MODERN_MIN_SDK = 30
     RIGHT_ARROW_COUNT = 20
+
+
+ANDROID_UIAUTOMATION_ACTIVE_MARKER = "Ui Automation["
+ANDROID_UIAUTOMATION_DUMP_PATH = "/data/local/tmp/window_dump.xml"
+ANDROID_UIAUTOMATION_INSTRUMENTATION_MARKER = "com.android.commands.am.Am instrument"
+ANDROID_UIAUTOMATION_PROCESS_NAME = "app_process"
+ANDROID_UIAUTOMATION_TIMEOUT_MARKER = "timed out"
+ANDROID_UIAUTOMATION_UIAUTOMATOR_MARKER = "com.android.commands.uiautomator"
 
 
 class IOSClearStrategy(IntEnum):

@@ -18,7 +18,6 @@ from tenacity import (
     wait_exponential,
 )
 
-from fathom.constants.execution import REMOTE_DEVICE_REQUEST_TIMEOUT_SECONDS
 from fathom.constants.interaction import InteractionAction, SwipeSpeed
 from fathom.constants.platform import DevicePlatform
 from fathom.core.exceptions import (
@@ -96,7 +95,7 @@ class ADBRemoteDeviceAdapter(DevicePort):
         self.__client = httpx.AsyncClient(
             http2=True,
             base_url=base_url,
-            timeout=REMOTE_DEVICE_REQUEST_TIMEOUT_SECONDS,
+            timeout=remote.request_timeout,
             headers={"Authorization": f"Bearer {self.__token}"} if self.__token else {},
         )
 

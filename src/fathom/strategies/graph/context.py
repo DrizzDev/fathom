@@ -1,14 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 
+from fathom.adapters.icon.noop import NoopIconDetector
+from fathom.adapters.journal.noop import NoopRuntimeJournal
+from fathom.adapters.ocr.noop import NoopOcr
+from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
 from fathom.base.paths import SharedPathManager
+from fathom.constants.platform import DevicePlatform
+from fathom.constants.tools import TurnMode
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
+from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
+from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.context.manager import ContextManager
+from fathom.core.embedding.cache import EmbeddingCache
+from fathom.core.localization import EnsembleLocalizerService
+from fathom.core.perception.localization import TargetLocalizationService
+from fathom.core.perception.observation import ScreenObservationService
+from fathom.core.runtime import RuntimeEventEmitter
+from fathom.core.services.abort import AbortDetectorFactory
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.audit import AuditService
 from fathom.core.services.comparator import ScreenComparator
@@ -18,22 +33,36 @@ from fathom.core.services.history import HistoryService
 from fathom.core.services.hitl import HITLService
 from fathom.core.services.perception import PerceptionService
 from fathom.core.services.resolution import ReferenceResolutionService
+from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
+from fathom.interfaces.abort import AbortDetectorPort
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.embedding import EmbeddingPort
+from fathom.interfaces.icon import IconDetectorPort
+from fathom.interfaces.journal import RuntimeJournalPort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.ocr import OcrPort
+from fathom.interfaces.overlay import OverlayDetectorPort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.processing.parsers.signature import HierarchySignatureBuilder
+from fathom.schemas.capabilities import (
+    DeviceCapability,
+    HITLCapability,
+    RuntimeCapabilities,
+)
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
+from fathom.schemas.perception import PerceptionConfiguration  # noqa: TC001
 from fathom.schemas.run import RealignmentPolicy
+from fathom.schemas.tools import ToolPolicyContext, ToolScopeMatrixExpansion
 
 logger = logging.getLogger(__name__)
 
@@ -47,50 +76,70 @@ class GraphContext:
 
     def __init__(
         self,
+        *,
         intent: str,
         llm: LLMPort,
         device: DevicePort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
+        phase: PhaseAnnouncer,
         telemetry: TelemetryPort,
         perception: PerceptionPort,
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
-        *,
+        perception_configuration: PerceptionConfiguration,
         use_xml: bool,
         max_steps: int,
         workflow_id: str,
         package_name: str,
+        ocr: Optional[OcrPort] = None,
         reasoner: Optional[Reasoner] = None,
         trace: Optional[TraceService] = None,
         planner: Optional[StepPlanner] = None,
+        auditor: Optional[AuditService] = None,
         vision: Optional[VisionService] = None,
+        icons: Optional[IconDetectorPort] = None,
         agent_state: Optional[AgentState] = None,
         history: Optional[HistoryService] = None,
         knowledge: Optional[KnowledgePort] = None,
         metrics: Optional[ExecutionMetrics] = None,
         cancel_event: Optional[asyncio.Event] = None,
         hierarchy: Optional[HierarchyService] = None,
+        journal: Optional[RuntimeJournalPort] = None,
         comparator: Optional[ScreenComparator] = None,
         summarizer: Optional[SummarizationPort] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_manager: Optional[ContextManager] = None,
         action_executor: Optional[ActionExecutor] = None,
+        pixel_overlay: Optional[OverlayDetectorPort] = None,
+        ensemble: Optional[EnsembleLocalizerService] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
         perception_service: Optional[PerceptionService] = None,
-        auditor: Optional[AuditService] = None,
         resolution: Optional[ReferenceResolutionService] = None,
+        screen_observer: Optional[ScreenObservationService] = None,
+        target_localizer: Optional[TargetLocalizationService] = None,
+        artifact_pipeline: Optional[ArtifactPipeline] = None,
+        embedder: Optional[EmbeddingPort] = None,
+        embedding_cache: Optional[EmbeddingCache] = None,
+        abort_detector: Optional[AbortDetectorPort] = None,
     ) -> None:
         self.__intent = intent
         self.__device = device
         self.__perception_port = perception
+        self.__embedder = embedder
+        self.__embedding_cache = (
+            embedding_cache
+            if embedding_cache is not None
+            else (EmbeddingCache(embedder=embedder) if embedder is not None else None)
+        )
 
         self.__llm = llm
         self.__memory = memory
         self.__storage = storage
         self.__knowledge = knowledge
 
+        self.__phase = phase
         self.__telemetry = telemetry
         self.__path_manager = path_manager
 
@@ -101,6 +150,7 @@ class GraphContext:
         self.__workflow_id = workflow_id
         self.__package_name = package_name
         self.__configuration = configuration
+        self.__perception_configuration = perception_configuration
 
         self.__cancel_event = cancel_event or asyncio.Event()
         self.__realignment = realignment or RealignmentPolicy()
@@ -108,21 +158,40 @@ class GraphContext:
         # Injected services with defaults for backward compatibility
         self.__metrics = metrics or ExecutionMetrics()
 
+        self.__capabilities = RuntimeCapabilities(
+            hitl=HITLCapability(enabled=signal.supports_interruption()),
+            device=DeviceCapability(
+                system_back_supported=self.__resolve_supports_back(device=device),
+            ),
+        )
+        self.__tool_scope = ToolScope(policies=DEFAULT_TOOL_POLICIES)
+        self.__log_tool_scope_matrix()
+
         self.__reasoner = reasoner or Reasoner(intent=intent)
         self.__agent_state = agent_state or AgentState(
             intent=intent,
             max_steps=max_steps,
+            capabilities=self.__capabilities,
+            retries=configuration.intent.retries,
             realignment_budget=self.__realignment.budget,
         )
 
         self.__signal = signal
-        self.__hitl = HITLService(signal=signal, telemetry=telemetry)
+        self.__hitl = HITLService(
+            phase=phase,
+            signal=signal,
+            telemetry=telemetry,
+            capabilities=self.__capabilities,
+        )
+
+        self.__artifact_pipeline = artifact_pipeline
 
         self.__perception = perception_service or PerceptionService(
             storage=storage,
             perception=perception,
             session_id=workflow_id,
             hierarchy_signature_builder=HierarchySignatureBuilder(),
+            pipeline=artifact_pipeline,
         )
 
         # GCC Context Manager with optional summarizer
@@ -139,6 +208,8 @@ class GraphContext:
             session_id=workflow_id,
             auditor=self.__auditor,
             use_cache=configuration.llm.use_cache,
+            capabilities=self.__capabilities,
+            tool_scope=self.__tool_scope,
         )
 
         self.__action_executor = action_executor or ActionExecutor(
@@ -146,11 +217,20 @@ class GraphContext:
             storage=storage,
             telemetry=telemetry,
             path_manager=path_manager,
+            pipeline=artifact_pipeline,
         )
 
         self.__comparator = comparator or ScreenComparator()
-        self.__hierarchy = hierarchy or HierarchyService(storage=storage)
-        self.__planner = planner or StepPlanner(vision_tool=self.__vision)
+        self.__hierarchy = hierarchy or HierarchyService(
+            storage=storage,
+            configuration=perception_configuration,
+            pipeline=artifact_pipeline,
+        )
+        self.__planner = planner or StepPlanner(
+            vision_tool=self.__vision,
+            tool_scope=self.__tool_scope,
+            escalation_policy=configuration.intent.escalation,
+        )
 
         self.__history = history or HistoryService(
             storage=storage,
@@ -158,9 +238,112 @@ class GraphContext:
             package_name=package_name,
             path_manager=path_manager,
             exporter=ScriptExporter(llm=llm, use_cache=configuration.llm.use_cache),
+            pipeline=artifact_pipeline,
         )
         self.__trace = trace or TraceService(path_manager=path_manager)
-        self.__resolution = resolution or ReferenceResolutionService(ledger=memory)
+        self.__resolution = resolution or ReferenceResolutionService(
+            ledger=memory,
+            workflow_id=workflow_id,
+        )
+
+        self.__ocr = ocr or NoopOcr()
+        self.__icons = icons or NoopIconDetector()
+        self.__pixel_overlay = pixel_overlay or NoopOverlayDetector()
+        self.__ensemble = ensemble or EnsembleLocalizerService(workflow_id=workflow_id)
+
+        self.__screen_observer = screen_observer or ScreenObservationService(
+            configuration=perception_configuration,
+            ocr=self.__ocr,
+            icons=self.__icons,
+            device=device,
+            workflow_id=workflow_id,
+            pixel_overlay=self.__pixel_overlay,
+            pipeline=artifact_pipeline,
+        )
+        self.__target_localizer = target_localizer or TargetLocalizationService(
+            workflow_id=workflow_id,
+            ensemble=self.__ensemble,
+        )
+
+        self.__abort_detector = abort_detector or AbortDetectorFactory.build(llm=llm)
+
+        self.__journal = journal if journal is not None else NoopRuntimeJournal()
+
+        self.__event_emitter = RuntimeEventEmitter(
+            journal=self.__journal,
+            workflow_id=workflow_id,
+        )
+
+    @staticmethod
+    def __resolve_supports_back(*, device: DevicePort) -> bool:
+        """
+        Return whether the live device adapter can dispatch a system back action.
+        """
+
+        runtime = device.configuration
+        if runtime is None:
+            return True
+
+        return runtime.platform is not DevicePlatform.IOS
+
+    def __log_tool_scope_matrix(self) -> None:
+        """
+        Dump every (mode-set, hitl) → tool-set expansion at construction time.
+        """
+
+        logger.info(
+            "Tool scope matrix resolved at boot",
+            extra={
+                "component": "strategies.graph.context",
+                "event": "tool_scope.matrix.resolved",
+                "tool_scope.expansions": [
+                    expansion.model_dump(mode="json") for expansion in self.__matrix_expansions()
+                ],
+            },
+        )
+
+    def __matrix_expansions(self) -> Sequence[ToolScopeMatrixExpansion]:
+        """
+        Compute one expansion entry per (mode-set, hitl) combination for the boot log.
+        """
+
+        return tuple(
+            self.__expansion(modes=modes, hitl=hitl)
+            for modes in self.__mode_subsets()
+            for hitl in (False, True)
+        )
+
+    @staticmethod
+    def __mode_subsets() -> Sequence[frozenset[TurnMode]]:
+        """
+        Enumerate every active mode-set combination supported by :class:`TurnMode`.
+        """
+
+        modes = tuple(TurnMode)
+
+        return tuple(
+            frozenset(combo)
+            for size in range(len(modes) + 1)
+            for combo in itertools.combinations(modes, size)
+        )
+
+    def __expansion(self, *, modes: frozenset[TurnMode], hitl: bool) -> ToolScopeMatrixExpansion:
+        """
+        Resolve one matrix entry for the given mode set and HITL capability.
+        """
+
+        capabilities = RuntimeCapabilities(
+            hitl=HITLCapability(enabled=hitl),
+            device=self.__capabilities.device,
+        )
+        result = self.__tool_scope.compute(
+            context=ToolPolicyContext(capabilities=capabilities, modes=modes),
+        )
+        return ToolScopeMatrixExpansion(
+            modes=modes,
+            hitl=hitl,
+            tools_allowed=result.names,
+        )
 
     @property
     def intent(self) -> str:
@@ -195,6 +378,30 @@ class GraphContext:
         return self.__llm
 
     @property
+    def abort_detector(self) -> AbortDetectorPort:
+        """
+        Composite operator-abort detector wired with LLM primary and heuristic fallback.
+        """
+
+        return self.__abort_detector
+
+    @property
+    def embedder(self) -> Optional[EmbeddingPort]:
+        """
+        Embedding port; ``None`` when embedding support is unavailable.
+        """
+
+        return self.__embedder
+
+    @property
+    def embedding_cache(self) -> Optional[EmbeddingCache]:
+        """
+        Async cache that warms sub-goal embeddings; ``None`` when disabled.
+        """
+
+        return self.__embedding_cache
+
+    @property
     def memory(self) -> MemoryPort:
         """
         Returns the MemoryPort instance.
@@ -227,6 +434,14 @@ class GraphContext:
         return self.__telemetry
 
     @property
+    def phase(self) -> PhaseAnnouncer:
+        """
+        Returns the PhaseAnnouncer shared with the parent strategy.
+        """
+
+        return self.__phase
+
+    @property
     def comparator(self) -> ScreenComparator:
         """
         Returns the screen comparator service.
@@ -252,6 +467,22 @@ class GraphContext:
         """
 
         return self.__hitl
+
+    @property
+    def capabilities(self) -> RuntimeCapabilities:
+        """
+        Returns live RuntimeCapabilities derived from the signal port.
+        """
+
+        return self.__capabilities
+
+    @property
+    def tool_scope(self) -> ToolScope:
+        """
+        Returns the shared ToolScope.
+        """
+
+        return self.__tool_scope
 
     @property
     def path_manager(self) -> SharedPathManager:
@@ -448,10 +679,86 @@ class GraphContext:
 
         return self.__resolution
 
+    @property
+    def ocr(self) -> OcrPort:
+        """
+        Returns the injected OCR port used by perception and localization.
+        """
+
+        return self.__ocr
+
+    @property
+    def icons(self) -> IconDetectorPort:
+        """
+        Returns the injected icon detector used by perception.
+        """
+
+        return self.__icons
+
+    @property
+    def pixel_overlay(self) -> OverlayDetectorPort:
+        """
+        Returns the injected pixel-overlay detector used by perception.
+        """
+
+        return self.__pixel_overlay
+
+    @property
+    def ensemble(self) -> EnsembleLocalizerService:
+        """
+        Returns the ensemble localizer service used by target localization.
+        """
+
+        return self.__ensemble
+
+    @property
+    def screen_observer(self) -> ScreenObservationService:
+        """
+        Returns the screen observation service.
+        """
+
+        return self.__screen_observer
+
+    @property
+    def target_localizer(self) -> TargetLocalizationService:
+        """
+        Returns the target localization service.
+        """
+
+        return self.__target_localizer
+
+    def journal(self) -> RuntimeJournalPort:
+        """
+        Returns the injected runtime journal port.
+        """
+
+        return self.__journal
+
+    @property
+    def event_emitter(self) -> RuntimeEventEmitter:
+        """
+        Returns the runtime event emitter wired against the journal port.
+        """
+
+        return self.__event_emitter
+
+    @property
+    def artifact_pipeline(self) -> Optional[ArtifactPipeline]:
+        """
+        Return the artifact pipeline producers emit into, or ``None`` when disabled.
+        """
+
+        return self.__artifact_pipeline
+
     async def shutdown(self) -> None:
         """
         Drain background tasks from all owned services before teardown.
         """
+
+        try:
+            await self.__phase.shutdown()
+        except Exception as exception:
+            logger.warning(f"[graph-context] phase announcer shutdown failed: {exception}")
 
         for service in (self.__action_executor, self.__hierarchy, self.__history):
             if hasattr(service, "drain_background_tasks"):
@@ -461,3 +768,9 @@ class GraphContext:
                     logger.warning(
                         f"[graph-context] drain failed for {type(service).__name__}: {exception}"
                     )
+
+        if self.__artifact_pipeline is not None:
+            try:
+                await self.__artifact_pipeline.drain()
+            except Exception as exception:
+                logger.warning(f"[graph-context] artifact pipeline drain failed: {exception}")

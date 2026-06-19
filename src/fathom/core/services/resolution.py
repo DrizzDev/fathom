@@ -5,9 +5,18 @@ import re
 from logging import getLogger
 from typing import Any, Dict, Optional, Pattern
 
-from fathom.constants import SPATIAL_ACTION_TYPES, ActionType
+from fathom.constants import GESTURE_ACTION_TYPES, SPATIAL_ACTION_TYPES, ActionType
+from fathom.constants.perception import LABEL_BBOX_AGREEMENT_FLOOR
 from fathom.interfaces.memory import MemoryPort
-from fathom.schemas.actions import Action, Bounds, InputContext
+from fathom.schemas.actions import (
+    Action,
+    Bounds,
+    CoordinateSource,
+    CoordinateSystem,
+    InputContext,
+    InputContextSource,
+)
+from fathom.schemas.resolution import ResolveResult, UnresolvedKind
 
 logger = getLogger(__name__)
 
@@ -18,32 +27,66 @@ class ReferenceResolutionService:
     Also resolves UI Element Label IDs to ground-truth pixel coordinates.
     """
 
-    def __init__(self, ledger: MemoryPort) -> None:
+    def __init__(self, ledger: MemoryPort, *, workflow_id: Optional[str] = None) -> None:
         """
-        Initialize with memory ledger for lookups.
+        Initialize with memory ledger for lookups and optional workflow context.
         """
 
         self.__ledger = ledger
+        self.__workflow_id = workflow_id
 
         # Regex for variable substitution: $source.key
         self.__ref_pattern: Pattern[str] = re.compile(r"\$(memory|env)\.([a-zA-Z0-9_]+)")
 
-        # Regex to parse bounds string: [x1,y1][x2,y2]
-        self.__bounds_pattern: Pattern[str] = re.compile(r"^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$")
+        # Regex to parse bounds string: [x1,y1][x2,y2]. Accepts negative coordinates (off-viewport scroll containers etc.)
+        # The clamp step in :meth:`__snap_to_label` is responsible for bringing them back into the viewport before they reach an executor.
+        self.__bounds_pattern: Pattern[str] = re.compile(
+            r"^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$"
+        )
 
     async def resolve(
         self,
         action: Action,
         elements: Optional[Dict[str, Any]] = None,
-    ) -> Action:
+    ) -> ResolveResult:
         """
-        Resolve dynamic references and snap to ground-truth coordinates.
+        Resolve dynamic references and map a named target to concrete manifest-grounded coordinates.
+
+        Returns a :class:`ResolveResult` whose status reflects what actually happened:
+
+        - ``RESOLVED``: snap succeeded or the action is non-spatial.
+        - ``UNRESOLVED``: action is spatial and named a label that
+          either doesn't exist in the manifest or carries unparsable
+          bounds. The Action returned still has its variable references
+          substituted so the planner can surface a useful failure reason.
+
+        Variable substitution (``$memory.key``, ``$env.VAR``) always
+        runs, even on the unresolved path, so the diagnostic carries the literal substituted target.
         """
 
-        # 1. Snap to Label ID (Ground Truth)
-        action = self.__snap_to_label(action=action, elements=elements)
+        attempt = self.__snap_to_label(action=action, elements=elements)
+        self.__emit_snap_evaluation(
+            requested=action,
+            resolved=attempt,
+            elements=elements,
+        )
+        substituted = await self.__substitute_references(action=attempt.action)
 
-        # 2. Resolve Variable References in text fields
+        return attempt.model_copy(update={"action": substituted})
+
+    async def substitute(self, *, action: Action) -> Action:
+        """
+        Substitute dynamic references without performing target localization.
+        """
+
+        return await self.__substitute_references(action=action)
+
+    async def __substitute_references(self, *, action: Action) -> Action:
+        """
+        Substitute ``$memory.key`` / ``$env.VAR`` references in the
+        action's text fields. Returns a fresh Action when any field changed; returns the original otherwise.
+        """
+
         updates: Dict[str, Any] = {}
 
         if action.text:
@@ -66,52 +109,233 @@ class ReferenceResolutionService:
         self,
         action: Action,
         elements: Optional[Dict[str, Any]],
-    ) -> Action:
+    ) -> ResolveResult:
         """
-        Overwrites action bounds with ground-truth pixel coordinates if label_id matches.
+        Overwrite action bounds with ground-truth pixel coordinates when
+        ``label_id`` matches an element in the manifest, returning a
+        typed :class:`ResolveResult` carrying the outcome.
 
-        Snapping is skipped for non-spatial action types (wait, validate, complete, etc.)
-        that carry no meaningful target element coordinates.
+        Non-spatial actions and successful snaps return ``RESOLVED``.
+        Any other path (missing ``label_id``, label not in manifest, empty /
+        unparsable bounds, snap exception) returns ``UNRESOLVED`` with a short
+        mechanical reason for the next planner turn.
         """
 
         if action.action_type not in SPATIAL_ACTION_TYPES:
-            return action
+            # Non-spatial actions (WAIT, VALIDATE, COMPLETE, BACK, HOME,
+            # HIDE_KEYBOARD, SAVE_MEMORY, RETRIEVE_MEMORY, INFER,
+            # ASK_USER, UNKNOWN) carry no target bounds — snapping is a
+            # no-op by design. The model occasionally attaches a stray
+            # ``label_id`` for narrative purposes; strip it so the
+            # executor doesn't read it as a target and downstream
+            # telemetry shows a clean "non-spatial" trace.
+            cleaned = (
+                action.model_copy(update={"label_id": None, "bounds": None})
+                if action.label_id or action.bounds
+                else action
+            )
+            if cleaned is not action:
+                logger.info(
+                    "[Resolution] non-spatial action passed through; stripped stray "
+                    "label_id/bounds",
+                    extra={
+                        "component": "resolution",
+                        "event": "non_spatial.pass_through",
+                        "action_type": action.action_type.value,
+                        "had_label_id": bool(action.label_id),
+                        "had_bounds": bool(action.bounds),
+                    },
+                )
+            return ResolveResult.resolved(action=cleaned)
 
-        if not action.label_id or not elements:
-            return action
+        if not action.label_id:
+            if action.action_type in GESTURE_ACTION_TYPES:
+                return ResolveResult.resolved(action=action)
+
+            return ResolveResult.unresolved(
+                action=action,
+                kind=UnresolvedKind.LABEL_NOT_FOUND,
+                reason=(
+                    "spatial action emitted without a label_id; model coordinates require "
+                    "perception-backed localization"
+                ),
+            )
+
+        if not elements:
+            return ResolveResult.unresolved(
+                action=action,
+                kind=UnresolvedKind.EMPTY_MANIFEST,
+                reason="manifest empty; no labeled elements to snap against",
+            )
 
         info = elements.get(action.label_id)
         if not info:
-            return action
+            return ResolveResult.unresolved(
+                action=action,
+                kind=UnresolvedKind.LABEL_NOT_FOUND,
+                reason=f"label_id '{action.label_id}' not present in current manifest",
+            )
+
+        if action.action_type in GESTURE_ACTION_TYPES and not self.__gesture_axis_compatible(
+            action=action, element=info
+        ):
+            logger.warning(
+                "Gesture label snap rejected because axis metadata is incompatible",
+                extra={
+                    "component": "resolution",
+                    "event": "gesture.snap.axis_mismatch",
+                    "action.target": action.target,
+                    "element.axis": info.get("axis"),
+                    "element.kind": info.get("kind"),
+                    "workflow.id": self.__workflow_id,
+                    "action.label_id": action.label_id,
+                    "element.bounds": info.get("bounds"),
+                    "element.source": info.get("source"),
+                    "action.type": action.action_type.value,
+                },
+            )
+            return ResolveResult.unresolved(
+                action=action,
+                reason=(
+                    f"label_id '{action.label_id}' is not compatible with "
+                    f"{action.action_type.value}; element axis={info.get('axis')!r} "
+                    f"kind={info.get('kind')!r}"
+                ),
+                kind=UnresolvedKind.AXIS_MISMATCH,
+            )
+
+        if (
+            action.bounds is not None
+            and action.bounds.source is CoordinateSource.MODEL
+            and str(info.get("source", "")).lower() != "cv"
+            and not self.__element_has_semantic_descriptor(element=info)
+            and action.action_type in {ActionType.TAP, ActionType.LONG_PRESS}
+        ):
+            iou = self.__label_bbox_iou(element=info, action=action)
+
+            if iou is not None and iou >= LABEL_BBOX_AGREEMENT_FLOOR:
+                logger.info(
+                    "Manifest label snap retained on bbox-label IoU agreement",
+                    extra={
+                        "component": "resolution",
+                        "event": "snap.label_bbox.agreement",
+                        "workflow.id": self.__workflow_id,
+                        "iou.label_vs_bbox": round(iou, 4),
+                        **self.__action_snapshot(action=action),
+                        "iou.floor": LABEL_BBOX_AGREEMENT_FLOOR,
+                        "element": self.__element_snapshot(element=info, label_id=action.label_id),
+                    },
+                )
+            else:
+                logger.info(
+                    "Manifest label snap rejected because selected element is a generic visual container",
+                    extra={
+                        "component": "resolution",
+                        "workflow.id": self.__workflow_id,
+                        "event": "snap.generic_container.rejected",
+                        **self.__action_snapshot(action=action),
+                        "iou.floor": LABEL_BBOX_AGREEMENT_FLOOR,
+                        "reason": "generic_visual_container_requires_perception",
+                        "iou.label_vs_bbox": round(iou, 4) if iou is not None else None,
+                        "element": self.__element_snapshot(element=info, label_id=action.label_id),
+                    },
+                )
+                return ResolveResult.unresolved(
+                    action=action,
+                    kind=UnresolvedKind.GENERIC_CONTAINER,
+                    reason=(
+                        f"label_id '{action.label_id}' is a generic visual container; "
+                        "perception-backed localization is required"
+                    ),
+                )
 
         bounds_str = str(info.get("bounds", ""))
         if not bounds_str:
-            return action
+            return ResolveResult.unresolved(
+                action=action,
+                kind=UnresolvedKind.MISSING_BOUNDS,
+                reason=(f"label_id '{action.label_id}' has no bounds; element is not snappable"),
+            )
+
+        match = self.__bounds_pattern.match(bounds_str)
+        if not match:
+            logger.warning(
+                "[Resolution] invalid bounds format for label %s: %s",
+                action.label_id,
+                bounds_str,
+                extra={
+                    "bounds": bounds_str,
+                    "component": "resolution",
+                    "event": "invalid.bounds",
+                    "label_id": action.label_id,
+                },
+            )
+
+            return ResolveResult.unresolved(
+                action=action,
+                kind=UnresolvedKind.INVALID_BOUNDS,
+                reason=(f"label_id '{action.label_id}' has unparsable bounds '{bounds_str}'"),
+            )
 
         try:
-            # Parse [x1,y1][x2,y2] using pre-compiled regex for speed
-            match = self.__bounds_pattern.match(bounds_str)
-            if not match:
-                logger.warning(f"Invalid bounds format for label {action.label_id}: {bounds_str}")
-                return action
+            raw_x1, raw_y1, raw_x2, raw_y2 = (int(value) for value in match.groups())
+            x1 = max(0, raw_x1)
+            y1 = max(0, raw_y1)
+            x2 = max(0, raw_x2)
+            y2 = max(0, raw_y2)
 
-            x1, y1, x2, y2 = map(int, match.groups())
             width = x2 - x1
             height = y2 - y1
 
+            if width <= 0 or height <= 0:
+                return ResolveResult.unresolved(
+                    action=action,
+                    kind=UnresolvedKind.INVALID_BOUNDS,
+                    reason=(
+                        f"label_id '{action.label_id}' bounds collapse to zero "
+                        f"after viewport clamp (raw={bounds_str})"
+                    ),
+                )
+
             logger.info(
-                f"Snapped Action to Label [{action.label_id}] "
-                f"-> Pixel Bounds: {x1},{y1} {width}x{height}"
+                "[Resolution] snapped action to label [%s] bounds=%d,%d %dx%d",
+                action.label_id,
+                x1,
+                y1,
+                width,
+                height,
+                extra={
+                    "x": x1,
+                    "y": y1,
+                    "width": width,
+                    "height": height,
+                    "event": "snapped",
+                    "component": "resolution",
+                    "raw_bounds": bounds_str,
+                    "label_id": action.label_id,
+                    "workflow.id": self.__workflow_id,
+                    "clamped": raw_x1 < 0 or raw_y1 < 0 or raw_x2 < 0 or raw_y2 < 0,
+                    **self.__action_snapshot(action=action),
+                    "element": self.__element_snapshot(label_id=action.label_id, element=info),
+                    "resolved.bounds": {
+                        "x": x1,
+                        "y": y1,
+                        "width": width,
+                        "height": height,
+                        "system": CoordinateSystem.DEVICE_PIXEL.value,
+                        "source": self.__coordinate_source(element=info).value,
+                    },
+                },
             )
 
             update: Dict[str, Any] = {
                 "bounds": Bounds(
                     x=x1,
                     y=y1,
-                    source="xml",
                     width=width,
                     height=height,
-                    coord_system="pixel",
+                    source=self.__coordinate_source(element=info),
+                    coordinate_system=CoordinateSystem.DEVICE_PIXEL,
                 ),
             }
 
@@ -122,11 +346,290 @@ class ReferenceResolutionService:
             ):
                 update["input_context"] = input_context
 
-            return action.model_copy(update=update)
+            return ResolveResult.resolved(action=action.model_copy(update=update))
 
         except Exception as exception:
-            logger.warning(f"Failed to snap to label {action.label_id}: {exception}")
-            return action
+            logger.warning(
+                "[Resolution] failed to snap label %s: %s",
+                action.label_id,
+                exception,
+                extra={
+                    "event": "snap.error",
+                    "error": str(exception),
+                    "component": "resolution",
+                    "label_id": action.label_id,
+                },
+            )
+            return ResolveResult.unresolved(
+                action=action,
+                kind=UnresolvedKind.OTHER,
+                reason=f"snap failed for label_id '{action.label_id}': {exception}",
+            )
+
+    def __emit_snap_evaluation(
+        self,
+        *,
+        requested: Action,
+        resolved: ResolveResult,
+        elements: Optional[Dict[str, Any]],
+    ) -> None:
+        """
+        Emit one structured snap.evaluated event per spatial snap attempt.
+        """
+
+        if requested.action_type not in SPATIAL_ACTION_TYPES:
+            return
+
+        element = (elements or {}).get(requested.label_id) if requested.label_id else None
+
+        logger.info(
+            "Snap evaluation completed",
+            extra={
+                "event": "snap.evaluated",
+                "component": "resolution",
+                "workflow.id": self.__workflow_id,
+                "outcome": resolved.status.value,
+                "reason": resolved.reason,
+                "action.label_id": requested.label_id,
+                "action.type": requested.action_type.value,
+                "action.target": (requested.target or "")[:120],
+                "manifest.source": (element or {}).get("source"),
+                "manifest.bounds": (element or {}).get("bounds"),
+            },
+        )
+
+    def __label_bbox_iou(self, *, action: Action, element: Dict[str, Any]) -> Optional[float]:
+        """
+        Return IoU between an element's manifest bounds and the action's LLM bbox.
+
+        Returns None when either the element has no parseable bounds or the action has no bounds.
+        Caller treats None as "no agreement signal" and falls back to the default rejection path.
+        """
+
+        if action.bounds is None:
+            return None
+
+        bounds_str = str(element.get("bounds", ""))
+        if not bounds_str:
+            return None
+
+        match = self.__bounds_pattern.match(bounds_str)
+        if match is None:
+            return None
+
+        try:
+            raw_x1, raw_y1, raw_x2, raw_y2 = (int(value) for value in match.groups())
+        except ValueError:
+            return None
+
+        label_x1 = max(0, raw_x1)
+        label_y1 = max(0, raw_y1)
+        label_x2 = max(0, raw_x2)
+        label_y2 = max(0, raw_y2)
+
+        label_w = label_x2 - label_x1
+        label_h = label_y2 - label_y1
+
+        if label_w <= 0 or label_h <= 0:
+            return None
+
+        bbox_x1 = action.bounds.x
+        bbox_y1 = action.bounds.y
+        bbox_x2 = bbox_x1 + action.bounds.width
+        bbox_y2 = bbox_y1 + action.bounds.height
+
+        if action.bounds.width <= 0 or action.bounds.height <= 0:
+            return None
+
+        intersect_w = max(0, min(label_x2, bbox_x2) - max(label_x1, bbox_x1))
+        intersect_h = max(0, min(label_y2, bbox_y2) - max(label_y1, bbox_y1))
+
+        intersection = intersect_w * intersect_h
+        if intersection == 0:
+            return 0.0
+
+        union = label_w * label_h + action.bounds.width * action.bounds.height - intersection
+        if union <= 0:
+            return 0.0
+
+        return intersection / union
+
+    @staticmethod
+    def __element_has_semantic_descriptor(*, element: Dict[str, Any]) -> bool:
+        """
+        Return whether a manifest element carries enough semantic text to be trusted over a model-provided visual bbox.
+        """
+
+        descriptor_keys = (
+            "text",
+            "name",
+            "label",
+            "hint",
+            "value",
+            "resource-id",
+            "content-desc",
+            "accessibility_label",
+            "accessibility-label",
+        )
+
+        for key in descriptor_keys:
+            value = element.get(key)
+            if value is not None and str(value).strip():
+                return True
+
+        return False
+
+    @staticmethod
+    def __action_snapshot(*, action: Action) -> Dict[str, Any]:
+        """
+        Return the action fields needed to debug snap-to-label decisions.
+        """
+
+        return {
+            "action.type": action.action_type.value,
+            "action.target": (action.target or "")[:120],
+            "action.natural_language_target": (
+                (action.natural_language_target or "")[:120]
+                if action.natural_language_target
+                else None
+            ),
+            "action.label_id": action.label_id,
+            "action.target_is_generic": action.target_is_generic,
+            "action.target_element_type": action.target_element_type,
+            "action.bounds": ReferenceResolutionService.__bounds_snapshot(bounds=action.bounds),
+        }
+
+    @staticmethod
+    def __element_snapshot(*, label_id: Optional[str], element: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Return a stable log-safe manifest element snapshot.
+        """
+
+        descriptor = ReferenceResolutionService.__element_descriptor(element=element)
+        return {
+            "label_id": label_id,
+            "text": descriptor[:120],
+            "type": element.get("type"),
+            "role": element.get("role"),
+            "kind": element.get("kind"),
+            "axis": element.get("axis"),
+            "class": element.get("class"),
+            "bounds": element.get("bounds"),
+            "source": element.get("source"),
+            "tappable": element.get("tappable"),
+            "name": str(element.get("name") or "")[:120],
+            "hint": str(element.get("hint") or "")[:120],
+            "label": str(element.get("label") or "")[:120],
+            "value": str(element.get("value") or "")[:120],
+            "raw_text": str(element.get("text") or "")[:120],
+        }
+
+    @staticmethod
+    def __element_descriptor(*, element: Dict[str, Any]) -> str:
+        """
+        Return the first semantic descriptor present on a manifest element.
+        """
+
+        for key in (
+            "text",
+            "label",
+            "name",
+            "value",
+            "hint",
+            "resource-id",
+            "content-desc",
+            "accessibility_label",
+            "accessibility-label",
+        ):
+            value = element.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+
+        return ""
+
+    @staticmethod
+    def __bounds_snapshot(*, bounds: Optional[Bounds]) -> Optional[Dict[str, Any]]:
+        """
+        Return action bounds in a consistent log shape.
+        """
+
+        if bounds is None:
+            return None
+
+        return {
+            "x": bounds.x,
+            "y": bounds.y,
+            "width": bounds.width,
+            "height": bounds.height,
+            "system": bounds.system.value,
+            "source": bounds.source.value if bounds.source else None,
+        }
+
+    @staticmethod
+    def __gesture_axis_compatible(*, action: Action, element: Dict[str, Any]) -> bool:
+        """
+        Return whether explicit manifest axis metadata agrees with a gesture action.
+        """
+
+        expected = ReferenceResolutionService.__expected_gesture_axis(action=action)
+        if expected is None:
+            return True
+
+        actual = ReferenceResolutionService.__element_axis(element=element)
+        if actual is None:
+            return True
+
+        return actual == expected
+
+    @staticmethod
+    def __expected_gesture_axis(*, action: Action) -> Optional[str]:
+        """
+        Return the axis implied by a directional gesture.
+        """
+
+        if action.action_type in {ActionType.SWIPE_LEFT, ActionType.SWIPE_RIGHT}:
+            return "horizontal"
+
+        if action.action_type in {ActionType.SWIPE_UP, ActionType.SWIPE_DOWN, ActionType.SCROLL}:
+            return "vertical"
+
+        return None
+
+    @staticmethod
+    def __element_axis(*, element: Dict[str, Any]) -> Optional[str]:
+        """
+        Return explicit axis metadata from a manifest element when present.
+        """
+
+        axis = str(element.get("axis") or "").strip().lower()
+        if axis in {"horizontal", "vertical"}:
+            return axis
+
+        kind = str(element.get("kind") or "").strip().lower()
+
+        if kind == "carousel":
+            return "horizontal"
+
+        if kind in {"viewport", "list"}:
+            return "vertical"
+
+        return None
+
+    @staticmethod
+    def __coordinate_source(*, element: Dict[str, Any]) -> CoordinateSource:
+        """
+        Preserve the source that contributed the snapped manifest entry.
+        """
+
+        source = str(element.get("source", "")).strip().lower()
+
+        if source == CoordinateSource.OCR.value:
+            return CoordinateSource.OCR
+
+        if source in {CoordinateSource.VIEWPORT.value, "cv", "icon", "vision"}:
+            return CoordinateSource.VIEWPORT
+
+        return CoordinateSource.XML
 
     @staticmethod
     def __build_input_context(*, element: Dict[str, Any]) -> Optional[InputContext]:
@@ -143,7 +646,11 @@ class ReferenceResolutionService:
         if not locator and len(prefilled) == 0:
             return None
 
-        return InputContext(locator=locator, prefilled=prefilled, source="xml")
+        return InputContext(
+            locator=locator,
+            prefilled=prefilled,
+            source=InputContextSource.XML,
+        )
 
     @staticmethod
     def __prefilled_text_from_element(*, element: Dict[str, Any]) -> str:

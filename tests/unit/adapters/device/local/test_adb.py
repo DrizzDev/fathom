@@ -130,3 +130,183 @@ class ADBDeviceClearTest(unittest.IsolatedAsyncioTestCase):
             c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list
         ]
         self.assertTrue(all("getprop" not in cmd for cmd in commands))
+
+
+class ADBDeviceTouchInputTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Cover local ADB touch source routing for pointer gestures.
+    """
+
+    def __build_device(self) -> ADBDevice:
+        """
+        Build a local ADB device with default configuration.
+        """
+
+        return ADBDevice(serial="emulator-5554")
+
+    async def test_tap_uses_explicit_touchscreen_source(self) -> None:
+        """
+        Taps must be routed as touchscreen input even when an edit field owns focus.
+        """
+
+        device = self.__build_device()
+
+        with patch.object(
+            device,
+            "_ADBDevice__shell",
+            new_callable=AsyncMock,
+            return_value=ActionResult(success=True, duration=1),
+        ) as mock_shell:
+            result = await device.tap(x=123, y=456)
+
+        self.assertTrue(result.success)
+        mock_shell.assert_awaited_once_with(command="input touchscreen tap 123 456")
+
+    async def test_swipe_uses_explicit_touchscreen_source(self) -> None:
+        """
+        Swipes must be routed as touchscreen input instead of falling back to input defaults.
+        """
+
+        device = self.__build_device()
+
+        with patch.object(
+            device,
+            "_ADBDevice__shell",
+            new_callable=AsyncMock,
+            return_value=ActionResult(success=True, duration=1),
+        ) as mock_shell:
+            result = await device.swipe(x1=1, y1=2, x2=3, y2=4, duration=500)
+
+        self.assertTrue(result.success)
+        mock_shell.assert_awaited_once_with(command="input touchscreen swipe 1 2 3 4 500")
+
+
+class ADBDeviceHierarchyDumpTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Cover Android UiAutomation recovery around hierarchy dumps.
+    """
+
+    def __build_device(self) -> ADBDevice:
+        """
+        Build a local ADB device with default configuration.
+        """
+
+        return ADBDevice(serial="emulator-5554")
+
+    async def test_dump_hierarchy_recovers_stale_instrumentation_before_dump(self) -> None:
+        """
+        Active UiAutomation state must kill stale shell instrumentation
+        before invoking ``uiautomator dump``.
+        """
+
+        device = self.__build_device()
+        ok = ActionResult(success=True, duration=1)
+        shell_results = [
+            ActionResult(success=True, duration=1, output="Ui Automation[eventTypes=TYPES_ALL]"),
+            ok,
+            ok,
+            ok,
+        ]
+
+        with (
+            patch.object(
+                device, "_ADBDevice__shell", new_callable=AsyncMock, side_effect=shell_results
+            ) as mock_shell,
+            patch.object(
+                device,
+                "_ADBDevice__run_safe_subprocess",
+                new_callable=AsyncMock,
+                return_value=(0, b"<hierarchy />", b""),
+            ),
+        ):
+            result = await device.dump_hierarchy()
+
+        self.assertEqual(result, "<hierarchy />")
+        commands = [
+            c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list
+        ]
+        self.assertEqual(commands[0], "dumpsys accessibility")
+        self.assertIn("pidof app_process", commands[1])
+        self.assertIn("com.android.commands.am.Am instrument", commands[1])
+        self.assertIn("kill -9", commands[1])
+        self.assertIn("rm -f /data/local/tmp/window_dump.xml", commands[2])
+        self.assertIn("uiautomator dump --compressed", commands[3])
+
+    async def test_dump_hierarchy_recovers_after_compressed_dump_failure(self) -> None:
+        """
+        Failed compressed dump must recover stale UiAutomation before the
+        uncompressed fallback; it must not call ``pkill uiautomator``.
+        """
+
+        device = self.__build_device()
+        ok = ActionResult(success=True, duration=1)
+        shell_results = [
+            ActionResult(success=True, duration=1, output=""),
+            ok,
+            ActionResult(success=False, duration=1, error="ADB shell command exited with code 137"),
+            ActionResult(success=True, duration=1, output="Ui Automation[eventTypes=TYPES_ALL]"),
+            ok,
+            ok,
+        ]
+
+        with (
+            patch.object(
+                device, "_ADBDevice__shell", new_callable=AsyncMock, side_effect=shell_results
+            ) as mock_shell,
+            patch.object(
+                device,
+                "_ADBDevice__run_safe_subprocess",
+                new_callable=AsyncMock,
+                return_value=(0, b"<hierarchy />", b""),
+            ),
+        ):
+            result = await device.dump_hierarchy()
+
+        self.assertEqual(result, "<hierarchy />")
+        commands = [
+            c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list
+        ]
+        self.assertIn("uiautomator dump --compressed", commands[2])
+        self.assertEqual(commands[3], "dumpsys accessibility")
+        self.assertIn("pidof app_process", commands[4])
+        self.assertIn("uiautomator dump /data/local/tmp/window_dump.xml", commands[5])
+        self.assertFalse(any("pkill -9 uiautomator" in command for command in commands))
+
+    async def test_dump_hierarchy_does_not_fallback_after_timeout(self) -> None:
+        """
+        A timed-out compressed dump must fail fast instead of entering the fallback ladder.
+        """
+
+        device = self.__build_device()
+        shell_results = [
+            ActionResult(success=True, duration=1, output=""),
+            ActionResult(success=True, duration=1),
+            ActionResult(
+                success=False,
+                duration=0,
+                error=(
+                    "Command timed out after 10.0s: adb -s emulator-5554 shell "
+                    "uiautomator dump --compressed /data/local/tmp/window_dump.xml"
+                ),
+            ),
+        ]
+
+        with (
+            patch.object(
+                device, "_ADBDevice__shell", new_callable=AsyncMock, side_effect=shell_results
+            ) as mock_shell,
+            self.assertRaisesRegex(Exception, "compressed UI automation dump timed out"),
+        ):
+            await device.dump_hierarchy()
+
+        commands = [
+            c.kwargs.get("command", c.args[0] if c.args else "") for c in mock_shell.call_args_list
+        ]
+        self.assertEqual(len(commands), 3)
+        self.assertIn("uiautomator dump --compressed", commands[2])
+        self.assertFalse(
+            any(
+                command == "uiautomator dump /data/local/tmp/window_dump.xml"
+                for command in commands
+            )
+        )

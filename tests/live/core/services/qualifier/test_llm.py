@@ -142,6 +142,18 @@ class IntentCorpus:
         "Open billing page",
         "Login with abc",
     ]
+    OUTCOME_VERB_EXECUTABLE: List[str] = [
+        "Complete the onboarding flow",
+        "Complete the onboarding flow without a device",
+        "Complete the onboarding without a device",
+        "Finish onboarding without a device",
+        "Finish checkout",
+        "Finish checkout using UPI",
+        "Get me logged in",
+        "Proceed with payment",
+        "Go through onboarding without connecting a device",
+        "Skip device setup during onboarding",
+    ]
     QUESTION_FORM_EXECUTABLE: List[str] = [
         "Can you open Swiggy and search for Biryani?",
         "Can you tap the checkout button?",
@@ -175,6 +187,10 @@ class IntentCorpus:
         "Should I click continue?",
         "Tell me what to do here.",
         "Explain this screen to me.",
+        "Login is complete",
+        "Order should be confirmed",
+        "The page is loaded",
+        "Checkout has been done",
     ]
     CLEARLY_NON_EXECUTABLE: List[str] = [
         "+",
@@ -210,6 +226,7 @@ class IntentCorpus:
             + cls.REAL_USER_INTENTS
             + cls.ANCHORED_EXECUTABLE
             + cls.UNDER_SPECIFIED_UI_EXECUTABLE
+            + cls.OUTCOME_VERB_EXECUTABLE
             + cls.QUESTION_FORM_EXECUTABLE
         )
         for intent in executable_intents:
@@ -366,16 +383,7 @@ class LLMIntentQualifierLiveTest(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_every_intent_classifies_correctly(self) -> None:
-        """
-        Run the corpus through the real qualifier wiring and report per-intent
-        and aggregate outcomes. The corpus is invoked through the same code
-        path production uses: assembly → composer → composition.qualifier.
-
-        The model the qualifier resolves to is asserted against the eval-validated
-        default so a regression that points the qualifier back at the planner's
-        model (e.g. an old preview model) fails this test loudly instead of
-        silently slipping into production.
-        """
+        """Run the corpus through the real qualifier wiring and report per-intent and aggregate outcomes."""
 
         cases = IntentCorpus.cases()
         configuration = QualifierConfiguration()

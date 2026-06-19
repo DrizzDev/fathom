@@ -50,7 +50,7 @@ def build_export_payload(
             screen_changed = bool(step.screen_changed)
         else:
             text = step.get("text")
-            rationale = str(object=step.get("rationale") or "")
+            rationale = str(step.get("rationale") or "")
             screen_changed = bool(step.get("screen_changed", False))
 
         payload.append(

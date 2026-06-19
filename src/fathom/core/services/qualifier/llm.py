@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Optional
 
 from pydantic import ValidationError
@@ -17,8 +16,8 @@ from fathom.core.prompts.qualifier import (
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.qualifier import IntentQualifierPort
 from fathom.schemas.configuration import QualifierConfiguration
+from fathom.schemas.llm import StructuredOutput
 from fathom.schemas.qualification import QualificationVerdict, Rationale
-from fathom.utils.parsing import strip_code_fences
 
 
 class LLMIntentQualifier(IntentQualifierPort):
@@ -42,6 +41,7 @@ class LLMIntentQualifier(IntentQualifierPort):
         self.__rejection_message = message
         self.__configuration = configuration or QualifierConfiguration()
         self.__prompt_builder = prompt_builder or GeminiQualifierPromptBuilder()
+        self.__structured_output = StructuredOutput(payload=QualificationVerdict)
 
     async def qualify(self, *, intent: str) -> QualificationVerdict:
         """
@@ -61,6 +61,7 @@ class LLMIntentQualifier(IntentQualifierPort):
                 use_cache=self.__configuration.inference.use_cache,
                 prompt=[self.__prompt_builder.build_user_prompt(intent=normalized)],
                 system_instruction=self.__prompt_builder.build_system_instruction(),
+                structured_output=self.__structured_output,
             )
         except Exception as exception:
             return self.__fail_open(reason=f"llm_error: {exception}")
@@ -69,36 +70,18 @@ class LLMIntentQualifier(IntentQualifierPort):
 
     def __parse_verdict(self, *, content: str) -> QualificationVerdict:
         """
-        Parse the LLM response into a QualificationVerdict; fail open on any issue.
+        Validate the structured-output payload; fail open on any defect.
         """
 
         try:
-            payload = json.loads(strip_code_fences(content))
-        except json.JSONDecodeError as exception:
+            verdict = QualificationVerdict.model_validate_json(content)
+        except ValidationError as exception:
+            return self.__fail_open(reason=f"schema_validation_failed: {exception}")
+        except (ValueError, TypeError) as exception:
             return self.__fail_open(reason=f"non_json_response: {exception}")
 
-        if not isinstance(payload, dict):
-            return self.__fail_open(
-                reason=f"non_object_json_response: payload_type={type(payload).__name__}"
-            )
-
-        try:
-            rationale_payload = payload.get("rationale") or {}
-
-            if not isinstance(rationale_payload, dict):
-                raise TypeError("rationale field is not an object")
-
-            return QualificationVerdict(
-                message=None,
-                confidence=float(payload["confidence"]),
-                label=QualificationLabel(payload["label"]),
-                rationale=Rationale(
-                    reasoning=str(rationale_payload.get("reasoning", "")),
-                    category=RationaleCategory(rationale_payload.get("category", "unspecified")),
-                ),
-            )
-        except (KeyError, ValidationError, ValueError, TypeError) as exception:
-            return self.__fail_open(reason=f"schema_validation_failed: {exception}")
+        # The qualifier owns the user-facing rejection message; the LLM never sets it.
+        return verdict.model_copy(update={"message": None})
 
     def __empty_intent_verdict(self) -> QualificationVerdict:
         """

@@ -1,0 +1,320 @@
+<?xml version="1.0" ?>
+<AppiumAUT>
+
+
+	<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Swiggy" label="Swiggy" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+		<XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+						<XCUIElementTypeOther type="XCUIElementTypeOther" name="Tabbar" label="TabBar" enabled="true" visible="false" accessible="false" x="0" y="932" width="430" height="88" index="0"/>
+
+
+						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="1">
+
+
+							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+								<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+									<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+										<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+											<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+												<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="932" index="0"/>
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="932" index="1"/>
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="16" y="309" width="398" height="339" index="2">
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="16" y="309" width="398" height="339" index="0">
+
+
+															<XCUIElementTypeButton type="XCUIElementTypeButton" name="Google Maps" label="Google Maps" enabled="true" visible="false" accessible="true" x="21" y="621" width="60" height="22" index="0"/>
+
+
+														</XCUIElementTypeOther>
+
+
+													</XCUIElementTypeOther>
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="1864" y="1864" width="319" height="162" index="3">
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="1864" y="1864" width="127" height="52" index="0">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="1864" y="1864" width="127" height="52" index="0">
+
+
+																<XCUIElementTypeImage type="XCUIElementTypeImage" name="poi_icon" enabled="true" visible="false" accessible="false" x="1917" y="1872" width="21" height="20" index="0"/>
+
+
+																<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Land Marvel Sridevi" name="Land Marvel Sridevi" label="Land Marvel Sridevi" enabled="true" visible="false" accessible="true" x="1872" y="1896" width="111" height="12" index="1"/>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="1993" y="1864" width="117" height="52" index="1">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="1993" y="1864" width="117" height="52" index="0">
+
+
+																<XCUIElementTypeImage type="XCUIElementTypeImage" name="poi_icon" enabled="true" visible="false" accessible="false" x="2041" y="1872" width="21" height="20" index="0"/>
+
+
+																<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Capital Kia Adyar" name="Capital Kia Adyar" label="Capital Kia Adyar" enabled="true" visible="false" accessible="true" x="2001" y="1896" width="101" height="12" index="1"/>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="1864" y="1918" width="180" height="52" index="2">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="1864" y="1918" width="180" height="52" index="0">
+
+
+																<XCUIElementTypeImage type="XCUIElementTypeImage" name="poi_icon" enabled="true" visible="false" accessible="false" x="1943" y="1926" width="21" height="20" index="0"/>
+
+
+																<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Anderson Diagnostics &amp; Labs" name="Anderson Diagnostics &amp; Labs" label="Anderson Diagnostics &amp; Labs" enabled="true" visible="false" accessible="true" x="1872" y="1950" width="164" height="12" index="1"/>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="2046" y="1918" width="135" height="52" index="3">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="2046" y="1918" width="135" height="52" index="0">
+
+
+																<XCUIElementTypeImage type="XCUIElementTypeImage" name="poi_icon" enabled="true" visible="false" accessible="false" x="2103" y="1926" width="21" height="20" index="0"/>
+
+
+																<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Adyar Malar Nilayam" name="Adyar Malar Nilayam" label="Adyar Malar Nilayam" enabled="true" visible="false" accessible="true" x="2054" y="1950" width="119" height="12" index="1"/>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="1864" y="1972" width="166" height="52" index="4">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="1864" y="1972" width="166" height="52" index="0">
+
+
+																<XCUIElementTypeImage type="XCUIElementTypeImage" name="poi_icon" enabled="true" visible="false" accessible="false" x="1936" y="1980" width="21" height="20" index="0"/>
+
+
+																<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Jains Anushika Apartment" name="Jains Anushika Apartment" label="Jains Anushika Apartment" enabled="true" visible="false" accessible="true" x="1872" y="2004" width="150" height="12" index="1"/>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+													</XCUIElementTypeOther>
+
+
+												</XCUIElementTypeOther>
+
+
+												<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Move the pin to change location" name="Move the pin to change location" label="Move the pin to change location" enabled="true" visible="true" accessible="true" x="111" y="372" width="170" height="12" index="1"/>
+
+
+												<XCUIElementTypeImage type="XCUIElementTypeImage" enabled="true" visible="true" accessible="true" x="303" y="369" width="16" height="16" index="2"/>
+
+
+												<XCUIElementTypeImage type="XCUIElementTypeImage" name="location_pin_v2" label="location_pin_v2" enabled="true" visible="true" accessible="true" x="189" y="419" width="52" height="66" index="3"/>
+
+
+												<XCUIElementTypeButton type="XCUIElementTypeButton" enabled="true" visible="true" accessible="true" x="16" y="70" width="36" height="36" index="4"/>
+
+
+												<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="true" x="80" y="78" width="318" height="20" index="5">
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" name="ComponentsLib.SearchBarView.searchBar" enabled="true" visible="true" accessible="false" x="80" y="78" width="318" height="20" index="0">
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" name="ComponentsLib.SearchBarView.searchBarText" enabled="true" visible="true" accessible="false" x="80" y="80" width="185" height="17" index="0">
+
+
+															<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Search an area or address" name="Search an area or address" label="Search an area or address" enabled="true" visible="true" accessible="false" x="80" y="80" width="185" height="17" index="0"/>
+
+
+														</XCUIElementTypeOther>
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" name="ComponentsLib.SearchBarView.searchIcon" enabled="true" visible="true" accessible="false" x="378" y="78" width="20" height="20" index="1">
+
+
+															<XCUIElementTypeImage type="XCUIElementTypeImage" enabled="true" visible="true" accessible="false" x="378" y="78" width="20" height="20" index="0"/>
+
+
+														</XCUIElementTypeOther>
+
+
+													</XCUIElementTypeOther>
+
+
+												</XCUIElementTypeOther>
+
+
+												<XCUIElementTypeImage type="XCUIElementTypeImage" enabled="true" visible="true" accessible="true" x="158" y="630" width="17" height="17" index="6"/>
+
+
+												<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Current Location" name="Current Location" label="Current Location" enabled="true" visible="true" accessible="true" x="182" y="632" width="90" height="13" index="7"/>
+
+
+												<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Order will be delivered here" name="Order will be delivered here" label="Order will be delivered here" enabled="true" visible="true" accessible="true" x="34" y="684" width="168" height="15" index="8"/>
+
+
+												<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Place the pin at exact delivery location" name="Place the pin at exact delivery location" label="Place the pin at exact delivery location" enabled="true" visible="false" accessible="false" x="34" y="702" width="239" height="15" index="9"/>
+
+
+												<XCUIElementTypeImage type="XCUIElementTypeImage" enabled="true" visible="true" accessible="true" x="30" y="724" width="24" height="25" index="10"/>
+
+
+												<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Adyar" name="Adyar" label="Adyar" enabled="true" visible="true" accessible="true" x="60" y="727" width="48" height="19" index="11"/>
+
+
+												<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Adyar, Chennai, Tamil Nadu, India" name="Adyar, Chennai, Tamil Nadu, India" label="Adyar, Chennai, Tamil Nadu, India" enabled="true" visible="true" accessible="true" x="32" y="754" width="205" height="15" index="12"/>
+
+
+												<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="This is 1027.3 km away from your current location." name="This is 1027.3 km away from your current location." label="This is 1027.3 km away from your current location." enabled="true" visible="true" accessible="true" x="40" y="791" width="255" height="12" index="13"/>
+
+
+												<XCUIElementTypeOther type="XCUIElementTypeOther" name="DLS.SuperButton.body" label="Confirm &amp; proceed, Button" enabled="true" visible="true" accessible="true" x="32" y="828" width="366" height="54" index="14">
+
+
+													<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Confirm &amp; proceed" name="Confirm &amp; proceed" label="Confirm &amp; proceed" enabled="true" visible="true" accessible="false" x="140" y="846" width="150" height="18" index="0"/>
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="32" y="828" width="366" height="54" index="1"/>
+
+
+												</XCUIElementTypeOther>
+
+
+											</XCUIElementTypeOther>
+
+
+										</XCUIElementTypeOther>
+
+
+									</XCUIElementTypeOther>
+
+
+								</XCUIElementTypeOther>
+
+
+							</XCUIElementTypeOther>
+
+
+						</XCUIElementTypeOther>
+
+
+						<XCUIElementTypeOther type="XCUIElementTypeOther" name="CroutonContainerView" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="80" index="2">
+
+
+							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="80" index="0">
+
+
+								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="10" name="10" label="10" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="0"/>
+
+
+								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="mins" name="mins" label="mins" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="1"/>
+
+
+								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Preparing your order" name="Preparing your order" label="Preparing your order" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="2"/>
+
+
+								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Test" name="Test" label="Test" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="3"/>
+
+
+								<XCUIElementTypeImage type="XCUIElementTypeImage" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="4"/>
+
+
+							</XCUIElementTypeOther>
+
+
+						</XCUIElementTypeOther>
+
+
+					</XCUIElementTypeOther>
+
+
+				</XCUIElementTypeOther>
+
+
+			</XCUIElementTypeOther>
+
+
+		</XCUIElementTypeWindow>
+
+
+		<XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="932" index="1">
+
+
+			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="932" index="0"/>
+
+
+				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="932" width="430" height="243" index="1"/>
+
+
+			</XCUIElementTypeOther>
+
+
+		</XCUIElementTypeWindow>
+
+
+	</XCUIElementTypeApplication>
+
+
+</AppiumAUT>

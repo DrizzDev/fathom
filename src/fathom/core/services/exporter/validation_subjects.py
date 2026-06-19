@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
 from logging import getLogger
 from typing import TYPE_CHECKING, List
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.core.prompts.templates import (
     VALIDATION_SUBJECT_EXTRACTION_SYSTEM,
@@ -19,13 +20,14 @@ if TYPE_CHECKING:
 logger = getLogger(__name__)
 
 
-@dataclass
-class ValidationSubjectsResult:
+class ValidationSubjectsResult(BaseModel):
     """Result of validation subject extraction with provenance tracking."""
 
-    subjects: list[str] = field(default_factory=list)
-    source: str = "regex"  # "llm" or "regex"
-    error: str | None = None
+    model_config = ConfigDict(frozen=True)
+
+    subjects: list[str] = Field(default_factory=list, description="Extracted validation subjects.")
+    source: str = Field(default="regex", description="Extraction source: llm or regex.")
+    error: str | None = Field(default=None, description="Fallback or parse error, when present.")
 
 
 def extract_validation_subjects_regex(intent: str) -> list[str]:

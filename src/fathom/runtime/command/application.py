@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime
 from logging import getLogger
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 from pydantic import ValidationError
@@ -147,6 +149,17 @@ class CommandApplication:
             help="Enable verbose output",
         )
         run_parser.add_argument(
+            "--log-file",
+            nargs="?",
+            const="auto",
+            default=None,
+            dest="log_file",
+            help=(
+                "Tee structured logs to a file. Pass without a value to auto-resolve "
+                "logs/<DD-MM-YYYY>/<workflow_id>/run.log, or pass an explicit path."
+            ),
+        )
+        run_parser.add_argument(
             "--use-xml",
             "-x",
             action="store_true",
@@ -169,13 +182,13 @@ class CommandApplication:
             "--realignment-budget",
             type=int,
             default=3,
-            help="Maximum allowed consecutive re-plans",
+            help="Maximum allowed consecutive HITL realignments",
         )
         run_parser.add_argument(
             "--no-realignment",
             action="store_false",
             dest="immediate_realignment",
-            help="Disable immediate re-planning on context injection",
+            help="Disable immediate realignment on context injection",
         )
         run_parser.set_defaults(immediate_realignment=True)
 
@@ -288,21 +301,27 @@ class CommandApplication:
             budget=command_input.realignment_budget,
             immediate=command_input.immediate_realignment,
         )
-
         device_configuration = self.__build_device_configuration(
             settings=settings,
             command_input=command_input,
         )
 
+        runtime_configuration = RuntimeConfiguration(
+            interactive=command_input.interactive,
+            signal_type=SignalAdapterType(command_input.signal),
+        )
+        self.__activate_log_file_if_requested(
+            settings=settings,
+            log_file=command_input.log_file,
+            workflow_id=runtime_configuration.session_id,
+        )
+
         return IntentRunRequest(
+            runtime=runtime_configuration,
             objective=IntentObjectiveConfiguration(
                 intent=command_input.intent,
                 use_xml=command_input.use_xml,
                 max_steps=command_input.max_steps,
-            ),
-            runtime=RuntimeConfiguration(
-                interactive=command_input.interactive,
-                signal_type=SignalAdapterType(command_input.signal),
             ),
             memory=MemoryConfiguration(),
             resources=ResourceConfiguration(
@@ -314,8 +333,8 @@ class CommandApplication:
                 ],
                 language_model_configuration=ModelSelectionConfiguration(),
             ),
-            interaction=InteractionConfiguration(realignment=realignment),
             metadata=RunMetadata(),
+            interaction=InteractionConfiguration(realignment=realignment),
         )
 
     def __build_explore_request(
@@ -412,6 +431,31 @@ class CommandApplication:
 
         if command_input.adb_executable_path:
             settings.adb_path = command_input.adb_executable_path
+
+    @staticmethod
+    def __activate_log_file_if_requested(
+        *,
+        workflow_id: str,
+        log_file: Optional[str],
+        settings: FathomSettings,
+    ) -> None:
+        """
+        Resolve the --log-file argument and tee the structured log stream to it.
+        """
+
+        if log_file is None:
+            return
+
+        if log_file == "auto":
+            today = datetime.datetime.now().strftime("%d-%m-%Y")
+            target = settings.run_logs_path / today / workflow_id / "run.log"
+        else:
+            target = Path(log_file).expanduser()
+
+        target = target.resolve()
+        BaseLogger.attach_file_handler(path=target)
+
+        console.print(f"[dim]Logs teeing to:[/dim] [cyan]{target}[/cyan]")
 
     def __configure_logging(self, *, settings: FathomSettings) -> None:
         """

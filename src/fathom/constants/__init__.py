@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import FrozenSet
 
 from fathom.constants.events import FathomEvent
 
@@ -52,6 +53,8 @@ class ActionType(StrEnum):
     HOME = "home"
     WAIT = "wait"
 
+    HIDE_KEYBOARD = "hide_keyboard"
+
     SWIPE = "swipe"
     SWIPE_UP = "swipe_up"
     SWIPE_DOWN = "swipe_down"
@@ -70,10 +73,26 @@ class ActionType(StrEnum):
     ASK_USER = "ask_user"
 
 
+class ActionExecutionKind(StrEnum):
+    """
+    High-level execution channel for one planned action.
+    """
+
+    DEVICE = "device"
+    CONTROL = "control"
+
+
+CONTROL_ACTION_TYPES: FrozenSet[ActionType] = frozenset({ActionType.ASK_USER})
+
+DEVICE_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
+    action_type for action_type in ActionType if action_type not in CONTROL_ACTION_TYPES
+)
+
+
 # Action types that operate on a specific UI element at a pixel location.
 # Only spatial actions warrant label-ID snapping to ground-truth coordinates.
 # Non-spatial actions (wait, validate, complete, etc.) carry no meaningful target bounds.
-SPATIAL_ACTION_TYPES: frozenset[ActionType] = frozenset(
+SPATIAL_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
     {
         ActionType.TAP,
         ActionType.TYPE,
@@ -87,19 +106,38 @@ SPATIAL_ACTION_TYPES: frozenset[ActionType] = frozenset(
     }
 )
 
+# Gesture-only action types — every spatial action whose target is a region
+# rather than a single tappable element (scroll, swipe variants).
+GESTURE_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
+    {
+        ActionType.SWIPE,
+        ActionType.SCROLL,
+        ActionType.SWIPE_UP,
+        ActionType.SWIPE_DOWN,
+        ActionType.SWIPE_LEFT,
+        ActionType.SWIPE_RIGHT,
+    }
+)
+
 # Action types that, when planned during a sub-goal check, indicate the agent is
 # actively executing a next-phase task — used to infer opener sub-goal completion.
-NEXT_PHASE_ACTION_TYPES: frozenset[ActionType] = frozenset(
+NEXT_PHASE_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
     {
         ActionType.TAP,
         ActionType.WAIT,
         ActionType.TYPE,
         ActionType.SWIPE,
+        ActionType.SCROLL,
+        ActionType.VALIDATE,
+        ActionType.SWIPE_UP,
+        ActionType.SWIPE_DOWN,
+        ActionType.SWIPE_LEFT,
+        ActionType.SWIPE_RIGHT,
     }
 )
 
 # Action types that count as "an action was executed" for sub-goal completion signalling.
-ACTION_EXECUTED_TYPES: frozenset[ActionType] = frozenset(
+ACTION_EXECUTED_TYPES: FrozenSet[ActionType] = frozenset(
     {
         ActionType.TAP,
         ActionType.TYPE,
@@ -107,6 +145,10 @@ ACTION_EXECUTED_TYPES: frozenset[ActionType] = frozenset(
         ActionType.SCROLL,
         ActionType.COMPLETE,
         ActionType.VALIDATE,
+        ActionType.SWIPE_UP,
+        ActionType.SWIPE_DOWN,
+        ActionType.SWIPE_LEFT,
+        ActionType.SWIPE_RIGHT,
     }
 )
 
@@ -149,6 +191,7 @@ class StrategyStatus(StrEnum):
 __all__ = [
     "FlowType",
     "ActionType",
+    "ActionExecutionKind",
     "SignalType",
     "TargetKind",
     "FathomEvent",
@@ -166,7 +209,10 @@ __all__ = [
     "VISUAL_HASH_LENGTH",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_RETRY_DELAY",
+    "CONTROL_ACTION_TYPES",
+    "DEVICE_ACTION_TYPES",
     "SPATIAL_ACTION_TYPES",
+    "GESTURE_ACTION_TYPES",
     "DeviceConnectionType",
     "IOSAutomationBackend",
     "ACTION_EXECUTED_TYPES",

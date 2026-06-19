@@ -18,6 +18,13 @@ class CacheService:
     Service for managing LLM context caching with key hashing and stats.
     """
 
+    # Gemini context caching has a provider-side minimum of ~1024 input
+    # tokens. A rough character heuristic of 3 chars/token gives a
+    # conservative ~3100 character floor — anything smaller will be
+    # rejected by the provider with a "minimum token count" error, so
+    # there is no point spending an RPC to discover that.
+    __CACHE_CHAR_FLOOR: int = 3100
+
     def __init__(
         self,
         client: Any,
@@ -69,12 +76,33 @@ class CacheService:
         if current_hash in self.__undersized_hashes:
             return None
 
+        # Pre-flight size gate: under-threshold prompts cannot be cached
+        # by the provider, so don't pay an RPC to find that out. The
+        # exporter system instruction is the canonical small payload that
+        # used to spend one create() call per export to be rejected.
+        approximate_size = len(system_instruction)
+        if tools:
+            approximate_size += len(json.dumps(tools, sort_keys=True))
+        if approximate_size < self.__CACHE_CHAR_FLOOR:
+            self.__undersized_hashes.add(current_hash)
+            logger.info(
+                "Skipping cache creation (pre-flight size below threshold)",
+                extra={
+                    "component": "adapter.llm.cache",
+                    "event": "cache.create.pre_flight_skip",
+                    "hash": current_hash[:8],
+                    "approximate.size.chars": approximate_size,
+                    "threshold.chars": self.__CACHE_CHAR_FLOOR,
+                },
+            )
+            return None
+
         cached_entry = self.__cache_entries.get(current_hash)
 
         # Cache hit: matching entry exists
         if cached_entry:
             self.stats.hits += 1
-            logger.debug(f"Cache hit (hash={current_hash[:8]})")
+            logger.info(f"Cache hit (hash={current_hash[:8]})")
             return str(cached_entry.name)
 
         # Cache miss: hash not present yet
@@ -116,7 +144,7 @@ class CacheService:
         except Exception as exception:
             if "minimum token count" in str(exception):
                 self.__undersized_hashes.add(current_hash)
-                logger.debug(f"Skipping cache (content below minimum token threshold): {exception}")
+                logger.info(f"Skipping cache (content below minimum token threshold): {exception}")
             else:
                 logger.warning(f"Failed to create cache: {exception}")
 
@@ -150,6 +178,10 @@ class CacheService:
             await self.__evict_hash(content_hash=content_hash)
 
     async def __evict_hash(self, *, content_hash: str) -> None:
+        """
+        Delete one tracked remote cache entry and remove its local index.
+        """
+
         cached_content = self.__cache_entries.get(content_hash)
         if not cached_content:
             return

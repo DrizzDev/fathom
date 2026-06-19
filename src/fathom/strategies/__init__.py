@@ -1,6 +1,8 @@
-from __future__ import annotations
+"""
+Strategies package.
+"""
 
-from fathom.strategies.exploration import ExplorationStrategy
-from fathom.strategies.intent import IntentStrategy
-
-__all__ = ["ExplorationStrategy", "IntentStrategy"]
+__all__ = [
+    "ExplorationStrategy",
+    "IntentStrategy",
+]

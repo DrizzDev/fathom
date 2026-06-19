@@ -208,8 +208,10 @@ logs/
 assets/
 scripts/
 secrets/
+scripts/
+documents/
 debug/
 debugging/
-documents/
 research/
+debug/scroll/poc/
 tests/fixtures/

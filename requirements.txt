@@ -15,6 +15,7 @@ google-auth>=2.0.0
 python-dotenv>=1.0.0
 google-genai>=0.2.0
 google-cloud-storage>=2.0.0
+google-cloud-documentai>=2.20.0
 types-PyYAML>=6.0.12.20250915
 rustworkx>=0.15.0
 langgraph>=0.0.10

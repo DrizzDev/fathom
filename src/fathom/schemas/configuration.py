@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional, Set, Union
+from logging import getLogger
+from typing import Any, ClassVar, Dict, Literal, Optional, Set, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,6 +19,18 @@ from fathom.constants.qualification import (
     DEFAULT_QUALIFIER_USE_CACHE,
 )
 from fathom.constants.storage import StorageBackend
+from fathom.schemas.artifact import PipelineConfiguration
+from fathom.schemas.checkpoint import (
+    CheckpointConfiguration,
+    SqliteCheckpointConfiguration,
+)
+from fathom.schemas.escalation import EscalationPolicy
+from fathom.schemas.finalization import FinalizationBudgetPolicy
+from fathom.schemas.retries import RetryLimits
+from fathom.schemas.swipe import SwipeRetryPolicy
+from fathom.schemas.telemetry import PhaseMessage
+
+logger = getLogger(__name__)
 
 
 class LLMConfiguration(BaseModel):
@@ -29,8 +42,8 @@ class LLMConfiguration(BaseModel):
     provider: Literal["gemini", "openai", "anthropic", "vertex_ai"] = Field(
         default="gemini", description="LLM provider name"
     )
-    model: str = Field(default="gemini-3-flash-preview", description="Model identifier")
-    api_key: Optional[str] = Field(default=None, description="API access key")
+    model: str = Field(default="gemini-3.5-flash", description="Model identifier")
+    api_key: Optional[str] = Field(default=None, description="Configured API access key")
 
     # Provider-specific settings (GCP/Azure/OpenAI specific)
     project_id: Optional[str] = Field(default=None, description="Project identifier")
@@ -50,8 +63,12 @@ class LLMConfiguration(BaseModel):
         description="Whether to include the model's reasoning process in the response.",
     )
     media_resolution: Literal["low", "medium", "high"] = Field(
-        default="low",
-        description="Vision token density. 'low' is recommended for high-speed agents.",
+        default="high",
+        description=(
+            "Vision token density. 'high' gives Gemini more vertical resolution "
+            "and is required for accurate bbox grounding on tall mobile screenshots. "
+            "Lower values trade latency for spatial accuracy on the failure path; for live agents the oss-of-grounding cost dominates."
+        ),
     )
 
     # Common hyper-parameters
@@ -75,7 +92,12 @@ class StorageConfiguration(BaseModel):
 
     backends: Set[StorageBackend] = Field(
         default={StorageBackend.LOCAL},
-        description="Storage backends to enable",
+        description=(
+            "Storage backends to enable. Defaults to LOCAL only so unconfigured "
+            "local runs do not attempt cloud uploads without ADC credentials. "
+            "Deployments that want CLOUD uploads pass ``backends={LOCAL, CLOUD}`` "
+            "explicitly (see ``services/crawler/manager.py``)."
+        ),
     )
     storage_bucket: Optional[str] = Field(
         default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"
@@ -141,12 +163,58 @@ class SwipeInteractionPolicy(BaseModel):
         default=64,
         description="Largest safe edge margin in screen pixels.",
     )
+    retry: SwipeRetryPolicy = Field(
+        default_factory=SwipeRetryPolicy,
+        description="Bounded coordinate-retry policy for swipes that produced no visual change.",
+    )
+
+
+class _DeprecatedAdaptivePolicy(BaseModel):
+    """
+    Inert backwards-compatibility stub for the deleted adaptive-scroll subsystem.
+
+    The adaptive-scroll runtime was removed when the swipe coordinator replaced
+    it. Older host callers (enricher / healing bridge) still construct
+    ``ScrollInteractionPolicy.AdaptivePolicy(...)``; this stub accepts the
+    legacy kwargs without applying any behavior so those hosts continue to
+    boot while they migrate. Emit a deprecation warning per construction so
+    the migration is visible.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    enabled: bool = Field(default=False, description="Ignored; adaptive scroll was removed.")
+    maximum_attempts: int = Field(
+        default=0,
+        description="Ignored; replaced by SwipeRetryPolicy.magnitudes.",
+    )
+    verify: bool = Field(default=False, description="Ignored; replaced by the validation service.")
+    budget: int = Field(
+        default=0, description="Ignored; the swipe coordinator is unbounded by wall time."
+    )
+    suspicious_bottom_ratio: float = Field(
+        default=0.0,
+        description="Ignored; was an adaptive-scroll heuristic.",
+    )
+
+    def model_post_init(self, _context: object) -> None:
+        """
+        Emit a deprecation warning when the stub is instantiated.
+        """
+
+        logger.warning(
+            "ScrollInteractionPolicy.AdaptivePolicy is deprecated and has no effect. "
+            "Remove the 'adaptive=ScrollInteractionPolicy.AdaptivePolicy(...)' kwarg; "
+            "adaptive scroll was replaced by the swipe coordinator + SwipeRetryPolicy.",
+        )
 
 
 class ScrollInteractionPolicy(BaseModel):
     """
     Runtime policy for scroll interactions.
     """
+
+    AdaptivePolicy: ClassVar[Type[_DeprecatedAdaptivePolicy]] = _DeprecatedAdaptivePolicy
 
     edge_margin_ratio: float = Field(
         ge=0.0,
@@ -163,6 +231,13 @@ class ScrollInteractionPolicy(BaseModel):
         ge=0,
         default=160,
         description="Largest safe edge margin in screen pixels.",
+    )
+    adaptive: Optional[_DeprecatedAdaptivePolicy] = Field(
+        default=None,
+        description=(
+            "Deprecated: accepted only so older hosts do not crash on import. "
+            "Adaptive scroll behavior was replaced by the swipe coordinator."
+        ),
     )
 
 
@@ -195,6 +270,33 @@ class ADBConfiguration(BaseModel):
         default=None, description="Target Android device identifier"
     )
     command_timeout: float = Field(default=10.0, description="Shell command timeout in seconds")
+    snapshot_timeout: float = Field(
+        default=30.0,
+        description=(
+            "Maximum wall-clock seconds for a full screen + hierarchy snapshot "
+            "(``get_snapshot``). Caps the gather over screencap and uiautomator "
+            "dump so a wedged emulator (e.g. qcow2 backing file exhausted) "
+            "surfaces as a clean DeviceError instead of an infinite await."
+        ),
+    )
+    subprocess_cleanup_timeout: float = Field(
+        default=2.0,
+        description=(
+            "Maximum wall-clock seconds the adapter will wait for a killed "
+            "subprocess to reap before abandoning. Protects against "
+            "uninterruptible-IO situations where the kernel cannot deliver "
+            "SIGKILL to a process stuck waiting on a wedged emulator backing."
+        ),
+    )
+    hierarchy_lock_timeout: float = Field(
+        default=10.0,
+        description=(
+            "Maximum wall-clock seconds the adapter will wait to acquire the "
+            "UiAutomation hierarchy lock. Prevents a leaked lock from a prior "
+            "cancelled dump_hierarchy task from compounding into an indefinite "
+            "wait on subsequent snapshots."
+        ),
+    )
 
     interaction: InteractionRuntimeConfiguration = Field(
         default_factory=InteractionRuntimeConfiguration,
@@ -250,6 +352,17 @@ class RemoteDeviceConfiguration(BaseModel):
     provider_url: Optional[str] = Field(default=None, description="Remote provider endpoint")
     authentication_token: Optional[str] = Field(
         default=None, description="Access token for remote provider"
+    )
+    request_timeout: float = Field(
+        default=60.0,
+        description=(
+            "Maximum wall-clock seconds for a single HTTP request to the "
+            "remote device provider (screenshot, hierarchy dump, action "
+            "dispatch). Higher than the local subprocess timeout because "
+            "remote snapshots can include emulator-side capture, on-the-wire "
+            "transfer, and provider-side queueing; some traffic patterns "
+            "legitimately take up to ~60s end-to-end."
+        ),
     )
 
 
@@ -336,11 +449,30 @@ class IntentConfiguration(BaseModel):
     Configuration for intent-based execution strategy.
     """
 
-    max_steps: int = Field(default=100, description="Step limit for goal achievement")
+    max_steps: int = Field(default=100, ge=1, description="Step limit for goal achievement")
+
+    retries: RetryLimits = Field(
+        default_factory=RetryLimits,
+        description="Per-kind retry caps; nested so new retry kinds are additive without changing call sites.",
+    )
+
     use_xml_grounding: bool = Field(default=False, description="Enable structured XML analysis")
     prompt_user_if_stuck: bool = Field(
         default=True,
         description="If True and in interactive mode, prompt the user for help when the agent detects a loop.",
+    )
+    finalization: FinalizationBudgetPolicy = Field(
+        default_factory=FinalizationBudgetPolicy,
+        description="Post-terminal finalization timeout policy applied to history flush, graph state read, checkpointer close, and runner cleanup phases.",
+    )
+    checkpoint: CheckpointConfiguration = Field(
+        default_factory=SqliteCheckpointConfiguration,
+        description="Backend-specific checkpoint store configuration; discriminated by `backend`.",
+        discriminator="backend",
+    )
+    escalation: EscalationPolicy = Field(
+        default_factory=EscalationPolicy,
+        description="Escalation gate policy controlling when HITL is permitted on stuck signals.",
     )
 
 
@@ -523,6 +655,13 @@ class TelemetryConfiguration(BaseModel):
         default=None, description="Session ID for channel interpolation"
     )
     identity: Optional[str] = Field(default=None, description="Workflow identity for log routing")
+    phase: PhaseMessage = Field(
+        default_factory=PhaseMessage,
+        description=(
+            "Client-facing phase messages and heartbeat budget; configurable per "
+            "deployment so message strings can be localized without code changes."
+        ),
+    )
 
 
 class FathomConfiguration(BaseModel):
@@ -534,7 +673,9 @@ class FathomConfiguration(BaseModel):
     llm: LLMConfiguration = Field(default_factory=LLMConfiguration)
     device: DeviceConfiguration = Field(default_factory=DeviceConfiguration)
     engine: ExecutionConfiguration = Field(default_factory=ExecutionConfiguration)
+
     storage: StorageConfiguration = Field(default_factory=StorageConfiguration)
+    artifact: PipelineConfiguration = Field(default_factory=PipelineConfiguration)
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
 
     intent: IntentConfiguration = Field(default_factory=IntentConfiguration)

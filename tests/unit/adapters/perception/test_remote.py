@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import unittest
 from unittest.mock import AsyncMock, Mock
+
+from PIL import Image
 
 from fathom.adapters.perception.remote import RemotePerceptionAdapter
 from fathom.core.exceptions import DeviceConnectionClosedError, DeviceError
@@ -12,6 +15,16 @@ class RemotePerceptionAdapterTest(unittest.IsolatedAsyncioTestCase):
     """
     Cover remote perception fallback behavior for snapshot capture.
     """
+
+    @staticmethod
+    def __screenshot(*, width: int, height: int) -> bytes:
+        """
+        Encode a minimal screenshot carrying the requested pixel dimensions.
+        """
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (width, height), "white").save(buffer, format="PNG")
+        return buffer.getvalue()
 
     def __build_device(self) -> Mock:
         """
@@ -84,3 +97,21 @@ class RemotePerceptionAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         device.capture_screen.assert_not_awaited()
         device.dump_hierarchy.assert_not_awaited()
+
+    async def test_capture_corrects_logical_dims_for_landscape_image(self) -> None:
+        """
+        Landscape screenshot with portrait-reported dims must yield a landscape capture.
+        """
+
+        device = self.__build_device()
+        device.get_dimensions = AsyncMock(return_value=(1080, 2340))
+        device.get_snapshot = AsyncMock(
+            return_value=(self.__screenshot(width=2340, height=1080), None),
+        )
+
+        adapter = RemotePerceptionAdapter(device=device, include_hierarchy=True)
+
+        capture = await adapter.capture()
+
+        self.assertEqual(capture.width, 2340)
+        self.assertEqual(capture.height, 1080)

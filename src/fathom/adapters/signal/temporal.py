@@ -97,7 +97,7 @@ class TemporalSignalAdapter(SignalPort):
             f"[signal-adapter] workflow={self.__workflow_id} event=wait_for_pause phase=entering"
         )
 
-        while not self.__state.paused:
+        while not self.__state.paused and not self.__state.cancelled:
             await asyncio.to_thread(
                 self.__state.wait_until,
                 timeout=SIGNAL_HEARTBEAT_INTERVAL,
@@ -197,7 +197,7 @@ class TemporalSignalAdapter(SignalPort):
         consumed = self.__state.dequeue_context()
 
         if consumed is not None:
-            logger.debug(
+            logger.info(
                 f"[signal-adapter] workflow={self.__workflow_id} event=consume_context "
                 f"context_length={len(consumed)}"
             )

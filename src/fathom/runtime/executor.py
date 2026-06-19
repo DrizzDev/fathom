@@ -43,7 +43,6 @@ class GraphExecutor:
         self.__has_interrupts = has_interrupts
         self.__invalidate_on_injection = invalidate_on_injection
 
-        self.__replan_count = 0
         self.__config: RunnableConfig = {"configurable": {"thread_id": self.__thread_id}}
 
         self.__active_tasks: Set[asyncio.Task[None]] = set()
@@ -66,10 +65,11 @@ class GraphExecutor:
                     if self.__context.is_cancelled:
                         logger.warning("Executor: Workflow cancelled during execution")
                         break
+
                     # Log node transitions
                     if isinstance(event, dict):
                         for node, _output in event.items():
-                            logger.debug(f"Executor: Node '{node}' completed")
+                            logger.info(f"Executor: Node '{node}' completed")
             except Exception as exception:
                 logger.error(f"Executor: Graph execution failed: {exception}")
                 raise
@@ -146,7 +146,7 @@ class GraphExecutor:
             # Log node transitions for visibility
             if isinstance(event, dict):
                 for node, _output in event.items():
-                    logger.debug(f"Executor: Node '{node}' completed")
+                    logger.info(f"Executor: Node '{node}' completed")
 
     def __create_task(self, *, operation: Coroutine[object, object, None]) -> asyncio.Task[None]:
         """
@@ -192,6 +192,19 @@ class GraphExecutor:
 
         logger.info("Executor: Pause signal received during execution")
 
+        signal_type = await self.__context.hitl.check_signal()
+        if signal_type == SignalType.CANCELLED.value:
+            logger.info("Executor: Cancellation signal received while waiting for pause")
+            self.__context.cancel()
+            stream_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stream_task
+            await self.__context.telemetry.info(
+                "Stopping the run.", type=FathomEvent.WORKFLOW_CANCELLED
+            )
+            await self.__guarded_phase_shutdown(reason="manual_cancel_during_pause")
+            return False
+
         # Do not cancel in-flight graph execution. Let current stream cycle
         # finish and handle pause at a safe graph boundary.
         if not stream_task.done():
@@ -214,8 +227,9 @@ class GraphExecutor:
 
         logger.warning(f"Executor: Workflow {self.__thread_id} cancelled {phase}")
         await self.__context.telemetry.info(
-            "Workflow execution cancelled", type=FathomEvent.WORKFLOW_CANCELLED
+            "Stopping the run.", type=FathomEvent.WORKFLOW_CANCELLED
         )
+        await self.__guarded_phase_shutdown(reason=f"cancelled_during_{phase}")
 
         return True
 
@@ -240,7 +254,7 @@ class GraphExecutor:
         Processes HITL signals at graph breakpoints.
         """
 
-        logger.debug(f"Executor: Checking signal at interrupt ({source})")
+        logger.info(f"Executor: Checking signal at interrupt ({source})")
 
         signal_type = await self.__context.hitl.check_signal()
 
@@ -252,25 +266,27 @@ class GraphExecutor:
             self.__context.cancel()
 
             await self.__context.telemetry.info(
-                "Workflow execution cancelled", type=FathomEvent.WORKFLOW_CANCELLED
+                "Stopping the run.", type=FathomEvent.WORKFLOW_CANCELLED
             )
+            await self.__guarded_phase_shutdown(reason=f"cancelled_at_{source}")
             return
 
         logger.info(f"Executor: Pausing execution ({source})")
         await self.__context.telemetry.info(
-            "Workflow execution paused", type=FathomEvent.WORKFLOW_PAUSED
+            "Holding here for now.", type=FathomEvent.WORKFLOW_PAUSED
         )
+        await self.__guarded_phase_pause(reason=f"paused_at_{source}")
 
         try:
             await self.__context.hitl.wait_for_resume()
         except WorkflowCancelledError:
             logger.info("Executor: Received workflow cancellation while paused")
             self.__context.cancel()
+            await self.__guarded_phase_shutdown(reason="cancelled_while_paused")
             return
 
-        await self.__context.telemetry.info(
-            "Workflow execution resumed", type=FathomEvent.WORKFLOW_RESUMED
-        )
+        await self.__context.telemetry.info("Picking back up...", type=FathomEvent.WORKFLOW_RESUMED)
+        await self.__guarded_phase_resume(reason=f"resumed_at_{source}")
 
         # Process ALL pending contexts in order
         processed_count = 0
@@ -283,6 +299,19 @@ class GraphExecutor:
             processed_count += 1
             logger.info(f"Executor: Processing context {processed_count}: '{context[:50]}...'")
 
+            if await self.__cancel_for_operator_context(content=context):
+                await self.__context.hitl.consume_context()
+                logger.info(
+                    "Executor: Operator context requested cancellation",
+                    extra={
+                        "event": "operator.context.cancelled",
+                        "source": source,
+                        "thread.id": self.__thread_id,
+                    },
+                )
+                await self.__guarded_phase_shutdown(reason="operator_context_abort")
+                return
+
             # Inject into system (resets loop state internally)
             await self.__inject_context(content=context)
 
@@ -293,6 +322,33 @@ class GraphExecutor:
             logger.info(f"Executor: Processed {processed_count} user contexts")
 
         logger.info("Executor: Resuming execution")
+
+    async def __cancel_for_operator_context(self, *, content: str) -> bool:
+        """
+        Cancel when injected operator context is an abort directive.
+        """
+
+        decision = await self.__context.abort_detector.aborted(response=content)
+        logger.info(
+            "Executor: Operator context classified",
+            extra={
+                "event": "operator.context.classified",
+                "source": "executor_injected_context",
+                "aborted": decision.aborted,
+                "content.preview": content[:120],
+                "abort.fallback": decision.fallback,
+                "abort.confidence": round(decision.confidence, 4),
+            },
+        )
+
+        if not decision.aborted:
+            return False
+
+        self.__context.cancel()
+        await self.__context.telemetry.info(
+            "Stopping the run.", type=FathomEvent.WORKFLOW_CANCELLED
+        )
+        return True
 
     async def __validate_state_sync(self, checkpoint: str) -> None:
         """
@@ -311,7 +367,7 @@ class GraphExecutor:
                     f"Graph is_complete={graph_is_complete}, Context is_complete={context_is_complete}"
                 )
 
-            logger.debug(
+            logger.info(
                 f"Executor [{checkpoint}]: State validation - "
                 f"next_nodes={snapshot.next}, graph_keys={list(snapshot.values.keys())}"
             )
@@ -337,11 +393,12 @@ class GraphExecutor:
 
         if self.__invalidate_on_injection:
             # Immediate realignment: Force complete re-evaluation
-            self.__replan_count += 1
-            remaining = self.__context.realignment.budget - self.__replan_count
+            used = self.__context.agent_state.runtime.realignment.count
+            budget = self.__context.agent_state.runtime.realignment.budget
+            remaining = budget - used
             logger.info(
-                f"Executor: Re-planning triggered. Budget used: {self.__replan_count}/"
-                f"{self.__context.realignment.budget} (Remaining: {remaining})"
+                f"Executor: Realignment triggered. Budget used: {used}/"
+                f"{budget} (Remaining: {remaining})"
             )
             if remaining < 0:
                 logger.warning("Executor: Realignment budget exceeded! Proceeding with caution.")
@@ -367,3 +424,46 @@ class GraphExecutor:
         logger.info(
             f"Executor: Graph state updated with context injection. Keys updated: {list(update_dict.keys())}"
         )
+
+    async def __guarded_phase_pause(self, *, reason: str) -> None:
+        """
+        Pause the phase announcer pulse without ever letting an exception bubble
+        out — the lifecycle telemetry event already shipped and must not be undone.
+        """
+
+        try:
+            await self.__context.phase.pause()
+        except Exception as exception:
+            logger.warning(
+                "Executor: phase.pause failed (%s): %s; lifecycle event already emitted",
+                reason,
+                exception,
+            )
+
+    async def __guarded_phase_resume(self, *, reason: str) -> None:
+        """
+        Resume the phase announcer pulse, suppressing any failure so the workflow keeps running.
+        """
+
+        try:
+            await self.__context.phase.resume()
+        except Exception as exception:
+            logger.warning(
+                "Executor: phase.resume failed (%s): %s; lifecycle event already emitted",
+                reason,
+                exception,
+            )
+
+    async def __guarded_phase_shutdown(self, *, reason: str) -> None:
+        """
+        Shutdown the phase announcer pulse, suppressing failures so the cancellation path completes.
+        """
+
+        try:
+            await self.__context.phase.shutdown()
+        except Exception as exception:
+            logger.warning(
+                "Executor: phase.shutdown failed (%s): %s; lifecycle event already emitted",
+                reason,
+                exception,
+            )

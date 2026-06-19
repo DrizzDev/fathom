@@ -9,6 +9,7 @@ from fathom.adapters.storage.local import LocalStorage
 from fathom.adapters.summarization.llm import LLMSummarizer
 from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.paths import SharedPathManager
+from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.exceptions import ConfigurationError
 from fathom.core.services.qualifier import IntentQualifierFactory
 from fathom.infrastructure.memory.ledger import Ledger
@@ -20,6 +21,7 @@ from fathom.schemas.configuration import (
     FathomConfiguration,
     IntentConfiguration,
     QualifierConfiguration,
+    StorageConfiguration,
 )
 from fathom.schemas.run import RealignmentPolicy
 from fathom.settings.env import FathomSettings
@@ -71,10 +73,48 @@ class FathomBuilder:
 
         self.__path_manager = path_manager
         self.__config: FathomConfiguration = FathomConfiguration()
+        # Pre-bound application-layer config translator. When the
+        # caller passes one via :meth:`with_runtime_configuration`, it rides
+        # into :class:`FathomRunner` and on into the strategy so the
+        # OCR / vision-localizer factories observe the same
+        # :class:`FathomSettings` the caller built. Without this, the
+        # strategy would fabricate ``RuntimeConfigLoader()`` itself,
+        # which silently reads only fathom-prefixed env aliases and
+        # misses deployment-prefixed names like
+        # ``DRIZZ_GOOGLE_APPLICATION_CREDENTIALS_JSON``.
+        #
+        # Note: the raw :class:`FathomSettings` (Infrastructure layer)
+        # never crosses this seam. The loader is the Application-layer
+        # abstraction; the caller (e.g. ``FathomActivities``) is
+        # responsible for binding settings to it before handing it in.
+        # This keeps SA credentials and other secrets confined to the
+        # caller's scope — they never become reachable from runner /
+        # strategy code that might otherwise log them or pass them as
+        # Temporal activity arguments.
+        self.__runtime_configuration: Optional[RuntimeConfigLoader] = None
 
         # Set by the optional .with_assembly() path to build a dedicated qualifier LLM.
         self.__llm_factory: Optional[LLMFactoryPort] = None
         self.__assembly: Optional[RunAssemblyBuilder] = None
+
+    def with_runtime_configuration(self, loader: RuntimeConfigLoader) -> FathomBuilder:
+        """
+        Attach a pre-bound :class:`RuntimeConfigLoader` so its settings
+        ride all the way down to :class:`AdapterAssembly` inside the
+        strategy. Required for any deployment whose env-var names
+        differ from fathom's own ``FATHOM_*`` /
+        ``GOOGLE_APPLICATION_CREDENTIALS_JSON`` aliases (e.g.
+        genymotion's ``DRIZZ_`` prefix).
+
+        The loader is an Application-layer object. The caller (e.g.
+        Temporal worker registry) constructs it as
+        ``RuntimeConfigLoader(settings=settings)`` and the raw
+        :class:`FathomSettings` never crosses this boundary — keeping
+        SA credentials and other secrets confined to caller scope.
+        """
+
+        self.__runtime_configuration = loader
+        return self
 
     def with_device(self, port: DevicePort) -> FathomBuilder:
         """
@@ -160,18 +200,18 @@ class FathomBuilder:
         self.__signal = port
         return self
 
-    def with_storage(self, port: StoragePort) -> FathomBuilder:
+    def with_storage(
+        self,
+        port: StoragePort,
+        configuration: StorageConfiguration,
+    ) -> FathomBuilder:
         """
-        Configure storage port.
-
-        Args:
-            port: Storage port implementation
-
-        Returns:
-            Builder instance for chaining
+        Configure storage port and propagate its configuration into ``__config``.
         """
 
         self.__storage = port
+        self.__config.storage = configuration
+
         return self
 
     def with_telemetry(self, port: TelemetryPort) -> FathomBuilder:
@@ -399,6 +439,7 @@ class FathomBuilder:
             perception=self.__perception,
             realignment=self.__realignment,
             path_manager=self.__path_manager,
+            runtime_configuration=self.__runtime_configuration,
             owned_resources=owned_resources,
         )
 

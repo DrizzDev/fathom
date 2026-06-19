@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import time
 from logging import getLogger
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.base.paths import SharedPathManager
+from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -18,6 +19,9 @@ from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.results import ExecutionResult
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.exploration.builder import ExplorationGraphBuilder
+
+if TYPE_CHECKING:
+    from fathom.core.config.loader import RuntimeConfigLoader
 
 logger = getLogger(name=__name__)
 
@@ -44,27 +48,44 @@ class ExplorationStrategy:
         telemetry: TelemetryPort,
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
+        runtime_configuration: Optional["RuntimeConfigLoader"] = None,
     ) -> None:
         self.__seed = seed
         self.__timeout = timeout
         intent = "Explore application"
 
         # Exploration strategy doesn't use XML grounding (uses visual-only approach)
+        from fathom.core.config.loader import RuntimeConfigLoader
+
+        # Use the caller-bound loader when supplied; otherwise fall
+        # back to env-only construction so stand-alone / test paths
+        # remain unchanged.
+        loader = (
+            runtime_configuration if runtime_configuration is not None else RuntimeConfigLoader()
+        )
+
+        phase = PhaseAnnouncer(
+            telemetry=telemetry,
+            message=configuration.telemetry.phase,
+        )
+
         self.__graph_context = GraphContext(
             llm=llm,
+            phase=phase,
             intent=intent,
             use_xml=False,
             device=device,
-            perception=perception,
             signal=signal,
             memory=memory,
             storage=storage,
             telemetry=telemetry,
             max_steps=max_steps,
+            perception=perception,
             workflow_id=workflow_id,
             package_name=package_name,
             path_manager=path_manager,
             configuration=configuration,
+            perception_configuration=loader.perception(),
         )
 
         builder = ExplorationGraphBuilder(context=self.__graph_context)

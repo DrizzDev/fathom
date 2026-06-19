@@ -6,18 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-
-class ExecutionRecord(BaseModel):
-    """
-    Tier 3: Individual Observe-Thought-Action (OTA) cycle.
-    """
-
-    thought: str
-    observation: str
-    action: Dict[str, Any]
-
-    timestamp: float = Field(default_factory=time.time)
-    record_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+from fathom.schemas.trace import ExecutionRecord
 
 
 class CommitNode(BaseModel):

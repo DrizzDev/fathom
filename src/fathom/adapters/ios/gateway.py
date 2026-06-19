@@ -277,11 +277,31 @@ class IOSAutomationGateway:
                 path=actions_path,
             )
         except Exception as exception:
+            if self.__is_missing_actions_release(exception=exception):
+                logger.warning(
+                    "Ignoring missing iOS automation actions release at %s: %s",
+                    actions_path,
+                    exception,
+                )
+                return
+
             logger.warning(
                 "Failed to release iOS automation actions at %s: %s",
                 actions_path,
                 exception,
             )
+
+    @classmethod
+    def __is_missing_actions_release(cls, *, exception: Exception) -> bool:
+        """
+        Return whether an actions-release failure is an expected no-op.
+        """
+
+        if not isinstance(exception, DeviceError):
+            return False
+
+        message = str(exception)
+        return "DELETE session/" in message and "/actions failed with HTTP 404" in message
 
     async def __request(
         self,

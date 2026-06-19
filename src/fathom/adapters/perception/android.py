@@ -4,9 +4,11 @@ import time
 from typing import Optional
 
 from fathom.core.exceptions import DeviceError
+from fathom.core.perception.orientation import CaptureOrientationResolver
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
+from fathom.schemas.observation import KeyboardObservation
 from fathom.schemas.screens import ScreenCapture
 
 
@@ -46,7 +48,12 @@ class AndroidPerceptionAdapter(PerceptionPort):
         if not screenshot_bytes:
             raise DeviceError("Android perception captured an empty screenshot.")
 
-        width, height = await self.__device.get_dimensions()
+        reported_width, reported_height = await self.__device.get_dimensions()
+        width, height = CaptureOrientationResolver.resolve(
+            image=screenshot_bytes,
+            reported_width=reported_width,
+            reported_height=reported_height,
+        )
 
         try:
             application_identifier = await self.__device.get_current_package()
@@ -69,3 +76,13 @@ class AndroidPerceptionAdapter(PerceptionPort):
                 ),
             },
         )
+
+    async def detect_keyboard(
+        self, *, capture: Optional[ScreenCapture] = None
+    ) -> KeyboardObservation:
+        """
+        Delegate keyboard detection to the underlying device adapter (dumpsys for local ADB).
+        """
+
+        _ = capture
+        return await self.__device.detect_keyboard()

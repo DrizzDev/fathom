@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def sanitize_path_component(value: str) -> str:
@@ -13,15 +14,19 @@ def sanitize_path_component(value: str) -> str:
     return sanitized
 
 
-@dataclass(frozen=True)
-class StorageMetadata:
+class StorageMetadata(BaseModel):
     """Validated and sanitized storage metadata extracted from a raw dict."""
 
-    session: str
-    package: str
-    activity: str
-    category: str
-    filename: str | None  # None means the caller should generate a default name
+    model_config = ConfigDict(frozen=True)
+
+    session: str = Field(description="Sanitized session identifier.")
+    package: str = Field(description="Sanitized package name.")
+    activity: str = Field(description="Sanitized activity identifier.")
+    category: str = Field(description="Sanitized storage category.")
+    filename: str | None = Field(
+        default=None,
+        description="Explicit filename when provided; None means the caller should generate one.",
+    )
 
 
 def extract_metadata(raw: Dict[str, Any]) -> StorageMetadata:

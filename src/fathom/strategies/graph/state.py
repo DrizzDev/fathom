@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, TypedDict
 
+from fathom.schemas.execution import ExecutionContext
+from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
@@ -18,12 +20,15 @@ class IntentGraphState(TypedDict, total=False):
     STEP_NUMBER: int
     IS_COMPLETE: bool
     SHOULD_RETRY: bool
+    VERIFY_MODE: Optional[str]
     INJECTED_CONTEXT: Optional[str]
     COMPLETION_REASON: Optional[str]
+    FAILURE_DIAGNOSTIC: Optional[str]
 
     IS_NEW_SCREEN: bool
     CAPTURE: Optional[ScreenCapture]
     SCREEN_STATE: Optional[ScreenState]
+    SCREEN_OBSERVATION: Optional[ScreenObservation]
 
     XML_CONTENT: Optional[str]
     ELEMENTS: Optional[Dict[str, Any]]
@@ -34,6 +39,9 @@ class IntentGraphState(TypedDict, total=False):
     STEP_RESULT: Optional[StepResult]
     ANALYSIS: Optional[AnalysisResult]
 
+    # Coordination handoff: SUPERVISE writes, EXECUTE / OBSERVE read.
+    # Must be declared on the schema or LangGraph drops the channel update.
+    EXECUTION_CONTEXT: Optional[ExecutionContext]
     ANALYSIS_DURATION: float
     EXECUTION_DURATION: float
     GROUNDING_DURATION: float

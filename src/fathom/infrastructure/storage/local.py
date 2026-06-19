@@ -5,6 +5,7 @@ from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from fathom.constants.artifact import ArtifactDirectory
 from fathom.core.exceptions import VisionError
 from fathom.interfaces import IImageStorage
 
@@ -40,7 +41,8 @@ class LocalImageStorage(IImageStorage):
             # Activity name is optional, fallback to package if missing
             activity = metadata.get("activity_name") or package
             filename_meta = metadata.get("filename")
-            category = self.__resolve_category(metadata=metadata)
+            raw_category = metadata.get("category") or metadata.get("type") or "screenshot"
+            category = self.__resolve_category(category=str(raw_category).strip().lower())
 
             if not all([session, package]):
                 raise ValueError(f"Missing required artifact metadata: {session=}, {package=}")
@@ -61,11 +63,11 @@ class LocalImageStorage(IImageStorage):
             )
 
             path = self.__resolve_destination_path(
-                category=category, filename=filename, session_id=session, package_name=package
+                category=category, filename=filename, session_id=session
             )
 
             self.__write(path=path, data=data)
-            logger.debug("Saved local %s artifact: %s", category, path)
+            logger.info("Saved local %s artifact: %s", category, path)
             return str(path.absolute())
         except Exception as exception:
             logger.warning("Failed to save local artifact: %s", exception)
@@ -79,76 +81,58 @@ class LocalImageStorage(IImageStorage):
         with path.open("wb") as handle:
             handle.write(data)
 
-    def __resolve_category(self, *, metadata: Dict[str, Any]) -> str:
+    def __resolve_category(self, *, category: str) -> str:
         """
         Resolve a canonical artifact category from storage metadata.
         """
 
-        raw_category = metadata.get("category") or metadata.get("type") or "screenshot"
-        category = str(raw_category).strip().lower()
-
         if category in {"screenshot", "screenshots"}:
-            return "screenshot"
+            return ArtifactDirectory.SCREENSHOT
 
-        if category == "annotated":
-            return "annotated"
+        if category in {ArtifactDirectory.ANNOTATED, "annotated"}:
+            return ArtifactDirectory.ANNOTATED
 
-        if category == "xmls":
-            return "xmls"
+        if category == ArtifactDirectory.XMLS:
+            return ArtifactDirectory.XMLS
 
-        if category == "traces":
-            return "traces"
+        if category == ArtifactDirectory.TRACES:
+            return ArtifactDirectory.TRACES
 
-        if category == "history":
-            return "history"
+        if category == ArtifactDirectory.HISTORY:
+            return ArtifactDirectory.HISTORY
 
-        return "screenshot"
+        return ArtifactDirectory.SCREENSHOT
 
     def __resolve_extension(self, *, category: str) -> str:
         """
         Resolve the default extension for a category when filename is not provided.
         """
 
-        if category == "xmls":
+        if category == ArtifactDirectory.XMLS:
             return ".xml"
 
-        if category == "history":
+        if category == ArtifactDirectory.HISTORY:
             return ".txt"
 
         return ".png"
 
-    def __resolve_destination_path(
-        self, *, category: str, filename: str, session_id: str, package_name: str
-    ) -> Path:
+    def __resolve_destination_path(self, *, category: str, filename: str, session_id: str) -> Path:
         """
         Resolve the filesystem path for the artifact category.
         """
 
-        if category == "annotated":
-            return self.__path_manager.get_annotated_path(
-                filename=filename, session_id=session_id, package_name=package_name
-            )
+        if category == ArtifactDirectory.ANNOTATED:
+            return self.__path_manager.get_annotated_path(filename=filename, session_id=session_id)
 
-        if category == "xmls":
-            return self.__path_manager.get_xml_path(
-                filename=filename, session_id=session_id, package_name=package_name
-            )
+        if category == ArtifactDirectory.XMLS:
+            return self.__path_manager.get_xml_path(filename=filename, session_id=session_id)
 
-        if category == "traces":
-            return self.__path_manager.get_trace_path(
-                filename=filename, session_id=session_id, package_name=package_name
-            )
-        if category == "history":
-            return (
-                self.__path_manager.get_history_directory(
-                    session_id=session_id,
-                    package_name=package_name,
-                )
-                / filename
-            )
+        if category == ArtifactDirectory.TRACES:
+            return self.__path_manager.get_trace_path(filename=filename, session_id=session_id)
+        if category == ArtifactDirectory.HISTORY:
+            return self.__path_manager.get_history_directory(session_id=session_id) / filename
 
         return self.__path_manager.get_screenshot_path(
             filename=filename,
             session_id=session_id,
-            package_name=package_name,
         )

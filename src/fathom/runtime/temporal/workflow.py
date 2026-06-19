@@ -206,13 +206,22 @@ class FathomWorkflow(FathomBaseWorkflow):
             return dict(result)
 
         except Exception as exception:
-            workflow.logger.exception(f"Workflow failed: {exception}")
+            workflow.logger.exception(
+                "Fathom intent workflow failed",
+                exc_info=exception,
+                extra={
+                    "workflow_id": workflow.info().workflow_id,
+                    "error_type": type(exception).__name__,
+                    "error": str(exception),
+                },
+            )
             return {
                 "steps": 0,
                 "duration": 0,
                 "metrics": None,
                 "success": False,
                 "error": str(exception),
+                "error_type": type(exception).__name__,
             }
 
 
@@ -257,11 +266,20 @@ class FathomExplorationWorkflow(FathomBaseWorkflow):
             return dict(result)
 
         except Exception as exception:
-            workflow.logger.exception(f"Exploration failed: {exception}")
+            workflow.logger.exception(
+                "Fathom exploration workflow failed",
+                exc_info=exception,
+                extra={
+                    "workflow_id": workflow.info().workflow_id,
+                    "error_type": type(exception).__name__,
+                    "error": str(exception),
+                },
+            )
             return {
                 "steps": 0,
                 "duration": 0,
                 "metrics": None,
                 "success": False,
                 "error": str(exception),
+                "error_type": type(exception).__name__,
             }

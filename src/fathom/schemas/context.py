@@ -7,17 +7,6 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 
-class UserGuidance(BaseModel):
-    """
-    Structured user instruction injected during execution.
-    """
-
-    content: str
-    source: str = "hitl"
-    step_number: Optional[int] = None
-    timestamp: float = Field(default_factory=time.time)
-
-
 class TraceRecord(BaseModel):
     """
     Tier 3: Fine-grained Observe-Thought-Action (OTA) record.

@@ -24,13 +24,14 @@ from fathom.constants.llm import (
     GEMINI_STALE_CACHE_STATE_MARKERS,
     GEMINI_STALE_CACHE_STATUS_CODE,
     GEMINI_TRANSIENT_RETRY_JITTER_SECONDS,
+    StructuredOutputMediaType,
 )
 from fathom.core.exceptions import VisionError
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.conversation import ConversationTurn
-from fathom.schemas.llm import GeminiExceptionKind, GeminiExceptionMetadata
+from fathom.schemas.llm import GeminiExceptionKind, GeminiExceptionMetadata, StructuredOutput
 from fathom.schemas.results import GenerateResult
 
 logger = getLogger(__name__)
@@ -45,7 +46,7 @@ class GeminiLLM(LLMPort):
         self,
         *,
         api_key: Optional[str] = None,
-        model: str = "gemini-3.1-flash-preview",
+        model: str = "gemini-3.5-flash",
         configuration: Optional[LLMConfiguration] = None,
     ) -> None:
         """
@@ -73,6 +74,14 @@ class GeminiLLM(LLMPort):
 
         return self.__configuration.model
 
+    @property
+    def client(self) -> Any:
+        """
+        Underlying ``google.genai`` client; consumed by sibling adapters that share auth.
+        """
+
+        return self.__client
+
     def __initialize(self) -> None:
         """
         Initialize client.
@@ -92,6 +101,7 @@ class GeminiLLM(LLMPort):
 
             elif isinstance(self.__configuration.credentials, str):
                 path = Path(self.__configuration.credentials)
+
                 if path.exists():
                     self.__credentials = service_account.Credentials.from_service_account_file(
                         filename=str(path),
@@ -100,23 +110,30 @@ class GeminiLLM(LLMPort):
                     if not project:
                         project = getattr(self.__credentials, "project_id", None)
                 else:
-                    logger.warning(f"Credential file not found at: {path}")
+                    logger.warning(
+                        "Gemini credentials file path does not exist",
+                        extra={
+                            "credentials.path": str(path),
+                            "component": "adapters.llm.gemini",
+                            "event": "gemini.credentials.path.missing",
+                        },
+                    )
 
         http_options = {"timeout": int(self.__configuration.timeout * 1000)}
 
         try:
             if self.__configuration.api_key:
                 self.__client = Client(
-                    http_options=cast("Any", http_options),
                     api_key=self.__configuration.api_key,
+                    http_options=cast("Any", http_options),
                 )
             else:
                 self.__client = Client(
                     vertexai=True,
                     project=project,
                     location=location,
-                    http_options=cast("Any", http_options),
                     credentials=self.__credentials,
+                    http_options=cast("Any", http_options),
                 )
 
             self.__cache = CacheService(client=self.__client, model_name=self.__configuration.model)
@@ -131,6 +148,7 @@ class GeminiLLM(LLMPort):
         cache_name: Optional[str] = None,
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
+        structured_output: Optional[StructuredOutput] = None,
     ) -> types.GenerateContentConfig:
         """
         Constructs the GenerateContentConfig using current configuration.
@@ -138,18 +156,19 @@ class GeminiLLM(LLMPort):
 
         media_resolution_map = {
             "low": types.MediaResolution.MEDIA_RESOLUTION_LOW,
-            "medium": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
             "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
+            "medium": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
         }
         configured_resolution = str(self.__configuration.media_resolution).lower()
 
         thinking_level_map = {
-            "minimal": types.ThinkingLevel.MINIMAL,
             "low": types.ThinkingLevel.LOW,
-            "medium": types.ThinkingLevel.MEDIUM,
             "high": types.ThinkingLevel.HIGH,
+            "medium": getattr(types.ThinkingLevel, "MEDIUM", types.ThinkingLevel.HIGH),
+            "minimal": getattr(types.ThinkingLevel, "MINIMAL", types.ThinkingLevel.LOW),
         }
         configured_thinking = getattr(self.__configuration, "thinking_level", "low")
+
         if isinstance(configured_thinking, str):
             configured_thinking = configured_thinking.lower()
         else:
@@ -185,6 +204,10 @@ class GeminiLLM(LLMPort):
         else:
             config_args["cached_content"] = cache_name
 
+        if structured_output is not None:
+            config_args["response_schema"] = structured_output.payload
+            config_args["response_mime_type"] = StructuredOutputMediaType.JSON.value
+
         return types.GenerateContentConfig(**config_args)
 
     async def generate(
@@ -194,6 +217,7 @@ class GeminiLLM(LLMPort):
         prompt: Sequence[Union[str, bytes, Dict[str, str]]],
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
+        structured_output: Optional[StructuredOutput] = None,
         conversation_history: Optional[Sequence[ConversationTurn]] = None,
     ) -> GenerateResult:
         """
@@ -203,12 +227,16 @@ class GeminiLLM(LLMPort):
         if not self.__client:
             raise VisionError("Client not ready")
 
-        cache_name = None
-        if use_cache and self.__cache and system_instruction:
+        if structured_output is not None and tools:
+            raise VisionError("Structured-output mode cannot be combined with tool calling")
+
+        if use_cache and self.__cache and system_instruction and structured_output is None:
             cache_name = await self.__cache.get_cached_content(
                 system_instruction=system_instruction,
                 tools=tools.get("function_declarations") if tools else None,
             )
+        else:
+            cache_name = None
 
         # Wrap content parts correctly for SDK
         parts = []
@@ -239,6 +267,7 @@ class GeminiLLM(LLMPort):
             config = self.__get_generation_configuration(
                 tools=tools,
                 cache_name=active_cache_name,
+                structured_output=structured_output,
                 system_instruction=system_instruction,
             )
             try:
@@ -281,18 +310,7 @@ class GeminiLLM(LLMPort):
                             if part.function_call:
                                 tool_calls.append(part.function_call)
 
-                # Extract token usage
-                metrics = {}
-                usage = getattr(response, "usage_metadata", None)
-
-                if usage:
-                    metrics["prompt_tokens"] = float(getattr(usage, "prompt_token_count", 0) or 0)
-                    metrics["completion_tokens"] = float(
-                        getattr(usage, "candidates_token_count", 0) or 0
-                    )
-                    metrics["cached_tokens"] = float(
-                        getattr(usage, "cached_content_token_count", 0) or 0
-                    )
+                metrics = self.__collect_usage_metrics(response=response)
 
                 return GenerateResult(content=content, tool_calls=tool_calls, metrics=metrics)
 
@@ -319,14 +337,19 @@ class GeminiLLM(LLMPort):
                     raise VisionError(f"LLM fail: {exception}") from exception
 
                 delay = self.__retry_delay(attempt=attempt, metadata=metadata)
+
                 if delay is not None:
                     logger.warning(
-                        "Gemini transient failure (kind=%s, status=%s). Retrying in %.2fs (%d/%d).",
-                        metadata.kind,
-                        metadata.status_code,
-                        delay,
-                        attempt + 1,
-                        max_retries,
+                        "Gemini transient failure; scheduling retry",
+                        extra={
+                            "component": "adapters.llm.gemini",
+                            "event": "gemini.request.retry.scheduled",
+                            "retry.delay_seconds": delay,
+                            "retry.attempt": attempt + 1,
+                            "retry.max_attempts": max_retries,
+                            "exception.kind": metadata.kind.value,
+                            "exception.status_code": metadata.status_code,
+                        },
                     )
                 else:
                     jitter = random.random() * GEMINI_GENERIC_RETRY_JITTER_SECONDS  # nosec
@@ -336,14 +359,57 @@ class GeminiLLM(LLMPort):
 
         raise VisionError("Unreachable")
 
+    @classmethod
+    def __collect_usage_metrics(cls, *, response: Any) -> Dict[str, float]:
+        """
+        Capture token usage from the SDK response and emit a structured usage event.
+        """
+
+        metrics: Dict[str, float] = {}
+        usage = getattr(response, "usage_metadata", None)
+
+        if usage is None:
+            return metrics
+
+        for metric_name, attribute in (
+            ("total_tokens", "total_token_count"),
+            ("prompt_tokens", "prompt_token_count"),
+            ("thoughts_tokens", "thoughts_token_count"),
+            ("completion_tokens", "candidates_token_count"),
+            ("cached_tokens", "cached_content_token_count"),
+            ("tool_use_prompt_tokens", "tool_use_prompt_token_count"),
+        ):
+            metrics[metric_name] = float(getattr(usage, attribute, 0) or 0)
+
+        logger.info(
+            "Gemini usage recorded",
+            extra={
+                "component": "adapters.llm.gemini",
+                "event": "gemini.usage.recorded",
+                "tokens.total": metrics["total_tokens"],
+                "tokens.prompt": metrics["prompt_tokens"],
+                "tokens.cached": metrics["cached_tokens"],
+                "tokens.thoughts": metrics["thoughts_tokens"],
+                "tokens.completion": metrics["completion_tokens"],
+                "traffic.type": getattr(usage, "traffic_type", None),
+                "tokens.tool_use_prompt": metrics["tool_use_prompt_tokens"],
+            },
+        )
+
+        return metrics
+
     async def __reset_stale_cache(self, *, cache_name: Optional[str]) -> Optional[str]:
         """
         Invalidate the active cached content and continue uncached.
         """
 
         logger.warning(
-            "Stale cached content detected (%s); retrying without cache.",
-            cache_name,
+            "Stale Gemini cached content detected; retrying uncached",
+            extra={
+                "component": "adapters.llm.gemini",
+                "event": "gemini.cache.stale",
+                "cache.name": cache_name,
+            },
         )
 
         if self.__cache and cache_name is not None:
@@ -449,18 +515,19 @@ class GeminiLLM(LLMPort):
         """
 
         logger.warning(
-            (
-                "Gemini request failed: type=%s kind=%s status=%s retry_after=%s "
-                "attempt=%d/%d cache_name=%s message=%s"
-            ),
-            metadata.exception_type,
-            metadata.kind,
-            metadata.status_code,
-            metadata.retry_after_seconds,
-            attempt + 1,
-            max_retries + 1,
-            cache_name,
-            metadata.message,
+            "Gemini request failed",
+            extra={
+                "component": "adapters.llm.gemini",
+                "event": "gemini.request.failed",
+                "cache.name": cache_name,
+                "retry.attempt": attempt + 1,
+                "exception.kind": metadata.kind.value,
+                "exception.message": metadata.message,
+                "retry.max_attempts": max_retries + 1,
+                "exception.type": metadata.exception_type,
+                "exception.status_code": metadata.status_code,
+                "retry.after_seconds": metadata.retry_after_seconds,
+            },
             exc_info=True,
         )
 
@@ -530,8 +597,8 @@ class GeminiLLM(LLMPort):
     @staticmethod
     def __is_provider_overloaded_error(
         *,
-        status_code: Optional[int],
         text: str,
+        status_code: Optional[int],
     ) -> bool:
         """
         Determine whether the provider is temporarily overloaded.
@@ -616,11 +683,11 @@ class GeminiLLM(LLMPort):
         """
         Convert a provider-neutral ConversationTurn to a Gemini SDK Content object.
 
-        This is the adapter boundary where domain models are translated to
-        provider-specific types.
+        This is the adapter boundary where domain models are translated to provider-specific types.
         """
 
         sdk_parts: list[types.Part] = []
+
         for part in turn.parts:
             if part.function_call:
                 sdk_parts.append(

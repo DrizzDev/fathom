@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fathom.constants import ActionType
 from fathom.schemas.validators import enforce_validate_prefix
 
 CoordSystem = Literal["normalized", "pixel"]
@@ -128,7 +129,7 @@ class EmitScriptArgs(BaseModel):
     @model_validator(mode="after")
     def _reject_duplicates_and_empty_blocks(self) -> "EmitScriptArgs":
         # Reject duplicate action IDs in remaining_action_ids.
-        seen: set[str] = set()
+        seen: Set[str] = set()
         for aid in self.remaining_action_ids:
             if aid in seen:
                 raise ValueError(f"Duplicate action ID '{aid}' in remaining_action_ids.")
@@ -138,7 +139,7 @@ class EmitScriptArgs(BaseModel):
         for i, block in enumerate(self.conditional_blocks):
             if not block.action_ids:
                 raise ValueError(f"conditional_blocks[{i}] has no action_ids; remove empty blocks.")
-            block_seen: set[str] = set()
+            block_seen: Set[str] = set()
             for aid in block.action_ids:
                 if aid in block_seen:
                     raise ValueError(
@@ -160,7 +161,7 @@ class GeminiBBox(BaseModel):
     y: int = Field(0, description="Top-left Y coordinate")
     width: int = Field(..., gt=0, description="Bounding box width")
     height: int = Field(..., gt=0, description="Bounding box height")
-    coord_system: CoordSystem = Field(
+    coordinate_system: CoordSystem = Field(
         "normalized",
         description="Coordinate system for bbox (normalized or pixel)",
     )
@@ -291,45 +292,116 @@ class ExecuteAction(BaseModel):
     Single low-level UI action emitted by execute_ui.
     """
 
-    bbox: Optional[GeminiBBox] = None
+    bbox: Optional[GeminiBBox] = Field(
+        default=None,
+        description="Optional target bounds emitted by the planner.",
+    )
     action_type: str = Field(
-        "wait",
+        default="wait",
         description="Low-level action type; mapped to internal ActionType.",
     )
-    target_name: Optional[str] = None
-    element_name: Optional[str] = None
-    text: Optional[str] = None
-    text_to_type: Optional[str] = None
-    wait_duration: Optional[float] = None
-    validation_reason: Optional[str] = None
+    target_name: Optional[str] = Field(default=None, description="Primary human-readable target.")
+    element_name: Optional[str] = Field(
+        default=None,
+        description="Secondary target name from older prompt variants.",
+    )
+    text: Optional[str] = Field(default=None, description="Text payload for type actions.")
+    text_to_type: Optional[str] = Field(
+        default=None,
+        description="Legacy alias for text payloads used by older prompts.",
+    )
+    wait_duration: Optional[float] = Field(
+        default=None,
+        description="Requested wait duration in seconds.",
+    )
+    validation_reason: Optional[str] = Field(
+        default=None,
+        description="Structured validation rationale for validate-like actions.",
+    )
 
-    condition: Optional[str] = None
-    is_conditional: bool = False
-    conditional_type: Optional[ConditionalType] = None
-    overlay_detected: bool = False
+    condition: Optional[str] = Field(
+        default=None,
+        description="Guard condition text for conditional actions.",
+    )
+    is_conditional: bool = Field(
+        default=False,
+        description="Whether the action is gated by a condition.",
+    )
+    conditional_type: Optional[ConditionalType] = Field(
+        default=None,
+        description="Classification of the action guard when conditional.",
+    )
+    overlay_detected: bool = Field(
+        default=False,
+        description="Whether the model explicitly observed an overlay.",
+    )
 
-    target_type: Optional[TargetType] = None
-    script_target: Optional[str] = None
+    target_type: Optional[TargetType] = Field(
+        default=None,
+        description="Planner hint describing target stability.",
+    )
+    script_target: Optional[str] = Field(
+        default=None,
+        description="Structured script-friendly target string when available.",
+    )
+    surface: Optional[str] = Field(
+        default=None,
+        description="Specific section, container, or on-screen area this action belongs to.",
+    )
 
     # Structured export signals — authoritative; no heuristic fallback.
-    export_target: Optional[str] = None
-    scroll_target: Optional[str] = None
-    wait_subject: Optional[str] = None
-    wait_pattern: Optional[WaitPattern] = None
-    is_app_launcher: bool = False
-    target_is_generic: Optional[bool] = None
-    target_element_type: Optional[TargetElementType] = None
-    validation_subject: Optional[str] = None
-    validation_pattern: Optional[ValidationPattern] = None
+    export_target: Optional[str] = Field(
+        default=None,
+        description="Specific export target name when script generation needs one.",
+    )
+    scroll_target: Optional[str] = Field(
+        default=None,
+        description="Specific target or section the scroll action is trying to reach.",
+    )
+    wait_subject: Optional[str] = Field(
+        default=None,
+        description="Object or condition the wait action is waiting on.",
+    )
+    wait_pattern: Optional[WaitPattern] = Field(
+        default=None,
+        description="Structured wait pattern classification.",
+    )
+    is_app_launcher: bool = Field(
+        default=False,
+        description="Whether the target launches an app from a launcher surface.",
+    )
+    target_is_generic: Optional[bool] = Field(
+        default=None,
+        description="Whether the planner considers the target name generic.",
+    )
+    target_element_type: Optional[TargetElementType] = Field(
+        default=None,
+        description="Structured target element type emitted by the planner.",
+    )
+    validation_subject: Optional[str] = Field(
+        default=None,
+        description="Primary subject of a validate action.",
+    )
+    validation_pattern: Optional[ValidationPattern] = Field(
+        default=None,
+        description="Structured validation pattern emitted by the planner.",
+    )
 
-    rationale: Optional[str] = None
-    is_valid: bool = True
-    confidence: float = 0.5  # Conservative default; VLM should provide explicit confidence
-    label_id: Optional[str] = None
+    rationale: Optional[str] = Field(default=None, description="Planner rationale for the action.")
+    is_valid: bool = Field(
+        default=True, description="Whether the planner considered the action valid."
+    )
+    confidence: float = Field(
+        description="Required planner confidence in [0, 1].",
+    )
+    label_id: Optional[str] = Field(
+        default=None,
+        description="Resolved manifest label identifier when the planner grounded to one.",
+    )
 
     @field_validator("wait_duration", mode="before")
     @classmethod
-    def _parse_wait_duration(cls, value: Any) -> Optional[float]:
+    def __parse_wait_duration(cls, value: Any) -> Optional[float]:
         if value is None:
             return None
         try:
@@ -337,16 +409,33 @@ class ExecuteAction(BaseModel):
         except (TypeError, ValueError):
             return None
 
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def __parse_confidence(cls, value: Any) -> float:
+        """
+        Parse planner confidence into a bounded float.
+        """
+
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError) as exception:
+            raise ValueError("confidence must be a numeric value in [0, 1].") from exception
+
+        if confidence < 0.0 or confidence > 1.0:
+            raise ValueError("confidence must be in [0, 1].")
+
+        return confidence
+
     @field_validator("label_id", mode="before")
     @classmethod
-    def _to_str_label(cls, value: Any) -> Optional[str]:
+    def __to_str_label(cls, value: Any) -> Optional[str]:
         if value is None:
             return None
         return str(value)
 
     @field_validator("export_target", mode="before")
     @classmethod
-    def _reject_generic_export_target(cls, value: Any) -> Optional[str]:
+    def __reject_generic_export_target(cls, value: Any) -> Optional[str]:
         if value is None:
             return None
         text = str(value).strip()
@@ -360,7 +449,7 @@ class ExecuteAction(BaseModel):
         return text
 
     @model_validator(mode="after")
-    def _enforce_structured_signals(self) -> "ExecuteAction":
+    def __enforce_structured_signals(self) -> "ExecuteAction":
         at = (self.action_type or "").strip().lower()
 
         # scroll_target is required for swipe/scroll actions.
@@ -368,6 +457,11 @@ class ExecuteAction(BaseModel):
             raise ValueError(
                 f"scroll_target is required for action_type='{at}'. "
                 "Provide the element or section being scrolled to find."
+            )
+        if at in _SWIPE_SCROLL_TYPES and not (self.label_id or self.bbox):
+            raise ValueError(
+                f"label_id or bbox is required for action_type='{at}'. "
+                "Ground every scroll action to a manifest container or an explicit visible region."
             )
 
         # wait_subject is required for wait actions.
@@ -380,7 +474,10 @@ class ExecuteAction(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _normalize_conditionals(self) -> "ExecuteAction":
+    def __normalize_conditionals(self) -> "ExecuteAction":
+        action_type = (self.action_type or "").strip().lower()
+        wait_subject = (self.wait_subject or "").strip() or None
+
         condition = (self.condition or "").strip() or None
         conditional_type = self.conditional_type
         is_conditional = self.is_conditional or bool(self.overlay_detected)
@@ -390,6 +487,19 @@ class ExecuteAction(BaseModel):
             condition = "Overlay is visible"
         if self.overlay_detected and not conditional_type:
             conditional_type = "blocker"
+
+        # A conditional wait is "wait for X to appear"; the subject is the de-facto
+        # guard. Mirror the overlay_detected default branch so the model is not
+        # forced to repeat the same phrase twice.
+        if (
+            is_conditional
+            and not condition
+            and action_type == ActionType.WAIT.value
+            and wait_subject
+        ):
+            condition = f"{wait_subject} is visible"
+        if is_conditional and not conditional_type and action_type == ActionType.WAIT.value:
+            conditional_type = "transient"
 
         # For all other conditional actions, require explicit condition text.
         if is_conditional and not condition:
@@ -414,11 +524,34 @@ class ExecuteUIArgs(GeminiCompletionFlags, GeminiDeltaTelemetry):
         "",
         description="Reasoning for the chosen UI action.",
     )
+    action: Optional[ExecuteAction] = Field(
+        default=None,
+        description="Single low-level UI action for this turn.",
+    )
     actions: List[ExecuteAction] = Field(
         default_factory=list,
-        description="List of candidate low-level UI actions; first is executed.",
+        description="Legacy compatibility field. At most one action is accepted.",
     )
     memory_updates: Optional[Dict[str, str]] = None
+
+    @model_validator(mode="after")
+    def __normalize_single_action(self) -> "ExecuteUIArgs":
+        """
+        Normalize the temporary legacy actions list into the singular action contract.
+        """
+
+        if self.action is not None and self.actions:
+            raise ValueError("execute_ui accepts either action or actions, not both.")
+
+        if len(self.actions) > 1:
+            raise ValueError(
+                "execute_ui accepts exactly one action; multi-action payloads are unsupported."
+            )
+
+        if self.action is None and self.actions:
+            object.__setattr__(self, "action", self.actions[0])
+
+        return self
 
 
 class StoreMemoryArgs(BaseModel):

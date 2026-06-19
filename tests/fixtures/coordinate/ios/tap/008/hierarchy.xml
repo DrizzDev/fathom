@@ -1,0 +1,902 @@
+<?xml version="1.0" ?>
+<AppiumAUT>
+
+
+	<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Swiggy" label="Swiggy" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+		<XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+						<XCUIElementTypeOther type="XCUIElementTypeOther" name="Tabbar" label="TabBar" enabled="true" visible="false" accessible="false" x="0" y="932" width="430" height="88" index="0"/>
+
+
+						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="1">
+
+
+							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+								<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+									<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+										<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+											<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="98" index="0">
+
+
+												<XCUIElementTypeButton type="XCUIElementTypeButton" enabled="true" visible="true" accessible="true" x="16" y="50" width="36" height="36" index="0"/>
+
+
+												<XCUIElementTypeButton type="XCUIElementTypeButton" enabled="true" visible="true" accessible="true" x="378" y="50" width="36" height="36" index="1"/>
+
+
+											</XCUIElementTypeOther>
+
+
+											<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="0" height="0" index="1"/>
+
+
+											<XCUIElementTypeCollectionView type="XCUIElementTypeCollectionView" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="932" index="2">
+
+
+												<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="311" index="0">
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="311" index="0">
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="311" index="0">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="306" index="0">
+
+
+																<XCUIElementTypeCollectionView type="XCUIElementTypeCollectionView" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="306" index="0">
+
+
+																	<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="306" index="0">
+
+
+																		<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="306" index="0">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="430" height="306" index="0"/>
+
+
+																		</XCUIElementTypeOther>
+
+
+																	</XCUIElementTypeCell>
+
+
+																</XCUIElementTypeCollectionView>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+													</XCUIElementTypeOther>
+
+
+												</XCUIElementTypeCell>
+
+
+												<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="0" y="311" width="430" height="1" index="1">
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="311" width="430" height="1" index="0">
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="311" width="430" height="1" index="0">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="311" width="430" height="1" index="0">
+
+
+																<XCUIElementTypeCollectionView type="XCUIElementTypeCollectionView" enabled="true" visible="true" accessible="false" x="0" y="311" width="430" height="1" index="0">
+
+
+																	<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="0" y="311" width="430" height="1" index="0">
+
+
+																		<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="311" width="430" height="1" index="0">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="311" width="430" height="1" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" name="Offer" label="Offer" enabled="true" visible="true" accessible="true" x="0" y="311" width="430" height="1" index="0"/>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeOther>
+
+
+																	</XCUIElementTypeCell>
+
+
+																</XCUIElementTypeCollectionView>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+													</XCUIElementTypeOther>
+
+
+												</XCUIElementTypeCell>
+
+
+												<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="0" y="312" width="430" height="53" index="2">
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="312" width="430" height="53" index="0">
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="312" width="430" height="53" index="0">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="312" width="430" height="53" index="0">
+
+
+																<XCUIElementTypeCollectionView type="XCUIElementTypeCollectionView" enabled="true" visible="true" accessible="false" x="0" y="312" width="430" height="53" index="0">
+
+
+																	<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="0" y="312" width="430" height="53" index="0">
+
+
+																		<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="312" width="430" height="53" index="0">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="312" width="430" height="53" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" name="Stack Header" label="Stack Header" enabled="true" visible="true" accessible="true" x="0" y="312" width="430" height="53" index="0"/>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeOther>
+
+
+																	</XCUIElementTypeCell>
+
+
+																</XCUIElementTypeCollectionView>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+													</XCUIElementTypeOther>
+
+
+												</XCUIElementTypeCell>
+
+
+												<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="0" y="365" width="430" height="68" index="3">
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="365" width="430" height="68" index="0">
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="365" width="430" height="68" index="0">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="365" width="430" height="68" index="0">
+
+
+																<XCUIElementTypeCollectionView type="XCUIElementTypeCollectionView" enabled="true" visible="true" accessible="false" x="0" y="381" width="430" height="36" index="0">
+
+
+																	<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="16" y="381" width="97" height="36" index="0">
+
+
+																		<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="381" width="97" height="36" index="0">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="381" width="97" height="36" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" name="FILTER__FLAT_200_OFF__IS_APPLIED" label="Filter Flat 200 Off is applied" enabled="true" visible="true" accessible="true" x="16" y="381" width="97" height="36" index="0"/>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeOther>
+
+
+																	</XCUIElementTypeCell>
+
+
+																	<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="120" y="381" width="130" height="36" index="1">
+
+
+																		<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="120" y="381" width="130" height="36" index="0">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="120" y="381" width="130" height="36" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" name="FILTER__GOURMET_50%_OFF" label="Filter Gourmet 50% Off" enabled="true" visible="true" accessible="true" x="120" y="381" width="130" height="36" index="0"/>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeOther>
+
+
+																	</XCUIElementTypeCell>
+
+
+																	<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="258" y="381" width="122" height="36" index="2">
+
+
+																		<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="258" y="381" width="122" height="36" index="0">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="258" y="381" width="122" height="36" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" name="FILTER__UNLIMITED_OFFERS" label="Filter Unlimited Offers" enabled="true" visible="true" accessible="true" x="258" y="381" width="122" height="36" index="0"/>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeOther>
+
+
+																	</XCUIElementTypeCell>
+
+
+																	<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="387" y="381" width="106" height="36" index="3">
+
+
+																		<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="387" y="381" width="106" height="36" index="0">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="387" y="381" width="106" height="36" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" name="FILTER__UPTO_60%_OFF" label="Filter Upto 60% Off" enabled="true" visible="true" accessible="true" x="387" y="381" width="106" height="36" index="0"/>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeOther>
+
+
+																	</XCUIElementTypeCell>
+
+
+																	<XCUIElementTypeOther type="XCUIElementTypeOther" value="0%" name="Vertical scroll bar, 2 pages" label="Vertical scroll bar, 2 pages" enabled="true" visible="true" accessible="false" x="397" y="381" width="30" height="36" index="4">
+
+
+																		<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="424" y="407" width="3" height="7" index="0"/>
+
+
+																	</XCUIElementTypeOther>
+
+
+																	<XCUIElementTypeOther type="XCUIElementTypeOther" value="0%" name="Vertical scroll bar, 2 pages" label="Vertical scroll bar, 2 pages" enabled="true" visible="true" accessible="false" x="397" y="381" width="30" height="36" index="5">
+
+
+																		<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="424" y="407" width="3" height="7" index="0"/>
+
+
+																	</XCUIElementTypeOther>
+
+
+																</XCUIElementTypeCollectionView>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+													</XCUIElementTypeOther>
+
+
+												</XCUIElementTypeCell>
+
+
+												<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="0" y="433" width="430" height="567" index="4">
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="433" width="430" height="567" index="0">
+
+
+														<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="433" width="430" height="567" index="0">
+
+
+															<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="433" width="430" height="567" index="0">
+
+
+																<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="433" width="430" height="476" index="0">
+
+
+																	<XCUIElementTypeCollectionView type="XCUIElementTypeCollectionView" enabled="true" visible="true" accessible="false" x="0" y="433" width="430" height="476" index="0">
+
+
+																		<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="16" y="433" width="125" height="246" index="0">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="433" width="125" height="246" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="433" width="125" height="246" index="0">
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="437" width="125" height="150" index="0">
+
+
+																						<XCUIElementTypeButton type="XCUIElementTypeButton" name="Favorite" label="Favorite" enabled="true" visible="true" accessible="true" x="101" y="437" width="40" height="41" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="439" width="125" height="148" index="1">
+
+
+																							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="534" width="125" height="53" index="0">
+
+
+																								<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="26" y="550" width="67" height="18" index="0">
+
+
+																									<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="₹200 OFF" name="₹200 OFF" label="₹200 OFF" enabled="true" visible="true" accessible="true" x="26" y="550" width="67" height="18" index="0"/>
+
+
+																								</XCUIElementTypeOther>
+
+
+																								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="ABOVE ₹699" name="ABOVE ₹699" label="ABOVE ₹699" enabled="true" visible="true" accessible="true" x="26" y="568" width="83" height="11" index="1"/>
+
+
+																							</XCUIElementTypeOther>
+
+
+																						</XCUIElementTypeOther>
+
+
+																					</XCUIElementTypeOther>
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="590" width="100" height="75" index="1">
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Hotel Saravana Bhavan" name="Hotel Saravana Bhavan Restaurant" label="Hotel Saravana Bhavan" enabled="true" visible="true" accessible="true" x="16" y="590" width="100" height="38" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="53" y="629" width="59" height="16" index="1">
+
+
+																							<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="35-45 mins" name="35-45 mins" label="35-45 mins" enabled="true" visible="true" accessible="true" x="53" y="629" width="59" height="16" index="0"/>
+
+
+																						</XCUIElementTypeOther>
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="South Indian" name="South Indian Cuisine" label="South Indian" enabled="true" visible="true" accessible="true" x="16" y="649" width="67" height="16" index="2"/>
+
+
+																					</XCUIElementTypeOther>
+
+
+																				</XCUIElementTypeOther>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeCell>
+
+
+																		<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="152" y="433" width="126" height="246" index="1">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="433" width="126" height="246" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="433" width="126" height="246" index="0">
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="437" width="126" height="150" index="0">
+
+
+																						<XCUIElementTypeButton type="XCUIElementTypeButton" name="Favorite" label="Favorite" enabled="true" visible="true" accessible="true" x="237" y="437" width="41" height="41" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="439" width="126" height="148" index="1">
+
+
+																							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="534" width="126" height="53" index="0">
+
+
+																								<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="162" y="550" width="68" height="18" index="0">
+
+
+																									<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="₹200 OFF" name="₹200 OFF" label="₹200 OFF" enabled="true" visible="true" accessible="true" x="162" y="550" width="68" height="18" index="0"/>
+
+
+																								</XCUIElementTypeOther>
+
+
+																								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="ABOVE ₹749" name="ABOVE ₹749" label="ABOVE ₹749" enabled="true" visible="true" accessible="true" x="162" y="568" width="84" height="11" index="1"/>
+
+
+																							</XCUIElementTypeOther>
+
+
+																						</XCUIElementTypeOther>
+
+
+																					</XCUIElementTypeOther>
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="590" width="99" height="57" index="1">
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Millet Express" name="Millet Express Restaurant" label="Millet Express" enabled="true" visible="true" accessible="true" x="152" y="590" width="84" height="20" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="192" y="611" width="59" height="16" index="1">
+
+
+																							<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="25-30 mins" name="25-30 mins" label="25-30 mins" enabled="true" visible="true" accessible="true" x="192" y="611" width="59" height="16" index="0"/>
+
+
+																						</XCUIElementTypeOther>
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Healthy Food" name="Healthy Food Cuisine" label="Healthy Food" enabled="true" visible="true" accessible="true" x="152" y="630" width="72" height="17" index="2"/>
+
+
+																					</XCUIElementTypeOther>
+
+
+																				</XCUIElementTypeOther>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeCell>
+
+
+																		<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="289" y="433" width="126" height="246" index="2">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="433" width="126" height="246" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="433" width="126" height="246" index="0">
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="437" width="126" height="150" index="0">
+
+
+																						<XCUIElementTypeButton type="XCUIElementTypeButton" name="Favorite" label="Favorite" enabled="true" visible="true" accessible="true" x="374" y="437" width="41" height="41" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="439" width="126" height="148" index="1">
+
+
+																							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="534" width="126" height="53" index="0">
+
+
+																								<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="299" y="550" width="68" height="18" index="0">
+
+
+																									<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="₹200 OFF" name="₹200 OFF" label="₹200 OFF" enabled="true" visible="true" accessible="true" x="299" y="550" width="68" height="18" index="0"/>
+
+
+																								</XCUIElementTypeOther>
+
+
+																								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="ABOVE ₹749" name="ABOVE ₹749" label="ABOVE ₹749" enabled="true" visible="true" accessible="true" x="299" y="568" width="84" height="11" index="1"/>
+
+
+																							</XCUIElementTypeOther>
+
+
+																						</XCUIElementTypeOther>
+
+
+																					</XCUIElementTypeOther>
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="590" width="114" height="75" index="1">
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Madras Curd Rice Company" name="Madras Curd Rice Company Restaurant" label="Madras Curd Rice Company" enabled="true" visible="true" accessible="true" x="289" y="590" width="114" height="38" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="329" y="629" width="57" height="16" index="1">
+
+
+																							<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="15-20 mins" name="15-20 mins" label="15-20 mins" enabled="true" visible="true" accessible="true" x="329" y="629" width="57" height="16" index="0"/>
+
+
+																						</XCUIElementTypeOther>
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="South Indian" name="South Indian Cuisine" label="South Indian" enabled="true" visible="true" accessible="true" x="289" y="649" width="68" height="16" index="2"/>
+
+
+																					</XCUIElementTypeOther>
+
+
+																				</XCUIElementTypeOther>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeCell>
+
+
+																		<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="16" y="679" width="125" height="230" index="3">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="679" width="125" height="230" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="679" width="125" height="230" index="0">
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="683" width="125" height="150" index="0">
+
+
+																						<XCUIElementTypeButton type="XCUIElementTypeButton" name="Favorite" label="Favorite" enabled="true" visible="true" accessible="true" x="101" y="683" width="40" height="40" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="685" width="125" height="148" index="1">
+
+
+																							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="780" width="125" height="53" index="0">
+
+
+																								<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="26" y="796" width="67" height="18" index="0">
+
+
+																									<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="₹200 OFF" name="₹200 OFF" label="₹200 OFF" enabled="true" visible="true" accessible="true" x="26" y="796" width="67" height="18" index="0"/>
+
+
+																								</XCUIElementTypeOther>
+
+
+																								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="ABOVE ₹849" name="ABOVE ₹849" label="ABOVE ₹849" enabled="true" visible="true" accessible="true" x="26" y="814" width="105" height="11" index="1"/>
+
+
+																							</XCUIElementTypeOther>
+
+
+																						</XCUIElementTypeOther>
+
+
+																					</XCUIElementTypeOther>
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="16" y="836" width="99" height="57" index="1">
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="McDonald's" name="McDonald's Restaurant" label="McDonald's" enabled="true" visible="true" accessible="true" x="16" y="836" width="72" height="20" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="56" y="857" width="59" height="16" index="1">
+
+
+																							<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="25-30 mins" name="25-30 mins" label="25-30 mins" enabled="true" visible="true" accessible="true" x="56" y="857" width="59" height="16" index="0"/>
+
+
+																						</XCUIElementTypeOther>
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Burgers" name="Burgers Cuisine" label="Burgers" enabled="true" visible="true" accessible="true" x="16" y="876" width="40" height="17" index="2"/>
+
+
+																					</XCUIElementTypeOther>
+
+
+																				</XCUIElementTypeOther>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeCell>
+
+
+																		<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="152" y="679" width="126" height="230" index="4">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="679" width="126" height="230" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="679" width="126" height="230" index="0">
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="683" width="126" height="150" index="0">
+
+
+																						<XCUIElementTypeButton type="XCUIElementTypeButton" name="Favorite" label="Favorite" enabled="true" visible="true" accessible="true" x="237" y="683" width="41" height="40" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="685" width="126" height="148" index="1">
+
+
+																							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="780" width="126" height="53" index="0">
+
+
+																								<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="162" y="796" width="68" height="18" index="0">
+
+
+																									<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="₹200 OFF" name="₹200 OFF" label="₹200 OFF" enabled="true" visible="true" accessible="true" x="162" y="796" width="68" height="18" index="0"/>
+
+
+																								</XCUIElementTypeOther>
+
+
+																								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="ABOVE ₹999" name="ABOVE ₹999" label="ABOVE ₹999" enabled="true" visible="true" accessible="true" x="162" y="814" width="106" height="11" index="1"/>
+
+
+																							</XCUIElementTypeOther>
+
+
+																						</XCUIElementTypeOther>
+
+
+																					</XCUIElementTypeOther>
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="152" y="836" width="99" height="57" index="1">
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="KFC" name="KFC Restaurant" label="KFC" enabled="true" visible="true" accessible="true" x="152" y="836" width="26" height="20" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="192" y="857" width="59" height="16" index="1">
+
+
+																							<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="25-30 mins" name="25-30 mins" label="25-30 mins" enabled="true" visible="true" accessible="true" x="192" y="857" width="59" height="16" index="0"/>
+
+
+																						</XCUIElementTypeOther>
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Burgers" name="Burgers Cuisine" label="Burgers" enabled="true" visible="true" accessible="true" x="152" y="876" width="41" height="17" index="2"/>
+
+
+																					</XCUIElementTypeOther>
+
+
+																				</XCUIElementTypeOther>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeCell>
+
+
+																		<XCUIElementTypeCell type="XCUIElementTypeCell" enabled="true" visible="true" accessible="false" x="289" y="679" width="126" height="230" index="5">
+
+
+																			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="679" width="126" height="230" index="0">
+
+
+																				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="679" width="126" height="230" index="0">
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="683" width="126" height="150" index="0">
+
+
+																						<XCUIElementTypeButton type="XCUIElementTypeButton" name="Favorite" label="Favorite" enabled="true" visible="true" accessible="true" x="374" y="683" width="41" height="40" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="685" width="126" height="148" index="1">
+
+
+																							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="780" width="126" height="53" index="0">
+
+
+																								<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="299" y="796" width="68" height="18" index="0">
+
+
+																									<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="₹200 OFF" name="₹200 OFF" label="₹200 OFF" enabled="true" visible="true" accessible="true" x="299" y="796" width="68" height="18" index="0"/>
+
+
+																								</XCUIElementTypeOther>
+
+
+																								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="ABOVE ₹1099" name="ABOVE ₹1099" label="ABOVE ₹1099" enabled="true" visible="true" accessible="true" x="299" y="814" width="106" height="11" index="1"/>
+
+
+																							</XCUIElementTypeOther>
+
+
+																						</XCUIElementTypeOther>
+
+
+																					</XCUIElementTypeOther>
+
+
+																					<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="289" y="836" width="100" height="57" index="1">
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="The Good Bowl" name="The Good Bowl Restaurant" label="The Good Bowl" enabled="true" visible="true" accessible="true" x="289" y="836" width="95" height="20" index="0"/>
+
+
+																						<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="329" y="857" width="60" height="16" index="1">
+
+
+																							<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="20-25 mins" name="20-25 mins" label="20-25 mins" enabled="true" visible="true" accessible="true" x="329" y="857" width="60" height="16" index="0"/>
+
+
+																						</XCUIElementTypeOther>
+
+
+																						<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Biryani" name="Biryani Cuisine" label="Biryani" enabled="true" visible="true" accessible="true" x="289" y="876" width="37" height="17" index="2"/>
+
+
+																					</XCUIElementTypeOther>
+
+
+																				</XCUIElementTypeOther>
+
+
+																			</XCUIElementTypeOther>
+
+
+																		</XCUIElementTypeCell>
+
+
+																	</XCUIElementTypeCollectionView>
+
+
+																</XCUIElementTypeOther>
+
+
+																<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="true" x="16" y="925" width="398" height="51" index="1"/>
+
+
+															</XCUIElementTypeOther>
+
+
+														</XCUIElementTypeOther>
+
+
+													</XCUIElementTypeOther>
+
+
+												</XCUIElementTypeCell>
+
+
+												<XCUIElementTypeOther type="XCUIElementTypeOther" value="0%" name="Horizontal scroll bar, 1 page" label="Horizontal scroll bar, 1 page" enabled="true" visible="true" accessible="false" x="49" y="899" width="332" height="30" index="5">
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="52" y="926" width="326" height="3" index="0"/>
+
+
+												</XCUIElementTypeOther>
+
+
+												<XCUIElementTypeOther type="XCUIElementTypeOther" value="0%" name="Horizontal scroll bar, 1 page" label="Horizontal scroll bar, 1 page" enabled="true" visible="true" accessible="false" x="49" y="899" width="332" height="30" index="6">
+
+
+													<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="52" y="926" width="326" height="3" index="0"/>
+
+
+												</XCUIElementTypeOther>
+
+
+											</XCUIElementTypeCollectionView>
+
+
+										</XCUIElementTypeOther>
+
+
+									</XCUIElementTypeOther>
+
+
+								</XCUIElementTypeOther>
+
+
+							</XCUIElementTypeOther>
+
+
+						</XCUIElementTypeOther>
+
+
+						<XCUIElementTypeOther type="XCUIElementTypeOther" name="CroutonContainerView" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="80" index="2">
+
+
+							<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="80" index="0">
+
+
+								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="14" name="14" label="14" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="0"/>
+
+
+								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="mins" name="mins" label="mins" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="1"/>
+
+
+								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Preparing your order" name="Preparing your order" label="Preparing your order" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="2"/>
+
+
+								<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Test" name="Test" label="Test" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="3"/>
+
+
+								<XCUIElementTypeImage type="XCUIElementTypeImage" enabled="true" visible="false" accessible="true" x="0" y="0" width="0" height="0" index="4"/>
+
+
+							</XCUIElementTypeOther>
+
+
+						</XCUIElementTypeOther>
+
+
+					</XCUIElementTypeOther>
+
+
+				</XCUIElementTypeOther>
+
+
+			</XCUIElementTypeOther>
+
+
+		</XCUIElementTypeWindow>
+
+
+		<XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="932" index="1">
+
+
+			<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="932" index="0">
+
+
+				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="430" height="932" index="0"/>
+
+
+				<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="932" width="430" height="243" index="1"/>
+
+
+			</XCUIElementTypeOther>
+
+
+		</XCUIElementTypeWindow>
+
+
+	</XCUIElementTypeApplication>
+
+
+</AppiumAUT>

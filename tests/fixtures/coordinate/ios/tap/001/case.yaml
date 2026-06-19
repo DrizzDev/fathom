@@ -1,0 +1,26 @@
+platform: ios
+label_id: "1"
+target_text: "Confirm & proceed"
+description: |
+  Outer container button at the screen footer. XML element bounds are
+  (32, 828, 366, 54) in logical points. After parser scale-factor x3,
+  the manifest carries device-pixel bounds (96, 2484, 1098, 162).
+  Pixel y=2484 is greater than logical screen height (932), so the
+  buggy clamp truncates y to 931 and height to 1 — dispatched coord
+  drifts to logical (263, 931), 1 px above the home-indicator edge.
+screen:
+  logical:
+    width: 430
+    height: 932
+expected:
+  resolved_pixel_bounds:
+    x: 96
+    y: 2484
+    width: 1098
+    height: 162
+  dispatched_logical:
+    x: 215
+    y: 855
+  observed_buggy_dispatched_logical:
+    x: 263
+    y: 931

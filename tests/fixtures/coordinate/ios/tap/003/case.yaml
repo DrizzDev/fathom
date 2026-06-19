@@ -1,0 +1,24 @@
+platform: ios
+label_id: "24"
+target_text: "Preparing your order banner"
+description: |
+  Promotional banner near the bottom of the home screen, above the
+  navigation tabs. XML logical bounds (72, 800, 128, 15); device-pixel
+  (216, 2400, 384, 45). Same below-clamp pathology — production
+  dispatched (323, 931) on the home-indicator edge.
+screen:
+  logical:
+    width: 430
+    height: 932
+expected:
+  resolved_pixel_bounds:
+    x: 216
+    y: 2400
+    width: 384
+    height: 45
+  dispatched_logical:
+    x: 136
+    y: 807
+  observed_buggy_dispatched_logical:
+    x: 323
+    y: 931

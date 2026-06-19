@@ -8,8 +8,8 @@ from pydantic import ValidationError
 from fathom.constants import ActionType
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.core.services.normalizer import Normalizer
-from fathom.schemas.actions import Action, Bounds
-from fathom.schemas.delta import GeminiDeltaSignal
+from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
+from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.gemini_tools import (
     AskUserArgs,
     ExecuteAction,
@@ -19,7 +19,12 @@ from fathom.schemas.gemini_tools import (
     ValidateStateArgs,
     VerifyGoalArgs,
 )
-from fathom.schemas.results import AnalysisResult, GenerateResult, ToolErrorFeedback
+from fathom.schemas.results import (
+    AnalysisOutcome,
+    AnalysisResult,
+    GenerateResult,
+    ToolErrorFeedback,
+)
 
 logger = getLogger(__name__)
 
@@ -31,17 +36,24 @@ class ToolResponseParser:
 
     # Primary tools produce the AnalysisResult; side-effect tools merge into it.
     __SIDE_EFFECT_TOOLS = {"store_memory", "recall_memory"}
-    __PRIMARY_TOOLS = {"execute_ui", "verify_goal", "validate_state", "ask_user"}
+    __PRIMARY_TOOLS = {
+        "ask_user",
+        "execute_ui",
+        "verify_goal",
+        "validate_state",
+    }
 
     @staticmethod
     def __require_bool(
-        arguments: Any,
         key: str,
+        arguments: Any,
         tool_name: str,
         *,
         default_if_missing: Optional[bool] = None,
     ) -> bool:
-        """Read a boolean field from model tool arguments with compatibility fallback."""
+        """
+        Read a boolean field from model tool arguments with compatibility fallback.
+        """
 
         if key not in arguments:
             if default_if_missing is not None:
@@ -161,6 +173,44 @@ class ToolResponseParser:
         else:
             raise VisionError(f"Unknown function call: {name}")
 
+    @staticmethod
+    def __autofill_completion_reasons(*, result: AnalysisResult, source_tool: str) -> None:
+        """
+        Derive missing completion-reason fields from ``action.rationale`` so
+        the completion gate's structured path remains valid even when the
+        model forgets the conditionally-required fields.
+        """
+
+        rationale = (result.action.rationale or "").strip()
+        if not rationale:
+            return
+
+        if result.is_sub_goal_complete and not (result.subgoal_completion_reason or "").strip():
+            object.__setattr__(result, "subgoal_completion_reason", rationale)
+            logger.info(
+                "Auto-derived missing subgoal_completion_reason from rationale",
+                extra={
+                    "component": "core.services.parsing",
+                    "event": "parsing.completion_reason.autofilled",
+                    "completion.scope": "subgoal",
+                    "source.tool": source_tool,
+                    "source.field": "action.rationale",
+                },
+            )
+
+        if result.is_goal_complete and not (result.goal_completion_reason or "").strip():
+            object.__setattr__(result, "goal_completion_reason", rationale)
+            logger.info(
+                "Auto-derived missing goal_completion_reason from rationale",
+                extra={
+                    "component": "core.services.parsing",
+                    "event": "parsing.completion_reason.autofilled",
+                    "completion.scope": "goal",
+                    "source.tool": source_tool,
+                    "source.field": "action.rationale",
+                },
+            )
+
     def __normalize_completion_flags(
         self,
         *,
@@ -174,6 +224,8 @@ class ToolResponseParser:
 
         - Preserves raw Gemini signals in metadata for auditability.
         - Normalizes is_goal_complete / is_sub_goal_complete when action_type is COMPLETE.
+        - Autofills missing completion-reason fields from ``action.rationale`` so the
+          downstream completion gate can verify the claim without a fuzzy match.
         """
 
         # Preserve raw model emissions for debugging and analytics.
@@ -183,19 +235,14 @@ class ToolResponseParser:
         }
         result.metadata.setdefault("raw_completion_flags", raw_flags)
 
-        # Only enforce invariants for terminal COMPLETE actions.
+        # Enforce invariants for terminal COMPLETE actions BEFORE autofill so the
+        # autofill check `if result.is_sub_goal_complete` sees the forced-True flag
+        # and populates a missing subgoal_completion_reason from the rationale.
         if result.action.action_type == ActionType.COMPLETE:
-            # In decomposed flows, COMPLETE may mean "current sub-goal complete" but not
-            # necessarily "intent complete". Do not promote local completion into full
-            # intent completion unless the model explicitly signals goal_completed.
-            #
-            # Policy:
-            # - COMPLETE always implies sub-goal completion.
-            # - Goal completion is respected only when explicitly signaled by the tool flags.
             normalized = {
-                "is_goal_complete": bool(raw_goal_completed) or bool(result.is_goal_complete),
-                "is_sub_goal_complete": True,
                 "source_tool": source_tool,
+                "is_sub_goal_complete": True,
+                "is_goal_complete": bool(raw_goal_completed) or result.is_goal_complete,
                 "reason": "COMPLETE→sub-goal complete; goal completion requires explicit signal",
             }
 
@@ -212,19 +259,14 @@ class ToolResponseParser:
             object.__setattr__(result, "is_goal_complete", normalized["is_goal_complete"])
             result.metadata.setdefault("normalized_completion_flags", normalized)
 
+        self.__autofill_completion_reasons(result=result, source_tool=source_tool)
+
         return result
 
-    def __parse_delta_telemetry(self, args: ExecuteUIArgs) -> Optional[GeminiDeltaSignal]:
+    def __parse_delta_telemetry(self, args: ExecuteUIArgs) -> Optional[DeltaSignal]:
         """
-        Normalize raw Gemini delta telemetry into a GeminiDeltaSignal.
-
-        Contract:
-        - If the model provides NO delta-specific fields (all None/empty), this
-          returns None so downstream code can treat it as "no signal".
-        - If the model provides values, we:
-            * Preserve raw values for auditability.
-            * Clamp confidence into [0.0, 1.0] when out-of-range.
-            * Do NOT fabricate default confidence or booleans when missing.
+        Normalize raw provider delta telemetry into a :class:`DeltaSignal`.
+        Returns None when no delta-specific fields are present.
         """
 
         # Fast path: detect complete absence of delta signal
@@ -263,7 +305,7 @@ class ToolResponseParser:
         # For now, we treat delta_observed as already boolean-normalized by the schema.
         normalized_observed: Optional[bool] = raw_observed
 
-        return GeminiDeltaSignal(
+        return DeltaSignal(
             previous_screen_summary=args.previous_screen_summary,
             current_screen_summary=args.current_screen_summary,
             delta_observed=normalized_observed,
@@ -407,10 +449,10 @@ class ToolResponseParser:
         completed = bool(raw_goal_completed)
         sub_completed = bool(raw_sub_goal_completed)
 
-        if not args.actions:
+        if args.action is None:
             return self.__create_fallback_result(message=message, completed=completed)
 
-        data: ExecuteAction = args.actions[0]
+        data: ExecuteAction = args.action
 
         bounds = None
         if data.bbox:
@@ -418,15 +460,37 @@ class ToolResponseParser:
                 bounds = Bounds(
                     x=data.bbox.x,
                     y=data.bbox.y,
-                    source="model",
                     width=data.bbox.width,
                     height=data.bbox.height,
-                    coord_system=data.bbox.coord_system,
+                    source=CoordinateSource.MODEL,
+                    coordinate_system=CoordinateSystem.from_legacy(
+                        data.bbox.coordinate_system,
+                    ),
                 )
+                if bounds.has_normalized_extent_violation():
+                    logger.warning(
+                        "Coercing malformed normalized bbox to logical coordinates: %s",
+                        data.bbox,
+                    )
+                    bounds = bounds.model_copy(
+                        update={"system": CoordinateSystem.LOGICAL},
+                    )
             except Exception:
                 logger.warning("Ignoring malformed bbox payload from GeminiBBox: %s", data.bbox)
 
-        raw_action_type_str = str(data.action_type or "").strip().lower()
+        raw_action_type_str = (data.action_type or "").strip().lower()
+        if raw_action_type_str == "enter":
+            raise ToolValidationError(
+                ToolErrorFeedback(
+                    tool_name="execute_ui",
+                    tool_call_id=None,
+                    error_kind="validation",
+                    message=(
+                        "action_type='enter' is not a supported execute_ui action_type. "
+                        "Choose a supported value from the execute_ui tool schema."
+                    ),
+                )
+            )
         try:
             action_type = ActionType(raw_action_type_str or "wait")
         except ValueError:
@@ -448,8 +512,15 @@ class ToolResponseParser:
         resolved_target_name: Optional[str] = raw_target_name
         if Normalizer.is_generic_target_name(resolved_target_name):
             structured_fallback = None
-            if script_target and not Normalizer.is_generic_target_name(script_target):
-                structured_fallback = script_target
+            for candidate in (
+                script_target,
+                data.wait_subject,
+                data.validation_subject,
+                data.export_target,
+            ):
+                if candidate and not Normalizer.is_generic_target_name(candidate):
+                    structured_fallback = candidate
+                    break
 
             if structured_fallback:
                 logger.info(
@@ -459,8 +530,38 @@ class ToolResponseParser:
                 )
                 resolved_target_name = structured_fallback
             else:
-                # Do not synthesize label- or bounds-based tags; keep a simple fallback.
-                resolved_target_name = raw_target_name or "element"
+                resolved_target_name = raw_target_name
+
+        scroll_action_types = {
+            ActionType.SWIPE_UP,
+            ActionType.SWIPE_DOWN,
+            ActionType.SWIPE_LEFT,
+            ActionType.SWIPE_RIGHT,
+            ActionType.SCROLL,
+        }
+        rendered_target = resolved_target_name
+        if (
+            action_type in scroll_action_types
+            and data.scroll_target
+            and rendered_target == data.scroll_target
+        ):
+            rendered_target = None
+
+        if not rendered_target and action_type in {
+            ActionType.SWIPE_UP,
+            ActionType.SWIPE_DOWN,
+            ActionType.SWIPE_LEFT,
+            ActionType.SWIPE_RIGHT,
+            ActionType.SCROLL,
+        }:
+            rendered_target = "main scrollable area"
+
+        if not rendered_target:
+            rendered_target = data.wait_subject or "unknown_target"
+
+        surface = data.surface
+        if not surface and action_type in scroll_action_types:
+            surface = rendered_target
 
         condition = data.condition
         is_conditional = data.is_conditional
@@ -471,7 +572,7 @@ class ToolResponseParser:
 
         action = Action(
             bounds=bounds,
-            target=resolved_target_name or "element",
+            target=rendered_target,
             condition=condition,
             is_conditional=is_conditional,
             conditional_type=conditional_type,
@@ -479,13 +580,14 @@ class ToolResponseParser:
             action_type=action_type,
             target_type=target_type,
             script_target=script_target,
+            surface=surface,
             wait_duration=wait_duration,
             text=str(text) if text else None,
             validation_reason=validation_reason,
-            natural_language_target=resolved_target_name or "element",
+            natural_language_target=rendered_target,
             rationale=str(data.rationale or ""),
             is_valid=bool(data.is_valid),
-            confidence=float(data.confidence),
+            confidence=data.confidence,
             memory_updates=args.memory_updates,
             label_id=data.label_id,
             # Structured export signals (VLM-provided, authoritative).
@@ -500,26 +602,31 @@ class ToolResponseParser:
             validation_pattern=data.validation_pattern,
         )
 
-        # Parse alternative actions from actions[1:] if provided.
+        logger.info(
+            "Planner tool call parsed",
+            extra={
+                "component": "core.services.parsing",
+                "event": "planner.tool_call.parsed",
+                "action.type": action_type.value,
+                "action.label_id": data.label_id,
+                "action.target": resolved_target_name,
+                "action.has_bounds": bounds is not None,
+                "action.confidence": data.confidence,
+                "action.bounds": (
+                    {
+                        "x": bounds.x,
+                        "y": bounds.y,
+                        "width": bounds.width,
+                        "height": bounds.height,
+                        "system": bounds.system.value,
+                    }
+                    if bounds is not None
+                    else None
+                ),
+            },
+        )
+
         alternatives: List[Action] = []
-        for alt_data in args.actions[1:]:
-            try:
-                alt_at_str = str(alt_data.action_type or "").strip().lower()
-                alt_at = ActionType(alt_at_str) if alt_at_str else ActionType.WAIT
-            except ValueError:
-                alt_at = ActionType.WAIT
-            alt_target = alt_data.target_name or alt_data.element_name or "element"
-            alternatives.append(
-                Action(
-                    action_type=alt_at,
-                    target=alt_target,
-                    natural_language_target=alt_target,
-                    rationale=str(alt_data.rationale or ""),
-                    confidence=float(alt_data.confidence),
-                    is_valid=bool(alt_data.is_valid),
-                    export_target=alt_data.export_target,
-                )
-            )
 
         metadata_dict: Dict[str, Any] = {}
         if action_type == ActionType.VALIDATE:
@@ -538,7 +645,7 @@ class ToolResponseParser:
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
-            gemini_delta=parsed_delta,
+            delta=parsed_delta,
             screen_description=message or action.rationale or "Analyzing screen...",
         )
 
@@ -666,6 +773,7 @@ class ToolResponseParser:
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
             screen_description="User guidance requested",
+            outcome=AnalysisOutcome.ASK_USER,
         )
 
     def __create_fallback_result(self, message: str, completed: bool = False) -> AnalysisResult:

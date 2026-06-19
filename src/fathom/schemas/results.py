@@ -1,13 +1,31 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from enum import StrEnum
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
-from fathom.schemas.delta import GeminiDeltaSignal
+from fathom.schemas.artifacts import ScreenArtifact
+from fathom.schemas.delta import DeltaSignal
+from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.swipe import SwipeExecution
+
+
+class AnalysisOutcome(StrEnum):
+    """
+    What the agent decided to do this ANALYZE turn.
+
+    Values route through distinct planner paths:
+
+    - ``ACT``: the agent committed to a concrete action; ``action`` is load-bearing and EXECUTE consumes it.
+    - ``ASK_USER``: the agent wants the human to clarify the next move (existing HITL path; planner emits an ``ASK_USER`` action).
+    """
+
+    ACT = "act"
+    ASK_USER = "ask_user"
 
 
 class AnalysisResult(BaseModel):
@@ -15,7 +33,9 @@ class AnalysisResult(BaseModel):
     Result of vision analysis.
     """
 
-    action: Action = Field(description="Primary recommended action")
+    action: Action = Field(
+        description="Primary recommended action.",
+    )
     alternatives: List[Action] = Field(
         default_factory=list, description="Alternative actions considered"
     )
@@ -52,8 +72,17 @@ class AnalysisResult(BaseModel):
     content_exhausted: bool = Field(
         default=False, description="Model signals end of scrollable content"
     )
-    gemini_delta: Optional[GeminiDeltaSignal] = Field(
+    delta: Optional[DeltaSignal] = Field(
         default=None, description="Optional model-provided semantic delta hints"
+    )
+
+    outcome: AnalysisOutcome = Field(
+        default=AnalysisOutcome.ACT,
+        description=(
+            "What the agent decided this turn. ``ACT`` is the default and "
+            "consumes ``action``. ``ASK_USER`` routes through HITL without "
+            "inventing a synthetic UI action."
+        ),
     )
 
 
@@ -63,6 +92,7 @@ class ToolErrorFeedback(BaseModel):
     """
 
     tool_name: str = Field(description="Name of the tool that failed")
+
     tool_call_id: Optional[str] = Field(
         default=None,
         description=(
@@ -173,6 +203,52 @@ class ActionResult(BaseModel):
     output: Optional[str] = Field(default=None, description="Command output")
 
 
+class ActionTraceAttempt(BaseModel):
+    """
+    Attempt metadata for one dispatched trace event.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    index: int = Field(ge=0, description="Zero-based attempt index within one logical step.")
+
+
+class ActionTraceEvent(BaseModel):
+    """
+    One concrete action trace captured during execution.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    capture: ScreenCapture = Field(
+        description="Pre-action capture the trace should be rendered on.",
+    )
+    coords: Tuple[int, ...] = Field(
+        description="Action coordinates to render for this trace event.",
+    )
+    attempt: Optional[ActionTraceAttempt] = Field(
+        default=None,
+        description="Attempt metadata when the action dispatched multiple device commands.",
+    )
+
+
+class TraceEmission(BaseModel):
+    """
+    Adapter-layer outcome of staging one rendered trace through the artifact pipeline.
+    Composes the source gesture event with an optional artifact handle so future metadata extends here.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    event: ActionTraceEvent = Field(
+        description="Source gesture event the trace was rendered from.",
+    )
+    artifact: Optional[ScreenArtifact] = Field(
+        default=None,
+        description="Pipeline-staged trace artifact when emission succeeded; None when un-wired or skipped.",
+    )
+
+
 class ExecutionResult(BaseModel):
     """
     Result of step execution attempt.
@@ -189,6 +265,18 @@ class ExecutionResult(BaseModel):
     error: Optional[str] = Field(default=None, description="Error message if failed")
     screen_changed: bool = Field(default=False, description="Whether the screen changed")
     is_cancelled: bool = Field(default=False, description="Whether the execution was cancelled")
+    swipe_execution: Optional[SwipeExecution] = Field(
+        default=None,
+        description="Bounded swipe execution outcome (attempts, rejections, abort reason) when available.",
+    )
+    trace_emissions: Tuple[TraceEmission, ...] = Field(
+        default_factory=tuple,
+        description="Trace emissions captured during execution; each wraps the gesture event and its staged artifact handle.",
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional finalization markers such as partial completion or the phase that timed out.",
+    )
 
 
 class PlanResult(BaseModel):

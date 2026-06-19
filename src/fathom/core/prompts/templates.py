@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from types import MappingProxyType
+from typing import Mapping
+
+from fathom.constants.tools import ToolName
+from fathom.schemas.tools import AllowedTools
 
 # Coordinate system and confidence guidance
 COORD_RULES = (
     "COORDINATE SYSTEM (CRITICAL):\n"
     "- GROUNDING: IF the target exists in the Element Manifest, you MUST include its 'label_id' (e.g., label_id='4').\n"
     "- BBOX SHAPE: x,y are TOP-LEFT; width,height extend right/down.\n"
-    "- DEFAULT: Use normalized coordinates (0-1000) for bbox.\n"
-    "- PIXEL MODE: Use raw pixels ONLY when you explicitly set coord_system='pixel'.\n"
-    "- COORD_SYSTEM CONSISTENCY: coord_system must match the numbers you provide."
+    "- DEFAULT: Use normalized coordinates (0-1000) only for visually estimated regions.\n"
+    "- MANIFEST REGIONS: If you are copying bounds from the manifest or from the screenshot resolution, you MUST set coordinate_system='pixel'.\n"
+    "- PIXEL MODE: Use raw pixels ONLY when you explicitly set coordinate_system='pixel'.\n"
+    "- COORD_SYSTEM CONSISTENCY: coordinate_system must match the numbers you provide."
 )
 
 CONFIDENCE_RULES = "CONFIDENCE: 0.9+ clear match, 0.7-0.89 certain. Below 0.7 indicates ambiguity."
@@ -27,6 +32,8 @@ PRECISION_RULES = MappingProxyType(_PRECISION_RULES_RAW)
 _ACTION_RULES_RAW = {
     "scroll": (
         "SWIPE: swipe_left (carousel), swipe_right, swipe_up (lists), swipe_down. "
+        "If a manifest-backed scrollable container exists, ground the swipe to that container via label_id first. "
+        "Use bbox only when no manifest container matches the intended scroll surface. "
         "Bbox wraps scrollable region only (exclude fixed headers/footers). "
         "Do NOT use 'scroll' as an action_type; always use the appropriate swipe_* variant."
     ),
@@ -100,34 +107,94 @@ ACTIONS:
 STRICT FORMAT: Return only valid tool calls using provided schema fields.
 """
 
-TOOL_GUIDANCE = """
-TOOL SELECTION & VALIDATION:
-- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).
-  * Delta telemetry is MANDATORY on every execute_ui call: always include both delta_observed (boolean) and delta_confidence (0.0-1.0).
-  * For explicit checks/validation, prefer execute_ui with action_type='validate'.
-  * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).
-  * Always provide condition text when visible; if omitted, conditional_type is used for default guard text.
-  * For overlay/popup dismissal: if the screenshot shows a scrim, dialog, sheet, or banner over the main UI, set overlay_detected=true and condition to describe the overlay (e.g., 'Cookie consent banner visible').
-  * Evaluate is_valid and validation_reason for EVERY action.
-  * If action is risky/ambiguous, set is_valid=False and explain.
-  * COMMAND NAMING: In 'target' and 'natural_language_target', use GENERIC, RELATIVE DESCRIPTIONS (e.g., 'Tap on edit CVV box', 'Tap on Submit button', 'Tap on 1st search result').
-    DO NOT use IDs like 'edt_cvv' or 'button_23'. Describe WHAT it is functionally.
-  * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.
-    Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}
-    ALWAYS use this to "tick off" requirements from the user's goal as you complete them.
-- validate_state: Legacy fallback for explicit checks when no immediate UI action is required.
-- verify_goal: Use for explicit completion checks.
-- store_memory: Secondary tool. Use ONLY for saving complex text data that doesn't fit in execute_ui.
-- recall_memory: Check what you've already done to avoid repeating actions.
-- ask_user: Use this tool to ask the user for help or clarification when you are stuck or confused.
+_EXECUTE_UI_GUIDANCE = (
+    "- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).\n"
+    "  * Delta telemetry is MANDATORY on every execute_ui call: always include both delta_observed (boolean) and delta_confidence (0.0-1.0).\n"
+    "  * For explicit checks/validation, prefer execute_ui with action_type='validate'.\n"
+    "  * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).\n"
+    "  * Whenever is_conditional=true, the 'condition' field is MANDATORY: a present-tense sentence describing the visible guard (e.g., 'Permission dialog is displayed', 'Main menu is visible', 'Loading spinner is active').\n"
+    "  * For a conditional wait, 'condition' must describe the awaited state in the present tense (e.g., 'Search results are visible'), not the act of waiting.\n"
+    "  * For overlay/popup dismissal: if the screenshot shows a scrim, dialog, sheet, or banner over the main UI, set overlay_detected=true and condition to describe the overlay (e.g., 'Cookie consent banner visible').\n"
+    "  * Evaluate is_valid and validation_reason for EVERY action.\n"
+    "  * confidence is REQUIRED for EVERY action.\n"
+    "  * If action is risky/ambiguous, set is_valid=False and explain.\n"
+    "  * BBOX PRECISION: bbox MUST hug the visible glyph or icon pixels of the SPECIFIC interactive control. Exclude surrounding card, shadow, halo, and empty padding. The runtime taps the geometric center of bbox.\n"
+    "  * COMMAND NAMING: 'target_name' and 'natural_language_target' MUST be the EXACT visible text or glyph label of the control, verbatim (e.g., 'Submit', 'Add to cart', 'HSR Layout'). Do NOT append interaction-kind suffixes such as 'button', 'icon', 'tab', 'link', 'chip', 'cell', 'row' — 'action_type' already names the interaction.\n"
+    "    DO NOT use raw IDs like 'edt_cvv' or 'button_23'. For unlabelled icons describe the visible symbol concisely (e.g., 'Magnifying glass').\n"
+    "  * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.\n"
+    "    Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}\n"
+    '    ALWAYS use this to "tick off" requirements from the user\'s goal as you complete them.'
+)
 
-MEMORY STRATEGY:
-- The system has NO implicit memory of what you "meant" to do. You MUST write it down.
-- If you select 'Monday', you MUST write memory_updates={'monday': 'selected'}.
-- If you don't write it, you WILL forget it when the screen changes.
-"""
+_TOOL_DESCRIPTIONS_RAW: Mapping[ToolName, str] = {
+    ToolName.EXECUTE_UI: _EXECUTE_UI_GUIDANCE,
+    ToolName.VALIDATE_STATE: (
+        "- validate_state: Legacy fallback for explicit checks when no immediate UI action is required."
+    ),
+    ToolName.VERIFY_GOAL: "- verify_goal: Use for explicit completion checks.",
+    ToolName.STORE_MEMORY: (
+        "- store_memory: Secondary tool. Use ONLY for saving complex text data that doesn't fit in execute_ui."
+    ),
+    ToolName.RECALL_MEMORY: (
+        "- recall_memory: Check what you've already done to avoid repeating actions."
+    ),
+    ToolName.ASK_USER: (
+        "- ask_user: Use this tool to ask the user for help or clarification when you are stuck or confused."
+    ),
+}
+TOOL_DESCRIPTIONS = MappingProxyType(_TOOL_DESCRIPTIONS_RAW)
 
-STUCK_PROMPT = "SYSTEM ALERT: You are stuck in a repetitive loop (same action/target multiple times with no progress). DO NOT try the same action again. You MUST use the 'ask_user' tool to ask the human for help immediately. This is a mandatory requirement."
+
+_PROGRESS_SAFETY_BASE = (
+    "PROGRESS SAFETY (MANDATORY):\n"
+    "- Every UI action MUST be grounded by at least one of: (a) a 'label_id' from the element manifest whose text/affordance matches your named target, OR (b) a 'bbox' you have visually identified on the current screenshot. The manifest is the preferred source whenever it already exposes the relevant element or scroll container.\n"
+    "- The manifest is a hint, not a precondition: when the intended target is visible on screen but absent from the element manifest, ground it via bbox instead of inventing a label_id.\n"
+    "- For scroll/swipe actions, when the manifest exposes a matching scrollable container, you MUST use that container's label_id and describe the intended content in scroll_target. Do not invent a broad bbox when the manifest already gives you the container.\n"
+    "- Observation scroll-region hints are NOT manifest label_ids. Never copy observation_hint values into label_id.\n"
+    "- When repeating the same scroll objective, reuse the same container if it is still valid instead of switching to a broader region.\n"
+    "- Before emitting the action, confirm the current screen is the one the active sub-goal expects."
+)
+
+_PROGRESS_SAFETY_HITL_FALLBACK = "- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), ask the user instead of guessing."
+
+_PROGRESS_SAFETY_AUTONOMOUS_FALLBACK = "- If you cannot ground the target by EITHER path (no matching manifest label AND no element you can visually identify), do NOT guess: emit a deliberate recovery action (back, home, swipe to re-orient) or signal completion failure via the appropriate flag."
+
+_PROGRESS_SAFETY_TAIL = "- Do NOT snap to a visually similar but semantically unrelated label (picking the wrong manifest entry just because it looks like a button). Do NOT emit a bbox for a region where you cannot see the target. Do NOT proceed when the screen contradicts the sub-goal."
+
+_MEMORY_STRATEGY = (
+    "MEMORY STRATEGY:\n"
+    '- The system has NO implicit memory of what you "meant" to do. You MUST write it down.\n'
+    "- If you select 'Monday', you MUST write memory_updates={'monday': 'selected'}.\n"
+    "- If you don't write it, you WILL forget it when the screen changes."
+)
+
+
+def build_tool_guidance(*, tools: AllowedTools) -> str:
+    """Render the TOOL SELECTION + PROGRESS SAFETY + MEMORY STRATEGY block for the allowed tools."""
+
+    tool_lines = [
+        TOOL_DESCRIPTIONS[name] for name in _TOOL_DESCRIPTIONS_RAW if tools.contains(name=name)
+    ]
+
+    fallback_rule = (
+        _PROGRESS_SAFETY_HITL_FALLBACK
+        if tools.contains(name=ToolName.ASK_USER)
+        else _PROGRESS_SAFETY_AUTONOMOUS_FALLBACK
+    )
+
+    return (
+        "TOOL SELECTION & VALIDATION:\n"
+        + "\n".join(tool_lines)
+        + "\n\n"
+        + _PROGRESS_SAFETY_BASE
+        + "\n"
+        + fallback_rule
+        + "\n"
+        + _PROGRESS_SAFETY_TAIL
+        + "\n\n"
+        + _MEMORY_STRATEGY
+    )
+
 
 # Summarization system instruction (for GCC milestone creation)
 SUMMARIZATION_SYSTEM = """You are an expert at analyzing mobile UI automation execution traces.
@@ -177,6 +244,41 @@ VERIFICATION_USER_TEMPLATE = """User Intent: {intent}
 {guidance_section}
 Task: Analyze the provided screenshot. Has the user's intent been fully and definitively achieved according to the verification framework?"""
 
+# Sub-goal verification (lighter than full intent verification)
+SUBGOAL_VERIFICATION_SYSTEM = """You are verifying whether a single step in a multi-step mobile automation task is complete.
+
+You will receive:
+- The step description (may contain multiple chained actions like "do X, then Y, then Z")
+- A list of actions already performed for this step
+- A screenshot of the current screen
+
+CRITICAL - HOW TO JUDGE:
+The step description often describes a sequence of actions. Verify only the final outcome: the last meaningful state described in the step. Earlier actions are means to that end.
+
+Examples:
+- "scroll up, find section X, add 3rd item, return to cart" -> only check whether the cart is visible with items.
+- "open app and navigate to settings" -> only check whether the settings screen is visible.
+- "tap filter, select option, verify filter applied" -> only check whether the filter is applied.
+- "search for X and select first result" -> only check whether the selected result's destination page is visible.
+
+RULES:
+1. Identify the last action or state in the step description; that is what you verify.
+2. Ignore intermediate navigation/tap/scroll actions; the action trace confirms what was already attempted.
+3. For "select", "tap on", "open", or "click" an item, the expected outcome is usually the destination page, not the original list page.
+4. Be lenient when the screen plausibly shows the step's end state. Reject only when it clearly contradicts or is still transitional.
+5. Loading screens, spinners, or transient states are incomplete.
+
+OUTPUT SCHEMA:
+Return ONLY a valid JSON object matching this schema. Do not include markdown formatting or explanations outside the JSON.
+{
+  "is_complete": boolean,
+  "reason": "string"
+}"""
+
+SUBGOAL_VERIFICATION_USER_TEMPLATE = """Step: {intent}
+{guidance_section}
+Task: Analyze the provided screenshot. Does the screen show the final outcome of this step?"""
+
 # Validation subject extraction prompt templates
 VALIDATION_SUBJECT_EXTRACTION_SYSTEM = (
     "You are an expert at parsing user intents for mobile UI automation. "
@@ -193,3 +295,85 @@ VALIDATION_SUBJECT_EXTRACTION_USER = (
     "Return ONLY valid JSON list of strings, no other text.\n\n"
     "Intent: {intent}"
 )
+
+
+def _format_trace_action(entry: object) -> str:
+    """
+    Render one context trace entry as a compact action line for verification.
+    """
+
+    if not isinstance(entry, dict):
+        return f"- {entry}"
+
+    action = entry.get("action")
+    if isinstance(action, dict):
+        action_type = action.get("action_type") or action.get("type") or "action"
+        target = (
+            action.get("natural_language_target")
+            or action.get("target")
+            or action.get("script_target")
+            or ""
+        )
+        return f"- {action_type}: {target}".strip()
+
+    return f"- {entry}"
+
+
+def build_verification_guidance_section(
+    *,
+    user_guidance: list[str] | tuple[str, ...] = (),
+    actions_performed: list[str] | tuple[str, ...] = (),
+) -> str:
+    """
+    Render the optional verification guidance block.
+    """
+
+    parts: list[str] = []
+    if user_guidance:
+        parts.append("\nUser Guidance:\n" + "\n".join(f"- {item}" for item in user_guidance))
+    if actions_performed:
+        parts.append("\nActions already performed for this step:\n" + "\n".join(actions_performed))
+    if not parts:
+        return ""
+    return "".join(parts) + "\n"
+
+
+def build_intent_verification_user_prompt(
+    *,
+    intent: str,
+    user_guidance: list[str] | tuple[str, ...] = (),
+) -> str:
+    """
+    Render the final intent verification prompt.
+    """
+
+    return VERIFICATION_USER_TEMPLATE.format(
+        intent=intent,
+        guidance_section=build_verification_guidance_section(user_guidance=user_guidance),
+    )
+
+
+def build_subgoal_verification_user_prompt(
+    *,
+    intent: str,
+    user_guidance: list[str] | tuple[str, ...] = (),
+    recent_trace: list[dict[str, object]] | tuple[dict[str, object], ...] = (),
+    max_actions: int = 10,
+) -> str:
+    """
+    Render the sub-goal verification prompt with recent action trace.
+    """
+
+    actions_performed: tuple[str, ...] = ()
+    if recent_trace:
+        actions_performed = tuple(
+            _format_trace_action(entry) for entry in list(recent_trace)[-max_actions:]
+        )
+
+    return SUBGOAL_VERIFICATION_USER_TEMPLATE.format(
+        intent=intent,
+        guidance_section=build_verification_guidance_section(
+            user_guidance=user_guidance,
+            actions_performed=actions_performed,
+        ),
+    )

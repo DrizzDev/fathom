@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 if TYPE_CHECKING:
     import xml.etree.ElementTree as ET  # nosec
 
-from fathom.constants import ActionType
+from fathom.constants import GESTURE_ACTION_TYPES, ActionType
+from fathom.constants.screen import REPEATED_TEXT_SUPPRESSION_THRESHOLD
 from fathom.processing.geometry import GeometryUtils
 from fathom.processing.parsers.base import PlatformParser
 from fathom.schemas.hierarchy import NormalizedHierarchyNodeSignature
@@ -181,6 +182,15 @@ class IOSParser(PlatformParser):
                     continue
 
                 metadata = {key: node.get(key, "") for key in node.attrib}
+                metadata.update(
+                    self.__scroll_metadata(
+                        width=width,
+                        height=height,
+                        screen_width=screen_width,
+                        screen_height=screen_height,
+                        metadata=metadata,
+                    )
+                )
 
                 hidden_icon_candidate = self.__is_hidden_tappable_icon_candidate(
                     x=x,
@@ -218,12 +228,24 @@ class IOSParser(PlatformParser):
                 ):
                     continue
 
+                clipped_x1 = self.__clamp(x, 0, screen_width)
+                clipped_y1 = self.__clamp(y, 0, screen_height)
+                clipped_x2 = self.__clamp(x + width, 0, screen_width)
+                clipped_y2 = self.__clamp(y + height, 0, screen_height)
+                if clipped_x2 <= clipped_x1 or clipped_y2 <= clipped_y1:
+                    continue
+
                 detected.append(
                     LabeledElement(
                         label="",
                         color="",
                         attributes=metadata,
-                        bounds=UIBounds(x1=x, y1=y, x2=x + width, y2=y + height),
+                        bounds=UIBounds(
+                            x1=clipped_x1,
+                            y1=clipped_y1,
+                            x2=clipped_x2,
+                            y2=clipped_y2,
+                        ),
                     )
                 )
 
@@ -232,6 +254,36 @@ class IOSParser(PlatformParser):
                 continue
 
         return detected
+
+    def __scroll_metadata(
+        self,
+        *,
+        width: int,
+        height: int,
+        screen_width: int,
+        screen_height: int,
+        metadata: Dict[str, Any],
+    ) -> Dict[str, str]:
+        """
+        Attach normalized scroll metadata for downstream scope resolution.
+        """
+
+        element_type = str(metadata.get("type", ""))
+        if element_type not in self.__SCROLLABLE_TYPES:
+            return {}
+
+        fills_viewport = width >= int(screen_width * 0.75) and height >= int(screen_height * 0.40)
+        is_horizontal_strip = width > max(height * 2, 1) and height <= int(screen_height * 0.30)
+        axis = "horizontal" if is_horizontal_strip and not fills_viewport else "vertical"
+        scope_kind = (
+            "viewport" if fills_viewport else ("carousel" if axis == "horizontal" else "list")
+        )
+
+        return {
+            "axis": axis,
+            "kind": scope_kind,
+            "scrollable": "true",
+        }
 
     @staticmethod
     def __clamp(value: int, minimum: int, maximum: int) -> int:
@@ -609,7 +661,7 @@ class IOSParser(PlatformParser):
             if self.__is_tappable(element=element):
                 score += 100
 
-        elif action == ActionType.SWIPE and self.__is_swipeable(element=element):
+        elif action in GESTURE_ACTION_TYPES and self.__is_swipeable(element=element):
             score += 100
 
         score -= element.bounds.area / 50000.0
@@ -737,25 +789,83 @@ class IOSParser(PlatformParser):
             iou_threshold=iou_threshold,
         )
         meaningful = self.__filter_for_meaningfulness(elements=suppressed)
+        deduped = self.__suppress_repeated_decorative_text(elements=meaningful)
 
-        return sorted(meaningful, key=lambda element: element.bounds.area, reverse=True)
+        return sorted(deduped, key=lambda element: element.bounds.area, reverse=True)
+
+    @staticmethod
+    def __suppress_repeated_decorative_text(elements: List[LabeledElement]) -> List[LabeledElement]:
+        """
+        Collapse identical decorative-text labels that repeat across cards.
+
+        Repeated ``StaticText`` entries (bullet dots, location labels,
+        rating strings) inflate the manifest without giving the planner
+        new grounding signal. The first occurrence is kept so the
+        screen still carries one anchor per unique string; subsequent
+        duplicates are dropped.
+        """
+
+        seen: Dict[str, int] = {}
+        retained: List[LabeledElement] = []
+
+        for element in elements:
+            kind = element.attributes.get("type")
+
+            if kind != "XCUIElementTypeStaticText":
+                retained.append(element)
+                continue
+
+            key = (
+                (element.attributes.get("label") or element.attributes.get("name") or "")
+                .strip()
+                .lower()
+            )
+            if not key:
+                retained.append(element)
+                continue
+
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] <= REPEATED_TEXT_SUPPRESSION_THRESHOLD - 1:
+                retained.append(element)
+
+        return retained
 
     def filter_by_action(self, elements: List[LabeledElement], action: Any) -> List[LabeledElement]:
         """
         Filter parsed elements to action-compatible candidates.
         """
 
-        if action == ActionType.TAP:
-            return [element for element in elements if self.__is_tappable(element=element)]
+        reason = "unchanged"
 
-        if action in {ActionType.TEXT, ActionType.TYPE}:
-            return [
+        if action == ActionType.TAP:
+            reason = "tappable"
+            filtered = [element for element in elements if self.__is_tappable(element=element)]
+
+        elif action in {ActionType.TEXT, ActionType.TYPE}:
+            reason = "typeable_or_tappable"
+            filtered = [
                 element
                 for element in elements
                 if self.__is_typeable(element=element) or self.__is_tappable(element=element)
             ]
 
-        if action == ActionType.SWIPE:
-            return [element for element in elements if self.__is_swipeable(element=element)]
+        elif action in GESTURE_ACTION_TYPES:
+            reason = "swipeable"
+            filtered = [element for element in elements if self.__is_swipeable(element=element)]
 
-        return elements
+        else:
+            filtered = elements
+
+        logger.info(
+            "Filtered iOS elements for action",
+            extra={
+                "platform": "ios",
+                "filter.reason": reason,
+                "elements.after": len(filtered),
+                "elements.before": len(elements),
+                "event": "parser.filter_by_action",
+                "component": "processing.parsers.ios",
+                "action.type": action.value if isinstance(action, ActionType) else str(action),
+            },
+        )
+        return filtered

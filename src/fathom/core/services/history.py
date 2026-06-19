@@ -8,8 +8,10 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from fathom.base.timing import time_it
+from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.services.exporter import ScriptExporter
 from fathom.interfaces.storage import StoragePort
+from fathom.schemas.artifact import ArtifactRecord, ScriptPayload
 from fathom.schemas.steps import StepResult
 
 if TYPE_CHECKING:
@@ -40,6 +42,8 @@ class HistoryService:
         exporter: ScriptExporter,
         path_manager: SharedPathManager,
         storage: Optional[StoragePort] = None,
+        *,
+        pipeline: Optional[ArtifactPipeline] = None,
     ) -> None:
         self.__workflow_id = workflow_id
         self.__package_name = package_name
@@ -47,6 +51,7 @@ class HistoryService:
         self.__storage = storage
         self.__exporter = exporter
         self.__path_manager = path_manager
+        self.__pipeline = pipeline
 
         self.__background_tasks: Set[asyncio.Task[Any]] = set()
         self.__persistence_tasks: Set[asyncio.Task[Any]] = set()
@@ -186,7 +191,7 @@ class HistoryService:
         return self.__read_existing_script(package_name=resolved_package_name)
 
     @time_it(operation="history.get_current_script")
-    async def get_current_script(self, intent: str) -> str:
+    async def get_current_script(self, *, intent: str, step_number: int) -> str:
         """
         Retrieves (or generates) the latest script based on saved history.
         """
@@ -197,6 +202,7 @@ class HistoryService:
         return await self.__update_script(
             intent=intent,
             package_name=self.__package_name,
+            step_number=step_number,
             history=history.get("history", []),
         )
 
@@ -308,6 +314,7 @@ class HistoryService:
         intent: str,
         *,
         package_name: str,
+        step_number: int,
     ) -> str:
         """
         Generates and persists a final natural language script.
@@ -329,20 +336,41 @@ class HistoryService:
         with path.open(mode="w") as handle:
             handle.write(script_data)
 
-        if self.__storage:
-            self.__fire_and_forget(
-                self.__storage.save(
-                    data=script_data.encode("utf-8"),
-                    metadata={
-                        "category": "history",
-                        "filename": "script.txt",
-                        "package_name": package_name,
-                        "session_id": self.__workflow_id,
-                    },
-                )
-            )
+        await self.__emit_script_artifact(
+            content=script_data,
+            package_name=package_name,
+            step_number=step_number,
+        )
 
         return script_data
+
+    async def __emit_script_artifact(
+        self,
+        *,
+        content: str,
+        package_name: str,
+        step_number: int,
+    ) -> None:
+        """
+        Hand the generated automation script to the artifact pipeline.
+
+        Replaces the legacy ``__storage.save(category="history", ...)``
+        direct upload — the pipeline owns durable EFS staging, async
+        cloud upload, and replay-on-crash for every artifact kind.
+        """
+
+        if self.__pipeline is None:
+            return
+
+        await self.__pipeline.emit(
+            record=ArtifactRecord(
+                session_id=self.__workflow_id,
+                package_name=package_name,
+                step_number=step_number,
+                created=int(time.time() * 1000),
+                payload=ScriptPayload(content=content),
+            ),
+        )
 
     def __read_existing_script(self, *, package_name: str) -> str:
         """
@@ -398,14 +426,15 @@ class HistoryService:
 
     def __get_history_file_path(self, *, package_name: str, filename: str) -> Path:
         """
-        Resolve a history artifact path for the current package context.
+        Resolve a history artifact path. Package is embedded in the filename so a
+        single session that touches multiple packages does not collide its histories.
         """
 
-        directory = self.__path_manager.get_history_directory(
-            package_name=package_name,
-            session_id=self.__workflow_id,
-        )
-        return directory / filename
+        directory = self.__path_manager.get_history_directory(session_id=self.__workflow_id)
+        stem, _, ext = filename.rpartition(".")
+        scoped = f"{stem}__{package_name}.{ext}" if stem and ext else f"{filename}__{package_name}"
+
+        return directory / scoped
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -445,9 +474,9 @@ class HistoryService:
             lines.append(f"  center: {step.get('center')}")
 
             meta = step["metadata"]
-            rationale = str(object=meta.get("rationale", "")).replace('"', '\\"')
+            rationale = str(meta.get("rationale", "")).replace('"', '\\"')
             lines.append("  metadata:")
-            lines.append(f"    success: {str(object=meta.get('success')).lower()}")
+            lines.append(f"    success: {str(meta.get('success')).lower()}")
             lines.append(f"    duration: {meta.get('duration')}")
             lines.append(f"    timestamp: {meta.get('timestamp')}")
             lines.append(f'    rationale: "{rationale}"')

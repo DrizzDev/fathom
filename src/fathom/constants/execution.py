@@ -12,7 +12,7 @@ LAUNCHER_PACKAGES: frozenset[str] = frozenset(
         "com.google.android.apps.nexuslauncher",  # Google Pixel default
         "com.android.launcher",
         "com.android.launcher3",
-        "com.sec.android.app.launchers",  # Samsung default
+        "com.sec.android.app.launcher",  # Samsung default
         "com.miui.home",  # MIUI default
         "com.oppo.launcher",  # OPPO default
         # iOS
@@ -21,9 +21,10 @@ LAUNCHER_PACKAGES: frozenset[str] = frozenset(
 )
 
 # Swipe and scroll distances (pixels)
+BOUNDS_SWIPE_DISTANCE = 100
 DEFAULT_SWIPE_DISTANCE = 300
 DEFAULT_SCROLL_DISTANCE = 300
-BOUNDS_SWIPE_DISTANCE = 100
+
 
 # Timing (milliseconds)
 DEFAULT_SWIPE_DURATION = 350  # Swipe gesture duration; 350ms reliable on modern devices
@@ -44,11 +45,8 @@ DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff (milliseconds)
 SIGNAL_HEARTBEAT_INTERVAL = 5.0
 RECOMMENDED_WORKFLOW_TASK_TIMEOUT_SECONDS = 60
 
-# Remote device request timeout (seconds)
-REMOTE_DEVICE_REQUEST_TIMEOUT_SECONDS = 60.0
-
 # Maximum time (seconds) to wait for background tasks during shutdown
-DRAIN_TIMEOUT = 30.0
+DRAIN_TIMEOUT = 60.0
 
 
 class SignalType(StrEnum):

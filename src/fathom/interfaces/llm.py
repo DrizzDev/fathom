@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Sequence, Union
 
 from fathom.schemas.conversation import ConversationTurn
+from fathom.schemas.llm import StructuredOutput
 from fathom.schemas.results import GenerateResult
 
 # Type alias for LLM prompt parts (text, images, or structured content)
@@ -33,6 +34,7 @@ class LLMPort(ABC):
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
         conversation_history: Optional[Sequence[ConversationTurn]] = None,
+        structured_output: Optional[StructuredOutput] = None,
     ) -> GenerateResult:
         """
         Generate response from LLM.
@@ -44,6 +46,8 @@ class LLMPort(ABC):
             conversation_history: Optional prior turns for multi-turn feedback loops.
                 Each entry is a provider-neutral ConversationTurn.
                 When provided, prompt is appended as the final user turn.
+            structured_output: Optional vendor-neutral constrained-decoding contract.
+                Adapters translate it into their provider's structured-output API.
 
         Returns:
             GenerateResult with content and tool calls

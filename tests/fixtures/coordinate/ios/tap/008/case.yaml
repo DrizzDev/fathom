@@ -1,0 +1,18 @@
+platform: ios
+description: |
+  gtLmU session 2, step 1 capture (re-entry after session 1 completion).
+  Production dispatched via Perception cascade Stage 2 (vision-localizer)
+  with the same Search-icon intent — observed tap was logical (429, 204),
+  workflow gtLmU_s2_ha8759a. Carried as a property-only fixture covering
+  the session-boundary re-entry path: parser + converter pipeline must
+  hold on a freshly captured screen at the start of a new session.
+screen:
+  logical:
+    width: 430
+    height: 932
+production_dispatch:
+  source: stage2_vision_localizer
+  workflow_id: gtLmU_s2_ha8759a
+  dispatched_logical:
+    x: 429
+    y: 204

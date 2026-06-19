@@ -14,6 +14,7 @@ from rich.table import Table
 
 from fathom.adapters.telemetry.console import ConsoleTelemetryAdapter
 from fathom.base.paths import SharedPathManager
+from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.exceptions import FathomError
 from fathom.interfaces.factory import (
     DeviceFactoryPort,
@@ -96,7 +97,9 @@ class CommandExecutor:
                 loop = asyncio.get_running_loop()
                 loop.add_signal_handler(os_signal, self.__handle_interrupt)
             except (NotImplementedError, ValueError, RuntimeError) as exception:
-                logger.debug("Signal handler registration skipped for %s: %s", os_signal, exception)
+                logger.warning(
+                    "Signal handler registration skipped for %s: %s", os_signal, exception
+                )
 
     def __handle_interrupt(self) -> None:
         """
@@ -189,6 +192,7 @@ class CommandExecutor:
                 .with_signal(port=signal_adapter)
                 .with_telemetry(port=telemetry_adapter)
                 .with_perception(port=perception_adapter)
+                .with_runtime_configuration(loader=RuntimeConfigLoader(settings=self.__settings))
                 .with_qualifier_config(configuration=request.interaction.qualifier_configuration)
             )
 
@@ -241,29 +245,34 @@ class CommandExecutor:
 
     async def __run_intent_workflow(self, *, request: IntentRunRequest) -> IntentResult:
         """
-        Execute intent workflow with spinner in non-interactive mode.
+        Execute intent workflow; wraps in a console spinner only when
+        the run is non-interactive (interactive sessions need stdin and would conflict with the spinner).
         """
 
         if self.__runner is None:
             raise FathomError("Runner is not initialized")
 
         if request.runtime.interactive:
-            return await self.__runner.run_intent(
-                intent=request.objective.intent,
-                use_xml=request.objective.use_xml,
-                max_steps=request.objective.max_steps,
-                request_id=request.runtime.session_id,
-                realignment=request.interaction.realignment,
-            )
+            return await self.__invoke_runner(request=request)
 
         with console.status("[bold green]Agent working...[/bold green]\n", spinner="dots"):
-            return await self.__runner.run_intent(
-                intent=request.objective.intent,
-                use_xml=request.objective.use_xml,
-                max_steps=request.objective.max_steps,
-                request_id=request.runtime.session_id,
-                realignment=request.interaction.realignment,
-            )
+            return await self.__invoke_runner(request=request)
+
+    async def __invoke_runner(self, *, request: IntentRunRequest) -> IntentResult:
+        """
+        Single dispatch into the runner
+        """
+
+        if self.__runner is None:
+            raise FathomError("Runner is not initialized")
+
+        return await self.__runner.run_intent(
+            intent=request.objective.intent,
+            use_xml=request.objective.use_xml,
+            max_steps=request.objective.max_steps,
+            request_id=request.runtime.session_id,
+            realignment=request.interaction.realignment,
+        )
 
     def __print_execution_summary(self, *, result: IntentResult) -> None:
         """

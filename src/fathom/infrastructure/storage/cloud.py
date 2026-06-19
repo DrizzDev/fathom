@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import time
-from datetime import datetime
+from datetime import datetime, timezone
 from logging import getLogger
 from typing import Any, Dict, Optional
 
 from google.cloud import storage
 
+from fathom.constants.artifact import ArtifactDirectory
 from fathom.core.exceptions import VisionError
 from fathom.infrastructure.storage.metadata import extract_metadata
 from fathom.interfaces import IImageStorage
@@ -30,8 +30,7 @@ class GCSImageStorage(IImageStorage):
 
     async def save(self, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Uploads image to GCS and returns the URI.
-        Path: YYYY-MM-DD/{package}/{session}/{timestamp}__{activity}.png
+        Upload bytes to GCS using path layout {category}/{date}/{session}/{filename}.
         """
 
         project = self.__configuration.project_id
@@ -40,7 +39,7 @@ class GCSImageStorage(IImageStorage):
 
         def __upload_sync() -> str:
             """
-            Uploads image to GCS and returns the URI.
+            Synchronously perform the upload on a worker thread.
             """
 
             try:
@@ -63,40 +62,70 @@ class GCSImageStorage(IImageStorage):
                 storage_bucket = client.bucket(bucket)
 
                 folder = datetime.now().strftime("%Y-%m-%d")
+                resolved_name = meta.filename or self.__fallback_filename(
+                    package=meta.package,
+                    category=meta.category,
+                    activity=meta.activity,
+                )
+                filename = f"{meta.category}/{folder}/{meta.session}/{resolved_name}"
 
-                if meta.filename:
-                    filename = (
-                        f"{meta.category}/{folder}/{meta.package}/{meta.session}/{meta.filename}"
-                    )
-                else:
-                    timestamp = int(time.time() * 1000)
-                    filename = f"{meta.category}/{folder}/{meta.package}/{meta.session}/{timestamp}__{meta.activity}.png"
-
-                content_type = "application/octet-stream"
-
-                if filename.endswith(".png"):
-                    content_type = "image/png"
-
-                elif filename.endswith(".json"):
-                    content_type = "application/json"
-
-                elif filename.endswith(".yaml") or filename.endswith(".yml"):
-                    content_type = "text/yaml"
-
-                elif filename.endswith(".txt"):
-                    content_type = "text/plain"
-
-                elif filename.endswith(".xml"):
-                    content_type = "application/xml"
+                content_type = self.__content_type_for(filename=filename)
 
                 blob = storage_bucket.blob(filename)
                 blob.upload_from_string(data, content_type=content_type)
 
                 uri = f"gs://{bucket}/{filename}"
-                logger.debug(f"Uploaded image to GCS: {uri}")
+                logger.info(f"Uploaded image to GCS: {uri}")
                 return uri
             except Exception as exception:
                 logger.warning(f"Failed to upload to GCS: {exception}")
                 raise VisionError(f"GCS upload failed: {exception}") from exception
 
         return await asyncio.to_thread(__upload_sync)
+
+    @staticmethod
+    def __content_type_for(*, filename: str) -> str:
+        """
+        Resolve the HTTP content-type for an uploaded GCS object from its extension.
+        """
+
+        if filename.endswith(".png"):
+            return "image/png"
+
+        if filename.endswith(".json"):
+            return "application/json"
+
+        if filename.endswith(".yaml") or filename.endswith(".yml"):
+            return "text/yaml"
+
+        if filename.endswith(".txt"):
+            return "text/plain"
+
+        if filename.endswith(".xml"):
+            return "application/xml"
+
+        return "application/octet-stream"
+
+    @staticmethod
+    def __fallback_filename(*, category: str, activity: str, package: str) -> str:
+        """
+        Build a storage filename when the caller did not provide a canonical artifact name.
+        """
+
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+        extension = GCSImageStorage.__extension_for(category=category)
+        return f"{timestamp}__{package}__{activity}{extension}"
+
+    @staticmethod
+    def __extension_for(*, category: str) -> str:
+        """
+        Resolve the default file extension for a storage category.
+        """
+
+        if category == ArtifactDirectory.XMLS:
+            return ".xml"
+
+        if category == ArtifactDirectory.HISTORY:
+            return ".txt"
+
+        return ".png"

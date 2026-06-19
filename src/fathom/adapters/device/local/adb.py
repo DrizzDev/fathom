@@ -6,9 +6,21 @@ from logging import getLogger
 from typing import List, Optional, Tuple
 
 from fathom.constants.interaction import SwipeSpeed
-from fathom.constants.platform import AndroidClearStrategy, AndroidKeycode, DevicePlatform
+from fathom.constants.observation import KeyboardVisibility
+from fathom.constants.platform import (
+    ANDROID_UIAUTOMATION_ACTIVE_MARKER,
+    ANDROID_UIAUTOMATION_DUMP_PATH,
+    ANDROID_UIAUTOMATION_INSTRUMENTATION_MARKER,
+    ANDROID_UIAUTOMATION_PROCESS_NAME,
+    ANDROID_UIAUTOMATION_TIMEOUT_MARKER,
+    ANDROID_UIAUTOMATION_UIAUTOMATOR_MARKER,
+    AndroidClearStrategy,
+    AndroidKeycode,
+    DevicePlatform,
+)
 from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
+from fathom.schemas.actions import Bounds, CoordinateSystem
 from fathom.schemas.configuration import (
     ADBConfiguration,
     DeviceRuntimeConfiguration,
@@ -17,6 +29,7 @@ from fathom.schemas.configuration import (
     ScrollInteractionPolicy,
     SwipeInteractionPolicy,
 )
+from fathom.schemas.observation import KeyboardObservation
 from fathom.schemas.results import ActionResult
 
 logger = getLogger(__name__)
@@ -79,6 +92,7 @@ class ADBDevice(DevicePort):
             metadata={"executable_path": self.__configuration.executable_path},
         )
         self.__cached_size: Optional[Tuple[int, int]] = None
+        self.__hierarchy_lock = asyncio.Lock()
 
     @property
     def configuration(self) -> DeviceRuntimeConfiguration:
@@ -93,7 +107,7 @@ class ADBDevice(DevicePort):
         Execute tap at coordinates.
         """
 
-        return await self.__shell(command=f"input tap {x} {y}")
+        return await self.__shell(command=f"input touchscreen tap {x} {y}")
 
     async def type(
         self,
@@ -202,13 +216,13 @@ class ADBDevice(DevicePort):
         """
 
         if speed is not None:
-            logger.debug("Ignoring swipe speed for ADB adapter: %s", speed)
+            logger.warning("Ignoring swipe speed for ADB adapter: %s", speed)
 
         duration = duration or (
             self.__configuration.interaction.policy.swipe.duration if self.__configuration else 300
         )
 
-        return await self.__shell(command=f"input swipe {x1} {y1} {x2} {y2} {duration}")
+        return await self.__shell(command=f"input touchscreen swipe {x1} {y1} {x2} {y2} {duration}")
 
     async def back(self) -> ActionResult:
         """
@@ -264,13 +278,73 @@ class ADBDevice(DevicePort):
 
         finally:
             if process and process.returncode is None:
-                try:
-                    process.kill()
-                    await process.wait()
-                except ProcessLookupError:
-                    pass  # Process already dead
-                except Exception as cleanup_exception:
-                    logger.warning(f"Failed to cleanup subprocess: {cleanup_exception}")
+                await self.__abandon_unkillable_subprocess(process=process, arguments=arguments)
+
+    async def __abandon_unkillable_subprocess(
+        self,
+        *,
+        process: asyncio.subprocess.Process,
+        arguments: List[str],
+    ) -> None:
+        """
+        Bounded post-kill reap of a still-running subprocess.
+
+        ``__run_safe_subprocess`` enforces a wall-clock per-command timeout
+        via :func:`asyncio.wait_for`. Its ``finally`` block sends SIGKILL,
+        then awaits the process to reap. When the host has wedged IO
+        (emulator qcow2 backing exhausted, NFS hang, etc.) the kernel
+        cannot deliver SIGKILL because the process sits in an
+        uninterruptible-IO state; the await would block indefinitely and
+        the entire workflow would stall.
+
+        This helper caps that reap with ``subprocess_cleanup_timeout`` and
+        abandons the process (logging at WARNING) rather than waiting
+        forever. The leaked subprocess will be reaped by the OS once the
+        underlying IO unwedges.
+        """
+
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return
+        except Exception as exception:
+            logger.warning(
+                "Failed to send SIGKILL to subprocess",
+                extra={
+                    "component": "adapter.device.local.adb",
+                    "event": "adb.subprocess.kill.failed",
+                    "command": " ".join(arguments),
+                    "error.message": str(exception),
+                },
+            )
+            return
+
+        try:
+            await asyncio.wait_for(
+                process.wait(),
+                timeout=self.__configuration.subprocess_cleanup_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Subprocess cleanup wait timed out; abandoning process",
+                extra={
+                    "component": "adapter.device.local.adb",
+                    "event": "adb.subprocess.cleanup.abandoned",
+                    "command": " ".join(arguments),
+                    "cleanup.budget": self.__configuration.subprocess_cleanup_timeout,
+                    "process.pid": process.pid,
+                },
+            )
+        except Exception as exception:
+            logger.warning(
+                "Failed to cleanup subprocess after kill",
+                extra={
+                    "component": "adapter.device.local.adb",
+                    "event": "adb.subprocess.cleanup.failed",
+                    "command": " ".join(arguments),
+                    "error.message": str(exception),
+                },
+            )
 
     async def get_dimensions(self) -> Tuple[int, int]:
         """
@@ -371,37 +445,125 @@ class ADBDevice(DevicePort):
                 capture_stderr=False,
             )
             if stdout_bytes or stderr_bytes:
-                logger.debug("wait-for-device produced subprocess output unexpectedly")
+                logger.warning("wait-for-device produced subprocess output unexpectedly")
             return returncode == 0
         except Exception:
             return False
 
+    async def detect_keyboard(self) -> KeyboardObservation:
+        """
+        Detect soft-keyboard state via ``dumpsys`` and parse the touch-absorbing rectangle.
+        """
+
+        try:
+            shown = await self.__keyboard_shown()
+            if shown is None:
+                return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
+            if not shown:
+                return KeyboardObservation(visibility=KeyboardVisibility.HIDDEN)
+            bounds = await self.__keyboard_bounds()
+            return KeyboardObservation(visibility=KeyboardVisibility.VISIBLE, bounds=bounds)
+        except Exception as exception:
+            logger.warning(f"ADB detect_keyboard failed: {exception}")
+            return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
+
+    async def __keyboard_shown(self) -> Optional[bool]:
+        """
+        Parse ``mInputShown=`` from ``dumpsys input_method``; None when the command fails.
+        """
+
+        result = await self.__shell(command="dumpsys input_method", capture_output=True)
+        if not result.success or not result.output:
+            return None
+        match = re.search(r"mInputShown=(true|false)", result.output)
+        if match is None:
+            return None
+        return match.group(1) == "true"
+
+    async def __keyboard_bounds(self) -> Optional[Bounds]:
+        """
+        Parse the touch-absorbing rectangle from ``dumpsys window InputMethod``.
+        """
+
+        result = await self.__shell(command="dumpsys window InputMethod", capture_output=True)
+        if not result.success or not result.output:
+            return None
+        match = re.search(
+            r"touchable region=SkRegion\(\((\d+),(\d+),(\d+),(\d+)\)\)",
+            result.output,
+        )
+        if match is None:
+            return None
+        left, top, right, bottom = (int(group) for group in match.groups())
+        width = max(0, right - left)
+        height = max(0, bottom - top)
+        if width == 0 or height == 0:
+            return None
+        return Bounds(
+            x=left,
+            y=top,
+            width=width,
+            height=height,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
+
     async def dump_hierarchy(self) -> Optional[str]:
         """
         Dump UI hierarchy to XML string.
-        Attempts compressed dump first, with fallback to uncompressed and process cleanup.
+
+        Acquires the per-adapter UiAutomation lock with a bounded timeout. A
+        prior ``dump_hierarchy`` task that was cancelled before the
+        ``async with`` exit could leak the lock; treating the acquire as
+        timed converts that latent class of bugs into an explicit
+        :class:`DeviceError` instead of an indefinite await on the next call.
         """
 
-        path = "/data/local/tmp/window_dump.xml"
+        try:
+            await asyncio.wait_for(
+                self.__hierarchy_lock.acquire(),
+                timeout=self.__configuration.hierarchy_lock_timeout,
+            )
+        except asyncio.TimeoutError as exception:
+            raise DeviceError(
+                f"Dump hierarchy: lock acquire timed out after "
+                f"{self.__configuration.hierarchy_lock_timeout:.1f}s "
+                "(likely a leaked lock from a prior cancelled task)"
+            ) from exception
+
+        try:
+            return await self.__dump_hierarchy_locked()
+
+        finally:
+            self.__hierarchy_lock.release()
+
+    async def __dump_hierarchy_locked(self) -> Optional[str]:
+        """
+        Dump UI hierarchy while holding the per-adapter UiAutomation lock.
+        """
+
+        path = ANDROID_UIAUTOMATION_DUMP_PATH
+
+        await self.__recover_stale_ui_automation(reason="pre_dump")
 
         # Ensure we don't read a stale file
         await self.__shell(command=f"rm -f {path}")
 
-        dump_command = f"uiautomator dump --compressed {path}"
-        dump_result = await self.__shell(command=dump_command)
+        dump_result = await self.__run_uiautomator_dump(path=path, compressed=True)
 
         if not dump_result.success:
+            if self.__uiautomator_timed_out(result=dump_result):
+                raise DeviceError(
+                    f"Dump hierarchy: compressed UI automation dump timed out: {dump_result.error or 'Unknown error'}"
+                )
+
             logger.warning(
                 f"Compressed dump failed: {dump_result.error}. Attempting recovery and fallback."
             )
-            # Device-side recovery: forcefully kill hung uiautomator service
-            await self.__shell(command="pkill -9 uiautomator")
-
-            # Fallback to uncompressed dump
-            fallback_command = f"uiautomator dump {path}"
-            dump_result = await self.__shell(command=fallback_command)
+            await self.__recover_stale_ui_automation(reason="compressed_dump_failed")
+            dump_result = await self.__run_uiautomator_dump(path=path, compressed=False)
 
             if not dump_result.success:
+                await self.__recover_stale_ui_automation(reason="fallback_dump_failed")
                 raise DeviceError(
                     f"Dump hierarchy: UI automation dump failed on device after fallback: {dump_result.error or 'Unknown error'}"
                 )
@@ -432,29 +594,109 @@ class ADBDevice(DevicePort):
                 f"Dump hierarchy: Unexpected error during XML retrieval: {exception}"
             ) from exception
 
-    async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
+    async def __run_uiautomator_dump(self, *, path: str, compressed: bool) -> ActionResult:
         """
-        Capture atomic snapshot (Screenshot + XML) in parallel.
+        Run one uiautomator dump attempt.
         """
 
-        results = await asyncio.gather(
-            self.capture_screen(),
-            self.dump_hierarchy(),
-            return_exceptions=True,
+        compression = " --compressed" if compressed else ""
+        return await self.__shell(command=f"uiautomator dump{compression} {path}")
+
+    @staticmethod
+    def __uiautomator_timed_out(*, result: ActionResult) -> bool:
+        """
+        Return whether a dump result failed because the device command timed out.
+        """
+
+        return bool(result.error and ANDROID_UIAUTOMATION_TIMEOUT_MARKER in result.error.lower())
+
+    async def __recover_stale_ui_automation(self, *, reason: str) -> None:
+        """
+        Release stale UiAutomation holders left by shell instrumentation or failed dumps.
+
+        Android exposes only one UiAutomation registration at a time. A
+        previous ``am instrument`` process can hold that slot forever,
+        causing every later ``uiautomator dump`` to crash with
+        "UiAutomationService ... already registered". Kill only shell
+        ``app_process`` commands that are known UiAutomation holders.
+        """
+
+        state = await self.__shell(command="dumpsys accessibility", capture_output=True)
+        if (
+            not state.success
+            or not state.output
+            or ANDROID_UIAUTOMATION_ACTIVE_MARKER not in state.output
+        ):
+            return
+
+        logger.warning(
+            "Active UiAutomation registration detected before hierarchy dump; recovering.",
+            extra={
+                "component": "adapter.device.local.adb",
+                "event": "adb.uiautomation.recovery.started",
+                "reason": reason,
+            },
         )
 
-        image_result = results[0]
-        xml_result = results[1]
+        cleanup = await self.__shell(command=self.__ui_automation_cleanup_command())
+        if not cleanup.success:
+            logger.warning(
+                "UiAutomation recovery command failed: %s",
+                cleanup.error,
+                extra={
+                    "component": "adapter.device.local.adb",
+                    "event": "adb.uiautomation.recovery.failed",
+                    "reason": reason,
+                },
+            )
 
-        if isinstance(xml_result, Exception):
-            logger.error(f"Snapshot: Hierarchy dump failed: {xml_result}")
+        await asyncio.sleep(0.2)
 
-        if isinstance(image_result, Exception):
-            logger.error(f"Snapshot: Screenshot capture failed: {image_result}")
-            raise DeviceError(f"Snapshot capture failed: {image_result}") from image_result
+    @staticmethod
+    def __ui_automation_cleanup_command() -> str:
+        """
+        Return a shell command that kills only known stale UiAutomation holders.
+        """
 
-        image = image_result if isinstance(image_result, bytes) else b""
-        xml = xml_result if isinstance(xml_result, str) else None
+        return (
+            f"for pid in $(pidof {ANDROID_UIAUTOMATION_PROCESS_NAME}); do "
+            'cmdline=$(tr "\\0" " " < /proc/$pid/cmdline 2>/dev/null); '
+            f'case "$cmdline" in '
+            f'*"{ANDROID_UIAUTOMATION_INSTRUMENTATION_MARKER}"*|'
+            f'*"{ANDROID_UIAUTOMATION_UIAUTOMATOR_MARKER}"*) '
+            'kill -9 "$pid";; '
+            "esac; "
+            "done"
+        )
+
+    async def get_snapshot(self) -> Tuple[bytes, Optional[str]]:
+        """
+        Capture a required screenshot and best-effort XML hierarchy.
+        """
+
+        try:
+            image = await self.capture_screen()
+        except Exception as exception:
+            logger.exception("Snapshot: Screenshot capture failed")
+            raise DeviceError(f"Snapshot capture failed: {exception}") from exception
+
+        if not image:
+            raise DeviceError("Snapshot capture failed: empty screenshot")
+
+        try:
+            xml = await asyncio.wait_for(
+                self.dump_hierarchy(),
+                timeout=self.__configuration.snapshot_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.exception(
+                "Snapshot: Hierarchy dump timed out after %.1fs",
+                self.__configuration.snapshot_timeout,
+            )
+            xml = None
+        except Exception:
+            logger.exception("Snapshot: Hierarchy dump failed")
+            xml = None
 
         return image, xml
 
@@ -478,7 +720,11 @@ class ADBDevice(DevicePort):
             duration = int((asyncio.get_event_loop().time() - start_time) * 1000)
 
             if returncode != 0:
-                error_message = stderr.decode().strip() if stderr else "Failed"
+                error_message = (
+                    stderr.decode().strip()
+                    if stderr
+                    else f"ADB shell command exited with code {returncode}"
+                )
                 return ActionResult(success=False, error=error_message, duration=duration)
 
             return ActionResult(

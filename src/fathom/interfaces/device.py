@@ -4,7 +4,9 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 
 from fathom.constants.interaction import SwipeSpeed
+from fathom.constants.observation import KeyboardVisibility
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
+from fathom.schemas.observation import KeyboardObservation
 from fathom.schemas.results import ActionResult
 
 
@@ -128,3 +130,16 @@ class DevicePort(ABC):
         """
 
         raise NotImplementedError
+
+    async def detect_keyboard(self) -> KeyboardObservation:
+        """
+        Probe the platform for soft-keyboard state; returns UNKNOWN when the adapter cannot determine it.
+
+        Adapters that cannot inspect the IME (e.g., remote gateways without a
+        ``dumpsys`` channel) inherit this default. ``UNKNOWN`` instructs the
+        swipe planner to skip the keyboard filter, so the original gesture
+        dispatches as-is — preserving prior behavior on un-instrumented
+        adapters at the cost of losing Glide-Typing protection.
+        """
+
+        return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)

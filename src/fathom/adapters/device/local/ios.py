@@ -14,9 +14,11 @@ from PIL import Image
 from fathom.adapters.ios.gateway import IOSAutomationGateway
 from fathom.constants.interaction import SwipeSpeed
 from fathom.constants.ios import IOSAdapterDefaults, IOSGestureDefaults
+from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.platform import DevicePlatform, IOSAutomationBackend
 from fathom.core.exceptions import DeviceError
 from fathom.interfaces.device import DevicePort
+from fathom.schemas.actions import Bounds, CoordinateSystem
 from fathom.schemas.configuration import (
     DeviceRuntimeConfiguration,
     InteractionPolicyConfiguration,
@@ -25,6 +27,7 @@ from fathom.schemas.configuration import (
     ScrollInteractionPolicy,
     SwipeInteractionPolicy,
 )
+from fathom.schemas.observation import KeyboardObservation
 from fathom.schemas.results import ActionResult
 
 logger = getLogger(__name__)
@@ -198,9 +201,6 @@ class IOSDevice(DevicePort):
         requested_speed = speed
         resolved_duration = duration or (self.__configuration.interaction.policy.swipe.duration)
 
-        if requested_speed is not None:
-            logger.debug("Ignoring swipe speed for iOS simctl adapter: %s", requested_speed)
-
         try:
             if self.__should_route_interactions_via_automation_gateway():
                 start_x, start_y = await self.__to_automation_coordinates(x=x1, y=y1)
@@ -214,6 +214,11 @@ class IOSDevice(DevicePort):
                     duration=resolved_duration,
                 )
             else:
+                if requested_speed is not None:
+                    logger.warning(
+                        "Ignoring swipe speed for iOS simctl adapter: %s", requested_speed
+                    )
+
                 device_identifier = await self.__resolve_device_identifier()
                 await self.__run_simctl(
                     parts=[
@@ -239,21 +244,10 @@ class IOSDevice(DevicePort):
 
     async def back(self) -> ActionResult:
         """
-        Attempt back navigation via a left-edge swipe gesture.
+        iOS has no system-level back gesture.
         """
 
-        width, height = await self.get_dimensions()
-        y = int(height * self.__gesture_defaults.back_y_ratio)
-        x1 = int(width * self.__gesture_defaults.back_start_x_ratio)
-        x2 = int(width * self.__gesture_defaults.back_end_x_ratio)
-
-        return await self.swipe(
-            x1=x1,
-            y1=y,
-            x2=x2,
-            y2=y,
-            duration=self.__gesture_defaults.back_duration,
-        )
+        raise NotImplementedError("iOS has no system-level back gesture.")
 
     async def home(self) -> ActionResult:
         """
@@ -527,10 +521,136 @@ class IOSDevice(DevicePort):
                 await self.get_dimensions()
                 return True
             except Exception as exception:
-                logger.debug("Device readiness check pending: %s", exception)
+                logger.info("Device readiness check pending: %s", exception)
                 await asyncio.sleep(self.__adapter_defaults.device_ready_poll_seconds)
 
         return False
+
+    async def detect_keyboard(self) -> KeyboardObservation:
+        """
+        Detect soft-keyboard state by walking the XCUITest hierarchy for ``XCUIElementTypeKeyboard``.
+        """
+
+        try:
+            hierarchy = await self.dump_hierarchy()
+            if not hierarchy:
+                return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
+            pixel_width, pixel_height = await self.get_dimensions()
+            return self.__parse_keyboard_from_hierarchy(
+                hierarchy=hierarchy,
+                pixel_width=pixel_width,
+                pixel_height=pixel_height,
+            )
+        except Exception as exception:
+            logger.warning(f"iOS detect_keyboard failed: {exception}")
+            return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
+
+    def __parse_keyboard_from_hierarchy(
+        self,
+        *,
+        hierarchy: str,
+        pixel_width: int,
+        pixel_height: int,
+    ) -> KeyboardObservation:
+        """
+        Parse a soft-keyboard element from an XCUITest hierarchy and scale to device pixels.
+        """
+
+        try:
+            root = ElementTree.fromstring(hierarchy)  # nosec: trusted local input
+        except ElementTree.ParseError:
+            return KeyboardObservation(visibility=KeyboardVisibility.UNKNOWN)
+
+        keyboard = self.__find_visible_keyboard(root=root)
+        if keyboard is None:
+            return KeyboardObservation(visibility=KeyboardVisibility.HIDDEN)
+
+        scale_x, scale_y = self.__resolve_pixel_scale(
+            root=root,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
+        )
+        bounds = self.__keyboard_bounds(element=keyboard, scale_x=scale_x, scale_y=scale_y)
+        if bounds is None:
+            return KeyboardObservation(visibility=KeyboardVisibility.VISIBLE, bounds=None)
+        return KeyboardObservation(visibility=KeyboardVisibility.VISIBLE, bounds=bounds)
+
+    @staticmethod
+    def __find_visible_keyboard(*, root: ElementTree.Element) -> Optional[ElementTree.Element]:
+        """
+        Return the first visible ``XCUIElementTypeKeyboard`` element in the hierarchy.
+        """
+
+        for element in root.iter("XCUIElementTypeKeyboard"):
+            if element.get("visible", "false") == "true":
+                return element
+        return None
+
+    @staticmethod
+    def __keyboard_bounds(
+        *,
+        element: ElementTree.Element,
+        scale_x: float,
+        scale_y: float,
+    ) -> Optional[Bounds]:
+        """
+        Translate logical-point bounds on the keyboard element into device-pixel bounds.
+        """
+
+        try:
+            point_x = int(element.get("x", "0"))
+            point_y = int(element.get("y", "0"))
+            point_width = int(element.get("width", "0"))
+            point_height = int(element.get("height", "0"))
+        except ValueError:
+            return None
+
+        pixel_width = int(round(point_width * scale_x))
+        pixel_height = int(round(point_height * scale_y))
+        if pixel_width <= 0 or pixel_height <= 0:
+            return None
+
+        return Bounds(
+            x=int(round(point_x * scale_x)),
+            y=int(round(point_y * scale_y)),
+            width=pixel_width,
+            height=pixel_height,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
+
+    @staticmethod
+    def __resolve_pixel_scale(
+        *,
+        root: ElementTree.Element,
+        pixel_width: int,
+        pixel_height: int,
+    ) -> Tuple[float, float]:
+        """
+        Compute the logical-point-to-device-pixel scale factors from the application root.
+        """
+
+        application = (
+            root
+            if root.tag == "XCUIElementTypeApplication"
+            else root.find(
+                ".//XCUIElementTypeApplication",
+            )
+        )
+        if application is None:
+            return 1.0, 1.0
+
+        try:
+            point_width = int(application.get("width", "0"))
+            point_height = int(application.get("height", "0"))
+        except ValueError:
+            return 1.0, 1.0
+
+        if point_width <= 0 or point_height <= 0:
+            return 1.0, 1.0
+
+        scale_x = pixel_width / point_width
+        scale_y = pixel_height / point_height
+        return scale_x, scale_y
 
     async def close(self) -> None:
         """
@@ -741,7 +861,7 @@ class IOSDevice(DevicePort):
                     process.kill()
                     await process.wait()
                 except ProcessLookupError:
-                    logger.debug("Subprocess already terminated before cleanup completed.")
+                    logger.info("Subprocess already terminated before cleanup completed.")
                 except Exception as cleanup_exception:
                     logger.warning("Failed to cleanup subprocess: %s", cleanup_exception)
 

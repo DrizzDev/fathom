@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import uuid
 from logging import getLogger
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Set, cast
 
 from fathom.constants import DRAIN_TIMEOUT
 from fathom.core.context.engines.gcc import GitContextEngine
@@ -12,7 +12,7 @@ from fathom.interfaces.context import ContextEngine
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.schemas.actions import Action
-from fathom.schemas.context import UserGuidance
+from fathom.schemas.feedback import UserGuidance, VerifierFeedback
 
 logger = getLogger(__name__)
 
@@ -55,17 +55,21 @@ class ContextManager:
         # Tier 1: Immutable Roadmap
         self.__roadmap_intent: str = "unknown"
 
-        # External interventions
+        # User-sourced instructions. Each entry has a small ANALYZE-turn
+        # TTL so a human correction survives one ignored model turn but
+        # cannot become a permanent stale instruction.
         self.__user_guidance: List[UserGuidance] = []
 
+        # System-sourced verifier rejection messages (use-once, planner clears after consuming for the next planning iteration)
+        self.__verifier_feedback: List[VerifierFeedback] = []
+
         # Async Lifecycle
-        self.__background_tasks: set[asyncio.Task[None]] = set()
+        self.__background_tasks: Set[asyncio.Task[None]] = set()
 
         # Persistence Queue for Non-Blocking I/O.
-        # DISABLED: GCC context is not persisted to Ledger (see __persistence_worker
-        # docstring). Spawn is commented out so shutdown() does NOT block 30s waiting
-        # on a worker that loops forever on an empty queue. Re-enable in lockstep
-        # with __enqueue_persist when separate context storage is added.
+        # Currently DISABLED: GCC context is not persisted to Ledger (see
+        # __persistence_worker docstring). Fields kept so call sites and
+        # shutdown logic stay valid; re-enable by uncommenting the spawn below.
         self.__persistence_task: Optional[asyncio.Task[None]] = None
         self.__persist_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
 
@@ -79,13 +83,6 @@ class ContextManager:
         loop = asyncio.get_running_loop()
         self.__persistence_task = loop.create_task(self.__persistence_worker())
 
-        # NOTE: persistence_task intentionally NOT registered into
-        # __background_tasks. shutdown() iterates that set with a 30s
-        # drain timeout; the persistence worker blocks forever on an empty
-        # queue (because __enqueue_persist is a no-op while persistence is
-        # disabled), so adding it here makes every successful run wait
-        # 30s at cleanup for nothing. shutdown() cancels persistence_task
-        # via its own dedicated branch instead.
         # self.__background_tasks.add(self.__persistence_task)
         # self.__persistence_task.add_done_callback(self.__background_tasks.discard)
 
@@ -106,35 +103,44 @@ class ContextManager:
 
         while True:
             try:
-                # Wait for next state snapshot
                 state_data = await self.__persist_queue.get()
-
-                # GCC context is NOT persisted to Ledger
-                # Ledger is reserved for user-actionable memory only
-                # If you need GCC persistence, implement separate context storage
-
-                logger.debug(
-                    f"[ContextManager] Skipping GCC persistence to Ledger | "
-                    f"workflow_id={self.__workflow_id} | "
-                    f"state_keys={list(state_data.keys())}"
-                )
-                """
-                # Perform CPU-bound serialization in thread
-                json_data = await asyncio.to_thread(json.dumps, state_data)
-
-                # Perform I/O
-                await self.__memory.set(
-                    key=f"context:v3:{self.__workflow_id}",
-                    value=json_data,
-                )
-                """
-
-                self.__persist_queue.task_done()
-
             except asyncio.CancelledError:
                 break
+
+            try:
+                # GCC context is NOT persisted to Ledger by design.
+                # Ledger is reserved for user-actionable memory only.
+                # If you need GCC persistence, implement separate context storage
+                # by replacing the no-op below with serialization + memory.set.
+                logger.info(
+                    "[ContextManager] skipping GCC persistence to Ledger",
+                    extra={
+                        "component": "context",
+                        "event": "persist_skipped",
+                        "workflow_id": self.__workflow_id,
+                        "state_keys": list(state_data.keys()),
+                    },
+                )
+                # Reference implementation for when separate context storage is added:
+                #     json_data = await asyncio.to_thread(json.dumps, state_data)
+                #     await self.__memory.set(
+                #         key=f"context:v3:{self.__workflow_id}",
+                #         value=json_data,
+                #     )
             except Exception as exception:
-                logger.error(f"Context: Background persistence failure: {exception}")
+                logger.error(
+                    "[ContextManager] background persistence failure",
+                    extra={
+                        "component": "context",
+                        "error": str(exception),
+                        "event": "persist_failed",
+                        "workflow_id": self.__workflow_id,
+                    },
+                )
+            finally:
+                # Always mark the item done — whether the work succeeded, was
+                # cancelled, or raised — otherwise queue.join() in shutdown hangs.
+                self.__persist_queue.task_done()
 
     async def hydrate(self) -> None:
         """
@@ -178,12 +184,9 @@ class ContextManager:
         Captures a snapshot of the current state and queues it for persistence.
         This operation is O(1) in-memory and non-blocking.
 
-        DISABLED: the persistence worker is not spawned (see __init__). Returning
+        DISABLED: persistence worker is not spawned (see __init__). Returning
         early avoids growing __persist_queue unbounded with snapshots that no
-        consumer will drain — this would leak roughly one queue entry per agent
-        step for the worker's lifetime across all workflows. Re-enable in
-        lockstep with __start_persistence_loop when separate context storage
-        is wired.
+        consumer will drain. Re-enable in lockstep with __start_persistence_loop.
         """
 
         return
@@ -196,7 +199,15 @@ class ContextManager:
         #         }
         #         self.__persist_queue.put_nowait(state_data)
         #     except Exception as exception:
-        #         logger.error(f"Context: Failed to enqueue persistence: {exception}")
+        #         logger.error(
+        #             "[ContextManager] failed to enqueue persistence",
+        #             extra={
+        #                 "component": "context",
+        #                 "event": "enqueue_failed",
+        #                 "workflow_id": self.__workflow_id,
+        #                 "error": str(exception),
+        #             },
+        #         )
 
     async def commit(self, *, observation: str, thought: str, action: Action) -> None:
         """
@@ -294,7 +305,8 @@ class ContextManager:
             "trace": engine_context.get("trace", []),
             "milestones": engine_context.get("milestones", []),
             "active_count": engine_context.get("active_count", 0),
-            "guidance": [guidance.content for guidance in self.__user_guidance],
+            "guidance": [entry.render() for entry in self.__active_user_guidance()],
+            "verifier_feedback": [entry.content for entry in self.__verifier_feedback],
         }
 
     def set_roadmap(self, *, intent: str) -> None:
@@ -306,7 +318,7 @@ class ContextManager:
 
     async def inject_user_guidance(self, *, guidance: str, step: Optional[int] = None) -> None:
         """
-        Inject priority HITL instruction.
+        Append a real-user instruction to the run-scoped user-guidance channel.
         """
 
         self.__user_guidance.append(UserGuidance(content=guidance, step_number=step))
@@ -314,17 +326,57 @@ class ContextManager:
 
     def get_user_guidance(self) -> List[UserGuidance]:
         """
-        Retrieve active instructions.
+        Return active user-guidance entries.
         """
 
-        return self.__user_guidance.copy()
+        return self.__active_user_guidance()
+
+    def consume_user_guidance(self) -> None:
+        """
+        Age active user guidance after one planner exposure.
+        """
+
+        self.__user_guidance = [
+            entry.consume() if entry.active else entry for entry in self.__user_guidance
+        ]
 
     def clear_user_guidance(self) -> None:
         """
-        Reset guidance buffer.
+        Drop all user-guidance entries (e.g. on explicit revoke).
         """
 
         self.__user_guidance.clear()
+
+    def __active_user_guidance(self) -> List[UserGuidance]:
+        """
+        Return active guidance entries in injection order.
+        """
+
+        return [entry for entry in self.__user_guidance if entry.active]
+
+    async def inject_verifier_feedback(self, *, feedback: str, step: Optional[int] = None) -> None:
+        """
+        Append a verifier rejection reason to the use-once verifier-feedback
+        channel. The planner consumes and clears this on the next iteration.
+        """
+
+        self.__verifier_feedback.append(VerifierFeedback(content=feedback, step_number=step))
+        await self.__enqueue_persist()
+
+    def get_verifier_feedback(self) -> List[VerifierFeedback]:
+        """
+        Return the current verifier-feedback entries (copy).
+        """
+
+        return self.__verifier_feedback.copy()
+
+    def clear_verifier_feedback(self) -> None:
+        """
+        Drop all verifier-feedback entries; called by the planner after one
+        consumption cycle so the next VERIFY round produces fresh evidence.
+        """
+
+        self.__verifier_feedback.clear()
 
     @property
     def workflow_id(self) -> str:
