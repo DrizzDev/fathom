@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, Mock, patch
 
 from fathom.constants.exploration import DISABLED_LOOP_THRESHOLD
+from fathom.constants.state import CommonStateKey as CKey
+from fathom.constants.state import CompletionReason
 from fathom.core.agent.state import AgentState
 from fathom.core.services.exporter.artifacts import ExplorationArtifactWriter
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
@@ -74,8 +76,10 @@ class TestExplorationWorkflowEndToEnd(unittest.IsolatedAsyncioTestCase):
     """A full graph run loops to completion and yields writable artifacts."""
 
     @staticmethod
-    def __context(*, agent_state: AgentState, graph: KnowledgeGraph) -> Mock:
-        capture = Mock(image=b"image")
+    def __context(
+        *, agent_state: AgentState, graph: KnowledgeGraph, image: bytes = b"image"
+    ) -> Mock:
+        capture = Mock(image=image, xml_content=None, activity="com.app/.Home")
         capture.model_copy = Mock(return_value=capture)
         screen_state = ScreenState(
             activity="com.app/.Home",
@@ -145,6 +149,26 @@ class TestExplorationWorkflowEndToEnd(unittest.IsolatedAsyncioTestCase):
                 {"graph.json", "graph.dot", "graph.mermaid", "report.md"},
             )
             self.assertTrue(all(path.exists() for path in written))
+
+    async def test_unusable_capture_ends_clean_not_recursion(self) -> None:
+        # Perception yields an empty screenshot: grounding must fail fast with a
+        # clear reason. A tight recursion budget would raise GraphRecursionError
+        # if the old silent wedge persisted, so reaching END proves the fix.
+        graph = KnowledgeGraph(provider=_NullProvider())
+        agent_state = AgentState(
+            intent="Explore application",
+            max_steps=_MAX_STEPS,
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+            loop_threshold=DISABLED_LOOP_THRESHOLD,
+        )
+        context = self.__context(agent_state=agent_state, graph=graph, image=b"")
+        compiled = ExplorationGraphBuilder(context=context).build()
+
+        final_state = await compiled.ainvoke({}, config={"recursion_limit": 5})
+
+        self.assertTrue(final_state[CKey.IS_COMPLETE])
+        self.assertEqual(final_state[CKey.COMPLETION_REASON], CompletionReason.PERCEPTION_FAILED)
+        self.assertEqual(agent_state.step_count, 0)
 
 
 if __name__ == "__main__":
