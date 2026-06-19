@@ -30,6 +30,7 @@ class CompletionReason(StrEnum):
     FAILED = "Failed"
     CANCELLED = "Cancelled"
     STUCK = "Stuck: No progress"
+    PERCEPTION_FAILED = "Perception failed: no usable screen"
     MAX_STEPS = "Max steps reached"
     SUCCESS = "Completed successfully"
     OPERATOR_ABORTED = "Aborted by operator"

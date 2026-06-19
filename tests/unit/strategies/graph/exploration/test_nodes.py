@@ -112,6 +112,41 @@ class TestGroundNode(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result[EKey.ACTION])
         self.assertFalse(result[EKey.CONTENT_EXHAUSTED])
 
+    async def test_ground_fails_fast_on_unusable_capture(self) -> None:
+        # An empty screenshot must end the run with a clear reason, not wedge it.
+        blank = Mock(image=b"", xml_content=None, activity="unknown")
+        context = Mock(
+            is_cancelled=False,
+            workflow_id="wf",
+            exploration_graph=_graph_mock(),
+            hitl=_quiet_hitl(),
+        )
+        context.perception = Mock(
+            perceive=AsyncMock(return_value=blank),
+            build_state=Mock(return_value=_screen_state()),
+        )
+        context.agent_state = Mock(update_screen=Mock(return_value=True))
+
+        result = await ExplorationNodeProvider(context=context, vision=Mock()).ground({})
+
+        self.assertTrue(result[CKey.IS_COMPLETE])
+        self.assertEqual(result[CKey.COMPLETION_REASON], CompletionReason.PERCEPTION_FAILED)
+
+    async def test_ground_fails_fast_when_perception_raises(self) -> None:
+        context = Mock(
+            is_cancelled=False,
+            workflow_id="wf",
+            exploration_graph=_graph_mock(),
+            hitl=_quiet_hitl(),
+            agent_state=Mock(step_count=0),
+        )
+        context.perception = Mock(perceive=AsyncMock(side_effect=DeviceError("snapshot timed out")))
+
+        result = await ExplorationNodeProvider(context=context, vision=Mock()).ground({})
+
+        self.assertTrue(result[CKey.IS_COMPLETE])
+        self.assertEqual(result[CKey.COMPLETION_REASON], CompletionReason.PERCEPTION_FAILED)
+
 
 class TestScanNode(unittest.IsolatedAsyncioTestCase):
     """Scan picks a novel action, honours exhaustion, and applies the depth floor."""

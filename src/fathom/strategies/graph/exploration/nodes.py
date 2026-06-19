@@ -107,6 +107,22 @@ class ExplorationNodeProvider:
                 session_id=ctx.workflow_id, step_number=ctx.agent_state.step_count
             )
             screen_state = ctx.perception.build_state(capture=screen)
+
+            # Fail fast (and loud) when perception yields nothing usable rather
+            # than letting a blank screen wedge the routing loop. The structured
+            # log names exactly what came back so the failing capture call is
+            # diagnosable from a single run.
+            if not self.__is_usable_capture(capture=screen, screen_state=screen_state):
+                logger.error(
+                    "Exploration grounding produced no usable screen",
+                    extra={
+                        "image_bytes": len(screen.image) if screen and screen.image else 0,
+                        "has_hierarchy": bool(screen and screen.xml_content),
+                        "activity": screen.activity if screen else None,
+                    },
+                )
+                return self.__complete(state, reason=CompletionReason.PERCEPTION_FAILED)
+
             screen = screen.model_copy(update={"state": screen_state})
             is_new = ctx.agent_state.update_screen(screen=screen_state)
 
@@ -122,13 +138,20 @@ class ExplorationNodeProvider:
             result[EKey.CONTENT_EXHAUSTED] = False
             return cast("ExplorationGraphState", result)
 
-        except Exception as exception:
-            logger.error(f"Exploration grounding failed: {exception}")
-            result = self.__mutable(state)
-            result[CKey.CAPTURE] = None
-            result[CKey.IS_COMPLETE] = True
-            result[CKey.COMPLETION_REASON] = "Capture failed"
-            return cast("ExplorationGraphState", result)
+        except Exception:
+            logger.exception("Exploration grounding failed")
+            return self.__complete(state, reason=CompletionReason.PERCEPTION_FAILED)
+
+    @staticmethod
+    def __is_usable_capture(*, capture: Any, screen_state: Any) -> bool:
+        """
+        Whether perception returned a screen the scan can actually act on.
+
+        Guards against a blank or partial capture (empty screenshot, missing
+        computed state) silently wedging the DFS routing loop.
+        """
+
+        return bool(capture and capture.image and screen_state)
 
     async def bfs_route(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """

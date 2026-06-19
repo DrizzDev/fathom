@@ -165,6 +165,7 @@ class ADBRemoteDeviceAdapter(DevicePort):
 
         try:
             params = {"execution_id": self.__execution_id} if self.__execution_id else {}
+            logger.info("Requesting remote snapshot from provider")
             response = await self.__execute_request("POST", "snapshot", params=params)
 
             data = response.content
@@ -314,6 +315,7 @@ class ADBRemoteDeviceAdapter(DevicePort):
         )
 
         try:
+            logger.info("Requesting remote screen dimensions from provider")
             response = await self.__execute_request(
                 "POST", "action", json=request.model_dump(exclude_none=True)
             )
@@ -418,6 +420,7 @@ class ADBRemoteDeviceAdapter(DevicePort):
         )
 
         try:
+            logger.info("Requesting remote foreground package from provider")
             response = await self.__execute_request(
                 "POST", "action", json=request.model_dump(exclude_none=True)
             )
