@@ -6,7 +6,12 @@ import time
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import EXPLORATION_PROGRESS_EVENT, RECENT_ACTION_WINDOW, BFSPhase
+from fathom.constants.exploration import (
+    EXPLORATION_PROGRESS_EVENT,
+    MAX_ROUTES_WITHOUT_PROGRESS,
+    RECENT_ACTION_WINDOW,
+    BFSPhase,
+)
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
@@ -132,6 +137,15 @@ class ExplorationNodeProvider:
 
         ctx = self.__context
         dfs = self.__dfs
+
+        # No-progress watchdog: bfs_route is the routing hub every cycle passes
+        # through, while record() resets the counter on each completed step. If
+        # routing cycles this many times without a step, the phase machine is
+        # wedged (e.g. a screen with no usable capture); end cleanly rather than
+        # spin to the graph recursion limit.
+        dfs.stalled_routes += 1
+        if dfs.stalled_routes > MAX_ROUTES_WITHOUT_PROGRESS:
+            return self.__complete(state, reason=CompletionReason.STUCK)
 
         screen_state = get_screen_state(state)
         fingerprint = (
@@ -331,6 +345,9 @@ class ExplorationNodeProvider:
         if not step_result:
             return state
 
+        # A step actually completed: clear the no-progress watchdog counter.
+        dfs.stalled_routes = 0
+
         # Keep the walk inside the target package before recording the step.
         scope_reason = await self.__enforce_package_scope()
         if scope_reason is not None:
@@ -398,7 +415,7 @@ class ExplorationNodeProvider:
         Proceed to phase routing, or end when cancelled or capture failed.
         """
 
-        if self.__context.is_cancelled or get_capture(state) is None:
+        if self.__context.is_cancelled or is_complete(state) or get_capture(state) is None:
             return NodeName.END
         return NodeName.BFS_ROUTE
 
@@ -408,7 +425,7 @@ class ExplorationNodeProvider:
         """
 
         dfs = self.__dfs
-        if self.__context.is_cancelled:
+        if self.__context.is_cancelled or is_complete(state):
             return NodeName.END
 
         phase = get_bfs_phase(state, BFSPhase.SCAN.value)
@@ -427,7 +444,7 @@ class ExplorationNodeProvider:
         Execute the chosen action, or loop back to routing when exhausted.
         """
 
-        if self.__context.is_cancelled:
+        if self.__context.is_cancelled or is_complete(state):
             return NodeName.END
         if is_content_exhausted(state) or get_action(state) is None:
             return NodeName.BFS_ROUTE

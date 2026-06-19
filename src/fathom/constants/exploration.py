@@ -160,6 +160,14 @@ MAX_REPORTED_CYCLES: int = 20
 # so the stuck-loop heuristic must stay disabled for the whole run.
 DISABLED_LOOP_THRESHOLD: int = 1_000_000
 
+# Safety bound on consecutive DFS routing cycles that complete no exploration
+# step. A healthy run records a step (or backtracks) within a couple of cycles,
+# so crossing this means the phase machine is wedged -- e.g. a screen yields no
+# usable capture and scan keeps routing back without advancing -- and the run
+# ends with CompletionReason.STUCK instead of spinning to the graph recursion
+# limit. Generous multiple of the healthy maximum, far below any recursion cap.
+MAX_ROUTES_WITHOUT_PROGRESS: int = 50
+
 
 # Most recent executed actions surfaced back into the scan context so the model
 # can see whether its latest moves advanced exploration (new screen / no-op /

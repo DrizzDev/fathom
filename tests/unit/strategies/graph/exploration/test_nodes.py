@@ -5,9 +5,15 @@ from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import EXPLORATION_PROGRESS_EVENT, BFSPhase, FocusRelevance
+from fathom.constants.exploration import (
+    EXPLORATION_PROGRESS_EVENT,
+    MAX_ROUTES_WITHOUT_PROGRESS,
+    BFSPhase,
+    FocusRelevance,
+)
 from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
+from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.core.exceptions import DeviceError
 from fathom.schemas.actions import Action
@@ -323,6 +329,44 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(progress_call.args[0], EXPLORATION_PROGRESS_EVENT)
         self.assertEqual(progress_call.kwargs["step"], 1)
 
+    async def test_recorded_step_resets_the_no_progress_watchdog(self) -> None:
+        graph = _graph_mock(resolve_hash=Mock(side_effect=lambda value: value))
+        context = Mock(
+            is_cancelled=False,
+            max_steps=100,
+            workflow_id="wf",
+            package_name="com.app",
+            device=Mock(get_current_package=AsyncMock(return_value="com.app")),
+            exploration_graph=graph,
+            memory=Mock(store_experience=AsyncMock()),
+            history=Mock(enqueue_save_step=Mock()),
+            agent_state=Mock(record_step=Mock(), step_count=1),
+            telemetry=Mock(info=AsyncMock()),
+        )
+        context.perception = Mock(
+            perceive=AsyncMock(return_value=Mock()),
+            build_state=Mock(return_value=_screen_state("post")),
+        )
+        action = _action()
+        step = Step(action=action, screen_hash="pre", step_number=1)
+        state: Dict[str, Any] = {
+            EKey.ACTION: action,
+            CKey.SCREEN_STATE: _screen_state("pre"),
+            CKey.STEP_RESULT: StepResult(
+                step=step,
+                success=True,
+                duration=10,
+                screen_changed=True,
+                pre_hash="pre",
+                post_hash="0",
+            ),
+        }
+        dfs = DfsState(phase=BFSPhase.SCAN, stalled_routes=7)
+
+        await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).record(state)
+
+        self.assertEqual(dfs.stalled_routes, 0)
+
 
 class TestNavigateNode(unittest.IsolatedAsyncioTestCase):
     """Navigate synthesises BACK presses and completes when recovery is empty."""
@@ -401,6 +445,32 @@ class TestBfsRouteNode(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dfs.fully_scanned, {"other"})
         self.assertEqual(dfs.phase, BFSPhase.SCAN)
 
+    async def test_ends_stuck_when_routing_makes_no_progress(self) -> None:
+        # The phase machine wedged: routing cycled the bound times without a step.
+        context = Mock(exploration_graph=_graph_mock())
+        dfs = DfsState(root_hash="root", stalled_routes=MAX_ROUTES_WITHOUT_PROGRESS)
+        state = {CKey.SCREEN_STATE: _screen_state("root")}
+
+        result = await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).bfs_route(
+            state
+        )
+
+        self.assertTrue(result[CKey.IS_COMPLETE])
+        self.assertEqual(result[CKey.COMPLETION_REASON], CompletionReason.STUCK)
+
+    async def test_counts_routes_but_continues_below_the_stall_bound(self) -> None:
+        context = Mock(exploration_graph=_graph_mock())
+        dfs = DfsState(root_hash="root", stalled_routes=2)
+        state = {CKey.SCREEN_STATE: _screen_state("root")}
+
+        result = await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).bfs_route(
+            state
+        )
+
+        self.assertEqual(dfs.stalled_routes, 3)
+        self.assertFalse(result.get(CKey.IS_COMPLETE, False))
+        self.assertEqual(result[EKey.BFS_PHASE], BFSPhase.SCAN.value)
+
 
 class TestRouters(unittest.TestCase):
     """The four conditional-edge routers steer by phase and completion."""
@@ -432,6 +502,21 @@ class TestRouters(unittest.TestCase):
         provider = self.__provider(DfsState(phase=BFSPhase.ADVANCE))
         self.assertEqual(
             provider.after_bfs_route({EKey.BFS_PHASE: BFSPhase.ADVANCE.value}), NodeName.END
+        )
+
+    def test_after_bfs_route_ends_when_complete(self) -> None:
+        # The no-progress watchdog completes from bfs_route; the router must end.
+        provider = self.__provider(DfsState())
+        self.assertEqual(
+            provider.after_bfs_route({EKey.BFS_PHASE: BFSPhase.SCAN.value, CKey.IS_COMPLETE: True}),
+            NodeName.END,
+        )
+
+    def test_after_scan_ends_when_complete(self) -> None:
+        provider = self.__provider(DfsState())
+        self.assertEqual(
+            provider.after_scan({EKey.ACTION: _action(), CKey.IS_COMPLETE: True}),
+            NodeName.END,
         )
 
     def test_after_scan(self) -> None:
