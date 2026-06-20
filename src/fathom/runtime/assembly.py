@@ -1,22 +1,30 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from fathom.constants.llm import InferencePriorityMode
 from fathom.constants.run import TargetKind
-from fathom.core.exceptions import ConfigurationError
+from fathom.constants.storage import InteractionBackend
+from fathom.core.exceptions import ConfigurationError, StorageConfigurationError
 from fathom.schemas.base.common import ThresholdConfiguration
 from fathom.schemas.configuration import (
     AdaptivePriorityConfiguration,
     DeviceConfiguration,
+    InteractionStorageConfiguration,
     LLMConfiguration,
+    NoopInteractionConfiguration,
+    PostgresInteractionConfiguration,
     PriorityInferenceConfiguration,
     QualifierConfiguration,
+    SQLiteInteractionConfiguration,
     StorageConfiguration,
     TelemetryConfiguration,
 )
 from fathom.schemas.run import RunRequest, TargetConfiguration
 from fathom.settings.env import FathomSettings
+
+if TYPE_CHECKING:
+    from fathom.base.paths import SharedPathManager
 
 
 class RunAssemblyBuilder:
@@ -149,6 +157,130 @@ class RunAssemblyBuilder:
         default_values.update(request_values)
 
         return StorageConfiguration.model_validate(default_values)
+
+    def build_interaction_storage_configuration(
+        self,
+        *,
+        request: RunRequest,
+        path_manager: Optional[SharedPathManager] = None,
+    ) -> InteractionStorageConfiguration:
+        """
+        Resolve interaction storage configuration for the run.
+
+        Host-supplied values on the wire win. When absent (CLI runs),
+        fall back to FathomSettings; the SQLite default uses the path manager's shared interaction db location.
+        """
+
+        if request.resources.interaction_storage is not None:
+            return request.resources.interaction_storage
+
+        backend = self.__resolve_backend()
+
+        if backend == InteractionBackend.SQLITE:
+            return self.__cli_sqlite_configuration(path_manager=path_manager)
+
+        if backend == InteractionBackend.POSTGRES:
+            return self.__cli_postgres_configuration()
+
+        return InteractionStorageConfiguration(
+            backend=InteractionBackend.NOOP,
+            noop=NoopInteractionConfiguration(),
+        )
+
+    def __resolve_backend(self) -> InteractionBackend:
+        """
+        Resolve the CLI-default interaction backend from settings.
+        """
+
+        backend = self.__settings.resolved_interaction_backend
+
+        try:
+            return InteractionBackend(backend)
+        except ValueError as exception:
+            raise StorageConfigurationError(
+                backend=backend,
+                message=(
+                    f"DRIZZ_FATHOM_INTERACTION_BACKEND must be one of "
+                    f"{[backend.value for backend in InteractionBackend]}; got '{backend}'"
+                ),
+            ) from exception
+
+    def __cli_sqlite_configuration(
+        self, *, path_manager: Optional[SharedPathManager]
+    ) -> InteractionStorageConfiguration:
+        """
+        Build a CLI-default SQLite interaction storage configuration.
+        """
+
+        configured_path = self.__settings.interaction_sqlite_path
+
+        if configured_path is None:
+            if path_manager is None:
+                raise StorageConfigurationError(
+                    backend=InteractionBackend.SQLITE.value,
+                    message=(
+                        "SQLite interaction path requires either "
+                        "FATHOM_INTERACTION_SQLITE_PATH or a SharedPathManager"
+                    ),
+                )
+            configured_path = path_manager.get_interaction_db_path()
+        return InteractionStorageConfiguration(
+            backend=InteractionBackend.SQLITE,
+            sqlite=SQLiteInteractionConfiguration(path=configured_path),
+        )
+
+    def __cli_postgres_configuration(self) -> InteractionStorageConfiguration:
+        """
+        Build a CLI-default Postgres interaction storage configuration.
+
+        Picks `DRIZZ_FATHOM_POSTGRES_DSN` when set; otherwise requires the discrete host/user/password triple.
+        The pool, schema and tunable fields are mode-independent and applied in both branches.
+        """
+
+        dsn = self.__settings.interaction_postgres_dsn
+
+        if dsn:
+            return InteractionStorageConfiguration(
+                backend=InteractionBackend.POSTGRES,
+                postgres=PostgresInteractionConfiguration(
+                    dsn=dsn,
+                    ssl=self.__settings.interaction_postgres_ssl,
+                    schema_name=self.__settings.interaction_postgres_schema,
+                    pool_min_size=self.__settings.interaction_postgres_pool_min_size,
+                    pool_max_size=self.__settings.interaction_postgres_pool_max_size,
+                    statement_timeout=self.__settings.interaction_postgres_statement_timeout,
+                ),
+            )
+
+        host = self.__settings.interaction_postgres_host
+        user = self.__settings.interaction_postgres_user
+        password = self.__settings.interaction_postgres_password
+
+        if not host or not user or not password:
+            raise StorageConfigurationError(
+                backend=InteractionBackend.POSTGRES.value,
+                message=(
+                    "DRIZZ_FATHOM_POSTGRES_DSN, or all of "
+                    "DRIZZ_FATHOM_POSTGRES_HOST, "
+                    "DRIZZ_FATHOM_POSTGRES_USER, and "
+                    "DRIZZ_FATHOM_POSTGRES_PASSWORD, are required when the interaction backend resolves to postgres"
+                ),
+            )
+        return InteractionStorageConfiguration(
+            backend=InteractionBackend.POSTGRES,
+            postgres=PostgresInteractionConfiguration(
+                host=host,
+                user=user,
+                password=password,
+                ssl=self.__settings.interaction_postgres_ssl,
+                port=self.__settings.interaction_postgres_port,
+                database=self.__settings.interaction_postgres_database,
+                schema_name=self.__settings.interaction_postgres_schema,
+                pool_min_size=self.__settings.interaction_postgres_pool_min_size,
+                pool_max_size=self.__settings.interaction_postgres_pool_max_size,
+                statement_timeout=self.__settings.interaction_postgres_statement_timeout,
+            ),
+        )
 
     def build_telemetry_configuration(
         self,

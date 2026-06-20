@@ -29,6 +29,7 @@ from fathom.settings.env import FathomSettings
 if TYPE_CHECKING:
     from fathom.interfaces.device import DevicePort
     from fathom.interfaces.factory import LLMFactoryPort
+    from fathom.interfaces.interaction import InteractionPort
     from fathom.interfaces.knowledge import KnowledgePort
     from fathom.interfaces.llm import LLMPort
     from fathom.interfaces.memory import MemoryPort
@@ -62,6 +63,7 @@ class FathomBuilder:
 
         self.__llm: Optional[LLMPort] = None
         self.__memory: Optional[MemoryPort] = None
+        self.__interaction: Optional[InteractionPort] = None
         self.__knowledge: Optional[KnowledgePort] = None
 
         self.__signal: Optional[SignalPort] = None
@@ -170,6 +172,20 @@ class FathomBuilder:
         """
 
         self.__memory = port
+        return self
+
+    def with_interaction(self, port: InteractionPort) -> FathomBuilder:
+        """
+        Configure interaction port.
+
+        Args:
+            port: Interaction port implementation
+
+        Returns:
+            Builder instance for chaining
+        """
+
+        self.__interaction = port
         return self
 
     def with_knowledge(self, port: KnowledgePort) -> FathomBuilder:
@@ -403,6 +419,13 @@ class FathomBuilder:
             )
             self.__memory = SQLiteMemory(ledger=ledger, provider=provider)
 
+        if not self.__interaction:
+            raise ConfigurationError(
+                "Interaction port is required. Call .with_interaction() before .build(). "
+                "The Temporal activity and CLI executor wire it via "
+                "InteractionFactory; tests should construct an adapter explicitly."
+            )
+
         if not self.__knowledge:
             self.__knowledge = SQLiteKnowledge(path_manager=self.__path_manager)
 
@@ -430,6 +453,7 @@ class FathomBuilder:
             device=self.__device,
             config=self.__config,
             memory=self.__memory,
+            interaction=self.__interaction,
             signal=self.__signal,
             storage=self.__storage,
             knowledge=self.__knowledge,

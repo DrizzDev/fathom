@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fathom.constants import ContextScope, ExecutionMode
 from fathom.constants.run import SignalAdapterType, TargetKind
@@ -12,6 +12,7 @@ from fathom.schemas.configuration import (
     ExecutionConfiguration,
     ExplorationConfiguration,
     IntentConfiguration,
+    InteractionStorageConfiguration,
     LLMConfiguration,
     QualifierConfiguration,
     StorageConfiguration,
@@ -80,7 +81,7 @@ class RuntimeConfiguration(BaseModel):
     """
 
     session_id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex[:8],
+        default_factory=lambda: uuid.uuid4().hex,
         description="Unique session identifier",
     )
     execution_id: Optional[str] = Field(
@@ -94,15 +95,47 @@ class RuntimeConfiguration(BaseModel):
     )
 
 
+class Principal(BaseModel):
+    """
+    Required identity context for a run, supplied by the host.
+
+    Every Fathom runtime entrypoint requires a fully resolved Principal. There
+    are no silent fallbacks: missing or empty fields fail at schema validation
+    time with a clear error that hosts can translate to client-friendly 4xx
+    responses.
+
+    Fields:
+      tenant       — tenant id, host-resolved from auth context.
+      operator     — caller/user actor id, host-resolved from auth context.
+      agent        — agent actor id, host-supplied (canonical: "agent:fathom").
+      workspace    — optional workspace boundary inside a tenant.
+      conversation — conversation thread id; the host MUST create the thread
+                     beforehand (or generate the id locally) and pass it here.
+                     The runner never invents one.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tenant: str = Field(min_length=1, description="Tenant identifier")
+    operator: str = Field(min_length=1, description="Caller/user actor identifier")
+    agent: str = Field(min_length=1, description="Agent actor identifier")
+    workspace: Optional[str] = Field(
+        default=None,
+        description="Optional workspace boundary",
+    )
+    conversation: str = Field(
+        min_length=1,
+        description="Conversation thread identifier",
+    )
+
+
 class MemoryConfiguration(BaseModel):
     """
     Memory and context configuration for a run.
     """
 
-    conversation_id: Optional[str] = Field(
-        default=None,
-        description="Conversation identifier for conversation-scoped memory",
-    )
+    model_config = ConfigDict(extra="forbid")
+
     context_scope: ContextScope = Field(
         default=ContextScope.EXECUTION,
         description="Scope used while hydrating runtime memory",
@@ -158,6 +191,14 @@ class ResourceConfiguration(BaseModel):
     storage_configuration: StorageConfiguration = Field(
         default_factory=StorageConfiguration,
         description="Artifact storage configuration",
+    )
+    interaction_storage: Optional[InteractionStorageConfiguration] = Field(
+        default=None,
+        description=(
+            "Optional host-supplied interaction storage configuration. "
+            "When absent, the runtime resolves a CLI-default config from "
+            "FathomSettings via RunAssemblyBuilder."
+        ),
     )
 
 
@@ -218,6 +259,9 @@ class RunRequest(BaseModel):
     Canonical host-agnostic run contract for Fathom.
     """
 
+    principal: Principal = Field(
+        description="Required identity block; tenant/operator/agent/conversation",
+    )
     objective: IntentObjectiveConfiguration | ExplorationObjectiveConfiguration
     runtime: RuntimeConfiguration = Field(default_factory=RuntimeConfiguration)
 

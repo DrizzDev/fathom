@@ -190,7 +190,7 @@ class VisionService:
         await self.__telemetry.debug(
             "Compiled execution context",
             type=FathomEvent.CONTEXT_CAPTURED,
-            session_id=self.__session_id,
+            metadata={"session_id": self.__session_id},
             trace_count=len(full_context.get("trace", [])),
             milestone_count=len(full_context.get("milestones", [])),
             guidance_count=len(context_manager.get_user_guidance()),
@@ -304,9 +304,9 @@ class VisionService:
 
         await self.__telemetry.debug(
             "Built vision prompt",
-            type=FathomEvent.PROMPT_BUILT,
-            session_id=self.__session_id,
             instruction=instruction,
+            type=FathomEvent.PROMPT_BUILT,
+            metadata={"session_id": self.__session_id},
             payload=self.__sanitize_recursive(data=payload),
         )
 

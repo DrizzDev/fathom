@@ -17,6 +17,7 @@ from fathom.constants.state import CommonStateKey, CompletionReason, IntentState
 from fathom.core.config import RuntimeConfigLoader
 from fathom.core.exceptions import FinalizationTimeoutError, WorkflowCancelledError
 from fathom.core.services.decomposer import IntentDecomposer
+from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.interfaces.checkpoint import CheckpointStore, LangGraphCheckpointer
 from fathom.interfaces.device import DevicePort
@@ -81,9 +82,15 @@ class IntentStrategy:
         max_steps: int,
         workflow_id: str,
         package_name: str,
+        tenant: str,
+        thread: str,
+        requester: str,
+        responder: str,
         realignment: Optional[RealignmentPolicy] = None,
         runtime_configuration: Optional[RuntimeConfigLoader] = None,
         checkpoint_store: Optional[CheckpointStore] = None,
+        workspace: Optional[str] = None,
+        recorder: Optional[ConversationRecorder] = None,
     ) -> None:
         self.__llm = llm
         self.__intent = intent
@@ -130,6 +137,12 @@ class IntentStrategy:
             phase=self.__phase,
             telemetry=telemetry,
             max_steps=max_steps,
+            tenant=tenant,
+            thread=thread,
+            recorder=recorder,
+            requester=requester,
+            responder=responder,
+            workspace=workspace,
             summarizer=summarizer,
             perception=perception,
             workflow_id=workflow_id,

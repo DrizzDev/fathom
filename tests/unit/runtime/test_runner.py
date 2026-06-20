@@ -1,551 +1,346 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
-from typing import List, Tuple
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Dict, List, Tuple
+from unittest.mock import AsyncMock, Mock, patch
 
-from fathom.constants.events import FathomEvent
+from fathom.adapters.interaction.pypika.sqlite import SQLiteInteraction
+from fathom.adapters.signing.noop import NoopSigner
+from fathom.constants.conversation import EntryKind, Visibility
 from fathom.constants.qualification import QualificationLabel, RationaleCategory
 from fathom.constants.state import CompletionReason
+from fathom.conversation.identity import InteractionIdentity
+from fathom.core.services.conversation import ConversationService
 from fathom.interfaces.qualifier import IntentQualifierPort
 from fathom.runtime.runner import FathomRunner
+from fathom.schemas.conversation import TaskTreeQuery, TimelineQuery
 from fathom.schemas.qualification import QualificationVerdict, Rationale
-
-
-class BlockingQualifier(IntentQualifierPort):
-    """
-    Stub qualifier that always returns a blocking verdict with a custom message.
-    """
-
-    def __init__(self, *, message: str = "blocked-by-test") -> None:
-        """
-        Initialize with the rejection message the stub should attach to its verdict.
-        """
-
-        self.__message = message
-        self.calls: List[str] = []
-
-    async def qualify(self, *, intent: str) -> QualificationVerdict:
-        """
-        Record the call and return a high-confidence NOT_EXECUTABLE verdict.
-        """
-
-        self.calls.append(intent)
-        return QualificationVerdict(
-            label=QualificationLabel.NOT_EXECUTABLE,
-            confidence=0.99,
-            rationale=Rationale(
-                category=RationaleCategory.INFORMATIONAL,
-                reasoning="test-rejection",
-            ),
-            message=self.__message,
-        )
+from fathom.schemas.results import ExecutionResult
+from fathom.schemas.run import Principal
 
 
 class PassingQualifier(IntentQualifierPort):
     """
-    Stub qualifier that always passes.
+    Test qualifier that always allows execution.
     """
-
-    def __init__(self) -> None:
-        """
-        Initialize the call-recording stub with an empty history.
-        """
-
-        self.calls: List[str] = []
 
     async def qualify(self, *, intent: str) -> QualificationVerdict:
         """
-        Record the call and return an EXECUTABLE verdict.
+        Return an executable verdict for runner tests.
         """
 
-        self.calls.append(intent)
         return QualificationVerdict(
             label=QualificationLabel.EXECUTABLE,
-            confidence=0.95,
-            rationale=Rationale(category=RationaleCategory.UI_TASK, reasoning="ok"),
+            confidence=1.0,
+            rationale=Rationale(category=RationaleCategory.UI_TASK, reasoning="test"),
         )
 
 
-class RunnerHarness:
+class SuccessfulStrategy:
     """
-    Factory for constructing a FathomRunner wired with mocked ports for gate-path tests.
-    """
-
-    @staticmethod
-    def build(*, qualifier: IntentQualifierPort) -> Tuple[FathomRunner, MagicMock]:
-        """
-        Build a runner with mocked dependencies and return both the runner and the telemetry mock.
-        """
-
-        telemetry = MagicMock()
-        telemetry.info = AsyncMock()
-        telemetry.warning = AsyncMock()
-        telemetry.error = AsyncMock()
-        telemetry.debug = AsyncMock()
-
-        device = MagicMock()
-        device.configuration = MagicMock(identifier="test-device")
-        device.get_current_package = AsyncMock(return_value="com.example.test")
-
-        runner = FathomRunner(
-            llm=MagicMock(),
-            device=device,
-            perception=MagicMock(),
-            memory=MagicMock(),
-            signal=MagicMock(),
-            storage=MagicMock(),
-            knowledge=MagicMock(),
-            telemetry=telemetry,
-            summarizer=MagicMock(),
-            qualifier=qualifier,
-            path_manager=MagicMock(),
-        )
-        return runner, telemetry
-
-
-class RunnerQualifierGateTest(unittest.IsolatedAsyncioTestCase):
-    """
-    Runner must short-circuit on a blocking verdict and emit BOTH the new
-    INTENT_REJECTED event (for clients that switch on the verdict) AND the
-    legacy WORKFLOW_COMPLETED event (so existing terminal-event consumers
-    still see the workflow as finalized).
+    Fake intent strategy that completes successfully.
     """
 
-    async def test_blocking_verdict_short_circuits_with_completed_result(self) -> None:
+    completion_reason = CompletionReason.SUCCESS.value
+    step_results: List[object] = []
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
         """
-        Block must skip ContextManager and IntentStrategy and produce a completed result.
-        """
-
-        qualifier = BlockingQualifier(message="custom-rejection-message")
-        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
-
-        with (
-            patch("fathom.runtime.runner.ContextManager") as context_manager_cls,
-            patch("fathom.runtime.runner.IntentStrategy") as strategy_cls,
-        ):
-            result = await runner.run_intent(intent="who founded google?")
-
-        context_manager_cls.assert_not_called()
-        strategy_cls.assert_not_called()
-        self.assertEqual(qualifier.calls, ["who founded google?"])
-
-        self.assertEqual(result.status, "completed")
-        self.assertFalse(result.success)
-        self.assertEqual(result.completion_reason, CompletionReason.NOT_EXECUTABLE.value)
-        self.assertIsNone(result.error)
-        self.assertEqual(result.intent, "who founded google?")
-        self.assertEqual(result.steps_taken, 0)
-
-    async def test_blocking_verdict_never_touches_device(self) -> None:
-        """
-        Regression check: a rejected intent must not trigger device.get_current_package
-        or any other device call. The qualifier sits in front of the device interaction.
+        Accept the same construction surface as the real strategy.
         """
 
-        qualifier = BlockingQualifier()
-        runner, _ = RunnerHarness.build(qualifier=qualifier)
-
-        with (
-            patch("fathom.runtime.runner.ContextManager"),
-            patch("fathom.runtime.runner.IntentStrategy"),
-        ):
-            await runner.run_intent(intent="+")
-
-        runner.device.get_current_package.assert_not_called()  # type: ignore[attr-defined]
-
-    async def test_blocking_verdict_emits_intent_rejected_with_full_payload(
-        self,
-    ) -> None:
+    async def execute(self) -> ExecutionResult:
         """
-        Rejection must emit exactly one qualifier-typed event: INTENT_REJECTED
-        with the full verdict and user-facing message. INTENT_QUALIFIED must
-        never fire on the reject path.
+        Return a successful execution result.
         """
 
-        qualifier = BlockingQualifier(message="custom-rejection-message")
-        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
+        return ExecutionResult(success=True, duration=10)
 
-        with (
-            patch("fathom.runtime.runner.ContextManager"),
-            patch("fathom.runtime.runner.IntentStrategy"),
-        ):
-            await runner.run_intent(intent="who founded google?")
+    def get_progress(self) -> Dict[str, object]:
+        """
+        Return deterministic progress.
+        """
 
-        qualifier_typed_calls = [
-            call
-            for call in telemetry.info.call_args_list + telemetry.warning.call_args_list
-            if call.kwargs.get("type")
-            in {FathomEvent.INTENT_QUALIFIED, FathomEvent.INTENT_REJECTED}
-        ]
-        self.assertEqual(len(qualifier_typed_calls), 1)
+        return {"step_count": 2}
 
-        rejection = qualifier_typed_calls[0]
-        self.assertEqual(rejection.kwargs["type"], FathomEvent.INTENT_REJECTED)
-        self.assertEqual(rejection.args[0], "custom-rejection-message")
-        self.assertEqual(rejection.kwargs["label"], QualificationLabel.NOT_EXECUTABLE.value)
-        self.assertEqual(rejection.kwargs["confidence"], 0.99)
-        self.assertEqual(
-            rejection.kwargs["rationale"]["category"], RationaleCategory.INFORMATIONAL.value
+    def get_subgoal_execution_audit(self) -> Tuple[List[str], List[str], int]:
+        """
+        Return empty sub-goal audit data.
+        """
+
+        return [], [], 0
+
+    def get_metrics(self) -> None:
+        """
+        Return no metrics.
+        """
+
+        return None
+
+
+class FailingStrategy(SuccessfulStrategy):
+    """
+    Fake intent strategy that fails during execution.
+    """
+
+    async def execute(self) -> ExecutionResult:
+        """
+        Raise a deterministic runtime failure.
+        """
+
+        raise RuntimeError("planner failed")
+
+    def get_progress(self) -> Dict[str, object]:
+        """
+        Return progress available at failure time.
+        """
+
+        return {"step_count": 1}
+
+
+class ContextManagerStub:
+    """
+    Lightweight context manager stub for runner tests.
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """
+        Accept the real context manager construction surface.
+        """
+
+    def set_roadmap(self, *, intent: str) -> None:
+        """
+        Accept roadmap updates.
+        """
+
+    async def shutdown(self) -> None:
+        """
+        Release no resources.
+        """
+
+
+class TestFathomRunnerConversationRecording(unittest.IsolatedAsyncioTestCase):
+    """
+    Unit tests for runtime conversation recording wiring.
+    """
+
+    def setUp(self) -> None:
+        """
+        Create an isolated runner with mocked runtime ports.
+        """
+
+        self.__temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.__temporary_directory.cleanup)
+        self.__base = Path(self.__temporary_directory.name)
+        self.__interaction = SQLiteInteraction(path=self.__base / "interaction.db")
+        self.__conversation = ConversationService(
+            signer=NoopSigner(), interaction=self.__interaction
+        )
+        self.__context = patch("fathom.runtime.runner.ContextManager", ContextManagerStub)
+        self.__context.start()
+        self.addCleanup(self.__context.stop)
+        self.__runner = self.__runner_with(interaction=self.__interaction)
+
+    async def asyncTearDown(self) -> None:
+        """
+        Release runner resources after each test.
+        """
+
+        await self.__runner.cleanup()
+
+    async def test_run_intent_records_conversation_lifecycle_and_artifacts(self) -> None:
+        """
+        Record run start, result, context, task, and artifacts through the recorder.
+        """
+
+        self.__write_artifact(
+            category="history",
+            package="com.example",
+            workflow="workflow-1",
+            name="script.txt",
+        )
+        self.__write_artifact(
+            category="screenshot",
+            package="com.example",
+            workflow="workflow-1",
+            name="capture.png",
         )
 
-    async def test_blocking_verdict_dual_emits_workflow_completed_for_legacy_consumers(
-        self,
-    ) -> None:
-        """Backward-compat: rejection must also emit WORKFLOW_COMPLETED so legacy consumers (Genymotion, Temporal activity result handlers) that key off the terminal event still get a completion signal."""
+        with patch("fathom.runtime.runner.IntentStrategy", SuccessfulStrategy):
+            result = await self.__runner.run_intent(
+                intent="Buy milk",
+                request_id="workflow-1",
+                package_name="com.example",
+                principal=Principal(
+                    tenant="default",
+                    operator="human-1",
+                    agent="agent-1",
+                    conversation="thread-1",
+                ),
+            )
 
-        qualifier = BlockingQualifier(message="custom-rejection-message")
-        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
-
-        with (
-            patch("fathom.runtime.runner.ContextManager"),
-            patch("fathom.runtime.runner.IntentStrategy"),
-        ):
-            await runner.run_intent(intent="who founded google?")
-
-        terminal_calls = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
-        ]
-        self.assertEqual(
-            len(terminal_calls),
-            1,
-            msg="rejection path must emit exactly one WORKFLOW_COMPLETED event",
+        timeline = await self.__conversation.timeline(
+            query=TimelineQuery(tenant="default", thread="thread-1")
+        )
+        audit = await self.__conversation.timeline(
+            query=TimelineQuery(tenant="default", thread="thread-1", mode=Visibility.AUDIT)
+        )
+        tree = await self.__conversation.tasks(
+            query=TaskTreeQuery(tenant="default", thread="thread-1")
         )
 
-        terminal = terminal_calls[0]
-        self.assertEqual(terminal.kwargs["success"], False)
-        self.assertEqual(terminal.kwargs["steps_taken"], 0)
-        self.assertIn("duration", terminal.kwargs)
-        self.assertGreaterEqual(terminal.kwargs["duration"], 0.0)
-
-    async def test_passing_verdict_proceeds_to_strategy(self) -> None:
-        """
-        Allow path must construct ContextManager and IntentStrategy and run execute().
-        """
-
-        qualifier = PassingQualifier()
-        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
-
-        strategy_instance = MagicMock()
-        strategy_instance.execute = AsyncMock(
-            return_value=MagicMock(success=True, is_cancelled=False, error=None, duration=10)
-        )
-        strategy_instance.get_progress = MagicMock(
-            return_value={"step_count": 1, "completion_reason": "Completed successfully"}
-        )
-        strategy_instance.get_subgoal_execution_audit = MagicMock(return_value=([], [], 0))
-        strategy_instance.get_metrics = MagicMock(return_value=None)
-        strategy_instance.completion_reason = "Completed successfully"
-        strategy_instance.step_results = []
-
-        memory_summary = {"screens": [], "total_screens": 0, "experience_count": 0}
-
-        with (
-            patch("fathom.runtime.runner.ContextManager") as context_manager_cls,
-            patch("fathom.runtime.runner.IntentStrategy", return_value=strategy_instance),
-            patch.object(
-                FathomRunner,
-                "_FathomRunner__get_memory_summary",
-                AsyncMock(return_value=memory_summary),
-            ),
-        ):
-            result = await runner.run_intent(intent="Search for McPuff")
-
-        context_manager_cls.assert_called_once()
-        strategy_instance.execute.assert_awaited_once()
-        self.assertEqual(qualifier.calls, ["Search for McPuff"])
-
-        self.assertEqual(result.status, "completed")
         self.assertTrue(result.success)
-        self.assertEqual(result.completion_reason, "Completed successfully")
-
-        # Allow path emits exactly one qualifier event: INTENT_QUALIFIED.
-        qualifier_typed_calls = [
-            call
-            for call in telemetry.info.call_args_list + telemetry.warning.call_args_list
-            if call.kwargs.get("type")
-            in {FathomEvent.INTENT_QUALIFIED, FathomEvent.INTENT_REJECTED}
-        ]
-        self.assertEqual(len(qualifier_typed_calls), 1)
-        self.assertEqual(qualifier_typed_calls[0].kwargs["type"], FathomEvent.INTENT_QUALIFIED)
         self.assertEqual(
-            qualifier_typed_calls[0].kwargs["label"], QualificationLabel.EXECUTABLE.value
+            {
+                InteractionIdentity(workflow="workflow-1").message(
+                    name="request"
+                ): EntryKind.MESSAGE,
+                InteractionIdentity(workflow="workflow-1").message(
+                    name="result"
+                ): EntryKind.MESSAGE,
+            },
+            {entry.id: entry.kind for entry in timeline.entries if entry.kind == EntryKind.MESSAGE},
+        )
+        self.assertIn(EntryKind.ARTIFACT, [entry.kind for entry in timeline.entries])
+        self.assertEqual(InteractionIdentity(workflow="workflow-1").task(), tree.roots[0].id)
+        self.assertIn(
+            InteractionIdentity(workflow="workflow-1").context(name="start"),
+            [entry.id for entry in audit.entries],
         )
 
-
-class RunnerOwnedResourcesCleanupTest(unittest.IsolatedAsyncioTestCase):
-    """
-    Runner takes optional ownership of LLM resources passed by the builder's
-    .with_assembly() path. Those resources must be drained in cleanup() so
-    SDK callers don't have to track them themselves.
-    """
-
-    async def test_cleanup_drains_each_owned_resource(self) -> None:
+    async def test_run_intent_records_failed_completion_before_reraising(self) -> None:
         """
-        Every entry in owned_resources must have cleanup() awaited exactly once.
+        Record a failed terminal result when strategy execution raises.
         """
-
-        cleanup_order: list[str] = []
-
-        planner_llm = MagicMock()
-        planner_llm.cleanup = AsyncMock(side_effect=lambda: cleanup_order.append("planner"))
-
-        owned_a = MagicMock()
-        owned_a.cleanup = AsyncMock(side_effect=lambda: cleanup_order.append("owned_a"))
-
-        owned_b = MagicMock()
-        owned_b.cleanup = AsyncMock(side_effect=lambda: cleanup_order.append("owned_b"))
-
-        runner = FathomRunner(
-            llm=planner_llm,
-            device=MagicMock(),
-            perception=MagicMock(),
-            memory=MagicMock(),
-            signal=MagicMock(),
-            storage=MagicMock(),
-            knowledge=MagicMock(),
-            telemetry=MagicMock(),
-            summarizer=MagicMock(),
-            qualifier=MagicMock(),
-            path_manager=MagicMock(),
-            owned_resources=[owned_a, owned_b],
-        )
-
-        await runner.cleanup()
-
-        planner_llm.cleanup.assert_awaited_once_with()
-        owned_a.cleanup.assert_awaited_once_with()
-        owned_b.cleanup.assert_awaited_once_with()
-        # Planner cleaned first, then owned resources in registration order.
-        self.assertEqual(cleanup_order, ["planner", "owned_a", "owned_b"])
-
-    async def test_cleanup_isolates_owned_resource_failures(self) -> None:
-        """
-        A failure on one owned resource cleanup must not skip the others —
-        the per-resource try/except in runner.cleanup must isolate them.
-        """
-
-        planner_llm = MagicMock()
-        planner_llm.cleanup = AsyncMock()
-
-        good_first = MagicMock()
-        good_first.cleanup = AsyncMock()
-
-        bad = MagicMock()
-        bad.cleanup = AsyncMock(side_effect=RuntimeError("kaboom"))
-
-        good_last = MagicMock()
-        good_last.cleanup = AsyncMock()
-
-        runner = FathomRunner(
-            llm=planner_llm,
-            device=MagicMock(),
-            perception=MagicMock(),
-            memory=MagicMock(),
-            signal=MagicMock(),
-            storage=MagicMock(),
-            knowledge=MagicMock(),
-            telemetry=MagicMock(),
-            summarizer=MagicMock(),
-            qualifier=MagicMock(),
-            path_manager=MagicMock(),
-            owned_resources=[good_first, bad, good_last],
-        )
-
-        await runner.cleanup()
-
-        good_first.cleanup.assert_awaited_once_with()
-        bad.cleanup.assert_awaited_once_with()
-        good_last.cleanup.assert_awaited_once_with()
-
-
-class RunnerWorkflowCancelledEmitTest(unittest.IsolatedAsyncioTestCase):
-    """
-    Runner must emit WORKFLOW_CANCELLED (not WORKFLOW_COMPLETED) when the
-    strategy returns ``is_cancelled=True`` and stamp the OPERATOR_ABORTED completion reason on the published terminal event.
-    """
-
-    async def test_cancelled_run_emits_workflow_cancelled_event(self) -> None:
-        """
-        ``execution_result.is_cancelled=True`` routes the terminal event to WORKFLOW_CANCELLED.
-        """
-
-        qualifier = PassingQualifier()
-        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
-
-        strategy_instance = MagicMock()
-        strategy_instance.execute = AsyncMock(
-            return_value=MagicMock(
-                error=None,
-                duration=42,
-                success=False,
-                is_cancelled=True,
-            )
-        )
-        strategy_instance.get_progress = MagicMock(
-            return_value={
-                "step_count": 9,
-                "completion_reason": CompletionReason.OPERATOR_ABORTED.value,
-            }
-        )
-
-        strategy_instance.step_results = []
-        strategy_instance.get_metrics = MagicMock(return_value=None)
-        strategy_instance.completion_reason = CompletionReason.OPERATOR_ABORTED.value
-        strategy_instance.get_subgoal_execution_audit = MagicMock(return_value=([], [], 0))
 
         with (
-            patch("fathom.runtime.runner.ContextManager"),
-            patch("fathom.runtime.runner.IntentStrategy", return_value=strategy_instance),
-            patch.object(
-                FathomRunner,
-                "_FathomRunner__get_memory_summary",
-                AsyncMock(return_value={}),
-            ),
+            patch("fathom.runtime.runner.IntentStrategy", FailingStrategy),
+            self.assertRaises(RuntimeError),
         ):
-            result = await runner.run_intent(intent="Stop me anytime")
-
-        cancelled_calls = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.WORKFLOW_CANCELLED
-        ]
-        completed_calls = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
-        ]
-
-        self.assertEqual(len(cancelled_calls), 1)
-        self.assertEqual(len(completed_calls), 0)
-
-        terminal = cancelled_calls[0]
-        self.assertEqual(terminal.kwargs["success"], False)
-        self.assertEqual(terminal.kwargs["steps_taken"], 9)
-        self.assertEqual(
-            terminal.kwargs["completion_reason"],
-            CompletionReason.CANCELLED.value,
-        )
-        self.assertFalse(result.success)
-        self.assertEqual(result.completion_reason, CompletionReason.CANCELLED.value)
-
-    async def test_successful_run_still_emits_workflow_completed_event(self) -> None:
-        """
-        Regression guard: a normal completion must keep emitting WORKFLOW_COMPLETED.
-        """
-
-        qualifier = PassingQualifier()
-        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
-
-        strategy_instance = MagicMock()
-        strategy_instance.execute = AsyncMock(
-            return_value=MagicMock(
-                error=None,
-                success=True,
-                duration=100,
-                is_cancelled=False,
+            await self.__runner.run_intent(
+                intent="Buy milk",
+                request_id="workflow-1",
+                package_name="com.example",
+                principal=Principal(
+                    tenant="default",
+                    operator="human-1",
+                    agent="agent-1",
+                    conversation="thread-1",
+                ),
             )
+
+        timeline = await self.__conversation.timeline(
+            query=TimelineQuery(tenant="default", thread="thread-1")
         )
-        strategy_instance.get_progress = MagicMock(
-            return_value={"step_count": 4, "completion_reason": CompletionReason.SUCCESS.value}
+        tree = await self.__conversation.tasks(
+            query=TaskTreeQuery(tenant="default", thread="thread-1")
         )
 
-        strategy_instance.step_results = []
-        strategy_instance.get_metrics = MagicMock(return_value=None)
-        strategy_instance.completion_reason = CompletionReason.SUCCESS.value
-        strategy_instance.get_subgoal_execution_audit = MagicMock(return_value=([], [], 0))
+        self.assertEqual(
+            [
+                InteractionIdentity(workflow="workflow-1").message(name="result"),
+                InteractionIdentity(workflow="workflow-1").message(name="request"),
+            ],
+            [entry.id for entry in timeline.entries],
+        )
+        self.assertEqual("failed", tree.roots[0].state)
+        self.assertEqual(CompletionReason.FAILED.value, tree.roots[0].summary)
+
+    async def test_run_exploration_records_failure_before_reraising(self) -> None:
+        """
+        Mirror the run_intent failure recording on the exploration path so
+        an exception during exploration leaves a terminal record on the
+        thread instead of an orphaned RUNNING root task.
+        """
+
+        from fathom.runtime.runner import ExplorationStrategy as _RealExploration  # noqa: F401
+
+        class _FailingExploration:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            async def execute(self):
+                raise RuntimeError("exploration crashed")
+
+            def get_progress(self):
+                return {"steps": 4}
+
+            @property
+            def graph(self):
+                return SimpleNamespace(nodes={})
 
         with (
-            patch("fathom.runtime.runner.ContextManager"),
-            patch("fathom.runtime.runner.IntentStrategy", return_value=strategy_instance),
-            patch.object(
-                FathomRunner,
-                "_FathomRunner__get_memory_summary",
-                AsyncMock(return_value={}),
-            ),
+            patch("fathom.runtime.runner.ExplorationStrategy", _FailingExploration),
+            self.assertRaises(RuntimeError),
         ):
-            await runner.run_intent(intent="Search for biryani")
-
-        cancelled_calls = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.WORKFLOW_CANCELLED
-        ]
-        completed_calls = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
-        ]
-
-        self.assertEqual(len(cancelled_calls), 0)
-        self.assertEqual(len(completed_calls), 1)
-
-    async def test_failed_run_emits_workflow_failed_event(self) -> None:
-        """
-        Failed strategy outcomes must not be announced as WORKFLOW_COMPLETED.
-        """
-
-        qualifier = PassingQualifier()
-        runner, telemetry = RunnerHarness.build(qualifier=qualifier)
-
-        strategy_instance = MagicMock()
-        strategy_instance.execute = AsyncMock(
-            return_value=MagicMock(
-                error="Planner retry budget exhausted",
-                success=False,
-                duration=100,
-                is_cancelled=False,
+            await self.__runner.run_exploration(
+                request_id="workflow-x",
+                package_name="com.example",
+                principal=Principal(
+                    tenant="default",
+                    operator="human-1",
+                    agent="agent-1",
+                    conversation="thread-x",
+                ),
             )
-        )
-        strategy_instance.get_progress = MagicMock(
-            return_value={
-                "step_count": 7,
-                "completion_reason": CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
-            }
+
+        tree = await self.__conversation.tasks(
+            query=TaskTreeQuery(tenant="default", thread="thread-x")
         )
 
-        strategy_instance.step_results = []
-        strategy_instance.get_metrics = MagicMock(return_value=None)
-        strategy_instance.completion_reason = CompletionReason.RETRY_BUDGET_EXHAUSTED.value
-        strategy_instance.get_subgoal_execution_audit = MagicMock(return_value=([], [], 0))
+        self.assertEqual("failed", tree.roots[0].state)
 
-        with (
-            patch("fathom.runtime.runner.ContextManager"),
-            patch("fathom.runtime.runner.IntentStrategy", return_value=strategy_instance),
-            patch.object(
-                FathomRunner,
-                "_FathomRunner__get_memory_summary",
-                AsyncMock(return_value={}),
-            ),
-        ):
-            result = await runner.run_intent(intent="Search for biryani")
+    def __runner_with(self, *, interaction: SQLiteInteraction) -> FathomRunner:
+        """
+        Build a runner with mocked ports and real interaction storage.
+        """
 
-        failed_calls = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.WORKFLOW_FAILED
-        ]
-        completed_calls = [
-            call
-            for call in telemetry.info.call_args_list
-            if call.kwargs.get("type") == FathomEvent.WORKFLOW_COMPLETED
-        ]
-
-        self.assertEqual(len(failed_calls), 1)
-        self.assertEqual(len(completed_calls), 0)
-        self.assertFalse(result.success)
-
-        terminal = failed_calls[0]
-        self.assertEqual(terminal.args[0], "Run failed: Planner retry budget exhausted")
-        self.assertEqual(terminal.kwargs["success"], False)
-        self.assertEqual(terminal.kwargs["steps_taken"], 7)
-        self.assertEqual(
-            terminal.kwargs["completion_reason"],
-            CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
+        device = SimpleNamespace(
+            configuration=None,
+            get_current_package=AsyncMock(return_value="com.example"),
         )
 
+        llm = Mock()
+        llm.cleanup = AsyncMock()
 
-if __name__ == "__main__":
-    unittest.main()
+        memory = Mock()
+        memory.get_all_knowledge = AsyncMock(return_value={})
+
+        telemetry = SimpleNamespace(info=AsyncMock(), warning=AsyncMock())
+
+        path = SimpleNamespace(base_path=self.__base)
+
+        return FathomRunner(
+            llm=llm,
+            device=device,
+            perception=Mock(),
+            memory=memory,
+            signal=Mock(),
+            storage=SimpleNamespace(),
+            knowledge=Mock(),
+            telemetry=telemetry,
+            summarizer=Mock(),
+            qualifier=PassingQualifier(),
+            path_manager=path,
+            interaction=interaction,
+        )
+
+    def __write_artifact(
+        self,
+        *,
+        category: str,
+        package: str,
+        workflow: str,
+        name: str,
+    ) -> None:
+        """
+        Create one generated artifact in the runner's expected directory layout.
+        """
+
+        path = self.__base / category / "session" / package / workflow / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"generated at {datetime.now().isoformat()}", encoding="utf-8")

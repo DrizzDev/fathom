@@ -1,25 +1,42 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from fathom.constants.llm import InferencePriorityMode
 from fathom.constants.qualification import DEFAULT_QUALIFIER_MODEL
+from fathom.constants.run import TargetKind
+from fathom.constants.storage import InteractionBackend
+from fathom.core.exceptions import StorageConfigurationError
 from fathom.runtime.assembly import RunAssemblyBuilder
-from fathom.schemas.configuration import QualifierConfiguration
-from fathom.schemas.run import IntentObjectiveConfiguration, RunRequest, TargetConfiguration
+from fathom.schemas.configuration import (
+    DeviceConfiguration,
+    InteractionStorageConfiguration,
+    PostgresInteractionConfiguration,
+    QualifierConfiguration,
+)
+from fathom.schemas.run import (
+    IntentObjectiveConfiguration,
+    IntentRunRequest,
+    Principal,
+    ResourceConfiguration,
+    RunRequest,
+    TargetConfiguration,
+)
 from fathom.settings.env import FathomSettings
 
 
 class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
     """
-    Assembly must derive the qualifier LLM configuration from its bound settings,
-    not from environment defaults or a fresh FathomSettings(). This is the regression
-    check for the staging bug where a builder-internal FathomSettings() saw no credentials.
+    Verify qualifier LLM configuration resolution.
     """
 
     def test_qualifier_llm_inherits_credentials_from_bound_settings(self) -> None:
         """
-        Credentials must come from the settings the caller bound, not from env.
+        Credentials must come from the settings bound to this assembly builder.
         """
 
         bound_settings = FathomSettings(
@@ -40,7 +57,9 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         self.assertEqual(configuration.credentials, "/fake/credentials.json")
 
     def test_qualifier_knobs_flow_into_llm_configuration(self) -> None:
-        """Inference knobs on QualifierConfiguration must reach the LLMConfiguration so the dedicated qualifier LLM behaves deterministically."""
+        """
+        Qualifier inference knobs must reach the LLM configuration.
+        """
 
         assembly = RunAssemblyBuilder(settings=FathomSettings(gemini_api_key="x"))
         configuration = assembly.build_qualifier_model_configuration(
@@ -49,12 +68,14 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         self.assertEqual(configuration.thinking_level, "minimal")
 
     def test_qualifier_model_defaults_to_constant(self) -> None:
-        """The qualifier owns its model selection — it must not silently inherit the planner's GEMINI_MODEL setting (a known prod regression: preview model leaking through)."""
+        """
+        The qualifier model must not silently inherit the planner model.
+        """
 
         assembly = RunAssemblyBuilder(
             settings=FathomSettings(
                 gemini_api_key="x",
-                gemini_model="gemini-3-flash-preview",  # planner model — must NOT leak
+                gemini_model="gemini-3-flash-preview",
             )
         )
         configuration = assembly.build_qualifier_model_configuration(
@@ -64,9 +85,7 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
 
     def test_qualifier_model_can_be_overridden_via_evolve(self) -> None:
         """
-        Caller can choose a different qualifier model via evolve() without
-        changing the planner's GEMINI_MODEL env var and without restating
-        every other inference field.
+        Callers can override only the qualifier model via evolve().
         """
 
         assembly = RunAssemblyBuilder(settings=FathomSettings(gemini_api_key="x"))
@@ -77,8 +96,7 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
 
     def test_qualifier_timeout_and_retries_flow_into_llm_configuration(self) -> None:
         """
-        Per-attempt timeout and retry budget must reach the LLMConfiguration so
-        the adapter applies them. Adapter owns the retry loop; no nested retries.
+        Qualifier timeout and retry budget must reach the LLM configuration.
         """
 
         assembly = RunAssemblyBuilder(settings=FathomSettings(gemini_api_key="x"))
@@ -165,5 +183,266 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         self.assertEqual(configuration.priority.adaptive.threshold.recovery, 3)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class InteractionStorageResolutionTest(unittest.TestCase):
+    """
+    Verify CLI-default and host-supplied interaction storage resolution.
+    """
+
+    def setUp(self) -> None:
+        self.__temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.__temporary_directory.cleanup)
+        self.__sqlite_path = Path(self.__temporary_directory.name) / "interaction.db"
+
+    def __principal(self) -> Principal:
+        """
+        Return a deterministic Principal for tests.
+        """
+
+        return Principal(
+            tenant="t",
+            operator="u",
+            agent="agent:fathom",
+            conversation="c",
+        )
+
+    def __build_request(
+        self,
+        *,
+        interaction_storage: InteractionStorageConfiguration | None = None,
+    ) -> IntentRunRequest:
+        """
+        Build a minimal valid IntentRunRequest for assembly tests.
+        """
+
+        return IntentRunRequest(
+            principal=self.__principal(),
+            objective=IntentObjectiveConfiguration(intent="x"),
+            resources=ResourceConfiguration(
+                targets=[
+                    TargetConfiguration(
+                        kind=TargetKind.DEVICE,
+                        device_configuration=DeviceConfiguration(),
+                    )
+                ],
+                interaction_storage=interaction_storage,
+            ),
+        )
+
+    def test_host_supplied_interaction_storage_wins(self) -> None:
+        """
+        Host-supplied configuration is returned verbatim.
+        """
+
+        host_configuration = InteractionStorageConfiguration(
+            backend=InteractionBackend.POSTGRES,
+            postgres=PostgresInteractionConfiguration(
+                host="example",
+                user="fathom",
+                password="secret",
+                database="fathom",
+            ),
+        )
+        request = self.__build_request(interaction_storage=host_configuration)
+        builder = RunAssemblyBuilder(settings=FathomSettings())
+
+        result = builder.build_interaction_storage_configuration(request=request)
+
+        self.assertIs(result, host_configuration)
+
+    def test_cli_default_uses_sqlite_via_path_manager(self) -> None:
+        """
+        Without host config and without env override, fall back to SQLite at
+        the path manager's interaction db path.
+        """
+
+        request = self.__build_request()
+        path_manager = SimpleNamespace(
+            get_interaction_db_path=lambda: self.__sqlite_path,
+        )
+        with patch.dict("os.environ", {}, clear=False):
+            settings = FathomSettings(interaction_backend="sqlite")
+            builder = RunAssemblyBuilder(settings=settings)
+            result = builder.build_interaction_storage_configuration(
+                request=request,
+                path_manager=path_manager,
+            )
+
+        self.assertEqual(InteractionBackend.SQLITE, result.backend)
+        assert result.sqlite is not None
+        self.assertEqual(self.__sqlite_path, result.sqlite.path)
+
+    def test_cli_default_uses_settings_sqlite_path_when_set(self) -> None:
+        """
+        Explicit FATHOM_INTERACTION_SQLITE_PATH wins over the path manager.
+        """
+
+        request = self.__build_request()
+        configured = self.__sqlite_path
+        settings = FathomSettings(
+            interaction_backend="sqlite",
+            interaction_sqlite_path=configured,
+        )
+        builder = RunAssemblyBuilder(settings=settings)
+        result = builder.build_interaction_storage_configuration(
+            request=request,
+            path_manager=None,
+        )
+
+        self.assertEqual(InteractionBackend.SQLITE, result.backend)
+        assert result.sqlite is not None
+        self.assertEqual(configured, result.sqlite.path)
+
+    def test_cli_default_postgres_requires_dsn(self) -> None:
+        """
+        Postgres backend without a DSN raises a typed StorageConfigurationError.
+        """
+
+        request = self.__build_request()
+        settings = FathomSettings(
+            interaction_backend="postgres",
+            interaction_postgres_host=None,
+            interaction_postgres_user=None,
+            interaction_postgres_password=None,
+        )
+        builder = RunAssemblyBuilder(settings=settings)
+
+        with self.assertRaises(StorageConfigurationError) as context:
+            builder.build_interaction_storage_configuration(request=request)
+        self.assertEqual(InteractionBackend.POSTGRES.value, context.exception.backend)
+
+    def test_cli_default_postgres_uses_worker_environment_settings(self) -> None:
+        """
+        Worker-side Postgres fallback must include schema and pool settings
+        from Fathom env rather than silently defaulting to a different schema.
+        """
+
+        request = self.__build_request()
+        settings = FathomSettings(
+            interaction_backend="postgres",
+            interaction_postgres_host="localhost",
+            interaction_postgres_user="fathom",
+            interaction_postgres_password="secret",
+            interaction_postgres_database="fathom",
+            interaction_postgres_schema="conversation",
+            interaction_postgres_pool_min_size=1,
+            interaction_postgres_pool_max_size=4,
+            interaction_postgres_statement_timeout=2500,
+        )
+        builder = RunAssemblyBuilder(settings=settings)
+
+        result = builder.build_interaction_storage_configuration(request=request)
+
+        self.assertEqual(InteractionBackend.POSTGRES, result.backend)
+        assert result.postgres is not None
+        self.assertEqual("conversation", result.postgres.schema_name)
+        self.assertEqual(1, result.postgres.pool_min_size)
+        self.assertEqual(4, result.postgres.pool_max_size)
+        self.assertEqual(2500, result.postgres.statement_timeout)
+
+    def test_cli_default_postgres_infers_drizz_worker_environment(self) -> None:
+        """
+        DRIZZ_FATHOM_POSTGRES_* is the canonical worker env set.
+        """
+
+        request = self.__build_request()
+        with patch.dict(
+            "os.environ",
+            {
+                "DRIZZ_FATHOM_POSTGRES_HOST": "localhost",
+                "DRIZZ_FATHOM_POSTGRES_PORT": "5433",
+                "DRIZZ_FATHOM_POSTGRES_USER": "fathom",
+                "DRIZZ_FATHOM_POSTGRES_PASSWORD": "secret",
+                "DRIZZ_FATHOM_POSTGRES_DATABASE": "fathom",
+                "DRIZZ_FATHOM_POSTGRES_SCHEMA": "fathom",
+                "DRIZZ_FATHOM_POSTGRES_POOL_MIN_SIZE": "2",
+                "DRIZZ_FATHOM_POSTGRES_POOL_MAX_SIZE": "8",
+                "DRIZZ_FATHOM_POSTGRES_STATEMENT_TIMEOUT": "3000",
+            },
+            clear=True,
+        ):
+            settings = FathomSettings(_env_file=None)
+        builder = RunAssemblyBuilder(settings=settings)
+
+        result = builder.build_interaction_storage_configuration(request=request)
+
+        self.assertEqual(InteractionBackend.POSTGRES, result.backend)
+        assert result.postgres is not None
+        self.assertEqual("localhost", result.postgres.host)
+        self.assertEqual(5433, result.postgres.port)
+        self.assertEqual("fathom", result.postgres.database)
+        self.assertEqual("fathom", result.postgres.schema_name)
+        self.assertEqual(2, result.postgres.pool_min_size)
+        self.assertEqual(8, result.postgres.pool_max_size)
+        self.assertEqual(3000, result.postgres.statement_timeout)
+
+    def test_cli_default_postgres_uses_dsn_when_settings_provide_one(self) -> None:
+        """
+        When DRIZZ_FATHOM_POSTGRES_DSN is set the CLI assembly builds a
+        DSN-mode PostgresInteractionConfiguration; host/user/password are not
+        required and are absent from the resulting config.
+        """
+
+        request = self.__build_request()
+        settings = FathomSettings(
+            interaction_backend="postgres",
+            interaction_postgres_dsn="postgresql://fathom:s%2Bcret@db.local:5432/fathom?sslmode=require",
+            interaction_postgres_schema="conversation",
+            interaction_postgres_pool_min_size=1,
+            interaction_postgres_pool_max_size=4,
+            interaction_postgres_statement_timeout=2500,
+        )
+        builder = RunAssemblyBuilder(settings=settings)
+
+        result = builder.build_interaction_storage_configuration(request=request)
+
+        self.assertEqual(InteractionBackend.POSTGRES, result.backend)
+        assert result.postgres is not None
+        self.assertEqual(
+            "postgresql://fathom:s%2Bcret@db.local:5432/fathom?sslmode=require",
+            result.postgres.dsn,
+        )
+        self.assertIsNone(result.postgres.host)
+        self.assertIsNone(result.postgres.user)
+        self.assertIsNone(result.postgres.password)
+        self.assertEqual("conversation", result.postgres.schema_name)
+        self.assertEqual(1, result.postgres.pool_min_size)
+        self.assertEqual(4, result.postgres.pool_max_size)
+        self.assertEqual(2500, result.postgres.statement_timeout)
+
+    def test_cli_default_postgres_dsn_env_alone_selects_postgres_backend(self) -> None:
+        """
+        A DSN in the environment is sufficient signal for the backend resolver
+        to pick Postgres; discrete host/user/password are no longer required.
+        """
+
+        request = self.__build_request()
+        with patch.dict(
+            "os.environ",
+            {
+                "DRIZZ_FATHOM_POSTGRES_DSN": "postgresql://fathom:secret@db.local:5432/fathom",
+            },
+            clear=True,
+        ):
+            settings = FathomSettings(_env_file=None)
+        builder = RunAssemblyBuilder(settings=settings)
+
+        result = builder.build_interaction_storage_configuration(request=request)
+
+        self.assertEqual(InteractionBackend.POSTGRES, result.backend)
+        assert result.postgres is not None
+        self.assertEqual(
+            "postgresql://fathom:secret@db.local:5432/fathom",
+            result.postgres.dsn,
+        )
+
+    def test_invalid_backend_setting_raises_typed_error(self) -> None:
+        """
+        Unknown FATHOM_INTERACTION_BACKEND values fail with a typed error.
+        """
+
+        request = self.__build_request()
+        settings = FathomSettings(interaction_backend="cassandra")
+        builder = RunAssemblyBuilder(settings=settings)
+
+        with self.assertRaises(StorageConfigurationError):
+            builder.build_interaction_storage_configuration(request=request)

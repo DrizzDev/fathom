@@ -11,6 +11,7 @@ from fathom.interfaces.factory import (
     TelemetryFactoryPort,
 )
 from fathom.interfaces.icon import IconDetectorPort
+from fathom.interfaces.interaction import InteractionPort
 from fathom.interfaces.journal import RuntimeJournalPort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
@@ -89,6 +90,7 @@ class IResponseParser(Protocol):
 __all__ = [
     "DevicePort",
     "IconDetectorPort",
+    "InteractionPort",
     "KnowledgePort",
     "LLMPort",
     "TargetLocalizerPort",

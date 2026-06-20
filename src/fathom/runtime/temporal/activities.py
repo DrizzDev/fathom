@@ -18,6 +18,7 @@ from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
 from fathom.runtime.factories import (
     DeviceFactory,
+    InteractionFactory,
     LLMFactory,
     PerceptionFactory,
     SignalFactory,
@@ -132,6 +133,12 @@ class FathomActivities:
             partial_resources.append(signal_adapter)
 
             path_manager = SharedPathManager(settings=self.__settings)
+            interaction_storage_configuration = (
+                self.__assembly.build_interaction_storage_configuration(
+                    request=request,
+                    path_manager=path_manager,
+                )
+            )
 
             device_adapter = DeviceFactory().create(configuration=device_configuration)
             partial_resources.append(device_adapter)
@@ -155,6 +162,11 @@ class FathomActivities:
             )
             partial_resources.append(storage_adapter)
 
+            interaction_adapter = InteractionFactory().create(
+                configuration=interaction_storage_configuration,
+            )
+            partial_resources.append(interaction_adapter)
+
             builder = (
                 Fathom.builder(path_manager=path_manager)
                 .with_llm(port=llm_adapter)
@@ -162,6 +174,7 @@ class FathomActivities:
                 .with_signal(port=signal_adapter)
                 .with_telemetry(port=telemetry_adapter)
                 .with_perception(port=perception_adapter)
+                .with_interaction(port=interaction_adapter)
                 .with_realignment(policy=request.interaction.realignment)
                 .with_runtime_configuration(loader=self.__runtime_configuration)
                 .with_storage(port=storage_adapter, configuration=storage_configuration)
@@ -296,12 +309,13 @@ class FathomActivities:
 
                 result = await runner.run_intent(
                     request_id=workflow_id,
+                    principal=validated_request.principal,
+                    package_name=validated_request.objective.package_name,
                     intent=validated_request.objective.intent,
                     use_xml=validated_request.objective.use_xml,
                     max_steps=validated_request.objective.max_steps,
                     context_scope=validated_request.memory.context_scope,
                     realignment=validated_request.interaction.realignment,
-                    conversation_id=validated_request.memory.conversation_id,
                 )
 
                 activity.logger.info(
@@ -391,6 +405,7 @@ class FathomActivities:
 
                 result = await runner.run_exploration(
                     request_id=workflow_id,
+                    principal=validated_request.principal,
                     package_name=package_name,
                     max_steps=validated_request.objective.max_steps,
                 )

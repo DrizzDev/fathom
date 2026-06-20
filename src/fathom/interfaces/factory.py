@@ -4,12 +4,16 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.interaction import InteractionPort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.perception import PerceptionPort
+from fathom.interfaces.scheduler import JobSchedulerPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import (
     DeviceConfiguration,
+    InteractionStorageConfiguration,
+    JobSchedulerConfiguration,
     LLMConfiguration,
     TelemetryConfiguration,
 )
@@ -92,6 +96,39 @@ class TelemetryFactoryPort(ABC):
     def create(self, *, configuration: TelemetryConfiguration) -> TelemetryPort:
         """
         Create telemetry adapter from runtime telemetry configuration.
+        """
+
+        raise NotImplementedError
+
+
+class InteractionFactoryPort(ABC):
+    """
+    Abstract factory contract for interaction-storage adapter creation.
+    """
+
+    @abstractmethod
+    def create(self, *, configuration: InteractionStorageConfiguration) -> InteractionPort:
+        """
+        Create the interaction-storage adapter for the selected backend.
+        """
+
+        raise NotImplementedError
+
+
+class JobSchedulerFactoryPort(ABC):
+    """
+    Abstract factory contract for durable-job scheduler creation.
+    """
+
+    @abstractmethod
+    def create(
+        self,
+        *,
+        configuration: JobSchedulerConfiguration,
+        interaction: InteractionPort,
+    ) -> JobSchedulerPort:
+        """
+        Create the job scheduler for the selected dispatcher kind.
         """
 
         raise NotImplementedError

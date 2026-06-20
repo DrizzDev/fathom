@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, cast
 
 from fathom.constants import ActionType
+from fathom.constants.collaboration import TaskKind
 from fathom.constants.messages import HITL_UNAVAILABLE_REPLAN_DIAGNOSTIC
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import HITLNotAvailableError
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
+from fathom.schemas.recording import Step as RecordedStep
 from fathom.schemas.results import ExecutionResult
+from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 from fathom.strategies.graph.state import IntentGraphState
 
@@ -105,6 +110,7 @@ class ExecuteNode:
         )
 
         start_time = time.time()
+        await self.__record_step_started(step=step, created=start_time)
 
         if step.action.memory_updates:
             logger.info(
@@ -176,6 +182,56 @@ class ExecuteNode:
         self.__provider.persistence.persist(result=result_dict)
 
         return cast("IntentGraphState", result_dict)
+
+    async def __record_step_started(self, *, step: Step, created: float) -> None:
+        """
+        Record the start of one graph action task when recording is enabled.
+        """
+
+        context = self.__provider.context
+        if context.recorder is None:
+            return
+        if not all(
+            isinstance(value, str)
+            for value in (context.tenant, context.thread, context.responder)
+        ):
+            return
+        if context.workspace is not None and not isinstance(context.workspace, str):
+            return
+
+        identity = InteractionIdentity(workflow=context.workflow_id)
+        try:
+            await context.recorder.record_step_started(
+                step=RecordedStep(
+                    id=identity.step_task(
+                        step_number=step.step_number,
+                        action_descriptor=step.action.to_description(),
+                    ),
+                    tenant=context.tenant,
+                    workspace=context.workspace,
+                    thread=context.thread,
+                    workflow=context.workflow_id,
+                    parent=identity.task(),
+                    root=identity.task(),
+                    origin=identity.message(name="request"),
+                    actor=context.responder,
+                    kind=TaskKind.AGENT,
+                    reference=step.screen_hash,
+                    objective=step.action.to_description(),
+                    created=datetime.fromtimestamp(created, tz=timezone.utc),
+                    metadata={
+                        "step": step.step_number,
+                        "target": step.action.target,
+                        "action": step.action.action_type.value,
+                    },
+                )
+            )
+        except Exception as exception:
+            await context.telemetry.warning(
+                "Conversation step start recording failed",
+                error=str(exception),
+                step=step.step_number + 1,
+            )
 
     def __route_back_for_replan(self) -> IntentGraphState:
         """Clear the stale ASK_USER step and signal SHOULD_RETRY so the planner re-decides."""

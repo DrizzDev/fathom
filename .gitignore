@@ -206,11 +206,10 @@ __marimo__/
 .DS_Store
 logs/
 assets/
-scripts/
+debug/
 secrets/
 scripts/
 documents/
-debug/
 debugging/
 research/
 debug/scroll/poc/

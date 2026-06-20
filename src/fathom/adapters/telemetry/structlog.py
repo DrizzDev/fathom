@@ -19,37 +19,37 @@ class StructlogAdapter(TelemetryPort):
 
         self.__logger = getLogger(name=logger_name)
 
-    async def debug(self, message: str, **context: Any) -> None:
+    async def debug(self, text: str, **context: Any) -> None:
         """
         Log debug message with context.
         """
 
-        self.__logger.debug(message, extra=context)
+        self.__logger.debug(text, extra=context)
 
-    async def info(self, message: str, **context: Any) -> None:
+    async def info(self, text: str, **context: Any) -> None:
         """
         Log info message with context.
         """
 
-        self.__logger.info(message, extra=context)
+        self.__logger.info(text, extra=context)
 
-    async def warning(self, message: str, **context: Any) -> None:
+    async def warning(self, text: str, **context: Any) -> None:
         """
         Log warning message with context.
         """
 
-        self.__logger.warning(message, extra=context)
+        self.__logger.warning(text, extra=context)
 
-    async def error(self, message: str, **context: Any) -> None:
+    async def error(self, text: str, **context: Any) -> None:
         """
         Log error message with context.
         """
 
-        self.__logger.error(message, extra=context)
+        self.__logger.error(text, extra=context)
 
     async def exception(
         self,
-        message: str,
+        text: str,
         *,
         exception: Optional[BaseException] = None,
         **context: Any,
@@ -59,11 +59,11 @@ class StructlogAdapter(TelemetryPort):
         """
 
         if exception is None:
-            self.__logger.exception(message, extra=context)
+            self.__logger.exception(text, extra=context)
             return
 
         self.__logger.error(
-            message,
+            text,
             extra=context,
             exc_info=(type(exception), exception, exception.__traceback__),
         )

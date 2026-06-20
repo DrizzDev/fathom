@@ -2,15 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, cast
 
 from fathom.constants import FathomEvent
+from fathom.constants.collaboration import ArtifactBackend, TaskCode, TaskState
 from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.constants.gcc import GCC_BRANCHING_ACTIVE_COUNT
 from fathom.constants.messages import RECORDING_FAILURE_MESSAGE
-from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey, VerifyMode
+from fathom.constants.state import (
+    CommonStateKey,
+    CompletionReason,
+    IntentStateKey,
+    VerifyMode,
+)
+from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import FathomError
 from fathom.schemas.observation import ScreenObservation
+from fathom.schemas.recording import Output, StepCompletion
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import StepResult
@@ -115,6 +124,7 @@ class RecordNode:
         try:
             # Record in agent state (internal bookkeeping, always done)
             self.__provider.context.agent_state.record_step(result=step_result)
+            await self.__record_step_finished(result=step_result)
 
             # Accumulate step results in graph state so MemorySaver checkpoints them.
             existing_step_results = cast(
@@ -425,6 +435,120 @@ class RecordNode:
             )
             self.__provider.persistence.persist(result=result)
             return result
+
+    async def __record_step_finished(self, *, result: StepResult) -> None:
+        """
+        Record the terminal state and artifacts for one graph action task.
+        """
+
+        context = self.__provider.context
+        if context.recorder is None:
+            return
+        if not all(
+            isinstance(value, str)
+            for value in (context.tenant, context.thread, context.responder)
+        ):
+            return
+        if context.workspace is not None and not isinstance(context.workspace, str):
+            return
+
+        identity = InteractionIdentity(workflow=context.workflow_id)
+        step_task_id = identity.step_task(
+            step_number=result.step.step_number,
+            action_descriptor=result.step.action.to_description(),
+        )
+        try:
+            await context.recorder.record_step_finished(
+                completion=StepCompletion(
+                    tenant=context.tenant,
+                    thread=context.thread,
+                    workflow=context.workflow_id,
+                    task=step_task_id,
+                    state=TaskState.SUCCEEDED if result.success else TaskState.FAILED,
+                    code=TaskCode.COMPLETED if result.success else TaskCode.UNKNOWN_ERROR,
+                    reason=result.error,
+                    summary=result.observation or result.step.action.to_description(),
+                    finished=datetime.now(tz=timezone.utc),
+                    elapsed=result.duration,
+                )
+            )
+        except Exception as exception:
+            await context.telemetry.warning(
+                "Conversation step finish recording failed",
+                error=str(exception),
+                step=result.step.step_number + 1,
+            )
+            return
+
+        await self.__record_step_artifacts(
+            step_number=result.step.step_number,
+            step_task_id=step_task_id,
+        )
+
+    async def __record_step_artifacts(self, *, step_number: int, step_task_id: str) -> None:
+        """
+        Record artifacts emitted during one graph step.
+        """
+
+        context = self.__provider.context
+        if context.recorder is None:
+            return
+
+        catalog = context.artifact_catalog
+        try:
+            artifacts = await catalog.discover(
+                workflow=context.workflow_id,
+                package_name=context.package_name,
+                only_step=step_number,
+            )
+        except Exception as exception:
+            await context.telemetry.warning(
+                "Step artifact discovery failed",
+                error=str(exception),
+                step=step_number + 1,
+            )
+            return
+
+        identity = InteractionIdentity(workflow=context.workflow_id)
+        for path, stat in artifacts:
+            captured_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            resolved_kind = catalog.kind(path=path)
+            if resolved_kind is None:
+                continue
+
+            metadata: Dict[str, Any] = {
+                "step": step_number,
+                "filename": path.name,
+                "category": catalog.category(path=path),
+                "captured_at": captured_at.isoformat(),
+            }
+            try:
+                await context.recorder.record_artifact(
+                    output=Output(
+                        uri=str(path),
+                        id=identity.artifact(path=path),
+                        task=step_task_id,
+                        size=stat.st_size,
+                        metadata=metadata,
+                        kind=resolved_kind,
+                        created=captured_at,
+                        thread=context.thread,
+                        tenant=context.tenant,
+                        mime=catalog.mime(path=path),
+                        backend=ArtifactBackend.LOCAL,
+                        actor=context.responder,
+                        workspace=context.workspace,
+                        workflow=context.workflow_id,
+                        retention=catalog.retention(path=path),
+                    )
+                )
+            except Exception as exception:
+                await context.telemetry.warning(
+                    "Step artifact recording failed",
+                    artifact=str(path),
+                    error=str(exception),
+                    step=step_number + 1,
+                )
 
     @staticmethod
     def __completion_claim_reason(*, reason: Optional[str]) -> str:

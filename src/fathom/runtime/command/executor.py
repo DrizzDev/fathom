@@ -33,6 +33,7 @@ from fathom.runtime.command.resolver import (
 )
 from fathom.runtime.factories import (
     DeviceFactory,
+    InteractionFactory,
     LLMFactory,
     PerceptionFactory,
     SignalFactory,
@@ -162,6 +163,12 @@ class CommandExecutor:
         device_configuration = self.__resolve_device_configuration(request=request)
         llm_configuration = assembly_builder.build_planner_model_configuration(request=request)
         telemetry_configuration = assembly_builder.build_telemetry_configuration(request=request)
+        interaction_storage_configuration = (
+            assembly_builder.build_interaction_storage_configuration(
+                request=request,
+                path_manager=path_manager,
+            )
+        )
 
         partial_resources: List[Any] = []
 
@@ -185,6 +192,11 @@ class CommandExecutor:
             )
             partial_resources.append(telemetry_adapter)
 
+            interaction_adapter = InteractionFactory().create(
+                configuration=interaction_storage_configuration,
+            )
+            partial_resources.append(interaction_adapter)
+
             builder = (
                 Fathom.builder(path_manager=path_manager)
                 .with_llm(port=llm_adapter)
@@ -192,6 +204,7 @@ class CommandExecutor:
                 .with_signal(port=signal_adapter)
                 .with_telemetry(port=telemetry_adapter)
                 .with_perception(port=perception_adapter)
+                .with_interaction(port=interaction_adapter)
                 .with_runtime_configuration(loader=RuntimeConfigLoader(settings=self.__settings))
                 .with_qualifier_config(configuration=request.interaction.qualifier_configuration)
             )
@@ -268,9 +281,12 @@ class CommandExecutor:
 
         return await self.__runner.run_intent(
             intent=request.objective.intent,
+            principal=request.principal,
             use_xml=request.objective.use_xml,
             max_steps=request.objective.max_steps,
             request_id=request.runtime.session_id,
+            package_name=request.objective.package_name,
+            context_scope=request.memory.context_scope,
             realignment=request.interaction.realignment,
         )
 
@@ -458,6 +474,7 @@ class CommandExecutor:
                 result = await self.__runner.run_exploration(
                     max_steps=request.objective.max_steps,
                     request_id=request.runtime.session_id,
+                    principal=request.principal,
                 )
 
             table = Table(title="Exploration Results", border_style="green")

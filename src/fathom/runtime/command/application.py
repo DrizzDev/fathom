@@ -12,6 +12,11 @@ from rich.console import Console
 from rich.markup import escape
 
 from fathom.base.logger import BaseLogger
+from fathom.constants.collaboration import (
+    DEFAULT_AGENT_ID,
+    DEFAULT_OPERATOR,
+    DEFAULT_TENANT,
+)
 from fathom.constants.run import SignalAdapterType, TargetKind
 from fathom.core.exceptions import FathomError
 from fathom.runtime.command.executor import CommandExecutor
@@ -29,6 +34,7 @@ from fathom.schemas.run import (
     InteractionConfiguration,
     MemoryConfiguration,
     ModelSelectionConfiguration,
+    Principal,
     RealignmentPolicy,
     ResourceConfiguration,
     RunMetadata,
@@ -36,6 +42,84 @@ from fathom.schemas.run import (
     TargetConfiguration,
 )
 from fathom.settings.env import FathomSettings
+
+
+class CLIPrincipalResolver:
+    """
+    Resolves a Principal from CLI command input and process-wide settings.
+
+    The CLI is the only entrypoint that intentionally falls back to the
+    DEFAULT_TENANT/OPERATOR constants when no value is supplied. Server-side
+    runtimes (Temporal worker, future REST host) MUST supply identity in the
+    wire-level RunRequest; they never pass through this resolver.
+    """
+
+    def __init__(self, *, settings: FathomSettings) -> None:
+        """
+        Initialize the resolver with the active CLI settings.
+        """
+
+        self.__settings = settings
+
+    def resolve_run(self, *, command_input: RunCommandInput) -> Principal:
+        """
+        Build a Principal for a `fathom run` invocation.
+        """
+
+        return Principal(
+            tenant=self.__tenant(command_input=command_input),
+            operator=self.__operator(command_input=command_input),
+            workspace=self.__workspace(command_input=command_input),
+            agent=DEFAULT_AGENT_ID,
+            conversation=command_input.conversation,
+        )
+
+    def resolve_explore(
+        self,
+        *,
+        command_input: ExploreCommandInput,
+        session_id: str,
+    ) -> Principal:
+        """
+        Build a Principal for a `fathom explore` invocation.
+
+        Exploration runs do not yet surface to clients; the conversation is
+        synthesised from the runtime session id so the durable layer can still
+        record exploration history under a stable thread.
+        """
+
+        return Principal(
+            tenant=self.__tenant(command_input=command_input),
+            operator=self.__operator(command_input=command_input),
+            workspace=self.__workspace(command_input=command_input),
+            agent=DEFAULT_AGENT_ID,
+            conversation=f"exploration:{session_id}",
+        )
+
+    def __tenant(self, *, command_input: LocalCommandInput) -> str:
+        """
+        Resolve the tenant in priority order: CLI flag, env setting, default.
+        """
+
+        explicit = getattr(command_input, "tenant", None)
+        return explicit or self.__settings.cli_tenant or DEFAULT_TENANT
+
+    def __operator(self, *, command_input: LocalCommandInput) -> str:
+        """
+        Resolve the operator in priority order: CLI flag, env setting, default.
+        """
+
+        explicit = getattr(command_input, "operator", None)
+        return explicit or self.__settings.cli_operator or DEFAULT_OPERATOR
+
+    def __workspace(self, *, command_input: LocalCommandInput) -> Optional[str]:
+        """
+        Resolve the optional workspace boundary: CLI flag then env setting.
+        """
+
+        explicit = getattr(command_input, "workspace", None)
+        return explicit or self.__settings.cli_workspace
+
 
 console = Console()
 logger = getLogger(__name__)
@@ -56,7 +140,17 @@ class CommandApplication:
         """
 
         self.__local_device_resolver = local_device_resolver or LocalDeviceConfigurationResolver()
+        self.__principal_resolver: Optional[CLIPrincipalResolver] = None
         self.__parser = self.__build_parser()
+
+    def __ensure_principal_resolver(self, *, settings: FathomSettings) -> CLIPrincipalResolver:
+        """
+        Lazily build the principal resolver bound to the active settings.
+        """
+
+        if self.__principal_resolver is None:
+            self.__principal_resolver = CLIPrincipalResolver(settings=settings)
+        return self.__principal_resolver
 
     def __build_parser(self) -> argparse.ArgumentParser:
         """
@@ -191,6 +285,30 @@ class CommandApplication:
             help="Disable immediate realignment on context injection",
         )
         run_parser.set_defaults(immediate_realignment=True)
+        run_parser.add_argument(
+            "--conversation",
+            type=str,
+            required=True,
+            help="Conversation thread id (required)",
+        )
+        run_parser.add_argument(
+            "--tenant",
+            type=str,
+            default=None,
+            help="Tenant id; falls back to CLI default if absent",
+        )
+        run_parser.add_argument(
+            "--operator",
+            type=str,
+            default=None,
+            help="Operator/user actor id; falls back to CLI default if absent",
+        )
+        run_parser.add_argument(
+            "--workspace",
+            type=str,
+            default=None,
+            help="Optional workspace boundary inside the tenant",
+        )
 
     def __configure_explore_parser(
         self,
@@ -271,6 +389,24 @@ class CommandApplication:
             action="store_true",
             help="Enable verbose output",
         )
+        explore_parser.add_argument(
+            "--tenant",
+            type=str,
+            default=None,
+            help="Tenant id; falls back to CLI default if absent",
+        )
+        explore_parser.add_argument(
+            "--operator",
+            type=str,
+            default=None,
+            help="Operator/user actor id; falls back to CLI default if absent",
+        )
+        explore_parser.add_argument(
+            "--workspace",
+            type=str,
+            default=None,
+            help="Optional workspace boundary inside the tenant",
+        )
 
     def __build_device_configuration(
         self,
@@ -315,8 +451,12 @@ class CommandApplication:
             log_file=command_input.log_file,
             workflow_id=runtime_configuration.session_id,
         )
+        principal = self.__ensure_principal_resolver(settings=settings).resolve_run(
+            command_input=command_input,
+        )
 
         return IntentRunRequest(
+            principal=principal,
             runtime=runtime_configuration,
             objective=IntentObjectiveConfiguration(
                 intent=command_input.intent,
@@ -352,14 +492,21 @@ class CommandApplication:
             command_input=command_input,
         )
 
+        runtime = RuntimeConfiguration(
+            interactive=False,
+            signal_type=SignalAdapterType.INTERACTIVE,
+        )
+        principal = self.__ensure_principal_resolver(settings=settings).resolve_explore(
+            command_input=command_input,
+            session_id=runtime.session_id,
+        )
+
         return ExplorationRunRequest(
+            principal=principal,
             objective=ExplorationObjectiveConfiguration(
                 max_steps=command_input.max_steps,
             ),
-            runtime=RuntimeConfiguration(
-                interactive=False,
-                signal_type=SignalAdapterType.INTERACTIVE,
-            ),
+            runtime=runtime,
             memory=MemoryConfiguration(),
             resources=ResourceConfiguration(
                 targets=[
