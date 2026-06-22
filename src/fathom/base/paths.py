@@ -5,6 +5,8 @@ from logging import getLogger
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Optional
 
+from fathom.constants.artifact import ArtifactDirectory
+
 if TYPE_CHECKING:
     from fathom.schemas.artifact import ArtifactKind
     from fathom.settings.env import FathomSettings
@@ -75,7 +77,7 @@ class SharedPathManager:
         Get directory for exploration graph exports and reports.
         """
 
-        return self.__get_category_root("reports", session_id)
+        return self.__get_category_root(ArtifactDirectory.REPORTS, session_id)
 
     def get_annotated_path(self, *, session_id: str, filename: str) -> Path:
         """

@@ -136,7 +136,7 @@ class TestExplorationWorkflowEndToEnd(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp) / "reports"
-            written = ExplorationArtifactWriter().write(
+            written = await ExplorationArtifactWriter().write(
                 graph=graph,
                 directory=directory,
                 workflow="e2e",

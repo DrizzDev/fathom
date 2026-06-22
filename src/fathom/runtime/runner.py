@@ -976,7 +976,7 @@ class FathomRunner:
 
         try:
             directory = self.__path_manager.get_report_directory(session_id=workflow_id)
-            written = ExplorationArtifactWriter().write(
+            written = await ExplorationArtifactWriter(storage=self.__storage).write(
                 graph=graph,
                 directory=directory,
                 workflow=workflow_id,

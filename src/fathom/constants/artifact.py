@@ -22,6 +22,7 @@ class ArtifactDirectory:
     XMLS: Final[str] = "xmls"
     TRACES: Final[str] = "traces"
     HISTORY: Final[str] = "history"
+    REPORTS: Final[str] = "reports"
     ANNOTATED: Final[str] = "annotated"
     SCREENSHOT: Final[str] = "screenshot"
     PERCEPTION: Final[str] = "annotated"

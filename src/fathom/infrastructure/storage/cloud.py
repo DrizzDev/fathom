@@ -104,6 +104,15 @@ class GCSImageStorage(IImageStorage):
         if filename.endswith(".xml"):
             return "application/xml"
 
+        if filename.endswith(".md"):
+            return "text/markdown"
+
+        if filename.endswith(".dot"):
+            return "text/vnd.graphviz"
+
+        if filename.endswith(".mermaid"):
+            return "text/plain"
+
         return "application/octet-stream"
 
     @staticmethod
