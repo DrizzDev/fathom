@@ -71,11 +71,35 @@ class TestExplorationArtifactWriter(unittest.IsolatedAsyncioTestCase):
                 duration=1.0,
             )
 
-            names = {path.name for path in written}
-            self.assertEqual(names, {"graph.json", "graph.dot", "graph.mermaid", "report.md"})
+            top_level = {path.name for path in written if path.parent == directory}
+            self.assertEqual(top_level, {"graph.json", "graph.dot", "graph.mermaid", "report.md"})
             self.assertTrue(all(path.exists() for path in written))
             self.assertIn("digraph exploration", (directory / "graph.dot").read_text())
             self.assertIn("# Exploration Report", (directory / "report.md").read_text())
+
+    async def test_write_emits_per_screen_documents(self) -> None:
+        graph = await self.__graph()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "reports"
+            written = ExplorationArtifactWriter().write(
+                graph=graph,
+                directory=directory,
+                workflow="wf",
+                package="com.app",
+                generated_at="2026-06-12T00:00:00",
+                duration=1.0,
+            )
+
+            screens = {path.name for path in written if path.parent == directory / "screens"}
+            self.assertIn("index.md", screens)
+            self.assertIn(
+                "# Screen Documentation", (directory / "screens" / "index.md").read_text()
+            )
+            # One doc per logical screen (home + cart), no screenshots referenced.
+            self.assertEqual(len(screens), 3)
+            for screen_doc in screens:
+                self.assertNotIn("![", (directory / "screens" / screen_doc).read_text())
 
     async def test_write_emits_bug_report_when_provided(self) -> None:
         graph = await self.__graph()

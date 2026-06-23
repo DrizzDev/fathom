@@ -145,9 +145,11 @@ class TestExplorationWorkflowEndToEnd(unittest.IsolatedAsyncioTestCase):
                 duration=1.0,
             )
             self.assertEqual(
-                {path.name for path in written},
+                {path.name for path in written if path.parent == directory},
                 {"graph.json", "graph.dot", "graph.mermaid", "report.md"},
             )
+            # Per-screen documentation lands under a screens/ subdirectory.
+            self.assertIn(directory / "screens" / "index.md", written)
             self.assertTrue(all(path.exists() for path in written))
 
     async def test_unusable_capture_ends_clean_not_recursion(self) -> None:
