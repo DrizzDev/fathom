@@ -6,6 +6,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from fathom.constants import ActionType
+from fathom.constants.defect import DEFECT_DETECTED_EVENT
 from fathom.constants.exploration import (
     EXPLORATION_PROGRESS_EVENT,
     MAX_ROUTES_WITHOUT_PROGRESS,
@@ -16,12 +17,15 @@ from fathom.constants.graph import NodeName
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
+from fathom.core.defect.inline import InlineDefectDetector
 from fathom.core.exceptions import DeviceError
 from fathom.core.exploration.config import ExplorationPolicyConfig
 from fathom.core.exploration.dedup import ActionKey, DedupPolicy
 from fathom.core.exploration.depth import DepthFloorPolicy
 from fathom.core.services.exploration import ExplorationVisionService
+from fathom.interfaces.defect import DefectRepositoryPort, InlineDefectDetectorPort
 from fathom.schemas.actions import Action
+from fathom.schemas.defect import StepSignals
 from fathom.schemas.exploration import ActionOutcome
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenState
@@ -69,6 +73,8 @@ class ExplorationNodeProvider:
         vision: Optional[ExplorationVisionService] = None,
         policy: Optional[ExplorationPolicyConfig] = None,
         dfs: Optional[DfsState] = None,
+        inline_detector: Optional[InlineDefectDetectorPort] = None,
+        defects: Optional[DefectRepositoryPort] = None,
     ) -> None:
         """
         Initialize with shared context, the vision service, and DFS policies.
@@ -83,6 +89,8 @@ class ExplorationNodeProvider:
         self.__navigator = DfsNavigator(dfs=self.__dfs, knowledge_graph=context.exploration_graph)
         self.__depth_floor = DepthFloorPolicy(config=self.__policy.depth)
         self.__dedup = DedupPolicy(dedup=self.__policy.dedup, sampling=self.__policy.sampling)
+        self.__inline_detector = inline_detector or InlineDefectDetector()
+        self.__defects = defects
 
     # ── Nodes ──────────────────────────────────────────────────────────────
 
@@ -371,10 +379,32 @@ class ExplorationNodeProvider:
         # A step actually completed: clear the no-progress watchdog counter.
         dfs.stalled_routes = 0
 
-        # Keep the walk inside the target package before recording the step.
+        # Step descriptors shared by transition recording and defect detection.
+        activity = (
+            screen_state.activity
+            if isinstance(screen_state, ScreenState) and screen_state.activity
+            else None
+        )
+        action_target = (action.natural_language_target or action.target) if action else None
+        expects_transition = bool(
+            action and action.expected_outcome and action.expected_outcome.implies_transition
+        )
+
+        # Keep the walk inside the target package before recording the step. An
+        # unrecoverable exit strands the user, so flag it before ending the run.
         scope_reason = await self.__enforce_package_scope()
         if scope_reason is not None:
             ctx.agent_state.record_step(result=step_result)
+            await self.__inspect_step(
+                signals=StepSignals(
+                    screen=step_result.pre_hash,
+                    activity=activity,
+                    action_target=action_target,
+                    expects_transition=expects_transition,
+                    screen_changed=False,
+                    left_package=True,
+                )
+            )
             return self.__complete(state, reason=scope_reason)
 
         # Re-capture the post-action screen to resolve the destination hash.
@@ -400,11 +430,21 @@ class ExplorationNodeProvider:
             success=step_result.success,
         )
 
-        activity = (
-            screen_state.activity
-            if isinstance(screen_state, ScreenState) and screen_state.activity
-            else None
+        # Inline defect pass: a dead tap (a predicted change that never happened)
+        # or a blank post-capture is evidence the user-facing step misbehaved.
+        await self.__inspect_step(
+            signals=StepSignals(
+                screen=pre_hash,
+                activity=activity,
+                action_target=action_target,
+                expects_transition=expects_transition,
+                screen_changed=step_result.screen_changed,
+                usable_capture=self.__is_usable_capture(
+                    capture=post_capture, screen_state=post_state
+                ),
+            )
         )
+
         ctx.history.enqueue_save_step(
             result=step_result, intent="exploration", package_name=activity
         )
@@ -730,6 +770,24 @@ class ExplorationNodeProvider:
             ctx.memory.store_experience(visual_hash=pre_hash, action=action, success=success)
         )
         await asyncio.gather(*writes, return_exceptions=True)
+
+    async def __inspect_step(self, *, signals: StepSignals) -> None:
+        """
+        Detect inline defects for one step, persist them, and surface them live.
+        """
+
+        ctx = self.__context
+        for defect in self.__inline_detector.inspect_step(signals=signals):
+            if self.__defects is not None:
+                await self.__defects.record(session=ctx.workflow_id, defect=defect)
+            await ctx.telemetry.info(
+                DEFECT_DETECTED_EVENT,
+                signal=defect.signal.value,
+                kind=defect.kind.value,
+                severity=defect.severity.value,
+                screen=defect.evidence.screen,
+                summary=defect.summary,
+            )
 
     async def __emit_progress(self, *, action: Optional[Action]) -> None:
         """

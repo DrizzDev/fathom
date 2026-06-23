@@ -153,3 +153,8 @@ PLACEHOLDER_SIGNALS: dict[str, DefectSignal] = {
     "dummy text": DefectSignal.PLACEHOLDER_TEXT,
     "sample text": DefectSignal.PLACEHOLDER_TEXT,
 }
+
+
+# Telemetry event name carrying a single detected defect; live observers (TUI,
+# console) surface it as it is found, mirroring EXPLORATION_PROGRESS_EVENT.
+DEFECT_DETECTED_EVENT: str = "exploration.defect"

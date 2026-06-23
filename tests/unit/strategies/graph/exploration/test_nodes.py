@@ -5,10 +5,12 @@ from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
 from fathom.constants import ActionType
+from fathom.constants.defect import DEFECT_DETECTED_EVENT, DefectSignal
 from fathom.constants.exploration import (
     EXPLORATION_PROGRESS_EVENT,
     MAX_ROUTES_WITHOUT_PROGRESS,
     BFSPhase,
+    ExpectedOutcome,
     FocusRelevance,
 )
 from fathom.constants.graph import NodeName
@@ -402,6 +404,57 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(dfs.stalled_routes, 0)
 
+    async def test_dead_tap_emits_a_functional_defect(self) -> None:
+        graph = _graph_mock(resolve_hash=Mock(side_effect=lambda value: value))
+        context = Mock(
+            is_cancelled=False,
+            max_steps=100,
+            workflow_id="wf",
+            package_name="com.app",
+            device=Mock(get_current_package=AsyncMock(return_value="com.app")),
+            exploration_graph=graph,
+            memory=Mock(store_experience=AsyncMock()),
+            history=Mock(enqueue_save_step=Mock()),
+            agent_state=Mock(record_step=Mock(), step_count=1),
+            telemetry=Mock(info=AsyncMock()),
+        )
+        # The post-action capture lands on the SAME screen: the predicted
+        # transition never happened, so the tap was inert.
+        context.perception = Mock(
+            perceive=AsyncMock(return_value=Mock()),
+            build_state=Mock(return_value=_screen_state("pre")),
+        )
+        action = Action(
+            action_type=ActionType.TAP,
+            rationale="r",
+            natural_language_target="Buy",
+            expected_outcome=ExpectedOutcome.NEW_SCREEN,
+        )
+        step = Step(action=action, screen_hash="pre", step_number=1)
+        state: Dict[str, Any] = {
+            EKey.ACTION: action,
+            CKey.SCREEN_STATE: _screen_state("pre"),
+            CKey.STEP_RESULT: StepResult(
+                step=step,
+                success=True,
+                duration=10,
+                screen_changed=True,
+                pre_hash="pre",
+                post_hash="0",
+            ),
+        }
+
+        await ExplorationNodeProvider(
+            context=context, vision=Mock(), dfs=DfsState(phase=BFSPhase.SCAN)
+        ).record(state)
+
+        defect_signals = [
+            call.kwargs["signal"]
+            for call in context.telemetry.info.await_args_list
+            if call.args and call.args[0] == DEFECT_DETECTED_EVENT
+        ]
+        self.assertEqual(defect_signals, [DefectSignal.DEAD_TAP.value])
+
 
 class TestNavigateNode(unittest.IsolatedAsyncioTestCase):
     """Navigate synthesises BACK presses and completes when recovery is empty."""
@@ -617,10 +670,12 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
     async def test_unrecoverable_drift_terminates(self) -> None:
         context = Mock(
             is_cancelled=False,
+            workflow_id="wf",
             package_name="com.app",
             configuration=Mock(),
             device=Mock(get_current_package=AsyncMock(return_value="com.other"), back=AsyncMock()),
             agent_state=Mock(record_step=Mock()),
+            telemetry=Mock(info=AsyncMock()),
         )
         step = Step(action=_action(), screen_hash="pre", step_number=1)
         state: Dict[str, Any] = {
@@ -640,6 +695,12 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result[CKey.IS_COMPLETE])
         self.assertIn("Left target package", result[CKey.COMPLETION_REASON])
         self.assertEqual(context.device.back.await_count, 3)
+        defect_signals = [
+            call.kwargs["signal"]
+            for call in context.telemetry.info.await_args_list
+            if call.args and call.args[0] == DEFECT_DETECTED_EVENT
+        ]
+        self.assertIn(DefectSignal.LEFT_PACKAGE.value, defect_signals)
 
     async def test_transient_drift_recovers_and_continues(self) -> None:
         graph = _graph_mock(resolve_hash=Mock(side_effect=lambda value: value))
