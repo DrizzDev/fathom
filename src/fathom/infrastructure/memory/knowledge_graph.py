@@ -21,8 +21,9 @@ logger = getLogger(__name__)
 MAX_TRIED_IN_CONTEXT = 25
 
 # Descriptions the VLM emits that carry no signal; treated as "no description"
-# so a later meaningful one can replace them.
-USELESS_DESCRIPTIONS = frozenset({"", "unknown", "tool-based analysis"})
+# so a later meaningful one can replace them. "fallback state" is the sentinel a
+# failed analysis writes, so it must not survive as a screen's description.
+USELESS_DESCRIPTIONS = frozenset({"", "unknown", "tool-based analysis", "fallback state"})
 
 # Action types that "sample" a list item (counted by the sampling guard).
 SAMPLING_ACTION_TYPES = frozenset(

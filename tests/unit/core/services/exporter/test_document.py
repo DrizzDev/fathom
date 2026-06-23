@@ -195,8 +195,18 @@ class TestScreenDocumentSlugCollision(unittest.IsolatedAsyncioTestCase):
 
     async def test_colliding_titles_get_numeric_suffixes(self) -> None:
         screens = [
-            _screen_row(visual_hash=_HOME_A, activity="com.app/.MainActivity", category="home"),
-            _screen_row(visual_hash=_DETAIL, activity="com.app/.ui.MainActivity", category="home"),
+            _screen_row(
+                visual_hash=_HOME_A,
+                activity="com.app/.MainActivity",
+                category="home",
+                description="Main menu",
+            ),
+            _screen_row(
+                visual_hash=_DETAIL,
+                activity="com.app/.ui.MainActivity",
+                category="home",
+                description="Main menu",
+            ),
         ]
         graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=[]))
         await graph.load()
@@ -204,7 +214,37 @@ class TestScreenDocumentSlugCollision(unittest.IsolatedAsyncioTestCase):
         index = ScreenDocumentExporter().build(graph=graph, defects=[], metadata=_metadata())
         slugs = sorted(document.slug for document in index.documents)
 
-        self.assertEqual(slugs, ["main-home", "main-home-2"])
+        self.assertEqual(slugs, ["main-menu", "main-menu-2"])
+
+
+class TestScreenDocumentFiltering(unittest.IsolatedAsyncioTestCase):
+    """Transient captures with no real content are not documented."""
+
+    async def test_skips_screens_without_description_or_narrative(self) -> None:
+        screens = [
+            _screen_row(
+                visual_hash=_HOME_A,
+                activity="com.app/.Home",
+                category="home",
+                description="Home feed",
+                rich="Home prose",
+            ),
+            # Transient capture: no meaningful description, no narrative.
+            _screen_row(visual_hash=_DETAIL, activity="com.app/.Home", category="other"),
+            # Failed analysis: the fallback sentinel is not a real description.
+            _screen_row(
+                visual_hash=_ACCOUNT,
+                activity="com.app/.Home",
+                category="other",
+                description="Fallback state",
+            ),
+        ]
+        graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=[]))
+        await graph.load()
+
+        index = ScreenDocumentExporter().build(graph=graph, defects=[], metadata=_metadata())
+
+        self.assertEqual([document.slug for document in index.documents], ["home-feed"])
 
 
 class TestScreenDocumentRenderer(unittest.TestCase):

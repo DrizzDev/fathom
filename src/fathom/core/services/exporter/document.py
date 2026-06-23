@@ -60,13 +60,28 @@ class ScreenDocumentExporter:
         ]
         return DocumentIndex(metadata=metadata, documents=documents)
 
-    @staticmethod
-    def __ordered(*, graph: KnowledgeGraph) -> List[GraphNode]:
+    @classmethod
+    def __ordered(cls, *, graph: KnowledgeGraph) -> List[GraphNode]:
         """
-        Orders screens by visit count, breaking ties on the hash for determinism.
+        Documentable screens ordered by visit count, ties broken on the hash.
         """
 
-        return sorted(graph.nodes.values(), key=lambda node: (-node.visit_count, node.visual_hash))
+        documentable = [node for node in graph.nodes.values() if cls.__is_documentable(node=node)]
+        return sorted(documentable, key=lambda node: (-node.visit_count, node.visual_hash))
+
+    @staticmethod
+    def __is_documentable(*, node: GraphNode) -> bool:
+        """
+        Whether a screen carries content worth a document.
+
+        Transient or failed captures (a loading frame, an analysis fallback) reach
+        the graph with no meaningful description and no narrative; documenting them
+        only produces near-duplicate noise, so they are skipped.
+        """
+
+        if KnowledgeGraph.has_meaningful_description(node.description):
+            return True
+        return bool(node.rich_description and node.rich_description.strip())
 
     def __title(self, *, node: GraphNode) -> str:
         """
