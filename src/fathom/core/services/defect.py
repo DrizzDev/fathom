@@ -49,6 +49,5 @@ class DefectAnalysisService:
         return ScreenSnapshot(
             screen=node.visual_hash,
             activity=node.activity,
-            description=node.description,
             texts=texts,
         )

@@ -52,6 +52,22 @@ class DefectFromSignalTest(unittest.TestCase):
         )
         self.assertEqual(defect.severity, DefectSeverity.MAJOR)
 
+    def test_kind_is_derived_from_signal_and_survives_round_trip(self) -> None:
+        """
+        Kind is computed from the signal, not an independent input, and persists in JSON.
+        """
+
+        defect = Defect.from_signal(
+            signal=DefectSignal.LOREM_IPSUM,
+            source=DefectSource.POST_RUN,
+            summary="placeholder copy",
+            evidence=self.__evidence(),
+        )
+        self.assertEqual(defect.kind, DefectKind.CONTENT)
+
+        restored = Defect.model_validate_json(defect.model_dump_json())
+        self.assertEqual(restored.kind, DefectKind.CONTENT)
+
 
 class BugReportTest(unittest.TestCase):
     """

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from fathom.constants.defect import (
     DefectKind,
@@ -45,7 +45,6 @@ class Defect(BaseModel):
     """
 
     signal: DefectSignal = Field(description="Specific observation evidencing the defect")
-    kind: DefectKind = Field(description="Broad category the defect belongs to")
     severity: DefectSeverity = Field(description="How badly the defect degrades the experience")
     source: DefectSource = Field(description="Run stage that produced the defect")
     summary: str = Field(description="One-line human-readable description")
@@ -53,6 +52,15 @@ class Defect(BaseModel):
     occurrence: int = Field(
         default=1, ge=1, description="Times the defect was observed across the run"
     )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def kind(self) -> DefectKind:
+        """
+        Broad category, derived from the signal so it cannot drift.
+        """
+
+        return self.signal.kind
 
     @classmethod
     def from_signal(
@@ -65,12 +73,11 @@ class Defect(BaseModel):
         severity: Optional[DefectSeverity] = None,
     ) -> "Defect":
         """
-        Builds a defect, defaulting kind and severity from the signal.
+        Builds a defect, defaulting severity from the signal when not supplied.
         """
 
         return cls(
             signal=signal,
-            kind=signal.kind,
             severity=severity or signal.default_severity,
             source=source,
             summary=summary,
@@ -133,14 +140,8 @@ class ScreenSnapshot(BaseModel):
     activity: Optional[str] = Field(
         default=None, description="Android activity the screen belongs to"
     )
-    description: Optional[str] = Field(
-        default=None, description="Model-written summary of the screen"
-    )
     texts: List[str] = Field(
         default_factory=list, description="Visible text fragments from OCR and the hierarchy"
-    )
-    screenshot: Optional[bytes] = Field(
-        default=None, description="Raw screenshot bytes for vision review, when available"
     )
 
 
