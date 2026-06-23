@@ -403,10 +403,14 @@ class HistoryService:
     def __resolve_package_name(self, *, package_name: Optional[str]) -> str:
         """
         Resolve the active package name for history artifact persistence.
+
+        Callers may pass a full "package/activity" identifier; only the package
+        component scopes history, and keeping the slash would corrupt the
+        artifact path.
         """
 
         if package_name and str(package_name).strip():
-            self.__package_name = str(package_name)
+            self.__package_name = str(package_name).split("/", 1)[0]
 
         return self.__package_name
 
@@ -431,8 +435,11 @@ class HistoryService:
         """
 
         directory = self.__path_manager.get_history_directory(session_id=self.__workflow_id)
+        # Guard against a path separator in the package leaking the artifact into a
+        # nested directory instead of a flat, session-scoped file.
+        safe_package = package_name.replace("/", "_")
         stem, _, ext = filename.rpartition(".")
-        scoped = f"{stem}__{package_name}.{ext}" if stem and ext else f"{filename}__{package_name}"
+        scoped = f"{stem}__{safe_package}.{ext}" if stem and ext else f"{filename}__{safe_package}"
 
         return directory / scoped
 
