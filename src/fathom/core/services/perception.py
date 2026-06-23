@@ -219,10 +219,11 @@ class PerceptionService:
         """
         Compute a content-agnostic hash of the screen's interactive layout.
 
-        Uses only each element's class and id, never its text, so a screen with
-        different typed or loaded content (an empty vs filled form, search results
-        for different queries) hashes the same while a structurally different
-        screen does not.
+        Uses only each element's class and id, never its text, and the distinct
+        set of those identities rather than their count, so a screen with
+        different typed or loaded content (an empty vs filled form, a results list
+        of different length) hashes the same while a structurally different screen
+        does not.
         """
 
         if not elements:
@@ -233,8 +234,9 @@ class PerceptionService:
             if not structures:
                 return ZERO_HASH
 
-            structures.sort()
-            combined_signature = "\n".join(structures)
+            # Distinct identities: a list with 3 vs 10 of the same item is one screen.
+            distinct = sorted(set(structures))
+            combined_signature = "\n".join(distinct)
             return hashlib.md5(
                 combined_signature.encode("utf-8"), usedforsecurity=False
             ).hexdigest()[:VISUAL_HASH_LENGTH]

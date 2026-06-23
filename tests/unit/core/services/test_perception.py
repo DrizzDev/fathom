@@ -329,6 +329,16 @@ class TestComputeStructureHash(unittest.TestCase):
 
         self.assertNotEqual(field_hash, button_hash)
 
+    def test_repeated_elements_do_not_change_the_structure_hash(self) -> None:
+        service = self.__service()
+
+        one = service.compute_structure_hash(elements=[self.__field(text="a")])
+        many = service.compute_structure_hash(
+            elements=[self.__field(text="a"), self.__field(text="b"), self.__field(text="c")]
+        )
+
+        self.assertEqual(one, many)
+
     def test_no_elements_is_zero_hash(self) -> None:
         self.assertEqual(self.__service().compute_structure_hash(elements=[]), ZERO_HASH)
 
