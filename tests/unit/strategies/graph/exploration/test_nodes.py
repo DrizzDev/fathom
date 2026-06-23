@@ -19,6 +19,7 @@ from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.core.exceptions import DeviceError
+from fathom.core.safety.guard import TraversalGuard
 from fathom.schemas.actions import Action
 from fathom.schemas.defect import Defect, DefectEvidence
 from fathom.schemas.exploration import TriedAction
@@ -345,6 +346,39 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         await ExplorationNodeProvider(context=context, vision=vision).scan(state)
 
         graph.record_category.assert_not_awaited()
+
+    async def test_traversal_guard_reprompts_away_from_a_sensitive_action(self) -> None:
+        # The model first picks a payment action; the guard re-prompts and the
+        # benign re-pick is what the step executes.
+        vision = Mock(
+            scan=AsyncMock(
+                side_effect=[
+                    _analysis(action=_action("Proceed to Pay")),
+                    _analysis(action=_action("Restaurant card")),
+                ]
+            )
+        )
+        graph = _graph_mock()
+        context = self.__context(graph, focus=None)
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("abc")}
+
+        result = await ExplorationNodeProvider(
+            context=context, vision=vision, traversal_guard=TraversalGuard()
+        ).scan(state)
+
+        self.assertEqual(result[EKey.ACTION].natural_language_target, "Restaurant card")
+        self.assertGreaterEqual(vision.scan.await_count, 2)
+
+    async def test_without_a_guard_a_sensitive_action_passes_through(self) -> None:
+        analysis = _analysis(action=_action("Proceed to Pay"))
+        vision = Mock(scan=AsyncMock(return_value=analysis))
+        graph = _graph_mock()
+        context = self.__context(graph, focus=None)
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("abc")}
+
+        result = await ExplorationNodeProvider(context=context, vision=vision).scan(state)
+
+        self.assertEqual(result[EKey.ACTION].natural_language_target, "Proceed to Pay")
 
     async def test_persists_exhaustion_past_the_depth_floor(self) -> None:
         graph = _graph_mock()

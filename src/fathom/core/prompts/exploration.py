@@ -190,6 +190,14 @@ EXPLORATION_RESPONSE_DIRECTIVE = (
     "NEVER output plain text, markdown, or explanations outside the tool calls."
 )
 
+EXPLORATION_AVOIDANCE_DIRECTIVE = (
+    "AVOID SENSITIVE AREAS: you are a broad-coverage crawler, not a real user. Do NOT "
+    "act into payment, authentication, or destructive flows - describe such a screen, "
+    "then pick a DIFFERENT element. Concretely: do NOT tap Pay / Checkout / Place Order, "
+    "do NOT log in / sign up / enter an OTP or password, and do NOT delete accounts or "
+    "reset data. Prefer browsing, navigation, and content over committing actions."
+)
+
 
 class ExplorationPromptBuilder:
     """
@@ -211,6 +219,7 @@ class ExplorationPromptBuilder:
                 EXPLORATION_SCAN_STRATEGY,
                 EXPLORATION_ELEMENT_CATEGORIES,
                 EXPLORATION_PRIORITY,
+                EXPLORATION_AVOIDANCE_DIRECTIVE,
                 EXPLORATION_FOCUS_DIRECTIVE,
                 EXPLORATION_ACTION_PALETTE,
                 EXPLORATION_LIST_SAMPLING,

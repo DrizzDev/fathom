@@ -175,6 +175,12 @@ MAX_ROUTES_WITHOUT_PROGRESS: int = 50
 RECENT_ACTION_WINDOW: int = 3
 
 
+# Re-prompts allowed when the traversal guard vetoes an action that would enter a
+# sensitive area (payment, auth, destructive); after these the screen is treated
+# as exhausted so the crawl describes it but backtracks instead of acting in.
+MAX_SENSITIVE_ACTION_RETRIES: int = 2
+
+
 # Quantization cell (on the normalized 0-1000 grid) for coordinate-bucket dedup:
 # two taps aimed at the same visual element land in the same bucket despite label drift.
 COORD_BUCKET_GRID_SIZE: int = 50

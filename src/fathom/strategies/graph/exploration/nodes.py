@@ -10,6 +10,7 @@ from fathom.constants.defect import DEFECT_DETECTED_EVENT
 from fathom.constants.exploration import (
     EXPLORATION_PROGRESS_EVENT,
     MAX_ROUTES_WITHOUT_PROGRESS,
+    MAX_SENSITIVE_ACTION_RETRIES,
     RECENT_ACTION_WINDOW,
     BFSPhase,
 )
@@ -23,6 +24,7 @@ from fathom.core.exceptions import DeviceError
 from fathom.core.exploration.config import ExplorationPolicyConfig
 from fathom.core.exploration.dedup import ActionKey, DedupPolicy
 from fathom.core.exploration.depth import DepthFloorPolicy
+from fathom.core.safety.guard import TraversalGuard
 from fathom.core.services.exploration import ExplorationVisionService
 from fathom.interfaces.defect import (
     DefectRepositoryPort,
@@ -81,6 +83,7 @@ class ExplorationNodeProvider:
         inline_detector: Optional[InlineDefectDetectorPort] = None,
         defects: Optional[DefectRepositoryPort] = None,
         screen_detector: Optional[ScreenDefectDetectorPort] = None,
+        traversal_guard: Optional[TraversalGuard] = None,
     ) -> None:
         """
         Initialize with shared context, the vision service, and DFS policies.
@@ -98,6 +101,8 @@ class ExplorationNodeProvider:
         self.__inline_detector = inline_detector or InlineDefectDetector()
         self.__defects = defects
         self.__screen_detector = screen_detector
+        # None means guardrails are off; the factory injects a guard for real runs.
+        self.__traversal_guard = traversal_guard
         self.__inspected_screens: Set[str] = set()
 
     # ── Nodes ──────────────────────────────────────────────────────────────
@@ -252,6 +257,12 @@ class ExplorationNodeProvider:
             capture=capture, knowledge_context=knowledge_context, intent=ctx.intent
         )
         analysis = await self.__guard_against_repeats(
+            analysis=analysis,
+            capture=capture,
+            knowledge_context=knowledge_context,
+            fingerprint=fingerprint,
+        )
+        analysis = await self.__guard_against_sensitive(
             analysis=analysis,
             capture=capture,
             knowledge_context=knowledge_context,
@@ -660,6 +671,55 @@ class ExplorationNodeProvider:
                 )
                 analysis.content_exhausted = True
 
+        return analysis
+
+    async def __guard_against_sensitive(
+        self,
+        *,
+        analysis: AnalysisResult,
+        capture: Any,
+        knowledge_context: str,
+        fingerprint: str,
+    ) -> AnalysisResult:
+        """
+        Re-prompt away from actions that enter sensitive areas (payment, auth,
+        destructive), exhausting the screen when the model keeps choosing one so
+        the crawl describes it but backtracks instead of acting in.
+        """
+
+        guard = self.__traversal_guard
+        if guard is None:
+            return analysis
+
+        for _ in range(MAX_SENSITIVE_ACTION_RETRIES):
+            if analysis.content_exhausted:
+                return analysis
+
+            verdict = guard.inspect_action(
+                target=analysis.action.natural_language_target or analysis.action.target or "",
+                rationale=analysis.action.rationale or "",
+            )
+            if verdict.allowed or verdict.reason is None:
+                return analysis
+
+            logger.info(
+                "Traversal guard vetoed a %s action on screen %s",
+                verdict.category.value if verdict.category else "sensitive",
+                fingerprint[:8],
+            )
+            analysis = await self.__vision.scan(
+                capture=capture,
+                knowledge_context=knowledge_context,
+                intent=self.__context.intent,
+                failures=[verdict.reason],
+            )
+
+        blocked = not guard.inspect_action(
+            target=analysis.action.natural_language_target or analysis.action.target or "",
+            rationale=analysis.action.rationale or "",
+        ).allowed
+        if blocked and not analysis.content_exhausted:
+            analysis.content_exhausted = True
         return analysis
 
     def __sampling_rejection(self, *, action: Action, fingerprint: str) -> Optional[List[str]]:
@@ -1139,4 +1199,5 @@ class ExplorationGraphFactory:
             screen_detector=VisionDefectDetector(
                 llm=context.llm, use_cache=context.configuration.llm.use_cache
             ),
+            traversal_guard=TraversalGuard(),
         )
