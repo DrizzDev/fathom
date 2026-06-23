@@ -5,6 +5,7 @@ from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock
 
 from fathom.constants.exploration import ExpectedOutcome, FocusRelevance
+from fathom.constants.screen import ScreenCategory
 from fathom.core.services.exploration import ExplorationResponseParser, ExplorationVisionService
 from fathom.schemas.results import GenerateResult
 
@@ -195,6 +196,52 @@ class TestExplorationResponseParser(unittest.TestCase):
 
         self.assertIn("## Elements", rich)
         self.assertIn("## What You Can Do", rich)
+
+    @staticmethod
+    def __describe(*, category: Any) -> GenerateResult:
+        return GenerateResult(
+            tool_calls=[
+                _Call(
+                    "explore_ui",
+                    {
+                        "action": {
+                            "action_type": "tap",
+                            "rationale": "r",
+                            "target_name": "Home",
+                        },
+                        "assistant_message": "m",
+                        "screen_description": "s",
+                    },
+                ),
+                _Call(
+                    "describe_screen",
+                    {"activity_name": "com.x/.Pay", "screen_category": category},
+                ),
+            ]
+        )
+
+    def test_parses_screen_category_onto_result(self) -> None:
+        result = self.__parser.parse(self.__describe(category="payment"))
+
+        self.assertEqual(result.category, ScreenCategory.PAYMENT)
+
+    def test_unknown_screen_category_coerces_to_other(self) -> None:
+        result = self.__parser.parse(self.__describe(category="frobnicate"))
+
+        self.assertEqual(result.category, ScreenCategory.OTHER)
+
+    def test_category_is_none_without_describe_screen(self) -> None:
+        response = self.__explore(
+            action={
+                "action_type": "tap",
+                "rationale": "r",
+                "target_name": "x",
+                "tap_target": {"x": 1, "y": 1},
+            },
+            assistant_message="m",
+        )
+
+        self.assertIsNone(self.__parser.parse(response).category)
 
     def test_no_tool_calls_returns_wait(self) -> None:
         result = self.__parser.parse(GenerateResult(content="I cannot see elements", tool_calls=[]))

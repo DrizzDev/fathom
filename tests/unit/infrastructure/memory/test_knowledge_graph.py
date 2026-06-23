@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from fathom.constants import ActionType
 from fathom.constants.exploration import ExpectedOutcome, FocusRelevance
+from fathom.constants.screen import ScreenCategory
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.exploration import ActionOutcome
@@ -33,6 +34,9 @@ class _FakeProvider:
         return None
 
     async def set_relevance(self, visual_hash: str, relevance: str) -> None:
+        return None
+
+    async def set_category(self, visual_hash: str, category: str) -> None:
         return None
 
     async def store_transition(
@@ -265,6 +269,67 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             graph.relevance_of(visual_hash="aaaaaaaaaaaaaaaa"), FocusRelevance.UNSCOPED
         )
+
+    async def test_record_category_sets_node_and_defaults_other(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+        self.assertEqual(
+            self.__graph.category_of(visual_hash="aaaaaaaaaaaaaaaa"), ScreenCategory.OTHER
+        )
+
+        await self.__graph.record_category(
+            visual_hash="aaaaaaaaaaaaaaaa", category=ScreenCategory.PAYMENT
+        )
+
+        self.assertEqual(
+            self.__graph.category_of(visual_hash="aaaaaaaaaaaaaaaa"), ScreenCategory.PAYMENT
+        )
+
+    async def test_category_of_unknown_screen_is_other(self) -> None:
+        self.assertEqual(
+            self.__graph.category_of(visual_hash="ffffffffffffffff"), ScreenCategory.OTHER
+        )
+
+    async def test_load_restores_category(self) -> None:
+        row = {
+            "visual_hash": "aaaaaaaaaaaaaaaa",
+            "activity": "com.app/.Feed",
+            "description": "Feed",
+            "first_seen": 1,
+            "last_seen": 2,
+            "visit_count": 1,
+            "rich_description": None,
+            "activity_hash": "act",
+            "xml_hash": None,
+            "interaction_hash": None,
+            "exhausted": False,
+            "relevance": "unscoped",
+            "category": "list",
+        }
+        graph = KnowledgeGraph(provider=_FakeProvider(screens=[row]))
+        await graph.load()
+
+        self.assertEqual(graph.category_of(visual_hash="aaaaaaaaaaaaaaaa"), ScreenCategory.LIST)
+
+    async def test_load_coerces_unknown_category_to_other(self) -> None:
+        row = {
+            "visual_hash": "aaaaaaaaaaaaaaaa",
+            "activity": "com.app/.Feed",
+            "description": "Feed",
+            "first_seen": 1,
+            "last_seen": 2,
+            "visit_count": 1,
+            "rich_description": None,
+            "activity_hash": "act",
+            "xml_hash": None,
+            "interaction_hash": None,
+            "exhausted": False,
+            "relevance": "unscoped",
+            "category": "garbage",
+        }
+        graph = KnowledgeGraph(provider=_FakeProvider(screens=[row]))
+        await graph.load()
+
+        self.assertEqual(graph.category_of(visual_hash="aaaaaaaaaaaaaaaa"), ScreenCategory.OTHER)
 
     async def test_build_exploration_context_lists_tried_and_forbidden(self) -> None:
         await self.__graph.add_screen(

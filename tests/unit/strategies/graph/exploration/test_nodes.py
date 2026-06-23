@@ -14,6 +14,7 @@ from fathom.constants.exploration import (
     FocusRelevance,
 )
 from fathom.constants.graph import NodeName
+from fathom.constants.screen import ScreenCategory
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
@@ -46,6 +47,7 @@ def _analysis(
     action: Action,
     content_exhausted: bool = False,
     focus_relevance: FocusRelevance | None = None,
+    category: ScreenCategory | None = None,
 ) -> AnalysisResult:
     return AnalysisResult(
         action=action,
@@ -53,6 +55,7 @@ def _analysis(
         screen_description="s",
         content_exhausted=content_exhausted,
         focus_relevance=focus_relevance,
+        category=category,
     )
 
 
@@ -72,6 +75,7 @@ def _graph_mock(**overrides: Any) -> Mock:
         record_transition=AsyncMock(),
         mark_exhausted=AsyncMock(),
         record_relevance=AsyncMock(),
+        record_category=AsyncMock(),
     )
     for key, value in overrides.items():
         setattr(graph, key, value)
@@ -301,6 +305,31 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         _args, kwargs = graph.build_exploration_context.call_args
         self.assertIsNone(kwargs["focus"])
         graph.record_relevance.assert_not_awaited()
+
+    async def test_scan_records_screen_category(self) -> None:
+        # Category is recorded on every run, focus or not, for the per-screen docs.
+        analysis = _analysis(action=_action("Pay"), category=ScreenCategory.PAYMENT)
+        vision = Mock(scan=AsyncMock(return_value=analysis))
+        graph = _graph_mock()
+        context = self.__context(graph, focus=None)
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("abc")}
+
+        await ExplorationNodeProvider(context=context, vision=vision).scan(state)
+
+        graph.record_category.assert_awaited_once_with(
+            visual_hash="abc", category=ScreenCategory.PAYMENT
+        )
+
+    async def test_scan_without_category_skips_category_recording(self) -> None:
+        analysis = _analysis(action=_action("Home"), category=None)
+        vision = Mock(scan=AsyncMock(return_value=analysis))
+        graph = _graph_mock()
+        context = self.__context(graph, focus=None)
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state()}
+
+        await ExplorationNodeProvider(context=context, vision=vision).scan(state)
+
+        graph.record_category.assert_not_awaited()
 
     async def test_persists_exhaustion_past_the_depth_floor(self) -> None:
         graph = _graph_mock()

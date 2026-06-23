@@ -8,6 +8,8 @@ from typing import Any, List
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from fathom.constants.screen import ScreenCategory
+
 
 class ScreenTranslation(BaseModel):
     """
@@ -17,6 +19,11 @@ class ScreenTranslation(BaseModel):
 
     activity: str = Field(
         default="", alias="activity_name", description="Android activity this screen belongs to"
+    )
+    category: ScreenCategory = Field(
+        default=ScreenCategory.OTHER,
+        alias="screen_category",
+        description="The functional kind of screen this is, used to group per-screen docs",
     )
     purpose: str = Field(
         default="",
@@ -43,6 +50,21 @@ class ScreenTranslation(BaseModel):
         """
 
         return "" if value is None else value
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def __coerce_category(cls, value: Any) -> ScreenCategory:
+        """
+        Map a missing or unrecognised category onto OTHER so an off-list value
+        from the model never fails the whole translation parse.
+        """
+
+        if isinstance(value, ScreenCategory):
+            return value
+        try:
+            return ScreenCategory(str(value).strip().lower())
+        except (ValueError, AttributeError):
+            return ScreenCategory.OTHER
 
     def to_markdown(self) -> str:
         """

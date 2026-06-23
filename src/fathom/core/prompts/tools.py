@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, FrozenSet, List, Optional
 
 from fathom.constants.defect import DETECT_DEFECTS_TOOL, VISION_DEFECT_SIGNALS, DefectSeverity
+from fathom.constants.screen import ScreenCategory
 from fathom.constants.tools import ToolName
 
 
@@ -300,6 +301,14 @@ class ToolRegistry:
                             "in the context. One description per unique activity."
                         ),
                     },
+                    "screen_category": {
+                        "type": "STRING",
+                        "description": (
+                            "The functional kind of screen this is, from the user's point of "
+                            "view. Choose the single best fit from the allowed values."
+                        ),
+                        "enum": [category.value for category in ScreenCategory],
+                    },
                     "screen_purpose": {
                         "type": "STRING",
                         "description": (
@@ -327,6 +336,7 @@ class ToolRegistry:
                 },
                 "required": [
                     "activity_name",
+                    "screen_category",
                     "screen_purpose",
                     "elements",
                     "achievable_actions",

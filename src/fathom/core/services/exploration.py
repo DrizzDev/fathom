@@ -166,15 +166,18 @@ class ExplorationResponseParser:
     @staticmethod
     def __attach_translation(*, result: AnalysisResult, arguments: Dict[str, Any]) -> None:
         """
-        Renders a describe_screen call into the rich-description metadata.
+        Renders a describe_screen call into the rich-description metadata and the
+        screen category.
         """
 
         try:
-            result.metadata["rich_description"] = ScreenTranslation.model_validate(
-                arguments
-            ).to_markdown()
+            translation = ScreenTranslation.model_validate(arguments)
         except Exception:
             logger.warning("Failed to parse describe_screen args", exc_info=True)
+            return
+
+        result.metadata["rich_description"] = translation.to_markdown()
+        result.category = translation.category
 
     @staticmethod
     def __safe_float(value: Any, default: float = 0.9) -> float:

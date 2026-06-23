@@ -164,6 +164,31 @@ class TestSQLiteMemoryProvider(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(screens[0]["relevance"], "on_focus")
 
+    async def test_set_category_persists(self) -> None:
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+        await self.__provider.set_category(visual_hash="a1b2c3d4e5f60718", category="payment")
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertEqual(screens[0]["category"], "payment")
+
+    async def test_screens_default_to_other_category(self) -> None:
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertEqual(screens[0]["category"], "other")
+
+    async def test_revisit_preserves_category(self) -> None:
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+        await self.__provider.set_category(visual_hash="a1b2c3d4e5f60718", category="detail")
+        # A later visit upserts the row but must not reset the recorded category.
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertEqual(screens[0]["category"], "detail")
+
     async def test_readonly_provider_drops_writes(self) -> None:
         readonly = SQLiteMemoryProvider(
             database_path=Path(self.__tmp.name) / "readonly.db", readonly=True

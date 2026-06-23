@@ -7,6 +7,7 @@ from typing import AbstractSet, Any, Dict, List, Optional, Set, Tuple
 
 from fathom.constants import ActionType
 from fathom.constants.exploration import FocusRelevance
+from fathom.constants.screen import ScreenCategory
 from fathom.infrastructure.memory.algorithms import GraphAlgorithms
 from fathom.infrastructure.memory.canonical import ScreenCanonicalizer
 from fathom.interfaces import IMemoryProvider
@@ -47,6 +48,7 @@ class GraphNode:
     interaction_hash: Optional[str] = None
     exhausted: bool = False
     relevance: FocusRelevance = FocusRelevance.UNSCOPED
+    category: ScreenCategory = ScreenCategory.OTHER
 
 
 @dataclass
@@ -210,6 +212,9 @@ class KnowledgeGraph:
             persisted_relevance = self.__coerce_relevance(screen.get("relevance"))
             if persisted_relevance is not FocusRelevance.UNSCOPED:
                 existing.relevance = persisted_relevance
+            persisted_category = self.__coerce_category(screen.get("category"))
+            if persisted_category is not ScreenCategory.OTHER:
+                existing.category = persisted_category
             self.__backfill_hashes(node=existing, source=screen)
             return
 
@@ -226,6 +231,7 @@ class KnowledgeGraph:
             interaction_hash=screen.get("interaction_hash"),
             exhausted=bool(screen.get("exhausted", False)),
             relevance=self.__coerce_relevance(screen.get("relevance")),
+            category=self.__coerce_category(screen.get("category")),
         )
 
     def __hydrate_transition(self, *, transition: Dict[str, Any]) -> None:
@@ -409,6 +415,38 @@ class KnowledgeGraph:
             return FocusRelevance(value)
         except ValueError:
             return FocusRelevance.UNSCOPED
+
+    async def record_category(self, *, visual_hash: str, category: ScreenCategory) -> None:
+        """
+        Records a screen's functional category, in memory and in persistence.
+        """
+
+        canonical = self.__resolve(visual_hash)
+        node = self.__nodes.get(canonical)
+        if node:
+            node.category = category
+        await self.__provider.set_category(visual_hash=canonical, category=category.value)
+
+    def category_of(self, *, visual_hash: str) -> ScreenCategory:
+        """
+        Returns the recorded category for a screen, OTHER when unknown.
+        """
+
+        node = self.__nodes.get(self.__resolve(visual_hash))
+        return node.category if node else ScreenCategory.OTHER
+
+    @staticmethod
+    def __coerce_category(value: Optional[str]) -> ScreenCategory:
+        """
+        Coerces a persisted category string into the enum, defaulting to OTHER.
+        """
+
+        if value is None:
+            return ScreenCategory.OTHER
+        try:
+            return ScreenCategory(value)
+        except ValueError:
+            return ScreenCategory.OTHER
 
     async def append_activity_description(self, *, activity: str, observation: str) -> None:
         """

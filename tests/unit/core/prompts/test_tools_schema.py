@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Any, Dict, List
 
+from fathom.constants.screen import ScreenCategory
 from fathom.constants.tools import ToolName
 from fathom.core.prompts.tools import ToolRegistry
 
@@ -232,3 +233,17 @@ class ExplorationToolDefinitionsTest(unittest.TestCase):
 
         for field in ("activity_name", "screen_purpose", "elements", "achievable_actions"):
             self.assertIn(field, describe["parameters"]["required"])
+
+    def test_describe_screen_constrains_category_to_the_enum(self) -> None:
+        """
+        describe_screen requires screen_category and limits it to ScreenCategory values.
+        """
+
+        describe = ToolRegistry.get_translation_definitions()["function_declarations"][0]
+        properties = describe["parameters"]["properties"]
+
+        self.assertIn("screen_category", describe["parameters"]["required"])
+        self.assertEqual(
+            set(properties["screen_category"]["enum"]),
+            {category.value for category in ScreenCategory},
+        )

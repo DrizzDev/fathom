@@ -278,6 +278,13 @@ class ExplorationNodeProvider:
                 visual_hash=fingerprint, relevance=analysis.focus_relevance
             )
 
+        # Record the screen's functional category (home, list, detail, ...) so the
+        # per-screen documentation groups fingerprints into one logical screen.
+        if analysis.category is not None:
+            await ctx.exploration_graph.record_category(
+                visual_hash=fingerprint, category=analysis.category
+            )
+
         # Inspect each freshly-registered screen once for UI/content defects.
         await self.__inspect_screen(
             fingerprint=fingerprint, screen_state=screen_state, capture=capture

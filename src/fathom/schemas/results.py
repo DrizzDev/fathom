@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
 from fathom.constants.exploration import FocusRelevance
+from fathom.constants.screen import ScreenCategory
 from fathom.schemas.actions import Action
 from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.delta import DeltaSignal
@@ -79,6 +80,10 @@ class AnalysisResult(BaseModel):
     focus_relevance: Optional[FocusRelevance] = Field(
         default=None,
         description="How this screen relates to the exploration focus; None when the model did not classify.",
+    )
+    category: Optional[ScreenCategory] = Field(
+        default=None,
+        description="The functional kind of screen describe_screen classified; None when unclassified.",
     )
 
     outcome: AnalysisOutcome = Field(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from fathom.constants.screen import ScreenCategory
 from fathom.schemas.translation import ScreenTranslation
 
 
@@ -47,3 +48,29 @@ class TestScreenTranslation(unittest.TestCase):
         self.assertIn("## Purpose\np", markdown)
         self.assertIn("## Elements\ne", markdown)
         self.assertIn("## What You Can Do\nx", markdown)
+
+    def test_parses_screen_category_from_alias(self) -> None:
+        translation = ScreenTranslation.model_validate(
+            {"activity_name": "a", "screen_category": "payment"}
+        )
+
+        self.assertEqual(translation.category, ScreenCategory.PAYMENT)
+
+    def test_unknown_category_coerces_to_other(self) -> None:
+        translation = ScreenTranslation.model_validate(
+            {"activity_name": "a", "screen_category": "frobnicate"}
+        )
+
+        self.assertEqual(translation.category, ScreenCategory.OTHER)
+
+    def test_missing_category_defaults_to_other(self) -> None:
+        translation = ScreenTranslation.model_validate({"activity_name": "a"})
+
+        self.assertEqual(translation.category, ScreenCategory.OTHER)
+
+    def test_category_is_not_rendered_into_markdown(self) -> None:
+        markdown = ScreenTranslation.model_validate(
+            {"activity_name": "a", "screen_category": "home"}
+        ).to_markdown()
+
+        self.assertEqual(markdown, "**Activity:** `a`")

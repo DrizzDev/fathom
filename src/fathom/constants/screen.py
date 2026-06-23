@@ -17,6 +17,39 @@ class ScreenKind(StrEnum):
     GAME_SURFACE = "GAME_SURFACE"
 
 
+class ScreenCategory(StrEnum):
+    """
+    The functional kind of a screen from the user's point of view.
+
+    Assigned by the describe_screen call and persisted per node. It groups the
+    many fingerprints of one logical screen into a single per-screen document
+    (a logical screen is one activity + category) and lets traversal guardrails
+    recognise sensitive areas such as AUTH and PAYMENT.
+
+    HOME       - The app's primary landing or dashboard surface.
+    LIST       - A browsable collection of items (feed, search results, catalogue).
+    DETAIL     - A single item's full view reached from a list.
+    FORM       - A data-entry surface (inputs, toggles, submit).
+    AUTH       - Sign-in, sign-up, OTP, or other identity gates.
+    PAYMENT    - Checkout, cart, billing, or payment-method screens.
+    SETTINGS   - Preferences, account, and configuration menus.
+    ONBOARDING - First-run intros, tutorials, and permission prompts.
+    SEARCH     - A dedicated search-entry surface.
+    OTHER      - Anything that does not fit the categories above.
+    """
+
+    HOME = "home"
+    LIST = "list"
+    DETAIL = "detail"
+    FORM = "form"
+    AUTH = "auth"
+    PAYMENT = "payment"
+    SETTINGS = "settings"
+    ONBOARDING = "onboarding"
+    SEARCH = "search"
+    OTHER = "other"
+
+
 WEBVIEW_AREA_FLOOR: float = 0.30
 GAME_SURFACE_AREA_FLOOR: float = 0.80
 
