@@ -158,3 +158,23 @@ PLACEHOLDER_SIGNALS: dict[str, DefectSignal] = {
 # Telemetry event name carrying a single detected defect; live observers (TUI,
 # console) surface it as it is found, mirroring EXPLORATION_PROGRESS_EVENT.
 DEFECT_DETECTED_EVENT: str = "exploration.defect"
+
+# Tool the vision detector asks the model to call with the defects it sees.
+DETECT_DEFECTS_TOOL: str = "detect_defects"
+
+# Defect signals a single screenshot can evidence; constrains the vision tool's
+# enum and the parser so the model cannot emit a runtime-only signal (dead tap,
+# crash, blank capture) that only the inline detector can observe.
+VISION_DEFECT_SIGNALS: tuple[DefectSignal, ...] = (
+    DefectSignal.OVERLAP_CLIPPING,
+    DefectSignal.CONTRAST,
+    DefectSignal.BROKEN_IMAGE,
+    DefectSignal.LOREM_IPSUM,
+    DefectSignal.PLACEHOLDER_TEXT,
+    DefectSignal.TODO_TEXT,
+    DefectSignal.UNTRANSLATED_STRING,
+    DefectSignal.EMPTY_STATE,
+    DefectSignal.ERROR_DIALOG,
+    DefectSignal.INFINITE_SPINNER,
+    DefectSignal.SPELLING,
+)

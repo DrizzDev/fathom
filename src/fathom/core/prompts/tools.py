@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, FrozenSet, List, Optional
 
+from fathom.constants.defect import DETECT_DEFECTS_TOOL, VISION_DEFECT_SIGNALS, DefectSeverity
 from fathom.constants.tools import ToolName
 
 
@@ -77,6 +78,14 @@ class ToolRegistry:
         """
 
         return {"function_declarations": [cls.__describe_screen()]}
+
+    @classmethod
+    def get_defect_definitions(cls) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Returns the detect_defects tool for a screenshot defect-inspection call.
+        """
+
+        return {"function_declarations": [cls.__detect_defects()]}
 
     @staticmethod
     def __explore_ui() -> Dict[str, Any]:
@@ -322,6 +331,76 @@ class ToolRegistry:
                     "elements",
                     "achievable_actions",
                 ],
+            },
+        }
+
+    @staticmethod
+    def __detect_defects() -> Dict[str, Any]:
+        """
+        Definition for the detect_defects tool: report user-visible screen defects.
+        """
+
+        return {
+            "name": DETECT_DEFECTS_TOOL,
+            "description": (
+                "Report every user-visible UI or content defect on the current screenshot. "
+                "Return an empty list when the screen looks correct."
+            ),
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "defects": {
+                        "type": "ARRAY",
+                        "description": "User-visible defects on this screen; empty when none.",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "signal": {
+                                    "type": "STRING",
+                                    "description": "Which kind of defect this is.",
+                                    "enum": [signal.value for signal in VISION_DEFECT_SIGNALS],
+                                },
+                                "severity": {
+                                    "type": "STRING",
+                                    "description": (
+                                        "How badly it degrades the screen; omit for a default."
+                                    ),
+                                    "enum": [severity.value for severity in DefectSeverity],
+                                },
+                                "summary": {
+                                    "type": "STRING",
+                                    "description": "One-line description of the defect.",
+                                },
+                                "bounds": {
+                                    "type": "OBJECT",
+                                    "description": (
+                                        "Normalized 0-1000 box around the defect, when localizable."
+                                    ),
+                                    "properties": {
+                                        "x": {
+                                            "type": "INTEGER",
+                                            "description": "Left edge (0-1000).",
+                                        },
+                                        "y": {
+                                            "type": "INTEGER",
+                                            "description": "Top edge (0-1000).",
+                                        },
+                                        "width": {
+                                            "type": "INTEGER",
+                                            "description": "Width (0-1000).",
+                                        },
+                                        "height": {
+                                            "type": "INTEGER",
+                                            "description": "Height (0-1000).",
+                                        },
+                                    },
+                                },
+                            },
+                            "required": ["signal", "summary"],
+                        },
+                    },
+                },
+                "required": ["defects"],
             },
         }
 

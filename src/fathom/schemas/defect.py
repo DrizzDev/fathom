@@ -143,6 +143,9 @@ class ScreenSnapshot(BaseModel):
     texts: List[str] = Field(
         default_factory=list, description="Visible text fragments from OCR and the hierarchy"
     )
+    screenshot: Optional[bytes] = Field(
+        default=None, description="Raw screenshot bytes for the vision detector, when available"
+    )
 
 
 class BugReport(BaseModel):
