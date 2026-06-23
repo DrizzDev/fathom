@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, Set, cast
 
 from fathom.constants import ActionType
 from fathom.constants.defect import DEFECT_DETECTED_EVENT
@@ -18,14 +18,19 @@ from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.core.defect.inline import InlineDefectDetector
+from fathom.core.defect.vision import VisionDefectDetector
 from fathom.core.exceptions import DeviceError
 from fathom.core.exploration.config import ExplorationPolicyConfig
 from fathom.core.exploration.dedup import ActionKey, DedupPolicy
 from fathom.core.exploration.depth import DepthFloorPolicy
 from fathom.core.services.exploration import ExplorationVisionService
-from fathom.interfaces.defect import DefectRepositoryPort, InlineDefectDetectorPort
+from fathom.interfaces.defect import (
+    DefectRepositoryPort,
+    InlineDefectDetectorPort,
+    ScreenDefectDetectorPort,
+)
 from fathom.schemas.actions import Action
-from fathom.schemas.defect import StepSignals
+from fathom.schemas.defect import Defect, ScreenSnapshot, StepSignals
 from fathom.schemas.exploration import ActionOutcome
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenState
@@ -75,6 +80,7 @@ class ExplorationNodeProvider:
         dfs: Optional[DfsState] = None,
         inline_detector: Optional[InlineDefectDetectorPort] = None,
         defects: Optional[DefectRepositoryPort] = None,
+        screen_detector: Optional[ScreenDefectDetectorPort] = None,
     ) -> None:
         """
         Initialize with shared context, the vision service, and DFS policies.
@@ -91,6 +97,8 @@ class ExplorationNodeProvider:
         self.__dedup = DedupPolicy(dedup=self.__policy.dedup, sampling=self.__policy.sampling)
         self.__inline_detector = inline_detector or InlineDefectDetector()
         self.__defects = defects
+        self.__screen_detector = screen_detector
+        self.__inspected_screens: Set[str] = set()
 
     # ── Nodes ──────────────────────────────────────────────────────────────
 
@@ -269,6 +277,11 @@ class ExplorationNodeProvider:
             await ctx.exploration_graph.record_relevance(
                 visual_hash=fingerprint, relevance=analysis.focus_relevance
             )
+
+        # Inspect each freshly-registered screen once for UI/content defects.
+        await self.__inspect_screen(
+            fingerprint=fingerprint, screen_state=screen_state, capture=capture
+        )
 
         if analysis.content_exhausted:
             return await self.__handle_exhaustion(
@@ -776,18 +789,50 @@ class ExplorationNodeProvider:
         Detect inline defects for one step, persist them, and surface them live.
         """
 
-        ctx = self.__context
         for defect in self.__inline_detector.inspect_step(signals=signals):
-            if self.__defects is not None:
-                await self.__defects.record(session=ctx.workflow_id, defect=defect)
-            await ctx.telemetry.info(
-                DEFECT_DETECTED_EVENT,
-                signal=defect.signal.value,
-                kind=defect.kind.value,
-                severity=defect.severity.value,
-                screen=defect.evidence.screen,
-                summary=defect.summary,
-            )
+            await self.__record_defect(defect=defect)
+
+    async def __inspect_screen(self, *, fingerprint: str, screen_state: Any, capture: Any) -> None:
+        """
+        Run the screen-level defect detector once per unique screen, best-effort.
+        """
+
+        if self.__screen_detector is None or fingerprint in self.__inspected_screens:
+            return
+        self.__inspected_screens.add(fingerprint)
+
+        image = getattr(capture, "image", None)
+        if not image:
+            return
+
+        activity = screen_state.activity if isinstance(screen_state, ScreenState) else None
+        snapshot = ScreenSnapshot(screen=fingerprint, activity=activity, screenshot=image)
+        try:
+            defects = await self.__screen_detector.inspect_screen(snapshot=snapshot)
+        except Exception:
+            # Defect inspection is best-effort enrichment; never let it break the crawl.
+            logger.warning("Screen defect inspection failed for %s", fingerprint[:8], exc_info=True)
+            return
+
+        for defect in defects:
+            await self.__record_defect(defect=defect)
+
+    async def __record_defect(self, *, defect: Defect) -> None:
+        """
+        Persist one defect to the shared repository and surface it live.
+        """
+
+        ctx = self.__context
+        if self.__defects is not None:
+            await self.__defects.record(session=ctx.workflow_id, defect=defect)
+        await ctx.telemetry.info(
+            DEFECT_DETECTED_EVENT,
+            signal=defect.signal.value,
+            kind=defect.kind.value,
+            severity=defect.severity.value,
+            screen=defect.evidence.screen,
+            summary=defect.summary,
+        )
 
     async def __emit_progress(self, *, action: Optional[Action]) -> None:
         """
@@ -1081,4 +1126,10 @@ class ExplorationGraphFactory:
         Builds the provider that supplies the exploration nodes and routers.
         """
 
-        return ExplorationNodeProvider(context=context, defects=context.defect_repository)
+        return ExplorationNodeProvider(
+            context=context,
+            defects=context.defect_repository,
+            screen_detector=VisionDefectDetector(
+                llm=context.llm, use_cache=context.configuration.llm.use_cache
+            ),
+        )

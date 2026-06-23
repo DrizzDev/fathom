@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
 from fathom.constants import ActionType
-from fathom.constants.defect import DEFECT_DETECTED_EVENT, DefectSignal
+from fathom.constants.defect import DEFECT_DETECTED_EVENT, DefectSignal, DefectSource
 from fathom.constants.exploration import (
     EXPLORATION_PROGRESS_EVENT,
     MAX_ROUTES_WITHOUT_PROGRESS,
@@ -19,6 +19,7 @@ from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.core.exceptions import DeviceError
 from fathom.schemas.actions import Action
+from fathom.schemas.defect import Defect, DefectEvidence
 from fathom.schemas.exploration import TriedAction
 from fathom.schemas.results import AnalysisResult, ExecutionResult
 from fathom.schemas.screens import ScreenState
@@ -174,6 +175,29 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         vision.scan.assert_awaited_once()
         self.assertIs(result[EKey.ACTION], action)
         self.assertFalse(result[EKey.CONTENT_EXHAUSTED])
+
+    async def test_runs_screen_detector_once_per_screen(self) -> None:
+        context = self.__context(_graph_mock())
+        context.telemetry = Mock(info=AsyncMock())
+        defect = Defect.from_signal(
+            signal=DefectSignal.OVERLAP_CLIPPING,
+            source=DefectSource.POST_RUN,
+            summary="Title overlaps the cart icon",
+            evidence=DefectEvidence(screen="s"),
+        )
+        screen_detector = Mock(inspect_screen=AsyncMock(return_value=[defect]))
+        vision = Mock(scan=AsyncMock(return_value=_analysis(action=_action())))
+        provider = ExplorationNodeProvider(
+            context=context, vision=vision, screen_detector=screen_detector, dfs=DfsState()
+        )
+        state = {CKey.CAPTURE: Mock(image=b"PNG"), CKey.SCREEN_STATE: _screen_state("s")}
+
+        await provider.scan(state)
+        await provider.scan(state)
+
+        screen_detector.inspect_screen.assert_awaited_once()
+        events = [call.args[0] for call in context.telemetry.info.await_args_list]
+        self.assertIn(DEFECT_DETECTED_EVENT, events)
 
     async def test_honours_exhaustion_past_the_depth_floor(self) -> None:
         vision = Mock(
