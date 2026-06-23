@@ -149,10 +149,12 @@ class GraphContext:
         self.__path_manager = path_manager
 
         self.__exploration_graph = exploration_graph or KnowledgeGraph(
-            provider=SQLiteMemoryProvider(database_path=path_manager.get_knowledge_db_path())
+            provider=SQLiteMemoryProvider(
+                database_path=path_manager.get_knowledge_db_path(package=package_name)
+            )
         )
         self.__defect_repository = SqliteDefectRepository(
-            database_path=path_manager.get_knowledge_db_path()
+            database_path=path_manager.get_knowledge_db_path(package=package_name)
         )
 
         self.__use_xml = use_xml

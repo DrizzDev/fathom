@@ -142,16 +142,15 @@ _SIGNAL_SEVERITY: dict[DefectSignal, DefectSeverity] = {
 }
 
 
-# Case-insensitive markers of unfinished copy, mapped to the signal each raises.
-# The content detector matches these on word boundaries to avoid false hits.
+# Markers of unfinished copy reliable enough to flag from a screen's text, mapped
+# to the signal each raises (matched on word boundaries). Words like "placeholder",
+# "skeleton", "dummy", and "todo" are deliberately excluded: they appear in
+# legitimate UI descriptions (loading skeletons, search-field placeholder hints)
+# and produced false positives. The vision detector catches placeholder/TODO copy
+# from the real screenshot instead.
 PLACEHOLDER_SIGNALS: dict[str, DefectSignal] = {
     "lorem ipsum": DefectSignal.LOREM_IPSUM,
     "lorem": DefectSignal.LOREM_IPSUM,
-    "todo": DefectSignal.TODO_TEXT,
-    "fixme": DefectSignal.TODO_TEXT,
-    "placeholder": DefectSignal.PLACEHOLDER_TEXT,
-    "dummy text": DefectSignal.PLACEHOLDER_TEXT,
-    "sample text": DefectSignal.PLACEHOLDER_TEXT,
 }
 
 

@@ -37,25 +37,27 @@ class ContentDefectDetectorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(defect.source, DefectSource.POST_RUN)
         self.assertEqual(defect.evidence.screen, "hash-1")
 
-    async def test_flags_todo_marker(self) -> None:
+    async def test_skeleton_placeholder_description_is_not_flagged(self) -> None:
         """
-        A bare TODO marker in the copy is flagged.
+        'placeholder'/'skeleton' in a screen description is not a content defect.
+
+        These words legitimately describe loading skeletons; flagging them produced
+        false positives, so only strong markers like lorem-ipsum remain.
         """
 
-        snapshot = ScreenSnapshot(screen="hash-1", texts=["TODO: wire up checkout"])
+        snapshot = ScreenSnapshot(
+            screen="hash-1",
+            texts=["Swiggy hub showing placeholder loading skeletons at the bottom"],
+        )
 
-        signals = {
-            defect.signal for defect in await self.__detector.inspect_screen(snapshot=snapshot)
-        }
-
-        self.assertIn(DefectSignal.TODO_TEXT, signals)
+        self.assertEqual(await self.__detector.inspect_screen(snapshot=snapshot), [])
 
     async def test_word_boundary_avoids_false_positive(self) -> None:
         """
-        A substring inside a real word (todoist) is not a TODO defect.
+        A marker embedded in a larger word is not flagged.
         """
 
-        snapshot = ScreenSnapshot(screen="hash-1", texts=["Open Todoist to plan"])
+        snapshot = ScreenSnapshot(screen="hash-1", texts=["Open the loremised mockups"])
 
         self.assertEqual(await self.__detector.inspect_screen(snapshot=snapshot), [])
 

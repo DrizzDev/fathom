@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path  # noqa: TC003
@@ -145,12 +146,29 @@ class SharedPathManager:
 
         return path
 
-    def get_knowledge_db_path(self) -> Path:
+    def get_knowledge_db_path(self, *, package: Optional[str] = None) -> Path:
         """
-        Path to knowledge graph database.
+        Path to the knowledge graph database, namespaced per package when given.
+
+        A per-package database keeps each app's screens, transitions, and defects
+        isolated, so a report never mixes apps and a run never resumes into another
+        app's frontier. Without a package the shared database path is returned.
         """
 
-        return self.memory_path / "knowledge.db"
+        if not package:
+            return self.memory_path / "knowledge.db"
+
+        directory = self.memory_path / "knowledge"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"{self.__safe_package(package)}.db"
+
+    @staticmethod
+    def __safe_package(package: str) -> str:
+        """
+        Reduce a package identifier to a filename-safe stem.
+        """
+
+        return re.sub(r"[^A-Za-z0-9._-]", "_", package)
 
     def get_ledger_db_path(self) -> Path:
         """

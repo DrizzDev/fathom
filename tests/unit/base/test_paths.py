@@ -39,6 +39,22 @@ class SharedPathManagerLayoutTest(unittest.TestCase):
 
         return datetime.now().strftime("%Y-%m-%d")
 
+    def test_knowledge_db_is_namespaced_per_package(self) -> None:
+        """
+        A package-scoped knowledge DB lives under memory/knowledge/<package>.db,
+        distinct from the shared default and from another package's database.
+        """
+
+        shared = self.__manager.get_knowledge_db_path()
+        swiggy = self.__manager.get_knowledge_db_path(package="in.swiggy.android")
+        zocdoc = self.__manager.get_knowledge_db_path(package="com.zocdoc.android")
+
+        self.assertEqual(shared.name, "knowledge.db")
+        self.assertEqual(swiggy.name, "in.swiggy.android.db")
+        self.assertEqual(swiggy.parent.name, "knowledge")
+        self.assertNotEqual(swiggy, zocdoc)
+        self.assertNotEqual(swiggy, shared)
+
     def test_screenshot_path_has_no_package_level(self) -> None:
         """
         Screenshot path is {root}/screenshot/{date}/{session}/{file}.

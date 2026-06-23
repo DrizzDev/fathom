@@ -1027,7 +1027,7 @@ class FathomRunner:
 
         try:
             repository = SqliteDefectRepository(
-                database_path=self.__path_manager.get_knowledge_db_path()
+                database_path=self.__path_manager.get_knowledge_db_path(package=package_name)
             )
             await DefectAnalysisService(
                 detectors=[ContentDefectDetector()], repository=repository
