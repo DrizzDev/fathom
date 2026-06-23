@@ -4,7 +4,7 @@ import time
 import uuid
 from datetime import datetime
 from logging import getLogger
-from typing import Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from fathom.base.paths import SharedPathManager
 from fathom.base.phase import AbandonablePhase
@@ -15,11 +15,15 @@ from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleC
 from fathom.constants.state import CompletionReason
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
+from fathom.core.defect.aggregator import DefectAggregator
+from fathom.core.defect.content import ContentDefectDetector
 from fathom.core.exceptions import DeviceError
 from fathom.core.execution.engine import ExecutionEngine
+from fathom.core.services.defect import DefectAnalysisService
 from fathom.core.services.exporter import ExplorationArtifactWriter
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.core.services.telemetry import PhaseAnnouncer
+from fathom.infrastructure.defect.sqlite import SqliteDefectRepository
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.knowledge import KnowledgePort
@@ -34,11 +38,15 @@ from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
 from fathom.runtime.inspection import RuntimeConfigurationInspector
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.qualification import QualificationVerdict
+from fathom.schemas.report import ReportMetadata
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
 from fathom.version import VersionInfo
+
+if TYPE_CHECKING:
+    from fathom.schemas.defect import BugReport
 
 logger = getLogger(__name__)
 
@@ -976,13 +984,22 @@ class FathomRunner:
 
         try:
             directory = self.__path_manager.get_report_directory(session_id=workflow_id)
+            generated_at = datetime.now().isoformat()
+            bug_report = await self.__build_bug_report(
+                graph=graph,
+                workflow_id=workflow_id,
+                package_name=package_name,
+                generated_at=generated_at,
+                duration=duration,
+            )
             written = ExplorationArtifactWriter().write(
                 graph=graph,
                 directory=directory,
                 workflow=workflow_id,
                 package=package_name,
-                generated_at=datetime.now().isoformat(),
+                generated_at=generated_at,
                 duration=duration,
+                bug_report=bug_report,
             )
             await self.__telemetry.info(
                 "Exploration artifacts written",
@@ -991,6 +1008,43 @@ class FathomRunner:
             )
         except Exception as exception:
             await self.__telemetry.warning(f"Failed to write exploration artifacts: {exception}")
+
+    async def __build_bug_report(
+        self,
+        *,
+        graph: KnowledgeGraph,
+        workflow_id: str,
+        package_name: str,
+        generated_at: str,
+        duration: float,
+    ) -> Optional["BugReport"]:
+        """
+        Runs the post-run defect pass and aggregates a bug report; failures are non-fatal.
+
+        Inline defects recorded during the crawl and the post-run content pass share
+        the knowledge database, so the aggregated report covers both.
+        """
+
+        try:
+            repository = SqliteDefectRepository(
+                database_path=self.__path_manager.get_knowledge_db_path()
+            )
+            await DefectAnalysisService(
+                detectors=[ContentDefectDetector()], repository=repository
+            ).analyze(graph=graph, session=workflow_id)
+            defects = await repository.for_run(session=workflow_id)
+            return DefectAggregator().build(
+                defects=defects,
+                metadata=ReportMetadata(
+                    workflow=workflow_id,
+                    package=package_name,
+                    generated_at=generated_at,
+                    duration=duration,
+                ),
+            )
+        except Exception as exception:
+            await self.__telemetry.warning(f"Defect analysis failed: {exception}")
+            return None
 
     async def __export_graph(self, graph: KnowledgeGraph) -> Dict[str, Any]:
         """

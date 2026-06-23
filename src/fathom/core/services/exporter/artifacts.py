@@ -5,8 +5,9 @@ Writes the graph exports and analysis report for a completed exploration run.
 from __future__ import annotations
 
 from pathlib import Path  # noqa: TC003
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
+from fathom.core.services.exporter.defect import BugReportRenderer
 from fathom.core.services.exporter.graph import GraphExporter
 from fathom.core.services.exporter.report import (
     ExplorationReportGenerator,
@@ -14,6 +15,9 @@ from fathom.core.services.exporter.report import (
 )
 from fathom.core.services.exporter.snapshot import ExplorationSnapshotBuilder
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
+
+if TYPE_CHECKING:
+    from fathom.schemas.defect import BugReport
 
 
 class ExplorationArtifactWriter:
@@ -27,10 +31,12 @@ class ExplorationArtifactWriter:
         snapshot_builder: Optional[ExplorationSnapshotBuilder] = None,
         exporter: Optional[GraphExporter] = None,
         renderer: Optional[MarkdownReportRenderer] = None,
+        bug_renderer: Optional[BugReportRenderer] = None,
     ) -> None:
         self.__snapshot_builder = snapshot_builder or ExplorationSnapshotBuilder()
         self.__exporter = exporter or GraphExporter()
         self.__renderer = renderer or MarkdownReportRenderer()
+        self.__bug_renderer = bug_renderer or BugReportRenderer()
 
     def write(
         self,
@@ -41,9 +47,10 @@ class ExplorationArtifactWriter:
         package: str,
         generated_at: str,
         duration: float = 0.0,
+        bug_report: Optional[BugReport] = None,
     ) -> List[Path]:
         """
-        Writes each graph format and the Markdown report, returning the paths.
+        Writes each graph format, the Markdown report, and any bug report; returns the paths.
         """
 
         directory.mkdir(parents=True, exist_ok=True)
@@ -65,4 +72,20 @@ class ExplorationArtifactWriter:
         report_path.write_text(self.__renderer.render(report=report), encoding="utf-8")
         written.append(report_path)
 
+        if bug_report is not None:
+            written.extend(self.__write_bug_report(directory=directory, bug_report=bug_report))
+
         return written
+
+    def __write_bug_report(self, *, directory: Path, bug_report: BugReport) -> List[Path]:
+        """
+        Writes the bug report as Markdown and JSON.
+        """
+
+        markdown_path = directory / "bug_report.md"
+        markdown_path.write_text(self.__bug_renderer.render(report=bug_report), encoding="utf-8")
+
+        json_path = directory / "bug_report.json"
+        json_path.write_text(bug_report.model_dump_json(indent=2), encoding="utf-8")
+
+        return [markdown_path, json_path]

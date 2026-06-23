@@ -77,6 +77,18 @@ class Defect(BaseModel):
             evidence=evidence,
         )
 
+    @property
+    def signature(self) -> str:
+        """
+        Stable dedup key: the same signal on the same screen region is one defect.
+        """
+
+        if self.evidence.bounds is not None:
+            anchor = self.evidence.bounds.coord_bucket()
+        else:
+            anchor = self.evidence.excerpt or ""
+        return f"{self.signal.value}|{self.evidence.screen}|{anchor}"
+
 
 class ScreenDefects(BaseModel):
     """

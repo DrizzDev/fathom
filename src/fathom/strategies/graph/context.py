@@ -36,9 +36,11 @@ from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
+from fathom.infrastructure.defect.sqlite import SqliteDefectRepository
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.interfaces.abort import AbortDetectorPort
+from fathom.interfaces.defect import DefectRepositoryPort
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.embedding import EmbeddingPort
 from fathom.interfaces.icon import IconDetectorPort
@@ -148,6 +150,9 @@ class GraphContext:
 
         self.__exploration_graph = exploration_graph or KnowledgeGraph(
             provider=SQLiteMemoryProvider(database_path=path_manager.get_knowledge_db_path())
+        )
+        self.__defect_repository = SqliteDefectRepository(
+            database_path=path_manager.get_knowledge_db_path()
         )
 
         self.__use_xml = use_xml
@@ -575,6 +580,14 @@ class GraphContext:
         """
 
         return self.__exploration_graph
+
+    @property
+    def defect_repository(self) -> DefectRepositoryPort:
+        """
+        Repository persisting defects to the shared knowledge database.
+        """
+
+        return self.__defect_repository
 
     @property
     def agent_state(self) -> AgentState:

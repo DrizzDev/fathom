@@ -1081,4 +1081,4 @@ class ExplorationGraphFactory:
         Builds the provider that supplies the exploration nodes and routers.
         """
 
-        return ExplorationNodeProvider(context=context)
+        return ExplorationNodeProvider(context=context, defects=context.defect_repository)

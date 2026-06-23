@@ -6,9 +6,13 @@ from pathlib import Path
 from typing import Optional
 
 from fathom.constants import ActionType
+from fathom.constants.defect import DefectSignal, DefectSource
+from fathom.core.defect.aggregator import DefectAggregator
 from fathom.core.services.exporter.artifacts import ExplorationArtifactWriter
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.schemas.actions import Action
+from fathom.schemas.defect import Defect, DefectEvidence
+from fathom.schemas.report import ReportMetadata
 from fathom.schemas.screens import ScreenState
 
 
@@ -72,6 +76,38 @@ class TestExplorationArtifactWriter(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(path.exists() for path in written))
             self.assertIn("digraph exploration", (directory / "graph.dot").read_text())
             self.assertIn("# Exploration Report", (directory / "report.md").read_text())
+
+    async def test_write_emits_bug_report_when_provided(self) -> None:
+        graph = await self.__graph()
+        defect = Defect.from_signal(
+            signal=DefectSignal.CRASH,
+            source=DefectSource.INLINE,
+            summary="App left the package",
+            evidence=DefectEvidence(screen="0000000000000000"),
+        )
+        bug_report = DefectAggregator().build(
+            defects=[defect],
+            metadata=ReportMetadata(
+                workflow="wf", package="com.app", generated_at="2026-06-12T00:00:00"
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "reports"
+            written = ExplorationArtifactWriter().write(
+                graph=graph,
+                directory=directory,
+                workflow="wf",
+                package="com.app",
+                generated_at="2026-06-12T00:00:00",
+                duration=1.0,
+                bug_report=bug_report,
+            )
+
+            names = {path.name for path in written}
+            self.assertIn("bug_report.md", names)
+            self.assertIn("bug_report.json", names)
+            self.assertIn("App left the package", (directory / "bug_report.md").read_text())
 
 
 if __name__ == "__main__":
