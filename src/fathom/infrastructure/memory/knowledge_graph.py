@@ -97,6 +97,14 @@ class KnowledgeGraph:
         return activity
 
     @staticmethod
+    def package_of(activity: str) -> str:
+        """
+        Returns the package component of a "package/activity" identifier.
+        """
+
+        return activity.split("/", 1)[0]
+
+    @staticmethod
     def has_meaningful_description(description: Optional[str]) -> bool:
         """
         Whether a description carries signal worth preserving across revisits.
@@ -599,6 +607,48 @@ class KnowledgeGraph:
         """
 
         return self.__resolve(visual_hash) in self.__nodes
+
+    def prune_foreign_screens(self, *, package: str) -> int:
+        """
+        Drops screens captured on a different app package, returning the count.
+
+        A crawl can briefly land on the device launcher or another app; those
+        screens are not part of the target app and must not appear in its graph,
+        report, or documentation. Their nodes, edges, and aliases are removed so
+        every downstream artifact is scoped to the target package.
+        """
+
+        foreign = {
+            visual_hash
+            for visual_hash, node in self.__nodes.items()
+            if self.__is_foreign(activity=node.activity, package=package)
+        }
+        if not foreign:
+            return 0
+
+        for visual_hash in foreign:
+            self.__nodes.pop(visual_hash, None)
+            self.__edges.pop(visual_hash, None)
+
+        for edges in self.__edges.values():
+            edges[:] = [edge for edge in edges if edge.destination_hash not in foreign]
+
+        self.__aliases = {
+            raw: canonical for raw, canonical in self.__aliases.items() if canonical not in foreign
+        }
+        return len(foreign)
+
+    @staticmethod
+    def __is_foreign(*, activity: str, package: str) -> bool:
+        """
+        Whether an activity belongs to a known package other than the target.
+
+        Unknown or empty activities are kept: only a clearly different package
+        (e.g. the launcher) is treated as foreign.
+        """
+
+        observed = KnowledgeGraph.package_of(activity)
+        return bool(observed) and observed not in (package, "unknown")
 
     def get_stats(self) -> Dict[str, Any]:
         """

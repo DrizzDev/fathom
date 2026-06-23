@@ -499,3 +499,80 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(graph.node_count, 1)
         self.assertEqual(graph.edge_count, 1)
         self.assertEqual(graph.get_screen(visual_hash="aaaaaaaaaaaaaaaa").visit_count, 3)  # type: ignore[union-attr]
+
+
+class TestPruneForeignScreens(unittest.IsolatedAsyncioTestCase):
+    """prune_foreign_screens drops screens captured on other app packages."""
+
+    def setUp(self) -> None:
+        self.__graph = KnowledgeGraph(provider=_FakeProvider())
+
+    @staticmethod
+    def __screen(*, visual_hash: str, activity: str, activity_hash: str) -> ScreenState:
+        return ScreenState(
+            activity=activity,
+            timestamp=0,
+            activity_hash=activity_hash,
+            visual_hash=visual_hash,
+        )
+
+    def test_package_of_extracts_the_package_component(self) -> None:
+        self.assertEqual(KnowledgeGraph.package_of("in.swiggy.android/.Home"), "in.swiggy.android")
+        self.assertEqual(KnowledgeGraph.package_of("in.swiggy.android"), "in.swiggy.android")
+
+    async def __seed(self) -> None:
+        await self.__graph.add_screen(
+            state=self.__screen(
+                visual_hash="0000000000000000",
+                activity="in.swiggy.android/in.swiggy.android.HomeActivity",
+                activity_hash="swiggy",
+            )
+        )
+        await self.__graph.add_screen(
+            state=self.__screen(
+                visual_hash="ffffffffffffffff",
+                activity="com.google.android.apps.nexuslauncher/.NexusLauncherActivity",
+                activity_hash="launcher",
+            )
+        )
+        await self.__graph.record_transition(
+            source_hash="0000000000000000",
+            action=Action(
+                action_type=ActionType.TAP, rationale="leave", natural_language_target="Home button"
+            ),
+            destination_hash="ffffffffffffffff",
+        )
+
+    async def test_prune_removes_foreign_node_and_its_edges(self) -> None:
+        await self.__seed()
+
+        removed = self.__graph.prune_foreign_screens(package="in.swiggy.android")
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(self.__graph.node_count, 1)
+        self.assertIsNotNone(self.__graph.get_screen(visual_hash="0000000000000000"))
+        self.assertIsNone(self.__graph.get_screen(visual_hash="ffffffffffffffff"))
+        # The edge into the launcher is gone, so the target screen has no neighbors.
+        self.assertEqual(self.__graph.get_neighbors(visual_hash="0000000000000000"), [])
+
+    async def test_prune_keeps_target_only_run_untouched(self) -> None:
+        await self.__graph.add_screen(
+            state=self.__screen(
+                visual_hash="0000000000000000",
+                activity="in.swiggy.android/in.swiggy.android.HomeActivity",
+                activity_hash="swiggy",
+            )
+        )
+
+        self.assertEqual(self.__graph.prune_foreign_screens(package="in.swiggy.android"), 0)
+        self.assertEqual(self.__graph.node_count, 1)
+
+    async def test_prune_keeps_unknown_activity_screens(self) -> None:
+        await self.__graph.add_screen(
+            state=self.__screen(
+                visual_hash="0000000000000000", activity="unknown", activity_hash="unknown"
+            )
+        )
+
+        self.assertEqual(self.__graph.prune_foreign_screens(package="in.swiggy.android"), 0)
+        self.assertEqual(self.__graph.node_count, 1)

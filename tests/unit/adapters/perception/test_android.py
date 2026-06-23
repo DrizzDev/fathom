@@ -35,6 +35,9 @@ class AndroidPerceptionAdapterTest(unittest.IsolatedAsyncioTestCase):
         device.configuration = DeviceRuntimeConfiguration()
         device.get_dimensions = AsyncMock(return_value=reported)
         device.get_current_package = AsyncMock(return_value="com.example.app")
+        device.get_current_activity = AsyncMock(
+            return_value="com.example.app/com.example.app.MainActivity"
+        )
         return device
 
     async def test_landscape_screenshot_swaps_portrait_report(self) -> None:
@@ -70,3 +73,19 @@ class AndroidPerceptionAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(capture.width, 1080)
         self.assertEqual(capture.height, 2340)
+
+    async def test_capture_records_the_foreground_activity(self) -> None:
+        """
+        The capture's activity is the device's full "package/activity" component.
+        """
+
+        screenshot = self.__screenshot(width=1080, height=2340)
+        device = self.__device(reported=(1080, 2340))
+        device.capture_screen = AsyncMock(return_value=screenshot)
+        device.get_snapshot = AsyncMock(return_value=(screenshot, None))
+
+        adapter = AndroidPerceptionAdapter(device=device, include_hierarchy=False)
+
+        capture = await adapter.capture()
+
+        self.assertEqual(capture.activity, "com.example.app/com.example.app.MainActivity")

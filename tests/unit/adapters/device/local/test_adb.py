@@ -353,3 +353,61 @@ class ADBDeviceLaunchPackageTest(unittest.IsolatedAsyncioTestCase):
         device = self.__build_device()
         with self.assertRaises(DeviceError):
             await device.launch_package(package_name="com.evil; rm -rf /")
+
+
+class ADBDeviceCurrentActivityTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Cover resolving the foreground component as "package/activity" from mCurrentFocus.
+    """
+
+    def __build_device(self) -> ADBDevice:
+        """
+        Build a local ADB device with default configuration.
+        """
+
+        return ADBDevice(serial="emulator-5554")
+
+    @staticmethod
+    def __focus(component: str) -> ActionResult:
+        """
+        Build a dumpsys result whose mCurrentFocus names the given component.
+        """
+
+        return ActionResult(
+            success=True, duration=1, output=f"  mCurrentFocus=Window{{e5fb16 u0 {component}}}"
+        )
+
+    async def test_returns_full_package_and_activity(self) -> None:
+        device = self.__build_device()
+        focus = self.__focus("in.swiggy.android/in.swiggy.android.activities.HomeActivity")
+
+        with patch.object(device, "_ADBDevice__shell", new_callable=AsyncMock, return_value=focus):
+            activity = await device.get_current_activity()
+
+        self.assertEqual(activity, "in.swiggy.android/in.swiggy.android.activities.HomeActivity")
+
+    async def test_keeps_relative_activity_component(self) -> None:
+        device = self.__build_device()
+        focus = self.__focus("com.app/.MainActivity")
+
+        with patch.object(device, "_ADBDevice__shell", new_callable=AsyncMock, return_value=focus):
+            self.assertEqual(await device.get_current_activity(), "com.app/.MainActivity")
+
+    async def test_falls_back_to_package_without_activity(self) -> None:
+        device = self.__build_device()
+        result = ActionResult(
+            success=True, duration=1, output="  mCurrentFocus=Window{e5fb16 u0 com.app}"
+        )
+
+        with patch.object(device, "_ADBDevice__shell", new_callable=AsyncMock, return_value=result):
+            self.assertEqual(await device.get_current_activity(), "com.app")
+
+    async def test_raises_when_focus_is_unparseable(self) -> None:
+        device = self.__build_device()
+        result = ActionResult(success=True, duration=1, output="mCurrentFocus=null")
+
+        with (
+            patch.object(device, "_ADBDevice__shell", new_callable=AsyncMock, return_value=result),
+            self.assertRaises(DeviceError),
+        ):
+            await device.get_current_activity()

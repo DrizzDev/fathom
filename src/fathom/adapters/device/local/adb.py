@@ -448,6 +448,39 @@ class ADBDevice(DevicePort):
             f"Get current package: Failed to parse package name from output: {result.output}"
         )
 
+    async def get_current_activity(self) -> str:
+        """
+        Get the foreground component as "package/activity".
+
+        Returns the bare package when the focused window exposes no activity
+        component (e.g. a system overlay).
+        """
+
+        result = await self.__shell(
+            command="dumpsys window | grep mCurrentFocus", capture_output=True
+        )
+
+        if not result.success or not result.output:
+            raise DeviceError(
+                f"Get current activity: query failed: {result.error or 'empty output'}"
+            )
+
+        # Expected format: mCurrentFocus=Window{e5fb16 u0 com.package.name/com.package.name.MainActivity}
+        if match := re.search(
+            r"mCurrentFocus=Window\{[a-f0-9]+\s+(?:u\d+\s+)?([a-zA-Z0-9_.]+)\/([a-zA-Z0-9_.]+)",
+            result.output,
+        ):
+            return f"{match.group(1)}/{match.group(2)}"
+
+        if match := re.search(
+            r"mCurrentFocus=Window\{[a-f0-9]+\s+(?:u\d+\s+)?([a-zA-Z0-9_.]+)", result.output
+        ):
+            return match.group(1)
+
+        raise DeviceError(
+            f"Get current activity: failed to parse component from output: {result.output}"
+        )
+
     async def wait_for_device(self, *, timeout: float = 30.0) -> bool:
         """
         Wait for device availability.

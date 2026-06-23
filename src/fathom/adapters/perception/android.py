@@ -56,16 +56,16 @@ class AndroidPerceptionAdapter(PerceptionPort):
         )
 
         try:
-            application_identifier = await self.__device.get_current_package()
+            foreground_activity = await self.__device.get_current_activity()
         except Exception:
-            application_identifier = "unknown"
+            foreground_activity = "unknown"
 
         return ScreenCapture(
             width=width,
             height=height,
             image=screenshot_bytes,
             xml_content=hierarchy_content,
-            activity=application_identifier,
+            activity=foreground_activity,
             timestamp=int(time.time() * 1000),
             metadata={
                 "capture_duration": time.time() - capture_start,

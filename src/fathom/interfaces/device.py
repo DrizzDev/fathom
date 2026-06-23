@@ -99,6 +99,16 @@ class DevicePort(ABC):
 
         raise NotImplementedError
 
+    async def get_current_activity(self) -> str:
+        """
+        Get the foreground component as "package/activity".
+
+        Defaults to the bare package; adapters that can resolve the activity
+        component (e.g. Android via mCurrentFocus) override this.
+        """
+
+        return await self.get_current_package()
+
     @abstractmethod
     async def capture_screen(self) -> bytes:
         """

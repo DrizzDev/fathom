@@ -503,8 +503,17 @@ class FathomRunner:
             progress = strategy.get_progress()
             stats = progress.get("stats", {})
 
-            # Extract discovered activities from graph
+            # Scope every artifact to the target app: a crawl can briefly land on
+            # the device launcher or another package; drop those screens so the
+            # graph, report, and per-screen docs cover only the target app.
             graph = strategy.graph
+            pruned = graph.prune_foreign_screens(package=package_name)
+            if pruned:
+                await self.__telemetry.info(
+                    "Pruned off-package screens before finalizing", count=pruned
+                )
+
+            # Extract discovered activities from graph
             discovered_activities = list({node.activity for node in graph.nodes.values()})
 
             # Calculate coverage (percentage of screens explored vs total discovered)
@@ -1032,7 +1041,14 @@ class FathomRunner:
             await DefectAnalysisService(
                 detectors=[ContentDefectDetector()], repository=repository
             ).analyze(graph=graph, session=workflow_id)
-            defects = await repository.for_run(session=workflow_id)
+            # Keep only defects on screens still in the (package-scoped) graph, so
+            # inline defects recorded on off-package screens do not leak in.
+            known_screens = set(graph.nodes)
+            defects = [
+                defect
+                for defect in await repository.for_run(session=workflow_id)
+                if defect.evidence.screen in known_screens
+            ]
             return DefectAggregator().build(
                 defects=defects,
                 metadata=ReportMetadata(
