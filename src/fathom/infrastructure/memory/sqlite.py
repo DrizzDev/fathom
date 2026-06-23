@@ -148,7 +148,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute("ALTER TABLE screens ADD COLUMN category TEXT DEFAULT 'other'")
             migrated = True
 
-        for column in ("activity_hash", "xml_hash", "interaction_hash"):
+        for column in ("activity_hash", "xml_hash", "interaction_hash", "structure_hash"):
             if column not in screen_columns:
                 await db.execute(f"ALTER TABLE screens ADD COLUMN {column} TEXT")
                 migrated = True
@@ -180,8 +180,8 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute(
                 "INSERT INTO screens "
                 "(visual_hash, activity, description, first_seen, last_seen, visit_count, "
-                " activity_hash, xml_hash, interaction_hash) "
-                "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?) "
+                " activity_hash, xml_hash, interaction_hash, structure_hash) "
+                "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?) "
                 "ON CONFLICT(visual_hash) DO UPDATE SET "
                 "activity = excluded.activity, "
                 "description = CASE "
@@ -196,7 +196,8 @@ class SQLiteMemoryProvider(IMemoryProvider):
                 "visit_count = screens.visit_count + 1, "
                 "activity_hash = COALESCE(screens.activity_hash, excluded.activity_hash), "
                 "xml_hash = COALESCE(screens.xml_hash, excluded.xml_hash), "
-                "interaction_hash = COALESCE(screens.interaction_hash, excluded.interaction_hash)",
+                "interaction_hash = COALESCE(screens.interaction_hash, excluded.interaction_hash), "
+                "structure_hash = COALESCE(screens.structure_hash, excluded.structure_hash)",
                 (
                     screen.visual_hash,
                     screen.activity,
@@ -206,6 +207,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
                     screen.activity_hash,
                     screen.xml_hash,
                     screen.interaction_hash,
+                    screen.structure_hash,
                 ),
             )
             await db.commit()
@@ -456,7 +458,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
             db.execute(
                 "SELECT visual_hash, activity, description, first_seen, last_seen, "
                 "visit_count, rich_description, activity_hash, xml_hash, interaction_hash, "
-                "exhausted, relevance, category "
+                "exhausted, relevance, category, structure_hash "
                 "FROM screens ORDER BY last_seen DESC"
             ) as cursor,
         ):
@@ -476,6 +478,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         "exhausted": bool(row[10]),
                         "relevance": row[11],
                         "category": row[12],
+                        "structure_hash": row[13],
                     }
                 )
 

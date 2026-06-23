@@ -47,6 +47,7 @@ class GraphNode:
     activity_hash: Optional[str] = None
     xml_hash: Optional[str] = None
     interaction_hash: Optional[str] = None
+    structure_hash: Optional[str] = None
     exhausted: bool = False
     relevance: FocusRelevance = FocusRelevance.UNSCOPED
     category: ScreenCategory = ScreenCategory.OTHER
@@ -238,6 +239,7 @@ class KnowledgeGraph:
             activity_hash=screen.get("activity_hash"),
             xml_hash=screen.get("xml_hash"),
             interaction_hash=screen.get("interaction_hash"),
+            structure_hash=screen.get("structure_hash"),
             exhausted=bool(screen.get("exhausted", False)),
             relevance=self.__coerce_relevance(screen.get("relevance")),
             category=self.__coerce_category(screen.get("category")),
@@ -320,6 +322,8 @@ class KnowledgeGraph:
             node.xml_hash = source["xml_hash"]
         if not node.interaction_hash and source.get("interaction_hash"):
             node.interaction_hash = source["interaction_hash"]
+        if not node.structure_hash and source.get("structure_hash"):
+            node.structure_hash = source["structure_hash"]
 
     async def add_screen(
         self, *, state: ScreenState, description: Optional[str] = None
@@ -352,6 +356,7 @@ class KnowledgeGraph:
             activity_hash=state.activity_hash,
             xml_hash=state.xml_hash,
             interaction_hash=state.interaction_hash,
+            structure_hash=state.structure_hash,
         )
         self.__nodes[state.visual_hash] = node
         return node
@@ -368,6 +373,8 @@ class KnowledgeGraph:
             node.xml_hash = state.xml_hash
         if not node.interaction_hash and state.interaction_hash:
             node.interaction_hash = state.interaction_hash
+        if not node.structure_hash and state.structure_hash:
+            node.structure_hash = state.structure_hash
 
     async def update_rich_description(self, *, visual_hash: str, rich_description: str) -> None:
         """

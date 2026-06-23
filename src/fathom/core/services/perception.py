@@ -211,6 +211,38 @@ class PerceptionService:
             logger.warning(f"Could not compute interaction_hash: {exception}")
             return ZERO_HASH
 
+    def compute_structure_hash(
+        self,
+        *,
+        elements: Optional[List[LabeledElement]] = None,
+    ) -> str:
+        """
+        Compute a content-agnostic hash of the screen's interactive layout.
+
+        Uses only each element's class and id, never its text, so a screen with
+        different typed or loaded content (an empty vs filled form, search results
+        for different queries) hashes the same while a structurally different
+        screen does not.
+        """
+
+        if not elements:
+            return ZERO_HASH
+
+        try:
+            structures = self.__extract_element_structures(elements=elements)
+            if not structures:
+                return ZERO_HASH
+
+            structures.sort()
+            combined_signature = "\n".join(structures)
+            return hashlib.md5(
+                combined_signature.encode("utf-8"), usedforsecurity=False
+            ).hexdigest()[:VISUAL_HASH_LENGTH]
+
+        except Exception as exception:
+            logger.warning(f"Could not compute structure_hash: {exception}")
+            return ZERO_HASH
+
     def build_state(
         self,
         *,
@@ -232,6 +264,7 @@ class PerceptionService:
             visual_hash=self.compute_visual_hash(capture=capture),
             xml_hash=self.compute_xml_hash(capture=capture),
             interaction_hash=self.compute_interaction_hash(elements=elements),
+            structure_hash=self.compute_structure_hash(elements=elements),
         )
 
     def __extract_element_identities(self, elements: List[LabeledElement]) -> List[str]:
@@ -272,3 +305,31 @@ class PerceptionService:
             stable_identities.append(semantic_identity)
 
         return stable_identities
+
+    def __extract_element_structures(self, elements: List[LabeledElement]) -> List[str]:
+        """
+        Extracts text-free structural identities (class and stable id) from elements.
+        """
+
+        structures: List[str] = []
+
+        for element_info in elements:
+            attributes = element_info.attributes
+            if not attributes:
+                continue
+
+            raw_class = str(attributes.get("class", "")).strip()
+            raw_type = str(attributes.get("type", "")).strip()
+
+            if raw_class:
+                class_name = raw_class.split(".")[-1]
+                identifier = str(attributes.get("resource-id", "")).split("/")[-1]
+            else:
+                # iOS exposes only text-like identifiers (name/label), so the class
+                # alone carries the structure.
+                class_name = raw_type.replace("XCUIElementType", "") or raw_type or "Unknown"
+                identifier = ""
+
+            structures.append(f"{class_name}|{identifier}")
+
+        return structures

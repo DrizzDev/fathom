@@ -46,6 +46,10 @@ class ScreenState(BaseModel):
     interaction_hash: Optional[str] = Field(
         default=None, description="Hash of interactive elements"
     )
+    structure_hash: Optional[str] = Field(
+        default=None,
+        description="Text-free layout hash of interactive elements (class and id, not content)",
+    )
 
     def is_same_screen(
         self,

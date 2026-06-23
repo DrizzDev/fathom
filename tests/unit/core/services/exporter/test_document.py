@@ -28,6 +28,7 @@ def _screen_row(
     description: Optional[str] = None,
     rich: Optional[str] = None,
     visits: int = 1,
+    structure: Optional[str] = None,
 ) -> Dict[str, Any]:
     return {
         "visual_hash": visual_hash,
@@ -40,6 +41,7 @@ def _screen_row(
         "activity_hash": None,
         "xml_hash": None,
         "interaction_hash": None,
+        "structure_hash": structure,
         "exhausted": False,
         "relevance": "unscoped",
         "category": category,
@@ -245,6 +247,53 @@ class TestScreenDocumentFiltering(unittest.IsolatedAsyncioTestCase):
         index = ScreenDocumentExporter().build(graph=graph, defects=[], metadata=_metadata())
 
         self.assertEqual([document.slug for document in index.documents], ["home-feed"])
+
+
+class TestScreenDocumentStructuralMerge(unittest.IsolatedAsyncioTestCase):
+    """Captures sharing an activity and structure hash collapse into one document."""
+
+    async def test_content_variations_merge_distinct_structures_stay_separate(self) -> None:
+        screens = [
+            _screen_row(
+                visual_hash=_HOME_A,
+                activity="com.app/.Login",
+                category="auth",
+                description="Login screen, empty field",
+                rich="Login prose A",
+                structure="loginstruct0001",
+            ),
+            _screen_row(
+                visual_hash=_HOME_B,
+                activity="com.app/.Login",
+                category="auth",
+                description="Login screen, number typed",
+                rich="Login prose B, longer",
+                structure="loginstruct0001",
+            ),
+            _screen_row(
+                visual_hash=_DETAIL,
+                activity="com.app/.Login",
+                category="auth",
+                description="OTP verification screen",
+                rich="OTP prose",
+                structure="otpstruct000001",
+            ),
+        ]
+        graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=[]))
+        await graph.load()
+
+        index = ScreenDocumentExporter().build(graph=graph, defects=[], metadata=_metadata())
+
+        # The two login captures merge (same structure); OTP stays separate.
+        self.assertEqual(len(index.documents), 2)
+        login = max(index.documents, key=lambda document: document.fingerprints)
+        otp = min(index.documents, key=lambda document: document.fingerprints)
+
+        self.assertEqual(login.fingerprints, 2)
+        self.assertEqual(login.visits, 2)
+        self.assertEqual(login.narrative, "Login prose B, longer")
+        self.assertEqual(otp.fingerprints, 1)
+        self.assertEqual(otp.title, "OTP verification screen")
 
 
 class TestScreenDocumentRenderer(unittest.TestCase):

@@ -189,6 +189,20 @@ class TestSQLiteMemoryProvider(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(screens[0]["category"], "detail")
 
+    async def test_structure_hash_persists_and_hydrates(self) -> None:
+        state = ScreenState(
+            activity="com.app/.Home",
+            timestamp=0,
+            activity_hash="acthash",
+            visual_hash="a1b2c3d4e5f60718",
+            structure_hash="structurehash01",
+        )
+        await self.__provider.store_observation(screen=state, description="Home feed")
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertEqual(screens[0]["structure_hash"], "structurehash01")
+
     async def test_readonly_provider_drops_writes(self) -> None:
         readonly = SQLiteMemoryProvider(
             database_path=Path(self.__tmp.name) / "readonly.db", readonly=True

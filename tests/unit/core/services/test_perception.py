@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Mapping, Optional
 from unittest.mock import Mock
 
+from fathom.constants.screen import ZERO_HASH
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.core.artifact.renderer import PassthroughRenderer
 from fathom.core.services.perception import PerceptionService
@@ -20,6 +21,7 @@ from fathom.schemas.artifact import (
 )
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.ui import LabeledElement, UIBounds
 
 
 class FakeStorage(StoragePort):
@@ -282,3 +284,54 @@ class TestPerceptionServicePipelineBranch(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.screenshot_uri.startswith(self.__tmp.name))
         self.assertTrue(result.screenshot_uri.endswith(".png"))
         self.assertNotIn("cloud://", result.screenshot_uri)
+
+
+class TestComputeStructureHash(unittest.TestCase):
+    """The structural hash captures layout (class + id) and ignores element text."""
+
+    @staticmethod
+    def __service() -> PerceptionService:
+        return PerceptionService(
+            storage=Mock(), perception=Mock(), hierarchy_signature_builder=Mock()
+        )
+
+    @staticmethod
+    def __field(*, text: str) -> LabeledElement:
+        return LabeledElement(
+            label="phone",
+            bounds=UIBounds(x1=0, y1=0, x2=100, y2=50),
+            attributes={
+                "class": "android.widget.EditText",
+                "resource-id": "com.app:id/phone",
+                "text": text,
+            },
+        )
+
+    def test_text_does_not_change_the_structure_hash(self) -> None:
+        service = self.__service()
+
+        empty = service.compute_structure_hash(elements=[self.__field(text="")])
+        filled = service.compute_structure_hash(elements=[self.__field(text="9876543210")])
+
+        self.assertEqual(empty, filled)
+        self.assertNotEqual(empty, ZERO_HASH)
+
+    def test_different_layout_changes_the_structure_hash(self) -> None:
+        service = self.__service()
+        button = LabeledElement(
+            label="continue",
+            bounds=UIBounds(x1=0, y1=0, x2=10, y2=10),
+            attributes={"class": "android.widget.Button", "resource-id": "com.app:id/continue"},
+        )
+
+        field_hash = service.compute_structure_hash(elements=[self.__field(text="x")])
+        button_hash = service.compute_structure_hash(elements=[button])
+
+        self.assertNotEqual(field_hash, button_hash)
+
+    def test_no_elements_is_zero_hash(self) -> None:
+        self.assertEqual(self.__service().compute_structure_hash(elements=[]), ZERO_HASH)
+
+
+if __name__ == "__main__":
+    unittest.main()

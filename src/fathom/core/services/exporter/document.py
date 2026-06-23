@@ -1,11 +1,14 @@
 """
-Builds and renders one image-free Markdown document per screen.
+Builds and renders one image-free Markdown document per logical screen.
 
-A screen is one canonical node in the knowledge graph (the graph already merges
-revisits and near-duplicate captures), so each distinct screen gets exactly one
-document and the output never duplicates files for the same screen. The builder is
-pure: it reads the knowledge graph and the run's defects and returns typed
-documents, leaving rendering and file I/O to the renderer and the artifact writer.
+Screens are grouped by structural identity: the crawler captures a screen many
+times (a form before and after typing, a list with different items), each a
+distinct graph node, but they share a text-free structure hash. Nodes that share
+an activity and structure hash collapse into one document, so a screen is
+documented once with its content variations counted as fingerprints, while a
+structurally different screen (an OTP step, a different section) stays separate.
+The builder is pure: it reads the knowledge graph and the run's defects and
+returns typed documents, leaving rendering and file I/O to the renderer.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from fathom.constants.exploration import MAX_SCREEN_LABEL_LENGTH
-from fathom.constants.screen import ScreenCategory
+from fathom.constants.screen import ZERO_HASH, ScreenCategory
 from fathom.core.services.exporter.graph import GraphLabeler
 from fathom.infrastructure.memory.knowledge_graph import GraphNode, KnowledgeGraph
 from fathom.schemas.defect import Defect
@@ -26,7 +29,7 @@ _LinkKey = Tuple[str, Optional[str], str]
 
 class ScreenDocumentExporter:
     """
-    Builds one document per canonical screen node from the knowledge graph.
+    Groups screen nodes by structural identity and builds one document each.
     """
 
     __NON_SLUG = re.compile(r"[^a-z0-9]+")
@@ -38,36 +41,57 @@ class ScreenDocumentExporter:
         self, *, graph: KnowledgeGraph, defects: List[Defect], metadata: ReportMetadata
     ) -> DocumentIndex:
         """
-        Builds one document per screen and the index over them.
+        Builds one document per logical screen and the index over them.
         """
 
-        nodes = self.__ordered(graph=graph)
-        titles = {node.visual_hash: self.__title(node=node) for node in nodes}
-        slugs = self.__slugs(nodes=nodes, titles=titles)
-        inbound, outbound = self.__flows(graph=graph, titles=titles)
+        groups = self.__group(graph=graph)
+        ordered = self.__order(groups=groups)
+        representatives = {key: self.__representative(nodes=nodes) for key, nodes in groups.items()}
+        titles = {key: self.__title(node=representatives[key]) for key in groups}
+        slugs = self.__slugs(ordered=ordered, titles=titles)
+        membership = self.__membership(groups=groups)
+        inbound, outbound = self.__flows(graph=graph, membership=membership, titles=titles)
         defects_by_screen = self.__defects_by_screen(defects=defects)
 
         documents = [
             self.__document(
-                node=node,
-                slug=slugs[node.visual_hash],
-                title=titles[node.visual_hash],
-                inbound=inbound.get(node.visual_hash, {}),
-                outbound=outbound.get(node.visual_hash, {}),
-                defects=defects_by_screen.get(node.visual_hash, []),
+                nodes=groups[key],
+                representative=representatives[key],
+                slug=slugs[key],
+                title=titles[key],
+                inbound=inbound.get(key, {}),
+                outbound=outbound.get(key, {}),
+                defects_by_screen=defects_by_screen,
             )
-            for node in nodes
+            for key in ordered
         ]
         return DocumentIndex(metadata=metadata, documents=documents)
 
     @classmethod
-    def __ordered(cls, *, graph: KnowledgeGraph) -> List[GraphNode]:
+    def __group(cls, *, graph: KnowledgeGraph) -> Dict[str, List[GraphNode]]:
         """
-        Documentable screens ordered by visit count, ties broken on the hash.
+        Buckets documentable screens by their structural-identity key.
         """
 
-        documentable = [node for node in graph.nodes.values() if cls.__is_documentable(node=node)]
-        return sorted(documentable, key=lambda node: (-node.visit_count, node.visual_hash))
+        groups: Dict[str, List[GraphNode]] = {}
+        for node in graph.nodes.values():
+            if not cls.__is_documentable(node=node):
+                continue
+            groups.setdefault(cls.__group_key(node=node), []).append(node)
+        return groups
+
+    @staticmethod
+    def __group_key(*, node: GraphNode) -> str:
+        """
+        Keys a screen by activity and structure hash, falling back to its own hash.
+
+        A node with no usable structure hash (no interactive layout) forms its own
+        group so unrelated contentless screens never merge together.
+        """
+
+        if node.structure_hash and node.structure_hash != ZERO_HASH:
+            return f"{KnowledgeGraph.normalize_activity(node.activity)}|{node.structure_hash}"
+        return node.visual_hash
 
     @staticmethod
     def __is_documentable(*, node: GraphNode) -> bool:
@@ -82,6 +106,38 @@ class ScreenDocumentExporter:
         if KnowledgeGraph.has_meaningful_description(node.description):
             return True
         return bool(node.rich_description and node.rich_description.strip())
+
+    @staticmethod
+    def __order(*, groups: Dict[str, List[GraphNode]]) -> List[str]:
+        """
+        Orders logical screens by total visits, breaking ties on the key.
+        """
+
+        def rank(key: str) -> Tuple[int, str]:
+            visits = sum(node.visit_count for node in groups[key])
+            return (-visits, key)
+
+        return sorted(groups, key=rank)
+
+    @staticmethod
+    def __representative(*, nodes: List[GraphNode]) -> GraphNode:
+        """
+        Picks the node that best describes the logical screen.
+        """
+
+        def rank(node: GraphNode) -> Tuple[int, int, int, str]:
+            described = node.description and KnowledgeGraph.has_meaningful_description(
+                node.description
+            )
+            description_length = len(node.description) if described and node.description else 0
+            return (
+                description_length,
+                len(node.rich_description or ""),
+                node.visit_count,
+                node.visual_hash,
+            )
+
+        return max(nodes, key=rank)
 
     def __title(self, *, node: GraphNode) -> str:
         """
@@ -105,18 +161,18 @@ class ScreenDocumentExporter:
             return text
         return text[: MAX_SCREEN_LABEL_LENGTH - 3].rstrip() + "..."
 
-    def __slugs(self, *, nodes: List[GraphNode], titles: Dict[str, str]) -> Dict[str, str]:
+    def __slugs(self, *, ordered: List[str], titles: Dict[str, str]) -> Dict[str, str]:
         """
         Assigns each screen a filename-safe slug, de-colliding by numeric suffix.
         """
 
         slugs: Dict[str, str] = {}
         seen: Dict[str, int] = {}
-        for node in nodes:
-            base = self.__slugify(text=titles[node.visual_hash])
+        for key in ordered:
+            base = self.__slugify(text=titles[key])
             count = seen.get(base, 0)
             seen[base] = count + 1
-            slugs[node.visual_hash] = base if count == 0 else f"{base}-{count + 1}"
+            slugs[key] = base if count == 0 else f"{base}-{count + 1}"
         return slugs
 
     @classmethod
@@ -128,8 +184,20 @@ class ScreenDocumentExporter:
         slug = cls.__NON_SLUG.sub("-", text.lower()).strip("-")
         return slug or "screen"
 
+    @staticmethod
+    def __membership(*, groups: Dict[str, List[GraphNode]]) -> Dict[str, str]:
+        """
+        Maps each canonical screen hash to the logical screen it belongs to.
+        """
+
+        membership: Dict[str, str] = {}
+        for key, nodes in groups.items():
+            for node in nodes:
+                membership[node.visual_hash] = key
+        return membership
+
     def __flows(
-        self, *, graph: KnowledgeGraph, titles: Dict[str, str]
+        self, *, graph: KnowledgeGraph, membership: Dict[str, str], titles: Dict[str, str]
     ) -> Tuple[Dict[str, Dict[_LinkKey, ScreenLink]], Dict[str, Dict[_LinkKey, ScreenLink]]]:
         """
         Resolves cross-screen transitions into deduped inbound and outbound links.
@@ -139,25 +207,26 @@ class ScreenDocumentExporter:
         outbound: Dict[str, Dict[_LinkKey, ScreenLink]] = {}
 
         for source_hash, edges in graph.edges.items():
-            if source_hash not in titles:
+            source_key = membership.get(source_hash)
+            if source_key is None:
                 continue
             for edge in edges:
-                destination_hash = edge.destination_hash
-                if destination_hash not in titles or destination_hash == source_hash:
+                destination_key = membership.get(edge.destination_hash)
+                if destination_key is None or destination_key == source_key:
                     continue
                 element = edge.action_target or None
                 self.__merge_link(
-                    bucket=outbound.setdefault(source_hash, {}),
+                    bucket=outbound.setdefault(source_key, {}),
                     action=edge.action_type,
                     element=element,
-                    screen=titles[destination_hash],
+                    screen=titles[destination_key],
                     count=edge.count,
                 )
                 self.__merge_link(
-                    bucket=inbound.setdefault(destination_hash, {}),
+                    bucket=inbound.setdefault(destination_key, {}),
                     action=edge.action_type,
                     element=element,
-                    screen=titles[source_hash],
+                    screen=titles[source_key],
                     count=edge.count,
                 )
 
@@ -197,39 +266,58 @@ class ScreenDocumentExporter:
     def __document(
         self,
         *,
-        node: GraphNode,
+        nodes: List[GraphNode],
+        representative: GraphNode,
         slug: str,
         title: str,
         inbound: Dict[_LinkKey, ScreenLink],
         outbound: Dict[_LinkKey, ScreenLink],
-        defects: List[Defect],
+        defects_by_screen: Dict[str, List[Defect]],
     ) -> ScreenDocument:
         """
-        Assembles a single screen's document from its node.
+        Assembles one logical screen's document from its grouped fingerprints.
         """
 
-        ordered = sorted(defects, key=lambda defect: (defect.severity.rank, defect.signal.value))
-        has_purpose = node.description and KnowledgeGraph.has_meaningful_description(
-            node.description
+        collected: List[Defect] = []
+        for node in nodes:
+            collected.extend(defects_by_screen.get(node.visual_hash, []))
+        collected.sort(key=lambda defect: (defect.severity.rank, defect.signal.value))
+
+        has_purpose = representative.description and KnowledgeGraph.has_meaningful_description(
+            representative.description
         )
-        purpose = node.description.strip() if has_purpose and node.description else ""
-        narrative = node.rich_description.strip() if node.rich_description else ""
+        purpose = (
+            representative.description.strip() if has_purpose and representative.description else ""
+        )
 
         return ScreenDocument(
             slug=slug,
             title=title,
-            category=node.category,
-            activity=node.activity,
+            category=representative.category,
+            activity=representative.activity,
             purpose=purpose,
-            narrative=narrative,
+            narrative=self.__narrative(nodes=nodes),
             flow=ScreenFlow(
                 inbound=self.__sorted_links(bucket=inbound),
                 outbound=self.__sorted_links(bucket=outbound),
             ),
-            defects=ordered,
-            visits=node.visit_count,
-            fingerprints=1,
+            defects=collected,
+            visits=sum(node.visit_count for node in nodes),
+            fingerprints=len(nodes),
         )
+
+    @staticmethod
+    def __narrative(*, nodes: List[GraphNode]) -> str:
+        """
+        Returns the richest narrative across the grouped fingerprints.
+        """
+
+        narratives = [
+            node.rich_description.strip()
+            for node in nodes
+            if node.rich_description and node.rich_description.strip()
+        ]
+        return max(narratives, key=len) if narratives else ""
 
     @staticmethod
     def __sorted_links(*, bucket: Dict[_LinkKey, ScreenLink]) -> List[ScreenLink]:
