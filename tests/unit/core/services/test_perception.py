@@ -13,6 +13,7 @@ from fathom.core.services.perception import PerceptionService
 from fathom.interfaces.artifact import ArtifactSinkPort
 from fathom.interfaces.perception import PerceptionPort
 from fathom.interfaces.storage import StoragePort
+from fathom.processing.parsers.signature import HierarchySignatureBuilder
 from fathom.schemas.artifact import (
     ArtifactKind,
     ArtifactMetadata,
@@ -341,6 +342,37 @@ class TestComputeStructureHash(unittest.TestCase):
 
     def test_no_elements_is_zero_hash(self) -> None:
         self.assertEqual(self.__service().compute_structure_hash(elements=[]), ZERO_HASH)
+
+
+class TestBuildStateStructureHash(unittest.TestCase):
+    """build_state derives the structure hash from the captured hierarchy."""
+
+    __XML = (
+        '<hierarchy package="com.app">'
+        '<node class="android.widget.EditText" resource-id="com.app:id/phone" '
+        'bounds="[0,0][100,50]" text="9876543210" />'
+        "</hierarchy>"
+    )
+
+    def test_structure_hash_comes_from_the_hierarchy_without_elements(self) -> None:
+        builder = HierarchySignatureBuilder()
+        service = PerceptionService(
+            storage=Mock(), perception=Mock(), hierarchy_signature_builder=builder
+        )
+        capture = ScreenCapture(
+            width=1080,
+            height=2400,
+            activity="com.app/.Login",
+            image=b"fake-png-bytes",
+            timestamp=0,
+            xml_content=self.__XML,
+            metadata={},
+        )
+
+        state = service.build_state(capture=capture)
+
+        self.assertEqual(state.structure_hash, builder.compute_layout_hash(xml_content=self.__XML))
+        self.assertNotEqual(state.structure_hash, ZERO_HASH)
 
 
 if __name__ == "__main__":

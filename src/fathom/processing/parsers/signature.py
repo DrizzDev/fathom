@@ -9,6 +9,7 @@ from fathom.constants.screen import (
     BOUNDS_DIGEST_LENGTH,
     SIGNATURE_TEXT_PREVIEW_LENGTH,
     SIGNATURE_VALUE_PREVIEW_LENGTH,
+    ZERO_HASH,
 )
 from fathom.processing.parsers.base import PlatformParser
 from fathom.processing.parsers.factory import PlatformParserFactory
@@ -37,6 +38,48 @@ class HierarchySignatureBuilder:
         return hashlib.md5(signature.encode("utf-8"), usedforsecurity=False).hexdigest()[
             :VISUAL_HASH_LENGTH
         ]
+
+    def compute_layout_hash(self, *, xml_content: str) -> str:
+        """
+        Compute a content-agnostic layout hash for a hierarchy.
+
+        Hashes the distinct set of element class+id identities, ignoring text,
+        state, and how many times each repeats, so a screen with different or
+        differently-sized content (a typed-in form, a list of any length) hashes
+        the same while a structurally different screen does not.
+        """
+
+        normalized_xml = self.__trim_xml(xml_content=xml_content)
+        root = ElementTree.fromstring(normalized_xml)  # nosec
+        parser = PlatformParserFactory.get_parser(root=root)
+
+        identities: set[str] = set()
+        self.__collect_identities(node=root, parser=parser, identities=identities)
+        if not identities:
+            return ZERO_HASH
+
+        combined = "\n".join(sorted(identities))
+        return hashlib.md5(combined.encode("utf-8"), usedforsecurity=False).hexdigest()[
+            :VISUAL_HASH_LENGTH
+        ]
+
+    def __collect_identities(
+        self,
+        *,
+        node: ElementTree.Element,
+        parser: PlatformParser,
+        identities: set[str],
+    ) -> None:
+        """
+        Collect each non-ignored node's text-free class+id identity.
+        """
+
+        metadata = parser.build_signature_metadata(node=node)
+        if not parser.should_ignore_signature_node(metadata=metadata):
+            identities.add(f"{metadata.class_name}#{metadata.identifier}")
+
+        for child_node in node:
+            self.__collect_identities(node=child_node, parser=parser, identities=identities)
 
     def __trim_xml(self, *, xml_content: str) -> str:
         """

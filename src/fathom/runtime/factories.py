@@ -111,13 +111,20 @@ class PerceptionFactory(PerceptionFactoryPort):
         configuration: DeviceConfiguration,
         device: DevicePort,
         use_xml: bool,
+        capture_hierarchy: bool = False,
     ) -> PerceptionPort:
         """
         Create the appropriate PerceptionPort implementation.
+
+        ``use_xml`` selects XML-grounded perception for the agent; the separate
+        ``capture_hierarchy`` only adds the view hierarchy to each capture (for
+        structural screen dedup) without changing how the agent grounds.
         """
 
+        include_hierarchy = use_xml or capture_hierarchy
+
         if configuration.type == DeviceConnectionType.REMOTE:
-            return RemotePerceptionAdapter(device=device, include_hierarchy=use_xml)
+            return RemotePerceptionAdapter(device=device, include_hierarchy=include_hierarchy)
 
         if configuration.platform == DevicePlatform.IOS:
             backend = configuration.ios.automation_backend
@@ -137,7 +144,7 @@ class PerceptionFactory(PerceptionFactoryPort):
             )
 
         if configuration.platform == DevicePlatform.ANDROID:
-            return AndroidPerceptionAdapter(device=device, include_hierarchy=use_xml)
+            return AndroidPerceptionAdapter(device=device, include_hierarchy=include_hierarchy)
 
         raise NotImplementedError(
             f"Perception adapter for platform {configuration.platform} is not implemented"

@@ -41,6 +41,7 @@ class PerceptionFactoryPort(ABC):
         configuration: DeviceConfiguration,
         device: DevicePort,
         use_xml: bool,
+        capture_hierarchy: bool = False,
     ) -> PerceptionPort:
         """
         Create perception adapter from runtime configuration and bound ports.

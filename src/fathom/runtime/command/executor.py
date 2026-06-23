@@ -175,9 +175,12 @@ class CommandExecutor:
             device_adapter = self.__device_factory.create(configuration=device_configuration)
             partial_resources.append(device_adapter)
 
+            # Exploration grounds on vision but needs the view hierarchy for
+            # structural screen dedup, so capture it without enabling XML grounding.
             perception_adapter = self.__perception_factory.create(
                 device=device_adapter,
                 use_xml=request.objective.use_xml,
+                capture_hierarchy=isinstance(request, ExplorationRunRequest),
                 configuration=device_configuration,
             )
             partial_resources.append(perception_adapter)

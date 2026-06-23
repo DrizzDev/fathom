@@ -266,8 +266,31 @@ class PerceptionService:
             visual_hash=self.compute_visual_hash(capture=capture),
             xml_hash=self.compute_xml_hash(capture=capture),
             interaction_hash=self.compute_interaction_hash(elements=elements),
-            structure_hash=self.compute_structure_hash(elements=elements),
+            structure_hash=self.__resolve_structure_hash(capture=capture, elements=elements),
         )
+
+    def __resolve_structure_hash(
+        self,
+        *,
+        capture: ScreenCapture,
+        elements: Optional[List[LabeledElement]],
+    ) -> str:
+        """
+        Prefer the hierarchy layout hash, falling back to interactive elements.
+
+        A vision-only crawl has no labeled elements, so the captured hierarchy is
+        the reliable source of a text-free structural identity.
+        """
+
+        if capture.xml_content:
+            try:
+                return self.__hierarchy_signature_builder.compute_layout_hash(
+                    xml_content=capture.xml_content
+                )
+            except Exception as exception:
+                logger.warning(f"Could not compute layout hash: {exception}")
+
+        return self.compute_structure_hash(elements=elements)
 
     def __extract_element_identities(self, elements: List[LabeledElement]) -> List[str]:
         """
