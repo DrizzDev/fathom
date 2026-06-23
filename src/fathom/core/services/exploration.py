@@ -220,11 +220,13 @@ class ExplorationVisionService:
         *,
         llm: LLMPort,
         use_cache: bool = True,
+        guarded: bool = True,
         builder: Optional[ExplorationPromptBuilder] = None,
         parser: Optional[ExplorationResponseParser] = None,
     ) -> None:
         self.__llm = llm
         self.__use_cache = use_cache
+        self.__guarded = guarded
         self.__builder = builder or ExplorationPromptBuilder()
         self.__parser = parser or ExplorationResponseParser()
 
@@ -234,7 +236,9 @@ class ExplorationVisionService:
         """
 
         await self.__llm.prewarm(
-            system_instruction=self.__builder.build_system_prompt(intent=intent),
+            system_instruction=self.__builder.build_system_prompt(
+                intent=intent, guarded=self.__guarded
+            ),
             tools=ToolRegistry.get_exploration_definitions(),
         )
 
@@ -264,7 +268,9 @@ class ExplorationVisionService:
             use_cache=self.__use_cache,
             prompt=prompt,
             tools=ToolRegistry.get_exploration_definitions(),
-            system_instruction=self.__builder.build_system_prompt(intent=intent),
+            system_instruction=self.__builder.build_system_prompt(
+                intent=intent, guarded=self.__guarded
+            ),
         )
         return self.__parser.parse(result)
 

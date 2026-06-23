@@ -91,7 +91,9 @@ class ExplorationNodeProvider:
 
         self.__context = context
         self.__vision = vision or ExplorationVisionService(
-            llm=context.llm, use_cache=context.configuration.llm.use_cache
+            llm=context.llm,
+            use_cache=context.configuration.llm.use_cache,
+            guarded=not context.focus,
         )
         self.__policy = policy or ExplorationPolicyConfig()
         self.__dfs = dfs or DfsState()
@@ -1199,5 +1201,7 @@ class ExplorationGraphFactory:
             screen_detector=VisionDefectDetector(
                 llm=context.llm, use_cache=context.configuration.llm.use_cache
             ),
-            traversal_guard=TraversalGuard(),
+            # Guardrails apply only to broad-coverage runs; a focused run may be a
+            # deliberate request to exercise a sensitive flow, so it is not guarded.
+            traversal_guard=TraversalGuard() if not context.focus else None,
         )

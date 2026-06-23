@@ -33,6 +33,15 @@ class TestExplorationPromptBuilder(unittest.TestCase):
     def test_system_prompt_omits_goal_when_blank(self) -> None:
         self.assertNotIn("GOAL:", self.__builder.build_system_prompt())
 
+    def test_guarded_prompt_includes_the_avoidance_directive(self) -> None:
+        self.assertIn("AVOID SENSITIVE AREAS", self.__builder.build_system_prompt(guarded=True))
+
+    def test_unguarded_prompt_omits_the_avoidance_directive(self) -> None:
+        # A focused run may deliberately exercise a sensitive (payment/auth) flow.
+        prompt = self.__builder.build_system_prompt(guarded=False)
+
+        self.assertNotIn("AVOID SENSITIVE AREAS", prompt)
+
     def test_prompt_has_no_emoji_symbols(self) -> None:
         prompt = self.__builder.build_system_prompt(intent="x")
 

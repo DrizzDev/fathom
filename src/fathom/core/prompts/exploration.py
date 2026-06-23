@@ -204,9 +204,13 @@ class ExplorationPromptBuilder:
     Assembles the system instructions for the exploration scan and screen-translation calls.
     """
 
-    def build_system_prompt(self, *, intent: str = "") -> str:
+    def build_system_prompt(self, *, intent: str = "", guarded: bool = True) -> str:
         """
         Builds the depth-first exploration system instruction, cacheable per session.
+
+        ``guarded`` adds the avoidance directive for broad-coverage runs; a focused
+        run omits it so a deliberate request to exercise a sensitive flow is not
+        steered away from it.
         """
 
         parts = [EXPLORATION_PERSONA]
@@ -219,7 +223,13 @@ class ExplorationPromptBuilder:
                 EXPLORATION_SCAN_STRATEGY,
                 EXPLORATION_ELEMENT_CATEGORIES,
                 EXPLORATION_PRIORITY,
-                EXPLORATION_AVOIDANCE_DIRECTIVE,
+            ]
+        )
+        if guarded:
+            parts.append(EXPLORATION_AVOIDANCE_DIRECTIVE)
+
+        parts.extend(
+            [
                 EXPLORATION_FOCUS_DIRECTIVE,
                 EXPLORATION_ACTION_PALETTE,
                 EXPLORATION_LIST_SAMPLING,
