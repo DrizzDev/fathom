@@ -183,14 +183,10 @@ EXPLORATION_EXHAUSTION_RULES = (
 EXPLORATION_RESPONSE_DIRECTIVE = (
     "RESPONSE: Return BOTH tool calls in EVERY response:\n"
     "1. explore_ui - pick the next untried element (or set content_exhausted=true).\n"
-    "2. describe_screen - describe what is on the current screen as seen in THIS screenshot:\n"
+    "2. describe_screen - fully describe the current screen as seen in THIS screenshot:\n"
     "   classify its screen_category, then describe each element and what it does, and\n"
-    "   what a user can achieve here.\n"
-    "   If an EXISTING DESCRIPTION is shown in the context, do NOT repeat anything already\n"
-    "   captured there. Only output elements or actions that are NEW - e.g. revealed by\n"
-    "   scrolling, a different state, or a section not yet described.\n"
-    "   If the screenshot shows nothing new beyond what is already described, return empty\n"
-    "   strings for all describe_screen fields except activity_name.\n"
+    "   what a user can achieve here. Describe the WHOLE screen on its own terms, even if\n"
+    "   it resembles one already seen - each screen is documented independently.\n"
     "NEVER output plain text, markdown, or explanations outside the tool calls."
 )
 

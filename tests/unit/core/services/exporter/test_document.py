@@ -135,45 +135,41 @@ class TestScreenDocumentExporter(unittest.IsolatedAsyncioTestCase):
     def __by_slug(self, index: DocumentIndex) -> Dict[str, ScreenDocument]:
         return {document.slug: document for document in index.documents}
 
-    async def test_groups_fingerprints_into_one_logical_screen(self) -> None:
+    async def test_one_document_per_canonical_node(self) -> None:
         index = self.__build()
-        home = self.__by_slug(index)["main-home"]
 
-        self.assertEqual(home.fingerprints, 2)
-        self.assertEqual(home.visits, 8)
+        # Four distinct nodes -> four docs (no activity/category collapse).
+        self.assertEqual(len(index.documents), 4)
+
+    async def test_title_and_slug_come_from_the_node_description(self) -> None:
+        home = self.__by_slug(self.__build())["home-feed"]
+
+        self.assertEqual(home.title, "Home feed")
+        self.assertEqual(home.visits, 5)
         self.assertEqual(home.category, ScreenCategory.HOME)
-
-    async def test_same_activity_distinct_categories_are_separate_documents(self) -> None:
-        index = self.__build()
-        slugs = set(self.__by_slug(index))
-
-        self.assertIn("main-home", slugs)
-        self.assertIn("main-detail", slugs)
 
     async def test_orders_documents_by_visits_descending(self) -> None:
         index = self.__build()
 
         self.assertEqual(
             [document.slug for document in index.documents],
-            ["main-home", "main-detail", "account-settings"],
+            ["home-feed", "home-feed-scrolled-further", "restaurant-detail", "account-settings"],
         )
 
-    async def test_outbound_skips_self_loops_and_names_the_target(self) -> None:
-        home = self.__by_slug(self.__build())["main-home"]
+    async def test_outbound_links_resolve_cross_node_targets(self) -> None:
+        home = self.__by_slug(self.__build())["home-feed"]
 
-        # The swipe_up edge stays inside the Home group and must not appear.
-        self.assertEqual(len(home.flow.outbound), 1)
-        link = home.flow.outbound[0]
-        self.assertEqual(link.element, "Restaurant card")
-        self.assertEqual(link.screen, "Main (Detail)")
+        # Both edges out of HOME_A now cross to distinct nodes; self-loops only are skipped.
+        targets = {link.screen for link in home.flow.outbound}
+        self.assertEqual(targets, {"Restaurant detail", "Home feed scrolled further"})
 
     async def test_inbound_links_name_the_source_screen(self) -> None:
-        detail = self.__by_slug(self.__build())["main-detail"]
+        detail = self.__by_slug(self.__build())["restaurant-detail"]
 
-        self.assertEqual([link.screen for link in detail.flow.inbound], ["Main (Home)"])
-        self.assertEqual([link.screen for link in detail.flow.outbound], ["Account (Settings)"])
+        self.assertEqual([link.screen for link in detail.flow.inbound], ["Home feed"])
+        self.assertEqual([link.screen for link in detail.flow.outbound], ["Account settings"])
 
-    async def test_defects_are_bucketed_onto_their_logical_screen(self) -> None:
+    async def test_defects_are_bucketed_onto_their_node(self) -> None:
         defect = Defect.from_signal(
             signal=DefectSignal.OVERLAP_CLIPPING,
             source=DefectSource.POST_RUN,
@@ -182,14 +178,16 @@ class TestScreenDocumentExporter(unittest.IsolatedAsyncioTestCase):
         )
         by_slug = self.__by_slug(self.__build(defects=[defect]))
 
-        self.assertEqual(len(by_slug["main-detail"].defects), 1)
-        self.assertEqual(by_slug["main-home"].defects, [])
+        self.assertEqual(len(by_slug["restaurant-detail"].defects), 1)
+        self.assertEqual(by_slug["home-feed"].defects, [])
 
-    async def test_narrative_prefers_own_rich_description(self) -> None:
+    async def test_narrative_is_the_nodes_own_rich_description(self) -> None:
         by_slug = self.__by_slug(self.__build())
 
-        self.assertEqual(by_slug["main-home"].narrative, "Home prose")
-        self.assertEqual(by_slug["main-detail"].narrative, "Detail prose")
+        self.assertEqual(by_slug["home-feed"].narrative, "Home prose")
+        self.assertEqual(by_slug["restaurant-detail"].narrative, "Detail prose")
+        # HOME_B carries no rich description of its own; there is no activity-level fallback.
+        self.assertEqual(by_slug["home-feed-scrolled-further"].narrative, "")
 
 
 class TestScreenDocumentSlugCollision(unittest.IsolatedAsyncioTestCase):

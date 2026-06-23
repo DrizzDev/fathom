@@ -71,7 +71,7 @@ def _graph_mock(**overrides: Any) -> Mock:
         exhausted_hashes=Mock(return_value=set()),
         node_count=0,
         add_screen=AsyncMock(),
-        append_activity_description=AsyncMock(),
+        update_rich_description=AsyncMock(),
         record_transition=AsyncMock(),
         mark_exhausted=AsyncMock(),
         record_relevance=AsyncMock(),
@@ -305,6 +305,21 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         _args, kwargs = graph.build_exploration_context.call_args
         self.assertIsNone(kwargs["focus"])
         graph.record_relevance.assert_not_awaited()
+
+    async def test_scan_stores_rich_description_on_the_node(self) -> None:
+        # The describe_screen markdown is stored per fingerprint, not per activity.
+        analysis = _analysis(action=_action("Home"))
+        analysis.metadata["rich_description"] = "## Purpose\nHome screen"
+        vision = Mock(scan=AsyncMock(return_value=analysis))
+        graph = _graph_mock()
+        context = self.__context(graph, focus=None)
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("abc")}
+
+        await ExplorationNodeProvider(context=context, vision=vision).scan(state)
+
+        graph.update_rich_description.assert_awaited_once_with(
+            visual_hash="abc", rich_description="## Purpose\nHome screen"
+        )
 
     async def test_scan_records_screen_category(self) -> None:
         # Category is recorded on every run, focus or not, for the per-screen docs.

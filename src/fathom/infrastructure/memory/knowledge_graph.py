@@ -456,50 +456,6 @@ class KnowledgeGraph:
         except ValueError:
             return ScreenCategory.OTHER
 
-    async def append_activity_description(self, *, activity: str, observation: str) -> None:
-        """
-        Appends a new observation to the activity's accumulated rich description.
-        """
-
-        target = self.__activity_description_node(activity=activity)
-        if target is None:
-            logger.warning("No node found for activity %s; dropping observation", activity)
-            return
-
-        if target.rich_description:
-            target.rich_description += f"\n\n---\n\n### Additional Observation\n{observation}"
-        else:
-            target.rich_description = observation
-
-        await self.__provider.update_rich_description(
-            visual_hash=target.visual_hash, rich_description=target.rich_description
-        )
-
-    def __activity_description_node(self, *, activity: str) -> Optional[GraphNode]:
-        """
-        Returns the node that owns the description for an activity, if any.
-        """
-
-        normalized = self.normalize_activity(activity)
-        for node in self.__nodes.values():
-            if self.normalize_activity(node.activity) == normalized and node.rich_description:
-                return node
-        for node in self.__nodes.values():
-            if self.normalize_activity(node.activity) == normalized:
-                return node
-        return None
-
-    def __activity_description(self, *, activity: str) -> Optional[str]:
-        """
-        Returns the existing rich description for an activity, or None.
-        """
-
-        normalized = self.normalize_activity(activity)
-        for node in self.__nodes.values():
-            if self.normalize_activity(node.activity) == normalized and node.rich_description:
-                return node.rich_description
-        return None
-
     async def record_transition(
         self, *, source_hash: str, action: Action, destination_hash: str
     ) -> None:
@@ -769,14 +725,6 @@ class KnowledgeGraph:
 
         if node and node.description:
             lines.append(f"CURRENT SCREEN: {node.description}")
-
-        if node:
-            existing = self.__activity_description(activity=node.activity)
-            if existing:
-                lines.append(
-                    "EXISTING DESCRIPTION FOR THIS ACTIVITY "
-                    "(do NOT repeat - only describe what is NEW):\n" + existing
-                )
 
         if current_hash:
             self.__append_tried_actions(

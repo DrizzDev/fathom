@@ -267,8 +267,8 @@ class ExplorationNodeProvider:
         )
         rich_text = analysis.metadata.get("rich_description", "")
         if rich_text and rich_text.strip():
-            await ctx.exploration_graph.append_activity_description(
-                activity=screen_state.activity, observation=rich_text
+            await ctx.exploration_graph.update_rich_description(
+                visual_hash=fingerprint, rich_description=rich_text
             )
 
         # On a focused run, record how this screen relates to the focus so the
