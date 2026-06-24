@@ -21,6 +21,7 @@ from fathom.constants import ActionType
 from fathom.constants.exploration import BFSPhase
 from fathom.infrastructure.memory.knowledge_graph import GraphEdge, KnowledgeGraph
 from fathom.schemas.actions import Action
+from fathom.schemas.checkpoint import ExplorationCheckpoint
 from fathom.schemas.exploration import BFSQueueEntry
 
 logger = getLogger(__name__)
@@ -54,6 +55,38 @@ class DfsState:
         """
 
         return len(self.current_path)
+
+    def to_checkpoint(self) -> ExplorationCheckpoint:
+        """
+        Captures the resumable DFS state as a serializable checkpoint.
+
+        Transient per-step fields (the screen being scanned, pending navigation,
+        the stall counter) are intentionally omitted: they are rebuilt each run.
+        """
+
+        return ExplorationCheckpoint(
+            phase=self.phase,
+            root_hash=self.root_hash,
+            current_path=list(self.current_path),
+            bfs_queue=list(self.bfs_queue),
+            fully_scanned=sorted(self.fully_scanned),
+            exhaustion_retries=dict(self.exhaustion_retries),
+        )
+
+    @classmethod
+    def from_checkpoint(cls, *, checkpoint: ExplorationCheckpoint) -> "DfsState":
+        """
+        Rehydrates a DFS state from a saved checkpoint, restoring the deque and set.
+        """
+
+        return cls(
+            phase=checkpoint.phase,
+            root_hash=checkpoint.root_hash,
+            current_path=list(checkpoint.current_path),
+            bfs_queue=deque(checkpoint.bfs_queue),
+            fully_scanned=set(checkpoint.fully_scanned),
+            exhaustion_retries=dict(checkpoint.exhaustion_retries),
+        )
 
 
 class DfsNavigator:

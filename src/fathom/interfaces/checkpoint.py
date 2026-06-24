@@ -4,10 +4,13 @@ Backend-neutral ports for LangGraph checkpoint storage.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Optional, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
+
+    from fathom.schemas.checkpoint import ExplorationCheckpoint
 
 
 @runtime_checkable
@@ -81,3 +84,25 @@ class CheckpointStore(Protocol):
         """
         Remove orphaned checkpoint state older than the configured retention; return removed workflow identifiers.
         """
+
+
+class ExplorationCheckpointPort(ABC):
+    """
+    Persistence contract for the exploration DFS checkpoint, enabling cross-run resume.
+    """
+
+    @abstractmethod
+    async def save(self, *, workflow_id: str, checkpoint: ExplorationCheckpoint) -> None:
+        """
+        Persist the latest DFS checkpoint for a workflow, replacing any prior one.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def load(self, *, workflow_id: str) -> Optional[ExplorationCheckpoint]:
+        """
+        Load the saved DFS checkpoint for a workflow, or None when absent or incompatible.
+        """
+
+        raise NotImplementedError

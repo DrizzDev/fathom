@@ -4,9 +4,13 @@ Backend-specific configuration for the LangGraph checkpoint store.
 
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from fathom.constants.exploration import BFSPhase
+from fathom.schemas.actions import Action
+from fathom.schemas.exploration import BFSQueueEntry
 
 
 class SqliteCheckpointPolicy(BaseModel):
@@ -101,3 +105,32 @@ class PostgresCheckpointConfiguration(BaseModel):
 
 
 CheckpointConfiguration = Union[SqliteCheckpointConfiguration, PostgresCheckpointConfiguration]
+
+
+class ExplorationCheckpoint(BaseModel):
+    """
+    Snapshot of the depth-first exploration path, frontier, and progress.
+
+    Persisted at each step boundary so an interrupted run resumes the actual
+    traversal (the path back to the root and the recovery queue), not merely the
+    knowledge-graph frontier.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    phase: BFSPhase = Field(description="DFS phase the run was in.")
+    root_hash: Optional[str] = Field(
+        default=None, description="Visual hash of the run's root screen."
+    )
+    current_path: List[Tuple[str, Action]] = Field(
+        default_factory=list, description="Path of (screen hash, action) from the root."
+    )
+    bfs_queue: List[BFSQueueEntry] = Field(
+        default_factory=list, description="Pending frontier entries with replayable paths."
+    )
+    fully_scanned: List[str] = Field(
+        default_factory=list, description="Screen hashes already fully scanned."
+    )
+    exhaustion_retries: Dict[str, int] = Field(
+        default_factory=dict, description="Per-screen exhaustion-retry counters."
+    )

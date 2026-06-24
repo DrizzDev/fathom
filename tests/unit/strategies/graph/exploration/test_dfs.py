@@ -5,9 +5,10 @@ from typing import List, Optional, Tuple
 from unittest.mock import Mock
 
 from fathom.constants import ActionType
-from fathom.constants.exploration import FocusRelevance
+from fathom.constants.exploration import BFSPhase, FocusRelevance
 from fathom.infrastructure.memory.knowledge_graph import GraphEdge
 from fathom.schemas.actions import Action
+from fathom.schemas.checkpoint import ExplorationCheckpoint
 from fathom.schemas.exploration import BFSQueueEntry
 from fathom.strategies.graph.exploration.dfs import DfsNavigator, DfsState
 
@@ -248,6 +249,58 @@ class TestPathToScreen(unittest.TestCase):
         dfs = DfsState(root_hash="root", current_path=_path("a", "b", "c"))
         navigator = DfsNavigator(dfs=dfs, knowledge_graph=Mock(nodes={}))
         self.assertEqual(navigator.path_to_screen(screen_hash="unknown"), _path("a", "b"))
+
+
+class TestDfsCheckpointRoundTrip(unittest.TestCase):
+    """DfsState serializes to a checkpoint and rehydrates losslessly."""
+
+    @staticmethod
+    def __state() -> DfsState:
+        state = DfsState(
+            phase=BFSPhase.BACKTRACK,
+            root_hash="root",
+            current_path=_path("a", "b"),
+            fully_scanned={"a", "b", "c"},
+            exhaustion_retries={"a": 2},
+        )
+        state.bfs_queue.append(
+            BFSQueueEntry(
+                screen_hash="frontier",
+                parent_hash="hash_a",
+                depth=1,
+                action_from_parent=_action("frontier"),
+                path_from_root=_path("a"),
+            )
+        )
+        # Transient fields that must NOT survive a checkpoint.
+        state.scanning_hash = "scanning"
+        state.stalled_routes = 5
+        return state
+
+    def test_round_trip_preserves_resumable_state(self) -> None:
+        original = self.__state()
+
+        restored = DfsState.from_checkpoint(checkpoint=original.to_checkpoint())
+
+        self.assertEqual(restored.phase, BFSPhase.BACKTRACK)
+        self.assertEqual(restored.root_hash, "root")
+        self.assertEqual(restored.current_path, original.current_path)
+        self.assertEqual(list(restored.bfs_queue), list(original.bfs_queue))
+        self.assertEqual(restored.fully_scanned, {"a", "b", "c"})
+        self.assertEqual(restored.exhaustion_retries, {"a": 2})
+
+    def test_round_trip_drops_transient_fields(self) -> None:
+        restored = DfsState.from_checkpoint(checkpoint=self.__state().to_checkpoint())
+
+        self.assertIsNone(restored.scanning_hash)
+        self.assertEqual(restored.stalled_routes, 0)
+
+    def test_checkpoint_survives_json_serialization(self) -> None:
+        checkpoint = self.__state().to_checkpoint()
+
+        reloaded = ExplorationCheckpoint.model_validate_json(checkpoint.model_dump_json())
+
+        self.assertEqual(reloaded, checkpoint)
 
 
 if __name__ == "__main__":
