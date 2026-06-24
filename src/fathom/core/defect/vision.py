@@ -102,6 +102,7 @@ class VisionDefectDetector(ScreenDefectDetectorPort):
                 activity=snapshot.activity,
                 bounds=cls.__coerce_bounds(finding.get("bounds")),
                 excerpt=summary,
+                screenshot=snapshot.screenshot_uri,
             ),
         )
 

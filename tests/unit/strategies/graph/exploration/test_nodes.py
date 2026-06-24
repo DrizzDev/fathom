@@ -5,7 +5,12 @@ from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
 from fathom.constants import ActionType
-from fathom.constants.defect import DEFECT_DETECTED_EVENT, DefectSignal, DefectSource
+from fathom.constants.defect import (
+    DEFECT_DETECTED_EVENT,
+    DefectSignal,
+    DefectSource,
+    DefectVerification,
+)
 from fathom.constants.exploration import (
     EXPLORATION_PROGRESS_EVENT,
     MAX_ROUTES_WITHOUT_PROGRESS,
@@ -196,7 +201,8 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         provider = ExplorationNodeProvider(
             context=context, vision=vision, screen_detector=screen_detector, dfs=DfsState()
         )
-        state = {CKey.CAPTURE: Mock(image=b"PNG"), CKey.SCREEN_STATE: _screen_state("s")}
+        capture = Mock(image=b"PNG", width=1000, height=2000, xml_content=None, screenshot_uri=None)
+        state = {CKey.CAPTURE: capture, CKey.SCREEN_STATE: _screen_state("s")}
 
         await provider.scan(state)
         await provider.scan(state)
@@ -435,7 +441,7 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
             telemetry=Mock(info=AsyncMock()),
         )
         context.perception = Mock(
-            perceive=AsyncMock(return_value=Mock()),
+            perceive=AsyncMock(return_value=Mock(screenshot_uri=None)),
             build_state=Mock(return_value=_screen_state("post")),
         )
         action = _action()
@@ -484,7 +490,7 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
             telemetry=Mock(info=AsyncMock()),
         )
         context.perception = Mock(
-            perceive=AsyncMock(return_value=Mock()),
+            perceive=AsyncMock(return_value=Mock(screenshot_uri=None)),
             build_state=Mock(return_value=_screen_state("post")),
         )
         action = _action()
@@ -525,7 +531,7 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
             telemetry=Mock(info=AsyncMock()),
         )
         context.perception = Mock(
-            perceive=AsyncMock(return_value=Mock()),
+            perceive=AsyncMock(return_value=Mock(screenshot_uri=None)),
             build_state=Mock(return_value=_screen_state("post")),
         )
         return context
@@ -587,7 +593,7 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
         # The post-action capture lands on the SAME screen: the predicted
         # transition never happened, so the tap was inert.
         context.perception = Mock(
-            perceive=AsyncMock(return_value=Mock()),
+            perceive=AsyncMock(return_value=Mock(screenshot_uri=None)),
             build_state=Mock(return_value=_screen_state("pre")),
         )
         action = Action(
@@ -888,7 +894,7 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
             telemetry=Mock(info=AsyncMock()),
         )
         context.perception = Mock(
-            perceive=AsyncMock(return_value=Mock()),
+            perceive=AsyncMock(return_value=Mock(screenshot_uri=None)),
             build_state=Mock(return_value=_screen_state("post")),
         )
         step = Step(action=_action(), screen_hash="pre", step_number=1)
@@ -937,7 +943,7 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
             telemetry=Mock(info=AsyncMock()),
         )
         context.perception = Mock(
-            perceive=AsyncMock(return_value=Mock()),
+            perceive=AsyncMock(return_value=Mock(screenshot_uri=None)),
             build_state=Mock(return_value=_screen_state("post")),
         )
         step = Step(action=_action(), screen_hash="pre", step_number=1)
@@ -964,6 +970,75 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
         context.device.back.assert_not_awaited()
         self.assertFalse(result[CKey.IS_COMPLETE])
         graph.record_transition.assert_awaited_once()
+
+
+class TestInspectScreen(unittest.IsolatedAsyncioTestCase):
+    """
+    Verifies WebView-aware screen defect inspection and its verification tagging.
+    """
+
+    @staticmethod
+    def __empty_state_detector() -> Mock:
+        defect = Defect.from_signal(
+            signal=DefectSignal.EMPTY_STATE,
+            source=DefectSource.POST_RUN,
+            summary="blank",
+            evidence=DefectEvidence(screen="fp"),
+        )
+        return Mock(inspect_screen=AsyncMock(return_value=[defect]))
+
+    @staticmethod
+    def __context(*, capture: Any) -> Mock:
+        context = Mock(
+            workflow_id="wf",
+            agent_state=Mock(step_count=1),
+            telemetry=Mock(info=AsyncMock()),
+            perception=Mock(
+                perceive=AsyncMock(return_value=capture),
+                build_state=Mock(return_value=_screen_state()),
+            ),
+        )
+        context.configuration.engine.stability_wait = 0.0
+        return context
+
+    async def __recorded_defect(self, *, capture: Any) -> Defect:
+        context = self.__context(capture=capture)
+        defects = Mock(record=AsyncMock())
+        provider = ExplorationNodeProvider(
+            context=context,
+            vision=Mock(),
+            screen_detector=self.__empty_state_detector(),
+            defects=defects,
+        )
+        await provider._ExplorationNodeProvider__inspect_screen(
+            fingerprint="fp", screen_state=_screen_state(), capture=capture
+        )
+        defects.record.assert_awaited_once()
+        return defects.record.await_args.kwargs["defect"]
+
+    async def test_webview_empty_state_is_held_for_review(self) -> None:
+        """
+        A blank reported on a WebView surface is recorded as needs-review.
+        """
+
+        webview_xml = (
+            '<hierarchy><node class="android.webkit.WebView" '
+            'bounds="[0,0][1000,1800]"/></hierarchy>'
+        )
+        capture = Mock(
+            image=b"PNG", width=1000, height=2000, xml_content=webview_xml, screenshot_uri="u"
+        )
+        defect = await self.__recorded_defect(capture=capture)
+        self.assertEqual(defect.verification, DefectVerification.NEEDS_REVIEW)
+
+    async def test_native_empty_state_is_recorded_as_confirmed(self) -> None:
+        """
+        A blank on a native screen leads the report as confirmed.
+        """
+
+        capture = Mock(image=b"PNG", width=1000, height=2000, xml_content=None, screenshot_uri="u")
+        defect = await self.__recorded_defect(capture=capture)
+        self.assertEqual(defect.verification, DefectVerification.CONFIRMED)
 
 
 if __name__ == "__main__":

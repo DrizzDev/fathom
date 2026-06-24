@@ -3,11 +3,11 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from fathom.constants.defect import DefectVerification
-from fathom.constants.screen import HitOutcome
-from fathom.core.defect.policy import DeadTapVerificationPolicy
+from fathom.constants.defect import DefectSignal, DefectSource, DefectVerification
+from fathom.constants.screen import HitOutcome, ScreenKind
+from fathom.core.defect.policy import DeadTapVerificationPolicy, WebViewBlankPolicy
 from fathom.schemas.actions import CoordinateSource
-from fathom.schemas.defect import StepSignals
+from fathom.schemas.defect import Defect, DefectEvidence, StepSignals
 
 
 class DeadTapVerificationPolicyTest(unittest.TestCase):
@@ -69,6 +69,39 @@ class DeadTapVerificationPolicyTest(unittest.TestCase):
     def test_missing_post_activity_does_not_downgrade(self) -> None:
         verdict = self.__policy.verify(signals=self.__signals(post_activity=None))
         self.assertEqual(verdict, DefectVerification.CONFIRMED)
+
+
+class WebViewBlankPolicyTest(unittest.TestCase):
+    """
+    Verifies that a blank WebView is held for review while other findings pass through.
+    """
+
+    @staticmethod
+    def __defect(signal: DefectSignal) -> Defect:
+        return Defect.from_signal(
+            signal=signal,
+            source=DefectSource.POST_RUN,
+            summary="finding",
+            evidence=DefectEvidence(screen="hash-1"),
+        )
+
+    def test_webview_empty_state_is_held_for_review(self) -> None:
+        reviewed = WebViewBlankPolicy.review(
+            defect=self.__defect(DefectSignal.EMPTY_STATE), kind=ScreenKind.WEBVIEW
+        )
+        self.assertEqual(reviewed.verification, DefectVerification.NEEDS_REVIEW)
+
+    def test_webview_other_signal_is_unchanged(self) -> None:
+        reviewed = WebViewBlankPolicy.review(
+            defect=self.__defect(DefectSignal.CONTRAST), kind=ScreenKind.WEBVIEW
+        )
+        self.assertEqual(reviewed.verification, DefectVerification.CONFIRMED)
+
+    def test_native_empty_state_is_unchanged(self) -> None:
+        reviewed = WebViewBlankPolicy.review(
+            defect=self.__defect(DefectSignal.EMPTY_STATE), kind=ScreenKind.NATIVE
+        )
+        self.assertEqual(reviewed.verification, DefectVerification.CONFIRMED)
 
 
 if __name__ == "__main__":

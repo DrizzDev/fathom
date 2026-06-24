@@ -4,9 +4,13 @@ Verification policy that grades inline dead-tap signals before they reach the re
 
 from __future__ import annotations
 
-from fathom.constants.defect import DEAD_TAP_MIN_CONFIDENCE, DefectVerification
-from fathom.constants.screen import HitOutcome
-from fathom.schemas.defect import StepSignals
+from fathom.constants.defect import (
+    DEAD_TAP_MIN_CONFIDENCE,
+    DefectSignal,
+    DefectVerification,
+)
+from fathom.constants.screen import HitOutcome, ScreenKind
+from fathom.schemas.defect import Defect, StepSignals
 
 
 class DeadTapVerificationPolicy:
@@ -32,3 +36,19 @@ class DeadTapVerificationPolicy:
         if grounded and confident and stayed and not_missed:
             return DefectVerification.CONFIRMED
         return DefectVerification.NEEDS_REVIEW
+
+
+class WebViewBlankPolicy:
+    """
+    Holds a blank-WebView finding for review, since a WebView often reads empty mid-load.
+    """
+
+    @staticmethod
+    def review(*, defect: Defect, kind: ScreenKind) -> Defect:
+        """
+        Downgrades an empty-state defect on a WebView surface to needs-review.
+        """
+
+        if kind is ScreenKind.WEBVIEW and defect.signal is DefectSignal.EMPTY_STATE:
+            return defect.model_copy(update={"verification": DefectVerification.NEEDS_REVIEW})
+        return defect

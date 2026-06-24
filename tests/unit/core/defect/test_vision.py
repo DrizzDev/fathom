@@ -120,6 +120,24 @@ class VisionDefectDetectorTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(await detector.inspect_screen(snapshot=self.__snapshot()), [])
 
+    async def test_screenshot_uri_is_stamped_onto_findings(self) -> None:
+        """
+        The screen's screenshot handle rides onto each defect for triage.
+        """
+
+        call = _tool_call([{"signal": "contrast", "summary": "Caption text is too faint"}])
+        detector = VisionDefectDetector(llm=_StubLLM(GenerateResult(tool_calls=[call])))
+        snapshot = ScreenSnapshot(
+            screen="home",
+            activity="com.app/.Home",
+            screenshot=b"PNG",
+            screenshot_uri="file:///s.png",
+        )
+
+        (defect,) = await detector.inspect_screen(snapshot=snapshot)
+
+        self.assertEqual(defect.evidence.screenshot, "file:///s.png")
+
 
 if __name__ == "__main__":
     unittest.main()

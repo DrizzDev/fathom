@@ -16,10 +16,12 @@ from fathom.constants.exploration import (
     BFSPhase,
 )
 from fathom.constants.graph import NodeName
+from fathom.constants.screen import HitOutcome, ScreenKind
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.core.defect.inline import InlineDefectDetector
+from fathom.core.defect.policy import WebViewBlankPolicy
 from fathom.core.defect.vision import VisionDefectDetector
 from fathom.core.exceptions import DeviceError
 from fathom.core.exploration.config import ExplorationPolicyConfig
@@ -32,6 +34,8 @@ from fathom.interfaces.defect import (
     InlineDefectDetectorPort,
     ScreenDefectDetectorPort,
 )
+from fathom.processing.parsers.hit import InteractiveHitTester
+from fathom.processing.parsers.kind import ScreenKindClassifier
 from fathom.schemas.actions import Action
 from fathom.schemas.defect import Defect, ScreenSnapshot, StepSignals
 from fathom.schemas.exploration import ActionOutcome
@@ -465,7 +469,9 @@ class ExplorationNodeProvider:
         )
 
         # Inline defect pass: a dead tap (a predicted change that never happened)
-        # or a blank post-capture is evidence the user-facing step misbehaved.
+        # or a blank post-capture is evidence the user-facing step misbehaved. The
+        # corroboration signals let the detector hold uncertain dead taps for review.
+        post_activity = post_state.activity if isinstance(post_state, ScreenState) else None
         await self.__inspect_step(
             signals=StepSignals(
                 screen=pre_hash,
@@ -476,6 +482,15 @@ class ExplorationNodeProvider:
                 usable_capture=self.__is_usable_capture(
                     capture=post_capture, screen_state=post_state
                 ),
+                post_activity=post_activity,
+                grounding=action.bounds.source if action and action.bounds else None,
+                confidence=action.confidence if action else 1.0,
+                target_hit=self.__target_hit(
+                    action=action,
+                    capture=post_capture,
+                    candidate=expects_transition and not step_result.screen_changed,
+                ),
+                screenshot=getattr(post_capture, "screenshot_uri", None),
             )
         )
 
@@ -866,6 +881,27 @@ class ExplorationNodeProvider:
         )
         await asyncio.gather(*writes, return_exceptions=True)
 
+    @staticmethod
+    def __target_hit(*, action: Optional[Action], capture: Any, candidate: bool) -> HitOutcome:
+        """
+        Whether a dead-tap candidate's tap landed on an interactive element.
+
+        Computed only for a grounded dead-tap candidate; otherwise UNKNOWN, so the
+        verification policy never acts on absent evidence.
+        """
+
+        if not candidate or action is None or action.bounds is None:
+            return HitOutcome.UNKNOWN
+
+        x, y, width, height = action.bounds.to_logical_dispatch(
+            logical_width=capture.width, logical_height=capture.height
+        )
+        return InteractiveHitTester.locate(
+            xml_content=getattr(capture, "xml_content", None),
+            point_x=x + width // 2,
+            point_y=y + height // 2,
+        )
+
     async def __inspect_step(self, *, signals: StepSignals) -> None:
         """
         Detect inline defects for one step, persist them, and surface them live.
@@ -877,18 +913,35 @@ class ExplorationNodeProvider:
     async def __inspect_screen(self, *, fingerprint: str, screen_state: Any, capture: Any) -> None:
         """
         Run the screen-level defect detector once per unique screen, best-effort.
+
+        A WebView surface is settled and recaptured first so the vision pass does not
+        read a mid-load frame; any blank it still reports there is held for review.
         """
 
         if self.__screen_detector is None or fingerprint in self.__inspected_screens:
             return
         self.__inspected_screens.add(fingerprint)
 
+        if not getattr(capture, "image", None):
+            return
+
+        kind = self.__screen_kind(capture=capture)
+        if kind is ScreenKind.WEBVIEW:
+            capture, screen_state = await self.__settle_webview(
+                capture=capture, screen_state=screen_state
+            )
+
         image = getattr(capture, "image", None)
         if not image:
             return
 
         activity = screen_state.activity if isinstance(screen_state, ScreenState) else None
-        snapshot = ScreenSnapshot(screen=fingerprint, activity=activity, screenshot=image)
+        snapshot = ScreenSnapshot(
+            screen=fingerprint,
+            activity=activity,
+            screenshot=image,
+            screenshot_uri=getattr(capture, "screenshot_uri", None),
+        )
         try:
             defects = await self.__screen_detector.inspect_screen(snapshot=snapshot)
         except Exception:
@@ -897,7 +950,37 @@ class ExplorationNodeProvider:
             return
 
         for defect in defects:
-            await self.__record_defect(defect=defect)
+            await self.__record_defect(defect=WebViewBlankPolicy.review(defect=defect, kind=kind))
+
+    @staticmethod
+    def __screen_kind(*, capture: Any) -> ScreenKind:
+        """
+        Classify the surface backing a capture from its hierarchy XML.
+        """
+
+        return ScreenKindClassifier.classify(
+            screen_width=capture.width,
+            screen_height=capture.height,
+            xml_content=getattr(capture, "xml_content", None),
+        )
+
+    async def __settle_webview(self, *, capture: Any, screen_state: Any) -> tuple[Any, Any]:
+        """
+        Wait for an async WebView to paint, then recapture; fall back to the original.
+        """
+
+        ctx = self.__context
+        try:
+            await stability_wait(ctx.configuration)
+            settled = await ctx.perception.perceive(
+                session_id=ctx.workflow_id, step_number=ctx.agent_state.step_count
+            )
+            return settled, ctx.perception.build_state(capture=settled)
+        except Exception:
+            logger.warning(
+                "WebView settle/recapture failed; using the original capture", exc_info=True
+            )
+            return capture, screen_state
 
     async def __record_defect(self, *, defect: Defect) -> None:
         """
