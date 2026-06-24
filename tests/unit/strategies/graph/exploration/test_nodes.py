@@ -9,6 +9,7 @@ from fathom.constants.defect import DEFECT_DETECTED_EVENT, DefectSignal, DefectS
 from fathom.constants.exploration import (
     EXPLORATION_PROGRESS_EVENT,
     MAX_ROUTES_WITHOUT_PROGRESS,
+    MAX_STEPS_WITHOUT_NEW_SCREEN,
     BFSPhase,
     ExpectedOutcome,
     FocusRelevance,
@@ -505,6 +506,69 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
         await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).record(state)
 
         self.assertEqual(dfs.stalled_routes, 0)
+
+    @staticmethod
+    def __record_context(*, has_screen: bool) -> Mock:
+        context = Mock(
+            is_cancelled=False,
+            max_steps=100,
+            workflow_id="wf",
+            package_name="com.app",
+            device=Mock(get_current_package=AsyncMock(return_value="com.app")),
+            exploration_graph=_graph_mock(
+                resolve_hash=Mock(side_effect=lambda value: value),
+                has_screen=Mock(return_value=has_screen),
+            ),
+            memory=Mock(store_experience=AsyncMock()),
+            history=Mock(enqueue_save_step=Mock()),
+            agent_state=Mock(record_step=Mock(), step_count=1),
+            telemetry=Mock(info=AsyncMock()),
+        )
+        context.perception = Mock(
+            perceive=AsyncMock(return_value=Mock()),
+            build_state=Mock(return_value=_screen_state("post")),
+        )
+        return context
+
+    @staticmethod
+    def __record_state() -> Dict[str, Any]:
+        action = _action()
+        step = Step(action=action, screen_hash="pre", step_number=1)
+        return {
+            EKey.ACTION: action,
+            CKey.SCREEN_STATE: _screen_state("pre"),
+            CKey.STEP_RESULT: StepResult(
+                step=step,
+                success=True,
+                duration=10,
+                screen_changed=True,
+                pre_hash="pre",
+                post_hash="0",
+            ),
+        }
+
+    async def test_plateau_completes_after_too_many_steps_without_a_new_screen(self) -> None:
+        # has_screen=True: the post screen is already known, so this step finds nothing new.
+        context = self.__record_context(has_screen=True)
+        dfs = DfsState(phase=BFSPhase.SCAN, steps_since_new_screen=MAX_STEPS_WITHOUT_NEW_SCREEN)
+
+        result = await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).record(
+            self.__record_state()
+        )
+
+        self.assertTrue(result[CKey.IS_COMPLETE])
+        self.assertEqual(result[CKey.COMPLETION_REASON], CompletionReason.COVERAGE_PLATEAU)
+
+    async def test_new_screen_resets_the_plateau_counter(self) -> None:
+        # has_screen=False: the post screen is new, so the plateau counter resets.
+        context = self.__record_context(has_screen=False)
+        dfs = DfsState(phase=BFSPhase.SCAN, steps_since_new_screen=10)
+
+        await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).record(
+            self.__record_state()
+        )
+
+        self.assertEqual(dfs.steps_since_new_screen, 0)
 
     async def test_dead_tap_emits_a_functional_defect(self) -> None:
         graph = _graph_mock(resolve_hash=Mock(side_effect=lambda value: value))

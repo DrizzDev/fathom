@@ -47,6 +47,7 @@ class DfsState:
     fully_scanned: Set[str] = field(default_factory=set)
     exhaustion_retries: Dict[str, int] = field(default_factory=dict)
     stalled_routes: int = 0
+    steps_since_new_screen: int = 0
 
     @property
     def depth(self) -> int:

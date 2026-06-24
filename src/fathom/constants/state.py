@@ -32,6 +32,7 @@ class CompletionReason(StrEnum):
     STUCK = "Stuck: No progress"
     PERCEPTION_FAILED = "Perception failed: no usable screen"
     MAX_STEPS = "Max steps reached"
+    COVERAGE_PLATEAU = "Coverage plateau: no new screens"
     SUCCESS = "Completed successfully"
     OPERATOR_ABORTED = "Aborted by operator"
     INTERVENTION_REQUIRED = "Human intervention required"

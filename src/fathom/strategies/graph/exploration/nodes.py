@@ -11,6 +11,7 @@ from fathom.constants.exploration import (
     EXPLORATION_PROGRESS_EVENT,
     MAX_ROUTES_WITHOUT_PROGRESS,
     MAX_SENSITIVE_ACTION_RETRIES,
+    MAX_STEPS_WITHOUT_NEW_SCREEN,
     RECENT_ACTION_WINDOW,
     BFSPhase,
 )
@@ -485,10 +486,20 @@ class ExplorationNodeProvider:
         results = list(get_step_results(state))
         results.append(step_result)
 
-        is_complete = self.__advance_phase(
+        # Plateau guard: end cleanly once exploration stops surfacing new screens
+        # rather than spending the remaining step budget re-treading known ground.
+        # Complements the routing watchdog, which instead fires when steps stop.
+        if post_is_new:
+            dfs.steps_since_new_screen = 0
+        else:
+            dfs.steps_since_new_screen += 1
+        plateaued = dfs.steps_since_new_screen > MAX_STEPS_WITHOUT_NEW_SCREEN
+
+        natural_complete = self.__advance_phase(
             action=action, pre_hash=pre_hash, post_hash=post_hash, post_is_new=post_is_new
         )
-        is_complete = is_complete or ctx.agent_state.step_count >= ctx.max_steps
+        max_steps_reached = ctx.agent_state.step_count >= ctx.max_steps
+        is_complete = natural_complete or plateaued or max_steps_reached
 
         result = self.__mutable(state)
         result[CKey.STEP_RESULT] = step_result
@@ -496,10 +507,12 @@ class ExplorationNodeProvider:
         result[CKey.STEP_NUMBER] = ctx.agent_state.step_count
         result[EKey.BFS_PHASE] = dfs.phase.value
         result[CKey.IS_COMPLETE] = is_complete
-        if ctx.agent_state.step_count >= ctx.max_steps:
+        if max_steps_reached:
             result[CKey.COMPLETION_REASON] = CompletionReason.MAX_STEPS
-        elif is_complete:
+        elif natural_complete:
             result[CKey.COMPLETION_REASON] = _DFS_COMPLETE
+        elif plateaued:
+            result[CKey.COMPLETION_REASON] = CompletionReason.COVERAGE_PLATEAU
 
         await self.__emit_progress(action=action)
         return cast("ExplorationGraphState", result)

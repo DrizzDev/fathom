@@ -169,6 +169,14 @@ DISABLED_LOOP_THRESHOLD: int = 1_000_000
 MAX_ROUTES_WITHOUT_PROGRESS: int = 50
 
 
+# Coverage-plateau bound: consecutive completed steps that surface no new screen
+# before the run ends with CompletionReason.COVERAGE_PLATEAU. Unlike the routing
+# watchdog above (which fires when steps stop happening), this fires when steps
+# keep happening but exploration has stopped discovering, so the crawl does not
+# spend its remaining budget re-treading screens it has already mapped.
+MAX_STEPS_WITHOUT_NEW_SCREEN: int = 15
+
+
 # Most recent executed actions surfaced back into the scan context so the model
 # can see whether its latest moves advanced exploration (new screen / no-op /
 # failed) and avoid re-issuing ineffective taps the per-screen dedup cannot catch.
