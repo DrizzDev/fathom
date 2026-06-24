@@ -4,9 +4,9 @@ Aggregation of detected defects into a bug report.
 
 from __future__ import annotations
 
-from typing import Dict, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
-from fathom.constants.defect import DefectKind, DefectSeverity
+from fathom.constants.defect import DefectKind, DefectSeverity, DefectVerification
 from fathom.schemas.defect import BugReport, Defect
 from fathom.schemas.report import ReportMetadata
 
@@ -18,16 +18,36 @@ class DefectAggregator:
 
     def build(self, *, defects: Sequence[Defect], metadata: ReportMetadata) -> BugReport:
         """
-        Builds a severity-sorted bug report with per-kind and per-severity counts.
+        Builds a bug report, leading with confirmed defects and holding the rest for review.
+
+        Only confirmed defects feed the headline list and the per-kind/per-severity
+        counts; needs-review defects are surfaced separately so uncorroborated
+        signals never inflate the headline.
         """
 
-        ordered = sorted(defects, key=self.__sort_key)
+        confirmed = sorted(
+            self.__by_verification(defects, DefectVerification.CONFIRMED), key=self.__sort_key
+        )
+        needs_review = sorted(
+            self.__by_verification(defects, DefectVerification.NEEDS_REVIEW), key=self.__sort_key
+        )
         return BugReport(
             metadata=metadata,
-            defects=list(ordered),
-            by_kind=self.__counts_by_kind(defects=ordered),
-            by_severity=self.__counts_by_severity(defects=ordered),
+            defects=list(confirmed),
+            needs_review=list(needs_review),
+            by_kind=self.__counts_by_kind(defects=confirmed),
+            by_severity=self.__counts_by_severity(defects=confirmed),
         )
+
+    @staticmethod
+    def __by_verification(
+        defects: Sequence[Defect], verification: DefectVerification
+    ) -> List[Defect]:
+        """
+        Selects the defects in the given verification state.
+        """
+
+        return [defect for defect in defects if defect.verification is verification]
 
     @staticmethod
     def __sort_key(defect: Defect) -> Tuple[int, str, str]:

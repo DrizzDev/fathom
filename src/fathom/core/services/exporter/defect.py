@@ -22,7 +22,12 @@ class BugReportRenderer:
         sections = [
             self.__header(report=report),
             self.__summary(report=report),
-            self.__defects(defects=report.defects),
+            self.__table(title="Defects", defects=report.defects),
+            self.__table(
+                title="Needs review",
+                defects=report.needs_review,
+                note="Uncorroborated signals held back from the headline; confirm before reporting.",
+            ),
         ]
         return "\n\n".join(section for section in sections if section)
 
@@ -33,16 +38,17 @@ class BugReportRenderer:
         """
 
         metadata = report.metadata
-        return "\n".join(
-            [
-                "# Bug Report",
-                "",
-                f"- Workflow: {metadata.workflow}",
-                f"- Package: {metadata.package}",
-                f"- Generated: {metadata.generated_at}",
-                f"- Defects: {len(report.defects)}",
-            ]
-        )
+        lines = [
+            "# Bug Report",
+            "",
+            f"- Workflow: {metadata.workflow}",
+            f"- Package: {metadata.package}",
+            f"- Generated: {metadata.generated_at}",
+            f"- Defects: {len(report.defects)}",
+        ]
+        if report.needs_review:
+            lines.append(f"- Needs review: {len(report.needs_review)}")
+        return "\n".join(lines)
 
     @staticmethod
     def __summary(*, report: BugReport) -> str:
@@ -59,26 +65,35 @@ class BugReportRenderer:
         kind = " · ".join(f"{kind.value}: {count}" for kind, count in report.by_kind.items())
         return "\n".join(["## Summary", "", f"- By severity: {severity}", f"- By kind: {kind}"])
 
-    @staticmethod
-    def __defects(*, defects: List[Defect]) -> str:
+    @classmethod
+    def __table(cls, *, title: str, defects: List[Defect], note: str = "") -> str:
         """
-        Renders the defect table, most severe first.
+        Renders a titled defect table, most severe first; empty when there are none.
         """
 
         if not defects:
             return ""
 
-        rows = [
+        heading = [f"## {title}", ""]
+        if note:
+            heading += [note, ""]
+        return "\n".join(
+            [
+                *heading,
+                "| Severity | Kind | Signal | Screen | Count | Summary |",
+                "| --- | --- | --- | --- | --- | --- |",
+                *cls.__rows(defects=defects),
+            ]
+        )
+
+    @staticmethod
+    def __rows(*, defects: List[Defect]) -> List[str]:
+        """
+        Renders one Markdown table row per defect.
+        """
+
+        return [
             f"| {defect.severity.value} | {defect.kind.value} | {defect.signal.value} | "
             f"{defect.evidence.screen} | {defect.occurrence} | {defect.summary} |"
             for defect in defects
         ]
-        return "\n".join(
-            [
-                "## Defects",
-                "",
-                "| Severity | Kind | Signal | Screen | Count | Summary |",
-                "| --- | --- | --- | --- | --- | --- |",
-                *rows,
-            ]
-        )

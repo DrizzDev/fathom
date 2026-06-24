@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from typing import Optional
 
-from fathom.constants.defect import DefectKind, DefectSeverity, DefectSignal, DefectSource
+from fathom.constants.defect import (
+    DefectKind,
+    DefectSeverity,
+    DefectSignal,
+    DefectSource,
+    DefectVerification,
+)
 from fathom.core.defect.aggregator import DefectAggregator
 from fathom.schemas.defect import Defect, DefectEvidence
 from fathom.schemas.report import ReportMetadata
@@ -24,7 +30,11 @@ class DefectAggregatorTest(unittest.TestCase):
 
     @staticmethod
     def __defect(
-        *, signal: DefectSignal, severity: Optional[DefectSeverity] = None, screen: str = "home"
+        *,
+        signal: DefectSignal,
+        severity: Optional[DefectSeverity] = None,
+        screen: str = "home",
+        verification: DefectVerification = DefectVerification.CONFIRMED,
     ) -> Defect:
         """
         Builds a defect for the given signal and optional severity override.
@@ -36,6 +46,7 @@ class DefectAggregatorTest(unittest.TestCase):
             summary="x",
             evidence=DefectEvidence(screen=screen),
             severity=severity,
+            verification=verification,
         )
 
     def test_orders_blocker_before_minor(self) -> None:
@@ -73,6 +84,29 @@ class DefectAggregatorTest(unittest.TestCase):
         self.assertEqual(report.by_kind[DefectKind.CONTENT], 1)
         self.assertEqual(report.by_severity[DefectSeverity.BLOCKER], 1)
         self.assertEqual(report.by_severity[DefectSeverity.MAJOR], 1)
+
+    def test_needs_review_is_held_out_of_the_headline_and_counts(self) -> None:
+        """
+        Only confirmed defects lead the report and feed the counts; the rest are held.
+        """
+
+        report = DefectAggregator().build(
+            defects=[
+                self.__defect(signal=DefectSignal.CRASH),
+                self.__defect(
+                    signal=DefectSignal.LOREM_IPSUM,
+                    verification=DefectVerification.NEEDS_REVIEW,
+                ),
+            ],
+            metadata=self.__metadata(),
+        )
+
+        self.assertEqual([defect.signal for defect in report.defects], [DefectSignal.CRASH])
+        self.assertEqual(
+            [defect.signal for defect in report.needs_review], [DefectSignal.LOREM_IPSUM]
+        )
+        self.assertEqual(report.by_kind, {DefectKind.FUNCTIONAL: 1})
+        self.assertNotIn(DefectKind.CONTENT, report.by_kind)
 
 
 if __name__ == "__main__":

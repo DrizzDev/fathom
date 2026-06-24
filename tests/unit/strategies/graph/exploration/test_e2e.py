@@ -79,7 +79,14 @@ class TestExplorationWorkflowEndToEnd(unittest.IsolatedAsyncioTestCase):
     def __context(
         *, agent_state: AgentState, graph: KnowledgeGraph, image: bytes = b"image"
     ) -> Mock:
-        capture = Mock(image=image, xml_content=None, activity="com.app/.Home")
+        capture = Mock(
+            image=image,
+            xml_content=None,
+            activity="com.app/.Home",
+            width=1080,
+            height=1920,
+            screenshot_uri=None,
+        )
         capture.model_copy = Mock(return_value=capture)
         screen_state = ScreenState(
             activity="com.app/.Home",
