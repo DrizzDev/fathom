@@ -61,6 +61,19 @@ class DefectSource(StrEnum):
     POST_RUN = "post_run"
 
 
+class DefectVerification(StrEnum):
+    """
+    How much the pipeline trusts a defect, gating whether it leads the report.
+
+    CONFIRMED    - Corroborated enough to surface in the headline defect list.
+    NEEDS_REVIEW - An uncorroborated signal held back for manual triage so it
+                   does not inflate the headline count.
+    """
+
+    CONFIRMED = "confirmed"
+    NEEDS_REVIEW = "needs_review"
+
+
 class DefectSignal(StrEnum):
     """
     The specific observation that evidences a defect.
@@ -152,6 +165,12 @@ PLACEHOLDER_SIGNALS: dict[str, DefectSignal] = {
     "lorem ipsum": DefectSignal.LOREM_IPSUM,
     "lorem": DefectSignal.LOREM_IPSUM,
 }
+
+
+# Planner-confidence floor below which a dead tap is only strong enough for
+# needs-review, not the headline: a low-confidence tap that changed nothing is
+# more likely a grounding miss than a genuinely inert control.
+DEAD_TAP_MIN_CONFIDENCE: float = 0.5
 
 
 # Telemetry event name carrying a single detected defect; live observers (TUI,

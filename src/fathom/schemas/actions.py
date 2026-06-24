@@ -32,6 +32,19 @@ class CoordinateSource(StrEnum):
     VIEWPORT = "viewport"
     MODEL_GROUNDED = "model_grounded"
 
+    @property
+    def is_corroborated(self) -> bool:
+        """
+        Whether the bounds carry evidence beyond a blind planner guess.
+        """
+
+        return self not in _BLIND_COORDINATE_SOURCES
+
+
+# Coordinate sources dispatched without independent corroboration: a planner LLM
+# guess with no OCR/XML/vision/pixel evidence behind the proposed region.
+_BLIND_COORDINATE_SOURCES: frozenset[CoordinateSource] = frozenset({CoordinateSource.MODEL})
+
 
 class InputContextSource(StrEnum):
     """

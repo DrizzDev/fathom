@@ -7,6 +7,7 @@ from fathom.constants.defect import (
     DefectSeverity,
     DefectSignal,
     DefectSource,
+    DefectVerification,
 )
 
 
@@ -88,6 +89,20 @@ class DefectSourceTest(unittest.TestCase):
 
         self.assertEqual(DefectSource.INLINE.value, "inline")
         self.assertEqual(DefectSource.POST_RUN.value, "post_run")
+
+
+class DefectVerificationTest(unittest.TestCase):
+    """
+    Pins the verification states that gate whether a defect leads the report.
+    """
+
+    def test_values(self) -> None:
+        """
+        Verification states serialize to stable lower-case tokens.
+        """
+
+        self.assertEqual(DefectVerification.CONFIRMED.value, "confirmed")
+        self.assertEqual(DefectVerification.NEEDS_REVIEW.value, "needs_review")
 
 
 if __name__ == "__main__":

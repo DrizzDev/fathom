@@ -7,6 +7,7 @@ from fathom.constants.defect import (
     DefectSeverity,
     DefectSignal,
     DefectSource,
+    DefectVerification,
 )
 from fathom.schemas.defect import BugReport, Defect, DefectEvidence
 from fathom.schemas.report import ReportMetadata
@@ -68,6 +69,53 @@ class DefectFromSignalTest(unittest.TestCase):
         restored = Defect.model_validate_json(defect.model_dump_json())
         self.assertEqual(restored.kind, DefectKind.CONTENT)
 
+    def test_verification_defaults_to_confirmed(self) -> None:
+        """
+        A defect is confirmed unless a detector explicitly downgrades it.
+        """
+
+        defect = Defect.from_signal(
+            signal=DefectSignal.DEAD_TAP,
+            source=DefectSource.INLINE,
+            summary="Tap on 'Buy' did nothing",
+            evidence=self.__evidence(),
+        )
+        self.assertEqual(defect.verification, DefectVerification.CONFIRMED)
+
+    def test_verification_override_is_respected(self) -> None:
+        """
+        An explicit needs-review verification is carried onto the defect.
+        """
+
+        defect = Defect.from_signal(
+            signal=DefectSignal.DEAD_TAP,
+            source=DefectSource.INLINE,
+            summary="Tap on a settings row did nothing",
+            evidence=self.__evidence(),
+            verification=DefectVerification.NEEDS_REVIEW,
+        )
+        self.assertEqual(defect.verification, DefectVerification.NEEDS_REVIEW)
+
+    def test_verification_is_excluded_from_the_dedup_signature(self) -> None:
+        """
+        The same signal on the same screen dedups regardless of verification state.
+        """
+
+        confirmed = Defect.from_signal(
+            signal=DefectSignal.DEAD_TAP,
+            source=DefectSource.INLINE,
+            summary="dead",
+            evidence=self.__evidence(),
+        )
+        review = Defect.from_signal(
+            signal=DefectSignal.DEAD_TAP,
+            source=DefectSource.INLINE,
+            summary="dead",
+            evidence=self.__evidence(),
+            verification=DefectVerification.NEEDS_REVIEW,
+        )
+        self.assertEqual(confirmed.signature, review.signature)
+
 
 class BugReportTest(unittest.TestCase):
     """
@@ -99,6 +147,29 @@ class BugReportTest(unittest.TestCase):
         self.assertEqual(restored.defects[0].signal, DefectSignal.CRASH)
         self.assertEqual(restored.by_kind[DefectKind.FUNCTIONAL], 1)
         self.assertEqual(restored.by_severity[DefectSeverity.BLOCKER], 1)
+
+    def test_needs_review_defects_round_trip(self) -> None:
+        """
+        Needs-review defects serialize alongside the headline list.
+        """
+
+        review = Defect.from_signal(
+            signal=DefectSignal.DEAD_TAP,
+            source=DefectSource.INLINE,
+            summary="uncorroborated dead tap",
+            evidence=DefectEvidence(screen="hash-2"),
+            verification=DefectVerification.NEEDS_REVIEW,
+        )
+        report = BugReport(
+            metadata=ReportMetadata(
+                workflow="wf-1", package="com.app", generated_at="2026-06-23T00:00:00"
+            ),
+            needs_review=[review],
+        )
+
+        restored = BugReport.model_validate_json(report.model_dump_json())
+
+        self.assertEqual(restored.needs_review[0].verification, DefectVerification.NEEDS_REVIEW)
 
 
 if __name__ == "__main__":

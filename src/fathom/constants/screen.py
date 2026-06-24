@@ -17,6 +17,20 @@ class ScreenKind(StrEnum):
     GAME_SURFACE = "GAME_SURFACE"
 
 
+class HitOutcome(StrEnum):
+    """
+    Whether a tap coordinate landed inside an interactive hierarchy element.
+
+    HIT     - The tap fell within an enabled, interactive element's bounds.
+    MISS    - The tap fell on dead space; no interactive element covered it.
+    UNKNOWN - The hierarchy was absent or unparseable, so the hit cannot be judged.
+    """
+
+    HIT = "hit"
+    MISS = "miss"
+    UNKNOWN = "unknown"
+
+
 class ScreenCategory(StrEnum):
     """
     The functional kind of a screen from the user's point of view.

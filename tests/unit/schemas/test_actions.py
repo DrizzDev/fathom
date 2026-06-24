@@ -46,6 +46,16 @@ class CoordinateSourceTest(unittest.TestCase):
         for member in CoordinateSource:
             self.assertEqual(CoordinateSource(member.value), member)
 
+    def test_only_blind_model_source_is_uncorroborated(self) -> None:
+        """
+        Every source except the last-resort blind MODEL guess is corroborated.
+        """
+
+        self.assertFalse(CoordinateSource.MODEL.is_corroborated)
+        for member in CoordinateSource:
+            if member is not CoordinateSource.MODEL:
+                self.assertTrue(member.is_corroborated)
+
 
 class ActionLegacyEnterRejectionTest(unittest.TestCase):
     """

@@ -13,8 +13,10 @@ from fathom.constants.defect import (
     DefectSeverity,
     DefectSignal,
     DefectSource,
+    DefectVerification,
 )
-from fathom.schemas.actions import Bounds
+from fathom.constants.screen import HitOutcome
+from fathom.schemas.actions import Bounds, CoordinateSource
 from fathom.schemas.report import ReportMetadata
 
 
@@ -52,6 +54,10 @@ class Defect(BaseModel):
     occurrence: int = Field(
         default=1, ge=1, description="Times the defect was observed across the run"
     )
+    verification: DefectVerification = Field(
+        default=DefectVerification.CONFIRMED,
+        description="Whether the defect is corroborated enough to lead the report",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -71,6 +77,7 @@ class Defect(BaseModel):
         summary: str,
         evidence: DefectEvidence,
         severity: Optional[DefectSeverity] = None,
+        verification: DefectVerification = DefectVerification.CONFIRMED,
     ) -> "Defect":
         """
         Builds a defect, defaulting severity from the signal when not supplied.
@@ -82,6 +89,7 @@ class Defect(BaseModel):
             source=source,
             summary=summary,
             evidence=evidence,
+            verification=verification,
         )
 
     @property
@@ -129,6 +137,22 @@ class StepSignals(BaseModel):
     usable_capture: bool = Field(
         default=True, description="Whether the post-action capture yielded a usable screen"
     )
+    post_activity: Optional[str] = Field(
+        default=None, description="Android activity after the action settled"
+    )
+    grounding: Optional[CoordinateSource] = Field(
+        default=None, description="Evidence source that produced the tapped coordinate"
+    )
+    confidence: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Planner confidence in the tapped action"
+    )
+    target_hit: HitOutcome = Field(
+        default=HitOutcome.UNKNOWN,
+        description="Whether the tap landed inside an interactive element",
+    )
+    screenshot: Optional[str] = Field(
+        default=None, description="Screenshot URI of the screen the step acted on"
+    )
 
 
 class ScreenSnapshot(BaseModel):
@@ -146,6 +170,9 @@ class ScreenSnapshot(BaseModel):
     screenshot: Optional[bytes] = Field(
         default=None, description="Raw screenshot bytes for the vision detector, when available"
     )
+    screenshot_uri: Optional[str] = Field(
+        default=None, description="Screenshot URI stamped onto any defect found on the screen"
+    )
 
 
 class BugReport(BaseModel):
@@ -162,4 +189,8 @@ class BugReport(BaseModel):
     )
     by_severity: Dict[DefectSeverity, int] = Field(
         default_factory=dict, description="Defect count per severity"
+    )
+    needs_review: List[Defect] = Field(
+        default_factory=list,
+        description="Uncorroborated defects held back from the headline for manual triage",
     )
