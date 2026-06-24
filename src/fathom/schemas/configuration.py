@@ -417,7 +417,7 @@ class ExplorationConfiguration(BaseModel):
     """
 
     max_steps: int = Field(default=100, description="Maximum exploration depth")
-    timeout: int = Field(default=300, description="Global timeout for the run")
+    timeout: int = Field(default=3600, description="Global timeout for the run in seconds")
     random_seed: Optional[int] = Field(
         default=None, description="Seed for deterministic exploration"
     )
