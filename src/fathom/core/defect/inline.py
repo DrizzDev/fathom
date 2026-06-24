@@ -4,9 +4,10 @@ Inline defect detection from a single exploration step's runtime signals.
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
-from fathom.constants.defect import DefectSignal, DefectSource
+from fathom.constants.defect import DefectSignal, DefectSource, DefectVerification
+from fathom.core.defect.policy import DeadTapVerificationPolicy
 from fathom.interfaces.defect import InlineDefectDetectorPort
 from fathom.schemas.defect import Defect, DefectEvidence, StepSignals
 
@@ -15,6 +16,9 @@ class InlineDefectDetector(InlineDefectDetectorPort):
     """
     Flags functional defects that a single step's signals already reveal.
     """
+
+    def __init__(self, *, policy: Optional[DeadTapVerificationPolicy] = None) -> None:
+        self.__policy = policy or DeadTapVerificationPolicy()
 
     def inspect_step(self, *, signals: StepSignals) -> List[Defect]:
         """
@@ -53,13 +57,20 @@ class InlineDefectDetector(InlineDefectDetectorPort):
                         f"'{signals.action_target or 'control'}' was expected to change "
                         "the screen but nothing happened"
                     ),
+                    verification=self.__policy.verify(signals=signals),
                 )
             )
 
         return defects
 
     @staticmethod
-    def __defect(*, signals: StepSignals, signal: DefectSignal, summary: str) -> Defect:
+    def __defect(
+        *,
+        signals: StepSignals,
+        signal: DefectSignal,
+        summary: str,
+        verification: DefectVerification = DefectVerification.CONFIRMED,
+    ) -> Defect:
         """
         Builds an inline defect anchored to the step's pre-action screen.
         """
@@ -68,9 +79,11 @@ class InlineDefectDetector(InlineDefectDetectorPort):
             signal=signal,
             source=DefectSource.INLINE,
             summary=summary,
+            verification=verification,
             evidence=DefectEvidence(
                 screen=signals.screen,
                 activity=signals.activity,
                 excerpt=signals.action_target,
+                screenshot=signals.screenshot,
             ),
         )

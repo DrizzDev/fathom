@@ -3,8 +3,10 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from fathom.constants.defect import DefectSignal, DefectSource
+from fathom.constants.defect import DefectSignal, DefectSource, DefectVerification
+from fathom.constants.screen import HitOutcome
 from fathom.core.defect.inline import InlineDefectDetector
+from fathom.schemas.actions import CoordinateSource
 from fathom.schemas.defect import StepSignals
 
 
@@ -34,6 +36,10 @@ class InlineDefectDetectorTest(unittest.TestCase):
             "screen_changed": True,
             "left_package": False,
             "usable_capture": True,
+            "post_activity": "com.app/.Home",
+            "grounding": CoordinateSource.VISION,
+            "confidence": 1.0,
+            "target_hit": HitOutcome.HIT,
         }
         base.update(overrides)
         return StepSignals(**base)
@@ -95,6 +101,58 @@ class InlineDefectDetectorTest(unittest.TestCase):
         self.assertEqual(defect.evidence.screen, "hash-1")
         self.assertEqual(defect.evidence.activity, "com.app/.Home")
         self.assertEqual(defect.source, DefectSource.INLINE)
+
+    def test_corroborated_dead_tap_is_confirmed(self) -> None:
+        """
+        A grounded, confident, on-target dead tap leads the report as confirmed.
+        """
+
+        (defect,) = self.__detector.inspect_step(
+            signals=self.__signals(expects_transition=True, screen_changed=False)
+        )
+        self.assertEqual(defect.verification, DefectVerification.CONFIRMED)
+
+    def test_blind_grounding_downgrades_dead_tap_to_needs_review(self) -> None:
+        """
+        A blind MODEL tap that changed nothing is a likely miss, not a headline bug.
+        """
+
+        (defect,) = self.__detector.inspect_step(
+            signals=self.__signals(
+                expects_transition=True,
+                screen_changed=False,
+                grounding=CoordinateSource.MODEL,
+            )
+        )
+        self.assertEqual(defect.verification, DefectVerification.NEEDS_REVIEW)
+
+    def test_missed_target_downgrades_dead_tap_to_needs_review(self) -> None:
+        """
+        A tap that landed off every interactive element is held for review.
+        """
+
+        (defect,) = self.__detector.inspect_step(
+            signals=self.__signals(
+                expects_transition=True,
+                screen_changed=False,
+                target_hit=HitOutcome.MISS,
+            )
+        )
+        self.assertEqual(defect.verification, DefectVerification.NEEDS_REVIEW)
+
+    def test_screenshot_uri_is_stamped_onto_the_defect(self) -> None:
+        """
+        The step's screenshot handle rides onto the defect for triage.
+        """
+
+        (defect,) = self.__detector.inspect_step(
+            signals=self.__signals(
+                expects_transition=True,
+                screen_changed=False,
+                screenshot="file:///shot.png",
+            )
+        )
+        self.assertEqual(defect.evidence.screenshot, "file:///shot.png")
 
 
 if __name__ == "__main__":

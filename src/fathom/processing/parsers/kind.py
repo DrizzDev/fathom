@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import xml.etree.ElementTree as ET  # nosec
 from logging import getLogger
 from typing import Optional, Tuple
@@ -10,6 +9,7 @@ from fathom.constants.screen import (
     WEBVIEW_AREA_FLOOR,
     ScreenKind,
 )
+from fathom.processing.parsers.geometry import ElementGeometry
 
 logger = getLogger(__name__)
 
@@ -18,8 +18,6 @@ class ScreenKindClassifier:
     """
     Classifies the root hierarchy XML as native, webview, or game-surface backed.
     """
-
-    __BOUNDS_PATTERN = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 
     __WEBVIEW_TAGS = (
         "android.webkit.WebView",
@@ -115,37 +113,18 @@ class ScreenKindClassifier:
 
         for tag in tags:
             for node in root.findall(f".//{tag}"):
-                area = cls.__element_area(element=node)
-
-                if area > largest_area:
-                    largest_area = area
+                largest_area = max(largest_area, cls.__area(element=node))
 
             for node in root.findall(f".//*[@class='{tag}']"):
-                area = cls.__element_area(element=node)
-
-                if area > largest_area:
-                    largest_area = area
+                largest_area = max(largest_area, cls.__area(element=node))
 
         return largest_area / screen_area
 
-    @classmethod
-    def __element_area(cls, *, element: ET.Element) -> int:
+    @staticmethod
+    def __area(*, element: ET.Element) -> int:
         """
-        Read element area from Android bounds or iOS width/height attributes.
+        Return the element's pixel area, or zero when it has no usable geometry.
         """
 
-        bounds_attr = element.get("bounds", "")
-
-        if bounds_attr:
-            match = cls.__BOUNDS_PATTERN.match(bounds_attr)
-            if match:
-                x1, y1, x2, y2 = (int(value) for value in match.groups())
-                return max(0, x2 - x1) * max(0, y2 - y1)
-
-        try:
-            width = int(element.get("width", "0"))
-            height = int(element.get("height", "0"))
-        except ValueError:
-            return 0
-
-        return max(0, width) * max(0, height)
+        rect = ElementGeometry.rect_of(element=element)
+        return rect.area if rect is not None else 0
