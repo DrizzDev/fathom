@@ -55,6 +55,19 @@ class SharedPathManagerLayoutTest(unittest.TestCase):
         self.assertNotEqual(swiggy, zocdoc)
         self.assertNotEqual(swiggy, shared)
 
+    def test_exploration_checkpoint_path_is_distinct_from_langgraph(self) -> None:
+        """
+        The exploration DFS checkpoint lives beside, but never collides with, the
+        LangGraph checkpoint file for the same workflow.
+        """
+
+        exploration = self.__manager.get_exploration_checkpoint_path(workflow_id="wf1")
+        langgraph = self.__manager.get_checkpoint_path(workflow_id="wf1")
+
+        self.assertEqual(exploration.name, "exploration__wf1.db")
+        self.assertEqual(exploration.parent.name, "checkpoints")
+        self.assertNotEqual(exploration, langgraph)
+
     def test_screenshot_path_has_no_package_level(self) -> None:
         """
         Screenshot path is {root}/screenshot/{date}/{session}/{file}.

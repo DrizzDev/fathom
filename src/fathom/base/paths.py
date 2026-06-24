@@ -195,3 +195,13 @@ class SharedPathManager:
         identifier = workflow_id.strip() or "default" if workflow_id else "default"
 
         return self.get_checkpoint_directory() / f"checkpoints__{identifier}.db"
+
+    def get_exploration_checkpoint_path(self, *, workflow_id: Optional[str]) -> Path:
+        """
+        Per-workflow exploration DFS checkpoint database path, kept separate from
+        the LangGraph checkpoint file so the two never collide.
+        """
+
+        identifier = workflow_id.strip() or "default" if workflow_id else "default"
+
+        return self.get_checkpoint_directory() / f"exploration__{identifier}.db"
