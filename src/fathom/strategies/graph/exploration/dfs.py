@@ -48,6 +48,8 @@ class DfsState:
     exhaustion_retries: Dict[str, int] = field(default_factory=dict)
     stalled_routes: int = 0
     steps_since_new_screen: int = 0
+    scroll_probes: Dict[str, int] = field(default_factory=dict)
+    scroll_probe_advanced: Dict[str, bool] = field(default_factory=dict)
 
     @property
     def depth(self) -> int:

@@ -275,6 +275,8 @@ class TestDfsCheckpointRoundTrip(unittest.TestCase):
         # Transient fields that must NOT survive a checkpoint.
         state.scanning_hash = "scanning"
         state.stalled_routes = 5
+        state.scroll_probes = {"a": 2}
+        state.scroll_probe_advanced = {"a": True}
         return state
 
     def test_round_trip_preserves_resumable_state(self) -> None:
@@ -294,6 +296,8 @@ class TestDfsCheckpointRoundTrip(unittest.TestCase):
 
         self.assertIsNone(restored.scanning_hash)
         self.assertEqual(restored.stalled_routes, 0)
+        self.assertEqual(restored.scroll_probes, {})
+        self.assertEqual(restored.scroll_probe_advanced, {})
 
     def test_checkpoint_survives_json_serialization(self) -> None:
         checkpoint = self.__state().to_checkpoint()
