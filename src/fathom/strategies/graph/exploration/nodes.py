@@ -43,7 +43,7 @@ from fathom.interfaces.defect import (
 )
 from fathom.processing.parsers.hit import InteractiveHitTester
 from fathom.processing.parsers.kind import ScreenKindClassifier
-from fathom.schemas.actions import Action
+from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.defect import Defect, ScreenSnapshot, StepSignals
 from fathom.schemas.exploration import ActionOutcome
 from fathom.schemas.results import AnalysisResult
@@ -72,6 +72,12 @@ _DFS_COMPLETE = "DFS complete - all reachable screens scanned"
 # device drifts out of it (e.g. a share sheet or permission prompt) before the
 # run is abandoned as out-of-scope.
 PACKAGE_RECOVERY_BACK_LIMIT = 3
+
+# Central, edge-inset region (normalized 0-1000) the forced scroll-probe swipes
+# within, so the gesture scrolls content rather than triggering the Android system
+# home/navigation gesture. A full-viewport swipe starts at the bottom edge and was
+# observed live to leave the app ('scroll probe' left the package, ending the run).
+_SCROLL_PROBE_REGION = Bounds(x=300, y=250, width=400, height=500)
 
 
 class ExplorationNodeProvider:
@@ -866,7 +872,7 @@ class ExplorationNodeProvider:
         return Action(
             action_type=ActionType.SWIPE_UP,
             confidence=1.0,
-            bounds=None,
+            bounds=_SCROLL_PROBE_REGION,
             target=SCROLL_PROBE_TARGET,
             natural_language_target=SCROLL_PROBE_TARGET,
             rationale="DFS: scroll-probe to reveal below-fold content before backtracking",
@@ -879,11 +885,7 @@ class ExplorationNodeProvider:
         Whether an action is the synthetic scroll-probe rather than a model-chosen scroll.
         """
 
-        return (
-            action.action_type == ActionType.SWIPE_UP
-            and action.bounds is None
-            and action.target == SCROLL_PROBE_TARGET
-        )
+        return action.action_type == ActionType.SWIPE_UP and action.target == SCROLL_PROBE_TARGET
 
     # ── Execution + persistence helpers ──────────────────────────────────────
 

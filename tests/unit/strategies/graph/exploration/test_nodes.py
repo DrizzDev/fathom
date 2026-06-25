@@ -267,7 +267,11 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         probe = result[EKey.ACTION]
         self.assertEqual(probe.action_type, ActionType.SWIPE_UP)
         self.assertEqual(probe.target, SCROLL_PROBE_TARGET)
-        self.assertIsNone(probe.bounds)
+        # The probe swipes a central, edge-inset region so it never triggers the
+        # Android home gesture (a full-viewport bottom-edge swipe leaves the app).
+        self.assertIsNotNone(probe.bounds)
+        self.assertGreater(probe.bounds.y, 0)
+        self.assertLess(probe.bounds.y + probe.bounds.height, 1000)
         self.assertFalse(result[EKey.CONTENT_EXHAUSTED])
         self.assertEqual(dfs.phase, BFSPhase.SCAN)
         self.assertEqual(dfs.scroll_probes["scr"], 1)
