@@ -134,6 +134,14 @@ LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD: int = 4
 # threshold high enough that cosmetic pHash jitter does not clear loop evidence.
 SCREEN_PROGRESS_HAMMING_THRESHOLD: int = 16
 
+# Minimum raw-pHash hamming distance between a screen's pre-scroll and post-scroll
+# captures for a forced exploration scroll-probe to count as "revealed new content".
+# Above LOOP_NEAR_DUPLICATE_HAMMING_THRESHOLD (4) so cosmetic jitter does not read as
+# progress, and below SCREEN_PROGRESS_HAMMING_THRESHOLD (16) so an ordinary content
+# scroll on a long feed (which moves most pixels but stays the same canonical node)
+# reliably trips it.
+SCROLL_PROBE_PROGRESS_HAMMING_THRESHOLD: int = 10
+
 # Maximum hamming distance for two hashes to be considered members of
 # the same "near-duplicate cluster" when evaluating whether a sequence
 # of scroll-like actions is producing real progress. Looser than

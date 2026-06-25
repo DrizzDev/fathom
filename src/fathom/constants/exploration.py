@@ -177,6 +177,13 @@ MAX_ROUTES_WITHOUT_PROGRESS: int = 50
 MAX_STEPS_WITHOUT_NEW_SCREEN: int = 15
 
 
+# Maximum deterministic scroll-probes forced on a single screen before the DFS
+# honours content-exhaustion and backtracks. Bounds the probe loop so a screen
+# that keeps revealing content (or a mis-judged static screen) cannot scroll
+# indefinitely. Each probe is one step against the global budget, so keep small.
+SCROLL_PROBE_MAX_PROBES: int = 4
+
+
 # Most recent executed actions surfaced back into the scan context so the model
 # can see whether its latest moves advanced exploration (new screen / no-op /
 # failed) and avoid re-issuing ineffective taps the per-screen dedup cannot catch.

@@ -8,6 +8,8 @@ from typing import Dict
 
 from pydantic import BaseModel, Field
 
+from fathom.constants.exploration import SCROLL_PROBE_MAX_PROBES
+
 
 class DepthFloorConfig(BaseModel):
     """
@@ -44,6 +46,18 @@ class SamplingConfig(BaseModel):
     )
 
 
+class ScrollProbeConfig(BaseModel):
+    """
+    Tuning for the scroll-probe-before-backtrack gate.
+    """
+
+    maximum: int = Field(
+        default=SCROLL_PROBE_MAX_PROBES,
+        ge=0,
+        description="Maximum forced scroll-probes before a screen may backtrack",
+    )
+
+
 class ExplorationPolicyConfig(BaseModel):
     """
     Aggregate tuning for the exploration decision policies.
@@ -60,4 +74,8 @@ class ExplorationPolicyConfig(BaseModel):
     sampling: SamplingConfig = Field(
         default_factory=SamplingConfig,
         description="List-sampling caps",
+    )
+    scroll: ScrollProbeConfig = Field(
+        default_factory=ScrollProbeConfig,
+        description="Scroll-probe-before-backtrack tuning",
     )
