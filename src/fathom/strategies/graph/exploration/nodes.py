@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, cast
 
-from fathom.constants import ActionType
+from fathom.constants import GESTURE_ACTION_TYPES, ActionType
 from fathom.constants.defect import DEFECT_DETECTED_EVENT
 from fathom.constants.exploration import (
     EXPLORATION_PROGRESS_EVENT,
@@ -13,10 +13,16 @@ from fathom.constants.exploration import (
     MAX_SENSITIVE_ACTION_RETRIES,
     MAX_STEPS_WITHOUT_NEW_SCREEN,
     RECENT_ACTION_WINDOW,
+    SCROLL_PROBE_TARGET,
     BFSPhase,
+    ExpectedOutcome,
 )
 from fathom.constants.graph import NodeName
-from fathom.constants.screen import HitOutcome, ScreenKind
+from fathom.constants.screen import (
+    SCROLL_PROBE_PROGRESS_HAMMING_THRESHOLD,
+    HitOutcome,
+    ScreenKind,
+)
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
@@ -27,6 +33,7 @@ from fathom.core.exceptions import DeviceError
 from fathom.core.exploration.config import ExplorationPolicyConfig
 from fathom.core.exploration.dedup import ActionKey, DedupPolicy
 from fathom.core.exploration.depth import DepthFloorPolicy
+from fathom.core.exploration.scroll import ScrollProbePolicy
 from fathom.core.safety.guard import TraversalGuard
 from fathom.core.services.exploration import ExplorationVisionService
 from fathom.interfaces.defect import (
@@ -104,6 +111,7 @@ class ExplorationNodeProvider:
         self.__dfs = dfs or DfsState()
         self.__navigator = DfsNavigator(dfs=self.__dfs, knowledge_graph=context.exploration_graph)
         self.__depth_floor = DepthFloorPolicy(config=self.__policy.depth)
+        self.__scroll_probe = ScrollProbePolicy(config=self.__policy.scroll)
         self.__dedup = DedupPolicy(dedup=self.__policy.dedup, sampling=self.__policy.sampling)
         self.__inline_detector = inline_detector or InlineDefectDetector()
         self.__defects = defects
@@ -458,6 +466,18 @@ class ExplorationNodeProvider:
         )
         ctx.agent_state.record_step(result=step_result)
 
+        # Scroll-probe progress: when this step was a forced scroll-probe, record
+        # whether it revealed new content so the gate can probe again or backtrack.
+        # Canonical screen_changed is False across a scroll (same node), so the RAW
+        # pre/post visual hashes are the only usable movement signal.
+        if action is not None and self.__is_probe_action(action=action):
+            dfs.scroll_probe_advanced[pre_hash] = (
+                ScreenState.hamming_distance(
+                    left_hash=step_result.pre_hash, right_hash=post_state.visual_hash
+                )
+                > SCROLL_PROBE_PROGRESS_HAMMING_THRESHOLD
+            )
+
         post_is_new = not ctx.exploration_graph.has_screen(visual_hash=post_hash)
         await ctx.exploration_graph.add_screen(state=post_state)
 
@@ -807,20 +827,63 @@ class ExplorationNodeProvider:
                 self.__depth_floor.minimum,
             )
             exhausted = False
+            probe = None
+        elif self.__scroll_probe.should_probe(
+            probes=dfs.scroll_probes.get(fingerprint, 0),
+            advanced=dfs.scroll_probe_advanced.get(fingerprint, False),
+        ):
+            dfs.scroll_probes[fingerprint] = dfs.scroll_probes.get(fingerprint, 0) + 1
+            logger.info(
+                "Scroll-probe %d/%d: screen %s exhausted; scrolling to reveal below-fold content",
+                dfs.scroll_probes[fingerprint],
+                self.__scroll_probe.maximum,
+                fingerprint[:8],
+            )
+            exhausted = False
+            probe = self.__probe_action()
         else:
             dfs.fully_scanned.add(fingerprint)
             await self.__context.exploration_graph.mark_exhausted(visual_hash=fingerprint)
             dfs.phase = BFSPhase.BACKTRACK
             logger.info("Screen %s fully scanned, backtracking (depth=%d)", fingerprint[:8], depth)
             exhausted = True
+            probe = None
 
         result = self.__mutable(state)
-        result[EKey.ACTION] = None
+        result[EKey.ACTION] = probe
         result[CKey.ANALYSIS] = analysis
         result[EKey.CONTENT_EXHAUSTED] = exhausted
         result[CKey.ANALYSIS_DURATION] = analysis_duration
         result[EKey.BFS_PHASE] = dfs.phase.value
         return cast("ExplorationGraphState", result)
+
+    @staticmethod
+    def __probe_action() -> Action:
+        """
+        The deterministic scroll-probe: a viewport SWIPE_UP that reveals below-fold content.
+        """
+
+        return Action(
+            action_type=ActionType.SWIPE_UP,
+            confidence=1.0,
+            bounds=None,
+            target=SCROLL_PROBE_TARGET,
+            natural_language_target=SCROLL_PROBE_TARGET,
+            rationale="DFS: scroll-probe to reveal below-fold content before backtracking",
+            expected_outcome=ExpectedOutcome.SCROLL_CONTENT,
+        )
+
+    @staticmethod
+    def __is_probe_action(*, action: Action) -> bool:
+        """
+        Whether an action is the synthetic scroll-probe rather than a model-chosen scroll.
+        """
+
+        return (
+            action.action_type == ActionType.SWIPE_UP
+            and action.bounds is None
+            and action.target == SCROLL_PROBE_TARGET
+        )
 
     # ── Execution + persistence helpers ──────────────────────────────────────
 
@@ -870,7 +933,10 @@ class ExplorationNodeProvider:
 
         ctx = self.__context
         writes: List[Any] = []
-        if pre_hash != "0":
+        # A gesture that stayed on the same canonical screen (e.g. a scroll-probe) is
+        # not a navigational edge; skip the self-loop but still log the experience.
+        scroll_in_place = pre_hash == post_hash and action.action_type in GESTURE_ACTION_TYPES
+        if pre_hash != "0" and not scroll_in_place:
             writes.append(
                 ctx.exploration_graph.record_transition(
                     source_hash=pre_hash, action=action, destination_hash=post_hash

@@ -15,6 +15,7 @@ from fathom.constants.exploration import (
     EXPLORATION_PROGRESS_EVENT,
     MAX_ROUTES_WITHOUT_PROGRESS,
     MAX_STEPS_WITHOUT_NEW_SCREEN,
+    SCROLL_PROBE_TARGET,
     BFSPhase,
     ExpectedOutcome,
     FocusRelevance,
@@ -25,6 +26,7 @@ from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import CompletionReason
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.core.exceptions import DeviceError
+from fathom.core.exploration.config import ExplorationPolicyConfig, ScrollProbeConfig
 from fathom.core.safety.guard import TraversalGuard
 from fathom.schemas.actions import Action
 from fathom.schemas.defect import Defect, DefectEvidence
@@ -95,6 +97,11 @@ def _quiet_hitl() -> Mock:
         is_pause_requested=AsyncMock(return_value=False),
         wait_for_resume=AsyncMock(),
     )
+
+
+def _no_scroll_policy() -> ExplorationPolicyConfig:
+    """Exploration policy with the scroll-probe gate disabled, to isolate other behaviour."""
+    return ExplorationPolicyConfig(scroll=ScrollProbeConfig(maximum=0))
 
 
 class TestGroundNode(unittest.IsolatedAsyncioTestCase):
@@ -221,7 +228,9 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         dfs = DfsState(current_path=deep_path)
         state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state()}
 
-        provider = ExplorationNodeProvider(context=context, vision=vision, dfs=dfs)
+        provider = ExplorationNodeProvider(
+            context=context, vision=vision, dfs=dfs, policy=_no_scroll_policy()
+        )
         result = await provider.scan(state)
 
         self.assertTrue(result[EKey.CONTENT_EXHAUSTED])
@@ -242,6 +251,84 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result[EKey.CONTENT_EXHAUSTED])
         self.assertEqual(dfs.phase, BFSPhase.SCAN)
         self.assertEqual(dfs.exhaustion_retries["abc"], 1)
+
+    async def test_first_exhaustion_past_the_floor_forces_a_scroll_probe(self) -> None:
+        vision = Mock(
+            scan=AsyncMock(return_value=_analysis(action=_action(), content_exhausted=True))
+        )
+        graph = _graph_mock()
+        context = self.__context(graph)
+        deep_path: List[Tuple[str, Action]] = [(f"h{i}", _action()) for i in range(4)]
+        dfs = DfsState(current_path=deep_path)
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("scr")}
+
+        result = await ExplorationNodeProvider(context=context, vision=vision, dfs=dfs).scan(state)
+
+        probe = result[EKey.ACTION]
+        self.assertEqual(probe.action_type, ActionType.SWIPE_UP)
+        self.assertEqual(probe.target, SCROLL_PROBE_TARGET)
+        self.assertIsNone(probe.bounds)
+        self.assertFalse(result[EKey.CONTENT_EXHAUSTED])
+        self.assertEqual(dfs.phase, BFSPhase.SCAN)
+        self.assertEqual(dfs.scroll_probes["scr"], 1)
+        self.assertNotIn("scr", dfs.fully_scanned)
+        graph.mark_exhausted.assert_not_awaited()
+
+    async def test_backtracks_after_a_probe_reveals_nothing(self) -> None:
+        vision = Mock(
+            scan=AsyncMock(return_value=_analysis(action=_action(), content_exhausted=True))
+        )
+        graph = _graph_mock()
+        context = self.__context(graph)
+        deep_path: List[Tuple[str, Action]] = [(f"h{i}", _action()) for i in range(4)]
+        dfs = DfsState(current_path=deep_path)
+        dfs.scroll_probes["scr"] = 1
+        dfs.scroll_probe_advanced["scr"] = False
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("scr")}
+
+        result = await ExplorationNodeProvider(context=context, vision=vision, dfs=dfs).scan(state)
+
+        self.assertTrue(result[EKey.CONTENT_EXHAUSTED])
+        self.assertIsNone(result[EKey.ACTION])
+        self.assertEqual(dfs.phase, BFSPhase.BACKTRACK)
+        self.assertIn("scr", dfs.fully_scanned)
+        graph.mark_exhausted.assert_awaited_once_with(visual_hash="scr")
+
+    async def test_keeps_probing_while_content_keeps_appearing(self) -> None:
+        vision = Mock(
+            scan=AsyncMock(return_value=_analysis(action=_action(), content_exhausted=True))
+        )
+        graph = _graph_mock()
+        context = self.__context(graph)
+        deep_path: List[Tuple[str, Action]] = [(f"h{i}", _action()) for i in range(4)]
+        dfs = DfsState(current_path=deep_path)
+        dfs.scroll_probes["scr"] = 1
+        dfs.scroll_probe_advanced["scr"] = True
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("scr")}
+
+        result = await ExplorationNodeProvider(context=context, vision=vision, dfs=dfs).scan(state)
+
+        self.assertEqual(result[EKey.ACTION].target, SCROLL_PROBE_TARGET)
+        self.assertEqual(dfs.scroll_probes["scr"], 2)
+        self.assertNotIn("scr", dfs.fully_scanned)
+
+    async def test_kill_switch_backtracks_without_probing(self) -> None:
+        vision = Mock(
+            scan=AsyncMock(return_value=_analysis(action=_action(), content_exhausted=True))
+        )
+        graph = _graph_mock()
+        context = self.__context(graph)
+        deep_path: List[Tuple[str, Action]] = [(f"h{i}", _action()) for i in range(4)]
+        dfs = DfsState(current_path=deep_path)
+        state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("scr")}
+
+        result = await ExplorationNodeProvider(
+            context=context, vision=vision, dfs=dfs, policy=_no_scroll_policy()
+        ).scan(state)
+
+        self.assertTrue(result[EKey.CONTENT_EXHAUSTED])
+        self.assertEqual(dfs.phase, BFSPhase.BACKTRACK)
+        self.assertEqual(dfs.scroll_probes, {})
 
     async def test_threads_windowed_recent_action_feedback(self) -> None:
         action = _action("Home")
@@ -397,7 +484,9 @@ class TestScanNode(unittest.IsolatedAsyncioTestCase):
         dfs = DfsState(current_path=deep_path)
         state = {CKey.CAPTURE: Mock(), CKey.SCREEN_STATE: _screen_state("scr")}
 
-        await ExplorationNodeProvider(context=context, vision=vision, dfs=dfs).scan(state)
+        await ExplorationNodeProvider(
+            context=context, vision=vision, dfs=dfs, policy=_no_scroll_policy()
+        ).scan(state)
 
         graph.mark_exhausted.assert_awaited_once_with(visual_hash="scr")
 
@@ -474,6 +563,64 @@ class TestRecordNode(unittest.IsolatedAsyncioTestCase):
         progress_call = context.telemetry.info.await_args
         self.assertEqual(progress_call.args[0], EXPLORATION_PROGRESS_EVENT)
         self.assertEqual(progress_call.kwargs["step"], 1)
+
+    @staticmethod
+    async def __probe_record(*, pre_raw: str, post_raw: str) -> Tuple[DfsState, Mock]:
+        """Runs record() for a forced scroll-probe; returns the mutated DfsState and graph."""
+
+        graph = _graph_mock(resolve_hash=Mock(return_value="scr"))
+        context = Mock(
+            is_cancelled=False,
+            max_steps=100,
+            workflow_id="wf",
+            package_name="com.app",
+            device=Mock(get_current_package=AsyncMock(return_value="com.app")),
+            exploration_graph=graph,
+            memory=Mock(store_experience=AsyncMock()),
+            history=Mock(enqueue_save_step=Mock()),
+            agent_state=Mock(record_step=Mock(), step_count=1),
+            telemetry=Mock(info=AsyncMock()),
+        )
+        context.perception = Mock(
+            perceive=AsyncMock(return_value=Mock(screenshot_uri=None)),
+            build_state=Mock(return_value=_screen_state(post_raw)),
+        )
+        probe = Action(
+            action_type=ActionType.SWIPE_UP,
+            rationale="probe",
+            target=SCROLL_PROBE_TARGET,
+            natural_language_target=SCROLL_PROBE_TARGET,
+        )
+        step = Step(action=probe, screen_hash=pre_raw, step_number=1)
+        state: Dict[str, Any] = {
+            EKey.ACTION: probe,
+            CKey.SCREEN_STATE: _screen_state(pre_raw),
+            CKey.STEP_RESULT: StepResult(
+                step=step,
+                success=True,
+                duration=10,
+                screen_changed=False,
+                pre_hash=pre_raw,
+                post_hash="0",
+            ),
+        }
+        dfs = DfsState(phase=BFSPhase.SCAN)
+        await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).record(state)
+        return dfs, graph
+
+    async def test_probe_that_moves_the_screen_marks_advanced(self) -> None:
+        dfs, graph = await self.__probe_record(
+            pre_raw="0000000000000000", post_raw="ffffffffffffffff"
+        )
+
+        self.assertTrue(dfs.scroll_probe_advanced["scr"])
+        # A scroll that stays on the same canonical screen is not a navigational edge.
+        graph.record_transition.assert_not_called()
+
+    async def test_probe_that_does_not_move_marks_not_advanced(self) -> None:
+        dfs, _ = await self.__probe_record(pre_raw="0000000000000000", post_raw="0000000000000000")
+
+        self.assertFalse(dfs.scroll_probe_advanced["scr"])
 
     async def test_recorded_step_resets_the_no_progress_watchdog(self) -> None:
         graph = _graph_mock(resolve_hash=Mock(side_effect=lambda value: value))

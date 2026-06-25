@@ -183,6 +183,10 @@ MAX_STEPS_WITHOUT_NEW_SCREEN: int = 15
 # indefinitely. Each probe is one step against the global budget, so keep small.
 SCROLL_PROBE_MAX_PROBES: int = 4
 
+# Sentinel target marking the synthetic scroll-probe action, so record() can tell a
+# forced probe from a model-chosen scroll when measuring whether it revealed content.
+SCROLL_PROBE_TARGET: str = "scroll probe"
+
 
 # Most recent executed actions surfaced back into the scan context so the model
 # can see whether its latest moves advanced exploration (new screen / no-op /
