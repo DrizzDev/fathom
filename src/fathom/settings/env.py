@@ -1,9 +1,17 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Literal, Optional, cast
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from fathom.constants.llm import (
+    DEFAULT_PRIORITY_FAILURE_THRESHOLD,
+    DEFAULT_PRIORITY_LATENCY_THRESHOLD,
+    DEFAULT_PRIORITY_RECOVERY_SUCCESSES,
+    DEFAULT_PRIORITY_SLOW_THRESHOLD,
+    DEFAULT_PRIORITY_WINDOW,
+)
 
 # Calculate project root from this file's location
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -19,6 +27,56 @@ class FathomSettings(BaseSettings):
     # Gemini settings
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-3-flash-preview", alias="GEMINI_MODEL")
+
+    capacity_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "FATHOM_LLM_PRIORITY_ENABLED",
+            "DRIZZ_FATHOM_LLM_PRIORITY_ENABLED",
+        ),
+    )
+    capacity_mode: Literal["always", "adaptive"] = Field(
+        default="always",
+        validation_alias=AliasChoices(
+            "FATHOM_LLM_PRIORITY_MODE",
+            "DRIZZ_FATHOM_LLM_PRIORITY_MODE",
+        ),
+    )
+    capacity_window: int = Field(
+        default=DEFAULT_PRIORITY_WINDOW,
+        validation_alias=AliasChoices(
+            "FATHOM_LLM_PRIORITY_WINDOW",
+            "DRIZZ_FATHOM_LLM_PRIORITY_WINDOW",
+        ),
+    )
+    capacity_failures: int = Field(
+        default=DEFAULT_PRIORITY_FAILURE_THRESHOLD,
+        validation_alias=AliasChoices(
+            "FATHOM_LLM_PRIORITY_FAILURE_THRESHOLD",
+            "DRIZZ_FATHOM_LLM_PRIORITY_FAILURE_THRESHOLD",
+        ),
+    )
+    capacity_slows: int = Field(
+        default=DEFAULT_PRIORITY_SLOW_THRESHOLD,
+        validation_alias=AliasChoices(
+            "FATHOM_LLM_PRIORITY_SLOW_THRESHOLD",
+            "DRIZZ_FATHOM_LLM_PRIORITY_SLOW_THRESHOLD",
+        ),
+    )
+    capacity_latency: float = Field(
+        default=DEFAULT_PRIORITY_LATENCY_THRESHOLD,
+        validation_alias=AliasChoices(
+            "FATHOM_LLM_PRIORITY_LATENCY_THRESHOLD",
+            "DRIZZ_FATHOM_LLM_PRIORITY_LATENCY_THRESHOLD",
+        ),
+    )
+    capacity_recovery: int = Field(
+        default=DEFAULT_PRIORITY_RECOVERY_SUCCESSES,
+        validation_alias=AliasChoices(
+            "FATHOM_LLM_PRIORITY_RECOVERY_SUCCESSES",
+            "DRIZZ_FATHOM_LLM_PRIORITY_RECOVERY_SUCCESSES",
+        ),
+    )
 
     vertex_location: str = Field(default="global", alias="VERTEX_LOCATION")
     vertex_project_id: Optional[str] = Field(

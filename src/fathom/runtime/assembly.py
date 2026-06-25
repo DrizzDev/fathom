@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from typing import Optional
 
+from fathom.constants.llm import InferencePriorityMode
 from fathom.constants.run import TargetKind
 from fathom.core.exceptions import ConfigurationError
+from fathom.schemas.base.common import ThresholdConfiguration
 from fathom.schemas.configuration import (
+    AdaptivePriorityConfiguration,
     DeviceConfiguration,
     LLMConfiguration,
+    PriorityInferenceConfiguration,
     QualifierConfiguration,
     StorageConfiguration,
     TelemetryConfiguration,
@@ -64,7 +68,8 @@ class RunAssemblyBuilder:
         )
         request_values = (
             request.resources.language_model_configuration.planner_configuration.model_dump(
-                exclude_none=True
+                exclude_none=True,
+                exclude_unset=True,
             )
         )
         default_values = {
@@ -72,10 +77,12 @@ class RunAssemblyBuilder:
             "model": self.__settings.gemini_model,
             "api_key": self.__settings.gemini_api_key,
             "location": self.__settings.vertex_location,
+            "priority": self.__priority_configuration(),
             "project_id": self.__settings.vertex_project_id,
             "use_cache": getattr(self.__settings, "use_cache", True),
         }
         default_values.update(request_values)
+
         return LLMConfiguration.model_validate(default_values)
 
     def build_qualifier_model_configuration(
@@ -101,7 +108,27 @@ class RunAssemblyBuilder:
                 "temperature": configuration.inference.temperature,
                 "max_retries": configuration.inference.max_retries,
                 "thinking_level": configuration.inference.thinking_level,
+                "priority": self.__priority_configuration(),
             }
+        )
+
+    def __priority_configuration(self) -> PriorityInferenceConfiguration:
+        """
+        Resolve provider-neutral elevated-capacity inference policy from settings.
+        """
+
+        return PriorityInferenceConfiguration(
+            enabled=self.__settings.capacity_enabled,
+            mode=InferencePriorityMode(self.__settings.capacity_mode),
+            adaptive=AdaptivePriorityConfiguration(
+                window=self.__settings.capacity_window,
+                threshold=ThresholdConfiguration(
+                    slows=self.__settings.capacity_slows,
+                    latency=self.__settings.capacity_latency,
+                    failures=self.__settings.capacity_failures,
+                    recovery=self.__settings.capacity_recovery,
+                ),
+            ),
         )
 
     def build_storage_configuration(self, *, request: RunRequest) -> StorageConfiguration:

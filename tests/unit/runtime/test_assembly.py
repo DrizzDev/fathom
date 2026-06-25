@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import unittest
 
+from fathom.constants.llm import InferencePriorityMode
 from fathom.constants.qualification import DEFAULT_QUALIFIER_MODEL
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.schemas.configuration import QualifierConfiguration
+from fathom.schemas.run import IntentObjectiveConfiguration, RunRequest, TargetConfiguration
 from fathom.settings.env import FathomSettings
 
 
@@ -85,6 +87,82 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         )
         self.assertEqual(configuration.timeout, 3.0)
         self.assertEqual(configuration.max_retries, 4)
+
+    def test_planner_priority_policy_flows_from_settings(self) -> None:
+        """
+        Planner LLM configuration must inherit priority settings from the bound settings object.
+        """
+
+        assembly = RunAssemblyBuilder(
+            settings=FathomSettings(
+                gemini_api_key="x",
+                capacity_enabled=True,
+                capacity_mode=InferencePriorityMode.ADAPTIVE.value,
+                capacity_window=4,
+                capacity_failures=2,
+                capacity_slows=3,
+                capacity_latency=6.5,
+                capacity_recovery=2,
+            ),
+        )
+        configuration = assembly.build_planner_model_configuration(
+            request=RunRequest(
+                objective=IntentObjectiveConfiguration(intent="Open settings"),
+                resources={"targets": [TargetConfiguration()]},
+            ),
+        )
+
+        self.assertTrue(configuration.priority.enabled)
+        self.assertEqual(configuration.priority.mode, InferencePriorityMode.ADAPTIVE)
+        self.assertEqual(configuration.priority.adaptive.window, 4)
+        self.assertEqual(configuration.priority.adaptive.threshold.failures, 2)
+        self.assertEqual(configuration.priority.adaptive.threshold.slows, 3)
+        self.assertEqual(configuration.priority.adaptive.threshold.latency, 6.5)
+        self.assertEqual(configuration.priority.adaptive.threshold.recovery, 2)
+
+    def test_request_priority_configuration_overrides_settings(self) -> None:
+        """
+        Run requests may explicitly override planner priority policy without changing environment settings.
+        """
+
+        assembly = RunAssemblyBuilder(settings=FathomSettings(gemini_api_key="x"))
+        request = RunRequest(
+            objective=IntentObjectiveConfiguration(intent="Open settings"),
+            resources={
+                "targets": [TargetConfiguration()],
+                "language_model_configuration": {
+                    "planner_configuration": {
+                        "priority": {
+                            "enabled": False,
+                            "mode": InferencePriorityMode.ALWAYS.value,
+                        },
+                    },
+                },
+            },
+        )
+
+        configuration = assembly.build_planner_model_configuration(request=request)
+
+        self.assertFalse(configuration.priority.enabled)
+
+    def test_qualifier_priority_policy_flows_from_settings(self) -> None:
+        """
+        Dedicated qualifier LLM configuration must use the same priority policy as planner.
+        """
+
+        assembly = RunAssemblyBuilder(
+            settings=FathomSettings(
+                gemini_api_key="x",
+                capacity_mode=InferencePriorityMode.ADAPTIVE.value,
+                capacity_recovery=3,
+            ),
+        )
+        configuration = assembly.build_qualifier_model_configuration(
+            configuration=QualifierConfiguration(),
+        )
+
+        self.assertEqual(configuration.priority.mode, InferencePriorityMode.ADAPTIVE)
+        self.assertEqual(configuration.priority.adaptive.threshold.recovery, 3)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,15 @@ from unittest.mock import patch
 from google.genai import types
 
 from fathom.adapters.llm.gemini import GeminiLLM
+from fathom.constants.llm import (
+    GEMINI_PRIORITY_SERVICE_TIER_VALUE,
+    GEMINI_PRIORITY_TRAFFIC_TYPE,
+    GEMINI_VERTEX_PRIORITY_HEADER,
+    GEMINI_VERTEX_PRIORITY_REQUEST_TYPE,
+    GEMINI_VERTEX_REQUEST_TYPE_HEADER,
+    GEMINI_VERTEX_SHARED_REQUEST_TYPE,
+    InferenceTier,
+)
 from fathom.core.exceptions import VisionError
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.llm import GeminiExceptionKind, StructuredOutput
@@ -56,6 +65,67 @@ class FakeGeminiException(Exception):
         self.code = code
         self.status_code = status_code
         self.response = FakeResponse(status_code=status_code, headers=headers)
+
+
+class FakeAsyncClient:
+    """
+    Async SDK client double that records close calls.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize close counter.
+        """
+
+        self.closed = 0
+
+    async def aclose(self) -> None:
+        """
+        Record async close.
+        """
+
+        self.closed += 1
+
+
+class FakeClient:
+    """
+    SDK client double exposing sync and async close surfaces.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize close counters.
+        """
+
+        self.aio = FakeAsyncClient()
+        self.closed = 0
+
+    def close(self) -> None:
+        """
+        Record sync close.
+        """
+
+        self.closed += 1
+
+
+class FakeCache:
+    """
+    Cache double that records deletion.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize deletion counter.
+        """
+
+        self.deleted = 0
+
+    async def delete_cache(self) -> None:
+        """
+        Record cache deletion.
+        """
+
+        self.deleted += 1
 
 
 class GeminiLLMTest(unittest.TestCase):
@@ -198,6 +268,98 @@ class GeminiLLMTest(unittest.TestCase):
         result = GeminiLLM._GeminiLLM__is_rate_limit_error(status_code=None, text=timeout_message)
 
         self.assertFalse(result)
+
+    def test_vertex_priority_uses_per_request_headers(self) -> None:
+        """
+        Vertex priority must be applied through GenerateContentConfig.http_options headers.
+        """
+
+        gemini = object.__new__(GeminiLLM)
+        gemini._GeminiLLM__configuration = LLMConfiguration(
+            credentials="/fake/credentials.json",
+            model="gemini-3-flash-preview",
+        )
+
+        config = gemini._GeminiLLM__get_generation_configuration(
+            tier=InferenceTier.PRIORITY,
+        )
+
+        self.assertIsNotNone(config.http_options)
+        assert config.http_options is not None
+        self.assertEqual(
+            config.http_options.headers[GEMINI_VERTEX_REQUEST_TYPE_HEADER],
+            GEMINI_VERTEX_SHARED_REQUEST_TYPE,
+        )
+        self.assertEqual(
+            config.http_options.headers[GEMINI_VERTEX_PRIORITY_HEADER],
+            GEMINI_VERTEX_PRIORITY_REQUEST_TYPE,
+        )
+
+    def test_standard_vertex_request_has_no_per_request_headers(self) -> None:
+        """
+        Standard Vertex calls must not carry priority headers.
+        """
+
+        gemini = object.__new__(GeminiLLM)
+        gemini._GeminiLLM__configuration = LLMConfiguration(
+            credentials="/fake/credentials.json",
+            model="gemini-3-flash-preview",
+        )
+
+        config = gemini._GeminiLLM__get_generation_configuration(
+            tier=InferenceTier.STANDARD,
+        )
+
+        self.assertIsNone(config.http_options)
+
+    def test_api_key_priority_uses_service_tier_config(self) -> None:
+        """
+        Gemini API-key mode uses service_tier instead of Vertex headers.
+        """
+
+        gemini = object.__new__(GeminiLLM)
+        gemini._GeminiLLM__configuration = LLMConfiguration(
+            api_key="api-key",
+            model="gemini-3-flash-preview",
+        )
+
+        config = gemini._GeminiLLM__get_generation_configuration(
+            tier=InferenceTier.PRIORITY,
+        )
+
+        self.assertEqual(config.service_tier, GEMINI_PRIORITY_SERVICE_TIER_VALUE)
+        self.assertIsNone(config.http_options)
+
+    def test_traffic_type_normalizes_sdk_enum_name(self) -> None:
+        """
+        SDK enum-like traffic values must normalize to their name string.
+        """
+
+        usage = SimpleNamespace(
+            traffic_type=SimpleNamespace(name=GEMINI_PRIORITY_TRAFFIC_TYPE),
+        )
+
+        result = GeminiLLM._GeminiLLM__traffic_type(usage=usage)
+
+        self.assertEqual(result, GEMINI_PRIORITY_TRAFFIC_TYPE)
+
+    def test_cleanup_closes_cache_and_single_client_idempotently(self) -> None:
+        """
+        Cleanup must release cache and both SDK client surfaces once.
+        """
+
+        gemini = object.__new__(GeminiLLM)
+        client = FakeClient()
+        cache = FakeCache()
+        gemini._GeminiLLM__client = client
+        gemini._GeminiLLM__cache = cache
+
+        asyncio.run(gemini.cleanup())
+        asyncio.run(gemini.cleanup())
+
+        self.assertEqual(cache.deleted, 1)
+        self.assertEqual(client.aio.closed, 1)
+        self.assertEqual(client.closed, 1)
 
 
 class GeminiStructuredOutputTest(unittest.TestCase):
