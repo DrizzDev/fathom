@@ -57,6 +57,14 @@ class ScreenDocument(BaseModel):
     narrative: str = Field(
         default="", description="Full prose description of the screen's elements and actions"
     )
+    elements: List[str] = Field(
+        default_factory=list,
+        description="Notable interactive or informative elements on the screen, one per entry",
+    )
+    actions: List[str] = Field(
+        default_factory=list,
+        description="Concrete things a user can accomplish on the screen, one per entry",
+    )
     flow: ScreenFlow = Field(
         default_factory=ScreenFlow, description="Inbound and outbound navigation"
     )

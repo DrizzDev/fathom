@@ -32,9 +32,24 @@ class TestScreenDocumentModels(unittest.TestCase):
 
         self.assertEqual(document.purpose, "")
         self.assertEqual(document.narrative, "")
+        self.assertEqual(document.elements, [])
+        self.assertEqual(document.actions, [])
         self.assertEqual(document.defects, [])
         self.assertEqual(document.fingerprints, 1)
         self.assertEqual(document.flow.outbound, [])
+
+    def test_screen_document_carries_structured_elements_and_actions(self) -> None:
+        document = ScreenDocument(
+            slug="cart",
+            title="Cart",
+            category=ScreenCategory.OTHER,
+            activity="com.app/.CartActivity",
+            elements=["'Checkout' button", "Item list"],
+            actions=["Proceed to checkout", "Remove an item"],
+        )
+
+        self.assertEqual(document.elements, ["'Checkout' button", "Item list"])
+        self.assertEqual(document.actions, ["Proceed to checkout", "Remove an item"])
 
     def test_document_index_holds_metadata_and_documents(self) -> None:
         index = DocumentIndex(
