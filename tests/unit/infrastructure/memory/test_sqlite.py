@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Optional
 from fathom.constants import ActionType
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.content import ScreenContent
 from fathom.schemas.screens import ScreenState
 
 
@@ -188,6 +190,72 @@ class TestSQLiteMemoryProvider(unittest.IsolatedAsyncioTestCase):
         screens = await self.__provider.get_all_screens()
 
         self.assertEqual(screens[0]["category"], "detail")
+
+    async def test_set_content_persists(self) -> None:
+        content = ScreenContent(
+            purpose="Review and confirm", elements=["'Confirm' button"], actions=["Confirm order"]
+        )
+        await self.__provider.store_observation(screen=self.__screen(), description="Checkout")
+        await self.__provider.set_content(
+            visual_hash="a1b2c3d4e5f60718", content_json=content.model_dump_json()
+        )
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertEqual(ScreenContent.model_validate_json(screens[0]["content_json"]), content)
+
+    async def test_screens_default_to_null_content(self) -> None:
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertIsNone(screens[0]["content_json"])
+
+    async def test_revisit_preserves_content(self) -> None:
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+        await self.__provider.set_content(
+            visual_hash="a1b2c3d4e5f60718",
+            content_json='{"purpose":"Browse","elements":[],"actions":[]}',
+        )
+        # A later visit upserts the row but must not clear the recorded content.
+        await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
+
+        screens = await self.__provider.get_all_screens()
+
+        self.assertEqual(
+            ScreenContent.model_validate_json(screens[0]["content_json"]).purpose, "Browse"
+        )
+
+    async def test_legacy_database_without_content_column_opens_and_migrates(self) -> None:
+        # A database written before the content_json column existed must still open,
+        # migrate, and accept structured content without losing its existing row.
+        legacy_path = Path(self.__tmp.name) / "legacy.db"
+        connection = sqlite3.connect(legacy_path)
+        connection.execute(
+            "CREATE TABLE screens ("
+            "visual_hash TEXT PRIMARY KEY, activity TEXT, description TEXT, "
+            "first_seen INTEGER, last_seen INTEGER, visit_count INTEGER DEFAULT 0, "
+            "rich_description TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO screens (visual_hash, activity, description, visit_count) "
+            "VALUES ('legacyhash000000', 'com.app/.Old', 'Old screen', 1)"
+        )
+        connection.commit()
+        connection.close()
+
+        provider = SQLiteMemoryProvider(database_path=legacy_path)
+        await provider.set_content(
+            visual_hash="legacyhash000000",
+            content_json='{"purpose":"Legacy","elements":[],"actions":[]}',
+        )
+
+        screens = await provider.get_all_screens()
+
+        self.assertEqual(len(screens), 1)
+        self.assertEqual(
+            ScreenContent.model_validate_json(screens[0]["content_json"]).purpose, "Legacy"
+        )
 
     async def test_structure_hash_persists_and_hydrates(self) -> None:
         state = ScreenState(

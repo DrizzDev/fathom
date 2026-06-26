@@ -74,3 +74,28 @@ class TestScreenTranslation(unittest.TestCase):
         ).to_markdown()
 
         self.assertEqual(markdown, "**Activity:** `a`")
+
+    def test_to_content_splits_per_line_fields_into_entries(self) -> None:
+        content = ScreenTranslation.model_validate(
+            {
+                "activity_name": "com.x/.Home",
+                "screen_purpose": "Home feed",
+                "elements": "Cart icon - opens cart\n  Search field  \n\nProfile tab",
+                "achievable_actions": "Search for restaurants\nOpen the cart",
+            }
+        ).to_content()
+
+        self.assertEqual(content.purpose, "Home feed")
+        self.assertEqual(
+            content.elements, ["Cart icon - opens cart", "Search field", "Profile tab"]
+        )
+        self.assertEqual(content.actions, ["Search for restaurants", "Open the cart"])
+
+    def test_to_content_empty_fields_yield_empty_lists(self) -> None:
+        content = ScreenTranslation.model_validate(
+            {"activity_name": "a", "elements": "   "}
+        ).to_content()
+
+        self.assertEqual(content.purpose, "")
+        self.assertEqual(content.elements, [])
+        self.assertEqual(content.actions, [])

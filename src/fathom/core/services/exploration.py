@@ -166,8 +166,8 @@ class ExplorationResponseParser:
     @staticmethod
     def __attach_translation(*, result: AnalysisResult, arguments: Dict[str, Any]) -> None:
         """
-        Renders a describe_screen call into the rich-description metadata and the
-        screen category.
+        Renders a describe_screen call into the rich-description metadata, the
+        structured screen content, and the screen category.
         """
 
         try:
@@ -177,6 +177,7 @@ class ExplorationResponseParser:
             return
 
         result.metadata["rich_description"] = translation.to_markdown()
+        result.content = translation.to_content()
         result.category = translation.category
 
     @staticmethod

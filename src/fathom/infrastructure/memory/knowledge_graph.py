@@ -12,6 +12,7 @@ from fathom.infrastructure.memory.algorithms import GraphAlgorithms
 from fathom.infrastructure.memory.canonical import ScreenCanonicalizer
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.actions import Action
+from fathom.schemas.content import ScreenContent
 from fathom.schemas.exploration import ActionOutcome, TriedAction
 from fathom.schemas.screens import ScreenState
 
@@ -51,6 +52,7 @@ class GraphNode:
     exhausted: bool = False
     relevance: FocusRelevance = FocusRelevance.UNSCOPED
     category: ScreenCategory = ScreenCategory.OTHER
+    content: Optional[ScreenContent] = None
 
 
 @dataclass
@@ -217,6 +219,8 @@ class KnowledgeGraph:
                 existing.description = screen["description"]
             if not existing.rich_description and screen.get("rich_description"):
                 existing.rich_description = screen["rich_description"]
+            if not existing.content and screen.get("content_json"):
+                existing.content = self.__coerce_content(screen.get("content_json"))
             if screen.get("exhausted"):
                 existing.exhausted = True
             persisted_relevance = self.__coerce_relevance(screen.get("relevance"))
@@ -243,6 +247,7 @@ class KnowledgeGraph:
             exhausted=bool(screen.get("exhausted", False)),
             relevance=self.__coerce_relevance(screen.get("relevance")),
             category=self.__coerce_category(screen.get("category")),
+            content=self.__coerce_content(screen.get("content_json")),
         )
 
     def __hydrate_transition(self, *, transition: Dict[str, Any]) -> None:
@@ -463,6 +468,40 @@ class KnowledgeGraph:
             return ScreenCategory(value)
         except ValueError:
             return ScreenCategory.OTHER
+
+    async def record_content(self, *, visual_hash: str, content: ScreenContent) -> None:
+        """
+        Records a screen's structured content, in memory and in persistence.
+        """
+
+        canonical = self.__resolve(visual_hash)
+        node = self.__nodes.get(canonical)
+        if node:
+            node.content = content
+        await self.__provider.set_content(
+            visual_hash=canonical, content_json=content.model_dump_json()
+        )
+
+    def content_of(self, *, visual_hash: str) -> Optional[ScreenContent]:
+        """
+        Returns the recorded structured content for a screen, None when unknown.
+        """
+
+        node = self.__nodes.get(self.__resolve(visual_hash))
+        return node.content if node else None
+
+    @staticmethod
+    def __coerce_content(value: Optional[str]) -> Optional[ScreenContent]:
+        """
+        Parses persisted content JSON into the value object, None when absent or invalid.
+        """
+
+        if not value:
+            return None
+        try:
+            return ScreenContent.model_validate_json(value)
+        except ValueError:
+            return None
 
     async def record_transition(
         self, *, source_hash: str, action: Action, destination_hash: str

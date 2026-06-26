@@ -8,6 +8,7 @@ from fathom.constants.exploration import ExpectedOutcome, FocusRelevance
 from fathom.constants.screen import ScreenCategory
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.content import ScreenContent
 from fathom.schemas.exploration import ActionOutcome
 from fathom.schemas.screens import ScreenState
 
@@ -37,6 +38,9 @@ class _FakeProvider:
         return None
 
     async def set_category(self, visual_hash: str, category: str) -> None:
+        return None
+
+    async def set_content(self, visual_hash: str, content_json: str) -> None:
         return None
 
     async def store_transition(
@@ -288,6 +292,51 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             self.__graph.category_of(visual_hash="ffffffffffffffff"), ScreenCategory.OTHER
         )
+
+    async def test_record_content_sets_node_and_defaults_none(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+        self.assertIsNone(self.__graph.content_of(visual_hash="aaaaaaaaaaaaaaaa"))
+
+        content = ScreenContent(
+            purpose="Confirm the booking", elements=["'Confirm'"], actions=["Confirm"]
+        )
+        await self.__graph.record_content(visual_hash="aaaaaaaaaaaaaaaa", content=content)
+
+        self.assertEqual(self.__graph.content_of(visual_hash="aaaaaaaaaaaaaaaa"), content)
+
+    async def test_content_of_unknown_screen_is_none(self) -> None:
+        self.assertIsNone(self.__graph.content_of(visual_hash="ffffffffffffffff"))
+
+    async def test_load_restores_content(self) -> None:
+        content = ScreenContent(purpose="Search", elements=["Search field"], actions=["Search"])
+        row = {
+            "visual_hash": "aaaaaaaaaaaaaaaa",
+            "activity": "com.app/.Feed",
+            "description": "Feed",
+            "first_seen": 1,
+            "last_seen": 2,
+            "visit_count": 1,
+            "content_json": content.model_dump_json(),
+        }
+        graph = KnowledgeGraph(provider=_FakeProvider(screens=[row]))
+        await graph.load()
+
+        self.assertEqual(graph.content_of(visual_hash="aaaaaaaaaaaaaaaa"), content)
+
+    async def test_load_ignores_invalid_content(self) -> None:
+        row = {
+            "visual_hash": "aaaaaaaaaaaaaaaa",
+            "activity": "com.app/.Feed",
+            "description": "Feed",
+            "first_seen": 1,
+            "last_seen": 2,
+            "visit_count": 1,
+            "content_json": "not valid json",
+        }
+        graph = KnowledgeGraph(provider=_FakeProvider(screens=[row]))
+        await graph.load()
+
+        self.assertIsNone(graph.content_of(visual_hash="aaaaaaaaaaaaaaaa"))
 
     async def test_load_restores_category(self) -> None:
         row = {

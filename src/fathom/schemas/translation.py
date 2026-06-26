@@ -9,6 +9,7 @@ from typing import Any, List
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fathom.constants.screen import ScreenCategory
+from fathom.schemas.content import ScreenContent
 
 
 class ScreenTranslation(BaseModel):
@@ -82,3 +83,22 @@ class ScreenTranslation(BaseModel):
             if body.strip():
                 parts.append(f"## {heading}\n{body}")
         return "\n\n".join(parts)
+
+    def to_content(self) -> ScreenContent:
+        """
+        Returns the structured screen content, splitting per-line fields into entries.
+        """
+
+        return ScreenContent(
+            purpose=self.purpose.strip(),
+            elements=self.__lines(self.elements),
+            actions=self.__lines(self.actions),
+        )
+
+    @staticmethod
+    def __lines(text: str) -> List[str]:
+        """
+        Splits a per-line field into trimmed, non-empty entries.
+        """
+
+        return [line.strip() for line in text.splitlines() if line.strip()]

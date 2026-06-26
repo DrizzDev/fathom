@@ -148,6 +148,10 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute("ALTER TABLE screens ADD COLUMN category TEXT DEFAULT 'other'")
             migrated = True
 
+        if "content_json" not in screen_columns:
+            await db.execute("ALTER TABLE screens ADD COLUMN content_json TEXT")
+            migrated = True
+
         for column in ("activity_hash", "xml_hash", "interaction_hash", "structure_hash"):
             if column not in screen_columns:
                 await db.execute(f"ALTER TABLE screens ADD COLUMN {column} TEXT")
@@ -276,6 +280,23 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute(
                 "UPDATE screens SET category = ? WHERE visual_hash = ?",
                 (category, visual_hash),
+            )
+            await db.commit()
+
+    async def set_content(self, visual_hash: str, content_json: str) -> None:
+        """
+        Persists a screen's structured content (purpose, elements, actions) as JSON.
+        """
+
+        if self.__readonly:
+            return
+
+        await self.__initialize()
+
+        async with aiosqlite.connect(self.__path) as db:
+            await db.execute(
+                "UPDATE screens SET content_json = ? WHERE visual_hash = ?",
+                (content_json, visual_hash),
             )
             await db.commit()
 
@@ -458,7 +479,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
             db.execute(
                 "SELECT visual_hash, activity, description, first_seen, last_seen, "
                 "visit_count, rich_description, activity_hash, xml_hash, interaction_hash, "
-                "exhausted, relevance, category, structure_hash "
+                "exhausted, relevance, category, structure_hash, content_json "
                 "FROM screens ORDER BY last_seen DESC"
             ) as cursor,
         ):
@@ -479,6 +500,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         "relevance": row[11],
                         "category": row[12],
                         "structure_hash": row[13],
+                        "content_json": row[14],
                     }
                 )
 

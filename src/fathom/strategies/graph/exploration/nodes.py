@@ -285,6 +285,13 @@ class ExplorationNodeProvider:
                 visual_hash=fingerprint, category=analysis.category
             )
 
+        # Persist the structured screen content (purpose, elements, actions) so the
+        # per-screen documentation renders it without re-parsing a prose blob.
+        if analysis.content is not None:
+            await ctx.exploration_graph.record_content(
+                visual_hash=fingerprint, content=analysis.content
+            )
+
         # Inspect each freshly-registered screen once for UI/content defects.
         await self.__inspect_screen(
             fingerprint=fingerprint, screen_state=screen_state, capture=capture

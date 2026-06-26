@@ -10,6 +10,7 @@ from fathom.constants.exploration import FocusRelevance
 from fathom.constants.screen import ScreenCategory
 from fathom.schemas.actions import Action
 from fathom.schemas.artifacts import ScreenArtifact
+from fathom.schemas.content import ScreenContent
 from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
@@ -84,6 +85,10 @@ class AnalysisResult(BaseModel):
     category: Optional[ScreenCategory] = Field(
         default=None,
         description="The functional kind of screen describe_screen classified; None when unclassified.",
+    )
+    content: Optional[ScreenContent] = Field(
+        default=None,
+        description="Structured screen content (purpose, elements, actions); None when not described.",
     )
 
     outcome: AnalysisOutcome = Field(
