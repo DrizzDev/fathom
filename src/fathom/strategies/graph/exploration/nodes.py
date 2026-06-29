@@ -58,6 +58,7 @@ _DFS_COMPLETE = "DFS complete - all reachable screens scanned"
 # device drifts out of it (e.g. a share sheet or permission prompt) before the
 # run is abandoned as out-of-scope.
 PACKAGE_RECOVERY_BACK_LIMIT = 3
+PACKAGE_RELAUNCH_SETTLE_LIMIT = 5
 
 
 class ExplorationNodeProvider:
@@ -1046,9 +1047,11 @@ class ExplorationNodeProvider:
         Keep exploration within the target package, recovering transient drift.
 
         Presses BACK up to ``PACKAGE_RECOVERY_BACK_LIMIT`` times to dismiss
-        out-of-app overlays (share sheets, permission prompts). On recovery the
-        DFS navigation state is reset so the next step re-orients; if the device
-        stays outside the package, returns a terminal completion reason.
+        out-of-app overlays (share sheets, permission prompts). If BACK cannot
+        return - a tap reached the device launcher or another app, which BACK does
+        not undo - the package is relaunched to the foreground. On recovery the DFS
+        navigation state is reset so the next step re-orients; only a package that
+        stays gone after a relaunch ends the run.
         """
 
         ctx = self.__context
@@ -1064,15 +1067,48 @@ class ExplorationNodeProvider:
             await ctx.device.back()
             await stability_wait(ctx.configuration)
             if await self.__current_package() == target:
-                dfs = self.__dfs
-                dfs.pending_nav.clear()
-                dfs.current_path = []
-                dfs.phase = BFSPhase.SCAN
+                self.__reset_navigation()
                 logger.info("Recovered to target package %s; DFS navigation reset", target)
                 return None
 
+        if await self.__relaunch_package(target=target):
+            self.__reset_navigation()
+            logger.info("Relaunched target package %s; DFS navigation reset", target)
+            return None
+
         logger.error("Left target package %s and could not recover", target)
         return f"Left target package {target} and could not recover"
+
+    async def __relaunch_package(self, *, target: str) -> bool:
+        """
+        Brings the target package back to the foreground after an unrecoverable exit.
+
+        A tap that reaches the device launcher or another app cannot be undone with
+        BACK, so the package is relaunched and given a few settle waits to come up;
+        returns whether it is the foreground package again.
+        """
+
+        ctx = self.__context
+        try:
+            await ctx.device.launch_package(package_name=target)
+        except DeviceError as exception:
+            logger.warning("Relaunch of target package %s failed: %s", target, exception)
+            return False
+        for _ in range(PACKAGE_RELAUNCH_SETTLE_LIMIT):
+            await stability_wait(ctx.configuration)
+            if await self.__current_package() == target:
+                return True
+        return False
+
+    def __reset_navigation(self) -> None:
+        """
+        Clears DFS navigation so the next step re-scans the screen it landed on.
+        """
+
+        dfs = self.__dfs
+        dfs.pending_nav.clear()
+        dfs.current_path = []
+        dfs.phase = BFSPhase.SCAN
 
     async def __current_package(self) -> Optional[str]:
         """

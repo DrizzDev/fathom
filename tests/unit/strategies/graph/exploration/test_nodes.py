@@ -741,7 +741,11 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
             workflow_id="wf",
             package_name="com.app",
             configuration=Mock(),
-            device=Mock(get_current_package=AsyncMock(return_value="com.other"), back=AsyncMock()),
+            device=Mock(
+                get_current_package=AsyncMock(return_value="com.other"),
+                back=AsyncMock(),
+                launch_package=AsyncMock(),
+            ),
             agent_state=Mock(record_step=Mock()),
             telemetry=Mock(info=AsyncMock()),
         )
@@ -769,6 +773,58 @@ class TestPackageScope(unittest.IsolatedAsyncioTestCase):
             if call.args and call.args[0] == DEFECT_DETECTED_EVENT
         ]
         self.assertIn(DefectSignal.LEFT_PACKAGE.value, defect_signals)
+
+    async def test_relaunch_recovers_drift_back_cannot_undo(self) -> None:
+        # The walk reaches the launcher, which BACK cannot leave; relaunching the
+        # package brings it back to the foreground and the run continues.
+        graph = _graph_mock(resolve_hash=Mock(side_effect=lambda value: value))
+        context = Mock(
+            is_cancelled=False,
+            max_steps=100,
+            workflow_id="wf",
+            package_name="com.app",
+            configuration=Mock(),
+            device=Mock(
+                # Off-package through all three BACKs, foreground again after relaunch.
+                get_current_package=AsyncMock(
+                    side_effect=["com.other", "com.other", "com.other", "com.other", "com.app"]
+                ),
+                back=AsyncMock(),
+                launch_package=AsyncMock(),
+            ),
+            exploration_graph=graph,
+            memory=Mock(store_experience=AsyncMock()),
+            history=Mock(enqueue_save_step=Mock()),
+            agent_state=Mock(record_step=Mock(), step_count=1),
+            telemetry=Mock(info=AsyncMock()),
+        )
+        context.perception = Mock(
+            perceive=AsyncMock(return_value=Mock()),
+            build_state=Mock(return_value=_screen_state("post")),
+        )
+        step = Step(action=_action(), screen_hash="pre", step_number=1)
+        state: Dict[str, Any] = {
+            EKey.ACTION: _action(),
+            CKey.SCREEN_STATE: _screen_state("pre"),
+            CKey.STEP_RESULT: StepResult(
+                step=step,
+                success=True,
+                duration=1,
+                screen_changed=True,
+                pre_hash="pre",
+                post_hash="0",
+            ),
+        }
+        dfs = DfsState(phase=BFSPhase.SCAN, current_path=[("root", _action())])
+
+        with patch("fathom.strategies.graph.exploration.nodes.stability_wait", new=AsyncMock()):
+            result = await ExplorationNodeProvider(context=context, vision=Mock(), dfs=dfs).record(
+                state
+            )
+
+        self.assertEqual(context.device.back.await_count, 3)
+        context.device.launch_package.assert_awaited_once_with(package_name="com.app")
+        self.assertFalse(result[CKey.IS_COMPLETE])
 
     async def test_transient_drift_recovers_and_continues(self) -> None:
         graph = _graph_mock(resolve_hash=Mock(side_effect=lambda value: value))
