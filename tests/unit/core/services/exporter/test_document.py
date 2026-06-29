@@ -12,7 +12,13 @@ from fathom.core.services.exporter.document import (
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.schemas.content import ScreenContent
 from fathom.schemas.defect import Defect, DefectEvidence
-from fathom.schemas.document import DocumentIndex, ScreenDocument, ScreenFlow, ScreenLink
+from fathom.schemas.document import (
+    DocumentIndex,
+    LinkSemantics,
+    ScreenDocument,
+    ScreenFlow,
+    ScreenLink,
+)
 from fathom.schemas.report import ReportMetadata
 
 _HOME_A = "0000000000000000"
@@ -58,6 +64,7 @@ def _transition_row(
     action_type: str = "tap",
     action_target: str = "",
     action_value: Optional[str] = None,
+    semantics: Optional[LinkSemantics] = None,
 ) -> Dict[str, Any]:
     return {
         "source_hash": source,
@@ -68,6 +75,7 @@ def _transition_row(
         "coord_region": None,
         "element_category": None,
         "action_value": action_value,
+        "semantics_json": semantics.model_dump_json() if semantics else None,
         "count": 1,
         "first_seen": 1,
         "last_seen": 2,
@@ -298,6 +306,42 @@ class TestScreenDocumentStructuredContent(unittest.IsolatedAsyncioTestCase):
         }
 
         self.assertEqual(documents["home"].flow.outbound[0].value, "pediatric dentist")
+
+    async def test_link_carries_semantics(self) -> None:
+        semantics = LinkSemantics(outcome="new_screen", region="top_bar", rationale="open booking")
+        screens = [
+            _screen_row(
+                visual_hash=_HOME_A, activity="com.app/.Home", category="home", description="Home"
+            ),
+            _screen_row(
+                visual_hash=_DETAIL,
+                activity="com.app/.Booking",
+                category="form",
+                description="Booking",
+            ),
+        ]
+        transitions = [
+            _transition_row(
+                source=_HOME_A,
+                destination=_DETAIL,
+                action_target="Continue button",
+                semantics=semantics,
+            )
+        ]
+        graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=transitions))
+        await graph.load()
+
+        documents = {
+            document.slug: document
+            for document in ScreenDocumentExporter()
+            .build(graph=graph, defects=[], metadata=_metadata())
+            .documents
+        }
+        link = documents["home"].flow.outbound[0]
+
+        assert link.semantics is not None
+        self.assertEqual(link.semantics.outcome, "new_screen")
+        self.assertEqual(link.semantics.region, "top_bar")
 
     async def test_legacy_rich_blob_is_decomposed_into_structured_fields(self) -> None:
         # A screen persisted before structured content existed only has the legacy

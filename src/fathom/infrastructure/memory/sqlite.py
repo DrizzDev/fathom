@@ -11,6 +11,7 @@ import aiosqlite
 from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.actions import Action
+from fathom.schemas.document import LinkSemantics
 from fathom.schemas.screens import ScreenState
 
 logger = getLogger(__name__)
@@ -160,7 +161,13 @@ class SQLiteMemoryProvider(IMemoryProvider):
         async with db.execute("PRAGMA table_info(transitions)") as cursor:
             transition_columns = {row[1] async for row in cursor}
 
-        for column in ("coord_bucket", "coord_region", "element_category", "action_value"):
+        for column in (
+            "coord_bucket",
+            "coord_region",
+            "element_category",
+            "action_value",
+            "semantics_json",
+        ):
             if column not in transition_columns:
                 await db.execute(f"ALTER TABLE transitions ADD COLUMN {column} TEXT")
                 migrated = True
@@ -408,20 +415,22 @@ class SQLiteMemoryProvider(IMemoryProvider):
         coord_region = action.region
         element_category = action.element_category
         action_value = action.text
+        semantics_json = LinkSemantics.of(action=action).model_dump_json()
 
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
                 "INSERT INTO transitions "
                 "(source_hash, destination_hash, action_type, action_target, coord_bucket, "
-                " coord_region, element_category, action_value, action_json, count, "
-                " first_seen, last_seen) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) "
+                " coord_region, element_category, action_value, semantics_json, action_json, "
+                " count, first_seen, last_seen) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) "
                 "ON CONFLICT(source_hash, action_type, action_target) DO UPDATE SET "
                 "destination_hash = excluded.destination_hash, "
                 "coord_bucket = COALESCE(excluded.coord_bucket, transitions.coord_bucket), "
                 "coord_region = COALESCE(excluded.coord_region, transitions.coord_region), "
                 "element_category = COALESCE(excluded.element_category, transitions.element_category), "
                 "action_value = COALESCE(excluded.action_value, transitions.action_value), "
+                "semantics_json = excluded.semantics_json, "
                 "action_json = excluded.action_json, "
                 "count = transitions.count + 1, "
                 "last_seen = excluded.last_seen",
@@ -434,6 +443,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
                     coord_region,
                     element_category,
                     action_value,
+                    semantics_json,
                     action.model_dump_json(),
                     now,
                     now,
@@ -522,7 +532,8 @@ class SQLiteMemoryProvider(IMemoryProvider):
             aiosqlite.connect(self.__path) as db,
             db.execute(
                 "SELECT source_hash, destination_hash, action_type, action_target, coord_bucket, "
-                "coord_region, element_category, action_value, count, first_seen, last_seen "
+                "coord_region, element_category, action_value, semantics_json, count, "
+                "first_seen, last_seen "
                 "FROM transitions ORDER BY count DESC"
             ) as cursor,
         ):
@@ -537,9 +548,10 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         "coord_region": row[5],
                         "element_category": row[6],
                         "action_value": row[7],
-                        "count": row[8],
-                        "first_seen": row[9],
-                        "last_seen": row[10],
+                        "semantics_json": row[8],
+                        "count": row[9],
+                        "first_seen": row[10],
+                        "last_seen": row[11],
                     }
                 )
 

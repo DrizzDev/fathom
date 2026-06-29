@@ -24,7 +24,13 @@ from fathom.core.services.exporter.graph import GraphLabeler
 from fathom.infrastructure.memory.knowledge_graph import GraphNode, KnowledgeGraph
 from fathom.schemas.content import ScreenContent
 from fathom.schemas.defect import Defect
-from fathom.schemas.document import DocumentIndex, ScreenDocument, ScreenFlow, ScreenLink
+from fathom.schemas.document import (
+    DocumentIndex,
+    LinkSemantics,
+    ScreenDocument,
+    ScreenFlow,
+    ScreenLink,
+)
 from fathom.schemas.report import ReportMetadata
 
 _LinkKey = Tuple[str, Optional[str], str]
@@ -228,6 +234,7 @@ class ScreenDocumentExporter:
                     screen=titles[destination_key],
                     count=edge.count,
                     value=edge.value,
+                    semantics=edge.semantics,
                 )
                 self.__merge_link(
                     bucket=inbound.setdefault(destination_key, {}),
@@ -236,6 +243,7 @@ class ScreenDocumentExporter:
                     screen=titles[source_key],
                     count=edge.count,
                     value=edge.value,
+                    semantics=edge.semantics,
                 )
 
         return inbound, outbound
@@ -249,6 +257,7 @@ class ScreenDocumentExporter:
         screen: str,
         count: int,
         value: Optional[str],
+        semantics: Optional[LinkSemantics],
     ) -> None:
         """
         Adds a link to a bucket, folding repeats of the same edge into one count.
@@ -258,12 +267,19 @@ class ScreenDocumentExporter:
         existing = bucket.get(dedup)
         if existing is None:
             bucket[dedup] = ScreenLink(
-                action=action, element=element, screen=screen, count=count, value=value
+                action=action,
+                element=element,
+                screen=screen,
+                count=count,
+                value=value,
+                semantics=semantics,
             )
         else:
             existing.count += count
             if existing.value is None and value is not None:
                 existing.value = value
+            if existing.semantics is None and semantics is not None:
+                existing.semantics = semantics
 
     @staticmethod
     def __defects_by_screen(*, defects: List[Defect]) -> Dict[str, List[Defect]]:

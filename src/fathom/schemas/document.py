@@ -14,8 +14,45 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from fathom.constants.screen import ScreenCategory
+from fathom.schemas.actions import Action
 from fathom.schemas.defect import Defect
 from fathom.schemas.report import ReportMetadata
+
+
+class LinkSemantics(BaseModel):
+    """
+    Recorded intent and classification of a transition, sourced from the crawl.
+    """
+
+    outcome: Optional[str] = Field(
+        default=None, description="Predicted screen effect of the transition"
+    )
+    category: Optional[str] = Field(
+        default=None, description="UI role of the element the action addressed"
+    )
+    region: Optional[str] = Field(
+        default=None, description="Screen region the addressed element sits in"
+    )
+    overlay: bool = Field(
+        default=False, description="Whether an overlay was present when the action ran"
+    )
+    rationale: Optional[str] = Field(
+        default=None, description="Why the action was taken during exploration"
+    )
+
+    @classmethod
+    def of(cls, *, action: Action) -> "LinkSemantics":
+        """
+        Builds link semantics from the action that drove a transition.
+        """
+
+        return cls(
+            outcome=action.expected_outcome.value if action.expected_outcome else None,
+            category=action.element_category,
+            region=action.region,
+            overlay=action.overlay_detected,
+            rationale=action.rationale.strip() or None,
+        )
 
 
 class ScreenLink(BaseModel):
@@ -31,6 +68,9 @@ class ScreenLink(BaseModel):
     count: int = Field(default=1, ge=1, description="Times the transition was observed")
     value: Optional[str] = Field(
         default=None, description="Text entered on the transition, for type actions"
+    )
+    semantics: Optional[LinkSemantics] = Field(
+        default=None, description="Recorded intent and classification of the transition"
     )
 
 

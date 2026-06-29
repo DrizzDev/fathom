@@ -10,6 +10,7 @@ from fathom.constants import ActionType
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.content import ScreenContent
+from fathom.schemas.document import LinkSemantics
 from fathom.schemas.screens import ScreenState
 
 
@@ -118,6 +119,18 @@ class TestSQLiteMemoryProvider(unittest.IsolatedAsyncioTestCase):
         transitions = await self.__provider.get_all_transitions()
 
         self.assertIsNone(transitions[0]["action_value"])
+
+    async def test_store_transition_persists_semantics(self) -> None:
+        await self.__provider.store_transition(
+            source_hash="src", action=self.__action(), destination_hash="dst"
+        )
+
+        transitions = await self.__provider.get_all_transitions()
+        semantics = LinkSemantics.model_validate_json(transitions[0]["semantics_json"])
+
+        self.assertEqual(semantics.region, "content")
+        self.assertEqual(semantics.category, "content_item")
+        self.assertEqual(semantics.rationale, "open the card")
 
     async def test_retrieve_knowledge_includes_transitions(self) -> None:
         await self.__provider.store_observation(screen=self.__screen(), description="Home feed")

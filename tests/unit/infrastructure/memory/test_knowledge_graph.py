@@ -150,6 +150,20 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(neighbors[0].value, "user@example.com")
 
+    async def test_record_transition_captures_semantics(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+        await self.__graph.record_transition(
+            source_hash="aaaaaaaaaaaaaaaa",
+            action=self.__tap(target="Card"),
+            destination_hash="bbbbbbbbbbbbbbbb",
+        )
+
+        semantics = self.__graph.get_neighbors(visual_hash="aaaaaaaaaaaaaaaa")[0].semantics
+
+        assert semantics is not None
+        self.assertEqual(semantics.region, "content")
+        self.assertEqual(semantics.category, "content_item")
+
     async def test_get_tried_actions_excludes_back(self) -> None:
         await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
         await self.__graph.record_transition(

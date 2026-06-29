@@ -13,6 +13,7 @@ from fathom.infrastructure.memory.canonical import ScreenCanonicalizer
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.actions import Action
 from fathom.schemas.content import ScreenContent
+from fathom.schemas.document import LinkSemantics
 from fathom.schemas.exploration import ActionOutcome, TriedAction
 from fathom.schemas.screens import ScreenState
 
@@ -72,6 +73,7 @@ class GraphEdge:
     coord_region: Optional[str] = None
     element_category: Optional[str] = None
     value: Optional[str] = None
+    semantics: Optional[LinkSemantics] = None
 
 
 class KnowledgeGraph:
@@ -269,6 +271,7 @@ class KnowledgeGraph:
             coord_region=transition.get("coord_region"),
             element_category=transition.get("element_category"),
             value=transition.get("action_value"),
+            semantics=self.__coerce_semantics(transition.get("semantics_json")),
             count=transition["count"] or 1,
             first_seen=transition["first_seen"],
             last_seen=transition["last_seen"],
@@ -318,6 +321,8 @@ class KnowledgeGraph:
             target.element_category = incoming.element_category
         if not target.value and incoming.value:
             target.value = incoming.value
+        if target.semantics is None and incoming.semantics is not None:
+            target.semantics = incoming.semantics
 
     @staticmethod
     def __backfill_hashes(*, node: GraphNode, source: Dict[str, Any]) -> None:
@@ -507,6 +512,19 @@ class KnowledgeGraph:
         except ValueError:
             return None
 
+    @staticmethod
+    def __coerce_semantics(value: Optional[str]) -> Optional[LinkSemantics]:
+        """
+        Parses persisted link-semantics JSON into the model, None when absent or invalid.
+        """
+
+        if not value:
+            return None
+        try:
+            return LinkSemantics.model_validate_json(value)
+        except ValueError:
+            return None
+
     async def record_transition(
         self, *, source_hash: str, action: Action, destination_hash: str
     ) -> None:
@@ -553,6 +571,8 @@ class KnowledgeGraph:
                     edge.element_category = action.element_category
                 if not edge.value and action.text:
                     edge.value = action.text
+                if edge.semantics is None:
+                    edge.semantics = LinkSemantics.of(action=action)
                 return
 
         edges.append(
@@ -565,6 +585,7 @@ class KnowledgeGraph:
                 coord_region=action.region,
                 element_category=action.element_category,
                 value=action.text,
+                semantics=LinkSemantics.of(action=action),
                 count=1,
                 first_seen=now,
                 last_seen=now,
