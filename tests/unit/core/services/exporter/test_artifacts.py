@@ -34,7 +34,9 @@ class _RecordingStorage(StoragePort):
     async def save(self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
         record = {"data": data, "metadata": metadata or {}}
         self.saved.append(record)
-        return f"gs://bucket/{record['metadata'].get('category')}/{record['metadata'].get('filename')}"
+        return (
+            f"gs://bucket/{record['metadata'].get('category')}/{record['metadata'].get('filename')}"
+        )
 
 
 class TestExplorationArtifactWriter(unittest.IsolatedAsyncioTestCase):
@@ -118,7 +120,9 @@ class TestExplorationArtifactWriter(unittest.IsolatedAsyncioTestCase):
             for path in written:
                 local_bytes = path.read_bytes()
                 match = next(
-                    record for record in storage.saved if record["metadata"]["filename"] == path.name
+                    record
+                    for record in storage.saved
+                    if record["metadata"]["filename"] == path.name
                 )
                 self.assertEqual(match["data"], local_bytes)
             # The local copies are still the durable record.
@@ -130,9 +134,7 @@ class TestExplorationArtifactWriter(unittest.IsolatedAsyncioTestCase):
         class _FailingStorage(StoragePort):
             """StoragePort whose every save raises, to prove uploads are best-effort."""
 
-            async def save(
-                self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None
-            ) -> str:
+            async def save(self, *, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
                 raise RuntimeError("simulated cloud outage")
 
         with tempfile.TemporaryDirectory() as tmp:

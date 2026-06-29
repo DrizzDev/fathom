@@ -109,9 +109,7 @@ class ExplorationArtifactWriter:
 
         return artifacts
 
-    async def __upload(
-        self, *, filename: str, content: str, workflow: str, package: str
-    ) -> None:
+    async def __upload(self, *, filename: str, content: str, workflow: str, package: str) -> None:
         """
         Best-effort upload of one rendered artifact to the ``reports`` storage category.
 
