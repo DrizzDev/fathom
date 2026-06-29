@@ -52,7 +52,12 @@ def _screen_row(
 
 
 def _transition_row(
-    *, source: str, destination: str, action_type: str = "tap", action_target: str = ""
+    *,
+    source: str,
+    destination: str,
+    action_type: str = "tap",
+    action_target: str = "",
+    action_value: Optional[str] = None,
 ) -> Dict[str, Any]:
     return {
         "source_hash": source,
@@ -62,6 +67,7 @@ def _transition_row(
         "coord_bucket": None,
         "coord_region": None,
         "element_category": None,
+        "action_value": action_value,
         "count": 1,
         "first_seen": 1,
         "last_seen": 2,
@@ -259,6 +265,39 @@ class TestScreenDocumentStructuredContent(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(documents["home"].flow.outbound[0].element, "Continue")
         self.assertEqual(documents["booking"].flow.inbound[0].element, "Continue")
+
+    async def test_link_carries_typed_value(self) -> None:
+        screens = [
+            _screen_row(
+                visual_hash=_HOME_A, activity="com.app/.Home", category="home", description="Home"
+            ),
+            _screen_row(
+                visual_hash=_DETAIL,
+                activity="com.app/.Search",
+                category="search",
+                description="Results",
+            ),
+        ]
+        transitions = [
+            _transition_row(
+                source=_HOME_A,
+                destination=_DETAIL,
+                action_type="type",
+                action_target="Search field",
+                action_value="pediatric dentist",
+            )
+        ]
+        graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=transitions))
+        await graph.load()
+
+        documents = {
+            document.slug: document
+            for document in ScreenDocumentExporter()
+            .build(graph=graph, defects=[], metadata=_metadata())
+            .documents
+        }
+
+        self.assertEqual(documents["home"].flow.outbound[0].value, "pediatric dentist")
 
     async def test_legacy_rich_blob_is_decomposed_into_structured_fields(self) -> None:
         # A screen persisted before structured content existed only has the legacy

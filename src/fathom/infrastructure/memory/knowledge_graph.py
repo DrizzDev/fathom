@@ -71,6 +71,7 @@ class GraphEdge:
     coord_bucket: Optional[str] = None
     coord_region: Optional[str] = None
     element_category: Optional[str] = None
+    value: Optional[str] = None
 
 
 class KnowledgeGraph:
@@ -267,6 +268,7 @@ class KnowledgeGraph:
             coord_bucket=transition.get("coord_bucket"),
             coord_region=transition.get("coord_region"),
             element_category=transition.get("element_category"),
+            value=transition.get("action_value"),
             count=transition["count"] or 1,
             first_seen=transition["first_seen"],
             last_seen=transition["last_seen"],
@@ -314,6 +316,8 @@ class KnowledgeGraph:
             target.coord_region = incoming.coord_region
         if not target.element_category and incoming.element_category:
             target.element_category = incoming.element_category
+        if not target.value and incoming.value:
+            target.value = incoming.value
 
     @staticmethod
     def __backfill_hashes(*, node: GraphNode, source: Dict[str, Any]) -> None:
@@ -547,6 +551,8 @@ class KnowledgeGraph:
                     edge.coord_region = action.region
                 if not edge.element_category and action.element_category:
                     edge.element_category = action.element_category
+                if not edge.value and action.text:
+                    edge.value = action.text
                 return
 
         edges.append(
@@ -558,6 +564,7 @@ class KnowledgeGraph:
                 coord_bucket=coord_bucket,
                 coord_region=action.region,
                 element_category=action.element_category,
+                value=action.text,
                 count=1,
                 first_seen=now,
                 last_seen=now,

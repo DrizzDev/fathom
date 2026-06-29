@@ -29,6 +29,9 @@ class ScreenLink(BaseModel):
     )
     screen: str = Field(description="Title of the logical screen on the other end")
     count: int = Field(default=1, ge=1, description="Times the transition was observed")
+    value: Optional[str] = Field(
+        default=None, description="Text entered on the transition, for type actions"
+    )
 
 
 class ScreenFlow(BaseModel):

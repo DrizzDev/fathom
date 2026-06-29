@@ -94,6 +94,31 @@ class TestSQLiteMemoryProvider(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transitions[0]["element_category"], "content_item")
         self.assertEqual(transitions[0]["coord_bucket"], "2_4")
 
+    async def test_store_transition_persists_typed_value(self) -> None:
+        action = Action(
+            action_type=ActionType.TYPE,
+            rationale="enter email",
+            natural_language_target="Email input field",
+            text="user@example.com",
+            bounds=Bounds(x=100, y=200, width=10, height=10),
+        )
+        await self.__provider.store_transition(
+            source_hash="src", action=action, destination_hash="dst"
+        )
+
+        transitions = await self.__provider.get_all_transitions()
+
+        self.assertEqual(transitions[0]["action_value"], "user@example.com")
+
+    async def test_tap_transition_has_no_typed_value(self) -> None:
+        await self.__provider.store_transition(
+            source_hash="src", action=self.__action(), destination_hash="dst"
+        )
+
+        transitions = await self.__provider.get_all_transitions()
+
+        self.assertIsNone(transitions[0]["action_value"])
+
     async def test_retrieve_knowledge_includes_transitions(self) -> None:
         await self.__provider.store_observation(screen=self.__screen(), description="Home feed")
         await self.__provider.store_transition(

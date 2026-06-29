@@ -227,6 +227,7 @@ class ScreenDocumentExporter:
                     element=element,
                     screen=titles[destination_key],
                     count=edge.count,
+                    value=edge.value,
                 )
                 self.__merge_link(
                     bucket=inbound.setdefault(destination_key, {}),
@@ -234,6 +235,7 @@ class ScreenDocumentExporter:
                     element=element,
                     screen=titles[source_key],
                     count=edge.count,
+                    value=edge.value,
                 )
 
         return inbound, outbound
@@ -246,6 +248,7 @@ class ScreenDocumentExporter:
         element: Optional[str],
         screen: str,
         count: int,
+        value: Optional[str],
     ) -> None:
         """
         Adds a link to a bucket, folding repeats of the same edge into one count.
@@ -254,9 +257,13 @@ class ScreenDocumentExporter:
         dedup: _LinkKey = (action, element, screen)
         existing = bucket.get(dedup)
         if existing is None:
-            bucket[dedup] = ScreenLink(action=action, element=element, screen=screen, count=count)
+            bucket[dedup] = ScreenLink(
+                action=action, element=element, screen=screen, count=count, value=value
+            )
         else:
             existing.count += count
+            if existing.value is None and value is not None:
+                existing.value = value
 
     @staticmethod
     def __defects_by_screen(*, defects: List[Defect]) -> Dict[str, List[Defect]]:

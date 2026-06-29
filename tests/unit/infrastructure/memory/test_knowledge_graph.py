@@ -132,6 +132,24 @@ class TestKnowledgeGraph(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(neighbors), 1)
         self.assertEqual(neighbors[0].count, 2)
 
+    async def test_record_transition_captures_typed_value(self) -> None:
+        await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
+        await self.__graph.record_transition(
+            source_hash="aaaaaaaaaaaaaaaa",
+            action=Action(
+                action_type=ActionType.TYPE,
+                rationale="enter email",
+                natural_language_target="Email input field",
+                text="user@example.com",
+                bounds=Bounds(x=100, y=200, width=10, height=10),
+            ),
+            destination_hash="bbbbbbbbbbbbbbbb",
+        )
+
+        neighbors = self.__graph.get_neighbors(visual_hash="aaaaaaaaaaaaaaaa")
+
+        self.assertEqual(neighbors[0].value, "user@example.com")
+
     async def test_get_tried_actions_excludes_back(self) -> None:
         await self.__graph.add_screen(state=self.__screen(visual_hash="aaaaaaaaaaaaaaaa"))
         await self.__graph.record_transition(
