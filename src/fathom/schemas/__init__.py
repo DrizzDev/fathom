@@ -8,6 +8,7 @@ from fathom.schemas.artifacts import (
 )
 from fathom.schemas.cli import ExploreCommandInput, LocalCommandInput, RunCommandInput
 from fathom.schemas.configuration import (
+    AdaptivePriorityConfiguration,
     ADBConfiguration,
     DeviceConfiguration,
     DeviceRuntimeConfiguration,
@@ -19,12 +20,19 @@ from fathom.schemas.configuration import (
     IntentWorkflowHostPolicyConfiguration,
     IOSConfiguration,
     LLMConfiguration,
+    PriorityInferenceConfiguration,
     WorkflowHostConfiguration,
     WorkflowHostPolicyConfiguration,
 )
 from fathom.schemas.decomposition import DecompositionSchema
 from fathom.schemas.exploration import ActionGenerator, ExplorationGraph, ScreenNode
-from fathom.schemas.llm import GeminiExceptionKind, GeminiExceptionMetadata
+from fathom.schemas.llm import (
+    GeminiExceptionKind,
+    GeminiExceptionMetadata,
+    PriorityInferenceEvidence,
+    PriorityInferenceSignal,
+    PriorityInferenceTransition,
+)
 from fathom.schemas.orchestration import (
     ExecutionContext,
     RunnerConfig,
@@ -66,6 +74,7 @@ __all__ = [
     "Action",
     "ActionGenerator",
     "ActionResult",
+    "AdaptivePriorityConfiguration",
     "AnalysisResult",
     "Bounds",
     "DeviceConfiguration",
@@ -97,6 +106,10 @@ __all__ = [
     "MemoryConfiguration",
     "ModelSelectionConfiguration",
     "PlanResult",
+    "PriorityInferenceConfiguration",
+    "PriorityInferenceEvidence",
+    "PriorityInferenceSignal",
+    "PriorityInferenceTransition",
     "RunCommandInput",
     "RealignmentPolicy",
     "ResourceConfiguration",

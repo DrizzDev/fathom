@@ -5,6 +5,14 @@ from typing import Any, ClassVar, Dict, Literal, Optional, Set, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.constants.llm import (
+    DEFAULT_PRIORITY_FAILURE_THRESHOLD,
+    DEFAULT_PRIORITY_LATENCY_THRESHOLD,
+    DEFAULT_PRIORITY_RECOVERY_SUCCESSES,
+    DEFAULT_PRIORITY_SLOW_THRESHOLD,
+    DEFAULT_PRIORITY_WINDOW,
+    InferencePriorityMode,
+)
 from fathom.constants.platform import (
     DeviceConnectionType,
     DevicePlatform,
@@ -20,6 +28,7 @@ from fathom.constants.qualification import (
 )
 from fathom.constants.storage import StorageBackend
 from fathom.schemas.artifact import PipelineConfiguration
+from fathom.schemas.base.common import ThresholdConfiguration
 from fathom.schemas.checkpoint import (
     CheckpointConfiguration,
     SqliteCheckpointConfiguration,
@@ -31,6 +40,50 @@ from fathom.schemas.swipe import SwipeRetryPolicy
 from fathom.schemas.telemetry import PhaseMessage
 
 logger = getLogger(__name__)
+
+
+class AdaptivePriorityConfiguration(BaseModel):
+    """
+    Provider-neutral adaptive elevated-capacity inference policy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    window: int = Field(
+        ge=1,
+        default=DEFAULT_PRIORITY_WINDOW,
+        description="Recent call outcomes retained by the adaptive selector.",
+    )
+    threshold: ThresholdConfiguration = Field(
+        default_factory=lambda: ThresholdConfiguration(
+            slows=DEFAULT_PRIORITY_SLOW_THRESHOLD,
+            latency=DEFAULT_PRIORITY_LATENCY_THRESHOLD,
+            failures=DEFAULT_PRIORITY_FAILURE_THRESHOLD,
+            recovery=DEFAULT_PRIORITY_RECOVERY_SUCCESSES,
+        ),
+        description="Adaptive scale-up and recovery thresholds.",
+    )
+
+
+class PriorityInferenceConfiguration(BaseModel):
+    """
+    Provider-neutral configuration for elevated-capacity inference.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether the adapter may request elevated provider capacity.",
+    )
+    mode: InferencePriorityMode = Field(
+        default=InferencePriorityMode.ALWAYS,
+        description="Selection policy for elevated capacity.",
+    )
+    adaptive: AdaptivePriorityConfiguration = Field(
+        default_factory=AdaptivePriorityConfiguration,
+        description="Adaptive selector thresholds used when mode is adaptive.",
+    )
 
 
 class LLMConfiguration(BaseModel):
@@ -78,6 +131,11 @@ class LLMConfiguration(BaseModel):
     retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
     rate_limit_backoff: float = Field(default=5.0, description="Base backoff for rate limit errors")
     use_cache: bool = Field(default=True, description="Whether to use context caching for the LLM")
+
+    priority: PriorityInferenceConfiguration = Field(
+        default_factory=PriorityInferenceConfiguration,
+        description="Provider-neutral elevated-capacity inference policy.",
+    )
 
     # Extension hook for arbitrary provider settings
     parameters: Dict[str, Any] = Field(

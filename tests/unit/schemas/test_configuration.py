@@ -4,6 +4,14 @@ import unittest
 
 from pydantic import ValidationError
 
+from fathom.constants.llm import (
+    DEFAULT_PRIORITY_FAILURE_THRESHOLD,
+    DEFAULT_PRIORITY_LATENCY_THRESHOLD,
+    DEFAULT_PRIORITY_RECOVERY_SUCCESSES,
+    DEFAULT_PRIORITY_SLOW_THRESHOLD,
+    DEFAULT_PRIORITY_WINDOW,
+    InferencePriorityMode,
+)
 from fathom.constants.qualification import (
     DEFAULT_QUALIFIER_MAX_RETRIES,
     DEFAULT_QUALIFIER_MODEL,
@@ -15,6 +23,7 @@ from fathom.constants.qualification import (
 from fathom.constants.storage import StorageBackend
 from fathom.schemas.configuration import (
     InferenceConfiguration,
+    PriorityInferenceConfiguration,
     QualifierConfiguration,
     StorageConfiguration,
 )
@@ -63,6 +72,35 @@ class QualifierConfigurationDefaultsTest(unittest.TestCase):
         self.assertEqual(inference.thinking_level, DEFAULT_QUALIFIER_THINKING_LEVEL)
         self.assertEqual(inference.timeout, DEFAULT_QUALIFIER_TIMEOUT)
         self.assertEqual(inference.max_retries, DEFAULT_QUALIFIER_MAX_RETRIES)
+
+
+class PriorityInferenceConfigurationDefaultsTest(unittest.TestCase):
+    """
+    Priority inference defaults are intentionally enabled and always-on for current rollout.
+    """
+
+    def test_default_priority_configuration_is_always_enabled(self) -> None:
+        """
+        Default LLM configuration must request priority for every call.
+        """
+
+        configuration = PriorityInferenceConfiguration()
+
+        self.assertTrue(configuration.enabled)
+        self.assertEqual(configuration.mode, InferencePriorityMode.ALWAYS)
+
+    def test_default_adaptive_thresholds_match_constants(self) -> None:
+        """
+        Adaptive defaults must come from constants to keep rollout knobs discoverable.
+        """
+
+        adaptive = PriorityInferenceConfiguration().adaptive
+
+        self.assertEqual(adaptive.window, DEFAULT_PRIORITY_WINDOW)
+        self.assertEqual(adaptive.threshold.failures, DEFAULT_PRIORITY_FAILURE_THRESHOLD)
+        self.assertEqual(adaptive.threshold.slows, DEFAULT_PRIORITY_SLOW_THRESHOLD)
+        self.assertEqual(adaptive.threshold.latency, DEFAULT_PRIORITY_LATENCY_THRESHOLD)
+        self.assertEqual(adaptive.threshold.recovery, DEFAULT_PRIORITY_RECOVERY_SUCCESSES)
 
 
 class QualifierConfigurationEvolveTest(unittest.TestCase):

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence, Union, cast
+from typing import Any, Dict, Mapping, Optional, Sequence, Union
 
 from google.genai import Client, types
 from google.oauth2 import service_account
@@ -15,6 +16,8 @@ from fathom.constants.llm import (
     GEMINI_CANCELLED_STATUS_CODE,
     GEMINI_GENERIC_RETRY_JITTER_SECONDS,
     GEMINI_MAX_TRANSIENT_RETRY_DELAY_SECONDS,
+    GEMINI_PRIORITY_SERVICE_TIER_VALUE,
+    GEMINI_PRIORITY_TRAFFIC_TYPE,
     GEMINI_PROVIDER_OVERLOAD_ERROR_MARKERS,
     GEMINI_PROVIDER_OVERLOADED_STATUS_CODE,
     GEMINI_RATE_LIMIT_ERROR_MARKERS,
@@ -24,14 +27,27 @@ from fathom.constants.llm import (
     GEMINI_STALE_CACHE_STATE_MARKERS,
     GEMINI_STALE_CACHE_STATUS_CODE,
     GEMINI_TRANSIENT_RETRY_JITTER_SECONDS,
+    GEMINI_TRANSIENT_STATUS_CODES,
+    GEMINI_VERTEX_PRIORITY_HEADER,
+    GEMINI_VERTEX_PRIORITY_REQUEST_TYPE,
+    GEMINI_VERTEX_REQUEST_TYPE_HEADER,
+    GEMINI_VERTEX_SHARED_REQUEST_TYPE,
+    InferenceTier,
     StructuredOutputMediaType,
 )
 from fathom.core.exceptions import VisionError
+from fathom.core.inference.priority import PriorityInferencePolicy
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.conversation import ConversationTurn
-from fathom.schemas.llm import GeminiExceptionKind, GeminiExceptionMetadata, StructuredOutput
+from fathom.schemas.llm import (
+    GeminiExceptionKind,
+    GeminiExceptionMetadata,
+    PriorityInferenceSignal,
+    PriorityInferenceTransition,
+    StructuredOutput,
+)
 from fathom.schemas.results import GenerateResult
 
 logger = getLogger(__name__)
@@ -60,6 +76,7 @@ class GeminiLLM(LLMPort):
 
         self.__client: Optional[Any] = None
         self.__credentials: Optional[Any] = None
+        self.__priority = PriorityInferencePolicy(configuration=self.__configuration.priority)
 
         self.__parser = ToolResponseParser()
         self.__cache: Optional[CacheService] = None
@@ -119,22 +136,8 @@ class GeminiLLM(LLMPort):
                         },
                     )
 
-        http_options = {"timeout": int(self.__configuration.timeout * 1000)}
-
         try:
-            if self.__configuration.api_key:
-                self.__client = Client(
-                    api_key=self.__configuration.api_key,
-                    http_options=cast("Any", http_options),
-                )
-            else:
-                self.__client = Client(
-                    vertexai=True,
-                    project=project,
-                    location=location,
-                    credentials=self.__credentials,
-                    http_options=cast("Any", http_options),
-                )
+            self.__client = self.__build_client(project=project, location=location)
 
             self.__cache = CacheService(client=self.__client, model_name=self.__configuration.model)
         except Exception as exception:
@@ -143,11 +146,41 @@ class GeminiLLM(LLMPort):
 
             raise VisionError(f"Init failed: {exception}") from exception
 
+    def __build_client(self, *, project: Optional[str], location: str) -> Client:
+        """
+        Build the base Gemini client for all SDK operations.
+        """
+
+        if self.__configuration.api_key:
+            return Client(
+                api_key=self.__configuration.api_key,
+                http_options=self.__base_http_options(),
+            )
+
+        return Client(
+            vertexai=True,
+            project=project,
+            location=location,
+            credentials=self.__credentials,
+            http_options=self.__base_http_options(),
+        )
+
+    def __base_http_options(self) -> types.HttpOptions:
+        """
+        Return SDK HTTP options shared by all requests.
+        """
+
+        return types.HttpOptions(
+            api_version="v1",
+            timeout=int(self.__configuration.timeout * 1000),
+        )
+
     def __get_generation_configuration(
         self,
         cache_name: Optional[str] = None,
         tools: Optional[Dict[str, Any]] = None,
         system_instruction: Optional[str] = None,
+        tier: InferenceTier = InferenceTier.STANDARD,
         structured_output: Optional[StructuredOutput] = None,
     ) -> types.GenerateContentConfig:
         """
@@ -208,7 +241,79 @@ class GeminiLLM(LLMPort):
             config_args["response_schema"] = structured_output.payload
             config_args["response_mime_type"] = StructuredOutputMediaType.JSON.value
 
+        if self.__uses_service_tier_config(tier=tier):
+            config_args["service_tier"] = GEMINI_PRIORITY_SERVICE_TIER_VALUE
+
+        if http_options := self.__priority_http_options(tier=tier):
+            config_args["http_options"] = http_options
+
         return types.GenerateContentConfig(**config_args)
+
+    def __uses_service_tier_config(self, *, tier: InferenceTier) -> bool:
+        """
+        Return whether Gemini API priority should be sent in generation config.
+        """
+
+        return tier == InferenceTier.PRIORITY and bool(self.__configuration.api_key)
+
+    def __priority_http_options(self, *, tier: InferenceTier) -> Optional[types.HttpOptions]:
+        """
+        Return the per-request SDK header patch for Vertex priority routing.
+        """
+
+        if tier != InferenceTier.PRIORITY or self.__configuration.api_key:
+            return None
+
+        return types.HttpOptions(
+            headers={
+                GEMINI_VERTEX_PRIORITY_HEADER: GEMINI_VERTEX_PRIORITY_REQUEST_TYPE,
+                GEMINI_VERTEX_REQUEST_TYPE_HEADER: GEMINI_VERTEX_SHARED_REQUEST_TYPE,
+            },
+        )
+
+    def __is_transient_failure(
+        self,
+        *,
+        exception: Exception,
+        metadata: GeminiExceptionMetadata,
+    ) -> bool:
+        """
+        Return whether a Gemini failure should feed adaptive priority escalation.
+        """
+
+        if isinstance(exception, asyncio.TimeoutError):
+            return True
+
+        if metadata.kind in {
+            GeminiExceptionKind.RATE_LIMITED,
+            GeminiExceptionKind.PROVIDER_OVERLOADED,
+        }:
+            return True
+
+        return metadata.status_code in GEMINI_TRANSIENT_STATUS_CODES
+
+    @staticmethod
+    def __traffic_type(*, usage: Optional[object]) -> Optional[str]:
+        """
+        Normalize provider-reported traffic type when the SDK returns it.
+        """
+
+        if usage is None:
+            return None
+
+        traffic_type = getattr(usage, "traffic_type", None)
+        if traffic_type is None:
+            return None
+
+        name = getattr(traffic_type, "name", None)
+        if isinstance(name, str):
+            return name
+
+        value = getattr(traffic_type, "value", None)
+        if isinstance(value, str):
+            return value
+
+        return str(traffic_type).removeprefix("TrafficType.")
 
     async def generate(
         self,
@@ -264,7 +369,10 @@ class GeminiLLM(LLMPort):
         active_cache_name = cache_name
 
         for attempt in range(max_retries + 1):
+            tier = self.__priority.select()
+
             config = self.__get_generation_configuration(
+                tier=tier,
                 tools=tools,
                 cache_name=active_cache_name,
                 structured_output=structured_output,
@@ -283,6 +391,7 @@ class GeminiLLM(LLMPort):
                 # Per-attempt timeout — caps a single Gemini call so a slow tail latency event (preview-model variance, regional slow path)
                 # cannot stall the caller for the full HTTP timeout. On expiry, asyncio.TimeoutError is raised, classified as GENERIC
                 # by __build_exception_metadata, and the retry path engages with backoff + jitter just like any other transient failure.
+                started = time.perf_counter()
                 response = await asyncio.wait_for(
                     self.__client.aio.models.generate_content(
                         config=config,
@@ -291,6 +400,9 @@ class GeminiLLM(LLMPort):
                     ),
                     timeout=self.__configuration.timeout,
                 )
+                latency = time.perf_counter() - started
+                usage = getattr(response, "usage_metadata", None)
+                observed_traffic = self.__traffic_type(usage=usage)
 
                 # Extract content
                 content = ""
@@ -310,7 +422,26 @@ class GeminiLLM(LLMPort):
                             if part.function_call:
                                 tool_calls.append(part.function_call)
 
-                metrics = self.__collect_usage_metrics(response=response)
+                metrics = self.__collect_usage_metrics(response=response, tier=tier)
+                logger.info(
+                    "Gemini request completed",
+                    extra={
+                        "component": "adapters.llm.gemini",
+                        "event": "gemini.request.completed",
+                        "latency": latency,
+                        "llm.tier.requested": tier.value,
+                        "llm.traffic.type": observed_traffic,
+                        "llm.model": self.__configuration.model,
+                    },
+                )
+                transition = self.__priority.record(
+                    signal=PriorityInferenceSignal(
+                        tier=tier,
+                        success=True,
+                        latency=latency,
+                    ),
+                )
+                self.__log_priority_transition(transition=transition)
 
                 return GenerateResult(content=content, tool_calls=tool_calls, metrics=metrics)
 
@@ -320,6 +451,7 @@ class GeminiLLM(LLMPort):
                     cache_name=active_cache_name,
                 )
                 self.__log_generation_exception(
+                    tier=tier,
                     attempt=attempt,
                     metadata=metadata,
                     max_retries=max_retries,
@@ -329,6 +461,17 @@ class GeminiLLM(LLMPort):
                 if metadata.kind == GeminiExceptionKind.STALE_CACHED_CONTENT:
                     active_cache_name = await self.__reset_stale_cache(cache_name=active_cache_name)
                     continue
+
+                transition = self.__priority.record(
+                    signal=PriorityInferenceSignal(
+                        tier=tier,
+                        success=False,
+                        transient=self.__is_transient_failure(
+                            metadata=metadata, exception=exception
+                        ),
+                    ),
+                )
+                self.__log_priority_transition(transition=transition)
 
                 if metadata.kind == GeminiExceptionKind.CANCELLED:
                     raise VisionError(f"LLM cancelled: {exception}") from exception
@@ -346,6 +489,7 @@ class GeminiLLM(LLMPort):
                             "event": "gemini.request.retry.scheduled",
                             "retry.delay_seconds": delay,
                             "retry.attempt": attempt + 1,
+                            "llm.tier.requested": tier.value,
                             "retry.max_attempts": max_retries,
                             "exception.kind": metadata.kind.value,
                             "exception.status_code": metadata.status_code,
@@ -359,14 +503,57 @@ class GeminiLLM(LLMPort):
 
         raise VisionError("Unreachable")
 
+    def __log_priority_transition(
+        self, *, transition: Optional[PriorityInferenceTransition]
+    ) -> None:
+        """
+        Emit structured diagnostics when adaptive priority changes tier.
+        """
+
+        if transition is None:
+            return
+
+        evidence = transition.evidence
+        logger.info(
+            "LLM priority tier changed",
+            extra={
+                "component": "adapters.llm.gemini",
+                "event": "llm.priority.transition",
+                "llm.model": self.__configuration.model,
+                "llm.tier.previous": transition.previous.value,
+                "llm.tier.current": transition.current.value,
+                "llm.priority.reason": transition.reason.value,
+                "llm.priority.window": evidence.window,
+                "llm.priority.failures": evidence.failures,
+                "llm.priority.slows": evidence.slows,
+                "llm.priority.healthy": evidence.healthy,
+                "llm.priority.threshold.failures": evidence.threshold.failures,
+                "llm.priority.threshold.slows": evidence.threshold.slows,
+                "llm.priority.threshold.latency": evidence.threshold.latency,
+                "llm.priority.threshold.recovery": evidence.threshold.recovery,
+            },
+        )
+
     @classmethod
-    def __collect_usage_metrics(cls, *, response: Any) -> Dict[str, float]:
+    def __collect_usage_metrics(
+        cls,
+        *,
+        response: Any,
+        tier: Optional[InferenceTier] = None,
+    ) -> Dict[str, float]:
         """
         Capture token usage from the SDK response and emit a structured usage event.
         """
 
         metrics: Dict[str, float] = {}
         usage = getattr(response, "usage_metadata", None)
+
+        if tier is not None:
+            observed_traffic = cls.__traffic_type(usage=usage)
+            metrics["priority_used"] = 1.0 if tier == InferenceTier.PRIORITY else 0.0
+            metrics["priority_observed"] = (
+                1.0 if observed_traffic == GEMINI_PRIORITY_TRAFFIC_TYPE else 0.0
+            )
 
         if usage is None:
             return metrics
@@ -462,8 +649,31 @@ class GeminiLLM(LLMPort):
         Cleanup resources.
         """
 
-        if self.__cache:
-            await self.__cache.delete_cache()
+        try:
+            await self.__delete_cache()
+        finally:
+            await self.__close_client()
+
+    async def __delete_cache(self) -> None:
+        """
+        Delete provider cache once when the adapter owns one.
+        """
+
+        if cache := self.__cache:
+            self.__cache = None
+            await cache.delete_cache()
+
+    async def __close_client(self) -> None:
+        """
+        Close async and sync SDK client resources once.
+        """
+
+        if client := self.__client:
+            self.__client = None
+            try:
+                await client.aio.aclose()
+            finally:
+                client.close()
 
     def __build_exception_metadata(
         self, *, exception: Exception, cache_name: Optional[str]
@@ -507,6 +717,7 @@ class GeminiLLM(LLMPort):
         *,
         attempt: int,
         max_retries: int,
+        tier: InferenceTier,
         cache_name: Optional[str],
         metadata: GeminiExceptionMetadata,
     ) -> None:
@@ -521,6 +732,7 @@ class GeminiLLM(LLMPort):
                 "event": "gemini.request.failed",
                 "cache.name": cache_name,
                 "retry.attempt": attempt + 1,
+                "llm.tier.requested": tier.value,
                 "exception.kind": metadata.kind.value,
                 "exception.message": metadata.message,
                 "retry.max_attempts": max_retries + 1,
