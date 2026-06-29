@@ -230,6 +230,36 @@ class TestScreenDocumentStructuredContent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(document.actions, ["Confirm the booking", "Edit the appointment time"])
         self.assertEqual(document.narrative, "Review and book")
 
+    async def test_link_element_is_reduced_to_visible_text(self) -> None:
+        # The transition target carries a generic descriptor; the rendered link
+        # element should be the exact visible text the consumer grounds on.
+        screens = [
+            _screen_row(
+                visual_hash=_HOME_A, activity="com.app/.Home", category="home", description="Home"
+            ),
+            _screen_row(
+                visual_hash=_DETAIL,
+                activity="com.app/.Booking",
+                category="form",
+                description="Booking",
+            ),
+        ]
+        transitions = [
+            _transition_row(source=_HOME_A, destination=_DETAIL, action_target="Continue button")
+        ]
+        graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=transitions))
+        await graph.load()
+
+        documents = {
+            document.slug: document
+            for document in ScreenDocumentExporter()
+            .build(graph=graph, defects=[], metadata=_metadata())
+            .documents
+        }
+
+        self.assertEqual(documents["home"].flow.outbound[0].element, "Continue")
+        self.assertEqual(documents["booking"].flow.inbound[0].element, "Continue")
+
     async def test_legacy_rich_blob_is_decomposed_into_structured_fields(self) -> None:
         # A screen persisted before structured content existed only has the legacy
         # rich-description markdown blob; the exporter recovers its structure.

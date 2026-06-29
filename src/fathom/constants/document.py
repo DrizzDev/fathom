@@ -27,3 +27,29 @@ class Relation(StrEnum):
 
     INBOUND = "from"
     OUTBOUND = "to"
+
+
+# Generic element-type descriptors the vision model appends to a target's visible
+# text (for example "Continue button", "Email input field"). They are stripped from
+# a link's element so the rendered target matches the element's exact on-screen text,
+# which is what the test-authoring consumer grounds against. Ordered longest-first so
+# multi-word descriptors are matched before their single-word tails.
+GENERIC_ELEMENT_SUFFIXES: tuple[str, ...] = (
+    "input field",
+    "text field",
+    "search field",
+    "search bar",
+    "button",
+    "checkbox",
+    "dropdown",
+    "toggle",
+    "switch",
+    "icon",
+    "field",
+    "option",
+    "tab",
+)
+
+# Shortest remaining text, after stripping a descriptor, that is still treated as a
+# usable visible-text target; below this the original target is kept unchanged.
+MINIMUM_VISIBLE_TARGET_LENGTH: int = 2

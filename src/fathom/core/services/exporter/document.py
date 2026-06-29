@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Tuple
 from fathom.constants.document import Relation, SectionHeading
 from fathom.constants.exploration import MAX_SCREEN_LABEL_LENGTH
 from fathom.constants.screen import ZERO_HASH, ScreenCategory
+from fathom.core.services.exporter.element import ElementText
 from fathom.core.services.exporter.graph import GraphLabeler
 from fathom.infrastructure.memory.knowledge_graph import GraphNode, KnowledgeGraph
 from fathom.schemas.content import ScreenContent
@@ -217,7 +218,9 @@ class ScreenDocumentExporter:
                 destination_key = membership.get(edge.destination_hash)
                 if destination_key is None or destination_key == source_key:
                     continue
-                element = edge.action_target or None
+                element = (
+                    ElementText.visible(target=edge.action_target) if edge.action_target else None
+                )
                 self.__merge_link(
                     bucket=outbound.setdefault(source_key, {}),
                     action=edge.action_type,
