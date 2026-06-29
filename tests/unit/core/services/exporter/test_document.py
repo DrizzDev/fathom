@@ -10,6 +10,7 @@ from fathom.core.services.exporter.document import (
     ScreenDocumentRenderer,
 )
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
+from fathom.schemas.content import ScreenContent
 from fathom.schemas.defect import Defect, DefectEvidence
 from fathom.schemas.document import DocumentIndex, ScreenDocument, ScreenFlow, ScreenLink
 from fathom.schemas.report import ReportMetadata
@@ -29,6 +30,7 @@ def _screen_row(
     rich: Optional[str] = None,
     visits: int = 1,
     structure: Optional[str] = None,
+    content: Optional[ScreenContent] = None,
 ) -> Dict[str, Any]:
     return {
         "visual_hash": visual_hash,
@@ -45,6 +47,7 @@ def _screen_row(
         "exhausted": False,
         "relevance": "unscoped",
         "category": category,
+        "content_json": content.model_dump_json() if content else None,
     }
 
 
@@ -183,13 +186,80 @@ class TestScreenDocumentExporter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(by_slug["restaurant-detail"].defects), 1)
         self.assertEqual(by_slug["home-feed"].defects, [])
 
-    async def test_narrative_is_the_nodes_own_rich_description(self) -> None:
+    async def test_narrative_is_the_screen_description(self) -> None:
         by_slug = self.__by_slug(self.__build())
 
-        self.assertEqual(by_slug["home-feed"].narrative, "Home prose")
-        self.assertEqual(by_slug["restaurant-detail"].narrative, "Detail prose")
-        # HOME_B carries no rich description of its own; there is no activity-level fallback.
-        self.assertEqual(by_slug["home-feed-scrolled-further"].narrative, "")
+        # The screen-summary narrative is the screen's own description; the structured
+        # purpose, elements, and actions now render as their own sections instead.
+        self.assertEqual(by_slug["home-feed"].narrative, "Home feed")
+        self.assertEqual(by_slug["restaurant-detail"].narrative, "Restaurant detail")
+        self.assertEqual(
+            by_slug["home-feed-scrolled-further"].narrative, "Home feed scrolled further"
+        )
+
+
+class TestScreenDocumentStructuredContent(unittest.IsolatedAsyncioTestCase):
+    """The exporter surfaces structured content as first-class document fields."""
+
+    async def test_captured_content_populates_elements_actions_and_purpose(self) -> None:
+        content = ScreenContent(
+            purpose="Review and confirm the booking",
+            elements=["'Confirm' button (bottom)", "Insurance card"],
+            actions=["Confirm the booking", "Edit the appointment time"],
+        )
+        screens = [
+            _screen_row(
+                visual_hash=_HOME_A,
+                activity="com.app/.Booking",
+                category="form",
+                description="Review and book",
+                content=content,
+            )
+        ]
+        graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=[]))
+        await graph.load()
+
+        document = (
+            ScreenDocumentExporter()
+            .build(graph=graph, defects=[], metadata=_metadata())
+            .documents[0]
+        )
+
+        self.assertEqual(document.purpose, "Review and confirm the booking")
+        self.assertEqual(document.elements, ["'Confirm' button (bottom)", "Insurance card"])
+        self.assertEqual(document.actions, ["Confirm the booking", "Edit the appointment time"])
+        self.assertEqual(document.narrative, "Review and book")
+
+    async def test_legacy_rich_blob_is_decomposed_into_structured_fields(self) -> None:
+        # A screen persisted before structured content existed only has the legacy
+        # rich-description markdown blob; the exporter recovers its structure.
+        blob = (
+            "**Activity:** `com.app/.Booking`\n\n"
+            "## Purpose\nReview and finalize the booking.\n\n"
+            "## Elements\nTop bar: 'Cancel' button\nDoctor card\n\n"
+            "## What You Can Do\nReview details\nConfirm the booking"
+        )
+        screens = [
+            _screen_row(
+                visual_hash=_HOME_A,
+                activity="com.app/.Booking",
+                category="form",
+                description="Review and book",
+                rich=blob,
+            )
+        ]
+        graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=[]))
+        await graph.load()
+
+        document = (
+            ScreenDocumentExporter()
+            .build(graph=graph, defects=[], metadata=_metadata())
+            .documents[0]
+        )
+
+        self.assertEqual(document.purpose, "Review and finalize the booking.")
+        self.assertEqual(document.elements, ["Top bar: 'Cancel' button", "Doctor card"])
+        self.assertEqual(document.actions, ["Review details", "Confirm the booking"])
 
 
 class TestScreenDocumentSlugCollision(unittest.IsolatedAsyncioTestCase):
@@ -291,7 +361,8 @@ class TestScreenDocumentStructuralMerge(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(login.fingerprints, 2)
         self.assertEqual(login.visits, 2)
-        self.assertEqual(login.narrative, "Login prose B, longer")
+        # The representative is the richer-described capture; narrative is its description.
+        self.assertEqual(login.narrative, "Login screen, number typed")
         self.assertEqual(otp.fingerprints, 1)
         self.assertEqual(otp.title, "OTP verification screen")
 
@@ -311,6 +382,8 @@ class TestScreenDocumentRenderer(unittest.TestCase):
             activity="com.app/.MainActivity",
             purpose="Restaurant detail",
             narrative="Detail prose describing the layout.",
+            elements=["'Order' button", "Rating stars"],
+            actions=["Place an order", "Read reviews"],
             flow=ScreenFlow(
                 inbound=[ScreenLink(action="tap", element="Restaurant card", screen="Main (Home)")],
                 outbound=[
@@ -348,6 +421,43 @@ class TestScreenDocumentRenderer(unittest.TestCase):
         self.assertIn('tap "Open settings" to Account (x3)', markdown)
         self.assertIn("## Defects", markdown)
         self.assertIn("Button overlaps title", markdown)
+
+    def test_renders_structured_sections_with_a_single_purpose(self) -> None:
+        markdown = self.__renderer.render_screen(document=self.__document())
+
+        self.assertIn("## Purpose\nRestaurant detail", markdown)
+        self.assertIn("## Screen\nDetail prose describing the layout.", markdown)
+        self.assertIn("## Elements", markdown)
+        self.assertIn("'Order' button", markdown)
+        self.assertIn("## What You Can Do", markdown)
+        self.assertIn("Place an order", markdown)
+        # Purpose renders exactly once: no duplicate from a flattened content blob.
+        self.assertEqual(markdown.count("## Purpose"), 1)
+        self.assertEqual(markdown.count("## Elements"), 1)
+
+    def test_structured_sections_sit_between_screen_and_navigation(self) -> None:
+        # The consumer extracts elements and actions from within the Screen section,
+        # so they must render after the Screen heading and before the navigation.
+        markdown = self.__renderer.render_screen(document=self.__document())
+
+        self.assertLess(markdown.index("## Screen"), markdown.index("## Elements"))
+        self.assertLess(markdown.index("## Elements"), markdown.index("## What You Can Do"))
+        self.assertLess(markdown.index("## What You Can Do"), markdown.index("## Reached From"))
+
+    def test_screen_heading_stays_present_for_elements_without_a_summary(self) -> None:
+        document = ScreenDocument(
+            slug="s",
+            title="S",
+            category=ScreenCategory.OTHER,
+            activity="com.app/.S",
+            narrative="",
+            elements=["Notable widget"],
+        )
+
+        markdown = self.__renderer.render_screen(document=document)
+
+        self.assertIn("## Screen", markdown)
+        self.assertLess(markdown.index("## Screen"), markdown.index("## Elements"))
 
     def test_index_links_to_each_document(self) -> None:
         index = DocumentIndex(metadata=_metadata(), documents=[self.__document()])

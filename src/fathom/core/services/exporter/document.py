@@ -16,15 +16,18 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional, Tuple
 
+from fathom.constants.document import Relation, SectionHeading
 from fathom.constants.exploration import MAX_SCREEN_LABEL_LENGTH
 from fathom.constants.screen import ZERO_HASH, ScreenCategory
 from fathom.core.services.exporter.graph import GraphLabeler
 from fathom.infrastructure.memory.knowledge_graph import GraphNode, KnowledgeGraph
+from fathom.schemas.content import ScreenContent
 from fathom.schemas.defect import Defect
 from fathom.schemas.document import DocumentIndex, ScreenDocument, ScreenFlow, ScreenLink
 from fathom.schemas.report import ReportMetadata
 
 _LinkKey = Tuple[str, Optional[str], str]
+_SECTION_HEADING = re.compile(r"^##\s+(?P<heading>.+?)\s*$")
 
 
 class ScreenDocumentExporter:
@@ -283,20 +286,25 @@ class ScreenDocumentExporter:
             collected.extend(defects_by_screen.get(node.visual_hash, []))
         collected.sort(key=lambda defect: (defect.severity.rank, defect.signal.value))
 
-        has_purpose = representative.description and KnowledgeGraph.has_meaningful_description(
+        has_description = representative.description and KnowledgeGraph.has_meaningful_description(
             representative.description
         )
-        purpose = (
-            representative.description.strip() if has_purpose and representative.description else ""
+        description = (
+            representative.description.strip()
+            if has_description and representative.description
+            else ""
         )
+        content = self.__content(nodes=nodes)
 
         return ScreenDocument(
             slug=slug,
             title=title,
             category=representative.category,
             activity=representative.activity,
-            purpose=purpose,
-            narrative=self.__narrative(nodes=nodes),
+            purpose=content.purpose or description,
+            narrative=description,
+            elements=content.elements,
+            actions=content.actions,
             flow=ScreenFlow(
                 inbound=self.__sorted_links(bucket=inbound),
                 outbound=self.__sorted_links(bucket=outbound),
@@ -306,18 +314,74 @@ class ScreenDocumentExporter:
             fingerprints=len(nodes),
         )
 
-    @staticmethod
-    def __narrative(*, nodes: List[GraphNode]) -> str:
+    @classmethod
+    def __content(cls, *, nodes: List[GraphNode]) -> ScreenContent:
         """
-        Returns the richest narrative across the grouped fingerprints.
+        Returns the richest structured content across the grouped fingerprints.
+
+        Prefers content captured directly from describe_screen; for screens persisted
+        before structured content existed, decomposes the richest legacy rich-description
+        blob so their documents still carry elements and actions.
         """
 
-        narratives = [
+        structured = [node.content for node in nodes if node.content is not None]
+        if structured:
+            return max(
+                structured,
+                key=lambda content: (
+                    len(content.elements) + len(content.actions),
+                    len(content.purpose),
+                ),
+            )
+        blobs = [
             node.rich_description.strip()
             for node in nodes
             if node.rich_description and node.rich_description.strip()
         ]
-        return max(narratives, key=len) if narratives else ""
+        return cls.__decompose(text=max(blobs, key=len)) if blobs else ScreenContent()
+
+    @classmethod
+    def __decompose(cls, *, text: str) -> ScreenContent:
+        """
+        Recovers structured content from a legacy rich-description markdown blob.
+        """
+
+        sections = cls.__sections(text=text)
+        return ScreenContent(
+            purpose=sections.get(SectionHeading.PURPOSE.value, ""),
+            elements=cls.__lines(text=sections.get(SectionHeading.ELEMENTS.value, "")),
+            actions=cls.__lines(text=sections.get(SectionHeading.ACTIONS.value, "")),
+        )
+
+    @staticmethod
+    def __sections(*, text: str) -> Dict[str, str]:
+        """
+        Maps each second-level heading in markdown text to its body.
+        """
+
+        sections: Dict[str, str] = {}
+        heading: Optional[str] = None
+        body: List[str] = []
+        for line in text.splitlines():
+            match = _SECTION_HEADING.match(line)
+            if match:
+                if heading is not None:
+                    sections[heading] = "\n".join(body).strip()
+                heading = match.group("heading")
+                body = []
+            elif heading is not None:
+                body.append(line)
+        if heading is not None:
+            sections[heading] = "\n".join(body).strip()
+        return sections
+
+    @staticmethod
+    def __lines(*, text: str) -> List[str]:
+        """
+        Splits a section body into trimmed, non-empty entries.
+        """
+
+        return [line.strip() for line in text.splitlines() if line.strip()]
 
     @staticmethod
     def __sorted_links(*, bucket: Dict[_LinkKey, ScreenLink]) -> List[ScreenLink]:
@@ -354,13 +418,50 @@ class ScreenDocumentRenderer:
 
         sections = [
             self.__screen_header(document=document),
-            self.__section(heading="Purpose", body=document.purpose),
-            self.__section(heading="Screen", body=document.narrative),
-            self.__links(heading="Reached From", links=document.flow.inbound, relation="from"),
-            self.__links(heading="Leads To", links=document.flow.outbound, relation="to"),
+            self.__section(heading=SectionHeading.PURPOSE.value, body=document.purpose),
+            self.__screen_section(document=document),
+            self.__list_section(heading=SectionHeading.ELEMENTS.value, items=document.elements),
+            self.__list_section(heading=SectionHeading.ACTIONS.value, items=document.actions),
+            self.__links(
+                heading=SectionHeading.REACHED_FROM.value,
+                links=document.flow.inbound,
+                relation=Relation.INBOUND.value,
+            ),
+            self.__links(
+                heading=SectionHeading.LEADS_TO.value,
+                links=document.flow.outbound,
+                relation=Relation.OUTBOUND.value,
+            ),
             self.__defects(defects=document.defects),
         ]
         return "\n\n".join(section for section in sections if section)
+
+    @staticmethod
+    def __screen_section(*, document: ScreenDocument) -> str:
+        """
+        Renders the screen-summary section.
+
+        Elements and actions render beneath this heading and the consumer extracts
+        them from within it, so the heading stays present whenever the screen has
+        elements or actions even when it carries no prose summary of its own.
+        """
+
+        body = document.narrative.strip()
+        if body:
+            return f"## {SectionHeading.SCREEN.value}\n{body}"
+        if document.elements or document.actions:
+            return f"## {SectionHeading.SCREEN.value}"
+        return ""
+
+    @staticmethod
+    def __list_section(*, heading: str, items: List[str]) -> str:
+        """
+        Renders a per-line list section, or nothing when there are no items.
+        """
+
+        if not items:
+            return ""
+        return "\n".join([f"## {heading}", "", *items])
 
     @staticmethod
     def __index_header(*, index: DocumentIndex) -> str:
@@ -465,7 +566,7 @@ class ScreenDocumentRenderer:
         ]
         return "\n".join(
             [
-                "## Defects",
+                f"## {SectionHeading.DEFECTS.value}",
                 "",
                 "| Severity | Signal | Count | Summary |",
                 "| --- | --- | --- | --- |",
