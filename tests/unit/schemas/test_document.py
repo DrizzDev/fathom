@@ -44,6 +44,7 @@ class TestScreenDocumentModels(unittest.TestCase):
         self.assertEqual(document.narrative, "")
         self.assertEqual(document.elements, [])
         self.assertEqual(document.actions, [])
+        self.assertEqual(document.interactions, [])
         self.assertEqual(document.defects, [])
         self.assertEqual(document.fingerprints, 1)
         self.assertEqual(document.flow.outbound, [])

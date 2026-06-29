@@ -16,12 +16,13 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional, Tuple
 
+from fathom.constants import ActionType
 from fathom.constants.document import Relation, SectionHeading
 from fathom.constants.exploration import MAX_SCREEN_LABEL_LENGTH
 from fathom.constants.screen import ZERO_HASH, ScreenCategory
 from fathom.core.services.exporter.element import ElementText
 from fathom.core.services.exporter.graph import GraphLabeler
-from fathom.infrastructure.memory.knowledge_graph import GraphNode, KnowledgeGraph
+from fathom.infrastructure.memory.knowledge_graph import GraphEdge, GraphNode, KnowledgeGraph
 from fathom.schemas.content import ScreenContent
 from fathom.schemas.defect import Defect
 from fathom.schemas.document import (
@@ -60,7 +61,9 @@ class ScreenDocumentExporter:
         titles = {key: self.__title(node=representatives[key]) for key in groups}
         slugs = self.__slugs(ordered=ordered, titles=titles)
         membership = self.__membership(groups=groups)
-        inbound, outbound = self.__flows(graph=graph, membership=membership, titles=titles)
+        inbound, outbound, interactions = self.__flows(
+            graph=graph, membership=membership, titles=titles
+        )
         defects_by_screen = self.__defects_by_screen(defects=defects)
 
         documents = [
@@ -71,6 +74,7 @@ class ScreenDocumentExporter:
                 title=titles[key],
                 inbound=inbound.get(key, {}),
                 outbound=outbound.get(key, {}),
+                interactions=interactions.get(key, {}),
                 defects_by_screen=defects_by_screen,
             )
             for key in ordered
@@ -208,13 +212,18 @@ class ScreenDocumentExporter:
 
     def __flows(
         self, *, graph: KnowledgeGraph, membership: Dict[str, str], titles: Dict[str, str]
-    ) -> Tuple[Dict[str, Dict[_LinkKey, ScreenLink]], Dict[str, Dict[_LinkKey, ScreenLink]]]:
+    ) -> Tuple[
+        Dict[str, Dict[_LinkKey, ScreenLink]],
+        Dict[str, Dict[_LinkKey, ScreenLink]],
+        Dict[str, Dict[_LinkKey, ScreenLink]],
+    ]:
         """
-        Resolves cross-screen transitions into deduped inbound and outbound links.
+        Resolves transitions into inbound and outbound navigation plus in-place interactions.
         """
 
         inbound: Dict[str, Dict[_LinkKey, ScreenLink]] = {}
         outbound: Dict[str, Dict[_LinkKey, ScreenLink]] = {}
+        interactions: Dict[str, Dict[_LinkKey, ScreenLink]] = {}
 
         for source_hash, edges in graph.edges.items():
             source_key = membership.get(source_hash)
@@ -222,11 +231,23 @@ class ScreenDocumentExporter:
                 continue
             for edge in edges:
                 destination_key = membership.get(edge.destination_hash)
-                if destination_key is None or destination_key == source_key:
+                if destination_key is None:
                     continue
                 element = (
                     ElementText.visible(target=edge.action_target) if edge.action_target else None
                 )
+                if destination_key == source_key:
+                    if self.__is_in_place_interaction(edge=edge):
+                        self.__merge_link(
+                            bucket=interactions.setdefault(source_key, {}),
+                            action=edge.action_type,
+                            element=element,
+                            screen=titles[source_key],
+                            count=edge.count,
+                            value=edge.value,
+                            semantics=edge.semantics,
+                        )
+                    continue
                 self.__merge_link(
                     bucket=outbound.setdefault(source_key, {}),
                     action=edge.action_type,
@@ -246,7 +267,15 @@ class ScreenDocumentExporter:
                     semantics=edge.semantics,
                 )
 
-        return inbound, outbound
+        return inbound, outbound, interactions
+
+    @staticmethod
+    def __is_in_place_interaction(*, edge: GraphEdge) -> bool:
+        """
+        Whether a same-screen edge is a typed input worth recording as an interaction.
+        """
+
+        return edge.action_type == ActionType.TYPE.value and bool(edge.value)
 
     @staticmethod
     def __merge_link(
@@ -301,6 +330,7 @@ class ScreenDocumentExporter:
         title: str,
         inbound: Dict[_LinkKey, ScreenLink],
         outbound: Dict[_LinkKey, ScreenLink],
+        interactions: Dict[_LinkKey, ScreenLink],
         defects_by_screen: Dict[str, List[Defect]],
     ) -> ScreenDocument:
         """
@@ -331,6 +361,7 @@ class ScreenDocumentExporter:
             narrative=description,
             elements=content.elements,
             actions=content.actions,
+            interactions=self.__sorted_links(bucket=interactions),
             flow=ScreenFlow(
                 inbound=self.__sorted_links(bucket=inbound),
                 outbound=self.__sorted_links(bucket=outbound),

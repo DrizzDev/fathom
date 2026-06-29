@@ -307,6 +307,50 @@ class TestScreenDocumentStructuredContent(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(documents["home"].flow.outbound[0].value, "pediatric dentist")
 
+    async def test_in_place_typing_is_recorded_as_a_screen_interaction(self) -> None:
+        # Two captures of the same form (empty, then name typed) collapse into one
+        # logical screen; the typing between them is an in-place interaction, not a
+        # navigation link.
+        screens = [
+            _screen_row(
+                visual_hash=_HOME_A,
+                activity="com.app/.Form",
+                category="form",
+                description="Patient form, empty",
+                structure="formstruct0001",
+            ),
+            _screen_row(
+                visual_hash=_HOME_B,
+                activity="com.app/.Form",
+                category="form",
+                description="Patient form, name typed",
+                structure="formstruct0001",
+            ),
+        ]
+        transitions = [
+            _transition_row(
+                source=_HOME_A,
+                destination=_HOME_B,
+                action_type="type",
+                action_target="Legal first name field",
+                action_value="John",
+            )
+        ]
+        graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=transitions))
+        await graph.load()
+
+        documents = (
+            ScreenDocumentExporter().build(graph=graph, defects=[], metadata=_metadata()).documents
+        )
+
+        self.assertEqual(len(documents), 1)
+        interactions = documents[0].interactions
+        self.assertEqual(len(interactions), 1)
+        self.assertEqual(interactions[0].action, "type")
+        self.assertEqual(interactions[0].element, "Legal first name")
+        self.assertEqual(interactions[0].value, "John")
+        self.assertEqual(documents[0].flow.outbound, [])
+
     async def test_link_carries_semantics(self) -> None:
         semantics = LinkSemantics(outcome="new_screen", region="top_bar", rationale="open booking")
         screens = [

@@ -109,6 +109,10 @@ class ScreenDocument(BaseModel):
         default_factory=list,
         description="Concrete things a user can accomplish on the screen, one per entry",
     )
+    interactions: List[ScreenLink] = Field(
+        default_factory=list,
+        description="In-place actions performed on the screen that stay on it, e.g. typing",
+    )
     flow: ScreenFlow = Field(
         default_factory=ScreenFlow, description="Inbound and outbound navigation"
     )
