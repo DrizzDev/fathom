@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from fathom.constants import ActionType
+from fathom.constants.document import SCREEN_DOCUMENT_SCHEMA_VERSION
 from fathom.constants.exploration import ExpectedOutcome
 from fathom.constants.screen import ScreenCategory
 from fathom.schemas.actions import Action, Bounds
@@ -74,6 +75,7 @@ class TestScreenDocumentModels(unittest.TestCase):
 
         self.assertEqual(index.metadata.workflow, "wf")
         self.assertEqual(index.documents, [])
+        self.assertEqual(index.schema_version, SCREEN_DOCUMENT_SCHEMA_VERSION)
 
 
 class TestLinkSemantics(unittest.TestCase):

@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, List, Optional
 
+from fathom.constants.document import SCREEN_DOCUMENT_ARTIFACT_FILENAME
 from fathom.core.services.exporter.defect import BugReportRenderer
 from fathom.core.services.exporter.document import (
     ScreenDocumentExporter,
@@ -131,6 +132,12 @@ class ExplorationArtifactWriter:
         screens_directory = directory / "screens"
         screens_directory.mkdir(parents=True, exist_ok=True)
         written: List[Path] = []
+
+        # The versioned typed artifact: the structured counterpart to the Markdown,
+        # so a consumer can validate it instead of re-parsing prose.
+        artifact_path = screens_directory / SCREEN_DOCUMENT_ARTIFACT_FILENAME
+        artifact_path.write_text(index.model_dump_json(indent=2), encoding="utf-8")
+        written.append(artifact_path)
 
         index_path = screens_directory / "index.md"
         index_path.write_text(self.__document_renderer.render_index(index=index), encoding="utf-8")

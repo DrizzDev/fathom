@@ -13,6 +13,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from fathom.constants.document import SCREEN_DOCUMENT_SCHEMA_VERSION
 from fathom.constants.screen import ScreenCategory
 from fathom.schemas.actions import Action
 from fathom.schemas.defect import Defect
@@ -125,6 +126,10 @@ class DocumentIndex(BaseModel):
     The full set of per-screen documents for a completed exploration run.
     """
 
+    schema_version: str = Field(
+        default=SCREEN_DOCUMENT_SCHEMA_VERSION,
+        description="Version of the screen-documentation contract this artifact follows",
+    )
     metadata: ReportMetadata = Field(description="Identifying context for the run")
     documents: List[ScreenDocument] = Field(
         default_factory=list, description="One document per logical screen"

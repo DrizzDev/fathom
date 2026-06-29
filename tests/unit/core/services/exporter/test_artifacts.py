@@ -7,11 +7,13 @@ from typing import Optional
 
 from fathom.constants import ActionType
 from fathom.constants.defect import DefectSignal, DefectSource
+from fathom.constants.document import SCREEN_DOCUMENT_SCHEMA_VERSION
 from fathom.core.defect.aggregator import DefectAggregator
 from fathom.core.services.exporter.artifacts import ExplorationArtifactWriter
 from fathom.infrastructure.memory.knowledge_graph import KnowledgeGraph
 from fathom.schemas.actions import Action
 from fathom.schemas.defect import Defect, DefectEvidence
+from fathom.schemas.document import DocumentIndex
 from fathom.schemas.report import ReportMetadata
 from fathom.schemas.screens import ScreenState
 
@@ -96,10 +98,33 @@ class TestExplorationArtifactWriter(unittest.IsolatedAsyncioTestCase):
             self.assertIn(
                 "# Screen Documentation", (directory / "screens" / "index.md").read_text()
             )
-            # One doc per logical screen (home + cart), no screenshots referenced.
-            self.assertEqual(len(screens), 3)
+            # The typed artifact plus one Markdown doc per logical screen (home + cart).
+            self.assertIn("index.json", screens)
+            self.assertEqual(len(screens), 4)
             for screen_doc in screens:
-                self.assertNotIn("![", (directory / "screens" / screen_doc).read_text())
+                if screen_doc.endswith(".md"):
+                    self.assertNotIn("![", (directory / "screens" / screen_doc).read_text())
+
+    async def test_write_emits_versioned_json_artifact(self) -> None:
+        graph = await self.__graph()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "reports"
+            ExplorationArtifactWriter().write(
+                graph=graph,
+                directory=directory,
+                workflow="wf",
+                package="com.app",
+                generated_at="2026-06-12T00:00:00",
+                duration=1.0,
+            )
+
+            artifact = directory / "screens" / "index.json"
+            self.assertTrue(artifact.exists())
+            index = DocumentIndex.model_validate_json(artifact.read_text())
+            self.assertEqual(index.schema_version, SCREEN_DOCUMENT_SCHEMA_VERSION)
+            self.assertEqual(index.metadata.package, "com.app")
+            self.assertGreaterEqual(len(index.documents), 1)
 
     async def test_write_emits_bug_report_when_provided(self) -> None:
         graph = await self.__graph()

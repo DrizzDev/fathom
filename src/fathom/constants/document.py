@@ -53,3 +53,12 @@ GENERIC_ELEMENT_SUFFIXES: tuple[str, ...] = (
 # Shortest remaining text, after stripping a descriptor, that is still treated as a
 # usable visible-text target; below this the original target is kept unchanged.
 MINIMUM_VISIBLE_TARGET_LENGTH: int = 2
+
+# Version of the published screen-documentation JSON artifact. The consumer reads
+# this to detect contract changes; bump the minor for additive fields and the major
+# for breaking changes to the structured screen schema.
+SCREEN_DOCUMENT_SCHEMA_VERSION: str = "1.0"
+
+# Filename of the published machine-readable screen-documentation artifact, written
+# beside the per-screen Markdown so the consumer can prefer it over re-parsing prose.
+SCREEN_DOCUMENT_ARTIFACT_FILENAME: str = "index.json"
