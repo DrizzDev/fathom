@@ -14,7 +14,7 @@ returns typed documents, leaving rendering and file I/O to the renderer.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from fathom.constants import ActionType
 from fathom.constants.document import Relation, SectionHeading
@@ -53,9 +53,12 @@ class ScreenDocumentExporter:
     ) -> DocumentIndex:
         """
         Builds one document per logical screen and the index over them.
+
+        Screens that no transition enters or leaves are dropped as stranded captures.
         """
 
         groups = self.__group(graph=graph)
+        groups = self.__linked(groups=groups, graph=graph)
         ordered = self.__order(groups=groups)
         representatives = {key: self.__representative(nodes=nodes) for key, nodes in groups.items()}
         titles = {key: self.__title(node=representatives[key]) for key in groups}
@@ -120,6 +123,43 @@ class ScreenDocumentExporter:
         if KnowledgeGraph.has_meaningful_description(node.description):
             return True
         return bool(node.rich_description and node.rich_description.strip())
+
+    @classmethod
+    def __linked(
+        cls, *, groups: Dict[str, List[GraphNode]], graph: KnowledgeGraph
+    ) -> Dict[str, List[GraphNode]]:
+        """
+        Drops logical screens no transition links to another documented screen.
+
+        A screen the navigation graph never connects to a documentable neighbour
+        cannot sit on any journey, so it is a stranded capture (a transient frame, an
+        overlay snapshot) that would only add an orphan document. Connectivity mirrors
+        the rendered flow exactly: a cross-screen edge or an in-place interaction
+        counts, while a screen reachable only through a dropped blank frame or a bare
+        self-loop that renders nothing is pruned. Pruning applies only once such links
+        exist: with no documented navigation at all there is nothing to be stranded
+        from, so every screen is kept.
+        """
+
+        membership = cls.__membership(groups=groups)
+        linked: Set[str] = set()
+        for source_hash, edges in graph.edges.items():
+            source_key = membership.get(source_hash)
+            if source_key is None:
+                continue
+            for edge in edges:
+                destination_key = membership.get(edge.destination_hash)
+                if destination_key is None:
+                    continue
+                if destination_key == source_key:
+                    if cls.__is_in_place_interaction(edge=edge):
+                        linked.add(source_key)
+                    continue
+                linked.add(source_key)
+                linked.add(destination_key)
+        if not linked:
+            return groups
+        return {key: nodes for key, nodes in groups.items() if key in linked}
 
     @staticmethod
     def __order(*, groups: Dict[str, List[GraphNode]]) -> List[str]:

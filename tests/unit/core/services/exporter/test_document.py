@@ -212,6 +212,76 @@ class TestScreenDocumentExporter(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class TestScreenDocumentConnectivity(unittest.IsolatedAsyncioTestCase):
+    """The exporter drops logical screens that no transition enters or leaves."""
+
+    async def __index(
+        self, *, screens: List[Dict[str, Any]], transitions: List[Dict[str, Any]]
+    ) -> DocumentIndex:
+        graph = KnowledgeGraph(provider=_Provider(screens=screens, transitions=transitions))
+        await graph.load()
+        return ScreenDocumentExporter().build(graph=graph, defects=[], metadata=_metadata())
+
+    async def test_stranded_screen_is_excluded(self) -> None:
+        source = "0000000000000000"
+        target = "1111111111111111"
+        stranded = "2222222222222222"
+        screens = [
+            _screen_row(
+                visual_hash=source,
+                activity="com.app/.MainActivity",
+                category="home",
+                description="Home feed",
+            ),
+            _screen_row(
+                visual_hash=target,
+                activity="com.app/.DetailActivity",
+                category="detail",
+                description="Restaurant detail",
+            ),
+            _screen_row(
+                visual_hash=stranded,
+                activity="com.app/.GhostActivity",
+                category="other",
+                description="Stranded capture nothing reaches",
+            ),
+        ]
+        transitions = [_transition_row(source=source, destination=target, action_target="Open")]
+
+        index = await self.__index(screens=screens, transitions=transitions)
+
+        activities = {document.activity for document in index.documents}
+        self.assertEqual(len(index.documents), 2)
+        self.assertEqual(activities, {"com.app/.MainActivity", "com.app/.DetailActivity"})
+
+    async def test_destination_only_screen_is_kept(self) -> None:
+        source = "0000000000000000"
+        target = "1111111111111111"
+        screens = [
+            _screen_row(
+                visual_hash=source,
+                activity="com.app/.MainActivity",
+                category="home",
+                description="Home feed",
+            ),
+            _screen_row(
+                visual_hash=target,
+                activity="com.app/.LeafActivity",
+                category="detail",
+                description="Reached leaf with no forward action",
+            ),
+        ]
+        transitions = [_transition_row(source=source, destination=target, action_target="Open")]
+
+        index = await self.__index(screens=screens, transitions=transitions)
+
+        # The leaf is reachable (a destination) so it stays, even with no outbound edge.
+        leaf = next(d for d in index.documents if d.activity == "com.app/.LeafActivity")
+        self.assertEqual(len(index.documents), 2)
+        self.assertEqual(leaf.flow.outbound, [])
+        self.assertEqual([link.screen for link in leaf.flow.inbound], ["Home feed"])
+
+
 class TestScreenDocumentStructuredContent(unittest.IsolatedAsyncioTestCase):
     """The exporter surfaces structured content as first-class document fields."""
 
