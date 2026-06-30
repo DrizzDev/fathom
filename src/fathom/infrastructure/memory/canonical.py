@@ -27,6 +27,10 @@ class CanonicalNode(Protocol):
     def interaction_hash(self) -> Optional[str]:
         """Hash of the node's interactive elements, when available."""
 
+    @property
+    def structure_hash(self) -> Optional[str]:
+        """Text-free layout hash of the node's interactive elements, when available."""
+
 
 class ScreenCanonicalizer:
     """
@@ -126,7 +130,89 @@ class ScreenCanonicalizer:
                 aliases[visual_hash] = structural_match
                 return structural_match
 
-        return self.resolve(visual_hash=visual_hash, nodes=nodes, aliases=aliases)
+        return self.resolve_identity(
+            visual_hash=visual_hash,
+            activity_hash=state.activity_hash,
+            structure_hash=state.structure_hash,
+            nodes=nodes,
+            aliases=aliases,
+        )
+
+    def resolve_identity(
+        self,
+        *,
+        visual_hash: str,
+        activity_hash: Optional[str],
+        structure_hash: Optional[str],
+        nodes: Mapping[str, CanonicalNode],
+        aliases: MutableMapping[str, str],
+    ) -> str:
+        """
+        Map a visual hash to a near-duplicate node, refusing matches a stronger
+        identity signal rules out.
+
+        A pHash near-match on its own over-merges visually similar but distinct
+        screens: generic forms across unrelated features collapse into one node,
+        pooling their transitions into a tangled graph. The candidate is rejected
+        when it sits in a different activity, or carries a different text-free
+        structure hash, so structurally distinct screens stay separate while
+        content variants of one screen (same activity and layout, different
+        loaded data) still coalesce.
+        """
+
+        if visual_hash in nodes:
+            return visual_hash
+        if visual_hash in aliases:
+            return aliases[visual_hash]
+
+        best_hash: Optional[str] = None
+        best_distance = self.__threshold + 1
+
+        for existing_hash, node in nodes.items():
+            if self.__identity_contradicts(
+                activity_hash=activity_hash, structure_hash=structure_hash, node=node
+            ):
+                continue
+            distance = self.hamming_distance(left_hash=visual_hash, right_hash=existing_hash)
+            if distance < best_distance:
+                best_distance = distance
+                best_hash = existing_hash
+
+        if best_hash is not None and best_distance <= self.__threshold:
+            aliases[visual_hash] = best_hash
+            return best_hash
+
+        return visual_hash
+
+    def __identity_contradicts(
+        self,
+        *,
+        activity_hash: Optional[str],
+        structure_hash: Optional[str],
+        node: CanonicalNode,
+    ) -> bool:
+        """
+        Whether a stronger identity signal rules out a visual near-duplicate match.
+
+        Mirrors the contradiction checks in :meth:`ScreenState.is_same_screen`: a
+        different activity, or a different meaningful text-free structure hash,
+        means the two screens are not the same despite visual similarity. The
+        structure hash is deliberately text-free, so a different doctor, list, or
+        typed-in value does not split one logical screen into many nodes.
+        """
+
+        activity_conflict = (
+            self.is_meaningful_hash(activity_hash)
+            and self.is_meaningful_hash(node.activity_hash)
+            and activity_hash != node.activity_hash
+        )
+        structure_conflict = (
+            self.is_meaningful_hash(structure_hash)
+            and self.is_meaningful_hash(node.structure_hash)
+            and structure_hash != node.structure_hash
+        )
+
+        return activity_conflict or structure_conflict
 
     def __match_structural(
         self,

@@ -179,6 +179,28 @@ class KnowledgeGraph:
             state=state, nodes=self.__nodes, aliases=self.__aliases
         )
 
+    def __resolve_identity(
+        self,
+        *,
+        visual_hash: str,
+        activity_hash: Optional[str],
+        structure_hash: Optional[str],
+    ) -> str:
+        """
+        Resolves a raw visual hash without crossing activity or structural identity.
+
+        Used where the full screen state is unavailable (persisted-row hydration)
+        so a near-duplicate merge cannot collapse structurally distinct screens.
+        """
+
+        return self.__canonicalizer.resolve_identity(
+            visual_hash=visual_hash,
+            activity_hash=activity_hash,
+            structure_hash=structure_hash,
+            nodes=self.__nodes,
+            aliases=self.__aliases,
+        )
+
     def resolve_hash(self, visual_hash: str) -> str:
         """
         Resolves a raw visual hash to its canonical form.
@@ -212,7 +234,11 @@ class KnowledgeGraph:
         """
 
         raw_hash = screen["visual_hash"]
-        canonical = self.__resolve(raw_hash)
+        canonical = self.__resolve_identity(
+            visual_hash=raw_hash,
+            activity_hash=screen.get("activity_hash"),
+            structure_hash=screen.get("structure_hash"),
+        )
         existing = self.__nodes.get(canonical)
 
         if existing and canonical != raw_hash:
