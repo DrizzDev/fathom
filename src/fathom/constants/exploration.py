@@ -136,6 +136,11 @@ EXPLORATION_PROGRESS_EVENT: str = "exploration.progress"
 # Longest screen label rendered in a diagram before it is truncated.
 MAX_SCREEN_LABEL_LENGTH: int = 48
 
+# Wall-clock seconds budgeted per requested step when deriving the global
+# exploration timeout from the step budget, so a larger step budget is honoured
+# instead of being cut short by the fixed configured timeout.
+STEP_TIME_BUDGET: int = 30
+
 # A screen counts as a hub once its combined inbound + outbound edges reach this.
 HUB_CONNECTIVITY_THRESHOLD: int = 5
 

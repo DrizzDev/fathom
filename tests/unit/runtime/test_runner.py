@@ -5,7 +5,7 @@ from typing import List, Tuple
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fathom.constants.events import FathomEvent
-from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT
+from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT, STEP_TIME_BUDGET
 from fathom.constants.qualification import QualificationLabel, RationaleCategory
 from fathom.constants.state import CompletionReason
 from fathom.interfaces.qualifier import IntentQualifierPort
@@ -607,6 +607,28 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
 
         runner.device.get_current_package.assert_awaited_once()
         runner.device.launch_package.assert_not_called()
+
+    async def test_timeout_scales_with_step_budget(self) -> None:
+        """
+        The wall-clock timeout is derived from the step budget, so a large step
+        budget is honoured instead of being cut short by the configured timeout.
+        """
+
+        runner, _ = RunnerHarness.build(qualifier=PassingQualifier())
+
+        with (
+            patch(
+                "fathom.runtime.runner.ExplorationStrategy", return_value=self.__strategy()
+            ) as strategy_cls,
+            patch("fathom.runtime.runner.ContextManager"),
+            patch.object(FathomRunner, "_FathomRunner__export_graph", AsyncMock(return_value={})),
+            patch.object(FathomRunner, "_FathomRunner__write_artifacts", AsyncMock()),
+        ):
+            await runner.run_exploration(max_steps=200, request_id="wf")
+
+        kwargs = strategy_cls.call_args.kwargs
+        self.assertEqual(kwargs["max_steps"], 200)
+        self.assertEqual(kwargs["timeout"], float(200 * STEP_TIME_BUDGET))
 
     async def test_focus_intent_forwarded_to_strategy(self) -> None:
         """

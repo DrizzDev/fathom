@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 from fathom.base.paths import SharedPathManager
 from fathom.base.phase import AbandonablePhase
 from fathom.constants import ContextScope, FathomEvent
-from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT
+from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT, STEP_TIME_BUDGET
 from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.state import CompletionReason
@@ -473,6 +473,7 @@ class FathomRunner:
         effective_intent = intent or DEFAULT_EXPLORATION_INTENT
         self.__context_manager.set_roadmap(intent=effective_intent)
 
+        effective_max_steps = max_steps or self.__config.exploration.max_steps
         strategy = ExplorationStrategy(
             llm=self.__llm,
             device=self.__device,
@@ -486,8 +487,8 @@ class FathomRunner:
             configuration=self.__config,
             path_manager=self.__path_manager,
             seed=self.__config.exploration.random_seed,
-            timeout=float(self.__config.exploration.timeout),
-            max_steps=max_steps or self.__config.exploration.max_steps,
+            timeout=self.__effective_timeout(max_steps=effective_max_steps),
+            max_steps=effective_max_steps,
             runtime_configuration=self.__runtime_configuration,
             intent=effective_intent,
             focus=focus,
@@ -964,6 +965,19 @@ class FathomRunner:
                 "total_screens": 0,
                 "experience_count": 0,
             }
+
+    def __effective_timeout(self, *, max_steps: int) -> float:
+        """
+        Derives the global wall-clock budget so it never undercuts the step budget.
+
+        The configured exploration timeout is a floor; the run is allowed at least
+        ``STEP_TIME_BUDGET`` seconds per requested step, so a larger step budget is
+        honoured instead of being cut short by the fixed configured timeout.
+        """
+
+        configured = float(self.__config.exploration.timeout)
+        derived = float(max_steps * STEP_TIME_BUDGET)
+        return max(configured, derived)
 
     async def __ensure_target_package(self, *, package_name: str) -> None:
         """
