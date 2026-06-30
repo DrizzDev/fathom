@@ -568,9 +568,37 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
         strategy.graph = MagicMock(nodes={})
         return strategy
 
-    async def test_explicit_package_is_launched_and_awaited(self) -> None:
+    @staticmethod
+    def __on_launcher_then_app() -> Tuple[AsyncMock, AsyncMock, MagicMock]:
         """
-        A provided package is launched, then the foreground is polled until it surfaces.
+        Device/perception/hash mocks for: launcher, then app focuses while the
+        launcher is still painted, then the app renders and settles.
+        """
+
+        get_current_package = AsyncMock(
+            side_effect=[
+                "com.android.launcher",  # pre-launch fingerprint
+                "ai.hangjam.app",  # poll 1: focused, launcher still drawn
+                "ai.hangjam.app",  # poll 2: app rendering
+                "ai.hangjam.app",  # poll 3: app settled
+            ]
+        )
+        capture = AsyncMock(return_value=MagicMock(image=b"frame"))
+        hash_engine = MagicMock(
+            hash=MagicMock(
+                side_effect=[
+                    "ffffffff00000000",  # pre-launch: launcher
+                    "ffffffff00000000",  # poll 1: still launcher
+                    "00000000ffffffff",  # poll 2: app (changed, not yet settled)
+                    "00000000ffffffff",  # poll 3: app settled
+                ]
+            )
+        )
+        return get_current_package, capture, hash_engine
+
+    async def test_explicit_package_is_launched(self) -> None:
+        """
+        A provided package is launched to the foreground before exploration starts.
         """
 
         runner, _ = RunnerHarness.build(qualifier=PassingQualifier())
@@ -579,6 +607,12 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
         )
         runner.device.get_current_package = AsyncMock(  # type: ignore[attr-defined]
             return_value="ai.hangjam.app"
+        )
+        runner.perception.capture = AsyncMock(  # type: ignore[attr-defined]
+            return_value=MagicMock(image=b"frame")
+        )
+        runner._FathomRunner__visual_hash_engine = MagicMock(  # type: ignore[attr-defined]
+            hash=MagicMock(return_value="aaaaaaaaaaaaaaaa")
         )
 
         with (
@@ -592,11 +626,11 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
             )
 
         runner.device.launch_package.assert_awaited_once_with(package_name="ai.hangjam.app")
-        runner.device.get_current_package.assert_awaited()  # type: ignore[attr-defined]
 
-    async def test_first_capture_waits_for_package_foreground(self) -> None:
+    async def test_first_capture_waits_until_app_renders_past_launcher(self) -> None:
         """
-        The foreground is polled until the launched package surfaces, so the first
+        Polling continues while the launcher is still painted and returns only once
+        the on-package screen has changed away from it and settled, so the first
         capture lands on the app rather than the launcher it was launched from.
         """
 
@@ -604,13 +638,14 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
         runner.device.launch_package = AsyncMock(  # type: ignore[attr-defined]
             return_value=ActionResult(success=True, duration=1)
         )
-        runner.device.get_current_package = AsyncMock(  # type: ignore[attr-defined]
-            side_effect=["com.android.launcher", "com.android.launcher", "ai.hangjam.app"]
-        )
+        get_current_package, capture, hash_engine = self.__on_launcher_then_app()
+        runner.device.get_current_package = get_current_package  # type: ignore[attr-defined]
+        runner.perception.capture = capture  # type: ignore[attr-defined]
+        runner._FathomRunner__visual_hash_engine = hash_engine  # type: ignore[attr-defined]
 
         with (
             patch("fathom.runtime.runner.ExplorationStrategy", return_value=self.__strategy()),
-            patch("fathom.runtime.runner.stability_wait", AsyncMock()) as settle,
+            patch("fathom.runtime.runner.stability_wait", AsyncMock()),
             patch.object(FathomRunner, "_FathomRunner__export_graph", AsyncMock(return_value={})),
             patch.object(FathomRunner, "_FathomRunner__write_artifacts", AsyncMock()),
         ):
@@ -618,11 +653,12 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
                 max_steps=1, request_id="wf", package_name="ai.hangjam.app"
             )
 
+        # Pre-launch capture plus three polls, returning on the settled app frame.
+        self.assertEqual(capture.await_count, 4)
         self.assertEqual(
             runner.device.get_current_package.await_count,  # type: ignore[attr-defined]
-            3,
+            4,
         )
-        self.assertEqual(settle.await_count, 3)
 
     async def test_absent_package_falls_back_to_foreground(self) -> None:
         """
@@ -709,6 +745,36 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
         context_manager_cls.return_value.set_roadmap.assert_called_once_with(
             intent=DEFAULT_EXPLORATION_INTENT
         )
+
+
+class IsRenderedAppScreenTest(unittest.TestCase):
+    """The launch wait accepts only a settled on-package screen that is not the launcher."""
+
+    LAUNCHER = "ffffffff00000000"
+    APP = "00000000ffffffff"
+
+    @staticmethod
+    def __decide(*, current: str, previous: object, launcher: object) -> bool:
+        return FathomRunner._FathomRunner__is_rendered_app_screen(  # type: ignore[attr-defined]
+            current=current, previous=previous, launcher=launcher
+        )
+
+    def test_first_capture_is_never_rendered(self) -> None:
+        self.assertFalse(self.__decide(current=self.LAUNCHER, previous=None, launcher=None))
+
+    def test_unsettled_pair_is_not_rendered(self) -> None:
+        self.assertFalse(self.__decide(current=self.APP, previous=self.LAUNCHER, launcher=None))
+
+    def test_settled_without_a_launcher_frame_is_rendered(self) -> None:
+        self.assertTrue(self.__decide(current=self.APP, previous=self.APP, launcher=None))
+
+    def test_settled_on_the_launcher_is_refused(self) -> None:
+        self.assertFalse(
+            self.__decide(current=self.LAUNCHER, previous=self.LAUNCHER, launcher=self.LAUNCHER)
+        )
+
+    def test_settled_away_from_the_launcher_is_rendered(self) -> None:
+        self.assertTrue(self.__decide(current=self.APP, previous=self.APP, launcher=self.LAUNCHER))
 
 
 if __name__ == "__main__":

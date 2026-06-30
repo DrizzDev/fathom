@@ -16,6 +16,7 @@ from fathom.constants.exploration import (
 )
 from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
+from fathom.constants.screen import DEFAULT_SAME_SCREEN_THRESHOLD
 from fathom.constants.state import CompletionReason
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
@@ -23,6 +24,7 @@ from fathom.core.defect.aggregator import DefectAggregator
 from fathom.core.defect.content import ContentDefectDetector
 from fathom.core.exceptions import DeviceError
 from fathom.core.execution.engine import ExecutionEngine
+from fathom.core.perception.hashing import VisualHashEngine
 from fathom.core.services.defect import DefectAnalysisService
 from fathom.core.services.exporter import ExplorationArtifactWriter
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
@@ -45,6 +47,7 @@ from fathom.schemas.qualification import QualificationVerdict
 from fathom.schemas.report import ReportMetadata
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
+from fathom.schemas.screens import ScreenState
 from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
 from fathom.utils.wait import stability_wait
@@ -133,6 +136,7 @@ class FathomRunner:
         self.__runtime_configuration = runtime_configuration
         self.__path_manager = path_manager
         self.__config = config or FathomConfiguration()
+        self.__visual_hash_engine = VisualHashEngine()
         self.__realignment = realignment or RealignmentPolicy()
         self.__owned_resources: List[LLMPort] = list(owned_resources or [])
         self.__phase = PhaseAnnouncer(
@@ -992,6 +996,8 @@ class FathomRunner:
         and exploration proceeds against whatever screen is foreground.
         """
 
+        launcher_fingerprint = await self.__off_package_fingerprint(package_name=package_name)
+
         try:
             result = await self.__device.launch_package(package_name=package_name)
         except DeviceError as exception:
@@ -1004,29 +1010,97 @@ class FathomRunner:
             )
             return
 
-        await self.__await_foreground(package_name=package_name)
+        await self.__await_rendered_foreground(
+            package_name=package_name, launcher_fingerprint=launcher_fingerprint
+        )
 
-    async def __await_foreground(self, *, package_name: str) -> None:
+    async def __off_package_fingerprint(self, *, package_name: str) -> Optional[str]:
         """
-        Block until the launched package is foreground so the first capture is the app.
+        Perceptual hash of the pre-launch screen when it is off the target package.
 
-        A launch intent returns before the app has rendered, so capturing
-        immediately grabs the launcher it started from, contaminating the graph
-        with an off-package screen and wasting a description call on it. Settle and
-        re-check until the package reports foreground; best-effort, a package that
-        never surfaces within the budget is logged and exploration proceeds.
+        Captured before launch so the wait can tell the launcher frame apart from
+        the app's own first rendered screen: the package reports foreground while
+        the launcher is still painted, so the launcher must be recognised visually.
+        Returns None when the target is already foreground or the screen is unreadable.
         """
 
+        try:
+            if await self.__device.get_current_package() == package_name:
+                return None
+            capture = await self.__perception.capture()
+        except DeviceError:
+            return None
+
+        return self.__visual_hash_engine.hash(image=capture.image)
+
+    async def __await_rendered_foreground(
+        self, *, package_name: str, launcher_fingerprint: Optional[str]
+    ) -> None:
+        """
+        Block until the target package has drawn its own screen, not the launcher.
+
+        A launch intent returns before the app renders, and the package reports
+        foreground while the launcher it started from is still painted, so an
+        immediate capture records the launcher: an in-package-tagged screen prune
+        cannot drop, which anchors the root and wastes a description call. Settle
+        and poll until the screen is on-package, has changed away from the launcher
+        frame, and has stopped changing. Best-effort within the settle budget.
+        """
+
+        previous_fingerprint: Optional[str] = None
         for _ in range(LAUNCH_FOREGROUND_SETTLE_LIMIT):
             await stability_wait(self.__config)
             try:
-                if await self.__device.get_current_package() == package_name:
-                    return
+                if await self.__device.get_current_package() != package_name:
+                    previous_fingerprint = None
+                    continue
+                capture = await self.__perception.capture()
             except DeviceError:
+                previous_fingerprint = None
                 continue
 
+            fingerprint = self.__visual_hash_engine.hash(image=capture.image)
+            if self.__is_rendered_app_screen(
+                current=fingerprint,
+                previous=previous_fingerprint,
+                launcher=launcher_fingerprint,
+            ):
+                return
+            previous_fingerprint = fingerprint
+
         await self.__telemetry.warning(
-            f"{package_name} did not reach the foreground before exploration started"
+            f"{package_name} did not render its own screen before exploration started"
+        )
+
+    @staticmethod
+    def __is_rendered_app_screen(
+        *, current: str, previous: Optional[str], launcher: Optional[str]
+    ) -> bool:
+        """
+        Whether an on-package capture has settled onto the app's own surface.
+
+        Requires the screen to have stopped changing between two captures (the
+        launch animation is over) and, when a launcher frame was seen pre-launch,
+        to differ from it, so a still-painted static launcher is not mistaken for
+        the app it was launched from.
+        """
+
+        if previous is None:
+            return False
+
+        settled = (
+            ScreenState.hamming_distance(left_hash=current, right_hash=previous)
+            <= DEFAULT_SAME_SCREEN_THRESHOLD
+        )
+        if not settled:
+            return False
+
+        if launcher is None:
+            return True
+
+        return (
+            ScreenState.hamming_distance(left_hash=current, right_hash=launcher)
+            > DEFAULT_SAME_SCREEN_THRESHOLD
         )
 
     async def __write_artifacts(
