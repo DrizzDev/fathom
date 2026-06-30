@@ -189,7 +189,7 @@ class ExplorationNodeProvider:
 
         screen_state = get_screen_state(state)
         fingerprint = (
-            ctx.exploration_graph.resolve_hash(screen_state.visual_hash) if screen_state else None
+            ctx.exploration_graph.canonical_for_state(state=screen_state) if screen_state else None
         )
 
         if dfs.root_hash is None and fingerprint:
@@ -231,7 +231,7 @@ class ExplorationNodeProvider:
             result[CKey.ANALYSIS_DURATION] = 0.0
             return cast("ExplorationGraphState", result)
 
-        fingerprint = ctx.exploration_graph.resolve_hash(screen_state.visual_hash)
+        fingerprint = ctx.exploration_graph.canonical_for_state(state=screen_state)
         dfs.scanning_hash = fingerprint
 
         depth = dfs.depth
@@ -440,16 +440,15 @@ class ExplorationNodeProvider:
             session_id=ctx.workflow_id, step_number=ctx.agent_state.step_count
         )
         post_state = ctx.perception.build_state(capture=post_capture)
-        post_hash = ctx.exploration_graph.resolve_hash(post_state.visual_hash)
-        pre_hash = ctx.exploration_graph.resolve_hash(step_result.pre_hash)
+        post_node = await ctx.exploration_graph.add_screen(state=post_state)
+        post_hash = post_node.visual_hash
+        post_is_new = post_node.visit_count == 1
+        pre_hash = step_result.pre_hash
 
         step_result = step_result.model_copy(
             update={"post_hash": post_hash, "screen_changed": pre_hash != post_hash}
         )
         ctx.agent_state.record_step(result=step_result)
-
-        post_is_new = not ctx.exploration_graph.has_screen(visual_hash=post_hash)
-        await ctx.exploration_graph.add_screen(state=post_state)
 
         await self.__persist_transition(
             action=action,
@@ -750,7 +749,9 @@ class ExplorationNodeProvider:
         """
 
         ctx = self.__context
-        pre_hash = screen_state.visual_hash if screen_state else "0"
+        pre_hash = (
+            ctx.exploration_graph.canonical_for_state(state=screen_state) if screen_state else "0"
+        )
         step = Step(action=action, screen_hash=pre_hash, step_number=ctx.agent_state.step_count)
 
         start_time = time.time()

@@ -208,6 +208,19 @@ class KnowledgeGraph:
 
         return self.__resolve(visual_hash)
 
+    def canonical_for_state(self, *, state: ScreenState) -> str:
+        """
+        Resolves a freshly observed screen to its canonical node via gated identity.
+
+        Callers that re-capture a screen (edge endpoints, DFS routing) get a fresh
+        perceptual hash that misses the node and alias maps; resolving it by bare
+        visual distance would snap it onto the nearest-looking node in any activity.
+        Routing through the same gated resolution as add_screen keeps every such
+        lookup on the correct node, so transitions never cross-staple features.
+        """
+
+        return self.__resolve_for_state(state)
+
     async def load(self) -> None:
         """
         Hydrates the in-memory graph from persistence, deduplicating on load.

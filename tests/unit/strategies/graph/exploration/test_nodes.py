@@ -59,10 +59,17 @@ def _analysis(
     )
 
 
+def _node_for(*, state: Any, **_: Any) -> Mock:
+    """A freshly registered node mirroring the observed state (first visit)."""
+
+    return Mock(visual_hash=state.visual_hash, visit_count=1)
+
+
 def _graph_mock(**overrides: Any) -> Mock:
     graph = Mock(
         nodes={},
         resolve_hash=Mock(side_effect=lambda value: value),
+        canonical_for_state=Mock(side_effect=lambda *, state: state.visual_hash),
         build_exploration_context=Mock(return_value="CONTEXT"),
         get_tried_actions=Mock(return_value=[]),
         get_screen=Mock(return_value=None),
@@ -70,7 +77,7 @@ def _graph_mock(**overrides: Any) -> Mock:
         has_screen=Mock(return_value=False),
         exhausted_hashes=Mock(return_value=set()),
         node_count=0,
-        add_screen=AsyncMock(),
+        add_screen=AsyncMock(side_effect=_node_for),
         update_rich_description=AsyncMock(),
         record_transition=AsyncMock(),
         mark_exhausted=AsyncMock(),

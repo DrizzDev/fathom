@@ -657,3 +657,58 @@ class TestPruneForeignScreens(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.__graph.prune_foreign_screens(package="in.swiggy.android"), 0)
         self.assertEqual(self.__graph.node_count, 1)
+
+
+class TestCanonicalForStateGating(unittest.IsolatedAsyncioTestCase):
+    """A re-captured screen resolves to its own activity's node, never the nearest pixels."""
+
+    def setUp(self) -> None:
+        self.__graph = KnowledgeGraph(provider=_FakeProvider())
+
+    @staticmethod
+    def __screen(*, visual_hash: str, activity_hash: str, structure_hash: str) -> ScreenState:
+        return ScreenState(
+            activity=f"com.app/.{activity_hash}",
+            timestamp=0,
+            activity_hash=activity_hash,
+            visual_hash=visual_hash,
+            structure_hash=structure_hash,
+        )
+
+    async def __seed_two_features(self) -> None:
+        """Two screens one pixel apart but in different features (activity + structure)."""
+
+        await self.__graph.add_screen(
+            state=self.__screen(
+                visual_hash="ffffffff00000000",
+                activity_hash="aaaaaaaaaaaaaaaa",
+                structure_hash="1111111111111111",
+            )
+        )
+        await self.__graph.add_screen(
+            state=self.__screen(
+                visual_hash="ffffffff00000001",
+                activity_hash="bbbbbbbbbbbbbbbb",
+                structure_hash="2222222222222222",
+            )
+        )
+
+    async def test_one_pixel_apart_features_stay_two_nodes(self) -> None:
+        await self.__seed_two_features()
+        self.assertEqual(self.__graph.node_count, 2)
+
+    async def test_recapture_resolves_within_feature(self) -> None:
+        await self.__seed_two_features()
+        recapture = self.__screen(
+            visual_hash="ffffffff00000003",
+            activity_hash="aaaaaaaaaaaaaaaa",
+            structure_hash="1111111111111111",
+        )
+        # Two bits from the pharmacy node, one bit from the PIN node, yet the gate
+        # follows activity and structure back onto the pharmacy node, not the pixels.
+        self.assertEqual(self.__graph.canonical_for_state(state=recapture), "ffffffff00000000")
+
+    async def test_bare_resolution_snaps_to_nearest_pixels(self) -> None:
+        await self.__seed_two_features()
+        # The ungated path, by contrast, snaps to the closest pixels: the PIN node.
+        self.assertEqual(self.__graph.resolve_hash("ffffffff00000003"), "ffffffff00000001")
