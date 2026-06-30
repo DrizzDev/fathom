@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 from fathom.base.paths import SharedPathManager
 from fathom.base.phase import AbandonablePhase
 from fathom.constants import ContextScope, FathomEvent
-from fathom.constants.exploration import DEFAULT_EXPLORATION_INTENT, STEP_TIME_BUDGET
+from fathom.constants.exploration import (
+    DEFAULT_EXPLORATION_INTENT,
+    LAUNCH_FOREGROUND_SETTLE_LIMIT,
+    STEP_TIME_BUDGET,
+)
 from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.state import CompletionReason
@@ -43,6 +47,7 @@ from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
+from fathom.utils.wait import stability_wait
 from fathom.version import VersionInfo
 
 if TYPE_CHECKING:
@@ -997,6 +1002,32 @@ class FathomRunner:
             await self.__telemetry.warning(
                 f"Launch of {package_name} did not succeed: {result.error}"
             )
+            return
+
+        await self.__await_foreground(package_name=package_name)
+
+    async def __await_foreground(self, *, package_name: str) -> None:
+        """
+        Block until the launched package is foreground so the first capture is the app.
+
+        A launch intent returns before the app has rendered, so capturing
+        immediately grabs the launcher it started from, contaminating the graph
+        with an off-package screen and wasting a description call on it. Settle and
+        re-check until the package reports foreground; best-effort, a package that
+        never surfaces within the budget is logged and exploration proceeds.
+        """
+
+        for _ in range(LAUNCH_FOREGROUND_SETTLE_LIMIT):
+            await stability_wait(self.__config)
+            try:
+                if await self.__device.get_current_package() == package_name:
+                    return
+            except DeviceError:
+                continue
+
+        await self.__telemetry.warning(
+            f"{package_name} did not reach the foreground before exploration started"
+        )
 
     async def __write_artifacts(
         self, *, graph: KnowledgeGraph, workflow_id: str, package_name: str, duration: float

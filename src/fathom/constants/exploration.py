@@ -141,6 +141,12 @@ MAX_SCREEN_LABEL_LENGTH: int = 48
 # instead of being cut short by the fixed configured timeout.
 STEP_TIME_BUDGET: int = 30
 
+# Settle-and-check cycles to wait for a freshly launched target package to reach
+# the foreground before the first capture, so a cold start lands exploration on
+# the app itself rather than the launcher it was launched from. Larger than the
+# relaunch limit because a cold start is slower than re-foregrounding a running app.
+LAUNCH_FOREGROUND_SETTLE_LIMIT: int = 10
+
 # A screen counts as a hub once its combined inbound + outbound edges reach this.
 HUB_CONNECTIVITY_THRESHOLD: int = 5
 

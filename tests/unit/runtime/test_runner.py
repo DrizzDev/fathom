@@ -568,18 +568,22 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
         strategy.graph = MagicMock(nodes={})
         return strategy
 
-    async def test_explicit_package_is_launched_not_queried(self) -> None:
+    async def test_explicit_package_is_launched_and_awaited(self) -> None:
         """
-        A provided package is launched to the foreground; the foreground is not queried.
+        A provided package is launched, then the foreground is polled until it surfaces.
         """
 
         runner, _ = RunnerHarness.build(qualifier=PassingQualifier())
         runner.device.launch_package = AsyncMock(  # type: ignore[attr-defined]
             return_value=ActionResult(success=True, duration=1)
         )
+        runner.device.get_current_package = AsyncMock(  # type: ignore[attr-defined]
+            return_value="ai.hangjam.app"
+        )
 
         with (
             patch("fathom.runtime.runner.ExplorationStrategy", return_value=self.__strategy()),
+            patch("fathom.runtime.runner.stability_wait", AsyncMock()),
             patch.object(FathomRunner, "_FathomRunner__export_graph", AsyncMock(return_value={})),
             patch.object(FathomRunner, "_FathomRunner__write_artifacts", AsyncMock()),
         ):
@@ -588,7 +592,37 @@ class RunnerExplorationLaunchTest(unittest.IsolatedAsyncioTestCase):
             )
 
         runner.device.launch_package.assert_awaited_once_with(package_name="ai.hangjam.app")
-        runner.device.get_current_package.assert_not_called()  # type: ignore[attr-defined]
+        runner.device.get_current_package.assert_awaited()  # type: ignore[attr-defined]
+
+    async def test_first_capture_waits_for_package_foreground(self) -> None:
+        """
+        The foreground is polled until the launched package surfaces, so the first
+        capture lands on the app rather than the launcher it was launched from.
+        """
+
+        runner, _ = RunnerHarness.build(qualifier=PassingQualifier())
+        runner.device.launch_package = AsyncMock(  # type: ignore[attr-defined]
+            return_value=ActionResult(success=True, duration=1)
+        )
+        runner.device.get_current_package = AsyncMock(  # type: ignore[attr-defined]
+            side_effect=["com.android.launcher", "com.android.launcher", "ai.hangjam.app"]
+        )
+
+        with (
+            patch("fathom.runtime.runner.ExplorationStrategy", return_value=self.__strategy()),
+            patch("fathom.runtime.runner.stability_wait", AsyncMock()) as settle,
+            patch.object(FathomRunner, "_FathomRunner__export_graph", AsyncMock(return_value={})),
+            patch.object(FathomRunner, "_FathomRunner__write_artifacts", AsyncMock()),
+        ):
+            await runner.run_exploration(
+                max_steps=1, request_id="wf", package_name="ai.hangjam.app"
+            )
+
+        self.assertEqual(
+            runner.device.get_current_package.await_count,  # type: ignore[attr-defined]
+            3,
+        )
+        self.assertEqual(settle.await_count, 3)
 
     async def test_absent_package_falls_back_to_foreground(self) -> None:
         """
