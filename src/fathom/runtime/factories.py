@@ -8,8 +8,9 @@ from fathom.adapters.device.local.ios import IOSDevice
 from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
 from fathom.adapters.device.remote.ios import IOSRemoteDeviceAdapter
 from fathom.adapters.interaction.noop import NoopInteraction
-from fathom.adapters.interaction.pypika.postgres import PostgresInteraction
-from fathom.adapters.interaction.pypika.sqlite import SQLiteInteraction
+from fathom.adapters.interaction.orm.postgres import (
+    PostgresInteraction as RepositoryPostgresInteraction,
+)
 from fathom.adapters.llm.gemini import GeminiLLM
 from fathom.adapters.perception.android import AndroidPerceptionAdapter
 from fathom.adapters.perception.ios import (
@@ -60,7 +61,6 @@ from fathom.schemas.configuration import (
     LLMConfiguration,
     NoopJobSchedulerConfiguration,
     PostgresInteractionConfiguration,
-    SQLiteInteractionConfiguration,
     StorageConfiguration,
     TelemetryConfiguration,
 )
@@ -263,30 +263,15 @@ class InteractionFactory(InteractionFactoryPort):
         Build the interaction-storage adapter for the selected backend.
         """
 
-        if configuration.backend == InteractionBackend.SQLITE:
-            return self.__create_sqlite(configuration=configuration.sqlite)
         if configuration.backend == InteractionBackend.POSTGRES:
             return self.__create_postgres(configuration=configuration.postgres)
+
         if configuration.backend == InteractionBackend.NOOP:
             return self.__create_noop()
 
         raise NotImplementedError(
             f"Interaction backend {configuration.backend.value} is not implemented"
         )
-
-    def __create_sqlite(
-        self, *, configuration: Optional[SQLiteInteractionConfiguration]
-    ) -> InteractionPort:
-        """
-        Build a SQLite-backed interaction adapter.
-        """
-
-        if configuration is None:
-            raise StorageConfigurationError(
-                backend=InteractionBackend.SQLITE.value,
-                message="SQLite interaction storage requires a configuration",
-            )
-        return SQLiteInteraction(configuration=configuration)
 
     def __create_postgres(
         self, *, configuration: Optional[PostgresInteractionConfiguration]
@@ -300,7 +285,7 @@ class InteractionFactory(InteractionFactoryPort):
                 backend=InteractionBackend.POSTGRES.value,
                 message="Postgres interaction storage requires a configuration",
             )
-        return PostgresInteraction(configuration=configuration)
+        return RepositoryPostgresInteraction(configuration=configuration)
 
     def __create_noop(self) -> InteractionPort:
         """
@@ -318,8 +303,8 @@ class JobSchedulerFactory(JobSchedulerFactoryPort):
     def create(
         self,
         *,
-        configuration: JobSchedulerConfiguration,
         interaction: InteractionPort,
+        configuration: JobSchedulerConfiguration,
     ) -> JobSchedulerPort:
         """
         Build the scheduler adapter for the selected dispatcher kind.
@@ -327,8 +312,8 @@ class JobSchedulerFactory(JobSchedulerFactoryPort):
 
         if configuration.kind == JobSchedulerKind.IN_PROCESS:
             return self.__create_inprocess(
-                configuration=configuration.inprocess,
                 interaction=interaction,
+                configuration=configuration.inprocess,
             )
         if configuration.kind == JobSchedulerKind.NOOP:
             return self.__create_noop(configuration=configuration.noop)
@@ -338,8 +323,8 @@ class JobSchedulerFactory(JobSchedulerFactoryPort):
     def __create_inprocess(
         self,
         *,
-        configuration: Optional[InProcessJobSchedulerConfiguration],
         interaction: InteractionPort,
+        configuration: Optional[InProcessJobSchedulerConfiguration],
     ) -> JobSchedulerPort:
         """
         Build an in-process durable-job scheduler.
@@ -350,10 +335,8 @@ class JobSchedulerFactory(JobSchedulerFactoryPort):
                 backend=JobSchedulerKind.IN_PROCESS.value,
                 message="In-process job scheduler requires a configuration",
             )
-        return InProcessJobScheduler(
-            configuration=configuration,
-            interaction=interaction,
-        )
+
+        return InProcessJobScheduler(interaction=interaction, configuration=configuration)
 
     def __create_noop(
         self, *, configuration: Optional[NoopJobSchedulerConfiguration]
@@ -367,4 +350,5 @@ class JobSchedulerFactory(JobSchedulerFactoryPort):
                 backend=JobSchedulerKind.NOOP.value,
                 message="Noop job scheduler requires a configuration",
             )
+
         return NoopJobScheduler()

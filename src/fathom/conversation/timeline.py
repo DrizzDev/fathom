@@ -1,54 +1,62 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, ClassVar, Dict, List, Optional, Tuple
 
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
-from fathom.constants.collaboration import Label
-from fathom.constants.conversation import EntryKind, Visibility, VisibilityRank
+from fathom.constants.collaboration import Label, MessageKind
+from fathom.constants.conversation import EntryKind, TimelineSource, Visibility, VisibilityRank
 from fathom.conversation.cursor import CompositeTimelineCursor, OpaqueCursor
-from fathom.schemas.conversation import EntryView, ThreadView, TimelineQuery, TimelineView
-from fathom.schemas.interaction import Artifact, Context, Event, Message, SortOrder, Thread
+from fathom.schemas.conversation import (
+    EntryView,
+    ThreadView,
+    TimelineQuery,
+    TimelineView,
+)
+from fathom.schemas.conversation.wire import (
+    WireAnswerBody,
+    WireProgressBody,
+    WireQuestionBody,
+    WireRequestBody,
+    WireResultBody,
+)
+from fathom.schemas.interaction import Artifact, Context, Event, Message, SortOrder
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-VISIBILITY_RANKS: Dict[Visibility, VisibilityRank] = {
-    Visibility.USER: VisibilityRank.USER,
-    Visibility.DEBUG: VisibilityRank.DEBUG,
-    Visibility.AUDIT: VisibilityRank.AUDIT,
-    Visibility.HIDDEN: VisibilityRank.HIDDEN,
-}
-
-# Sentinel labels for the four ledger kinds. Used internally during the
-# consume-emit walk so per-kind cursor positions stay distinct. Single
-# underscore avoids Python's class-scope name-mangling on `__name`.
-_MESSAGES = "messages"
-_EVENTS = "events"
-_ARTIFACTS = "artifacts"
-_CONTEXTS = "contexts"
-
 
 class TimelineComposer:
     """
-    Pure composer that walks merged per-kind candidates, consumes hidden /
-    filtered rows, emits visible rows up to the global page limit, and
-    derives a composite next cursor based on what was *consumed* (not just
-    what was emitted) so that pages of all-hidden rows still advance.
+    Pure composer that walks merged per-kind candidates, consumes hidden / filtered rows, emits visible rows up to the global page limit,
+    and derives a composite next cursor based on what was *consumed* (not just what was emitted) so that pages of all-hidden rows still advance.
     """
+
+    __COMPACT_PROJECTORS: ClassVar[Dict[MessageKind, Callable[..., Optional[BaseModel]]]] = {
+        MessageKind.ANSWER: WireAnswerBody.project,
+        MessageKind.RESULT: WireResultBody.project,
+        MessageKind.REQUEST: WireRequestBody.project,
+        MessageKind.PROGRESS: WireProgressBody.project,
+        MessageKind.QUESTION: WireQuestionBody.project,
+    }
+
+    def __init__(self) -> None:
+        """
+        Initialize the pure timeline entry composer.
+        """
 
     def build(
         self,
         *,
-        thread: Thread,
-        messages: Tuple[Message, ...],
-        events: Tuple[Event, ...],
-        artifacts: Tuple[Artifact, ...],
-        contexts: Tuple[Context, ...],
-        query: TimelineQuery,
-        inbound: CompositeTimelineCursor,
-        has_more: Dict[str, bool],
         total: int,
+        thread: ThreadView,
+        query: TimelineQuery,
+        events: Tuple[Event, ...],
+        has_more: Dict[str, bool],
+        contexts: Tuple[Context, ...],
+        messages: Tuple[Message, ...],
+        artifacts: Tuple[Artifact, ...],
+        inbound: CompositeTimelineCursor,
     ) -> TimelineView:
         """
         Build a filtered, ordered, globally-limited timeline view.
@@ -61,6 +69,7 @@ class TimelineComposer:
 
         candidates = self.__candidates(
             events=events,
+            mode=query.mode,
             order=query.order,
             contexts=contexts,
             messages=messages,
@@ -94,14 +103,15 @@ class TimelineComposer:
 
         return TimelineView(
             total=total,
+            thread=thread,
             next=next_cursor,
             entries=tuple(emitted),
-            thread=self.__thread(thread=thread),
         )
 
     def __candidates(
         self,
         *,
+        mode: Visibility,
         order: SortOrder,
         events: Tuple[Event, ...],
         contexts: Tuple[Context, ...],
@@ -110,24 +120,31 @@ class TimelineComposer:
     ) -> List[Tuple[str, datetime, str, EntryView]]:
         """
         Build the merge-sorted candidate stream tagged by source kind.
-
-        Sort direction matches the per-kind query order so the walk emits in the same order the storage layer returned,
-        keeping cursor semantics consistent (DESC = newest first; ASC = oldest first).
         """
 
         candidates: List[Tuple[str, datetime, str, EntryView]] = []
         for message in messages:
             candidates.append(
-                (_MESSAGES, message.created, message.identity.id, self.__message(message=message))
+                (
+                    TimelineSource.MESSAGES.value,
+                    message.created,
+                    message.identity.id,
+                    self.__message(message=message, mode=mode),
+                )
             )
         for event in events:
             candidates.append(
-                (_EVENTS, event.created, event.identity.id, self.__event(event=event))
+                (
+                    TimelineSource.EVENTS.value,
+                    event.created,
+                    event.identity.id,
+                    self.__event(event=event),
+                )
             )
         for artifact in artifacts:
             candidates.append(
                 (
-                    _ARTIFACTS,
+                    TimelineSource.ARTIFACTS.value,
                     artifact.created,
                     artifact.identity.id,
                     self.__artifact(artifact=artifact),
@@ -135,7 +152,12 @@ class TimelineComposer:
             )
         for context in contexts:
             candidates.append(
-                (_CONTEXTS, context.created, context.identity.id, self.__context(context=context))
+                (
+                    TimelineSource.CONTEXTS.value,
+                    context.created,
+                    context.identity.id,
+                    self.__context(context=context),
+                )
             )
         reverse = order is SortOrder.DESC
         candidates.sort(key=lambda candidate: (candidate[1], candidate[2]), reverse=reverse)
@@ -163,28 +185,28 @@ class TimelineComposer:
 
         composite = CompositeTimelineCursor(
             messages=self.__sub_cursor(
-                kind=_MESSAGES,
                 fallback=inbound.messages,
                 last_consumed=last_consumed,
-                has_more=has_more.get(_MESSAGES, False),
+                kind=TimelineSource.MESSAGES.value,
+                has_more=has_more.get(TimelineSource.MESSAGES.value, False),
             ),
             events=self.__sub_cursor(
-                kind=_EVENTS,
                 fallback=inbound.events,
                 last_consumed=last_consumed,
-                has_more=has_more.get(_EVENTS, False),
+                kind=TimelineSource.EVENTS.value,
+                has_more=has_more.get(TimelineSource.EVENTS.value, False),
             ),
             artifacts=self.__sub_cursor(
-                kind=_ARTIFACTS,
                 fallback=inbound.artifacts,
                 last_consumed=last_consumed,
-                has_more=has_more.get(_ARTIFACTS, False),
+                kind=TimelineSource.ARTIFACTS.value,
+                has_more=has_more.get(TimelineSource.ARTIFACTS.value, False),
             ),
             contexts=self.__sub_cursor(
-                kind=_CONTEXTS,
                 fallback=inbound.contexts,
                 last_consumed=last_consumed,
-                has_more=has_more.get(_CONTEXTS, False),
+                kind=TimelineSource.CONTEXTS.value,
+                has_more=has_more.get(TimelineSource.CONTEXTS.value, False),
             ),
         )
 
@@ -202,25 +224,21 @@ class TimelineComposer:
         last_consumed: Dict[str, Tuple[datetime, str]],
     ) -> str | None:
         """
-        Build one per-kind sub-cursor: last consumed if any, else preserve
-        the inbound position when more data exists, else None.
+        Build one per-kind sub-cursor: last consumed if any, else preserve the inbound position.
         """
 
         if kind in last_consumed:
             created, identifier = last_consumed[kind]
             return OpaqueCursor(created=created, identifier=identifier).encode()
 
-        if has_more:
-            return fallback
-
-        return None
+        return fallback
 
     def message_entry(self, *, message: Message) -> EntryView:
         """
-        Convert one message into a timeline entry.
+        Convert one message into a timeline entry with the full audit-shape body.
         """
 
-        return self.__message(message=message)
+        return self.__message(message=message, mode=Visibility.AUDIT)
 
     def artifact_entry(self, *, artifact: Artifact) -> EntryView:
         """
@@ -236,28 +254,26 @@ class TimelineComposer:
 
         return self.__context(context=context)
 
-    def __thread(self, *, thread: Thread) -> ThreadView:
+    def __message(self, *, message: Message, mode: Visibility) -> EntryView:
         """
-        Convert a ledger thread into a client thread view.
-        """
-
-        return ThreadView(
-            title=thread.title,
-            state=thread.state,
-            digest=thread.digest,
-            id=thread.identity.id,
-            created=thread.timing.created,
-            updated=thread.timing.updated,
-        )
-
-    def __message(self, *, message: Message) -> EntryView:
-        """
-        Convert one message into a timeline entry.
+        Convert one message into a timeline entry with a mode-appropriate body.
         """
 
         visibility = self.__label_visibility(labels=message.content.labels)
+        payload: Dict[str, JsonValue] = {
+            "kind": message.kind.value,
+            "body": self.__project_body(
+                mode=mode,
+                kind=message.kind,
+                body=message.content.body,
+            ),
+        }
+        if mode is not Visibility.USER:
+            payload["audience"] = message.audience.value
+            payload["labels"] = [label.value for label in message.content.labels]
 
         return EntryView(
+            payload=payload,
             task=message.task,
             actor=message.author,
             visibility=visibility,
@@ -265,13 +281,33 @@ class TimelineComposer:
             kind=EntryKind.MESSAGE,
             created=message.created,
             sequence=message.sequence,
-            payload={
-                "kind": message.kind.value,
-                "body": message.content.body,
-                "audience": message.audience.value,
-                "labels": [label.value for label in message.content.labels],
-            },
         )
+
+    @classmethod
+    def __project_body(
+        cls,
+        *,
+        body: JsonValue,
+        mode: Visibility,
+        kind: MessageKind,
+    ) -> JsonValue:
+        """
+        Project one stored body into the shape requested by mode.
+        """
+
+        if mode is not Visibility.USER:
+            return body
+
+        if not isinstance(body, dict):
+            return body
+
+        if (projector := cls.__COMPACT_PROJECTORS.get(kind)) is None:
+            return body
+
+        if (projected := projector(body=body)) is None:
+            return body
+
+        return projected.model_dump(mode="json", exclude_none=True)
 
     def __event(self, *, event: Event) -> EntryView:
         """
@@ -356,13 +392,33 @@ class TimelineComposer:
         Decide whether an entry is visible in the requested mode.
         """
 
-        mode_rank = VISIBILITY_RANKS.get(mode)
-        entry_rank = VISIBILITY_RANKS.get(entry.visibility)
+        mode_rank = self.__visibility_rank(visibility=mode)
+        entry_rank = self.__visibility_rank(visibility=entry.visibility)
 
         if entry_rank is None or mode_rank is None:
             return False
 
         return entry_rank <= mode_rank
+
+    @staticmethod
+    def __visibility_rank(*, visibility: Visibility) -> Optional[VisibilityRank]:
+        """
+        Convert a timeline visibility value to its filtering rank.
+        """
+
+        if visibility is Visibility.USER:
+            return VisibilityRank.USER
+
+        if visibility is Visibility.DEBUG:
+            return VisibilityRank.DEBUG
+
+        if visibility is Visibility.AUDIT:
+            return VisibilityRank.AUDIT
+
+        if visibility is Visibility.HIDDEN:
+            return VisibilityRank.HIDDEN
+
+        return None
 
     def __kind_visible(self, *, entry: EntryView, kinds: Tuple[EntryKind, ...]) -> bool:
         """

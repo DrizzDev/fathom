@@ -26,13 +26,13 @@ TASK_TRANSITIONS: Final[Dict[TaskState, FrozenSet[TaskState]]] = {
             TaskState.CANCELLED,
         }
     ),
-    TaskState.BLOCKED: frozenset({TaskState.RUNNING, TaskState.FAILED, TaskState.CANCELLED}),
-    TaskState.WAITING: frozenset({TaskState.RUNNING, TaskState.FAILED, TaskState.CANCELLED}),
-    TaskState.SUCCEEDED: frozenset(),
     TaskState.FAILED: frozenset(),
-    TaskState.CANCELLED: frozenset(),
     TaskState.EXPIRED: frozenset(),
     TaskState.DELETED: frozenset(),
+    TaskState.CANCELLED: frozenset(),
+    TaskState.SUCCEEDED: frozenset(),
+    TaskState.BLOCKED: frozenset({TaskState.RUNNING, TaskState.FAILED, TaskState.CANCELLED}),
+    TaskState.WAITING: frozenset({TaskState.RUNNING, TaskState.FAILED, TaskState.CANCELLED}),
 }
 
 
@@ -60,7 +60,7 @@ class Lifecycle:
         Validate that a message can be recorded for the optional task state.
         """
 
-        if task_state in TERMINAL_TASK_STATES:
+        if task_state and task_state in TERMINAL_TASK_STATES:
             raise InteractionError(
                 f"Message cannot be recorded for terminal task state '{task_state.value}'."
             )
@@ -69,8 +69,8 @@ class Lifecycle:
         self,
         *,
         task: str,
-        parent: Optional[str],
         root: Optional[str],
+        parent: Optional[str],
     ) -> None:
         """
         Validate that task lineage references are internally consistent.

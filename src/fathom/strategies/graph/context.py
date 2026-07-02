@@ -93,6 +93,7 @@ class GraphContext:
         perception_configuration: PerceptionConfiguration,
         use_xml: bool,
         max_steps: int,
+        execution_id: str,
         workflow_id: str,
         package_name: str,
         tenant: str,
@@ -155,6 +156,7 @@ class GraphContext:
 
         self.__use_xml = use_xml
         self.__max_steps = max_steps
+        self.__execution_id = execution_id
         self.__workflow_id = workflow_id
         self.__tenant = tenant
         self.__thread = thread
@@ -530,6 +532,14 @@ class GraphContext:
         """
 
         return self.__workflow_id
+
+    @property
+    def execution_id(self) -> str:
+        """
+        Returns the conversation ledger execution identifier.
+        """
+
+        return self.__execution_id
 
     @property
     def tenant(self) -> str:

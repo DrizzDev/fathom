@@ -10,7 +10,7 @@ from fathom.constants.collaboration import (
     JobState,
     Label,
 )
-from fathom.interfaces.interaction import InteractionPort
+from fathom.interfaces.interaction import MessagePort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.scheduler import JobHandlerPort
 from fathom.schemas.interaction import Job, Message, MessageCursorQuery, Outcome
@@ -22,13 +22,13 @@ class MemoryProjectorHandler(JobHandlerPort):
     Job handler that projects safe conversation messages into memory.
     """
 
-    def __init__(self, *, interaction: InteractionPort, memory: MemoryPort) -> None:
+    def __init__(self, *, memory: MemoryPort, interaction: MessagePort) -> None:
         """
         Initialize the handler with durable interaction and memory ports.
         """
 
-        self.__interaction = interaction
         self.__memory = memory
+        self.__interaction = interaction
 
     async def handle(self, *, job: Job) -> JobHandlerResult:
         """
@@ -57,7 +57,9 @@ class MemoryProjectorHandler(JobHandlerPort):
             async for message in self.__paginated_messages(job=job)
             if self.__projectable(message=message)
         ]
+
         projected = tuple(projected_list)
+
         await self.__memory.set(
             key=self.__key(thread=job.thread, task=job.task),
             value=self.__value(thread=job.thread, task=job.task, messages=projected),
@@ -73,24 +75,27 @@ class MemoryProjectorHandler(JobHandlerPort):
         Walk every page of task messages so long tasks are projected fully.
 
         The previous implementation read only the first page and silently
-        truncated long task histories. We loop until the underlying cursor
-        is exhausted.
+        truncated long task histories. We loop until the underlying cursor is exhausted.
         """
 
         cursor: str | None = None
+
         while True:
             page = await self.__interaction.list_messages(
                 query=MessageCursorQuery(
-                    tenant=job.identity.tenant,
-                    thread=job.thread,
                     task=job.task,
                     cursor=cursor,
+                    thread=job.thread,
+                    tenant=job.identity.tenant,
                 )
             )
+
             for message in page.items:
                 yield message
+
             if page.next is None:
                 return
+
             cursor = page.next
 
     def __key(self, *, thread: str, task: str) -> str:
@@ -128,6 +133,6 @@ class MemoryProjectorHandler(JobHandlerPort):
                     for message in messages
                 ],
             },
-            separators=(",", ":"),
             sort_keys=True,
+            separators=(",", ":"),
         )

@@ -2,28 +2,26 @@ from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import Field, JsonValue
+
+from fathom.schemas.conversation.base import ConversationSchema
 
 
-class FunctionCallPart(BaseModel):
+class FunctionCallPart(ConversationSchema):
     """
     A tool/function call within a conversation turn.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = Field(description="Tool function name")
     args: Dict[str, JsonValue] = Field(default_factory=dict, description="Function arguments")
 
 
-class TurnPart(BaseModel):
+class TurnPart(ConversationSchema):
     """
     A single content part within a conversation turn.
 
     Exactly one of text, image_data, or function_call should be set.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
     text: Optional[str] = Field(default=None, description="Plain text content for the part.")
     image_data: Optional[bytes] = Field(
@@ -64,14 +62,12 @@ class TurnPart(BaseModel):
         return cls(function_call=FunctionCallPart(name=name, args=args))
 
 
-class ConversationTurn(BaseModel):
+class ConversationTurn(ConversationSchema):
     """
     A single turn in a multi-turn conversation.
 
     Provider-neutral representation that adapters convert to/from their native types (e.g. google.genai.types.Content).
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     role: Literal["user", "model"] = Field(description="Speaker role")
     parts: List[TurnPart] = Field(default_factory=list, description="Content parts")

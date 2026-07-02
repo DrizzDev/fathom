@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from tests.builders import ActionFixtures, AgentFixtures, SubGoalFixtures
-
 from fathom.constants import ActionType
 from fathom.core.agent.state import AgentState
 from fathom.schemas.steps import Step, StepResult
+from tests.builders import ActionFixtures, AgentFixtures, SubGoalFixtures
 
 
 class AgentStateDeferralTest(unittest.TestCase):

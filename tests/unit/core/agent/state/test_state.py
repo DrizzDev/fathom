@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import unittest
 
-from tests.builders import SubGoalFixtures
-
 from fathom.constants import ActionType
 from fathom.constants.retries import (
     DEFAULT_PLANNER_RETRY_LIMIT,
@@ -20,6 +18,7 @@ from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.supervision import BlockReason
+from tests.builders import SubGoalFixtures
 
 
 class AgentStateContinuationTest(unittest.TestCase):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import AsyncContextManager, List, Optional
+from typing import AsyncContextManager, Optional
 
 from fathom.schemas.interaction import (
     Actor,
@@ -24,6 +24,9 @@ from fathom.schemas.interaction import (
     EventCursorQuery,
     EventPage,
     EventQuery,
+    Execution,
+    ExecutionQuery,
+    FinishExecution,
     FinishJob,
     FinishRequest,
     FinishTask,
@@ -34,6 +37,7 @@ from fathom.schemas.interaction import (
     JoinThread,
     LinkArtifact,
     Membership,
+    MembershipQuery,
     Message,
     MessageCursorQuery,
     MessagePage,
@@ -55,6 +59,7 @@ from fathom.schemas.interaction import (
     ScriptVersion,
     ScriptVersionQuery,
     SetThreadTitle,
+    StartExecution,
     Task,
     TaskOneQuery,
     TaskQuery,
@@ -66,18 +71,15 @@ from fathom.schemas.interaction import (
 )
 
 
-class InteractionPort(ABC):
+class LifecyclePort(ABC):
     """
-    Application-facing persistence contract for interaction state.
+    Resource lifecycle and transaction contract for interaction adapters.
     """
 
     @abstractmethod
     async def initialize(self) -> None:
         """
         Realize persistent state required before the adapter accepts traffic.
-
-        Implementations create schemas, apply pending migrations, and open connection pools.
-        Idempotent: safe to call more than once. Hosts invoke this from a startup lifecycle hook so readiness probes can distinguish "store ready" from "store will migrate on first write".
         """
 
         raise NotImplementedError
@@ -86,9 +88,6 @@ class InteractionPort(ABC):
     async def aclose(self) -> None:
         """
         Release adapter resources.
-
-        Implementations close any pools, connections, or files held open by the adapter.
-        Idempotent: safe to call when no resources were ever realized. Hosts wire this into their shutdown lifecycle so adapter resources are released before the event loop terminates.
         """
 
         raise NotImplementedError
@@ -101,6 +100,12 @@ class InteractionPort(ABC):
 
         raise NotImplementedError
 
+
+class ThreadPort(ABC):
+    """
+    Persistence contract for conversation thread rows.
+    """
+
     @abstractmethod
     async def create_thread(self, *, request: CreateThread) -> Thread:
         """
@@ -110,12 +115,56 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_thread(self, *, query: ThreadQuery) -> Thread | None:
+        """
+        Load one tenant-scoped thread.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def set_thread_title(self, *, request: SetThreadTitle) -> Thread:
+        """
+        Set a thread title when the stored title is empty.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def transition(self, *, request: ThreadTransition) -> Thread:
+        """
+        Archive, unarchive, or soft-delete one thread.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_threads(self, *, query: ThreadListQuery) -> ThreadPage:
+        """
+        Load a cursor-paginated page of tenant-scoped threads.
+        """
+
+        raise NotImplementedError
+
+
+class ActorPort(ABC):
+    """
+    Persistence contract for actor rows.
+    """
+
+    @abstractmethod
     async def create_actor(self, *, request: CreateActor) -> Actor:
         """
         Create an actor identity.
         """
 
         raise NotImplementedError
+
+
+class MemberPort(ABC):
+    """
+    Persistence contract for thread membership rows.
+    """
 
     @abstractmethod
     async def join_thread(self, *, request: JoinThread) -> Membership:
@@ -126,12 +175,94 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def find_membership(self, *, query: MembershipQuery) -> Optional[Membership]:
+        """
+        Load one active actor membership in a thread.
+        """
+
+        raise NotImplementedError
+
+
+class TaskPort(ABC):
+    """
+    Persistence contract for task rows.
+    """
+
+    @abstractmethod
     async def open_task(self, *, request: OpenTask) -> Task:
         """
         Open a durable unit of work.
         """
 
         raise NotImplementedError
+
+    @abstractmethod
+    async def finish_task(self, *, request: FinishTask) -> Task:
+        """
+        Finish a task with a terminal outcome.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_tasks(self, *, query: TaskQuery) -> list[Task]:
+        """
+        Load tenant-scoped tasks for one thread.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_task(self, *, query: TaskOneQuery) -> Task | None:
+        """
+        Load one tenant-scoped task by identifier.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def recent_task(self, *, query: TaskQuery) -> Task | None:
+        """
+        Load the most recent non-archived task for one thread, if any.
+        """
+
+        raise NotImplementedError
+
+
+class ExecutionPort(ABC):
+    """
+    Persistence contract for user intent execution rows.
+    """
+
+    @abstractmethod
+    async def start_execution(self, *, request: StartExecution) -> Execution:
+        """
+        Start a durable execution.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def finish_execution(self, *, request: FinishExecution) -> Execution:
+        """
+        Finish a durable execution.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_execution(self, *, query: ExecutionQuery) -> Optional[Execution]:
+        """
+        Load one tenant-scoped execution by identifier.
+        """
+
+        raise NotImplementedError
+
+
+class MessagePort(ABC):
+    """
+    Persistence contract for conversation message rows.
+    """
 
     @abstractmethod
     async def record_message(self, *, request: RecordMessage) -> Message:
@@ -150,73 +281,7 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def finish_task(self, *, request: FinishTask) -> Task:
-        """
-        Finish a task with a terminal outcome.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_thread(self, *, query: ThreadQuery) -> Optional[Thread]:
-        """
-        Load one tenant-scoped thread.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    async def set_thread_title(self, *, request: SetThreadTitle) -> Thread:
-        """
-        Set a thread's title only when the existing title is null. The method is idempotent:
-        a non-null stored title is left unchanged and the existing thread is returned. Raises if the thread does not exist.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    async def transition(self, *, request: ThreadTransition) -> Thread:
-        """
-        Archive, unarchive, or soft-delete one thread.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    async def cleanup(self, *, request: CleanupRequest) -> CleanupResult:
-        """
-        Run a retention sweep: delete idempotency, terminal jobs, old events, and physically remove soft-deleted entities
-        older than the request's per-scope `before` thresholds. Per-scope thresholds of None skip that scope. Returns per-scope deletion counts.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    async def list_threads(self, *, query: ThreadListQuery) -> ThreadPage:
-        """
-        Load a cursor-paginated page of tenant-scoped threads.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_tasks(self, *, query: TaskQuery) -> List[Task]:
-        """
-        Load tenant-scoped tasks for one thread.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_task(self, *, query: TaskOneQuery) -> Optional[Task]:
-        """
-        Load one tenant-scoped task by identifier.
-        """
-
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_messages(self, *, query: MessageQuery) -> List[Message]:
+    async def get_messages(self, *, query: MessageQuery) -> list[Message]:
         """
         Load tenant-scoped messages for one thread and optional task.
         """
@@ -231,8 +296,14 @@ class InteractionPort(ABC):
 
         raise NotImplementedError
 
+
+class EventPort(ABC):
+    """
+    Persistence contract for lifecycle event rows.
+    """
+
     @abstractmethod
-    async def get_events(self, *, query: EventQuery) -> List[Event]:
+    async def get_events(self, *, query: EventQuery) -> list[Event]:
         """
         Load tenant-scoped lifecycle events for one thread.
         """
@@ -247,6 +318,12 @@ class InteractionPort(ABC):
 
         raise NotImplementedError
 
+
+class ArtifactPort(ABC):
+    """
+    Persistence contract for artifact rows.
+    """
+
     @abstractmethod
     async def link_artifact(self, *, request: LinkArtifact) -> Artifact:
         """
@@ -256,7 +333,7 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_artifacts(self, *, query: ArtifactQuery) -> List[Artifact]:
+    async def get_artifacts(self, *, query: ArtifactQuery) -> list[Artifact]:
         """
         Load tenant-scoped artifacts for one thread.
         """
@@ -271,6 +348,12 @@ class InteractionPort(ABC):
 
         raise NotImplementedError
 
+
+class ScriptPort(ABC):
+    """
+    Persistence contract for script rows.
+    """
+
     @abstractmethod
     async def save_script(self, *, request: SaveScript) -> Script:
         """
@@ -280,7 +363,7 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_scripts(self, *, query: ScriptQuery) -> List[Script]:
+    async def get_scripts(self, *, query: ScriptQuery) -> list[Script]:
         """
         Load tenant-scoped scripts.
         """
@@ -288,7 +371,7 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_script_versions(self, *, query: ScriptVersionQuery) -> List[ScriptVersion]:
+    async def get_script_versions(self, *, query: ScriptVersionQuery) -> list[ScriptVersion]:
         """
         Load immutable versions for one script.
         """
@@ -303,6 +386,12 @@ class InteractionPort(ABC):
 
         raise NotImplementedError
 
+
+class PolicyPort(ABC):
+    """
+    Persistence contract for governance policy rows.
+    """
+
     @abstractmethod
     async def save_policy(self, *, request: SavePolicy) -> Policy:
         """
@@ -312,12 +401,18 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_policy(self, *, query: PolicyQuery) -> Optional[Policy]:
+    async def get_policy(self, *, query: PolicyQuery) -> Policy | None:
         """
         Load one tenant-scoped policy.
         """
 
         raise NotImplementedError
+
+
+class JobPort(ABC):
+    """
+    Persistence contract for durable job rows.
+    """
 
     @abstractmethod
     async def schedule_job(self, *, request: ScheduleJob) -> Job:
@@ -328,7 +423,7 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def claim_job(self, *, request: ClaimJob) -> Optional[Job]:
+    async def claim_job(self, *, request: ClaimJob) -> Job | None:
         """
         Claim one available job for a worker.
         """
@@ -344,7 +439,7 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def recover_jobs(self, *, request: RecoverJob) -> List[Job]:
+    async def recover_jobs(self, *, request: RecoverJob) -> list[Job]:
         """
         Release stale claimed jobs.
         """
@@ -360,12 +455,18 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_jobs(self, *, query: JobQuery) -> List[Job]:
+    async def get_jobs(self, *, query: JobQuery) -> list[Job]:
         """
         Load tenant-scoped jobs.
         """
 
         raise NotImplementedError
+
+
+class RequestPort(ABC):
+    """
+    Persistence contract for idempotent request rows.
+    """
 
     @abstractmethod
     async def begin_request(self, *, request: BeginRequest) -> Idempotency:
@@ -384,12 +485,18 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_idempotency(self, *, query: IdempotencyQuery) -> Optional[Idempotency]:
+    async def get_idempotency(self, *, query: IdempotencyQuery) -> Idempotency | None:
         """
         Load one tenant-scoped idempotency record.
         """
 
         raise NotImplementedError
+
+
+class ContextPort(ABC):
+    """
+    Persistence contract for context rows.
+    """
 
     @abstractmethod
     async def build_context(self, *, request: BuildContext) -> Context:
@@ -400,7 +507,7 @@ class InteractionPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_contexts(self, *, query: ContextQuery) -> List[Context]:
+    async def get_contexts(self, *, query: ContextQuery) -> list[Context]:
         """
         Load tenant-scoped contexts for one thread.
         """
@@ -414,3 +521,40 @@ class InteractionPort(ABC):
         """
 
         raise NotImplementedError
+
+
+class CleanupPort(ABC):
+    """
+    Persistence contract for retention cleanup.
+    """
+
+    @abstractmethod
+    async def cleanup(self, *, request: CleanupRequest) -> CleanupResult:
+        """
+        Run a retention sweep and return per-scope deletion counts.
+        """
+
+        raise NotImplementedError
+
+
+class InteractionPort(
+    LifecyclePort,
+    ThreadPort,
+    ActorPort,
+    MemberPort,
+    TaskPort,
+    ExecutionPort,
+    MessagePort,
+    EventPort,
+    ArtifactPort,
+    ScriptPort,
+    PolicyPort,
+    JobPort,
+    RequestPort,
+    ContextPort,
+    CleanupPort,
+    ABC,
+):
+    """
+    Composite adapter compatibility contract for the full interaction store.
+    """

@@ -117,7 +117,13 @@ class TestRedisTelemetryReservedKeyGuard(unittest.IsolatedAsyncioTestCase):
         Caller-supplied `message` is renamed; the envelope `message` reflects the log text.
         """
 
-        await self.__adapter.info("hi", message="caller-supplied")
+        publish = self.__adapter._RedisTelemetryAdapter__publish
+        await publish(
+            message="hi",
+            level="info",
+            color="green",
+            context={"message": "caller-supplied"},
+        )
 
         payload = self.__last_payload()
         self.assertEqual(payload["message"], "hi")

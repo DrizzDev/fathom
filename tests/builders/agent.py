@@ -3,11 +3,10 @@ from __future__ import annotations
 from typing import Iterable, Optional
 from unittest.mock import AsyncMock, Mock
 
-from tests.builders.screens import ScreenFixtures
-
 from fathom.core.agent.state import AgentState
 from fathom.core.context.manager import ContextManager
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
+from tests.builders.screens import ScreenFixtures
 
 
 class AgentFixtures:

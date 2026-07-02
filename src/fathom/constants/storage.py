@@ -13,46 +13,23 @@ class StorageBackend(StrEnum):
     CLOUD = "CLOUD"
 
 
-
 class InteractionBackend(StrEnum):
     """
     Supported backend kinds for the durable interaction storage port.
     """
 
     NOOP = "noop"
-    SQLITE = "sqlite"
     POSTGRES = "postgres"
 
 
-class SQLiteJournalMode(StrEnum):
+class PostgresMigrationMode(StrEnum):
     """
-    Supported SQLite journal modes.
-
-    DELETE / TRUNCATE / PERSIST are rollback-journal modes that work safely on
-    network-mounted filesystems (NFS, EFS, FUSE). MEMORY/OFF disable durable
-    rollback. WAL is the high-throughput shared-memory journal mode and is
-    only safe on local-disk deployments — see SQLiteInteractionConfiguration.
+    Supported startup behaviors for Postgres interaction schema handling.
     """
 
-    WAL = "WAL"
-    OFF = "OFF"
-
-    MEMORY = "MEMORY"
-    PERSIST = "PERSIST"
-
-    DELETE = "DELETE"
-    TRUNCATE = "TRUNCATE"
-
-
-class SQLiteSynchronous(StrEnum):
-    """
-    Supported SQLite synchronous PRAGMA values.
-    """
-
-    OFF = "OFF"
-    FULL = "FULL"
-    EXTRA = "EXTRA"
-    NORMAL = "NORMAL"
+    APPLY = "apply"
+    VALIDATE = "validate"
+    DISABLED = "disabled"
 
 
 class PostgresSslMode(StrEnum):
@@ -71,15 +48,6 @@ class PostgresSslMode(StrEnum):
     VERIFY_FULL = "verify-full"
 
 
-class SqlParameterStyle(StrEnum):
-    """
-    Supported SQL placeholder syntaxes used by interaction storage adapters.
-    """
-
-    NUMBERED = "numbered"
-    QUESTION_MARK = "question_mark"
-
-
 class RetentionClass(StrEnum):
     """
     Supported retention windows applied to artifact and message rows.
@@ -93,28 +61,13 @@ class RetentionClass(StrEnum):
 
 
 # Default backend when neither host nor settings selects one.
-INTERACTION_DEFAULT_BACKEND: Final[InteractionBackend] = InteractionBackend.SQLITE
-
-# SQLite tunable's. DELETE journal mode (rollback journal) is safe across local disks AND network-mounted filesystems (EFS, NFS, FUSE).
-# WAL needs shared memory coordination and is unsafe on shared filesystems; hosts that run on local disks can opt into WAL explicitly via SQLiteInteractionConfiguration.
-INTERACTION_SQLITE_SYNCHRONOUS: Final[SQLiteSynchronous] = SQLiteSynchronous.NORMAL
-INTERACTION_SQLITE_JOURNAL_MODE: Final[SQLiteJournalMode] = SQLiteJournalMode.DELETE
-
-# Time the writer waits for a contended lock before SQLITE_BUSY. Value is in
-# milliseconds because that is the unit the SQLite PRAGMA accepts directly.
-INTERACTION_SQLITE_BUSY_TIMEOUT: Final[int] = 5000
-INTERACTION_SQLITE_FOREIGN_KEYS: Final[bool] = True
-INTERACTION_SQLITE_TEMP_STORE: Final[str] = "MEMORY"
-
-# Memory-mapped read window for the database file. Value is in bytes; default
-# is 256 MiB, large enough that hot-page reads land in the OS page cache.
-INTERACTION_SQLITE_MMAP_SIZE: Final[int] = 268_435_456  # 256 MiB
+INTERACTION_DEFAULT_BACKEND: Final[InteractionBackend] = InteractionBackend.POSTGRES
 
 # Postgres tunable.
 INTERACTION_POSTGRES_DEFAULT_PORT: Final[int] = 5432
 INTERACTION_POSTGRES_DEFAULT_SCHEMA: Final[str] = "fathom"
-INTERACTION_POSTGRES_DEFAULT_POOL_MIN_SIZE: Final[int] = 10
-INTERACTION_POSTGRES_DEFAULT_POOL_MAX_SIZE: Final[int] = 50
+INTERACTION_POSTGRES_DEFAULT_POOL_MIN_SIZE: Final[int] = 1
+INTERACTION_POSTGRES_DEFAULT_POOL_MAX_SIZE: Final[int] = 10
 
 # Postgres `statement_timeout` setting applied per session. Value is in
 # milliseconds because that is the unit the server-side parameter expects.
@@ -123,9 +76,16 @@ INTERACTION_POSTGRES_APPLICATION_NAME: Final[str] = "fathom"
 INTERACTION_POSTGRES_DEFAULT_DATABASE: Final[str] = "fathom"
 INTERACTION_POSTGRES_DEFAULT_STATEMENT_TIMEOUT: Final[int] = 10_000
 
-# Slow-query observability threshold in milliseconds; queries exceeding this
-# emit a structured log record. Default 500 ms keeps the log channel quiet
-# for hot-path reads while surfacing any single query that drifts into the
+INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE: Final[PostgresMigrationMode] = (
+    PostgresMigrationMode.APPLY
+)
+INTERACTION_POSTGRES_ORM_APP: Final[str] = "models"
+INTERACTION_POSTGRES_ORM_CONNECTION: Final[str] = "default"
+INTERACTION_POSTGRES_ORM_ENGINE: Final[str] = "tortoise.backends.asyncpg"
+
+# Slow-query observability threshold, in milliseconds. Queries exceeding this
+# emit a structured log record. Default keeps the log channel quiet for
+# hot-path reads while surfacing any single query that drifts into the
 # user-visible-latency band.
 INTERACTION_SLOW_QUERY_THRESHOLD: Final[int] = 500
 

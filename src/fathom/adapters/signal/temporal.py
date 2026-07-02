@@ -8,6 +8,7 @@ from typing import Optional
 from temporalio import activity
 
 from fathom.constants import SIGNAL_HEARTBEAT_INTERVAL, SignalType
+from fathom.core.exceptions import WorkflowCancelledError
 from fathom.infrastructure.temporal.state import SignalStateRegistry, WorkflowSignalState
 from fathom.interfaces.signal import SignalPort
 
@@ -114,7 +115,7 @@ class TemporalSignalAdapter(SignalPort):
 
     async def wait_for_resume(self) -> None:
         """
-        Block until a resume signal is received.
+        Block until a resume signal is received; raise on cancellation so the executor unwinds.
         """
 
         self.__state.metrics.resume_waits += 1
@@ -122,16 +123,22 @@ class TemporalSignalAdapter(SignalPort):
             f"[signal-adapter] workflow={self.__workflow_id} event=wait_for_resume phase=entering"
         )
 
-        while self.__state.paused:
+        while self.__state.paused and not self.__state.cancelled:
             await asyncio.to_thread(
                 self.__state.wait_until,
                 timeout=SIGNAL_HEARTBEAT_INTERVAL,
-                predicate=lambda: not self.__state.paused,
+                predicate=lambda: not self.__state.paused or self.__state.cancelled,
             )
 
             with contextlib.suppress(RuntimeError):
                 self.__state.metrics.heartbeats_sent += 1
                 activity.heartbeat("Paused - waiting for resume")
+
+        if self.__state.cancelled:
+            logger.info(
+                f"[signal-adapter] workflow={self.__workflow_id} event=wait_for_resume phase=cancelled"
+            )
+            raise WorkflowCancelledError(workflow_id=self.__workflow_id)
 
         logger.info(
             f"[signal-adapter] workflow={self.__workflow_id} event=wait_for_resume phase=resolved"
@@ -139,7 +146,7 @@ class TemporalSignalAdapter(SignalPort):
 
     async def ask(self, *, prompt: str) -> str:
         """
-        Request human input and block until context is injected.
+        Request human input and block until context is injected; raise on cancellation.
         """
 
         logger.info(
@@ -147,6 +154,12 @@ class TemporalSignalAdapter(SignalPort):
         )
 
         while True:
+            if self.__state.cancelled:
+                logger.info(
+                    f"[signal-adapter] workflow={self.__workflow_id} event=ask phase=cancelled"
+                )
+                raise WorkflowCancelledError(workflow_id=self.__workflow_id)
+
             if self.__state.has_context():
                 context = self.__state.dequeue_context()
                 if context is not None:
@@ -159,7 +172,7 @@ class TemporalSignalAdapter(SignalPort):
             await asyncio.to_thread(
                 self.__state.wait_until,
                 timeout=SIGNAL_HEARTBEAT_INTERVAL,
-                predicate=self.__state.has_context,
+                predicate=lambda: self.__state.has_context() or self.__state.cancelled,
             )
 
             with contextlib.suppress(RuntimeError):

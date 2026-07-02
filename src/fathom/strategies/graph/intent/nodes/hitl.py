@@ -3,16 +3,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any, Dict, Optional, Tuple
 
 from fathom.constants.agent import DirectiveKind
 from fathom.constants.messages import HITL_DEFAULT_PROMPT
 from fathom.constants.state import CompletionReason
+from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import WorkflowCancelledError
 from fathom.core.services.hitl import HITLService
 from fathom.interfaces.abort import AbortDetectorPort
 from fathom.schemas.abort import AbortDecision
+from fathom.schemas.recording import Answer, Question
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.context import GraphContext
@@ -78,9 +81,21 @@ class Hitl:
             },
         )
 
+        question_id = await self.__record_question(
+            step=step,
+            prompt=question,
+            started_at=start_time,
+            current_step=current_step,
+        )
         response = await self.__ask_with_cancellation(
             prompt=question,
             step=current_step + 1,
+        )
+        await self.__record_answer(
+            step=step,
+            response=response,
+            question=question_id,
+            started_at=start_time,
         )
 
         decision = await self.__aborter.aborted(response=response)
@@ -88,8 +103,8 @@ class Hitl:
         if decision.aborted:
             await self.__trigger_workflow_cancellation(
                 response=response,
-                step=current_step + 1,
                 decision=decision,
+                step=current_step + 1,
             )
 
         await self.__context.context_manager.inject_user_guidance(
@@ -120,6 +135,111 @@ class Hitl:
             duration=int((time.time() - start_time) * 1000),
         )
 
+    async def __record_question(
+        self,
+        *,
+        step: Step,
+        prompt: str,
+        current_step: int,
+        started_at: float,
+    ) -> Optional[str]:
+        """
+        Persist the HITL question as a user-visible conversation message.
+        """
+
+        recorder = getattr(self.__context, "recorder", None)
+        if recorder is None:
+            return None
+
+        identity = InteractionIdentity(execution=self.__context.execution_id)
+        task = identity.step_task(
+            step_number=step.step_number,
+            action_descriptor=step.action.to_description(),
+        )
+        question = identity.derived_message(
+            name="hitl.question",
+            qualifier=f"{step.step_number}:{step.action.to_description()}",
+        )
+        try:
+            await recorder.record_hitl_question(
+                question=Question(
+                    task=task,
+                    id=question,
+                    tenant=self.__context.tenant,
+                    thread=self.__context.thread,
+                    actor=self.__context.responder,
+                    workspace=self.__context.workspace,
+                    workflow=self.__context.workflow_id,
+                    execution=self.__context.execution_id,
+                    created=datetime.fromtimestamp(started_at, tz=timezone.utc),
+                    body={
+                        "question": prompt,
+                        "step": current_step + 1,
+                    },
+                    metadata={},
+                )
+            )
+            return question
+        except Exception as exception:
+            await self.__context.telemetry.warning(
+                "Conversation HITL question recording failed",
+                step=current_step + 1,
+                error=str(exception),
+            )
+            return None
+
+    async def __record_answer(
+        self,
+        *,
+        step: Step,
+        response: str,
+        started_at: float,
+        question: Optional[str],
+    ) -> None:
+        """
+        Persist the HITL response as a user-visible conversation message.
+        """
+
+        recorder = getattr(self.__context, "recorder", None)
+        if recorder is None or question is None:
+            return
+
+        identity = InteractionIdentity(execution=self.__context.execution_id)
+        task = identity.step_task(
+            step_number=step.step_number,
+            action_descriptor=step.action.to_description(),
+        )
+        try:
+            await recorder.record_hitl_answer(
+                answer=Answer(
+                    task=task,
+                    question=question,
+                    tenant=self.__context.tenant,
+                    thread=self.__context.thread,
+                    actor=self.__context.requester,
+                    workspace=self.__context.workspace,
+                    workflow=self.__context.workflow_id,
+                    execution=self.__context.execution_id,
+                    body={"answer": response},
+                    id=identity.derived_message(
+                        name="hitl.answer",
+                        qualifier=f"{step.step_number}:{response}",
+                    ),
+                    created=datetime.fromtimestamp(
+                        started_at,
+                        tz=timezone.utc,
+                    )
+                    + timedelta(milliseconds=1),
+                    metadata={},
+                )
+            )
+        except Exception as exception:
+            await self.__context.telemetry.warning(
+                "Conversation HITL answer recording failed",
+                error=str(exception),
+                step=step.step_number + 1,
+            )
+
     async def __trigger_workflow_cancellation(
         self,
         *,
@@ -138,8 +258,8 @@ class Hitl:
                 "event": "hitl.abort.cancellation_requested",
                 "step.index": step,
                 "response.preview": response[:120],
-                "abort.confidence": round(decision.confidence, 4),
                 "abort.fallback": decision.fallback,
+                "abort.confidence": round(decision.confidence, 4),
             },
         )
 
@@ -224,8 +344,8 @@ class Hitl:
                 await hitl.consume_context()
                 await self.__trigger_workflow_cancellation(
                     response=context,
-                    step=self.__context.agent_state.step_count,
                     decision=decision,
+                    step=self.__context.agent_state.step_count,
                 )
 
             consumed += 1

@@ -17,11 +17,11 @@ class EventDigest:
     def compute(
         self,
         *,
+        sequence: int,
         kind: EventKind,
-        source: EventSource,
         payload: Metadata,
         created: datetime,
-        sequence: int,
+        source: EventSource,
     ) -> str:
         """
         Return a stable SHA-256 digest for one event payload.
@@ -34,13 +34,13 @@ class EventDigest:
 
         body = json.dumps(
             {
-                "created": created.astimezone(timezone.utc).isoformat(),
                 "kind": kind.value,
-                "payload": payload.entries,
                 "sequence": sequence,
                 "source": source.value,
+                "payload": payload.entries,
+                "created": created.astimezone(timezone.utc).isoformat(),
             },
-            separators=(",", ":"),
             sort_keys=True,
+            separators=(",", ":"),
         )
         return sha256(body.encode("utf-8"), usedforsecurity=False).hexdigest()

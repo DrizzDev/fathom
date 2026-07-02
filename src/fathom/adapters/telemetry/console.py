@@ -27,40 +27,40 @@ class ConsoleTelemetryAdapter(TelemetryPort):
         self.__inner = inner
         self.__console = console or Console()
 
-    async def debug(self, text: str, **context: Any) -> None:
+    async def debug(self, message: str, **context: Any) -> None:
         """
         Publish a debug telemetry event.
         """
 
-        await self.__inner.debug(text, **context)
+        await self.__inner.debug(message, **context)
 
-    async def info(self, text: str, **context: Any) -> None:
+    async def info(self, message: str, **context: Any) -> None:
         """
         Publish an info telemetry event and render selected CLI events.
         """
 
-        await self.__inner.info(text, **context)
-        self.__render(level="info", message=text, context=context)
+        await self.__inner.info(message, **context)
+        self.__render(level="info", message=message, context=context)
 
-    async def warning(self, text: str, **context: Any) -> None:
+    async def warning(self, message: str, **context: Any) -> None:
         """
         Publish a warning telemetry event and render CLI warnings.
         """
 
-        await self.__inner.warning(text, **context)
-        self.__render(level="warning", message=text, context=context)
+        await self.__inner.warning(message, **context)
+        self.__render(level="warning", message=message, context=context)
 
-    async def error(self, text: str, **context: Any) -> None:
+    async def error(self, message: str, **context: Any) -> None:
         """
         Publish an error telemetry event and render CLI errors.
         """
 
-        await self.__inner.error(text, **context)
-        self.__render(level="error", message=text, context=context)
+        await self.__inner.error(message, **context)
+        self.__render(level="error", message=message, context=context)
 
     async def exception(
         self,
-        text: str,
+        message: str,
         *,
         exception: Optional[BaseException] = None,
         **context: Any,
@@ -69,8 +69,8 @@ class ConsoleTelemetryAdapter(TelemetryPort):
         Publish an exception telemetry event and render CLI errors.
         """
 
-        await self.__inner.exception(text, exception=exception, **context)
-        self.__render(level="error", message=text, context=context)
+        await self.__inner.exception(message, exception=exception, **context)
+        self.__render(level="error", message=message, context=context)
 
     def update_identity(self, *, identity: str) -> None:
         """

@@ -42,6 +42,15 @@ class TestArtifactCatalogKind(unittest.TestCase):
 
         self.assertIsNone(self.__catalog.kind(path=Path("/tmp/run/script.txt")))
 
+    def test_generated_step_script_file_returns_none(self) -> None:
+        """
+        A generated step script file is script content and must not be classified.
+        """
+
+        path = Path("/tmp/run/step-010__script__checkout.txt")
+        self.assertTrue(self.__catalog.is_script(path=path))
+        self.assertIsNone(self.__catalog.kind(path=path))
+
     def test_trace_category_returns_trace_kind(self) -> None:
         """
         Files under a `traces/` category folder resolve to ArtifactKind.TRACE.

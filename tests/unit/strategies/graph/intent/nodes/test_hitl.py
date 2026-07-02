@@ -7,8 +7,6 @@ from types import SimpleNamespace
 from typing import List, Optional
 from unittest.mock import AsyncMock
 
-from tests.builders.agent import AgentFixtures
-
 from fathom.constants import ActionType
 from fathom.constants.agent import DirectiveKind
 from fathom.constants.state import CompletionReason
@@ -19,6 +17,7 @@ from fathom.schemas.abort import AbortDecision
 from fathom.schemas.actions import Action
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.hitl import Hitl
+from tests.builders.agent import AgentFixtures
 
 
 class _StubAborter(AbortDetectorPort):
@@ -604,7 +603,18 @@ class _SpyContext(SimpleNamespace):
 
         super().__init__(
             hitl=hitl,
+            tenant="tenant-1",
+            thread="thread-1",
+            workspace=None,
+            requester="human-1",
+            responder="agent-1",
+            recorder=SimpleNamespace(
+                record_hitl_answer=AsyncMock(),
+                record_hitl_question=AsyncMock(),
+            ),
+            telemetry=SimpleNamespace(warning=AsyncMock()),
             workflow_id=workflow_id,
+            execution_id="execution-test",
             is_cancelled=False,
             agent_state=SimpleNamespace(
                 step_count=3,
@@ -697,6 +707,25 @@ class HitlAbortCancellationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.directive_kinds, [])
 
+    async def test_abort_response_is_recorded_before_cancellation(self) -> None:
+        """
+        Abort answers must still be visible in the user timeline.
+        """
+
+        service = _FakeHitlService(ask_response="cancel the workflow")
+        aborter = _StubAborter(aborted=True)
+        context = _SpyContext(hitl=service)
+        helper = Hitl(context=context, aborter=aborter)  # type: ignore[arg-type]
+
+        with self.assertRaises(WorkflowCancelledError):
+            await helper.ask(step=_ask_user_step(), start_time=0.0)
+
+        context.recorder.record_hitl_question.assert_awaited_once()
+        context.recorder.record_hitl_answer.assert_awaited_once()
+        answer = context.recorder.record_hitl_answer.await_args.kwargs["answer"]
+        self.assertEqual("human-1", answer.actor)
+        self.assertEqual({"answer": "cancel the workflow"}, answer.body)
+
 
 class HitlNonAbortResponseTest(unittest.IsolatedAsyncioTestCase):
     """
@@ -718,6 +747,13 @@ class HitlNonAbortResponseTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.success)
         self.assertEqual(context.cancel_calls, 0)
         self.assertFalse(context.is_cancelled)
+        context.recorder.record_hitl_question.assert_awaited_once()
+        context.recorder.record_hitl_answer.assert_awaited_once()
+        question = context.recorder.record_hitl_question.await_args.kwargs["question"]
+        answer = context.recorder.record_hitl_answer.await_args.kwargs["answer"]
+        self.assertEqual("agent-1", question.actor)
+        self.assertEqual("human-1", answer.actor)
+        self.assertEqual(question.id, answer.question)
 
     async def test_retry_action_response_records_retry_directive(self) -> None:
         """

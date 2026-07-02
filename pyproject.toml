@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fathom"
-version = "0.3.0"
+version = "1.0.0"
 readme = "README.md"
 description = "Vision-driven agent orchestration framework for UI crawling"
 
@@ -42,7 +42,6 @@ dependencies = [
     "httpx>=0.28.1",
     "PyYAML>=6.0.0",
     "rich>=14.3.2",
-    "pypika>=0.48.9",
     "Pillow>=12.1.0",
     "pydantic>=2.0.0",
     "tenacity>=9.0.0",
@@ -58,8 +57,9 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "opencv-python>=4.13.0.92",
     "google-cloud-storage>=2.0.0",
-    "google-cloud-documentai>=2.20.0",
+    "tortoise-orm[asyncpg]>=1.1.7",
     "types-PyYAML>=6.0.12.20250915",
+    "google-cloud-documentai>=2.20.0",
     "langgraph>=0.0.10",
     "langgraph-checkpoint-sqlite>=3.0.3"
 ]
@@ -164,6 +164,10 @@ explicit_package_bases = true
 module = "tests.*"
 disallow_untyped_defs = false
 
+[[tool.mypy.overrides]]
+module = "fathom.infrastructure.interaction.orm.models.*"
+disallow_subclassing_any = false
+
 [tool.pyrefly]
 # Pyrefly only resolves first-party imports from entries in ``search-path``;
 # ``src`` is the production root and ``.`` lets it discover the implicit
@@ -172,6 +176,7 @@ disallow_untyped_defs = false
 search-path = ["src", "."]
 project-includes = ["src/**/*.py", "tests/**/*.py"]
 project-excludes = ["**/.venv/**", "**/__pycache__/**"]
+fallback-python-interpreter-name = "python"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -176,6 +176,10 @@ class FathomWorkflow(FathomBaseWorkflow):
 
         try:
             validated_request = IntentRunRequest.model_validate(request)
+            runtime = validated_request.runtime.model_copy(
+                update={"workflow_id": workflow.info().workflow_id}
+            )
+            validated_request = validated_request.model_copy(update={"runtime": runtime})
 
             workflow.logger.info(
                 f"Starting Fathom intent workflow for session {validated_request.runtime.session_id} "
@@ -239,6 +243,10 @@ class FathomExplorationWorkflow(FathomBaseWorkflow):
 
         try:
             validated_request = ExplorationRunRequest.model_validate(request)
+            runtime = validated_request.runtime.model_copy(
+                update={"workflow_id": workflow.info().workflow_id}
+            )
+            validated_request = validated_request.model_copy(update={"runtime": runtime})
 
             workflow.logger.info(
                 f"Starting Fathom exploration for session {validated_request.runtime.session_id}"

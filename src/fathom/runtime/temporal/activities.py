@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
@@ -16,6 +15,7 @@ from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.telemetry import TelemetryLevel
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
+from fathom.runtime.cleanup import ResourceCloser
 from fathom.runtime.factories import (
     DeviceFactory,
     InteractionFactory,
@@ -167,6 +167,8 @@ class FathomActivities:
             )
             partial_resources.append(interaction_adapter)
 
+            await interaction_adapter.initialize()
+
             builder = (
                 Fathom.builder(path_manager=path_manager)
                 .with_llm(port=llm_adapter)
@@ -207,36 +209,12 @@ class FathomActivities:
     async def __drain_partial_resources(*, resources: list[Any]) -> None:
         """
         Best-effort drain of every adapter created during a failed build.
-
-        Adapters expose cleanup() (async) or close() (async or sync) depending
-        on the kind. We probe for each in turn and isolate per-resource errors
-        so one failed close cannot skip the others. Drains in reverse-creation
-        order so later adapters built on earlier ones tear down first.
         """
 
-        for resource in reversed(resources):
-            try:
-                cleanup = getattr(resource, "cleanup", None)
-
-                if cleanup is not None:
-                    result = cleanup()
-                    if inspect.isawaitable(result):
-                        await result
-
-                    continue
-
-                close = getattr(resource, "close", None)
-                if close is None:
-                    continue
-
-                result = close()
-                if inspect.isawaitable(result):
-                    await result
-
-            except Exception as exception:
-                activity.logger.warning(
-                    f"[activity] partial-build resource cleanup failed: {exception}"
-                )
+        await ResourceCloser(
+            logger=activity.logger,
+            message="[activity] partial-build resource cleanup failed",
+        ).drain(resources=resources)
 
     async def __cleanup_runner(self, *, composition: RunnerComposition) -> None:
         """
@@ -310,12 +288,13 @@ class FathomActivities:
                 result = await runner.run_intent(
                     request_id=workflow_id,
                     principal=validated_request.principal,
-                    package_name=validated_request.objective.package_name,
                     intent=validated_request.objective.intent,
                     use_xml=validated_request.objective.use_xml,
                     max_steps=validated_request.objective.max_steps,
                     context_scope=validated_request.memory.context_scope,
+                    package_name=validated_request.objective.package_name,
                     realignment=validated_request.interaction.realignment,
+                    execution_id=validated_request.runtime.execution_id,
                 )
 
                 activity.logger.info(
@@ -405,9 +384,10 @@ class FathomActivities:
 
                 result = await runner.run_exploration(
                     request_id=workflow_id,
-                    principal=validated_request.principal,
                     package_name=package_name,
+                    principal=validated_request.principal,
                     max_steps=validated_request.objective.max_steps,
+                    execution_id=validated_request.runtime.execution_id,
                 )
 
                 activity.logger.info(

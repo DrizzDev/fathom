@@ -385,6 +385,7 @@ class IntentStrategyHarnessBuilder:
             package_name="com.example",
             configuration=configuration,
             device=DeterministicDevicePort(),
+            execution_id="execution-cancelled-script",
             workflow_id="workflow-cancelled-script",
             perception=DeterministicPerceptionPort(),
             summarizer=DeterministicSummarizationPort(),

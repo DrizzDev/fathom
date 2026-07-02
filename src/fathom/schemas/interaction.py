@@ -14,6 +14,7 @@ from fathom.constants.collaboration import (
     ContextPurpose,
     EventKind,
     EventSource,
+    ExecutionState,
     IdempotencyState,
     JobCode,
     JobKind,
@@ -83,6 +84,82 @@ class Identity(BaseModel):
     workspace: Optional[str] = Field(default=None, description="Optional workspace boundary.")
 
 
+class Visibility(BaseModel):
+    """
+    Lifecycle inclusion flags for tenant-scoped reads.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    archived: bool = Field(default=False, description="Include archived rows.")
+    deleted: bool = Field(default=False, description="Include soft-deleted rows.")
+
+    def as_filters(self) -> Dict[str, bool]:
+        """
+        Return ORM lifecycle filter keyword arguments for this visibility.
+        """
+
+        filters: Dict[str, bool] = {}
+
+        if not self.deleted:
+            filters["deleted_at__isnull"] = True
+
+        if not self.archived:
+            filters["archived_at__isnull"] = True
+
+        return filters
+
+
+class MembershipVisibility(BaseModel):
+    """
+    Lifecycle inclusion flags for membership reads that track deletion and departure.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    deleted: bool = Field(default=False, description="Include soft-deleted memberships.")
+    departed: bool = Field(default=False, description="Include departed memberships.")
+
+    def as_filters(self) -> Dict[str, bool]:
+        """
+        Return ORM lifecycle filter keyword arguments for membership visibility.
+        """
+
+        filters: Dict[str, bool] = {}
+
+        if not self.deleted:
+            filters["deleted_at__isnull"] = True
+
+        if not self.departed:
+            filters["departed_at__isnull"] = True
+
+        return filters
+
+
+class ThreadReference(BaseModel):
+    """
+    Tenant-scoped conversation identity.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    thread: str = Field(description="Conversation identifier.")
+    tenant: str = Field(description="Tenant that owns the conversation.")
+
+
+class ThreadScope(BaseModel):
+    """
+    Conversation reference bundled with visibility flags.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    reference: ThreadReference = Field(description="Tenant-scoped conversation identity.")
+    visibility: Visibility = Field(
+        default_factory=Visibility, description="Lifecycle inclusion flags."
+    )
+
+
 class Timing(BaseModel):
     """
     Common lifecycle timestamps and elapsed duration.
@@ -118,8 +195,8 @@ class Runtime(BaseModel):
         frozen=True, extra="forbid", protected_namespaces=(), populate_by_name=True
     )
 
-    kind: Optional[str] = Field(default=None, description="Runtime category for the actor.")
     provider: Optional[str] = Field(default=None, description="Runtime provider name.")
+    kind: Optional[str] = Field(default=None, description="Runtime category for the actor.")
     model: Optional[str] = Field(default=None, description="Provider-neutral model reference.")
 
 
@@ -141,9 +218,9 @@ class Lineage(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
+    origin: Optional[str] = Field(default=None, description="Message that caused the task.")
     parent: Optional[str] = Field(default=None, description="Direct parent task identifier.")
     root: Optional[str] = Field(default=None, description="Root task identifier for the work tree.")
-    origin: Optional[str] = Field(default=None, description="Message that caused the task.")
 
 
 class Plan(BaseModel):
@@ -155,6 +232,7 @@ class Plan(BaseModel):
 
     objective: str = Field(description="Human-readable objective for the task.")
     reference: Optional[str] = Field(default=None, description="Optional target system reference.")
+
     plan: Metadata = Field(default_factory=Metadata, description="Structured plan details.")
     progress: Metadata = Field(default_factory=Metadata, description="Structured progress details.")
 
@@ -213,13 +291,15 @@ class Thread(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     identity: Identity = Field(description="Tenant-scoped thread identity.")
+    creator: Optional[str] = Field(default=None, description="Actor that created the thread.")
     title: Optional[str] = Field(default=None, description="Optional user-facing thread title.")
+
     state: ThreadState = Field(description="Current thread lifecycle state.")
     digest: Optional[str] = Field(default=None, description="Rolling long-context digest.")
     cursor: Optional[int] = Field(
         default=None, ge=0, description="Last sequence included in the digest."
     )
-    creator: Optional[str] = Field(default=None, description="Actor that created the thread.")
+
     timing: Timing = Field(description="Thread lifecycle timestamps.")
     archived: Optional[datetime] = Field(
         alias="archived_at", default=None, description="Timestamp when archived."
@@ -239,12 +319,14 @@ class Actor(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    identity: Identity = Field(description="Tenant-scoped actor identity.")
     kind: ActorKind = Field(description="Actor category.")
     name: str = Field(description="User-facing actor name.")
-    external: Optional[str] = Field(default=None, description="Optional external system reference.")
+    identity: Identity = Field(description="Tenant-scoped actor identity.")
+
     runtime: Runtime = Field(default_factory=Runtime, description="Optional runtime identity.")
     skills: Metadata = Field(default_factory=Metadata, description="Structured skill metadata.")
+    external: Optional[str] = Field(default=None, description="Optional external system reference.")
+
     timing: Timing = Field(description="Actor lifecycle timestamps.")
     metadata: Metadata = Field(
         default_factory=Metadata, description="Optional non-critical metadata."
@@ -258,11 +340,13 @@ class Membership(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    identity: Identity = Field(description="Tenant-scoped membership identity.")
     thread: str = Field(description="Thread joined by the actor.")
     actor: str = Field(description="Actor that belongs to the thread.")
+    identity: Identity = Field(description="Tenant-scoped membership identity.")
+
     role: MembershipRole = Field(description="Actor role inside the thread.")
     scope: MembershipScope = Field(description="Visibility scope for the membership.")
+
     joined: datetime = Field(alias="joined_at", description="Timestamp when the actor joined.")
     departed_at: Optional[datetime] = Field(
         default=None, description="Timestamp when the actor left."
@@ -279,17 +363,22 @@ class Task(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    identity: Identity = Field(description="Tenant-scoped task identity.")
     thread: str = Field(description="Thread that owns the task.")
+    identity: Identity = Field(description="Tenant-scoped task identity.")
+
+    execution: str = Field(description="Execution that owns the task.")
     assignment: Assignment = Field(description="Creator and assignee references.")
+
     lineage: Lineage = Field(description="Task tree references.")
-    kind: TaskKind = Field(description="Category of work represented by the task.")
     state: TaskState = Field(description="Current task lifecycle state.")
     plan: Plan = Field(description="Objective, reference, plan, and progress.")
+    kind: TaskKind = Field(description="Category of work represented by the task.")
+
     terminal: Optional[Terminal] = Field(
         default=None, description="Terminal outcome when finished."
     )
     summary: Optional[str] = Field(default=None, description="Human-readable task result summary.")
+
     timing: Timing = Field(description="Task lifecycle timestamps.")
     deleted: Optional[datetime] = Field(
         alias="deleted_at", default=None, description="Timestamp when deleted."
@@ -306,15 +395,25 @@ class Message(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    identity: Identity = Field(description="Tenant-scoped message identity.")
     thread: str = Field(description="Thread that contains the message.")
-    task: Optional[str] = Field(default=None, description="Optional task scoped by the message.")
+    identity: Identity = Field(description="Tenant-scoped message identity.")
+
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the message.",
+    )
+    task: Optional[str] = Field(
+        default=None, description="Optional task identifier for the message."
+    )
+
     author: str = Field(description="Actor that authored the message.")
     reply: Optional[str] = Field(default=None, description="Optional parent message.")
     sequence: int = Field(ge=0, description="Stable sequence for ordering messages and events.")
+
     kind: MessageKind = Field(description="Message category.")
-    audience: Audience = Field(description="Intended audience for the message.")
     content: Content = Field(description="Message body and policy labels.")
+    audience: Audience = Field(description="Intended audience for the message.")
+
     created: datetime = Field(
         alias="created_at", description="Timestamp when the message was recorded."
     )
@@ -333,16 +432,19 @@ class Event(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    identity: Identity = Field(description="Tenant-scoped event identity.")
     thread: str = Field(description="Thread that contains the event.")
-    task: Optional[str] = Field(default=None, description="Optional task scoped by the event.")
+    identity: Identity = Field(description="Tenant-scoped event identity.")
+
+    task: Optional[str] = Field(default=None, description="Optional task identifier for the event.")
     actor: Optional[str] = Field(
         default=None, description="Optional actor associated with the event."
     )
-    sequence: int = Field(ge=0, description="Stable sequence for event ordering.")
+
     kind: EventKind = Field(description="Lifecycle event category.")
+    sequence: int = Field(ge=0, description="Stable sequence for event ordering.")
     source: EventSource = Field(description="System component that produced the event.")
     payload: Metadata = Field(default_factory=Metadata, description="Structured event payload.")
+
     created: datetime = Field(
         alias="created_at", description="Timestamp when the event was recorded."
     )
@@ -358,20 +460,24 @@ class Artifact(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    identity: Identity = Field(description="Tenant-scoped artifact identity.")
     thread: str = Field(description="Thread that owns the artifact.")
+    identity: Identity = Field(description="Tenant-scoped artifact identity.")
+
     task: Optional[str] = Field(
-        default=None, description="Optional task that produced the artifact."
+        default=None, description="Optional task identifier that produced the artifact."
     )
     producer: Optional[str] = Field(
         default=None, description="Optional actor that produced the artifact."
     )
+
     kind: ArtifactKind = Field(description="Artifact category.")
     uri: str = Field(description="Stable artifact location.")
     backend: ArtifactBackend = Field(description="Storage backend for the artifact.")
+
     mime: Optional[str] = Field(default=None, description="Optional media type.")
     size: Optional[int] = Field(default=None, ge=0, description="Artifact size in bytes.")
     retention: Optional[str] = Field(default=None, description="Retention class for the artifact.")
+
     labels: Tuple[Label, ...] = Field(
         default_factory=tuple,
         description="Policy labels attached to the artifact.",
@@ -396,7 +502,9 @@ class Script(BaseModel):
 
     identity: Identity = Field(description="Tenant-scoped script identity.")
     thread: str = Field(description="Thread that owns the script.")
-    task: Optional[str] = Field(default=None, description="Task that produced the script.")
+    task: Optional[str] = Field(
+        default=None, description="Optional task identifier that produced the script."
+    )
     artifact: Optional[str] = Field(default=None, description="Export artifact for this script.")
     title: Optional[str] = Field(default=None, description="User-facing script title.")
     format: ScriptFormat = Field(
@@ -426,7 +534,9 @@ class ScriptVersion(BaseModel):
     identity: Identity = Field(description="Tenant-scoped script version identity.")
     script: str = Field(description="Script that owns this version.")
     thread: str = Field(description="Thread that owns the script.")
-    task: Optional[str] = Field(default=None, description="Task that produced this version.")
+    task: Optional[str] = Field(
+        default=None, description="Optional task identifier for this version."
+    )
     artifact: Optional[str] = Field(default=None, description="Export artifact for this version.")
     version: int = Field(ge=1, description="Monotonic script version number.")
     source: ScriptVersionSource = Field(description="Source of this script version.")
@@ -482,6 +592,109 @@ class Policy(BaseModel):
     )
 
 
+class Execution(BaseModel):
+    """
+    Durable user intent execution inside a conversation.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    identity: Identity = Field(description="Tenant-scoped execution identity.")
+    workflow_id: Optional[str] = Field(
+        default=None,
+        description="Optional runtime workflow correlation identifier.",
+    )
+    thread: str = Field(description="Conversation that owns the execution.")
+    intent: str = Field(description="User intent that started the execution.")
+    state: ExecutionState = Field(description="Current execution lifecycle state.")
+    terminal: Optional[Terminal] = Field(
+        default=None,
+        description="Terminal outcome when the execution has finished.",
+    )
+    summary: Optional[str] = Field(
+        default=None,
+        description="Human-readable execution result summary.",
+    )
+    outcome: Metadata = Field(description="Structured execution outcome payload.")
+    timing: Timing = Field(description="Execution lifecycle timestamps.")
+    deleted: Optional[datetime] = Field(
+        alias="deleted_at",
+        default=None,
+        description="Timestamp when the execution was soft-deleted.",
+    )
+    metadata: Metadata = Field(
+        default_factory=Metadata,
+        description="Optional non-critical metadata.",
+    )
+
+
+class StartExecution(BaseModel):
+    """
+    Request to start one user intent execution.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    identity: Identity = Field(description="Identity for the new execution.")
+    workflow_id: Optional[str] = Field(
+        default=None,
+        description="Optional runtime workflow correlation identifier.",
+    )
+    thread: str = Field(description="Conversation that owns the execution.")
+    intent: str = Field(description="User intent that started the execution.")
+    actor: Optional[str] = Field(default=None, description="Actor that started the execution.")
+    state: ExecutionState = Field(
+        default=ExecutionState.RUNNING,
+        description="Initial execution lifecycle state.",
+    )
+    started: datetime = Field(
+        alias="started_at",
+        description="Timestamp when execution work started.",
+    )
+    metadata: Metadata = Field(
+        default_factory=Metadata,
+        description="Optional non-critical metadata.",
+    )
+
+
+class FinishExecution(BaseModel):
+    """
+    Request to finish one user intent execution.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    tenant: str = Field(description="Tenant that owns the execution.")
+    execution: str = Field(description="Execution to finish.")
+    actor: Optional[str] = Field(default=None, description="Actor that finished the execution.")
+    state: ExecutionState = Field(description="Terminal execution state.")
+    terminal: Terminal = Field(description="Terminal execution outcome.")
+    summary: Optional[str] = Field(
+        default=None,
+        description="Human-readable execution result summary.",
+    )
+    outcome: Metadata = Field(
+        default_factory=Metadata,
+        description="Structured execution outcome payload.",
+    )
+    completed: datetime = Field(
+        alias="completed_at",
+        description="Timestamp when the execution reached a terminal state.",
+    )
+
+
+class ExecutionQuery(BaseModel):
+    """
+    Query for one tenant-scoped execution constrained to one conversation.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    tenant: str = Field(description="Tenant that owns the execution.")
+    execution: str = Field(description="Execution identifier to load.")
+    thread: str = Field(description="Conversation identifier that owns the execution.")
+
+
 class Job(BaseModel):
     """
     Durable background work item.
@@ -491,7 +704,11 @@ class Job(BaseModel):
 
     identity: Identity = Field(description="Tenant-scoped job identity.")
     thread: str = Field(description="Thread that owns the job.")
-    task: Optional[str] = Field(default=None, description="Optional task scoped by the job.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the job.",
+    )
+    task: Optional[str] = Field(default=None, description="Optional task identifier for the job.")
     kind: JobKind = Field(description="Background job category.")
     state: JobState = Field(description="Current job lifecycle state.")
     attempts: int = Field(ge=0, description="Number of processing attempts.")
@@ -570,6 +787,18 @@ class JoinThread(BaseModel):
     )
 
 
+class MembershipQuery(BaseModel):
+    """
+    Query for one active actor membership in a conversation.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    tenant: str = Field(description="Tenant that owns the membership.")
+    thread: str = Field(description="Conversation thread identifier.")
+    actor: str = Field(description="Actor whose active membership is required.")
+
+
 class OpenTask(BaseModel):
     """
     Request to open a task.
@@ -579,6 +808,7 @@ class OpenTask(BaseModel):
 
     identity: Identity = Field(description="Identity for the new task.")
     thread: str = Field(description="Thread that owns the task.")
+    execution: str = Field(description="Execution that owns the task.")
     assignment: Assignment = Field(description="Creator and assignee references.")
     lineage: Lineage = Field(default_factory=Lineage, description="Task tree references.")
     kind: TaskKind = Field(description="Category of work represented by the task.")
@@ -601,7 +831,13 @@ class RecordMessage(BaseModel):
 
     identity: Identity = Field(description="Identity for the new message.")
     thread: str = Field(description="Thread that contains the message.")
-    task: Optional[str] = Field(default=None, description="Optional task scoped by the message.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the message.",
+    )
+    task: Optional[str] = Field(
+        default=None, description="Optional task identifier for the message."
+    )
     author: str = Field(description="Actor that authored the message.")
     reply: Optional[str] = Field(default=None, description="Optional parent message.")
     sequence: Optional[int] = Field(
@@ -666,8 +902,12 @@ class LinkArtifact(BaseModel):
 
     identity: Identity = Field(description="Identity for the new artifact.")
     thread: str = Field(description="Thread that owns the artifact.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the artifact.",
+    )
     task: Optional[str] = Field(
-        default=None, description="Optional task that produced the artifact."
+        default=None, description="Optional task identifier that produced the artifact."
     )
     producer: Optional[str] = Field(
         default=None, description="Optional actor that produced the artifact."
@@ -697,9 +937,15 @@ class SaveScript(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    identity: Identity = Field(description="Identity for the script.")
     thread: str = Field(description="Thread that owns the script.")
-    task: Optional[str] = Field(default=None, description="Task that produced the script.")
+    identity: Identity = Field(description="Identity for the script.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the script.",
+    )
+    task: Optional[str] = Field(
+        default=None, description="Optional task identifier that produced the script."
+    )
     artifact: Optional[str] = Field(default=None, description="Export artifact for the content.")
     title: Optional[str] = Field(default=None, description="User-facing script title.")
     format: ScriptFormat = Field(
@@ -711,8 +957,10 @@ class SaveScript(BaseModel):
         default=ScriptVersionSource.GENERATED,
         description="Source of the version being saved.",
     )
-    summary: Optional[str] = Field(default=None, description="Change summary for audit.")
+
     actor: Optional[str] = Field(default=None, description="Actor saving the script.")
+    summary: Optional[str] = Field(default=None, description="Change summary for audit.")
+
     created: datetime = Field(
         alias="created_at", description="Timestamp supplied by the application."
     )
@@ -752,7 +1000,11 @@ class ScheduleJob(BaseModel):
 
     identity: Identity = Field(description="Identity for the new job.")
     thread: str = Field(description="Thread that owns the job.")
-    task: Optional[str] = Field(default=None, description="Optional task scoped by the job.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the job.",
+    )
+    task: Optional[str] = Field(default=None, description="Optional task identifier for the job.")
     kind: JobKind = Field(description="Background job category.")
     available: datetime = Field(
         alias="available_at", description="Timestamp when the job becomes claimable."
@@ -847,6 +1099,14 @@ class ThreadQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the thread.")
     thread: str = Field(description="Thread identifier to load.")
+    include_archived: bool = Field(
+        default=False,
+        description="Whether archived threads are eligible for this internal lookup.",
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description="Whether soft-deleted threads are eligible for this internal lookup.",
+    )
 
 
 class CleanupRequest(BaseModel):
@@ -954,6 +1214,11 @@ class CleanupResult(BaseModel):
         default=0,
         description="Script version rows removed while purging parent threads.",
     )
+    executions_purged: int = Field(
+        ge=0,
+        default=0,
+        description="Execution rows removed while physically purging parent threads.",
+    )
     memberships_purged: int = Field(
         ge=0,
         default=0,
@@ -993,6 +1258,7 @@ class CleanupCascadeResult(BaseModel):
     contexts: int = Field(default=0, ge=0, description="Context rows removed.")
     scripts: int = Field(default=0, ge=0, description="Script rows removed.")
     script_versions: int = Field(default=0, ge=0, description="Script version rows removed.")
+    executions: int = Field(default=0, ge=0, description="Execution rows removed.")
 
     jobs: int = Field(default=0, ge=0, description="Job rows removed.")
     events: int = Field(default=0, ge=0, description="Event rows removed.")
@@ -1032,6 +1298,10 @@ class SetThreadTitle(BaseModel):
     tenant: str = Field(description="Tenant that owns the thread.")
     thread: str = Field(description="Thread identifier to update.")
     title: str = Field(min_length=1, description="Title to set when null.")
+    metadata: Metadata = Field(
+        default_factory=Metadata,
+        description="Metadata describing how the title was produced.",
+    )
     updated: datetime = Field(
         alias="updated_at", description="Timestamp of the host-issued update."
     )
@@ -1046,8 +1316,9 @@ class ThreadTransition(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the thread.")
     thread: str = Field(description="Thread identifier to update.")
+    actor: str = Field(description="Actor that requested the transition.")
     state: ThreadState = Field(description="Target thread lifecycle state.")
-    actor: Optional[str] = Field(default=None, description="Actor that requested the transition.")
+
     updated: datetime = Field(
         alias="updated_at", description="Timestamp of the host-issued update."
     )
@@ -1061,8 +1332,10 @@ class ThreadListQuery(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     tenant: str = Field(description="Tenant that owns the threads.")
+    actor: str = Field(description="Active member actor whose threads are returned.")
     workspace: Optional[str] = Field(default=None, description="Optional workspace filter.")
     state: Optional[ThreadState] = Field(default=None, description="Optional state filter.")
+
     include_archived: bool = Field(
         default=False,
         description=(
@@ -1077,12 +1350,14 @@ class ThreadListQuery(BaseModel):
         default=None,
         description="Only include threads updated before this timestamp.",
     )
+
     title: Optional[str] = Field(
         default=None,
         max_length=THREAD_TITLE_PREFIX_MAX_LENGTH,
         description="Optional case-insensitive prefix match against thread titles.",
     )
     cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
+
     count_total: bool = Field(
         default=True,
         description=(
@@ -1092,9 +1367,9 @@ class ThreadListQuery(BaseModel):
         ),
     )
     limit: int = Field(
-        default=CONVERSATION_LIST_DEFAULT_LIMIT,
         gt=0,
         le=CONVERSATION_LIST_MAX_LIMIT,
+        default=CONVERSATION_LIST_DEFAULT_LIMIT,
         description="Maximum threads to return.",
     )
 
@@ -1120,17 +1395,22 @@ class TaskQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the tasks.")
     thread: str = Field(description="Thread identifier used to scope tasks.")
+    deleted: bool = Field(
+        default=False,
+        description="Include soft-deleted tasks when True; excluded by default.",
+    )
 
 
 class TaskOneQuery(BaseModel):
     """
-    Query for loading one tenant-scoped task by identifier.
+    Query for loading one tenant-scoped task constrained to one conversation.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    tenant: str = Field(description="Tenant that owns the task.")
     task: str = Field(description="Task identifier to load.")
+    tenant: str = Field(description="Tenant that owns the task.")
+    thread: str = Field(description="Conversation identifier that owns the task.")
 
 
 class MessageQuery(BaseModel):
@@ -1144,6 +1424,15 @@ class MessageQuery(BaseModel):
     thread: str = Field(description="Thread identifier used to scope messages.")
     task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
 
+    include_archived: bool = Field(
+        default=False,
+        description="Include messages whose parent conversation is archived.",
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description="Include soft-deleted messages when true.",
+    )
+
 
 class MessageCursorQuery(BaseModel):
     """
@@ -1154,12 +1443,15 @@ class MessageCursorQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the messages.")
     thread: str = Field(description="Thread identifier used to scope messages.")
-    task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
+
     author: Optional[str] = Field(default=None, description="Optional author filter.")
+    task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
+
     kinds: Tuple[MessageKind, ...] = Field(
         default_factory=tuple,
         description="Optional message-kind filter.",
     )
+
     since: Optional[datetime] = Field(
         default=None,
         description="Only include messages created at or after this timestamp.",
@@ -1169,6 +1461,16 @@ class MessageCursorQuery(BaseModel):
         description="Only include messages created before this timestamp.",
     )
     cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
+
+    include_archived: bool = Field(
+        default=False,
+        description="Include messages whose parent conversation is archived.",
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description="Include soft-deleted messages when true.",
+    )
+
     count_total: bool = Field(
         default=True,
         description=(
@@ -1207,8 +1509,8 @@ class MessagePage(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     items: Tuple[Message, ...] = Field(description="Messages in page order.")
-    next: Optional[str] = Field(default=None, description="Opaque next-page cursor.")
     total: int = Field(ge=0, description="Total rows matching the query filters.")
+    next: Optional[str] = Field(default=None, description="Opaque next-page cursor.")
 
 
 class EventQuery(BaseModel):
@@ -1222,6 +1524,15 @@ class EventQuery(BaseModel):
     thread: str = Field(description="Thread identifier used to scope events.")
     task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
 
+    include_archived: bool = Field(
+        default=False,
+        description="Include events for archived conversations when true.",
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description="Include events for deleted conversations when true.",
+    )
+
 
 class EventCursorQuery(BaseModel):
     """
@@ -1232,12 +1543,15 @@ class EventCursorQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the events.")
     thread: str = Field(description="Thread identifier used to scope events.")
-    task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
+
     actor: Optional[str] = Field(default=None, description="Optional actor filter.")
+    task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
+
     kinds: Tuple[EventKind, ...] = Field(
         default_factory=tuple,
         description="Optional event-kind filter.",
     )
+
     since: Optional[datetime] = Field(
         default=None,
         description="Only include events created at or after this timestamp.",
@@ -1246,7 +1560,18 @@ class EventCursorQuery(BaseModel):
         default=None,
         description="Only include events created before this timestamp.",
     )
+
     cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
+
+    include_archived: bool = Field(
+        default=False,
+        description="Include events for archived conversations when true.",
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description="Include events for deleted conversations when true.",
+    )
+
     count_total: bool = Field(
         default=True,
         description=(
@@ -1261,6 +1586,7 @@ class EventCursorQuery(BaseModel):
         le=TIMELINE_MAX_LIMIT,
         description="Maximum events to return.",
     )
+
     order: SortOrder = Field(
         default=SortOrder.DESC,
         description=(
@@ -1292,6 +1618,14 @@ class ArtifactQuery(BaseModel):
     tenant: str = Field(description="Tenant that owns the artifacts.")
     thread: str = Field(description="Thread identifier used to scope artifacts.")
     task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
+    include_archived: bool = Field(
+        default=False,
+        description="Include artifacts for archived conversations when true.",
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description="Include soft-deleted artifacts when true.",
+    )
 
 
 class ArtifactCursorQuery(BaseModel):
@@ -1303,33 +1637,46 @@ class ArtifactCursorQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the artifacts.")
     thread: str = Field(description="Thread identifier used to scope artifacts.")
-    task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
+
     producer: Optional[str] = Field(default=None, description="Optional producer filter.")
+    task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
+
     kinds: Tuple[ArtifactKind, ...] = Field(
         default_factory=tuple,
         description="Optional artifact-kind filter.",
     )
+
     since: Optional[datetime] = Field(
         default=None,
         description="Only include artifacts created at or after this timestamp.",
     )
+
     until: Optional[datetime] = Field(
         default=None,
         description="Only include artifacts created before this timestamp.",
     )
     cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
+
+    include_archived: bool = Field(
+        default=False,
+        description="Include artifacts for archived conversations when true.",
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description="Include soft-deleted artifacts when true.",
+    )
+
     count_total: bool = Field(
         default=True,
         description=(
             "Run a COUNT(*) for total match estimate. Set False to skip the "
-            "scan when the caller doesn't need an exact total — page.total "
-            "will be 0 in that case."
+            "scan when the caller doesn't need an exact total — page.total will be 0 in that case."
         ),
     )
     limit: int = Field(
-        default=ARTIFACT_LIST_DEFAULT_LIMIT,
         gt=0,
         le=ARTIFACT_LIST_MAX_LIMIT,
+        default=ARTIFACT_LIST_DEFAULT_LIMIT,
         description="Maximum artifacts to return.",
     )
     order: SortOrder = Field(
@@ -1370,6 +1717,10 @@ class ScriptQuery(BaseModel):
         default=False,
         description="Include soft-deleted scripts when true.",
     )
+    include_archived: bool = Field(
+        default=False,
+        description="Include scripts for archived conversations when true.",
+    )
 
 
 class ScriptVersionQuery(BaseModel):
@@ -1382,6 +1733,14 @@ class ScriptVersionQuery(BaseModel):
     tenant: str = Field(description="Tenant that owns the script versions.")
     script: str = Field(description="Script whose versions should be loaded.")
     version: Optional[int] = Field(default=None, ge=1, description="Optional version number.")
+    include_deleted: bool = Field(
+        default=False,
+        description="Include versions for soft-deleted scripts when true.",
+    )
+    include_archived: bool = Field(
+        default=False,
+        description="Include versions for archived conversations when true.",
+    )
 
 
 class ScriptListQuery(BaseModel):
@@ -1431,6 +1790,10 @@ class ScriptListQuery(BaseModel):
         default=False,
         description="Include soft-deleted scripts when true.",
     )
+    include_archived: bool = Field(
+        default=False,
+        description="Include scripts for archived conversations when true.",
+    )
 
 
 class ScriptPage(BaseModel):
@@ -1454,6 +1817,7 @@ class SummaryMessagesQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the messages.")
     thread: str = Field(description="Thread identifier used to scope messages.")
+    operator: str = Field(description="Actor requesting summary access.")
     kinds: Tuple[MessageKind, ...] = Field(
         default_factory=tuple,
         description="Message kinds to include. Empty selects every kind.",
@@ -1469,6 +1833,7 @@ class SummaryScriptsQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the scripts.")
     thread: str = Field(description="Thread identifier used to scope scripts.")
+    operator: str = Field(description="Actor requesting summary access.")
 
 
 class ContextCursorQuery(BaseModel):
@@ -1480,6 +1845,7 @@ class ContextCursorQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the contexts.")
     thread: str = Field(description="Thread identifier used to scope contexts.")
+    execution: Optional[str] = Field(default=None, description="Optional execution filter.")
     task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
     consumer: Optional[str] = Field(default=None, description="Optional consumer filter.")
     purpose: Optional[ContextPurpose] = Field(
@@ -1495,6 +1861,14 @@ class ContextCursorQuery(BaseModel):
         description="Only include contexts created before this timestamp.",
     )
     cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
+    include_archived: bool = Field(
+        default=False,
+        description="Include contexts for archived conversations when true.",
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description="Include soft-deleted contexts when true.",
+    )
     count_total: bool = Field(
         default=True,
         description=(
@@ -1551,8 +1925,10 @@ class JobQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the jobs.")
     thread: Optional[str] = Field(default=None, description="Optional thread filter.")
+    execution: Optional[str] = Field(default=None, description="Optional execution filter.")
     state: Optional[JobState] = Field(default=None, description="Optional job state filter.")
     kind: Optional[JobKind] = Field(default=None, description="Optional job kind filter.")
+    include_deleted: bool = Field(default=False, description="Include soft-deleted jobs when true.")
 
 
 class MemoryReference(BaseModel):
@@ -1593,7 +1969,13 @@ class Context(BaseModel):
 
     identity: Identity = Field(description="Tenant-scoped context identity.")
     thread: str = Field(description="Thread that owns the context.")
-    task: Optional[str] = Field(default=None, description="Optional task scoped by the context.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the context.",
+    )
+    task: Optional[str] = Field(
+        default=None, description="Optional task identifier for the context."
+    )
     consumer: Optional[str] = Field(default=None, description="Actor that consumes the context.")
     purpose: ContextPurpose = Field(description="Purpose of the assembled context.")
     builder: str = Field(description="Builder name and version that produced the recipe.")
@@ -1629,7 +2011,13 @@ class BuildContext(BaseModel):
 
     identity: Identity = Field(description="Identity for the new context.")
     thread: str = Field(description="Thread that owns the context.")
-    task: Optional[str] = Field(default=None, description="Optional task scoped by the context.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the context.",
+    )
+    task: Optional[str] = Field(
+        default=None, description="Optional task identifier for the context."
+    )
     consumer: Optional[str] = Field(default=None, description="Actor that consumes the context.")
     purpose: ContextPurpose = Field(description="Purpose of the assembled context.")
     builder: str = Field(description="Builder name and version that produced the recipe.")
@@ -1663,8 +2051,17 @@ class ContextQuery(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the contexts.")
     thread: str = Field(description="Thread identifier used to scope contexts.")
+    execution: Optional[str] = Field(default=None, description="Optional execution filter.")
     task: Optional[str] = Field(default=None, description="Optional task identifier filter.")
     purpose: Optional[ContextPurpose] = Field(default=None, description="Optional purpose filter.")
+    include_archived: bool = Field(
+        default=False,
+        description="Include contexts for archived conversations when true.",
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description="Include soft-deleted contexts when true.",
+    )
 
 
 class Idempotency(BaseModel):
@@ -1675,10 +2072,17 @@ class Idempotency(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     tenant: str = Field(description="Tenant that owns the idempotency record.")
+    workspace: Optional[str] = Field(
+        default=None,
+        description="Optional workspace boundary for the idempotency record.",
+    )
+
     key: str = Field(description="Caller-supplied idempotency key.")
     hash: str = Field(description="Stable hash of the original request payload.")
+
     state: IdempotencyState = Field(description="Current request lifecycle state.")
     response: Optional[JsonValue] = Field(default=None, description="Cached response for replay.")
+
     created: datetime = Field(
         alias="created_at", description="Timestamp when the record was created."
     )
@@ -1698,8 +2102,14 @@ class BeginRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     tenant: str = Field(description="Tenant that owns the idempotency record.")
+    workspace: Optional[str] = Field(
+        default=None,
+        description="Optional workspace boundary for the idempotency record.",
+    )
+
     key: str = Field(description="Caller-supplied idempotency key.")
     hash: str = Field(description="Stable hash of the request payload.")
+
     created: datetime = Field(
         alias="created_at", description="Creation timestamp supplied by the application."
     )
@@ -1729,11 +2139,12 @@ class FinishRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    tenant: str = Field(description="Tenant that owns the idempotency record.")
     key: str = Field(description="Caller-supplied idempotency key.")
     state: IdempotencyState = Field(description="Terminal idempotency state.")
-    response: Optional[JsonValue] = Field(default=None, description="Cached response for replay.")
+    tenant: str = Field(description="Tenant that owns the idempotency record.")
+
     finished: datetime = Field(description="Finish timestamp supplied by the application.")
+    response: Optional[JsonValue] = Field(default=None, description="Cached response for replay.")
 
 
 class IdempotencyQuery(BaseModel):
@@ -1743,8 +2154,8 @@ class IdempotencyQuery(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    tenant: str = Field(description="Tenant that owns the idempotency record.")
     key: str = Field(description="Caller-supplied idempotency key.")
+    tenant: str = Field(description="Tenant that owns the idempotency record.")
 
 
 class RunStart(BaseModel):

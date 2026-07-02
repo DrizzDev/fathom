@@ -12,7 +12,7 @@ class TelemetryPort(ABC):
     """
 
     @abstractmethod
-    async def debug(self, text: str, **context: Any) -> None:
+    async def debug(self, message: str, **context: Any) -> None:
         """
         Log debug message with context.
         """
@@ -20,7 +20,7 @@ class TelemetryPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def info(self, text: str, **context: Any) -> None:
+    async def info(self, message: str, **context: Any) -> None:
         """
         Log info message with context.
         """
@@ -28,7 +28,7 @@ class TelemetryPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def warning(self, text: str, **context: Any) -> None:
+    async def warning(self, message: str, **context: Any) -> None:
         """
         Log warning message with context.
         """
@@ -36,7 +36,7 @@ class TelemetryPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def error(self, text: str, **context: Any) -> None:
+    async def error(self, message: str, **context: Any) -> None:
         """
         Log error message with context.
         """
@@ -46,7 +46,7 @@ class TelemetryPort(ABC):
     @abstractmethod
     async def exception(
         self,
-        text: str,
+        message: str,
         *,
         exception: Optional[BaseException] = None,
         **context: Any,

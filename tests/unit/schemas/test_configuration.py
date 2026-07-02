@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -21,13 +20,12 @@ from fathom.constants.qualification import (
     DEFAULT_QUALIFIER_TIMEOUT,
     DEFAULT_QUALIFIER_USE_CACHE,
 )
-from fathom.constants.storage import SQLiteJournalMode, SQLiteSynchronous, StorageBackend
+from fathom.constants.storage import StorageBackend
 from fathom.schemas.configuration import (
     InferenceConfiguration,
     PostgresInteractionConfiguration,
     PriorityInferenceConfiguration,
     QualifierConfiguration,
-    SQLiteInteractionConfiguration,
     StorageConfiguration,
 )
 
@@ -151,60 +149,6 @@ class StorageConfigurationDefaultBackendsTest(unittest.TestCase):
         )
 
         self.assertEqual(configuration.backends, {StorageBackend.CLOUD})
-
-
-class TestSQLiteInteractionConfiguration(unittest.TestCase):
-    """
-    Unit tests for the storage-safety guard rails on the SQLite config.
-    """
-
-    def test_default_journal_mode_is_delete(self) -> None:
-        """
-        Default mode must be DELETE so EFS / NFS deployments are safe by
-        default; WAL is opt-in.
-        """
-
-        config = SQLiteInteractionConfiguration(path=Path("/tmp/fathom-test.db"))
-
-        self.assertEqual(SQLiteJournalMode.DELETE, config.journal_mode)
-        self.assertEqual(SQLiteSynchronous.NORMAL, config.synchronous)
-
-    def test_wal_requires_explicit_acknowledgement(self) -> None:
-        """
-        Selecting WAL without the shared-filesystem acknowledgement must
-        fail — protects against accidental WAL on a network mount.
-        """
-
-        with self.assertRaises(ValidationError):
-            SQLiteInteractionConfiguration(
-                path=Path("/tmp/fathom-test.db"),
-                journal_mode=SQLiteJournalMode.WAL,
-            )
-
-    def test_wal_accepted_when_acknowledged(self) -> None:
-        """
-        WAL is permitted when the operator explicitly opts in.
-        """
-
-        config = SQLiteInteractionConfiguration(
-            path=Path("/tmp/fathom-test.db"),
-            journal_mode=SQLiteJournalMode.WAL,
-            allow_wal_on_shared_filesystem=True,
-        )
-
-        self.assertEqual(SQLiteJournalMode.WAL, config.journal_mode)
-
-    def test_journal_mode_enum_rejects_arbitrary_strings(self) -> None:
-        """
-        journal_mode is now Literal-validated; raw strings are rejected so
-        SQL interpolation can't carry tainted values.
-        """
-
-        with self.assertRaises(ValidationError):
-            SQLiteInteractionConfiguration(
-                path=Path("/tmp/fathom-test.db"),
-                journal_mode="DELETE; DROP TABLE jobs",  # type: ignore[arg-type]
-            )
 
 
 class TestPostgresInteractionConfiguration(unittest.TestCase):

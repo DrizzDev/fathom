@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from tests.builders import ActionFixtures, AgentFixtures
-
 from fathom.constants import ActionType
 from fathom.schemas.steps import Step, StepResult
+from tests.builders import ActionFixtures, AgentFixtures
 
 
 class AgentStateControlDescriptorTest(unittest.TestCase):

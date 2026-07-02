@@ -5,23 +5,24 @@ from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock
 
-from tests.builders.agent import AgentFixtures
-
 from fathom.constants import ActionType
 from fathom.constants.state import (
     TERMINAL_COMPLETION_REASONS,
     CommonStateKey,
     CompletionReason,
     IntentStateKey,
+    PlanMetadataKey,
     VerifyMode,
 )
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
+from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.analyze import AnalyzeNode
+from tests.builders.agent import AgentFixtures
 
 
 class _Persistence:
@@ -431,3 +432,145 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertTrue(result[CommonStateKey.IS_COMPLETE])
                 self.assertIsNone(result[IntentStateKey.VERIFY_MODE])
+
+
+class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins that AnalyzeNode publishes the analyzer AnalysisResult into state.
+    """
+
+    async def test_analysis_result_is_published_to_state_from_plan_metadata(self) -> None:
+        """
+        state[ANALYSIS] must carry the AnalysisResult so downstream nodes read distinct reasoning.
+        """
+
+        analysis = AnalysisResult(
+            screen_description="home screen with search bar and app icons",
+            action=Action(action_type=ActionType.TAP, rationale="tap search"),
+            reasoning="deliberating over the visible search bar and the goal",
+        )
+        agent_state = AgentState(
+            intent="search for burgers",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
+
+        planner = Mock()
+        planner.plan_step = AsyncMock(
+            return_value=SimpleNamespace(
+                metrics=None,
+                step=Step(
+                    action=Action(
+                        target="search_field",
+                        rationale="tap search",
+                        action_type=ActionType.TAP,
+                    ),
+                    metadata={},
+                    step_number=0,
+                    screen_hash="abc",
+                ),
+                reason="planned",
+                is_complete=False,
+                should_retry=False,
+                reasoning="deliberating",
+                metadata={PlanMetadataKey.ANALYSIS.value: analysis},
+            ),
+        )
+        provider = SimpleNamespace(
+            persistence=_Persistence(),
+            hitl=SimpleNamespace(prompt=AsyncMock()),
+            is_cancelled=AsyncMock(return_value=False),
+            context=SimpleNamespace(
+                max_steps=10,
+                use_xml=True,
+                reasoner=Mock(),
+                planner=planner,
+                workflow_id="run-test",
+                agent_state=agent_state,
+                context_manager=AgentFixtures.context_manager(),
+                metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
+                signal=SimpleNamespace(supports_interruption=Mock(return_value=False)),
+                device=SimpleNamespace(get_dimensions=AsyncMock(return_value=(100, 200))),
+                configuration=SimpleNamespace(intent=SimpleNamespace(prompt_user_if_stuck=False)),
+            ),
+        )
+        node = AnalyzeNode(provider=provider)  # type: ignore[arg-type]
+
+        result = await node.run(
+            state={
+                CommonStateKey.CAPTURE: ScreenCapture(
+                    width=100,
+                    height=200,
+                    activity="app",
+                    image=b"png",
+                    timestamp=1,
+                )
+            }
+        )
+
+        published = result[CommonStateKey.ANALYSIS]
+        self.assertIsInstance(published, AnalysisResult)
+        self.assertEqual(
+            "deliberating over the visible search bar and the goal",
+            published.reasoning,
+        )
+        self.assertEqual(
+            "home screen with search bar and app icons",
+            published.screen_description,
+        )
+
+    async def test_missing_analysis_metadata_leaves_state_analysis_none(self) -> None:
+        """
+        When planner does not attach ANALYSIS metadata, state[ANALYSIS] must be None (not crash).
+        """
+
+        agent_state = AgentState(
+            intent="open the app",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
+        planner = Mock()
+        planner.plan_step = AsyncMock(
+            return_value=SimpleNamespace(
+                metrics=None,
+                step=None,
+                is_complete=False,
+                should_retry=False,
+                reason="",
+                reasoning="",
+                metadata=None,
+            ),
+        )
+        provider = SimpleNamespace(
+            is_cancelled=AsyncMock(return_value=False),
+            persistence=_Persistence(),
+            hitl=SimpleNamespace(prompt=AsyncMock()),
+            context=SimpleNamespace(
+                workflow_id="run-test",
+                max_steps=10,
+                agent_state=agent_state,
+                context_manager=AgentFixtures.context_manager(),
+                device=SimpleNamespace(get_dimensions=AsyncMock(return_value=(100, 200))),
+                signal=SimpleNamespace(supports_interruption=Mock(return_value=False)),
+                configuration=SimpleNamespace(intent=SimpleNamespace(prompt_user_if_stuck=False)),
+                planner=planner,
+                use_xml=True,
+                reasoner=Mock(),
+                metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
+            ),
+        )
+        node = AnalyzeNode(provider=provider)  # type: ignore[arg-type]
+
+        result = await node.run(
+            state={
+                CommonStateKey.CAPTURE: ScreenCapture(
+                    width=100,
+                    height=200,
+                    activity="app",
+                    image=b"png",
+                    timestamp=1,
+                )
+            }
+        )
+
+        self.assertIsNone(result[CommonStateKey.ANALYSIS])

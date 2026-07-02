@@ -86,7 +86,11 @@ class RuntimeConfiguration(BaseModel):
     )
     execution_id: Optional[str] = Field(
         default=None,
-        description="Host execution identifier for correlation and remote routing",
+        description="Fathom execution identifier used by the conversation ledger.",
+    )
+    workflow_id: Optional[str] = Field(
+        default=None,
+        description="Runtime workflow correlation identifier used by the orchestrator.",
     )
     interactive: bool = Field(default=False, description="Enable HITL interaction")
     signal_type: SignalAdapterType = Field(

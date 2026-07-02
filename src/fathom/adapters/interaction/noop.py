@@ -30,6 +30,9 @@ from fathom.schemas.interaction import (
     EventCursorQuery,
     EventPage,
     EventQuery,
+    Execution,
+    ExecutionQuery,
+    FinishExecution,
     FinishJob,
     FinishRequest,
     FinishTask,
@@ -40,10 +43,12 @@ from fathom.schemas.interaction import (
     JoinThread,
     LinkArtifact,
     Membership,
+    MembershipQuery,
     Message,
     MessageCursorQuery,
     MessagePage,
     MessageQuery,
+    Metadata,
     OpenTask,
     Policy,
     PolicyQuery,
@@ -61,6 +66,7 @@ from fathom.schemas.interaction import (
     ScriptVersion,
     ScriptVersionQuery,
     SetThreadTitle,
+    StartExecution,
     Task,
     TaskOneQuery,
     TaskQuery,
@@ -154,6 +160,13 @@ class NoopInteraction(InteractionPort):
             metadata=request.metadata,
         )
 
+    async def find_membership(self, *, query: MembershipQuery) -> Optional[Membership]:
+        """
+        Return no membership because the noop store has no persisted state.
+        """
+
+        return None
+
     async def open_task(self, *, request: OpenTask) -> Task:
         """
         Echo a Task shaped from the request without persisting.
@@ -167,9 +180,47 @@ class NoopInteraction(InteractionPort):
             lineage=request.lineage,
             metadata=request.metadata,
             identity=request.identity,
+            execution=request.execution,
             assignment=request.assignment,
             timing=Timing(created_at=request.created, updated_at=request.created),
         )
+
+    async def start_execution(self, *, request: StartExecution) -> Execution:
+        """
+        Echo an Execution shaped from the request without persisting.
+        """
+
+        return Execution(
+            outcome=Metadata(),
+            state=request.state,
+            thread=request.thread,
+            intent=request.intent,
+            metadata=request.metadata,
+            identity=request.identity,
+            timing=Timing(
+                created_at=request.started,
+                updated_at=request.started,
+                started_at=request.started,
+            ),
+        )
+
+    async def finish_execution(self, *, request: FinishExecution) -> Execution:
+        """
+        Finishing an execution requires prior state; not supported without storage.
+        """
+
+        _ = request
+
+        raise InteractionError("Finish execution requires durable storage; noop is not supported")
+
+    async def get_execution(self, *, query: ExecutionQuery) -> Optional[Execution]:
+        """
+        Return no execution because the noop store has no persisted state.
+        """
+
+        _ = query
+
+        return None
 
     async def record_message(self, *, request: RecordMessage) -> Message:
         """
@@ -266,6 +317,15 @@ class NoopInteraction(InteractionPort):
         return []
 
     async def get_task(self, *, query: TaskOneQuery) -> Optional[Task]:
+        """
+        Always return None; nothing was persisted.
+        """
+
+        _ = query
+
+        return None
+
+    async def recent_task(self, *, query: TaskQuery) -> Optional[Task]:
         """
         Always return None; nothing was persisted.
         """

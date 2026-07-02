@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
 from fathom.adapters.device.remote.ios import IOSRemoteDeviceAdapter
 from fathom.adapters.interaction.noop import NoopInteraction
-from fathom.adapters.interaction.pypika.postgres import PostgresInteraction
-from fathom.adapters.interaction.pypika.sqlite import SQLiteInteraction
+from fathom.adapters.interaction.orm.postgres import (
+    PostgresInteraction as RepositoryPostgresInteraction,
+)
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform
 from fathom.constants.storage import InteractionBackend
-from fathom.core.exceptions import StorageConfigurationError
 from fathom.runtime.factories import DeviceFactory, InteractionFactory
 from fathom.schemas.configuration import (
     DeviceConfiguration,
@@ -20,7 +18,6 @@ from fathom.schemas.configuration import (
     NoopInteractionConfiguration,
     PostgresInteractionConfiguration,
     RemoteDeviceConfiguration,
-    SQLiteInteractionConfiguration,
 )
 
 
@@ -75,23 +72,6 @@ class InteractionFactoryTest(unittest.TestCase):
     Verify backend dispatch and missing-configuration handling.
     """
 
-    def setUp(self) -> None:
-        self.__temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.__temporary_directory.cleanup)
-        self.__path = Path(self.__temporary_directory.name) / "interaction.db"
-
-    def test_sqlite_backend_returns_sqlite_adapter(self) -> None:
-        """
-        Selecting the SQLite backend returns the SQLite adapter.
-        """
-
-        configuration = InteractionStorageConfiguration(
-            backend=InteractionBackend.SQLITE,
-            sqlite=SQLiteInteractionConfiguration(path=self.__path),
-        )
-        adapter = InteractionFactory().create(configuration=configuration)
-        self.assertIsInstance(adapter, SQLiteInteraction)
-
     def test_noop_backend_returns_noop_adapter(self) -> None:
         """
         Selecting the noop backend returns the noop adapter.
@@ -104,9 +84,9 @@ class InteractionFactoryTest(unittest.TestCase):
         adapter = InteractionFactory().create(configuration=configuration)
         self.assertIsInstance(adapter, NoopInteraction)
 
-    def test_postgres_backend_returns_postgres_adapter(self) -> None:
+    def test_postgres_backend_returns_repository_adapter_by_default(self) -> None:
         """
-        Selecting the Postgres backend returns the Postgres adapter.
+        Selecting Postgres defaults to the repository-backed adapter.
         """
 
         configuration = InteractionStorageConfiguration(
@@ -119,15 +99,7 @@ class InteractionFactoryTest(unittest.TestCase):
             ),
         )
         adapter = InteractionFactory().create(configuration=configuration)
-        self.assertIsInstance(adapter, PostgresInteraction)
-
-    def test_envelope_rejects_sqlite_backend_without_sqlite_config(self) -> None:
-        """
-        Envelope construction enforces matching nested configuration.
-        """
-
-        with self.assertRaises(ValueError):
-            InteractionStorageConfiguration(backend=InteractionBackend.SQLITE)
+        self.assertIsInstance(adapter, RepositoryPostgresInteraction)
 
     def test_envelope_rejects_postgres_backend_without_postgres_config(self) -> None:
         """
@@ -159,18 +131,3 @@ class InteractionFactoryTest(unittest.TestCase):
                 pool_min_size=10,
                 pool_max_size=5,
             )
-
-    def test_factory_emits_storage_error_on_explicit_missing_sqlite(self) -> None:
-        """
-        Bypass envelope validation by sending None and observe the typed error.
-        """
-
-        configuration = InteractionStorageConfiguration.model_construct(
-            backend=InteractionBackend.SQLITE,
-            sqlite=None,
-            postgres=None,
-            noop=None,
-        )
-        with self.assertRaises(StorageConfigurationError) as context:
-            InteractionFactory().create(configuration=configuration)
-        self.assertEqual(InteractionBackend.SQLITE.value, context.exception.backend)

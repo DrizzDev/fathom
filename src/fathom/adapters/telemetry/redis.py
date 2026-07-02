@@ -71,7 +71,7 @@ class RedisTelemetryAdapter(TelemetryPort):
     async def __publish(
         self,
         *,
-        text: str,
+        message: str,
         level: str,
         color: str,
         context: Dict[str, Any],
@@ -87,7 +87,7 @@ class RedisTelemetryAdapter(TelemetryPort):
                 TelemetryEnvelopeKey.LEVEL.value: level,
                 TelemetryEnvelopeKey.COLOR.value: color,
                 TelemetryEnvelopeKey.SOURCE.value: "fathom",
-                TelemetryEnvelopeKey.MESSAGE.value: text,
+                TelemetryEnvelopeKey.MESSAGE.value: message,
                 TelemetryEnvelopeKey.REQUEST_ID.value: self.__identity,
                 TelemetryEnvelopeKey.SESSION_ID.value: self.__session_id,
                 TelemetryEnvelopeKey.TIMESTAMP.value: datetime.now()
@@ -154,41 +154,41 @@ class RedisTelemetryAdapter(TelemetryPort):
             "exception_type": type(exception).__name__,
         }
 
-    async def debug(self, text: str, **context: Any) -> None:
+    async def debug(self, message: str, **context: Any) -> None:
         """
         Publishes DEBUG Logs
         """
 
-        self.__logger.debug(text, extra=context)
-        await self.__publish(text=text, level="debug", color="gray", context=context)
+        self.__logger.debug(message, extra=context)
+        await self.__publish(message=message, level="debug", color="gray", context=context)
 
-    async def info(self, text: str, **context: Any) -> None:
+    async def info(self, message: str, **context: Any) -> None:
         """
         Publishes INFO Logs
         """
 
-        self.__logger.info(text, extra=context)
-        await self.__publish(text=text, level="info", color="blue", context=context)
+        self.__logger.info(message, extra=context)
+        await self.__publish(message=message, level="info", color="blue", context=context)
 
-    async def warning(self, text: str, **context: Any) -> None:
+    async def warning(self, message: str, **context: Any) -> None:
         """
         Publishes WARNING Logs
         """
 
-        self.__logger.warning(text, extra=context)
-        await self.__publish(text=text, level="warning", color="yellow", context=context)
+        self.__logger.warning(message, extra=context)
+        await self.__publish(message=message, level="warning", color="yellow", context=context)
 
-    async def error(self, text: str, **context: Any) -> None:
+    async def error(self, message: str, **context: Any) -> None:
         """
         Publishes ERROR Logs
         """
 
-        self.__logger.error(text, extra=context)
-        await self.__publish(text=text, level="error", color="red", context=context)
+        self.__logger.error(message, extra=context)
+        await self.__publish(message=message, level="error", color="red", context=context)
 
     async def exception(
         self,
-        text: str,
+        message: str,
         *,
         exception: Optional[BaseException] = None,
         **context: Any,
@@ -200,15 +200,15 @@ class RedisTelemetryAdapter(TelemetryPort):
         payload = self.__error_context(exception=exception, context=context)
 
         if exception is None:
-            self.__logger.exception(text, extra=payload)
+            self.__logger.exception(message, extra=payload)
         else:
             self.__logger.error(
-                text,
+                message,
                 extra=payload,
                 exc_info=(type(exception), exception, exception.__traceback__),
             )
 
-        await self.__publish(text=text, level="error", color="red", context=payload)
+        await self.__publish(message=message, level="error", color="red", context=payload)
 
     async def close(self) -> None:
         """

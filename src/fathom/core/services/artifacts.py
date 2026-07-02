@@ -102,7 +102,7 @@ class ArtifactCatalog:
         Resolve interaction artifact kind, or None when the path is not a public artifact.
         """
 
-        if path.name == SCRIPT_CONTENT_FILENAME:
+        if self.is_script(path=path):
             return None
 
         category = self.category(path=path)
@@ -114,6 +114,13 @@ class ArtifactCatalog:
             return ArtifactKind.SCREENSHOT
 
         return ArtifactKind.STRUCTURED_LOG
+
+    def is_script(self, *, path: Path) -> bool:
+        """
+        Return whether the path contains generated script content.
+        """
+
+        return path.name == SCRIPT_CONTENT_FILENAME or "__script__" in path.stem
 
     def mime(self, *, path: Path) -> str:
         """

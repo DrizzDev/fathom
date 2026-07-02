@@ -44,9 +44,15 @@ SCRIPT_CONTENT_FILENAME: Final[str] = "script.txt"
 # the query reaches the storage adapter; keeps unbounded scans off the floor.
 THREAD_TITLE_PREFIX_MAX_LENGTH: Final[int] = 200
 
+# Upper bound enforced on stored thread titles at the schema boundary.
+THREAD_TITLE_MAX_LENGTH: Final[int] = 256
+
 # Opaque cursor envelope version. Bumped when the cursor payload format changes
 # in a way that older cursors cannot be decoded.
 CURSOR_VERSION: Final[str] = "v1"
+
+# Hex length used only to detect raw SHA-256 hashes that should not be rendered as human-readable conversation summaries.
+SHA256_HEX_LENGTH: Final[int] = 64
 
 
 # Default retention windows used by the conversation cleanup service. Hosts override these per-tenant via CleanupRequest fields.
@@ -67,6 +73,26 @@ class EntryKind(StrEnum):
     MESSAGE = "message"
     CONTEXT = "context"
     ARTIFACT = "artifact"
+
+
+class TimelineSource(StrEnum):
+    """
+    Ledger sources consumed by the composite timeline cursor.
+    """
+
+    EVENTS = "events"
+    CONTEXTS = "contexts"
+    MESSAGES = "messages"
+    ARTIFACTS = "artifacts"
+
+
+class SequenceScope(StrEnum):
+    """
+    Durable sequence namespaces inside one conversation.
+    """
+
+    EVENT = "event"
+    MESSAGE = "message"
 
 
 class Visibility(StrEnum):
@@ -104,6 +130,28 @@ class ConversationFailureReason(StrEnum):
     SUMMARY_LIMIT_EXCEEDED = "SUMMARY.LIMIT_EXCEEDED"
 
 
+class RecorderEvent(StrEnum):
+    """
+    Stable recorder operation event names.
+    """
+
+    RUN_STARTED = "conversation.run.started"
+    RUN_FINISHED = "conversation.run.finished"
+    RUN_FAILED = "conversation.run.failed"
+    STEP_STARTED = "conversation.step.started"
+    STEP_FINISHED = "conversation.step.finished"
+    SUBTASK_STARTED = "conversation.subtask.started"
+    SUBTASK_FINISHED = "conversation.subtask.finished"
+    ANALYSIS_RECORDED = "conversation.analysis.recorded"
+    HITL_QUESTION = "conversation.hitl.question"
+    HITL_ANSWER = "conversation.hitl.answer"
+    ARTIFACT_LINKED = "conversation.artifact.linked"
+    SCRIPT_SAVED = "conversation.script.saved"
+    CONTEXT_BUILT = "conversation.context.built"
+    TIMELINE_PROGRESS_RECORDED = "conversation.timeline.progress.recorded"
+    TIMELINE_PROGRESS_FAILED = "conversation.timeline.progress.failed"
+
+
 class RunScriptOutcomeStatus(StrEnum):
     """
     Stable script lookup dispositions returned alongside the script payload.
@@ -124,3 +172,12 @@ class RunState(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     CANCELLED = "cancelled"
+
+
+class ProgressStatus(StrEnum):
+    """
+    Client-facing lifecycle state of one progress milestone.
+    """
+
+    FAILED = "failed"
+    COMPLETED = "completed"

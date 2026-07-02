@@ -7,7 +7,7 @@ from typing import Dict, Optional
 
 from fathom.constants.collaboration import JobCode, JobState
 from fathom.core.exceptions import InteractionError
-from fathom.interfaces.interaction import InteractionPort
+from fathom.interfaces.interaction import JobPort
 from fathom.interfaces.scheduler import JobHandlerPort, JobSchedulerPort
 from fathom.schemas.configuration import InProcessJobSchedulerConfiguration
 from fathom.schemas.interaction import (
@@ -30,7 +30,7 @@ class InProcessJobScheduler(JobSchedulerPort):
     def __init__(
         self,
         *,
-        interaction: InteractionPort,
+        interaction: JobPort,
         configuration: InProcessJobSchedulerConfiguration,
     ) -> None:
         """
@@ -56,7 +56,7 @@ class InProcessJobScheduler(JobSchedulerPort):
 
         self.__logger.info(
             "Starting in-process job scheduler",
-            extra=self.__log_extra(event="scheduler_start"),
+            extra=self.__log_extra(event="scheduler.start"),
         )
 
         self.__stopping.clear()
@@ -75,7 +75,7 @@ class InProcessJobScheduler(JobSchedulerPort):
 
         self.__logger.info(
             "Stopped in-process job scheduler",
-            extra=self.__log_extra(event="scheduler_stop"),
+            extra=self.__log_extra(event="scheduler.stop"),
         )
 
     async def __loop(self, *, handler: JobHandlerPort) -> None:
@@ -88,7 +88,7 @@ class InProcessJobScheduler(JobSchedulerPort):
                 if self.__should_recover():
                     self.__logger.info(
                         "Recovering stale scheduler jobs",
-                        extra=self.__log_extra(event="scheduler_recover_stale"),
+                        extra=self.__log_extra(event="scheduler.recover_stale"),
                     )
                     await self.__recover_stale()
                     self.__last_recovery = self.__now()
@@ -97,7 +97,7 @@ class InProcessJobScheduler(JobSchedulerPort):
             except Exception:
                 self.__logger.exception(
                     "Job scheduler iteration failed; backing off",
-                    extra=self.__log_extra(event="scheduler_iteration_failed"),
+                    extra=self.__log_extra(event="scheduler.iteration_failed"),
                 )
                 await self.__sleep(duration=self.__configuration.failure_backoff)
                 continue
@@ -131,8 +131,8 @@ class InProcessJobScheduler(JobSchedulerPort):
                 self.__logger.debug(
                     "No job available for scheduler dispatch",
                     extra=self.__log_extra(
-                        event="scheduler_claim_empty",
                         claimed=claimed,
+                        event="scheduler.claim_empty",
                     ),
                 )
                 return claimed
@@ -180,8 +180,8 @@ class InProcessJobScheduler(JobSchedulerPort):
             self.__logger.warning(
                 "Scheduler claimed job beyond attempt budget",
                 extra=self.__job_log_extra(
-                    event="scheduler_job_attempt_budget_exceeded",
                     job=job,
+                    event="scheduler.job.attempt_budget_exceeded",
                 ),
             )
             await self.__finish_max_attempts(job=job)
@@ -193,7 +193,7 @@ class InProcessJobScheduler(JobSchedulerPort):
             self.__logger.exception(
                 "Scheduler handler failed for claimed job",
                 extra=self.__job_log_extra(
-                    event="scheduler_job_handler_failed",
+                    event="scheduler.job.handler_failed",
                     job=job,
                     attempt=job.attempts,
                 ),
@@ -208,7 +208,7 @@ class InProcessJobScheduler(JobSchedulerPort):
         self.__logger.info(
             "Scheduler handler completed claimed job",
             extra=self.__job_log_extra(
-                event="scheduler_job_completed",
+                event="scheduler.job.completed",
                 job=job,
                 result_state=result.state.value,
             ),
@@ -232,7 +232,7 @@ class InProcessJobScheduler(JobSchedulerPort):
         self.__logger.warning(
             "Finishing scheduler job as failed after maximum attempts",
             extra=self.__job_log_extra(
-                event="scheduler_job_max_attempts",
+                event="scheduler.job.max_attempts",
                 job=job,
                 max_attempts=self.__configuration.max_attempts,
             ),
@@ -289,7 +289,7 @@ class InProcessJobScheduler(JobSchedulerPort):
         self.__logger.info(
             "Rescheduling scheduler job after handler failure",
             extra=self.__job_log_extra(
-                event="scheduler_job_reschedule",
+                event="scheduler.job.reschedule",
                 job=job,
                 attempt=job.attempts,
             ),

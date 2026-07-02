@@ -1,346 +1,156 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
-from datetime import datetime
-from pathlib import Path
-from types import SimpleNamespace
-from typing import Dict, List, Tuple
-from unittest.mock import AsyncMock, Mock, patch
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
-from fathom.adapters.interaction.pypika.sqlite import SQLiteInteraction
-from fathom.adapters.signing.noop import NoopSigner
-from fathom.constants.conversation import EntryKind, Visibility
-from fathom.constants.qualification import QualificationLabel, RationaleCategory
+from fathom.constants.collaboration import TaskCode
 from fathom.constants.state import CompletionReason
-from fathom.conversation.identity import InteractionIdentity
-from fathom.core.services.conversation import ConversationService
-from fathom.interfaces.qualifier import IntentQualifierPort
 from fathom.runtime.runner import FathomRunner
-from fathom.schemas.conversation import TaskTreeQuery, TimelineQuery
-from fathom.schemas.qualification import QualificationVerdict, Rationale
-from fathom.schemas.results import ExecutionResult
-from fathom.schemas.run import Principal
+from fathom.schemas.recording import Handle, ScriptOutput
 
 
-class PassingQualifier(IntentQualifierPort):
+class FathomRunnerGeneratedScriptTest(unittest.IsolatedAsyncioTestCase):
     """
-    Test qualifier that always allows execution.
+    Runner persists final generated script content without relying on artifact files.
     """
 
-    async def qualify(self, *, intent: str) -> QualificationVerdict:
+    def __runner(self, *, recorder: AsyncMock) -> FathomRunner:
         """
-        Return an executable verdict for runner tests.
-        """
-
-        return QualificationVerdict(
-            label=QualificationLabel.EXECUTABLE,
-            confidence=1.0,
-            rationale=Rationale(category=RationaleCategory.UI_TASK, reasoning="test"),
-        )
-
-
-class SuccessfulStrategy:
-    """
-    Fake intent strategy that completes successfully.
-    """
-
-    completion_reason = CompletionReason.SUCCESS.value
-    step_results: List[object] = []
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        """
-        Accept the same construction surface as the real strategy.
+        Build a runner instance with only the recorder dependency needed by this unit.
         """
 
-    async def execute(self) -> ExecutionResult:
-        """
-        Return a successful execution result.
-        """
+        runner = object.__new__(FathomRunner)
+        runner._FathomRunner__recorder = recorder  # type: ignore[attr-defined]
+        return runner
 
-        return ExecutionResult(success=True, duration=10)
-
-    def get_progress(self) -> Dict[str, object]:
+    @staticmethod
+    def __handle() -> Handle:
         """
-        Return deterministic progress.
+        Return stable run identifiers for script persistence tests.
         """
 
-        return {"step_count": 2}
-
-    def get_subgoal_execution_audit(self) -> Tuple[List[str], List[str], int]:
-        """
-        Return empty sub-goal audit data.
-        """
-
-        return [], [], 0
-
-    def get_metrics(self) -> None:
-        """
-        Return no metrics.
-        """
-
-        return None
-
-
-class FailingStrategy(SuccessfulStrategy):
-    """
-    Fake intent strategy that fails during execution.
-    """
-
-    async def execute(self) -> ExecutionResult:
-        """
-        Raise a deterministic runtime failure.
-        """
-
-        raise RuntimeError("planner failed")
-
-    def get_progress(self) -> Dict[str, object]:
-        """
-        Return progress available at failure time.
-        """
-
-        return {"step_count": 1}
-
-
-class ContextManagerStub:
-    """
-    Lightweight context manager stub for runner tests.
-    """
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        """
-        Accept the real context manager construction surface.
-        """
-
-    def set_roadmap(self, *, intent: str) -> None:
-        """
-        Accept roadmap updates.
-        """
-
-    async def shutdown(self) -> None:
-        """
-        Release no resources.
-        """
-
-
-class TestFathomRunnerConversationRecording(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for runtime conversation recording wiring.
-    """
-
-    def setUp(self) -> None:
-        """
-        Create an isolated runner with mocked runtime ports.
-        """
-
-        self.__temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.__temporary_directory.cleanup)
-        self.__base = Path(self.__temporary_directory.name)
-        self.__interaction = SQLiteInteraction(path=self.__base / "interaction.db")
-        self.__conversation = ConversationService(
-            signer=NoopSigner(), interaction=self.__interaction
-        )
-        self.__context = patch("fathom.runtime.runner.ContextManager", ContextManagerStub)
-        self.__context.start()
-        self.addCleanup(self.__context.stop)
-        self.__runner = self.__runner_with(interaction=self.__interaction)
-
-    async def asyncTearDown(self) -> None:
-        """
-        Release runner resources after each test.
-        """
-
-        await self.__runner.cleanup()
-
-    async def test_run_intent_records_conversation_lifecycle_and_artifacts(self) -> None:
-        """
-        Record run start, result, context, task, and artifacts through the recorder.
-        """
-
-        self.__write_artifact(
-            category="history",
-            package="com.example",
+        return Handle(
+            task="7c5f7738-8c0b-4597-b9a0-988a1d22bc24",
+            tenant="tenant-1",
+            thread="9d243b7d-2a52-457a-b799-72d4bc420e3a",
             workflow="workflow-1",
-            name="script.txt",
-        )
-        self.__write_artifact(
-            category="screenshot",
-            package="com.example",
-            workflow="workflow-1",
-            name="capture.png",
-        )
-
-        with patch("fathom.runtime.runner.IntentStrategy", SuccessfulStrategy):
-            result = await self.__runner.run_intent(
-                intent="Buy milk",
-                request_id="workflow-1",
-                package_name="com.example",
-                principal=Principal(
-                    tenant="default",
-                    operator="human-1",
-                    agent="agent-1",
-                    conversation="thread-1",
-                ),
-            )
-
-        timeline = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="default", thread="thread-1")
-        )
-        audit = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="default", thread="thread-1", mode=Visibility.AUDIT)
-        )
-        tree = await self.__conversation.tasks(
-            query=TaskTreeQuery(tenant="default", thread="thread-1")
+            execution="7dcb8a47-f3e7-435b-8a0e-c596dd2fdd90",
+            workspace=None,
+            requester="requester",
+            responder="responder",
+            request="request-1",
+            context="context-1",
         )
 
-        self.assertTrue(result.success)
-        self.assertEqual(
-            {
-                InteractionIdentity(workflow="workflow-1").message(
-                    name="request"
-                ): EntryKind.MESSAGE,
-                InteractionIdentity(workflow="workflow-1").message(
-                    name="result"
-                ): EntryKind.MESSAGE,
-            },
-            {entry.id: entry.kind for entry in timeline.entries if entry.kind == EntryKind.MESSAGE},
-        )
-        self.assertIn(EntryKind.ARTIFACT, [entry.kind for entry in timeline.entries])
-        self.assertEqual(InteractionIdentity(workflow="workflow-1").task(), tree.roots[0].id)
-        self.assertIn(
-            InteractionIdentity(workflow="workflow-1").context(name="start"),
-            [entry.id for entry in audit.entries],
-        )
-
-    async def test_run_intent_records_failed_completion_before_reraising(self) -> None:
+    async def test_record_generated_script_uses_content_without_file_path(self) -> None:
         """
-        Record a failed terminal result when strategy execution raises.
+        Regression: final scripts must be saved from generated content, not only script.txt.
         """
 
-        with (
-            patch("fathom.runtime.runner.IntentStrategy", FailingStrategy),
-            self.assertRaises(RuntimeError),
-        ):
-            await self.__runner.run_intent(
-                intent="Buy milk",
-                request_id="workflow-1",
-                package_name="com.example",
-                principal=Principal(
-                    tenant="default",
-                    operator="human-1",
-                    agent="agent-1",
-                    conversation="thread-1",
-                ),
-            )
+        recorder = AsyncMock()
+        runner = self.__runner(recorder=recorder)
+        record = runner._FathomRunner__record_generated_script  # type: ignore[attr-defined]
+        created = datetime(2026, 6, 30, tzinfo=timezone.utc)
 
-        timeline = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="default", thread="thread-1")
+        await record(
+            title="Search shoes",
+            handle=self.__handle(),
+            created=created,
+            content="open browser\nsearch shoes",
+            metadata={"workflow": "workflow-1"},
         )
-        tree = await self.__conversation.tasks(
-            query=TaskTreeQuery(tenant="default", thread="thread-1")
+
+        recorder.record_script.assert_awaited_once()
+        output: ScriptOutput = recorder.record_script.await_args.kwargs["output"]
+
+        self.assertEqual(output.task, "7c5f7738-8c0b-4597-b9a0-988a1d22bc24")
+        self.assertEqual(output.title, "Search shoes")
+        self.assertEqual(output.content, "open browser\nsearch shoes")
+        self.assertEqual(output.created, created)
+        self.assertEqual(output.metadata, {"workflow": "workflow-1"})
+
+    async def test_record_generated_script_skips_empty_content(self) -> None:
+        """
+        Empty finalization output should not create an empty script row.
+        """
+
+        recorder = AsyncMock()
+        runner = self.__runner(recorder=recorder)
+        record = runner._FathomRunner__record_generated_script  # type: ignore[attr-defined]
+
+        await record(
+            title="Search shoes",
+            handle=self.__handle(),
+            created=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            content="   ",
+            metadata={},
         )
+
+        recorder.record_script.assert_not_awaited()
+
+    def test_completion_reason_preserves_recorded_reason(self) -> None:
+        """
+        Completion reason preserves runtime data without synthetic step prose.
+        """
+
+        recorder = AsyncMock()
+        runner = self.__runner(recorder=recorder)
+        reason = runner._FathomRunner__completion_reason  # type: ignore[attr-defined]
+
+        result = reason(
+            status="cancelled",
+            fallback="User stopped the execution.",
+        )
+
+        self.assertEqual("User stopped the execution.", result)
+
+    def test_task_code_uses_exact_cancelled_reason(self) -> None:
+        """
+        Task code mapping must not treat arbitrary failure prose as cancellation.
+        """
+
+        recorder = AsyncMock()
+        runner = self.__runner(recorder=recorder)
+        task_code = runner._FathomRunner__task_code  # type: ignore[attr-defined]
 
         self.assertEqual(
-            [
-                InteractionIdentity(workflow="workflow-1").message(name="result"),
-                InteractionIdentity(workflow="workflow-1").message(name="request"),
-            ],
-            [entry.id for entry in timeline.entries],
+            task_code(success=False, reason=CompletionReason.CANCELLED.value),
+            TaskCode.USER_CANCELLED,
         )
-        self.assertEqual("failed", tree.roots[0].state)
-        self.assertEqual(CompletionReason.FAILED.value, tree.roots[0].summary)
-
-    async def test_run_exploration_records_failure_before_reraising(self) -> None:
-        """
-        Mirror the run_intent failure recording on the exploration path so
-        an exception during exploration leaves a terminal record on the
-        thread instead of an orphaned RUNNING root task.
-        """
-
-        from fathom.runtime.runner import ExplorationStrategy as _RealExploration  # noqa: F401
-
-        class _FailingExploration:
-            def __init__(self, *args: object, **kwargs: object) -> None:
-                pass
-
-            async def execute(self):
-                raise RuntimeError("exploration crashed")
-
-            def get_progress(self):
-                return {"steps": 4}
-
-            @property
-            def graph(self):
-                return SimpleNamespace(nodes={})
-
-        with (
-            patch("fathom.runtime.runner.ExplorationStrategy", _FailingExploration),
-            self.assertRaises(RuntimeError),
-        ):
-            await self.__runner.run_exploration(
-                request_id="workflow-x",
-                package_name="com.example",
-                principal=Principal(
-                    tenant="default",
-                    operator="human-1",
-                    agent="agent-1",
-                    conversation="thread-x",
-                ),
-            )
-
-        tree = await self.__conversation.tasks(
-            query=TaskTreeQuery(tenant="default", thread="thread-x")
+        self.assertEqual(
+            task_code(success=False, reason="Failed while trying to cancel my order"),
+            TaskCode.UNKNOWN_ERROR,
         )
 
-        self.assertEqual("failed", tree.roots[0].state)
-
-    def __runner_with(self, *, interaction: SQLiteInteraction) -> FathomRunner:
+    def test_task_code_maps_operator_aborted_to_user_cancelled(self) -> None:
         """
-        Build a runner with mocked ports and real interaction storage.
+        Intent strategy emits OPERATOR_ABORTED on HITL cancel; that must land as USER_CANCELLED.
         """
 
-        device = SimpleNamespace(
-            configuration=None,
-            get_current_package=AsyncMock(return_value="com.example"),
+        recorder = AsyncMock()
+        runner = self.__runner(recorder=recorder)
+        task_code = runner._FathomRunner__task_code  # type: ignore[attr-defined]
+
+        self.assertEqual(
+            task_code(success=False, reason=CompletionReason.OPERATOR_ABORTED.value),
+            TaskCode.USER_CANCELLED,
         )
 
-        llm = Mock()
-        llm.cleanup = AsyncMock()
+    def test_task_code_uses_exact_max_steps_reason(self) -> None:
+        """
+        Task code mapping must only timeout for the canonical max-step reason.
+        """
 
-        memory = Mock()
-        memory.get_all_knowledge = AsyncMock(return_value={})
+        recorder = AsyncMock()
+        runner = self.__runner(recorder=recorder)
+        task_code = runner._FathomRunner__task_code  # type: ignore[attr-defined]
 
-        telemetry = SimpleNamespace(info=AsyncMock(), warning=AsyncMock())
-
-        path = SimpleNamespace(base_path=self.__base)
-
-        return FathomRunner(
-            llm=llm,
-            device=device,
-            perception=Mock(),
-            memory=memory,
-            signal=Mock(),
-            storage=SimpleNamespace(),
-            knowledge=Mock(),
-            telemetry=telemetry,
-            summarizer=Mock(),
-            qualifier=PassingQualifier(),
-            path_manager=path,
-            interaction=interaction,
+        self.assertEqual(
+            task_code(success=False, reason=CompletionReason.MAX_STEPS.value),
+            TaskCode.TIMEOUT,
         )
-
-    def __write_artifact(
-        self,
-        *,
-        category: str,
-        package: str,
-        workflow: str,
-        name: str,
-    ) -> None:
-        """
-        Create one generated artifact in the runner's expected directory layout.
-        """
-
-        path = self.__base / category / "session" / package / workflow / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"generated at {datetime.now().isoformat()}", encoding="utf-8")
+        self.assertEqual(
+            task_code(success=False, reason="Failed after max steps in app copy"),
+            TaskCode.UNKNOWN_ERROR,
+        )

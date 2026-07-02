@@ -5,12 +5,14 @@ from datetime import timedelta
 from hashlib import sha256
 from logging import getLogger
 from typing import Awaitable, Callable, Dict, Optional, TypeVar
+from uuid import uuid4
 
 from pydantic import JsonValue
 
 from fathom.constants.collaboration import (
     Audience,
     ContextPurpose,
+    ExecutionState,
     IdempotencyState,
     JobCode,
     JobKind,
@@ -18,6 +20,7 @@ from fathom.constants.collaboration import (
     MembershipRole,
     MessageKind,
     PolicyScope,
+    TaskCode,
     TaskKind,
     TaskState,
 )
@@ -25,17 +28,17 @@ from fathom.constants.conversation import (
     RECORDER_BUILDER,
     REQUEST_EXPIRY_DAYS,
     EntryKind,
+    RecorderEvent,
 )
 from fathom.constants.events import FathomEvent
 from fathom.conversation.identity import InteractionIdentity
-from fathom.core.exceptions import InteractionError, ThreadConflictError, ThreadNotFoundError
+from fathom.core.exceptions import InteractionError, ThreadConflictError
 from fathom.core.services.conversation import ConversationService
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.conversation import (
     AddActor,
     ArtifactAttach,
     ContextRecord,
-    ConversationThreadQuery,
     EntryView,
     JoinMember,
     MessageAppend,
@@ -48,6 +51,7 @@ from fathom.schemas.conversation import (
 from fathom.schemas.interaction import (
     BeginRequest,
     ClaimJob,
+    FinishExecution,
     FinishJob,
     FinishRequest,
     Governance,
@@ -58,12 +62,17 @@ from fathom.schemas.interaction import (
     SavePolicy,
     ScheduleJob,
     Script,
+    StartExecution,
+    Terminal,
+    ThreadQuery,
 )
 from fathom.schemas.recording import (
     Analysis,
     Answer,
     Completion,
+    ContextSnapshot,
     Handle,
+    Members,
     Output,
     Question,
     Run,
@@ -142,6 +151,7 @@ class ConversationRecorder:
         *,
         telemetry: TelemetryPort,
         conversation: ConversationService,
+        identifier: Optional[Callable[[], str]] = None,
     ) -> None:
         """
         Initialize the recorder with a conversation service and telemetry port.
@@ -151,6 +161,7 @@ class ConversationRecorder:
 
         self.__telemetry = telemetry
         self.__conversation = conversation
+        self.__identifier = identifier or (lambda: str(uuid4()))
 
         self.__health = RecorderHealth()
 
@@ -168,9 +179,9 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.run.started",
+            failure_event=RecorderEvent.RUN_STARTED,
             do=lambda: self.__do_record_run_started(run=run),
-            envelope_for=lambda _handle: self.__envelope_run_started(run=run),
+            envelope_for=lambda handle: self.__envelope_run_started(run=run, handle=handle),
         )
 
     async def record_run_finished(self, *, completion: Completion) -> Optional[EntryView]:
@@ -179,7 +190,7 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.run.finished",
+            failure_event=RecorderEvent.RUN_FINISHED,
             do=lambda: self.__do_record_run_finished(completion=completion),
             envelope_for=lambda _entry: self.__envelope_run_finished(completion=completion),
         )
@@ -193,7 +204,7 @@ class ConversationRecorder:
             raise InteractionError("Failed run recording requires an unsuccessful completion.")
 
         return await self.__guard(
-            failure_event="conversation.run.failed",
+            failure_event=RecorderEvent.RUN_FAILED,
             do=lambda: self.__do_record_run_finished(completion=completion),
             envelope_for=lambda _entry: self.__envelope_run_failed(completion=completion),
         )
@@ -204,7 +215,7 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.step.started",
+            failure_event=RecorderEvent.STEP_STARTED,
             do=lambda: self.__do_record_step_started(step=step),
             envelope_for=lambda _node: self.__envelope_step_started(step=step),
         )
@@ -215,7 +226,7 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.step.finished",
+            failure_event=RecorderEvent.STEP_FINISHED,
             do=lambda: self.__do_record_step_finished(completion=completion),
             envelope_for=lambda _node: self.__envelope_step_finished(completion=completion),
         )
@@ -228,7 +239,7 @@ class ConversationRecorder:
         delegated = step.model_copy(update={"kind": TaskKind.DELEGATION})
 
         return await self.__guard(
-            failure_event="conversation.subtask.started",
+            failure_event=RecorderEvent.SUBTASK_STARTED,
             do=lambda: self.__do_record_step_started(step=delegated),
             envelope_for=lambda _node: self.__envelope_subtask_started(step=delegated),
         )
@@ -241,7 +252,7 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.subtask.finished",
+            failure_event=RecorderEvent.SUBTASK_FINISHED,
             do=lambda: self.__do_record_step_finished(completion=completion),
             envelope_for=lambda _node: self.__envelope_subtask_finished(completion=completion),
         )
@@ -252,7 +263,7 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.analysis.recorded",
+            failure_event=RecorderEvent.ANALYSIS_RECORDED,
             do=lambda: self.__do_record_llm_analysis(analysis=analysis),
             envelope_for=lambda _entry: self.__envelope_llm_analysis(analysis=analysis),
         )
@@ -263,7 +274,7 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.hitl.question",
+            failure_event=RecorderEvent.HITL_QUESTION,
             do=lambda: self.__do_record_hitl_question(question=question),
             envelope_for=lambda _entry: self.__envelope_hitl_question(question=question),
         )
@@ -274,7 +285,7 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.hitl.answer",
+            failure_event=RecorderEvent.HITL_ANSWER,
             do=lambda: self.__do_record_hitl_answer(answer=answer),
             envelope_for=lambda _entry: self.__envelope_hitl_answer(answer=answer),
         )
@@ -285,7 +296,7 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.artifact.linked",
+            failure_event=RecorderEvent.ARTIFACT_LINKED,
             do=lambda: self.__do_record_artifact(output=output),
             envelope_for=lambda _entry: self.__envelope_artifact(output=output),
         )
@@ -296,15 +307,26 @@ class ConversationRecorder:
         """
 
         return await self.__guard(
-            failure_event="conversation.script.saved",
+            failure_event=RecorderEvent.SCRIPT_SAVED,
             do=lambda: self.__do_record_script(output=output),
             envelope_for=lambda script: self.__envelope_script(output=output, script=script),
+        )
+
+    async def record_context(self, *, snapshot: ContextSnapshot) -> Optional[EntryView]:
+        """
+        Record a context recipe produced by runtime execution.
+        """
+
+        return await self.__guard(
+            failure_event=RecorderEvent.CONTEXT_BUILT,
+            do=lambda: self.__do_record_context(snapshot=snapshot),
+            envelope_for=lambda _entry: self.__envelope_context(snapshot=snapshot),
         )
 
     async def __guard(
         self,
         *,
-        failure_event: str,
+        failure_event: RecorderEvent,
         do: Callable[[], Awaitable[T]],
         envelope_for: Callable[[T], TelemetryEnvelope],
     ) -> Optional[T]:
@@ -323,11 +345,13 @@ class ConversationRecorder:
         try:
             result = await do()
         except InteractionError as exception:
-            await self.__handle_failure(exception=exception, operation=failure_event)
+            await self.__handle_failure(exception=exception, operation=failure_event.value)
             return None
 
         except Exception as exception:
-            await self.__handle_unexpected_failure(exception=exception, operation=failure_event)
+            await self.__handle_unexpected_failure(
+                exception=exception, operation=failure_event.value
+            )
             return None
 
         try:
@@ -339,20 +363,21 @@ class ConversationRecorder:
         except Exception:
             self.__logger.exception(
                 "Conversation recorder success telemetry failed",
-                extra={"operation": failure_event},
+                extra={"operation": failure_event.value},
             )
 
         return result
 
     async def __handle_failure(self, *, exception: InteractionError, operation: str) -> None:
         """
-        Record one InteractionError failure with a full traceback and emit a single typed error event on first failure for the live UI.
+        Log one InteractionError with traceback and emit a sanitized disabled notice.
         """
 
         self.__logger.exception(
             "Conversation recorder write failed (interaction error)",
-            extra={"operation": operation, "error_type": type(exception).__name__},
+            stack_info=True,
             exc_info=exception,
+            extra={"operation": operation, "error_type": type(exception).__name__},
         )
 
         first = self.__health.record_failure()
@@ -362,10 +387,8 @@ class ConversationRecorder:
         try:
             await self.__telemetry.error(
                 "Conversation recorder disabled after failure",
-                type=FathomEvent.RECORDER_DISABLED,
                 operation=operation,
-                error=str(exception),
-                error_type=type(exception).__name__,
+                type=FathomEvent.RECORDER_DISABLED,
             )
         except Exception:
             self.__logger.exception(
@@ -375,13 +398,14 @@ class ConversationRecorder:
 
     async def __handle_unexpected_failure(self, *, exception: Exception, operation: str) -> None:
         """
-        Record one unexpected failure with a full traceback and emit a single typed error event on first failure for the live UI.
+        Log one unexpected failure with traceback and emit a sanitized disabled notice.
         """
 
         self.__logger.exception(
             "Conversation recorder write failed (unexpected exception)",
-            extra={"operation": operation, "error_type": type(exception).__name__},
+            stack_info=True,
             exc_info=exception,
+            extra={"operation": operation, "error_type": type(exception).__name__},
         )
 
         first = self.__health.record_failure()
@@ -391,10 +415,8 @@ class ConversationRecorder:
         try:
             await self.__telemetry.error(
                 "Conversation recorder disabled after unexpected storage failure",
-                type=FathomEvent.RECORDER_DISABLED,
                 operation=operation,
-                error=str(exception),
-                error_type=type(exception).__name__,
+                type=FathomEvent.RECORDER_DISABLED,
             )
         except Exception:
             self.__logger.exception(
@@ -408,36 +430,80 @@ class ConversationRecorder:
         """
 
         async with self.__conversation.atomic():
-            await self.__ensure_requester(run=run)
-            await self.__ensure_responder(run=run)
+            execution = run.execution or self.__identifier()
+            identity = InteractionIdentity(execution=execution)
+
+            task = run.task or identity.task()
+            context = run.context or identity.context(name="start")
+            request = run.request or identity.message(name="request")
+
+            members = run.members or Members(
+                requester=identity.membership(
+                    thread=run.thread,
+                    actor=run.requester.id,
+                    role=MembershipRole.REQUESTER.value,
+                ),
+                responder=identity.membership(
+                    thread=run.thread,
+                    actor=run.responder.id,
+                    role=MembershipRole.RESPONDER.value,
+                ),
+            )
+
+            await self.__ensure_requester(run=run, members=members)
+            await self.__ensure_responder(run=run, members=members)
 
             await self.__record_default_policy(run=run)
-            await self.__record_request_started(run=run)
+            await self.__record_request_started(
+                run=run,
+                task=task,
+                request=request,
+                execution=execution,
+            )
 
+            await self.__conversation.start_execution(
+                request=StartExecution(
+                    identity=Identity(
+                        id=execution,
+                        tenant=run.tenant,
+                        workspace=run.workspace,
+                    ),
+                    thread=run.thread,
+                    intent=run.intent,
+                    actor=run.requester.id,
+                    started_at=run.created,
+                    workflow_id=run.workflow,
+                    metadata=Metadata(entries=run.metadata),
+                )
+            )
             await self.__conversation.start(
                 request=TaskStart(
-                    id=run.task,
+                    id=task,
                     tenant=run.tenant,
                     thread=run.thread,
-                    kind=TaskKind.FATHOM,
+                    execution=execution,
                     created=run.created,
                     objective=run.intent,
+                    kind=TaskKind.FATHOM,
                     reference=run.package,
                     workspace=run.workspace,
                     creator=run.requester.id,
                     assignee=run.responder.id,
-                    metadata={
-                        **run.metadata,
-                        "workflow": run.workflow,
+                    plan={
+                        "intent": run.intent,
+                        "package": run.package,
                     },
+                    progress={"state": TaskState.RUNNING.value},
+                    metadata={**run.metadata, "workflow": run.workflow},
                 )
             )
             await self.__conversation.append(
                 request=MessageAppend(
-                    id=run.request,
-                    task=run.task,
+                    id=request,
+                    task=task,
                     tenant=run.tenant,
                     thread=run.thread,
+                    execution=execution,
                     workspace=run.workspace,
                     author=run.requester.id,
                     kind=MessageKind.REQUEST,
@@ -445,7 +511,6 @@ class ConversationRecorder:
                     body={
                         "intent": run.intent,
                         "package": run.package,
-                        "workflow": run.workflow,
                         "starting_package": run.metadata.get("starting_package"),
                     },
                     created=run.created,
@@ -454,13 +519,14 @@ class ConversationRecorder:
             )
             await self.__conversation.record(
                 request=ContextRecord(
-                    id=run.context,
-                    task=run.task,
+                    task=task,
+                    id=context,
                     tenant=run.tenant,
                     thread=run.thread,
+                    execution=execution,
                     created=run.created,
+                    messages=(request,),
                     metadata=run.metadata,
-                    messages=(run.request,),
                     workspace=run.workspace,
                     builder=RECORDER_BUILDER,
                     consumer=run.responder.id,
@@ -469,14 +535,19 @@ class ConversationRecorder:
                     purpose=ContextPurpose.EXECUTION,
                 )
             )
-            await self.__record_job_started(run=run)
+            await self.__record_job_started(
+                run=run,
+                task=task,
+                execution=execution,
+            )
 
         return Handle(
-            task=run.task,
+            task=task,
+            request=request,
+            context=context,
             tenant=run.tenant,
             thread=run.thread,
-            request=run.request,
-            context=run.context,
+            execution=execution,
             workflow=run.workflow,
             workspace=run.workspace,
             requester=run.requester.id,
@@ -514,7 +585,14 @@ class ConversationRecorder:
             )
         )
 
-    async def __record_request_started(self, *, run: Run) -> None:
+    async def __record_request_started(
+        self,
+        *,
+        run: Run,
+        task: str,
+        request: str,
+        execution: str,
+    ) -> None:
         """
         Persist a run idempotency/audit request row.
         """
@@ -523,20 +601,25 @@ class ConversationRecorder:
             request=BeginRequest(
                 tenant=run.tenant,
                 created_at=run.created,
-                hash=self.__request_hash(run=run),
-                key=self.__request_key(workflow=run.workflow),
+                workspace=run.workspace,
+                hash=self.__request_hash(
+                    run=run,
+                    task=task,
+                    request=request,
+                    execution=execution,
+                ),
+                key=self.__request_key(execution=execution),
                 expires_at=run.created + timedelta(days=REQUEST_EXPIRY_DAYS),
                 metadata=Metadata(
                     entries={
                         "thread": run.thread,
-                        "workflow": run.workflow,
                         "entrypoint": "fathom.run",
                     }
                 ),
             )
         )
 
-    async def __record_job_started(self, *, run: Run) -> None:
+    async def __record_job_started(self, *, run: Run, execution: str, task: str) -> None:
         """
         Persist and claim a run-scoped job for CLI/direct execution parity.
         """
@@ -546,17 +629,17 @@ class ConversationRecorder:
                 identity=Identity(
                     tenant=run.tenant,
                     workspace=run.workspace,
-                    id=self.__job_id(workflow=run.workflow),
+                    id=self.__job_id(execution=execution),
                 ),
-                task=run.task,
+                task=task,
                 thread=run.thread,
+                execution=execution,
                 kind=JobKind.EXECUTION,
                 available_at=run.created,
                 payload=Metadata(
                     entries={
                         "intent": run.intent,
                         "package": run.package,
-                        "workflow": run.workflow,
                     }
                 ),
                 created_at=run.created,
@@ -571,11 +654,11 @@ class ConversationRecorder:
                 tenant=run.tenant,
                 claimed=run.created,
                 owner=run.responder.id,
-                job=self.__job_id(workflow=run.workflow),
+                job=self.__job_id(execution=execution),
             )
         )
 
-    async def __ensure_requester(self, *, run: Run) -> None:
+    async def __ensure_requester(self, *, run: Run, members: Members) -> None:
         """
         Create or join the requesting actor for the run thread.
 
@@ -600,7 +683,7 @@ class ConversationRecorder:
                         metadata=run.metadata,
                         creator=run.requester,
                         workspace=run.workspace,
-                        member=run.members.requester,
+                        member=members.requester,
                         role=MembershipRole.REQUESTER,
                     )
                 )
@@ -625,11 +708,11 @@ class ConversationRecorder:
         await self.__conversation.join(
             request=JoinMember(
                 tenant=run.tenant,
-                joined=run.created,
                 thread=run.thread,
+                joined=run.created,
+                id=members.requester,
                 actor=run.requester.id,
                 workspace=run.workspace,
-                id=run.members.requester,
                 role=MembershipRole.REQUESTER,
             )
         )
@@ -640,16 +723,11 @@ class ConversationRecorder:
         typed ThreadNotFoundError; any other failure propagates so the recorder's failure-suppression layer can disable cleanly.
         """
 
-        try:
-            await self.__conversation.get(
-                query=ConversationThreadQuery(tenant=run.tenant, thread=run.thread)
-            )
-        except ThreadNotFoundError:
-            return False
+        return await self.__conversation.internal_exists(
+            query=ThreadQuery(tenant=run.tenant, thread=run.thread)
+        )
 
-        return True
-
-    async def __ensure_responder(self, *, run: Run) -> None:
+    async def __ensure_responder(self, *, run: Run, members: Members) -> None:
         """
         Create and join the responding actor for the run thread.
         """
@@ -671,9 +749,9 @@ class ConversationRecorder:
                 tenant=run.tenant,
                 thread=run.thread,
                 joined=run.created,
+                id=members.responder,
                 actor=run.responder.id,
                 workspace=run.workspace,
-                id=run.members.responder,
                 role=MembershipRole.RESPONDER,
             )
         )
@@ -690,13 +768,14 @@ class ConversationRecorder:
                     kind=MessageKind.RESULT,
                     audience=Audience.THREAD,
                     task=completion.handle.task,
+                    created=completion.finished,
+                    metadata=completion.metadata,
                     tenant=completion.handle.tenant,
                     thread=completion.handle.thread,
                     author=completion.handle.responder,
+                    execution=completion.handle.execution,
                     workspace=completion.handle.workspace,
                     body=self.__result_body(completion=completion),
-                    created=completion.finished,
-                    metadata=completion.metadata,
                 )
             )
             await self.__conversation.finish(
@@ -709,6 +788,25 @@ class ConversationRecorder:
                     task=completion.handle.task,
                     tenant=completion.handle.tenant,
                     state=self.__run_state(completion=completion),
+                )
+            )
+            await self.__conversation.finish_execution(
+                request=FinishExecution(
+                    summary=completion.reason,
+                    tenant=completion.handle.tenant,
+                    completed_at=completion.finished,
+                    actor=completion.handle.responder,
+                    execution=completion.handle.execution,
+                    state=self.__execution_state(completion=completion),
+                    terminal=Terminal(code=completion.code, detail=completion.reason),
+                    outcome=Metadata(
+                        entries={
+                            "steps": completion.steps,
+                            "error": completion.error,
+                            "status": completion.status,
+                            "success": completion.success,
+                        }
+                    ),
                 )
             )
             await self.__record_job_finished(completion=completion)
@@ -726,7 +824,7 @@ class ConversationRecorder:
                 finished=completion.finished,
                 tenant=completion.handle.tenant,
                 owner=completion.handle.responder,
-                job=self.__job_id(workflow=completion.handle.workflow),
+                job=self.__job_id(execution=completion.handle.execution),
                 state=JobState.COMPLETED if completion.success else JobState.FAILED,
                 outcome=Outcome(
                     code=JobCode.COMPLETED if completion.success else JobCode.UNKNOWN_ERROR,
@@ -742,8 +840,9 @@ class ConversationRecorder:
 
         await self.__conversation.finish_request(
             request=FinishRequest(
+                finished=completion.finished,
                 tenant=completion.handle.tenant,
-                key=self.__request_key(workflow=completion.handle.workflow),
+                key=self.__request_key(execution=completion.handle.execution),
                 state=(
                     IdempotencyState.COMPLETED if completion.success else IdempotencyState.FAILED
                 ),
@@ -752,9 +851,8 @@ class ConversationRecorder:
                     "status": completion.status,
                     "success": completion.success,
                     "task": completion.handle.task,
-                    "workflow": completion.handle.workflow,
+                    "execution": completion.handle.execution,
                 },
-                finished=completion.finished,
             )
         )
 
@@ -776,9 +874,16 @@ class ConversationRecorder:
                 assignee=step.actor,
                 created=step.created,
                 metadata=step.metadata,
+                execution=step.execution,
                 workspace=step.workspace,
                 objective=step.objective,
                 reference=step.reference,
+                plan={
+                    "root": step.root,
+                    "parent": step.parent,
+                    "kind": step.kind.value,
+                },
+                progress={"state": TaskState.RUNNING.value},
             )
         )
 
@@ -818,6 +923,7 @@ class ConversationRecorder:
                 kind=MessageKind.PROGRESS,
                 metadata=analysis.metadata,
                 workspace=analysis.workspace,
+                execution=analysis.execution,
                 body=self.__progress_body(analysis=analysis),
             )
         )
@@ -825,16 +931,24 @@ class ConversationRecorder:
     @staticmethod
     def __progress_body(*, analysis: Analysis) -> Dict[str, JsonValue]:
         """
-        Build the JSON body for a per-step planning message.
+        Build the JSON body for a per-step planning message from the analysis payload.
         """
 
         return {
             "step": analysis.step,
-            "action": analysis.action,
-            "target": analysis.target,
+            "status": analysis.status,
             "summary": analysis.summary,
-            "evidence": analysis.evidence,
-            "confidence": analysis.confidence,
+            "rationale": analysis.rationale,
+            "action": (
+                analysis.action.model_dump(mode="json", exclude_none=True)
+                if analysis.action is not None
+                else None
+            ),
+            "observation": (
+                analysis.observation.model_dump(mode="json", exclude_none=True)
+                if analysis.observation is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -843,10 +957,11 @@ class ConversationRecorder:
         Build the JSON body for a terminal run-result message.
         """
 
+        reason = completion.reason or completion.summary
         summary = completion.summary or completion.reason
 
         return {
-            "reason": summary,
+            "reason": reason,
             "summary": summary,
             "error": completion.error,
             "steps": completion.steps,
@@ -873,6 +988,7 @@ class ConversationRecorder:
                 created=question.created,
                 metadata=question.metadata,
                 workspace=question.workspace,
+                execution=question.execution,
             )
         )
 
@@ -895,6 +1011,7 @@ class ConversationRecorder:
                 audience=Audience.THREAD,
                 metadata=answer.metadata,
                 workspace=answer.workspace,
+                execution=answer.execution,
             )
         )
 
@@ -918,8 +1035,9 @@ class ConversationRecorder:
                 backend=output.backend,
                 created=output.created,
                 metadata=output.metadata,
-                retention=output.retention,
+                execution=output.execution,
                 workspace=output.workspace,
+                retention=output.retention,
             )
         )
 
@@ -945,6 +1063,34 @@ class ConversationRecorder:
                 artifact=output.artifact,
                 metadata=output.metadata,
                 workspace=output.workspace,
+                execution=output.execution,
+            )
+        )
+
+    async def __do_record_context(self, *, snapshot: ContextSnapshot) -> EntryView:
+        """
+        Persist a context recipe and return its renderable audit entry.
+        """
+
+        return await self.__conversation.record(
+            request=ContextRecord(
+                id=snapshot.id,
+                task=snapshot.task,
+                hash=snapshot.hash,
+                model=snapshot.model,
+                events=snapshot.events,
+                tenant=snapshot.tenant,
+                thread=snapshot.thread,
+                purpose=snapshot.purpose,
+                builder=RECORDER_BUILDER,
+                consumer=snapshot.actor,
+                created=snapshot.created,
+                provider=snapshot.provider,
+                metadata=snapshot.metadata,
+                messages=snapshot.messages,
+                artifacts=snapshot.artifacts,
+                execution=snapshot.execution,
+                workspace=snapshot.workspace,
             )
         )
 
@@ -953,7 +1099,27 @@ class ConversationRecorder:
         Resolve the terminal task state for a run completion.
         """
 
-        return TaskState.SUCCEEDED if completion.success else TaskState.FAILED
+        if completion.success:
+            return TaskState.SUCCEEDED
+
+        if completion.code is TaskCode.USER_CANCELLED:
+            return TaskState.CANCELLED
+
+        return TaskState.FAILED
+
+    @staticmethod
+    def __execution_state(*, completion: Completion) -> ExecutionState:
+        """
+        Return the terminal execution state for a recorded run completion.
+        """
+
+        if completion.success:
+            return ExecutionState.SUCCEEDED
+
+        if completion.code is TaskCode.USER_CANCELLED:
+            return ExecutionState.CANCELLED
+
+        return ExecutionState.FAILED
 
     def __policy_id(self, *, workspace: Optional[str]) -> str:
         """
@@ -962,51 +1128,51 @@ class ConversationRecorder:
 
         return InteractionIdentity.stable(scope="policy.default", parts=(workspace or "tenant",))
 
-    def __request_key(self, *, workflow: str) -> str:
+    def __request_key(self, *, execution: str) -> str:
         """
-        Return the deterministic idempotency key for a run workflow.
-        """
-
-        return InteractionIdentity.stable(scope="request.run", parts=(workflow,))
-
-    def __job_id(self, *, workflow: str) -> str:
-        """
-        Return the deterministic durable job id for a run workflow.
+        Return the deterministic idempotency key for a run execution.
         """
 
-        return InteractionIdentity.stable(scope="job.execution", parts=(workflow,))
+        return InteractionIdentity.stable(scope="request.run", parts=(execution,))
 
-    def __request_hash(self, *, run: Run) -> str:
+    def __job_id(self, *, execution: str) -> str:
+        """
+        Return the deterministic durable job id for a run execution.
+        """
+
+        return InteractionIdentity.stable(scope="job.execution", parts=(execution,))
+
+    def __request_hash(self, *, run: Run, request: str, task: str, execution: str) -> str:
         """
         Hash the stable run request payload stored in the idempotency row.
         """
 
         payload = json.dumps(
             {
-                "task": run.task,
-                "thread": run.thread,
+                "task": task,
+                "request": request,
                 "intent": run.intent,
+                "thread": run.thread,
                 "package": run.package,
-                "request": run.request,
-                "workflow": run.workflow,
+                "execution": execution,
             },
             sort_keys=True,
             separators=(",", ":"),
         )
         return sha256(payload.encode("utf-8"), usedforsecurity=False).hexdigest()
 
-    def __envelope_run_started(self, *, run: Run) -> TelemetryEnvelope:
+    def __envelope_run_started(self, *, run: Run, handle: Handle) -> TelemetryEnvelope:
         """
         Build the telemetry envelope for a run-started event.
         """
 
         return TelemetryEnvelope(
-            task_id=run.task,
+            task_id=handle.task,
             tenant=run.tenant,
             kind=EntryKind.EVENT,
             workflow_id=run.workflow,
             conversation_id=run.thread,
-            type="conversation.run.started",
+            type=RecorderEvent.RUN_STARTED.value,
             payload={"intent": run.intent, "package": run.package},
         )
 
@@ -1019,7 +1185,7 @@ class ConversationRecorder:
             kind=EntryKind.MESSAGE,
             task_id=completion.handle.task,
             tenant=completion.handle.tenant,
-            type="conversation.run.finished",
+            type=RecorderEvent.RUN_FINISHED.value,
             workflow_id=completion.handle.workflow,
             conversation_id=completion.handle.thread,
             payload={
@@ -1038,7 +1204,7 @@ class ConversationRecorder:
         return TelemetryEnvelope(
             kind=EntryKind.MESSAGE,
             task_id=completion.handle.task,
-            type="conversation.run.failed",
+            type=RecorderEvent.RUN_FAILED.value,
             tenant=completion.handle.tenant,
             workflow_id=completion.handle.workflow,
             conversation_id=completion.handle.thread,
@@ -1063,7 +1229,7 @@ class ConversationRecorder:
             tenant=output.tenant,
             workflow_id=output.workflow,
             conversation_id=output.thread,
-            type="conversation.script.saved",
+            type=RecorderEvent.SCRIPT_SAVED.value,
             payload={
                 "script": output.id,
                 "format": output.format,
@@ -1083,7 +1249,7 @@ class ConversationRecorder:
             kind=EntryKind.EVENT,
             workflow_id=step.workflow,
             conversation_id=step.thread,
-            type="conversation.step.started",
+            type=RecorderEvent.STEP_STARTED.value,
             payload={"objective": step.objective, "kind": step.kind.value},
         )
 
@@ -1098,7 +1264,7 @@ class ConversationRecorder:
             tenant=completion.tenant,
             workflow_id=completion.workflow,
             conversation_id=completion.thread,
-            type="conversation.step.finished",
+            type=RecorderEvent.STEP_FINISHED.value,
             payload={"state": completion.state.value, "code": completion.code.value},
         )
 
@@ -1108,7 +1274,7 @@ class ConversationRecorder:
         """
 
         envelope = self.__envelope_step_started(step=step)
-        return envelope.model_copy(update={"type": "conversation.subtask.started"})
+        return envelope.model_copy(update={"type": RecorderEvent.SUBTASK_STARTED.value})
 
     def __envelope_subtask_finished(self, *, completion: StepCompletion) -> TelemetryEnvelope:
         """
@@ -1116,7 +1282,7 @@ class ConversationRecorder:
         """
 
         envelope = self.__envelope_step_finished(completion=completion)
-        return envelope.model_copy(update={"type": "conversation.subtask.finished"})
+        return envelope.model_copy(update={"type": RecorderEvent.SUBTASK_FINISHED.value})
 
     def __envelope_llm_analysis(self, *, analysis: Analysis) -> TelemetryEnvelope:
         """
@@ -1129,7 +1295,7 @@ class ConversationRecorder:
             tenant=analysis.tenant,
             workflow_id=analysis.workflow,
             conversation_id=analysis.thread,
-            type="conversation.analysis.recorded",
+            type=RecorderEvent.ANALYSIS_RECORDED.value,
             payload={"summary": analysis.summary},
         )
 
@@ -1144,7 +1310,7 @@ class ConversationRecorder:
             tenant=question.tenant,
             workflow_id=question.workflow,
             conversation_id=question.thread,
-            type="conversation.hitl.question",
+            type=RecorderEvent.HITL_QUESTION.value,
             payload=dict(question.body) if isinstance(question.body, dict) else {},
         )
 
@@ -1159,7 +1325,7 @@ class ConversationRecorder:
             kind=EntryKind.MESSAGE,
             workflow_id=answer.workflow,
             conversation_id=answer.thread,
-            type="conversation.hitl.answer",
+            type=RecorderEvent.HITL_ANSWER.value,
             payload=dict(answer.body) if isinstance(answer.body, dict) else {},
         )
 
@@ -1174,10 +1340,30 @@ class ConversationRecorder:
             kind=EntryKind.ARTIFACT,
             workflow_id=output.workflow,
             conversation_id=output.thread,
-            type="conversation.artifact.linked",
+            type=RecorderEvent.ARTIFACT_LINKED.value,
             payload={
                 "uri": output.uri,
                 "mime": output.mime,
                 "kind": output.kind.value,
+            },
+        )
+
+    def __envelope_context(self, *, snapshot: ContextSnapshot) -> TelemetryEnvelope:
+        """
+        Build the telemetry envelope for a context-built event.
+        """
+
+        return TelemetryEnvelope(
+            task_id=snapshot.task,
+            kind=EntryKind.CONTEXT,
+            tenant=snapshot.tenant,
+            workflow_id=snapshot.workflow,
+            conversation_id=snapshot.thread,
+            type=RecorderEvent.CONTEXT_BUILT.value,
+            payload={
+                "hash": snapshot.hash,
+                "purpose": snapshot.purpose.value,
+                "messages": list(snapshot.messages),
+                "artifacts": list(snapshot.artifacts),
             },
         )

@@ -154,6 +154,10 @@ class IntentResult(WorkflowResult):
     """
 
     intent: str = Field(default="", description="The intent executed")
+    script: Optional[str] = Field(
+        default=None,
+        description="Final generated script content produced during run finalization.",
+    )
     steps_taken: int = Field(ge=0, description="Number of steps executed")
     final_screen: Optional[Any] = Field(default=None, description="Final state")
 

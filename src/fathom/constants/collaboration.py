@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
-from typing import Final, FrozenSet
+from typing import Final, FrozenSet, Mapping
 
 DEFAULT_AGENT: Final[str] = "fathom"
 DEFAULT_TENANT: Final[str] = "default"
@@ -13,6 +13,14 @@ DEFAULT_AGENT_ID: Final[str] = "agent:fathom"
 DEFAULT_PLANNER_AGENT_ID: Final[str] = "agent:planner"
 DEFAULT_EXECUTOR_AGENT_ID: Final[str] = "agent:executor"
 DEFAULT_VERIFIER_AGENT_ID: Final[str] = "agent:verifier"
+
+SYSTEM_WORKER_ACTOR_ID: Final[str] = "system:worker"
+SYSTEM_POLICY_ACTOR_ID: Final[str] = "system:policy"
+SYSTEM_CLIENT_ACTOR_ID: Final[str] = "system:client"
+SYSTEM_RECOVERY_ACTOR_ID: Final[str] = "system:recovery"
+SYSTEM_ARTIFACT_ACTOR_ID: Final[str] = "system:artifact"
+SYSTEM_INTERACTION_ACTOR_ID: Final[str] = "system:interaction"
+
 
 INTERACTION_BUILDER: Final[str] = "interaction@1"
 
@@ -96,6 +104,17 @@ class TaskState(StrEnum):
     WAITING = "waiting"
     EXPIRED = "expired"
     DELETED = "deleted"
+    SUCCEEDED = "succeeded"
+    CANCELLED = "cancelled"
+
+
+class ExecutionState(StrEnum):
+    """
+    Supported lifecycle states for one user intent execution.
+    """
+
+    FAILED = "failed"
+    RUNNING = "running"
     SUCCEEDED = "succeeded"
     CANCELLED = "cancelled"
 
@@ -193,6 +212,17 @@ class EventSource(StrEnum):
     ARTIFACT = "artifact"
     RECOVERY = "recovery"
     INTERACTION = "interaction"
+
+
+EVENT_SOURCE_ACTORS: Final[Mapping[EventSource, str]] = {
+    EventSource.FATHOM: DEFAULT_AGENT_ID,
+    EventSource.CLIENT: SYSTEM_CLIENT_ACTOR_ID,
+    EventSource.POLICY: SYSTEM_POLICY_ACTOR_ID,
+    EventSource.WORKER: SYSTEM_WORKER_ACTOR_ID,
+    EventSource.ARTIFACT: SYSTEM_ARTIFACT_ACTOR_ID,
+    EventSource.RECOVERY: SYSTEM_RECOVERY_ACTOR_ID,
+    EventSource.INTERACTION: SYSTEM_INTERACTION_ACTOR_ID,
+}
 
 
 class ArtifactKind(StrEnum):

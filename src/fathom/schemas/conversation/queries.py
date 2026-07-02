@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime  # noqa: TC003
 from typing import Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
-from fathom.constants.collaboration import ArtifactKind, MessageKind
+from fathom.constants.collaboration import ArtifactKind, MessageKind, ThreadState
 from fathom.constants.conversation import (
     ARTIFACT_LIST_DEFAULT_LIMIT,
     ARTIFACT_LIST_MAX_LIMIT,
@@ -21,35 +21,36 @@ from fathom.constants.conversation import (
     EntryKind,
     Visibility,
 )
+from fathom.schemas.conversation.base import (
+    CursorScope,
+    TenantAccessScope,
+    ThreadAccessScope,
+    ThreadActorScope,
+    TimeWindow,
+)
 from fathom.schemas.interaction import SortOrder
 
 
-class ConversationThreadQuery(BaseModel):
+class ConversationThreadQuery(ThreadAccessScope):
     """
     Query for loading one client-facing conversation thread.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    thread: str = Field(description="Conversation thread identifier.")
-    tenant: str = Field(description="Tenant that owns the conversation thread.")
-
-
-class ConversationTransition(BaseModel):
+class ConversationTransition(ThreadActorScope):
     """
     Command for archive, unarchive, and soft-delete conversation operations.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    thread: str = Field(description="Conversation thread identifier.")
-    tenant: str = Field(description="Tenant that owns the conversation thread.")
-    actor: Optional[str] = Field(default=None, description="Actor that requested the transition.")
+    include_archived: bool = Field(
+        default=False,
+        description="Whether access validation may load an archived conversation.",
+    )
 
     updated: datetime = Field(description="Timestamp of the host-issued lifecycle update.")
 
 
-class TaskTreeQuery(BaseModel):
+class TaskTreeQuery(ThreadAccessScope):
     """
     Query for rendering one conversation task tree.
 
@@ -57,26 +58,17 @@ class TaskTreeQuery(BaseModel):
     Subtree queries are bounded and remain cheap on conversations with many runs.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    thread: str = Field(description="Conversation thread identifier.")
-    tenant: str = Field(description="Tenant that owns the conversation task tree.")
     task: Optional[str] = Field(
         default=None,
         description="Optional root-task identifier; when set, restrict the tree to that subtree.",
     )
 
 
-class TimelineQuery(BaseModel):
+class TimelineQuery(ThreadAccessScope, TimeWindow, CursorScope):
     """
     Query for rendering a conversation timeline.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    tenant: str = Field(description="Tenant that owns the conversation timeline.")
-
-    thread: str = Field(description="Conversation thread identifier.")
     task: Optional[str] = Field(default=None, description="Optional task filter.")
     actor: Optional[str] = Field(
         default=None,
@@ -91,14 +83,6 @@ class TimelineQuery(BaseModel):
             "Optional timeline entry-kind filter. Applied after the visibility mode filter."
         ),
     )
-    since: Optional[datetime] = Field(
-        default=None,
-        description="Only include entries created at or after this timestamp.",
-    )
-    until: Optional[datetime] = Field(
-        default=None,
-        description="Only include entries created before this timestamp.",
-    )
     mode: Visibility = Field(default=Visibility.USER, description="Timeline visibility mode.")
     limit: int = Field(
         gt=0,
@@ -106,7 +90,6 @@ class TimelineQuery(BaseModel):
         default=TIMELINE_DEFAULT_LIMIT,
         description="Maximum entries to return.",
     )
-    cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
     order: SortOrder = Field(
         default=SortOrder.DESC,
         description=(
@@ -116,24 +99,16 @@ class TimelineQuery(BaseModel):
     )
 
 
-class ConversationListQuery(BaseModel):
+class ConversationListQuery(TenantAccessScope, TimeWindow, CursorScope):
     """
     Query for listing client-facing conversations.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    tenant: str = Field(description="Tenant that owns the conversations.")
     workspace: Optional[str] = Field(default=None, description="Optional workspace filter.")
 
-    state: Optional[str] = Field(default=None, description="Optional thread state filter.")
-    since: Optional[datetime] = Field(
+    state: Optional[ThreadState] = Field(
         default=None,
-        description="Only include conversations updated at or after this timestamp.",
-    )
-    until: Optional[datetime] = Field(
-        default=None,
-        description="Only include conversations updated before this timestamp.",
+        description="Optional thread state filter.",
     )
     title: Optional[str] = Field(
         default=None,
@@ -146,18 +121,13 @@ class ConversationListQuery(BaseModel):
         default=CONVERSATION_LIST_DEFAULT_LIMIT,
         description="Maximum conversations to return.",
     )
-    cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
 
 
-class MessageListQuery(BaseModel):
+class MessageListQuery(ThreadAccessScope, TimeWindow, CursorScope):
     """
     Query for listing messages in one conversation.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    tenant: str = Field(description="Tenant that owns the messages.")
-    thread: str = Field(description="Conversation thread identifier.")
     task: Optional[str] = Field(default=None, description="Optional task filter.")
     actor: Optional[str] = Field(default=None, description="Optional author filter.")
 
@@ -165,21 +135,12 @@ class MessageListQuery(BaseModel):
         default_factory=tuple,
         description="Optional message-kind filter.",
     )
-    since: Optional[datetime] = Field(
-        default=None,
-        description="Only include messages created at or after this timestamp.",
-    )
-    until: Optional[datetime] = Field(
-        default=None,
-        description="Only include messages created before this timestamp.",
-    )
     limit: int = Field(
         gt=0,
         le=MESSAGE_LIST_MAX_LIMIT,
         default=MESSAGE_LIST_DEFAULT_LIMIT,
         description="Maximum messages to return.",
     )
-    cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
     order: SortOrder = Field(
         default=SortOrder.DESC,
         description=(
@@ -189,15 +150,11 @@ class MessageListQuery(BaseModel):
     )
 
 
-class ArtifactListQuery(BaseModel):
+class ArtifactListQuery(ThreadAccessScope, TimeWindow, CursorScope):
     """
     Query for listing artifacts in one conversation.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    tenant: str = Field(description="Tenant that owns the artifacts.")
-    thread: str = Field(description="Conversation thread identifier.")
     task: Optional[str] = Field(default=None, description="Optional task filter.")
     producer: Optional[str] = Field(default=None, description="Optional producer filter.")
 
@@ -205,21 +162,12 @@ class ArtifactListQuery(BaseModel):
         default_factory=tuple,
         description="Optional artifact-kind filter.",
     )
-    since: Optional[datetime] = Field(
-        default=None,
-        description="Only include artifacts created at or after this timestamp.",
-    )
-    until: Optional[datetime] = Field(
-        default=None,
-        description="Only include artifacts created before this timestamp.",
-    )
     limit: int = Field(
         gt=0,
         le=ARTIFACT_LIST_MAX_LIMIT,
         default=ARTIFACT_LIST_DEFAULT_LIMIT,
         description="Maximum artifacts to return.",
     )
-    cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
     order: SortOrder = Field(
         default=SortOrder.DESC,
         description=(
@@ -229,45 +177,34 @@ class ArtifactListQuery(BaseModel):
     )
 
 
-class RunScriptQuery(BaseModel):
+class RunScriptQuery(ThreadAccessScope):
     """
     Query for loading the generated script for one run task.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     task: str = Field(description="Run root task identifier.")
-    tenant: str = Field(description="Tenant that owns the script.")
-    thread: str = Field(description="Conversation thread identifier.")
 
 
-class ScriptsQuery(BaseModel):
+class ScriptsQuery(ThreadAccessScope, TimeWindow, CursorScope):
     """
     Query for listing scripts in one conversation thread.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    tenant: str = Field(description="Tenant that owns the scripts.")
-    thread: str = Field(description="Conversation thread identifier.")
     task: Optional[str] = Field(default=None, description="Optional run-root task filter.")
 
-    since: Optional[datetime] = Field(
-        default=None,
-        description="Only include scripts updated at or after this timestamp.",
-    )
-    until: Optional[datetime] = Field(
-        default=None,
-        description="Only include scripts updated before this timestamp.",
-    )
     limit: int = Field(
         gt=0,
         le=SCRIPT_LIST_MAX_LIMIT,
         default=SCRIPT_LIST_DEFAULT_LIMIT,
         description="Maximum scripts to return.",
     )
-    cursor: Optional[str] = Field(default=None, description="Opaque pagination cursor.")
     count: bool = Field(
         default=True,
         description="Whether to run COUNT(*) for the total match estimate; false skips the scan.",
     )
+
+
+class SummaryQuery(ThreadAccessScope):
+    """
+    Query for projecting one client-facing conversation summary.
+    """

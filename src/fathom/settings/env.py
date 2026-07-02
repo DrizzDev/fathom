@@ -14,6 +14,7 @@ from fathom.constants.llm import (
 )
 from fathom.constants.storage import (
     INTERACTION_DEFAULT_BACKEND,
+    INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE,
     INTERACTION_POSTGRES_DEFAULT_POOL_MAX_SIZE,
     INTERACTION_POSTGRES_DEFAULT_POOL_MIN_SIZE,
     INTERACTION_POSTGRES_DEFAULT_PORT,
@@ -21,6 +22,7 @@ from fathom.constants.storage import (
     INTERACTION_POSTGRES_DEFAULT_SSL,
     INTERACTION_POSTGRES_DEFAULT_STATEMENT_TIMEOUT,
     InteractionBackend,
+    PostgresMigrationMode,
     PostgresSslMode,
 )
 
@@ -143,10 +145,6 @@ class FathomSettings(BaseSettings):
             "DRIZZ_FATHOM_INTERACTION_BACKEND",
         ),
     )
-    interaction_sqlite_path: Optional[Path] = Field(
-        default=None,
-        alias="FATHOM_INTERACTION_SQLITE_PATH",
-    )
     interaction_postgres_dsn: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -222,6 +220,13 @@ class FathomSettings(BaseSettings):
         validation_alias=AliasChoices(
             "DRIZZ_FATHOM_POSTGRES_SSL",
             "FATHOM_INTERACTION_POSTGRES_SSL",
+        ),
+    )
+    interaction_postgres_migration_mode: PostgresMigrationMode = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_MIGRATION_MODE",
+            "FATHOM_INTERACTION_POSTGRES_MIGRATION_MODE",
         ),
     )
 

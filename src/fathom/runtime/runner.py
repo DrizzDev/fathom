@@ -24,10 +24,8 @@ from fathom.constants import ContextScope, FathomEvent
 from fathom.constants.collaboration import (
     ActorKind,
     ArtifactBackend,
-    MembershipRole,
     TaskCode,
 )
-from fathom.constants.conversation import SCRIPT_CONTENT_FILENAME
 from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.screen import (
@@ -44,7 +42,7 @@ from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import IdentityError, InteractionError
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.core.services.artifacts import ArtifactCatalog
-from fathom.core.services.conversation import ConversationService
+from fathom.core.services.conversation import ConversationService, Ports
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.telemetry import PhaseAnnouncer
@@ -64,7 +62,7 @@ from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.conversation import ActorInput
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.qualification import QualificationVerdict
-from fathom.schemas.recording import Completion, Handle, Members, Output, Run, ScriptOutput
+from fathom.schemas.recording import Completion, Handle, Output, Run, ScriptOutput
 from fathom.schemas.results import ExplorationResult, IntentResult
 from fathom.schemas.run import Principal, RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
@@ -105,6 +103,20 @@ class CancellableStrategy(Protocol):
         ...
 
 
+@runtime_checkable
+class AsyncCloser(Protocol):
+    """
+    Optional adapter capability for releasing async transport resources.
+    """
+
+    async def close(self) -> None:
+        """
+        Close adapter-owned transport resources.
+        """
+
+        ...
+
+
 class FathomRunner:
     """
     Executes Fathom workflows with configured ports.
@@ -124,20 +136,20 @@ class FathomRunner:
         *,
         llm: LLMPort,
         device: DevicePort,
-        perception: PerceptionPort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
         knowledge: KnowledgePort,
         telemetry: TelemetryPort,
+        perception: PerceptionPort,
         summarizer: SummarizationPort,
         qualifier: IntentQualifierPort,
         path_manager: SharedPathManager,
-        interaction: Optional[InteractionPort] = None,
         config: Optional[FathomConfiguration] = None,
+        interaction: Optional[InteractionPort] = None,
         realignment: Optional[RealignmentPolicy] = None,
-        runtime_configuration: Optional[RuntimeConfigLoader] = None,
         owned_resources: Optional[List[LLMPort]] = None,
+        runtime_configuration: Optional[RuntimeConfigLoader] = None,
     ) -> None:
         """
         Initialize runner with all configured ports.
@@ -154,14 +166,20 @@ class FathomRunner:
         self.__storage = storage
         self.__telemetry = telemetry
         self.__summarizer = summarizer
+
         self.__qualifier = qualifier
-        self.__runtime_configuration = runtime_configuration
         self.__interaction = interaction
+
+        self.__runtime_configuration = runtime_configuration
         self.__recorder = self.__recorder_for(interaction=interaction)
+
         self.__path_manager = path_manager
+
         self.__artifact_catalog = ArtifactCatalog(path_manager=path_manager)
+
         self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
+
         self.__owned_resources: List[LLMPort] = list(owned_resources or [])
         self.__phase = PhaseAnnouncer(
             telemetry=telemetry,
@@ -172,11 +190,11 @@ class FathomRunner:
         self.__engine = ExecutionEngine(
             llm=llm,
             device=device,
-            perception=perception,
             memory=memory,
             signal=signal,
             storage=storage,
             telemetry=telemetry,
+            perception=perception,
             path_manager=path_manager,
         )
         self.__context_manager: Optional[ContextManager] = None
@@ -263,10 +281,11 @@ class FathomRunner:
         self,
         *,
         intent: str,
-        principal: Principal,
         request_id: str,
+        principal: Principal,
         max_steps: int = 50,
         use_xml: bool = False,
+        execution_id: Optional[str] = None,
         package_name: Optional[str] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_scope: ContextScope = ContextScope.EXECUTION,
@@ -276,20 +295,31 @@ class FathomRunner:
 
         All identity is supplied via `principal`; there are no silent fallbacks.
         `request_id` is required and becomes the workflow id used for artifact
-        directories, telemetry routing, and as the root task suffix.
+        directories and telemetry routing. When recording is enabled, the
+        recorder reserves the execution id before strategy execution starts.
         """
 
         if not request_id:
             raise IdentityError(field="request_id", message="request_id is required")
 
+        if not execution_id and self.__recorder is None:
+            raise IdentityError(
+                field="execution_id",
+                message="No execution identity is available for this run.",
+            )
+
         start_time = time.time()
         started = datetime.now(tz=timezone.utc)
+
         workflow_id = request_id
-        thread = principal.conversation
+
         tenant = principal.tenant
-        workspace = principal.workspace
-        requester = principal.operator
+        thread = principal.conversation
+
         responder = principal.agent
+        requester = principal.operator
+        workspace = principal.workspace
+
         handle: Optional[Handle] = None
         requested_package = package_name
 
@@ -305,8 +335,8 @@ class FathomRunner:
 
         rejection = await self.__qualify_or_reject(
             intent=intent,
-            workflow_id=workflow_id,
             start_time=start_time,
+            workflow_id=workflow_id,
         )
         if rejection is not None:
             return rejection
@@ -330,52 +360,46 @@ class FathomRunner:
             context_scope=context_scope,
         )
 
-        identity = InteractionIdentity(workflow=workflow_id)
-
         if self.__recorder is not None:
             self.__recorder.health.reset()
             handle = await self.__recorder.record_run_started(
                 run=Run(
                     tenant=tenant,
-                    workspace=workspace,
                     thread=thread,
-                    task=identity.task(),
-                    workflow=workflow_id,
                     intent=intent,
+                    workspace=workspace,
+                    workflow=workflow_id,
+                    execution=execution_id,
                     package=requested_package,
                     requester=ActorInput(
                         id=requester,
-                        kind=ActorKind.HUMAN,
                         name=requester,
+                        kind=ActorKind.HUMAN,
                     ),
                     responder=ActorInput(
                         id=responder,
-                        kind=ActorKind.AGENT,
                         name=responder,
-                        provider=self.__llm_provider(),
+                        kind=ActorKind.AGENT,
                         model=self.__llm_model(),
+                        provider=self.__llm_provider(),
                     ),
-                    members=Members(
-                        requester=identity.membership(
-                            thread=thread,
-                            role=MembershipRole.REQUESTER.value,
-                            actor=requester,
-                        ),
-                        responder=identity.membership(
-                            thread=thread,
-                            role=MembershipRole.RESPONDER.value,
-                            actor=responder,
-                        ),
-                    ),
-                    request=identity.message(name="request"),
-                    context=identity.context(name="start"),
                     created=started,
                     metadata={
-                        "context_scope": context_scope.value,
                         "starting_package": package_name,
+                        "context_scope": context_scope.value,
                     },
                 )
             )
+            if handle is not None:
+                execution_id = handle.execution
+
+        if not execution_id:
+            raise IdentityError(
+                field="execution_id",
+                message="Conversation recording did not reserve an execution identity.",
+            )
+
+        identity = InteractionIdentity(execution=execution_id)
 
         # Initialize context namespace. Conversation-scoped runs share memory
         # across runs in the same conversation; execution-scoped runs are
@@ -389,27 +413,28 @@ class FathomRunner:
         # Create and execute strategy
         strategy = IntentStrategy(
             intent=intent,
+            tenant=tenant,
+            thread=thread,
             llm=self.__llm,
+            requester=requester,
+            responder=responder,
+            workspace=workspace,
             device=self.__device,
-            perception=self.__perception,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
             workflow_id=workflow_id,
-            tenant=tenant,
-            thread=thread,
+            execution_id=execution_id,
             recorder=self.__recorder,
-            requester=requester,
-            responder=responder,
-            workspace=workspace,
             package_name=package_name,
             telemetry=self.__telemetry,
             configuration=self.__config,
-            path_manager=self.__path_manager,
             summarizer=self.__summarizer,
+            perception=self.__perception,
+            path_manager=self.__path_manager,
             realignment=realignment or self.__realignment,
-            max_steps=max_steps or self.__config.intent.max_steps,
             runtime_configuration=self.__runtime_configuration,
+            max_steps=max_steps or self.__config.intent.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
         )
         self.__current_strategy = strategy
@@ -432,13 +457,12 @@ class FathomRunner:
 
             # Bound memory summary so a stuck store read cannot block result delivery.
             raw_memory_summary = await AbandonablePhase(
+                workflow_id=workflow_id,
                 phase=FinalizationPhase.MEMORY_SUMMARY,
                 timeout=self.__config.intent.finalization.runtime.memory_summary,
-                workflow_id=workflow_id,
             ).execute(awaitable=self.__get_memory_summary())
-            memory_summary: Dict[str, JsonValue] = (
-                raw_memory_summary if raw_memory_summary else {}
-            )
+
+            memory_summary: Dict[str, JsonValue] = raw_memory_summary if raw_memory_summary else {}
 
             # Build IntentResult
             duration = time.time() - start_time
@@ -447,13 +471,20 @@ class FathomRunner:
             if is_cancelled:
                 error = None
                 success = False
-                status = "failed"
-                completion_reason = CompletionReason.CANCELLED.value
+                status = "cancelled"
+                completion_reason = self.__completion_reason(
+                    status=status,
+                    fallback=(
+                        strategy.completion_reason
+                        or str(progress.get("completion_reason") or "").strip()
+                        or CompletionReason.CANCELLED.value
+                    ),
+                )
             else:
                 success = execution_result.success
                 error = execution_result.error
                 status = "completed" if execution_result.success else "failed"
-                completion_reason = (
+                raw_completion_reason = (
                     strategy.completion_reason
                     or str(progress.get("completion_reason") or "").strip()
                     or execution_result.error
@@ -462,6 +493,11 @@ class FathomRunner:
                         if execution_result.success
                         else CompletionReason.FAILED.value
                     )
+                )
+                completion_reason = self.__completion_reason(
+                    error=error,
+                    status=status,
+                    fallback=raw_completion_reason,
                 )
 
             result = IntentResult(
@@ -472,14 +508,15 @@ class FathomRunner:
                 success=success,
                 duration=duration,
                 workflow_id=workflow_id,
+                subgoal_count=subgoal_count,
+                script=strategy.final_script,
                 memory_summary=memory_summary,
+                skipped_subgoals=skipped_subgoals,
+                step_results=strategy.step_results,
+                executed_subgoals=executed_subgoals,
                 completion_reason=completion_reason,
                 steps_taken=progress.get("step_count", 0),
                 steps_executed=progress.get("step_count", 0),
-                executed_subgoals=executed_subgoals,
-                skipped_subgoals=skipped_subgoals,
-                subgoal_count=subgoal_count,
-                step_results=strategy.step_results,
             )
 
             await self.__telemetry.info(
@@ -492,27 +529,35 @@ class FathomRunner:
 
             if self.__recorder is not None and handle is not None:
                 finished = datetime.now(tz=timezone.utc)
+
                 await self.__recorder.record_run_finished(
                     completion=Completion(
                         handle=handle,
-                        result=identity.message(name="result"),
-                        success=result.success,
                         status=result.status,
+                        success=result.success,
                         reason=result.completion_reason,
+                        result=identity.message(name="result"),
                         code=self.__task_code(
                             success=result.success, reason=result.completion_reason
                         ),
+                        metadata={},
+                        finished=finished,
                         error=result.error,
                         steps=result.steps_taken,
-                        finished=finished,
                         elapsed=int(duration * 1000),
-                        metadata={"workflow": workflow_id},
                     )
+                )
+                await self.__record_generated_script(
+                    title=intent,
+                    handle=handle,
+                    created=finished,
+                    content=result.script,
+                    metadata={"source": "finalization"},
                 )
                 await self.__record_workflow_artifacts(
                     handle=handle,
-                    package_name=package_name,
                     script_title=intent,
+                    package_name=package_name,
                 )
 
             return result
@@ -526,28 +571,34 @@ class FathomRunner:
             )
             if self.__recorder is not None and handle is not None:
                 finished = datetime.now(tz=timezone.utc)
+
                 try:
                     progress = strategy.get_progress()
                     steps = int(progress.get("step_count") or 0)
+
                     await self.__recorder.record_run_failed(
                         completion=Completion(
+                            steps=steps,
+                            metadata={},
                             handle=handle,
-                            result=identity.message(name="result"),
                             success=False,
                             status="failed",
-                            reason=CompletionReason.FAILED.value,
-                            code=TaskCode.UNKNOWN_ERROR,
-                            error=str(exception),
-                            steps=steps,
                             finished=finished,
+                            error=str(exception),
+                            code=TaskCode.UNKNOWN_ERROR,
+                            reason=self.__completion_reason(
+                                error=str(exception),
+                                status=CompletionReason.FAILED.value,
+                                fallback=CompletionReason.FAILED.value,
+                            ),
+                            result=identity.message(name="result"),
                             elapsed=int((time.time() - start_time) * 1000),
-                            metadata={"workflow": workflow_id},
                         )
                     )
                     await self.__record_workflow_artifacts(
                         handle=handle,
-                        package_name=package_name,
                         script_title=intent,
+                        package_name=package_name,
                     )
                 except InteractionError as interaction_exception:
                     await self.__telemetry.warning(
@@ -567,28 +618,36 @@ class FathomRunner:
         request_id: str,
         principal: Principal,
         max_steps: int = 100,
+        execution_id: Optional[str] = None,
         package_name: Optional[str] = None,
     ) -> ExplorationResult:
         """
         Execute exploration workflow.
 
-        `request_id` is required and becomes the workflow id; identity is
-        supplied via `principal` exactly as for intent runs. The conversation
-        recorder mirrors the intent path so exploration produces a thread,
-        root task, request/result messages, and artifact references.
+        `request_id` is required and becomes the workflow id. When recording is
+        enabled, the recorder reserves the execution id before exploration starts.
         """
 
         if not request_id:
             raise IdentityError(field="request_id", message="request_id is required")
 
+        if not execution_id and self.__recorder is None:
+            raise IdentityError(
+                field="execution_id",
+                message="No execution identity is available for this run.",
+            )
+
         start_time = time.time()
         started = datetime.now(tz=timezone.utc)
+
         workflow_id = request_id
-        thread = principal.conversation
         tenant = principal.tenant
-        workspace = principal.workspace
-        requester = principal.operator
+        thread = principal.conversation
+
         responder = principal.agent
+        requester = principal.operator
+        workspace = principal.workspace
+
         intent = "Explore application structure"
         handle: Optional[Handle] = None
 
@@ -611,69 +670,65 @@ class FathomRunner:
             device_serial=device_serial,
         )
 
-        identity = InteractionIdentity(workflow=workflow_id)
-
         if self.__recorder is not None:
             self.__recorder.health.reset()
+
             handle = await self.__recorder.record_run_started(
                 run=Run(
-                    tenant=tenant,
-                    workspace=workspace,
-                    thread=thread,
-                    task=identity.task(),
-                    workflow=workflow_id,
                     intent=intent,
+                    tenant=tenant,
+                    thread=thread,
+                    workspace=workspace,
+                    workflow=workflow_id,
                     package=package_name,
+                    execution=execution_id,
                     requester=ActorInput(
                         id=requester,
-                        kind=ActorKind.HUMAN,
                         name=requester,
+                        kind=ActorKind.HUMAN,
                     ),
                     responder=ActorInput(
                         id=responder,
-                        kind=ActorKind.AGENT,
                         name=responder,
-                        provider=self.__llm_provider(),
+                        kind=ActorKind.AGENT,
                         model=self.__llm_model(),
+                        provider=self.__llm_provider(),
                     ),
-                    members=Members(
-                        requester=identity.membership(
-                            thread=thread,
-                            role=MembershipRole.REQUESTER.value,
-                            actor=requester,
-                        ),
-                        responder=identity.membership(
-                            thread=thread,
-                            role=MembershipRole.RESPONDER.value,
-                            actor=responder,
-                        ),
-                    ),
-                    request=identity.message(name="request"),
-                    context=identity.context(name="start"),
                     created=started,
                     metadata={"mode": "exploration"},
                 )
             )
+            if handle is not None:
+                execution_id = handle.execution
+
+        if not execution_id:
+            raise IdentityError(
+                field="execution_id",
+                message="Conversation recording did not reserve an execution identity.",
+            )
+
+        identity = InteractionIdentity(execution=execution_id)
 
         # Initialize context
         self.__context_manager = ContextManager(memory=self.__memory, workflow_id=workflow_id)
         self.__context_manager.set_roadmap(intent=intent)
 
         strategy = ExplorationStrategy(
+            tenant=tenant,
+            thread=thread,
             llm=self.__llm,
+            requester=requester,
+            responder=responder,
             device=self.__device,
-            perception=self.__perception,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
             workflow_id=workflow_id,
+            execution_id=execution_id,
             package_name=package_name,
-            tenant=tenant,
-            thread=thread,
-            requester=requester,
-            responder=responder,
             telemetry=self.__telemetry,
             configuration=self.__config,
+            perception=self.__perception,
             path_manager=self.__path_manager,
             seed=self.__config.exploration.random_seed,
             timeout=float(self.__config.exploration.timeout),
@@ -696,8 +751,9 @@ class FathomRunner:
             discovered_activities = list({node.activity for node in graph.nodes.values()})
 
             # Calculate coverage (percentage of screens explored vs total discovered)
-            unique_screens = stats.get("unique_screens", 0)
             unexplored = stats.get("unexplored", 0)
+            unique_screens = stats.get("unique_screens", 0)
+
             coverage_percentage = (
                 ((unique_screens - unexplored) / unique_screens * 100.0)
                 if unique_screens > 0
@@ -717,11 +773,11 @@ class FathomRunner:
                 error=execution_result.error,
                 unique_screens=unique_screens,
                 success=execution_result.success,
-                steps_executed=progress.get("steps", 0),
                 coverage_percentage=coverage_percentage,
                 completion_reason="Exploration completed",
                 discovered_activities=discovered_activities,
                 total_actions=stats.get("total_actions", 0),
+                steps_executed=progress.get("steps", 0),
                 total_transitions=stats.get("total_transitions", 0),
                 status="completed" if execution_result.success else "failed",
             )
@@ -735,21 +791,22 @@ class FathomRunner:
 
             if self.__recorder is not None and handle is not None:
                 finished = datetime.now(tz=timezone.utc)
+
                 await self.__recorder.record_run_finished(
                     completion=Completion(
                         handle=handle,
-                        result=identity.message(name="result"),
-                        success=result.success,
+                        finished=finished,
+                        error=result.error,
                         status=result.status,
+                        success=result.success,
+                        steps=result.steps_executed,
+                        elapsed=int(duration * 1000),
                         reason=result.completion_reason,
+                        result=identity.message(name="result"),
+                        metadata={"mode": "exploration"},
                         code=self.__task_code(
                             success=result.success, reason=result.completion_reason
                         ),
-                        error=result.error,
-                        steps=result.steps_executed,
-                        finished=finished,
-                        elapsed=int(duration * 1000),
-                        metadata={"workflow": workflow_id, "mode": "exploration"},
                     )
                 )
                 await self.__record_workflow_artifacts(
@@ -769,22 +826,24 @@ class FathomRunner:
             )
             if self.__recorder is not None and handle is not None:
                 finished = datetime.now(tz=timezone.utc)
+
                 try:
                     progress = strategy.get_progress()
                     steps = int(progress.get("steps") or 0)
+
                     await self.__recorder.record_run_failed(
                         completion=Completion(
+                            steps=steps,
                             handle=handle,
-                            result=identity.message(name="result"),
                             success=False,
                             status="failed",
-                            reason=CompletionReason.FAILED.value,
-                            code=TaskCode.UNKNOWN_ERROR,
-                            error=str(exception),
-                            steps=steps,
                             finished=finished,
+                            error=str(exception),
+                            code=TaskCode.UNKNOWN_ERROR,
+                            reason=CompletionReason.FAILED.value,
+                            result=identity.message(name="result"),
                             elapsed=int((time.time() - start_time) * 1000),
-                            metadata={"workflow": workflow_id, "mode": "exploration"},
+                            metadata={"mode": "exploration"},
                         )
                     )
                     await self.__record_workflow_artifacts(
@@ -792,6 +851,7 @@ class FathomRunner:
                         package_name=package_name,
                         script_title="Exploration script",
                     )
+
                 except InteractionError as interaction_exception:
                     await self.__telemetry.warning(
                         "Failed to record exploration failure",
@@ -876,27 +936,20 @@ class FathomRunner:
                 logger.warning(f"[FathomRunner] owned resource cleanup failed: {exception}")
 
         # 3. Device — close HTTP client (ADB remote, iOS remote)
-        if hasattr(self.__device, "close"):
+        if isinstance(self.__device, AsyncCloser):
             try:
                 await self.__device.close()
             except Exception as exception:
                 logger.warning(f"[FathomRunner] device close failed: {exception}")
 
         # 4. Telemetry — close Redis connection if applicable
-        if hasattr(self.__telemetry, "close"):
+        if isinstance(self.__telemetry, AsyncCloser):
             try:
                 await self.__telemetry.close()
             except Exception as exception:
                 logger.warning(f"[FathomRunner] telemetry close failed: {exception}")
 
-        # 5. Storage — close any open handles
-        if hasattr(self.__storage, "close"):
-            try:
-                await self.__storage.close()
-            except Exception as exception:
-                logger.warning(f"[FathomRunner] storage close failed: {exception}")
-
-        # 6. Interaction — close durable conversation pools.
+        # 5. Interaction — close durable conversation pools.
         if self.__interaction is not None:
             try:
                 await self.__interaction.aclose()
@@ -943,6 +996,7 @@ class FathomRunner:
         }
         if verdict.rationale.category == RationaleCategory.QUALIFIER_ERROR:
             verdict_log_extra["reasoning"] = verdict.rationale.reasoning
+
         logger.info("[FathomRunner] Qualifier returned verdict", extra=verdict_log_extra)
 
         verdict_payload: Dict[str, Any] = {
@@ -1064,14 +1118,23 @@ class FathomRunner:
         if self.__recorder is None:
             return
 
-        identity = InteractionIdentity(workflow=handle.workflow)
+        identity = InteractionIdentity(execution=handle.execution)
 
+        logger.info(
+            "Recording workflow artifacts",
+            extra={
+                "event": "conversation.artifacts.workflow.started",
+                "workflow.id": handle.workflow,
+                "conversation.id": handle.thread,
+            },
+        )
         artifacts = await self.__artifact_catalog.discover(
             workflow=handle.workflow,
             only_workflow_scope=True,
             package_name=package_name,
         )
 
+        recorded = 0
         for path, stat in artifacts:
             captured_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
 
@@ -1084,26 +1147,49 @@ class FathomRunner:
             resolved_kind = self.__artifact_catalog.kind(path=path)
 
             if resolved_kind is not None:
-                await self.__recorder.record_artifact(
-                    output=Output(
-                        uri=str(path),
-                        task=handle.task,
-                        size=stat.st_size,
-                        metadata=metadata,
-                        kind=resolved_kind,
-                        created=captured_at,
-                        tenant=handle.tenant,
-                        thread=handle.thread,
-                        actor=handle.responder,
-                        workflow=handle.workflow,
-                        workspace=handle.workspace,
-                        backend=ArtifactBackend.LOCAL,
-                        id=identity.artifact(path=path),
-                        mime=self.__artifact_catalog.mime(path=path),
-                        retention=self.__artifact_catalog.retention(path=path),
+                try:
+                    await self.__recorder.record_artifact(
+                        output=Output(
+                            uri=str(path),
+                            task=handle.task,
+                            size=stat.st_size,
+                            metadata=metadata,
+                            kind=resolved_kind,
+                            created=captured_at,
+                            tenant=handle.tenant,
+                            thread=handle.thread,
+                            actor=handle.responder,
+                            workflow=handle.workflow,
+                            execution=handle.execution,
+                            workspace=handle.workspace,
+                            backend=ArtifactBackend.LOCAL,
+                            id=identity.artifact(path=path),
+                            mime=self.__artifact_catalog.mime(path=path),
+                            retention=self.__artifact_catalog.retention(path=path),
+                        )
                     )
+                    recorded += 1
+                except Exception:
+                    logger.exception(
+                        "Workflow artifact recording failed",
+                        extra={
+                            "event": "conversation.artifacts.workflow.failed",
+                            "path": str(path),
+                            "workflow.id": handle.workflow,
+                            "conversation.id": handle.thread,
+                        },
+                    )
+            else:
+                logger.warning(
+                    "Skipping unclassified workflow artifact",
+                    extra={
+                        "event": "conversation.artifacts.workflow.skipped",
+                        "path": str(path),
+                        "workflow.id": handle.workflow,
+                        "conversation.id": handle.thread,
+                    },
                 )
-            if path.name == SCRIPT_CONTENT_FILENAME:
+            if self.__artifact_catalog.is_script(path=path):
                 await self.__record_script_content(
                     path=path,
                     handle=handle,
@@ -1112,6 +1198,16 @@ class FathomRunner:
                     title=script_title,
                     created=captured_at,
                 )
+        logger.info(
+            "Recorded workflow artifacts",
+            extra={
+                "event": "conversation.artifacts.workflow.completed",
+                "workflow.id": handle.workflow,
+                "artifacts.recorded": recorded,
+                "conversation.id": handle.thread,
+                "artifacts.discovered": len(artifacts),
+            },
+        )
 
     async def __record_script_content(
         self,
@@ -1135,23 +1231,71 @@ class FathomRunner:
         except FileNotFoundError:
             return
 
-        identity = InteractionIdentity(workflow=handle.workflow)
+        await self.__record_generated_script(
+            task=task,
+            title=title,
+            handle=handle,
+            content=content,
+            created=created,
+            script_name=str(path),
+            metadata={**metadata, "uri": str(path)},
+        )
+
+    async def __record_generated_script(
+        self,
+        *,
+        title: str,
+        handle: Handle,
+        created: datetime,
+        content: Optional[str],
+        metadata: Dict[str, JsonValue],
+        task: Optional[str] = None,
+        script_name: str = "final",
+    ) -> None:
+        """
+        Persist generated script text without depending on artifact file discovery.
+        """
+
+        if self.__recorder is None or content is None or not content.strip():
+            return
+
+        identity = InteractionIdentity(execution=handle.execution)
+
+        logger.info(
+            "Recording generated script",
+            extra={
+                "event": "conversation.script.record.started",
+                "workflow.id": handle.workflow,
+                "script.name": script_name,
+                "conversation.id": handle.thread,
+            },
+        )
         await self.__recorder.record_script(
             output=ScriptOutput(
-                task=task,
                 title=title,
                 artifact=None,
                 content=content,
                 created=created,
+                metadata=metadata,
                 tenant=handle.tenant,
                 thread=handle.thread,
                 actor=handle.responder,
+                task=task or handle.task,
                 workflow=handle.workflow,
+                execution=handle.execution,
                 workspace=handle.workspace,
-                id=identity.script(path=path),
                 summary="Generated script export.",
-                metadata={**metadata, "uri": str(path)},
+                id=identity.script(name=script_name),
             )
+        )
+        logger.info(
+            "Recorded generated script",
+            extra={
+                "event": "conversation.script.record.completed",
+                "workflow.id": handle.workflow,
+                "conversation.id": handle.thread,
+                "script.name": script_name,
+            },
         )
 
     def __recorder_for(
@@ -1166,8 +1310,31 @@ class FathomRunner:
 
         return ConversationRecorder(
             telemetry=self.__telemetry,
-            conversation=ConversationService(signer=NoopSigner(), interaction=interaction),
+            conversation=ConversationService(
+                signer=NoopSigner(),
+                ports=self.__ports(interaction=interaction),
+            ),
         )
+
+    def __ports(self, *, interaction: InteractionPort) -> Ports:
+        """
+        Map the configured interaction adapter into conversation service ports.
+        """
+
+        return Ports(interaction=interaction)
+
+    def __completion_reason(
+        self,
+        *,
+        status: str,
+        fallback: str,
+        error: Optional[str] = None,
+    ) -> str:
+        """
+        Return the recorded completion reason without synthetic terminal prose.
+        """
+
+        return (error or fallback or status).strip() or status
 
     def __task_code(self, *, success: bool, reason: str) -> TaskCode:
         """
@@ -1177,10 +1344,15 @@ class FathomRunner:
         if success:
             return TaskCode.COMPLETED
 
-        if reason == CompletionReason.CANCELLED.value:
+        normalized = reason.casefold().strip()
+
+        if normalized in {
+            CompletionReason.CANCELLED.value.casefold(),
+            CompletionReason.OPERATOR_ABORTED.value.casefold(),
+        }:
             return TaskCode.USER_CANCELLED
 
-        if reason == CompletionReason.MAX_STEPS.value:
+        if normalized == CompletionReason.MAX_STEPS.value.casefold():
             return TaskCode.TIMEOUT
 
         return TaskCode.UNKNOWN_ERROR

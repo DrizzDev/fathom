@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import AsyncGenerator, Callable, Dict, List, NoReturn, Optional, cast
 
-from fathom.adapters.interaction.pypika.sqlite import SQLiteInteraction
+from pydantic import JsonValue
+
+from fathom.adapters.interaction.orm.postgres import PostgresInteraction
 from fathom.adapters.signing.noop import NoopSigner
 from fathom.constants.collaboration import (
     ActorKind,
     ArtifactBackend,
     ArtifactKind,
     Audience,
+    ExecutionState,
     IdempotencyState,
     JobKind,
     JobState,
@@ -25,12 +26,15 @@ from fathom.constants.collaboration import (
     TaskState,
 )
 from fathom.constants.conversation import EntryKind, Visibility
+from fathom.constants.events import FathomEvent
+from fathom.constants.storage import PostgresMigrationMode
 from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import InteractionError, ThreadConflictError, ThreadNotFoundError
-from fathom.core.services.conversation import ConversationService
+from fathom.core.services.conversation import ConversationService, Ports
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.interfaces.interaction import InteractionPort
 from fathom.interfaces.telemetry import TelemetryPort
+from fathom.schemas.configuration import PostgresInteractionConfiguration
 from fathom.schemas.conversation import (
     ActorInput,
     ActorView,
@@ -38,6 +42,7 @@ from fathom.schemas.conversation import (
     ContextRecord,
     ConversationThreadQuery,
     EntryView,
+    ExecutionReference,
     JoinMember,
     MemberView,
     MessageAppend,
@@ -53,29 +58,42 @@ from fathom.schemas.conversation import (
 from fathom.schemas.interaction import (
     BeginRequest,
     ClaimJob,
+    Execution,
+    ExecutionQuery,
+    FinishExecution,
     Idempotency,
     IdempotencyQuery,
     Identity,
     Job,
     JobQuery,
+    MessageCursorQuery,
+    Metadata,
     Policy,
     PolicyQuery,
     SavePolicy,
     ScheduleJob,
+    StartExecution,
+    TaskQuery,
     ThreadListQuery,
+    ThreadQuery,
     Timing,
 )
 from fathom.schemas.recording import (
+    ActionSummary,
     Analysis,
     Answer,
     Completion,
     Members,
+    Metrics,
+    Observation,
     Output,
     Question,
     Run,
     Step,
     StepCompletion,
+    Usage,
 )
+from tests.unit.infrastructure.interaction.orm.support import PostgresSchema
 
 
 class _StubTelemetry(TelemetryPort):
@@ -144,23 +162,48 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
     Unit tests for host-neutral runtime conversation recording.
     """
 
-    def setUp(self) -> None:
+    async def asyncSetUp(self) -> None:
         """
-        Create an isolated recorder backed by the SQLite interaction adapter.
+        Create an isolated recorder backed by the ORM Postgres interaction adapter.
         """
 
-        self.__temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.__temporary_directory.cleanup)
-        path = Path(self.__temporary_directory.name) / "recorder.db"
-        interaction = SQLiteInteraction(path=path)
+        self.__schema = PostgresSchema(prefix="conversation_recorder")
+        await self.__schema.__aenter__()
+        interaction = PostgresInteraction(
+            configuration=PostgresInteractionConfiguration(
+                database="postgres",
+                host="localhost",
+                migration_mode=PostgresMigrationMode.VALIDATE,
+                password="postgres",
+                pool_max_size=2,
+                schema_name=self.__schema.name,
+                user="postgres",
+            )
+        )
+        await interaction.initialize()
         self.__interaction = interaction
-        self.__conversation = ConversationService(signer=NoopSigner(), interaction=interaction)
+        self.__conversation = ConversationService(
+            signer=NoopSigner(),
+            ports=Ports(interaction=interaction),
+        )
         self.__telemetry = _StubTelemetry()
         self.__recorder = ConversationRecorder(
             conversation=self.__conversation,
             telemetry=self.__telemetry,
         )
         self.__now = datetime(2026, 4, 29, 10, 0, 0, tzinfo=timezone.utc)
+
+    async def asyncTearDown(self) -> None:
+        """
+        Close the ORM adapter and drop the disposable schema.
+        """
+
+        await self.__interaction.aclose()
+        await self.__schema.__aexit__(
+            exception_type=None,
+            exception=None,
+            traceback=None,
+        )
 
     async def test_records_run_lifecycle_for_renderable_timeline(self) -> None:
         """
@@ -185,10 +228,15 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         assert result is not None
 
         timeline = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="tenant-1", thread="thread-1")
+            query=TimelineQuery(tenant="tenant-1", thread="thread-1", operator="human-1")
         )
         audit = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="tenant-1", thread="thread-1", mode=Visibility.AUDIT)
+            query=TimelineQuery(
+                tenant="tenant-1",
+                thread="thread-1",
+                operator="human-1",
+                mode=Visibility.AUDIT,
+            )
         )
 
         self.assertEqual("task-run-1", handle.task)
@@ -198,7 +246,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         request = await self.__interaction.get_idempotency(
             query=IdempotencyQuery(
                 tenant="tenant-1",
-                key=InteractionIdentity.stable(scope="request.run", parts=("workflow-1",)),
+                key=InteractionIdentity.stable(scope="request.run", parts=("execution-run-1",)),
             )
         )
         policy = await self.__interaction.get_policy(
@@ -207,7 +255,19 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         jobs = await self.__interaction.get_jobs(
             query=JobQuery(tenant="tenant-1", thread="thread-1")
         )
-        threads = await self.__interaction.list_threads(query=ThreadListQuery(tenant="tenant-1"))
+        threads = await self.__interaction.list_threads(
+            query=ThreadListQuery(tenant="tenant-1", actor="human-1")
+        )
+        execution = await self.__interaction.get_execution(
+            query=ExecutionQuery(tenant="tenant-1", thread="thread-1", execution="execution-run-1")
+        )
+        messages = await self.__interaction.get_messages(
+            query=MessageCursorQuery(
+                tenant="tenant-1",
+                thread="thread-1",
+                kinds=(MessageKind.REQUEST, MessageKind.RESULT),
+            )
+        )
 
         self.assertIsNotNone(request)
         assert request is not None
@@ -219,7 +279,50 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(JobKind.EXECUTION, jobs[0].kind)
         self.assertEqual(JobState.COMPLETED, jobs[0].state)
         self.assertIsNotNone(threads.items[0].digest)
-        self.assertGreater(threads.items[0].cursor or 0, 0)
+        self.assertIsNotNone(execution)
+        assert execution is not None
+        self.assertEqual(ExecutionState.SUCCEEDED, execution.state)
+        self.assertEqual(
+            {"execution-run-1"},
+            {message.execution for message in messages},
+        )
+
+    async def test_record_run_started_reserves_missing_execution_identity(self) -> None:
+        """
+        Recorder reserves execution-owned ids when the runtime does not provide them.
+        """
+
+        recorder = ConversationRecorder(
+            conversation=self.__conversation,
+            telemetry=self.__telemetry,
+            identifier=lambda: "7dcb8a47-f3e7-435b-8a0e-c596dd2fdd90",
+        )
+        run = self.__run().model_copy(
+            update={
+                "context": None,
+                "execution": None,
+                "members": None,
+                "request": None,
+                "task": None,
+            }
+        )
+
+        handle = await recorder.record_run_started(run=run)
+
+        assert handle is not None
+        self.assertEqual("7dcb8a47-f3e7-435b-8a0e-c596dd2fdd90", handle.execution)
+        self.assertEqual(
+            InteractionIdentity(execution=handle.execution).task(),
+            handle.task,
+        )
+
+        execution = await self.__interaction.get_execution(
+            query=ExecutionQuery(tenant="tenant-1", thread="thread-1", execution=handle.execution)
+        )
+
+        assert execution is not None
+        self.assertEqual(handle.execution, execution.identity.id)
+        self.assertEqual("workflow-1", execution.workflow_id)
 
     async def test_explicit_summary_and_detail_are_preserved_on_result_body(self) -> None:
         """
@@ -228,29 +331,64 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
 
         handle = await self.__recorder.record_run_started(run=self.__run())
         assert handle is not None
+
         entry = await self.__recorder.record_run_finished(
             completion=Completion(
-                handle=handle,
-                result="message-result-summary-detail",
-                success=True,
-                status="completed",
-                reason="ignored when explicit fields are present",
-                summary="Checkout reached.",
-                detail="LLM cross-checked the final screen against the goal.",
-                code=TaskCode.COMPLETED,
                 steps=4,
-                finished=self.__now.replace(second=11),
+                success=True,
+                handle=handle,
                 elapsed=11000,
+                status="completed",
+                code=TaskCode.COMPLETED,
+                summary="Checkout reached.",
+                result="message-result-summary-detail",
+                finished=self.__now.replace(second=11),
+                reason="ignored when explicit fields are present",
+                detail="LLM cross-checked the final screen against the goal.",
             )
         )
         assert entry is not None
 
-        self.assertEqual("Checkout reached.", entry.payload["body"]["summary"])
+        body = self.__body(entry=entry)
+        self.assertEqual("Checkout reached.", body["summary"])
         self.assertEqual(
             "LLM cross-checked the final screen against the goal.",
-            entry.payload["body"]["detail"],
+            body["detail"],
         )
-        self.assertEqual("Checkout reached.", entry.payload["body"]["reason"])
+        self.assertEqual("ignored when explicit fields are present", body["reason"])
+
+    async def test_cancelled_run_records_cancelled_execution_and_task_state(self) -> None:
+        """
+        User-cancelled runs must not be stored as failed runs.
+        """
+
+        handle = await self.__recorder.record_run_started(run=self.__run())
+        assert handle is not None
+
+        await self.__recorder.record_run_finished(
+            completion=Completion(
+                steps=2,
+                handle=handle,
+                elapsed=12000,
+                success=False,
+                status="cancelled",
+                reason="cancelled",
+                code=TaskCode.USER_CANCELLED,
+                result="message-result-cancelled",
+                finished=self.__now.replace(second=12),
+            )
+        )
+
+        execution = await self.__interaction.get_execution(
+            query=ExecutionQuery(tenant="tenant-1", thread="thread-1", execution=handle.execution)
+        )
+        tasks = await self.__conversation.tasks(
+            query=TaskTreeQuery(tenant="tenant-1", thread="thread-1", operator="human-1")
+        )
+
+        assert execution is not None
+        self.assertEqual(ExecutionState.CANCELLED, execution.state)
+        self.assertEqual("cancelled", tasks.roots[0].state)
 
     async def test_reason_with_parenthetical_clause_is_not_split(self) -> None:
         """
@@ -259,25 +397,27 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
 
         handle = await self.__recorder.record_run_started(run=self.__run())
         assert handle is not None
+
         entry = await self.__recorder.record_run_finished(
             completion=Completion(
-                handle=handle,
-                result="message-result-no-split",
+                steps=4,
                 success=True,
+                handle=handle,
+                elapsed=12000,
                 status="completed",
+                result="message-result-no-split",
                 reason=(
                     "All sub-goals completed (LLM disagreed: the screenshot showed a "
                     "Swiggy McDonald's menu, not the running-shoes result page.)"
                 ),
                 code=TaskCode.COMPLETED,
-                steps=4,
                 finished=self.__now.replace(second=12),
-                elapsed=12000,
             )
         )
         assert entry is not None
 
-        body = entry.payload["body"]
+        body = self.__body(entry=entry)
+
         self.assertEqual(
             "All sub-goals completed (LLM disagreed: the screenshot showed a "
             "Swiggy McDonald's menu, not the running-shoes result page.)",
@@ -308,7 +448,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         )
         assert entry is not None
 
-        body = entry.payload["body"]
+        body = self.__body(entry=entry)
         self.assertEqual("Order placed", body["summary"])
         self.assertIsNone(body["detail"])
 
@@ -331,12 +471,19 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
 
         handle = await self.__recorder.record_run_started(run=run)
         timeline = await self.__conversation.timeline(
-            query=TimelineQuery(tenant=run.tenant, thread=run.thread)
+            query=TimelineQuery(
+                tenant=run.tenant,
+                thread=run.thread,
+                operator=run.requester.id,
+            )
         )
 
         assert handle is not None
         self.assertEqual(run.task, handle.task)
         self.assertEqual(["message-request-1"], self.__ids(timeline=timeline))
+        self.assertFalse(
+            [event for event in self.__telemetry.events if event.get("level") == "error"]
+        )
 
     async def test_records_step_tree_and_subtask_aliases(self) -> None:
         """
@@ -349,6 +496,8 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 id="task-step-1",
                 tenant="tenant-1",
                 thread="thread-1",
+                workflow="workflow-1",
+                execution="execution-run-1",
                 parent="task-run-1",
                 root="task-run-1",
                 actor="agent-1",
@@ -362,6 +511,8 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 id="task-sub-1",
                 tenant="tenant-1",
                 thread="thread-1",
+                workflow="workflow-1",
+                execution="execution-run-1",
                 parent="task-step-1",
                 root="task-run-1",
                 actor="agent-1",
@@ -385,13 +536,33 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         )
 
         tree = await self.__conversation.tasks(
-            query=TaskTreeQuery(tenant="tenant-1", thread="thread-1")
+            query=TaskTreeQuery(tenant="tenant-1", thread="thread-1", operator="human-1")
         )
 
         self.assertEqual("task-run-1", tree.roots[0].id)
         self.assertEqual("task-step-1", tree.roots[0].children[0].id)
         self.assertEqual("task-sub-1", tree.roots[0].children[0].children[0].id)
         self.assertEqual("delegation", tree.roots[0].children[0].children[0].kind)
+        tasks = await self.__interaction.get_tasks(
+            query=TaskQuery(tenant="tenant-1", thread="thread-1")
+        )
+        by_id = {task.identity.id: task for task in tasks}
+        self.assertEqual(
+            {
+                "intent": "Buy milk",
+                "package": "com.example",
+            },
+            by_id["task-run-1"].plan.plan.entries,
+        )
+        self.assertEqual(
+            {
+                "kind": "agent",
+                "parent": "task-run-1",
+                "root": "task-run-1",
+            },
+            by_id["task-step-1"].plan.plan.entries,
+        )
+        self.assertEqual({"state": "running"}, by_id["task-step-1"].plan.progress.entries)
 
     async def test_records_multiple_runs_inside_one_thread(self) -> None:
         """
@@ -402,6 +573,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         second = first.model_copy(
             update={
                 "task": "task-run-2",
+                "execution": "execution-run-2",
                 "workflow": "workflow-2",
                 "intent": "Buy bread",
                 "request": "message-request-2",
@@ -414,10 +586,10 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         await self.__recorder.record_run_started(run=second)
 
         timeline = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="tenant-1", thread="thread-1")
+            query=TimelineQuery(tenant="tenant-1", thread="thread-1", operator="human-1")
         )
         tree = await self.__conversation.tasks(
-            query=TaskTreeQuery(tenant="tenant-1", thread="thread-1")
+            query=TaskTreeQuery(tenant="tenant-1", thread="thread-1", operator="human-1")
         )
 
         self.assertEqual(["message-request-2", "message-request-1"], self.__ids(timeline=timeline))
@@ -436,6 +608,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 thread="thread-1",
                 task="task-run-1",
                 actor="agent-1",
+                execution="execution-run-1",
                 body={"text": "Which payment method should I use?"},
                 created=self.__now.replace(second=1),
             )
@@ -447,6 +620,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 thread="thread-1",
                 task="task-run-1",
                 actor="human-1",
+                execution="execution-run-1",
                 question="message-question-1",
                 body={"text": "Use wallet balance"},
                 created=self.__now.replace(second=2),
@@ -456,7 +630,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         assert answer is not None
 
         timeline = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="tenant-1", thread="thread-1")
+            query=TimelineQuery(tenant="tenant-1", thread="thread-1", operator="human-1")
         )
 
         self.assertEqual(EntryKind.MESSAGE, question.kind)
@@ -478,38 +652,121 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 thread="thread-1",
                 task="task-run-1",
                 actor="agent-1",
+                execution="execution-run-1",
                 summary="Tap the checkout button to advance.",
+                rationale="Checkout is the next required control.",
+                observation=Observation(
+                    summary="Checkout button is visible.",
+                    evidence="The checkout CTA is the dominant element on the screen.",
+                    screen="screen-before",
+                    changed=True,
+                ),
                 evidence="The checkout CTA is the dominant element on the screen.",
                 step=1,
-                action="tap",
-                target="Checkout button",
-                confidence=0.92,
+                action=ActionSummary(
+                    type="tap",
+                    target="Checkout button",
+                    rationale="Checkout is the next required control.",
+                    confidence=0.92,
+                ),
+                metrics=Metrics(
+                    total=440,
+                    execution=80,
+                    analysis=120,
+                    grounding=240,
+                    usage=Usage(prompt=100, completion=20, cached=10, total=120),
+                ),
                 created=self.__now.replace(second=1),
+                metadata={
+                    "metrics": {
+                        "total": 440,
+                        "execution": 80,
+                        "analysis": 120,
+                        "grounding": 240,
+                        "usage": {
+                            "total": 120,
+                            "cached": 10,
+                            "prompt": 100,
+                            "completion": 20,
+                        },
+                    }
+                },
             )
         )
 
         assert entry is not None
         self.assertEqual(Visibility.USER, entry.visibility)
         self.assertEqual(EntryKind.MESSAGE, entry.kind)
-        self.assertEqual(MessageKind.PROGRESS.value, entry.payload["kind"])
-        self.assertEqual(Audience.THREAD.value, entry.payload["audience"])
+        payload = self.__payload(entry=entry)
+        self.assertEqual(MessageKind.PROGRESS.value, payload["kind"])
+        self.assertEqual(Audience.THREAD.value, payload["audience"])
         self.assertEqual(
             {
                 "step": 1,
-                "action": "tap",
-                "target": "Checkout button",
-                "confidence": 0.92,
+                "status": "completed",
                 "summary": "Tap the checkout button to advance.",
-                "evidence": "The checkout CTA is the dominant element on the screen.",
+                "rationale": "Checkout is the next required control.",
+                "action": {
+                    "type": "tap",
+                    "target": "Checkout button",
+                    "rationale": "Checkout is the next required control.",
+                    "confidence": 0.92,
+                },
+                "observation": {
+                    "summary": "Checkout button is visible.",
+                    "evidence": "The checkout CTA is the dominant element on the screen.",
+                    "screen": "screen-before",
+                    "changed": True,
+                },
             },
-            entry.payload["body"],
+            payload["body"],
         )
 
         user = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="tenant-1", thread="thread-1")
+            query=TimelineQuery(tenant="tenant-1", thread="thread-1", operator="human-1")
         )
 
         self.assertIn("message-progress-1", self.__ids(timeline=user))
+
+    async def test_progress_body_passes_duplicated_fields_through_verbatim(self) -> None:
+        """
+        Recorder stores the analysis payload verbatim; duplication is the source's concern, not the recorder's.
+        """
+
+        await self.__recorder.record_run_started(run=self.__run())
+        same = "I'll tap 'View Cart' to verify the item is present."
+        entry = await self.__recorder.record_llm_analysis(
+            analysis=Analysis(
+                id="message-progress-dupe",
+                tenant="tenant-1",
+                thread="thread-1",
+                task="task-run-1",
+                actor="agent-1",
+                execution="execution-run-1",
+                summary=same,
+                rationale="verify item in cart",
+                observation=Observation(
+                    summary=same,
+                    evidence=same,
+                    screen="abc",
+                    changed=True,
+                ),
+                evidence=same,
+                step=7,
+                action=ActionSummary(
+                    type="tap",
+                    target="View Cart",
+                    rationale="verify item in cart",
+                    confidence=1.0,
+                ),
+                created=self.__now.replace(second=3),
+            )
+        )
+
+        assert entry is not None
+        body = self.__body(entry=entry)
+        self.assertEqual(same, body["summary"])
+        self.assertNotIn("analysis", body)
 
     async def test_progress_planning_without_action_keeps_optional_fields_null(self) -> None:
         """
@@ -524,6 +781,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 thread="thread-1",
                 task="task-run-1",
                 actor="agent-1",
+                execution="execution-run-1",
                 summary="All sub-goals reached; ready to finalize.",
                 step=4,
                 created=self.__now.replace(second=2),
@@ -531,12 +789,14 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         )
 
         assert entry is not None
-        body = entry.payload["body"]
+        body = self.__body(entry=entry)
         self.assertEqual(4, body["step"])
+        self.assertEqual("completed", body["status"])
         self.assertIsNone(body["action"])
-        self.assertIsNone(body["target"])
-        self.assertIsNone(body["confidence"])
-        self.assertIsNone(body["evidence"])
+        self.assertIsNone(body["rationale"])
+        self.assertIsNone(body["observation"])
+        self.assertNotIn("analysis", body)
+        self.assertEqual("All sub-goals reached; ready to finalize.", body["summary"])
 
     async def test_explicit_display_audit_label_overrides_to_audit_visibility(self) -> None:
         """
@@ -551,6 +811,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 thread="thread-1",
                 task="task-run-1",
                 actor="agent-1",
+                execution="execution-run-1",
                 summary="Internal scaffolding note.",
                 step=2,
                 labels=(Label.DISPLAY_AUDIT,),
@@ -560,10 +821,15 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         assert entry is not None
 
         user = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="tenant-1", thread="thread-1")
+            query=TimelineQuery(tenant="tenant-1", thread="thread-1", operator="human-1")
         )
         audit = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="tenant-1", thread="thread-1", mode=Visibility.AUDIT)
+            query=TimelineQuery(
+                tenant="tenant-1",
+                thread="thread-1",
+                operator="human-1",
+                mode=Visibility.AUDIT,
+            )
         )
 
         self.assertEqual(Visibility.AUDIT, entry.visibility)
@@ -595,7 +861,12 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(Visibility.DEBUG, artifact.visibility)
 
         debug = await self.__conversation.timeline(
-            query=TimelineQuery(tenant="tenant-1", thread="thread-1", mode=Visibility.DEBUG)
+            query=TimelineQuery(
+                tenant="tenant-1",
+                thread="thread-1",
+                operator="human-1",
+                mode=Visibility.DEBUG,
+            )
         )
 
         self.assertIn("artifact-trace-1", self.__ids(timeline=debug))
@@ -631,6 +902,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         return Run(
             tenant="tenant-1",
             thread="thread-1",
+            execution="execution-run-1",
             task="task-run-1",
             workflow="workflow-1",
             intent="Buy milk",
@@ -650,6 +922,28 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
 
         return [entry.id for entry in timeline.entries]
 
+    def __payload(self, *, entry: EntryView) -> Dict[str, JsonValue]:
+        """
+        Return a timeline payload object after validating its JSON shape.
+        """
+
+        payload = entry.payload
+        if not isinstance(payload, dict):
+            self.fail(f"Expected object payload for entry {entry.id}.")
+
+        return payload
+
+    def __body(self, *, entry: EntryView) -> Dict[str, JsonValue]:
+        """
+        Return a message body object after validating its JSON shape.
+        """
+
+        body = self.__payload(entry=entry).get("body")
+        if not isinstance(body, dict):
+            self.fail(f"Expected object body for entry {entry.id}.")
+
+        return body
+
     async def test_step_finished_envelope_routes_workflow_and_thread(self) -> None:
         """
         Step-finished envelopes carry the typed thread and workflow ids, not parsed task slugs.
@@ -661,6 +955,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 id="task-step-7",
                 tenant="tenant-1",
                 thread="thread-1",
+                execution="execution-run-1",
                 workflow="workflow-1",
                 parent="task-run-1",
                 root="task-run-1",
@@ -721,7 +1016,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
 
         broken_conversation = ConversationService(
             signer=NoopSigner(),
-            interaction=cast("InteractionPort", _BrokenInteraction()),
+            ports=Ports(interaction=cast("InteractionPort", _BrokenInteraction())),
         )
         recorder = ConversationRecorder(
             conversation=broken_conversation,
@@ -739,6 +1034,11 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
 
         errors = [event for event in self.__telemetry.events if event.get("level") == "error"]
         self.assertEqual(1, len(errors))
+        self.assertEqual(FathomEvent.RECORDER_DISABLED, errors[0].get("type"))
+        self.assertEqual("conversation.run.started", errors[0].get("operation"))
+        self.assertNotIn("error", errors[0])
+        self.assertNotIn("error_type", errors[0])
+        self.assertNotIn("forced failure", str(errors[0]))
 
     async def test_concurrent_thread_create_race_falls_through_to_join(self) -> None:
         """
@@ -764,6 +1064,13 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 raise ThreadNotFoundError(
                     thread=query.thread, message="Conversation thread does not exist."
                 )
+
+            async def internal_exists(self, *, query: ThreadQuery) -> bool:
+                """
+                Report the pre-race snapshot where the thread is absent.
+                """
+
+                return False
 
             async def create(self, *, request: ThreadCreate) -> ThreadView:
                 # Simulate the racer winning between our get and our create.
@@ -813,8 +1120,8 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                     key=request.key,
                     hash=request.hash,
                     state=IdempotencyState.STARTED,
-                    created=request.created,
-                    expires=request.expires,
+                    created_at=request.created,
+                    expires_at=request.expires,
                     metadata=request.metadata,
                 )
 
@@ -830,9 +1137,12 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                     kind=request.kind,
                     state=JobState.PENDING,
                     attempts=0,
-                    available=request.available,
+                    available_at=request.available,
                     payload=request.payload,
-                    timing=Timing(created=request.created, updated=request.created),
+                    timing=Timing(
+                        created_at=request.created,
+                        updated_at=request.created,
+                    ),
                     metadata=request.metadata,
                 )
 
@@ -852,16 +1162,46 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                     state=JobState.CLAIMED,
                     attempts=1,
                     owner=request.owner,
-                    locked=request.claimed,
-                    available=request.claimed,
-                    timing=Timing(created=request.claimed, updated=request.claimed),
+                    locked_at=request.claimed,
+                    available_at=request.claimed,
+                    timing=Timing(
+                        created_at=request.claimed,
+                        updated_at=request.claimed,
+                    ),
                 )
+
+            async def start_execution(self, *, request: StartExecution) -> Execution:
+                """
+                Return the started execution row.
+                """
+
+                return Execution(
+                    state=request.state,
+                    thread=request.thread,
+                    intent=request.intent,
+                    outcome=Metadata(),
+                    metadata=request.metadata,
+                    identity=request.identity,
+                    timing=Timing(
+                        created_at=request.started,
+                        updated_at=request.started,
+                        started_at=request.started,
+                    ),
+                )
+
+            async def finish_execution(self, *, request: FinishExecution) -> Execution:
+                """
+                Race test never finishes the run.
+                """
+
+                raise NotImplementedError
 
             async def start(self, *, request: TaskStart) -> TaskNodeView:
                 return TaskNodeView(
                     id=request.id,
                     parent=None,
                     root=request.id,
+                    execution=ExecutionReference(id=request.execution),
                     kind=request.kind.value,
                     state="running",
                     objective=request.objective,
@@ -916,12 +1256,12 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         Non-InteractionError exceptions from the interaction port (DB lock,
         filesystem error) must also disable the recorder; the run keeps
         running, the recorder no-ops further writes, and one error event
-        is emitted with the underlying error type.
+        is emitted without leaking the internal exception.
         """
 
         broken_conversation = ConversationService(
             signer=NoopSigner(),
-            interaction=cast("InteractionPort", _RawErrorInteraction()),
+            ports=Ports(interaction=cast("InteractionPort", _RawErrorInteraction())),
         )
         recorder = ConversationRecorder(
             conversation=broken_conversation,
@@ -934,7 +1274,11 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
 
         errors = [event for event in self.__telemetry.events if event.get("level") == "error"]
         self.assertEqual(1, len(errors))
-        self.assertIn(errors[0].get("error_type"), {"OperationalError", "RuntimeError"})
+        self.assertEqual(FathomEvent.RECORDER_DISABLED, errors[0].get("type"))
+        self.assertEqual("conversation.run.started", errors[0].get("operation"))
+        self.assertNotIn("error", errors[0])
+        self.assertNotIn("error_type", errors[0])
+        self.assertNotIn("raw storage failure", str(errors[0]))
 
 
 class _BrokenInteraction:

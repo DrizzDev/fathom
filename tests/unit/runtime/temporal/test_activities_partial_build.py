@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any
+from typing import Any, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fathom.runtime.temporal.activities import FathomActivities
@@ -77,6 +77,88 @@ class _RecordingSyncCleanupAdapter:
         self.__call_log.append(self.name)
 
 
+class _RecordingInteractionAdapter:
+    """
+    Adapter shaped like InteractionPort: aclose() is teardown, while cleanup()
+    is a domain method that requires a request argument.
+    """
+
+    def __init__(self, *, name: str, call_log: list[str]) -> None:
+        """
+        Initialize with a unique name and a shared call-log list.
+        """
+
+        self.name = name
+        self.__call_log = call_log
+        self.initialized = False
+        self.initialize = AsyncMock(side_effect=self.__initialize)
+        self.aclose = AsyncMock(side_effect=self.__record)
+
+    async def __initialize(self) -> None:
+        """
+        Mark the adapter as initialized.
+        """
+
+        self.initialized = True
+
+    async def __record(self) -> None:
+        """
+        Append this adapter's name when the teardown path is called.
+        """
+
+        self.__call_log.append(self.name)
+
+    async def cleanup(self, *, request: object) -> None:
+        """
+        Domain cleanup operation; must not be called by partial-build teardown.
+        """
+
+        _ = request
+        raise AssertionError("Domain cleanup must not be used as teardown")
+
+
+class _InitializedInteractionBuilder:
+    """
+    Fluent builder double that rejects uninitialized interaction adapters.
+    """
+
+    def __getattr__(self, name: str) -> object:
+        """
+        Return fluent no-op methods for builder steps irrelevant to this test.
+        """
+
+        if name == "build":
+            return self.__build
+
+        return self.__fluent
+
+    def with_interaction(
+        self, *, port: _RecordingInteractionAdapter
+    ) -> "_InitializedInteractionBuilder":
+        """
+        Accept only an adapter that has already completed initialize().
+        """
+
+        if not port.initialized:
+            raise AssertionError("Interaction adapter reached builder before initialize()")
+
+        return self
+
+    def __fluent(self, **_: object) -> "_InitializedInteractionBuilder":
+        """
+        Preserve the runtime builder's fluent call style.
+        """
+
+        return self
+
+    def __build(self) -> object:
+        """
+        Return a runner placeholder if the test reaches build().
+        """
+
+        return object()
+
+
 class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
     """
     Regression: if any step after partial adapters are created fails during
@@ -92,15 +174,18 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
         path invoked exactly once, in reverse-creation order.
         """
 
+        call_log: List[str] = []
         activities = FathomActivities(settings=FathomSettings())
-        call_log: list[str] = []
 
+        planner_llm = _RecordingAdapter(name="planner", call_log=call_log)
         device_adapter = _RecordingAdapter(name="device", call_log=call_log)
         perception_adapter = _RecordingAdapter(name="perception", call_log=call_log)
-        planner_llm = _RecordingAdapter(name="planner", call_log=call_log)
-        telemetry_adapter = _RecordingCloseOnlyAdapter(name="telemetry", call_log=call_log)
-        storage_adapter = _RecordingAdapter(name="storage", call_log=call_log)
+
         signal_adapter = _RecordingAdapter(name="signal", call_log=call_log)
+        storage_adapter = _RecordingAdapter(name="storage", call_log=call_log)
+        telemetry_adapter = _RecordingCloseOnlyAdapter(name="telemetry", call_log=call_log)
+
+        interaction_adapter = _RecordingInteractionAdapter(name="interaction", call_log=call_log)
 
         request = MagicMock()
         request.objective = MagicMock(use_xml=False)
@@ -119,6 +204,10 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
             patch("fathom.runtime.temporal.activities.TelemetryFactory") as telemetry_factory_cls,
             patch("fathom.runtime.temporal.activities.StorageFactory") as storage_factory_cls,
             patch("fathom.runtime.temporal.activities.SignalFactory") as signal_factory_cls,
+            patch(
+                "fathom.runtime.temporal.activities.InteractionFactory"
+            ) as interaction_factory_cls,
+            patch("fathom.runtime.temporal.activities.Fathom") as fathom_cls,
             patch("fathom.runtime.temporal.activities.QualifierComposer") as composer_cls,
             patch.object(
                 activities,
@@ -141,6 +230,10 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
             telemetry_factory_cls.return_value.create = MagicMock(return_value=telemetry_adapter)
             storage_factory_cls.return_value.create = MagicMock(return_value=storage_adapter)
             signal_factory_cls.return_value.create = MagicMock(return_value=signal_adapter)
+            interaction_factory_cls.return_value.create = MagicMock(
+                return_value=interaction_adapter
+            )
+            fathom_cls.builder = MagicMock(return_value=_InitializedInteractionBuilder())
 
             composer_cls.should_compose = MagicMock(return_value=True)
             composer_cls.return_value.compose = MagicMock(
@@ -154,9 +247,10 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
                 )
 
         # Every registered adapter drained exactly once, in reverse-creation order.
+        interaction_adapter.initialize.assert_awaited_once_with()
         self.assertEqual(
             call_log,
-            ["storage", "telemetry", "planner", "perception", "device", "signal"],
+            ["interaction", "storage", "telemetry", "planner", "perception", "device", "signal"],
         )
 
     async def test_partial_build_isolates_per_resource_errors(self) -> None:
@@ -166,7 +260,7 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
         """
 
         activities = FathomActivities(settings=FathomSettings())
-        call_log: list[str] = []
+        call_log: List[str] = []
 
         good_one = _RecordingAdapter(name="good_one", call_log=call_log)
         bad = _RecordingAdapter(name="bad", call_log=call_log)
@@ -205,7 +299,7 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
         """
 
         activities = FathomActivities(settings=FathomSettings())
-        call_log: list[str] = []
+        call_log: List[str] = []
         adapter = _RecordingSyncCleanupAdapter(name="sync-cleanup", call_log=call_log)
 
         await activities._FathomActivities__drain_partial_resources(  # type: ignore[attr-defined]
@@ -213,6 +307,23 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(call_log, ["sync-cleanup"])
+
+    async def test_partial_build_prefers_aclose_over_domain_cleanup(self) -> None:
+        """
+        InteractionPort exposes cleanup(request=...) as a domain operation.
+        Partial-build teardown must call aclose() instead.
+        """
+
+        call_log: List[str] = []
+        activities = FathomActivities(settings=FathomSettings())
+        adapter = _RecordingInteractionAdapter(name="interaction", call_log=call_log)
+
+        await activities._FathomActivities__drain_partial_resources(  # type: ignore[attr-defined]
+            resources=[adapter]
+        )
+
+        adapter.aclose.assert_awaited_once_with()
+        self.assertEqual(call_log, ["interaction"])
 
 
 _ = Any  # exported for downstream test extensions; binding silences unused warning

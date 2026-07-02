@@ -16,7 +16,6 @@ from fathom.schemas.configuration import (
     PostgresInteractionConfiguration,
     PriorityInferenceConfiguration,
     QualifierConfiguration,
-    SQLiteInteractionConfiguration,
     StorageConfiguration,
     TelemetryConfiguration,
 )
@@ -168,16 +167,13 @@ class RunAssemblyBuilder:
         Resolve interaction storage configuration for the run.
 
         Host-supplied values on the wire win. When absent (CLI runs),
-        fall back to FathomSettings; the SQLite default uses the path manager's shared interaction db location.
+        fall back to FathomSettings and build the configured durable backend.
         """
 
         if request.resources.interaction_storage is not None:
             return request.resources.interaction_storage
 
         backend = self.__resolve_backend()
-
-        if backend == InteractionBackend.SQLITE:
-            return self.__cli_sqlite_configuration(path_manager=path_manager)
 
         if backend == InteractionBackend.POSTGRES:
             return self.__cli_postgres_configuration()
@@ -205,30 +201,6 @@ class RunAssemblyBuilder:
                 ),
             ) from exception
 
-    def __cli_sqlite_configuration(
-        self, *, path_manager: Optional[SharedPathManager]
-    ) -> InteractionStorageConfiguration:
-        """
-        Build a CLI-default SQLite interaction storage configuration.
-        """
-
-        configured_path = self.__settings.interaction_sqlite_path
-
-        if configured_path is None:
-            if path_manager is None:
-                raise StorageConfigurationError(
-                    backend=InteractionBackend.SQLITE.value,
-                    message=(
-                        "SQLite interaction path requires either "
-                        "FATHOM_INTERACTION_SQLITE_PATH or a SharedPathManager"
-                    ),
-                )
-            configured_path = path_manager.get_interaction_db_path()
-        return InteractionStorageConfiguration(
-            backend=InteractionBackend.SQLITE,
-            sqlite=SQLiteInteractionConfiguration(path=configured_path),
-        )
-
     def __cli_postgres_configuration(self) -> InteractionStorageConfiguration:
         """
         Build a CLI-default Postgres interaction storage configuration.
@@ -248,6 +220,7 @@ class RunAssemblyBuilder:
                     schema_name=self.__settings.interaction_postgres_schema,
                     pool_min_size=self.__settings.interaction_postgres_pool_min_size,
                     pool_max_size=self.__settings.interaction_postgres_pool_max_size,
+                    migration_mode=self.__settings.interaction_postgres_migration_mode,
                     statement_timeout=self.__settings.interaction_postgres_statement_timeout,
                 ),
             )
@@ -278,6 +251,7 @@ class RunAssemblyBuilder:
                 schema_name=self.__settings.interaction_postgres_schema,
                 pool_min_size=self.__settings.interaction_postgres_pool_min_size,
                 pool_max_size=self.__settings.interaction_postgres_pool_max_size,
+                migration_mode=self.__settings.interaction_postgres_migration_mode,
                 statement_timeout=self.__settings.interaction_postgres_statement_timeout,
             ),
         )

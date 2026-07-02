@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, Final, List, Optional, Tuple, cast
 
 from fathom.constants import FathomEvent
 from fathom.constants.collaboration import ArtifactBackend, TaskCode, TaskState
+from fathom.constants.conversation import ProgressStatus, RecorderEvent
 from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.constants.gcc import GCC_BRANCHING_ACTIVE_COUNT
 from fathom.constants.messages import RECORDING_FAILURE_MESSAGE
@@ -19,7 +21,16 @@ from fathom.constants.state import (
 from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import FathomError
 from fathom.schemas.observation import ScreenObservation
-from fathom.schemas.recording import Output, StepCompletion
+from fathom.schemas.recording import (
+    ActionSummary,
+    Analysis,
+    ContextSnapshot,
+    Metrics,
+    Observation,
+    Output,
+    StepCompletion,
+    Usage,
+)
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import StepResult
@@ -34,6 +45,8 @@ class RecordNode:
     """
     RECORD graph node; commits results and decides task advancement.
     """
+
+    __STEP_STARTED_AT: Final[str] = "started_at"
 
     def __init__(self, *, provider: IntentNodeProvider) -> None:
         """
@@ -124,7 +137,7 @@ class RecordNode:
         try:
             # Record in agent state (internal bookkeeping, always done)
             self.__provider.context.agent_state.record_step(result=step_result)
-            await self.__record_step_finished(result=step_result)
+            await self.__record_step_finished(result=step_result, state=state)
 
             # Accumulate step results in graph state so MemorySaver checkpoints them.
             existing_step_results = cast(
@@ -436,40 +449,67 @@ class RecordNode:
             self.__provider.persistence.persist(result=result)
             return result
 
-    async def __record_step_finished(self, *, result: StepResult) -> None:
+    async def __record_step_finished(self, *, result: StepResult, state: IntentGraphState) -> None:
         """
-        Record the terminal state and artifacts for one graph action task.
+        Record progress, artifacts, context, and terminal state for one graph action task.
         """
 
         context = self.__provider.context
-        if context.recorder is None:
+        recorder = getattr(context, "recorder", None)
+        tenant = getattr(context, "tenant", None)
+        thread = getattr(context, "thread", None)
+        responder = getattr(context, "responder", None)
+        workspace = getattr(context, "workspace", None)
+        execution_id = getattr(context, "execution_id", None)
+        workflow_id = getattr(context, "workflow_id", None)
+        if recorder is None:
             return
-        if not all(
-            isinstance(value, str)
-            for value in (context.tenant, context.thread, context.responder)
+        if (
+            not isinstance(tenant, str)
+            or not isinstance(thread, str)
+            or not isinstance(responder, str)
+            or not isinstance(execution_id, str)
+            or not isinstance(workflow_id, str)
         ):
             return
-        if context.workspace is not None and not isinstance(context.workspace, str):
+        if workspace is not None and not isinstance(workspace, str):
             return
 
-        identity = InteractionIdentity(workflow=context.workflow_id)
+        identity = InteractionIdentity(execution=execution_id)
+
         step_task_id = identity.step_task(
             step_number=result.step.step_number,
             action_descriptor=result.step.action.to_description(),
         )
+        progress = await self.__record_progress_message(
+            state=state,
+            result=result,
+            step_task_id=step_task_id,
+        )
+        artifacts = await self.__record_step_artifacts(
+            step_task_id=step_task_id,
+            step_number=result.step.step_number,
+        )
+        await self.__record_step_context(
+            result=result,
+            progress=progress,
+            artifacts=artifacts,
+            step_task_id=step_task_id,
+        )
+
         try:
-            await context.recorder.record_step_finished(
+            await recorder.record_step_finished(
                 completion=StepCompletion(
-                    tenant=context.tenant,
-                    thread=context.thread,
-                    workflow=context.workflow_id,
+                    tenant=tenant,
+                    thread=thread,
                     task=step_task_id,
+                    reason=result.error,
+                    workflow=workflow_id,
+                    elapsed=result.duration,
+                    finished=datetime.now(tz=timezone.utc),
+                    summary=result.observation or result.step.action.to_description(),
                     state=TaskState.SUCCEEDED if result.success else TaskState.FAILED,
                     code=TaskCode.COMPLETED if result.success else TaskCode.UNKNOWN_ERROR,
-                    reason=result.error,
-                    summary=result.observation or result.step.action.to_description(),
-                    finished=datetime.now(tz=timezone.utc),
-                    elapsed=result.duration,
                 )
             )
         except Exception as exception:
@@ -480,26 +520,391 @@ class RecordNode:
             )
             return
 
-        await self.__record_step_artifacts(
-            step_number=result.step.step_number,
-            step_task_id=step_task_id,
+    async def __record_progress_message(
+        self,
+        *,
+        step_task_id: str,
+        result: StepResult,
+        state: IntentGraphState,
+    ) -> Optional[str]:
+        """
+        Record one user-visible progress message for the completed graph step.
+        """
+
+        context = self.__provider.context
+        recorder = getattr(context, "recorder", None)
+        tenant = getattr(context, "tenant", None)
+        thread = getattr(context, "thread", None)
+        responder = getattr(context, "responder", None)
+        workspace = getattr(context, "workspace", None)
+        execution_id = getattr(context, "execution_id", None)
+        workflow_id = getattr(context, "workflow_id", None)
+
+        if recorder is None:
+            return None
+
+        if (
+            not isinstance(tenant, str)
+            or not isinstance(thread, str)
+            or not isinstance(responder, str)
+            or not isinstance(execution_id, str)
+            or not isinstance(workflow_id, str)
+        ):
+            return None
+        if workspace is not None and not isinstance(workspace, str):
+            return None
+
+        analysis_raw = state.get(CommonStateKey.ANALYSIS)
+        analysis = analysis_raw if isinstance(analysis_raw, AnalysisResult) else None
+
+        action = result.step.action
+        identity = InteractionIdentity(execution=execution_id)
+        message = identity.derived_message(
+            name="progress",
+            qualifier=f"{result.step.step_number}:{action.to_description()}",
+        )
+        metrics = self.__progress_metrics(result=result, state=state, analysis=analysis)
+
+        try:
+            await recorder.record_llm_analysis(
+                analysis=Analysis(
+                    id=message,
+                    thread=thread,
+                    tenant=tenant,
+                    metrics=metrics,
+                    actor=responder,
+                    task=step_task_id,
+                    workspace=workspace,
+                    workflow=workflow_id,
+                    execution=execution_id,
+                    step=result.step.step_number + 1,
+                    status=(
+                        ProgressStatus.COMPLETED.value
+                        if result.success
+                        else ProgressStatus.FAILED.value
+                    ),
+                    rationale=action.rationale,
+                    summary=self.__progress_summary(result=result, analysis=analysis),
+                    evidence=self.__progress_evidence(result=result, analysis=analysis),
+                    action=self.__progress_action(result=result),
+                    created=self.__progress_created(result=result),
+                    observation=self.__progress_observation(result=result, analysis=analysis),
+                    metadata={
+                        "screen_hash": result.step.screen_hash,
+                        "metrics": metrics.model_dump(mode="json", exclude_none=True),
+                        "analysis_present": analysis is not None,
+                    },
+                )
+            )
+            await context.telemetry.info(
+                "Conversation progress message recorded.",
+                type=RecorderEvent.TIMELINE_PROGRESS_RECORDED.value,
+                tenant_id=tenant,
+                conversation_id=thread,
+                execution_id=getattr(context, "execution_id", None),
+                workflow_id=workflow_id,
+                task=step_task_id,
+                step=result.step.step_number + 1,
+                duration=self.__duration_seconds(metrics=metrics),
+                analysis_present=analysis is not None,
+                step_result_present=True,
+            )
+            return message
+        except Exception as exception:
+            await context.telemetry.warning(
+                "Conversation progress message recording failed",
+                type=RecorderEvent.TIMELINE_PROGRESS_FAILED.value,
+                tenant_id=tenant,
+                conversation_id=thread,
+                execution_id=getattr(context, "execution_id", None),
+                workflow_id=workflow_id,
+                task=step_task_id,
+                error=str(exception),
+                step=result.step.step_number + 1,
+                duration=self.__duration_seconds(metrics=metrics),
+                analysis_present=analysis is not None,
+                step_result_present=True,
+            )
+            return None
+
+    def __progress_action(self, *, result: StepResult) -> ActionSummary:
+        """
+        Build the user-safe action projection for a progress message.
+        """
+
+        action = result.step.action
+
+        return ActionSummary(
+            text=action.text,
+            rationale=action.rationale,
+            confidence=action.confidence,
+            type=action.action_type.value,
+            target=action.natural_language_target or action.target,
         )
 
-    async def __record_step_artifacts(self, *, step_number: int, step_task_id: str) -> None:
+    def __progress_observation(
+        self, *, result: StepResult, analysis: Optional[AnalysisResult]
+    ) -> Observation:
+        """
+        Build the user-safe observation projection for a progress message.
+        """
+
+        return Observation(
+            summary=result.observation,
+            changed=result.screen_changed,
+            screen=result.step.screen_hash,
+            evidence=self.__progress_evidence(result=result, analysis=analysis),
+        )
+
+    @staticmethod
+    def __progress_summary(*, result: StepResult, analysis: Optional[AnalysisResult]) -> str:
+        """
+        Return the best available user-safe step summary.
+        """
+
+        if analysis is not None and analysis.reasoning:
+            return analysis.reasoning
+
+        if result.observation:
+            return result.observation
+
+        return result.step.action.to_description()
+
+    @staticmethod
+    def __progress_evidence(
+        *, result: StepResult, analysis: Optional[AnalysisResult]
+    ) -> Optional[str]:
+        """
+        Return screen evidence from analysis or the post-action observation.
+        """
+
+        if analysis is not None and analysis.screen_description:
+            return analysis.screen_description
+
+        return result.observation
+
+    def __progress_metrics(
+        self,
+        *,
+        result: StepResult,
+        state: IntentGraphState,
+        analysis: Optional[AnalysisResult],
+    ) -> Metrics:
+        """
+        Build timing and token metadata for a progress message.
+        """
+
+        analysis_duration = self.__duration(value=state.get(CommonStateKey.ANALYSIS_DURATION))
+        grounding_duration = self.__duration(value=state.get(CommonStateKey.GROUNDING_DURATION))
+        execution_duration = self.__duration(value=state.get(CommonStateKey.EXECUTION_DURATION))
+
+        return Metrics(
+            analysis=analysis_duration,
+            grounding=grounding_duration,
+            execution=execution_duration or result.duration,
+            total=self.__total_duration(
+                values=(
+                    analysis_duration,
+                    grounding_duration,
+                    execution_duration or result.duration,
+                )
+            ),
+            usage=self.__usage(metrics=analysis.metrics if analysis is not None else {}),
+        )
+
+    @staticmethod
+    def __duration(*, value: object) -> Optional[int]:
+        """
+        Convert optional second-based state timing into milliseconds.
+        """
+
+        if not isinstance(value, (float, int)):
+            return None
+
+        return max(0, int(float(value) * 1000))
+
+    @staticmethod
+    def __duration_seconds(*, metrics: Metrics) -> Optional[float]:
+        """
+        Return the total progress duration in seconds for observability.
+        """
+
+        if metrics.total is None:
+            return None
+
+        return metrics.total / 1000
+
+    @staticmethod
+    def __total_duration(*, values: Tuple[Optional[int], ...]) -> Optional[int]:
+        """
+        Sum available duration values.
+        """
+
+        available = tuple(value for value in values if value is not None)
+        if not available:
+            return None
+
+        return sum(available)
+
+    @staticmethod
+    def __usage(*, metrics: Dict[str, float]) -> Optional[Usage]:
+        """
+        Convert provider token metrics into recorder usage metadata.
+        """
+
+        if not metrics:
+            return None
+
+        prompt = int(metrics.get("prompt_tokens", 0) or 0)
+        cached = int(metrics.get("cached_tokens", 0) or 0)
+        reasoning = int(metrics.get("reasoning_tokens", 0) or 0)
+        completion = int(metrics.get("completion_tokens", 0) or 0)
+        total = int(metrics.get("total_tokens", 0) or prompt + completion)
+
+        if not any((prompt, completion, cached, reasoning, total)):
+            return None
+
+        return Usage(
+            total=total or None,
+            prompt=prompt or None,
+            cached=cached or None,
+            reasoning=reasoning or None,
+            completion=completion or None,
+        )
+
+    def __progress_created(self, *, result: StepResult) -> datetime:
+        """
+        Return the deterministic creation timestamp carried by EXECUTE.
+        """
+
+        value = result.step.metadata.get(self.__STEP_STARTED_AT)
+
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                pass
+
+        return datetime.now(tz=timezone.utc)
+
+    async def __record_step_context(
+        self,
+        *,
+        step_task_id: str,
+        result: StepResult,
+        progress: Optional[str],
+        artifacts: Tuple[str, ...],
+    ) -> None:
+        """
+        Record one audit context snapshot for a completed graph step.
+        """
+
+        context = self.__provider.context
+
+        recorder = getattr(context, "recorder", None)
+
+        tenant = getattr(context, "tenant", None)
+        thread = getattr(context, "thread", None)
+        responder = getattr(context, "responder", None)
+        workspace = getattr(context, "workspace", None)
+        execution_id = getattr(context, "execution_id", None)
+        workflow_id = getattr(context, "workflow_id", None)
+
+        if recorder is None:
+            return
+        if (
+            not isinstance(tenant, str)
+            or not isinstance(thread, str)
+            or not isinstance(responder, str)
+            or not isinstance(execution_id, str)
+            or not isinstance(workflow_id, str)
+        ):
+            return
+        if workspace is not None and not isinstance(workspace, str):
+            return
+
+        identity = InteractionIdentity(execution=execution_id)
+        messages = (progress,) if progress is not None else ()
+        try:
+            await recorder.record_context(
+                snapshot=ContextSnapshot(
+                    tenant=tenant,
+                    thread=thread,
+                    actor=responder,
+                    task=step_task_id,
+                    messages=messages,
+                    artifacts=artifacts,
+                    workspace=workspace,
+                    workflow=workflow_id,
+                    execution=identity.execution,
+                    created=self.__progress_created(result=result),
+                    id=identity.context(name=f"step:{result.step.step_number}"),
+                    hash=self.__context_hash(
+                        messages=messages,
+                        artifacts=artifacts,
+                        workflow=workflow_id,
+                        step=result.step.step_number,
+                    ),
+                    metadata={
+                        "step": result.step.step_number,
+                    },
+                )
+            )
+        except Exception as exception:
+            await context.telemetry.warning(
+                "Conversation step context recording failed",
+                error=str(exception),
+                step=result.step.step_number + 1,
+            )
+
+    @staticmethod
+    def __context_hash(
+        *,
+        step: int,
+        workflow: str,
+        messages: Tuple[str, ...],
+        artifacts: Tuple[str, ...],
+    ) -> str:
+        """
+        Return a stable digest for one step context snapshot.
+        """
+
+        material = "\x1f".join((workflow, str(step), *messages, *artifacts))
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    async def __record_step_artifacts(
+        self, *, step_number: int, step_task_id: str
+    ) -> Tuple[str, ...]:
         """
         Record artifacts emitted during one graph step.
         """
 
         context = self.__provider.context
-        if context.recorder is None:
-            return
+
+        recorder = getattr(context, "recorder", None)
+        workflow_id = getattr(context, "workflow_id", None)
+        package_name = getattr(context, "package_name", None)
+
+        if recorder is None:
+            return ()
+
+        if not isinstance(workflow_id, str) or not isinstance(package_name, str):
+            return ()
 
         catalog = context.artifact_catalog
         try:
+            logger.info(
+                "Recording step artifacts",
+                extra={
+                    "event": "conversation.artifacts.step.started",
+                    "step.index": step_number,
+                    "workflow.id": workflow_id,
+                },
+            )
             artifacts = await catalog.discover(
-                workflow=context.workflow_id,
-                package_name=context.package_name,
+                workflow=workflow_id,
                 only_step=step_number,
+                package_name=package_name,
             )
         except Exception as exception:
             await context.telemetry.warning(
@@ -507,14 +912,29 @@ class RecordNode:
                 error=str(exception),
                 step=step_number + 1,
             )
-            return
+            return ()
 
-        identity = InteractionIdentity(workflow=context.workflow_id)
+        recorded: List[str] = []
+        execution_id = context.execution_id
+        identity = InteractionIdentity(execution=execution_id)
+
         for path, stat in artifacts:
             captured_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
             resolved_kind = catalog.kind(path=path)
+
             if resolved_kind is None:
+                logger.warning(
+                    "Skipping unclassified step artifact",
+                    extra={
+                        "event": "conversation.artifacts.step.skipped",
+                        "path": str(path),
+                        "step.index": step_number,
+                        "workflow.id": workflow_id,
+                    },
+                )
                 continue
+
+            artifact = identity.artifact(path=path)
 
             metadata: Dict[str, Any] = {
                 "step": step_number,
@@ -523,10 +943,10 @@ class RecordNode:
                 "captured_at": captured_at.isoformat(),
             }
             try:
-                await context.recorder.record_artifact(
+                await recorder.record_artifact(
                     output=Output(
+                        id=artifact,
                         uri=str(path),
-                        id=identity.artifact(path=path),
                         task=step_task_id,
                         size=stat.st_size,
                         metadata=metadata,
@@ -534,21 +954,33 @@ class RecordNode:
                         created=captured_at,
                         thread=context.thread,
                         tenant=context.tenant,
-                        mime=catalog.mime(path=path),
-                        backend=ArtifactBackend.LOCAL,
                         actor=context.responder,
                         workspace=context.workspace,
                         workflow=context.workflow_id,
+                        execution=execution_id,
+                        mime=catalog.mime(path=path),
+                        backend=ArtifactBackend.LOCAL,  # TODO: Remove hardcoded value
                         retention=catalog.retention(path=path),
                     )
                 )
+                recorded.append(artifact)
             except Exception as exception:
                 await context.telemetry.warning(
                     "Step artifact recording failed",
+                    step=step_number + 1,
                     artifact=str(path),
                     error=str(exception),
-                    step=step_number + 1,
                 )
+        logger.info(
+            "Recorded step artifacts",
+            extra={
+                "event": "conversation.artifacts.step.completed",
+                "step.index": step_number,
+                "workflow.id": workflow_id,
+                "artifacts.count": len(recorded),
+            },
+        )
+        return tuple(recorded)
 
     @staticmethod
     def __completion_claim_reason(*, reason: Optional[str]) -> str:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime  # noqa: TC003
 from typing import Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import Field, JsonValue
 
 from fathom.constants.collaboration import (
     ActorKind,
@@ -21,20 +21,85 @@ from fathom.constants.collaboration import (
 )
 from fathom.constants.conversation import EntryKind, Visibility
 from fathom.constants.signing import SigningStatus
+from fathom.schemas.conversation.base import ConversationAliasSchema, ConversationSchema
 
 
-class ThreadView(BaseModel):
+class ThreadTitleMetadataView(ConversationAliasSchema):
+    """
+    Metadata describing how a conversation title was produced.
+    """
+
+    source: Optional[str] = Field(
+        default=None,
+        description="Producer that supplied the current title.",
+    )
+    refreshed: Optional[datetime] = Field(
+        default=None,
+        validation_alias="refreshed_at",
+        serialization_alias="refreshed_at",
+        description="Timestamp when the title metadata was refreshed.",
+    )
+
+
+class ThreadMetadataView(ConversationAliasSchema):
+    """
+    Public metadata grouped under the conversation thread.
+    """
+
+    title: Optional[ThreadTitleMetadataView] = Field(
+        default=None,
+        description="Optional metadata describing how the title was produced.",
+    )
+
+
+class ExecutionReference(ConversationSchema):
+    """
+    Nested execution identifier for client-facing surfaces.
+    """
+
+    id: str = Field(description="Stable execution identifier.")
+
+
+class WorkflowReference(ConversationSchema):
+    """
+    Nested workflow identifier for client-facing surfaces.
+    """
+
+    id: str = Field(description="Stable workflow identifier.")
+
+
+class RuntimeReference(ConversationSchema):
+    """
+    Latest execution and workflow surfaced at the response root of every conversation endpoint.
+    """
+
+    execution: Optional[ExecutionReference] = Field(
+        default=None,
+        description="Latest execution for the conversation.",
+    )
+    workflow: Optional[WorkflowReference] = Field(
+        default=None,
+        description="Latest runtime workflow for the conversation.",
+    )
+
+
+class ThreadView(ConversationAliasSchema):
     """
     Client-facing conversation thread summary.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable conversation thread identifier.")
     title: Optional[str] = Field(default=None, description="User-facing thread title.")
+    metadata: ThreadMetadataView = Field(
+        default_factory=ThreadMetadataView,
+        description="Public conversation metadata grouped by concern.",
+    )
 
     state: ThreadState = Field(description="Current thread lifecycle state.")
-    digest: Optional[str] = Field(default=None, description="Conversation-local digest.")
+    digest: Optional[str] = Field(
+        default=None,
+        description="Optional human-readable conversation digest.",
+    )
 
     created: datetime = Field(
         serialization_alias="created_at", description="Timestamp when the thread was created."
@@ -45,12 +110,10 @@ class ThreadView(BaseModel):
     )
 
 
-class ActorView(BaseModel):
+class ActorView(ConversationSchema):
     """
     Client-facing actor summary.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(description="Stable actor identifier.")
     kind: ActorKind = Field(description="Actor category.")
@@ -58,29 +121,29 @@ class ActorView(BaseModel):
     created: datetime = Field(description="Timestamp when the actor was registered.")
 
 
-class MemberView(BaseModel):
+class MemberView(ConversationSchema):
     """
     Client-facing thread membership summary.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(description="Stable membership identifier.")
     actor: str = Field(description="Actor that joined the thread.")
 
     scope: MembershipScope = Field(description="Membership scope.")
-    role: MembershipRole = Field(description="Actor role inside the thread.")
     joined: datetime = Field(description="Timestamp when the actor joined.")
+    role: MembershipRole = Field(description="Actor role inside the thread.")
 
 
-class TaskNodeView(BaseModel):
+class TaskNodeView(ConversationAliasSchema):
     """
     Client-facing task tree node.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable task identifier.")
+    execution: ExecutionReference = Field(description="Execution that owns the task.")
+    workflow: Optional[WorkflowReference] = Field(
+        default=None, description="Runtime workflow that produced the task, when known."
+    )
 
     root: Optional[str] = Field(default=None, description="Root task identifier.")
     parent: Optional[str] = Field(default=None, description="Parent task identifier.")
@@ -109,24 +172,27 @@ class TaskNodeView(BaseModel):
     )
 
 
-class TaskTreeView(BaseModel):
+class TaskTreeView(ConversationAliasSchema):
     """
-    Client-facing task hierarchy for one conversation thread.
+    Client-facing task hierarchy for one conversation.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    thread: ThreadView = Field(description="Thread that owns this task tree.")
+    thread: ThreadView = Field(
+        serialization_alias="conversation",
+        description="Conversation that owns this task tree.",
+    )
+    runtime: Optional[RuntimeReference] = Field(
+        default=None,
+        description="Latest execution and workflow for the conversation.",
+    )
     roots: Tuple[TaskNodeView, ...] = Field(description="Root task nodes.")
     total: int = Field(ge=0, description="Total task count in the tree.")
 
 
-class EntryView(BaseModel):
+class EntryView(ConversationAliasSchema):
     """
     Client-facing timeline entry.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(description="Stable entry identifier.")
     kind: EntryKind = Field(description="Renderable entry category.")
@@ -142,12 +208,10 @@ class EntryView(BaseModel):
     )
 
 
-class MessageView(BaseModel):
+class MessageView(ConversationAliasSchema):
     """
     Client-facing message row.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(description="Stable message identifier.")
     task: Optional[str] = Field(default=None, description="Optional task identifier.")
@@ -157,20 +221,20 @@ class MessageView(BaseModel):
 
     kind: MessageKind = Field(description="Message kind.")
     audience: Audience = Field(description="Message audience.")
+
     body: JsonValue = Field(description="JSON-safe message body.")
     sequence: int = Field(ge=0, description="Message sequence inside the thread.")
     labels: Tuple[Label, ...] = Field(description="Policy labels attached to the message.")
+
     created: datetime = Field(
         serialization_alias="created_at", description="Timestamp when the message was recorded."
     )
 
 
-class ArtifactView(BaseModel):
+class ArtifactView(ConversationAliasSchema):
     """
     Client-facing artifact row.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(description="Stable artifact identifier.")
     task: Optional[str] = Field(default=None, description="Optional task identifier.")
@@ -198,12 +262,10 @@ class ArtifactView(BaseModel):
     )
 
 
-class ScriptView(BaseModel):
+class ScriptView(ConversationAliasSchema):
     """
     Client-facing reusable script row.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     id: str = Field(description="Stable script identifier.")
     task: Optional[str] = Field(default=None, description="Run-root task identifier when recorded.")
@@ -235,14 +297,19 @@ class ScriptView(BaseModel):
     )
 
 
-class TimelineView(BaseModel):
+class TimelineView(ConversationAliasSchema):
     """
-    Client-facing timeline response for one thread.
+    Client-facing timeline response for one conversation.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    thread: ThreadView = Field(description="Thread rendered by this timeline.")
+    thread: ThreadView = Field(
+        serialization_alias="conversation",
+        description="Conversation rendered by this timeline.",
+    )
+    runtime: Optional[RuntimeReference] = Field(
+        default=None,
+        description="Latest execution and workflow for the conversation.",
+    )
     entries: Tuple[EntryView, ...] = Field(description="Renderable timeline entries.")
     total: int = Field(
         ge=0,

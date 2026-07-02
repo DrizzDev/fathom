@@ -10,13 +10,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from tests.builders.intent import (
-    DeterministicDecomposer,
-    IntentCancellationConfigurationBuilder,
-    IntentStrategyHarness,
-    IntentStrategyHarnessBuilder,
-    TerminalIntentGraph,
-)
 
 from fathom.adapters.checkpoint import SqliteCheckpointStore
 from fathom.constants.events import FathomEvent
@@ -34,6 +27,13 @@ from fathom.strategies.intent import (
     CHECKPOINT_ALLOWED_JSON_MODULES,
     CHECKPOINT_ALLOWED_MSGPACK_MODULES,
     IntentStrategy,
+)
+from tests.builders.intent import (
+    DeterministicDecomposer,
+    IntentCancellationConfigurationBuilder,
+    IntentStrategyHarness,
+    IntentStrategyHarnessBuilder,
+    TerminalIntentGraph,
 )
 
 if TYPE_CHECKING:

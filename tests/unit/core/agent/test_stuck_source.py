@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from tests.builders import AgentFixtures, ScreenFixtures, SubGoalFixtures
-
 from fathom.core.agent.stuck_source import StuckSourceResolver
 from fathom.schemas.escalation import StuckSource
+from tests.builders import AgentFixtures, ScreenFixtures, SubGoalFixtures
 
 
 class StuckSourceResolverTest(unittest.TestCase):

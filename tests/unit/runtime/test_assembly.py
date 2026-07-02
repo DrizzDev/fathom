@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from fathom.constants.llm import InferencePriorityMode
 from fathom.constants.qualification import DEFAULT_QUALIFIER_MODEL
 from fathom.constants.run import TargetKind
-from fathom.constants.storage import InteractionBackend
+from fathom.constants.storage import InteractionBackend, PostgresMigrationMode
 from fathom.core.exceptions import StorageConfigurationError
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.schemas.configuration import (
@@ -33,6 +30,18 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
     """
     Verify qualifier LLM configuration resolution.
     """
+
+    def __principal(self) -> Principal:
+        """
+        Return a valid principal for runtime request construction.
+        """
+
+        return Principal(
+            tenant="tenant",
+            operator="operator",
+            agent="agent:fathom",
+            conversation="conversation",
+        )
 
     def test_qualifier_llm_inherits_credentials_from_bound_settings(self) -> None:
         """
@@ -126,6 +135,7 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         configuration = assembly.build_planner_model_configuration(
             request=RunRequest(
                 objective=IntentObjectiveConfiguration(intent="Open settings"),
+                principal=self.__principal(),
                 resources={"targets": [TargetConfiguration()]},
             ),
         )
@@ -146,6 +156,7 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         assembly = RunAssemblyBuilder(settings=FathomSettings(gemini_api_key="x"))
         request = RunRequest(
             objective=IntentObjectiveConfiguration(intent="Open settings"),
+            principal=self.__principal(),
             resources={
                 "targets": [TargetConfiguration()],
                 "language_model_configuration": {
@@ -187,11 +198,6 @@ class InteractionStorageResolutionTest(unittest.TestCase):
     """
     Verify CLI-default and host-supplied interaction storage resolution.
     """
-
-    def setUp(self) -> None:
-        self.__temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.__temporary_directory.cleanup)
-        self.__sqlite_path = Path(self.__temporary_directory.name) / "interaction.db"
 
     def __principal(self) -> Principal:
         """
@@ -249,49 +255,6 @@ class InteractionStorageResolutionTest(unittest.TestCase):
 
         self.assertIs(result, host_configuration)
 
-    def test_cli_default_uses_sqlite_via_path_manager(self) -> None:
-        """
-        Without host config and without env override, fall back to SQLite at
-        the path manager's interaction db path.
-        """
-
-        request = self.__build_request()
-        path_manager = SimpleNamespace(
-            get_interaction_db_path=lambda: self.__sqlite_path,
-        )
-        with patch.dict("os.environ", {}, clear=False):
-            settings = FathomSettings(interaction_backend="sqlite")
-            builder = RunAssemblyBuilder(settings=settings)
-            result = builder.build_interaction_storage_configuration(
-                request=request,
-                path_manager=path_manager,
-            )
-
-        self.assertEqual(InteractionBackend.SQLITE, result.backend)
-        assert result.sqlite is not None
-        self.assertEqual(self.__sqlite_path, result.sqlite.path)
-
-    def test_cli_default_uses_settings_sqlite_path_when_set(self) -> None:
-        """
-        Explicit FATHOM_INTERACTION_SQLITE_PATH wins over the path manager.
-        """
-
-        request = self.__build_request()
-        configured = self.__sqlite_path
-        settings = FathomSettings(
-            interaction_backend="sqlite",
-            interaction_sqlite_path=configured,
-        )
-        builder = RunAssemblyBuilder(settings=settings)
-        result = builder.build_interaction_storage_configuration(
-            request=request,
-            path_manager=None,
-        )
-
-        self.assertEqual(InteractionBackend.SQLITE, result.backend)
-        assert result.sqlite is not None
-        self.assertEqual(configured, result.sqlite.path)
-
     def test_cli_default_postgres_requires_dsn(self) -> None:
         """
         Postgres backend without a DSN raises a typed StorageConfigurationError.
@@ -327,6 +290,7 @@ class InteractionStorageResolutionTest(unittest.TestCase):
             interaction_postgres_pool_min_size=1,
             interaction_postgres_pool_max_size=4,
             interaction_postgres_statement_timeout=2500,
+            interaction_postgres_migration_mode=PostgresMigrationMode.VALIDATE,
         )
         builder = RunAssemblyBuilder(settings=settings)
 
@@ -338,6 +302,7 @@ class InteractionStorageResolutionTest(unittest.TestCase):
         self.assertEqual(1, result.postgres.pool_min_size)
         self.assertEqual(4, result.postgres.pool_max_size)
         self.assertEqual(2500, result.postgres.statement_timeout)
+        self.assertEqual(PostgresMigrationMode.VALIDATE, result.postgres.migration_mode)
 
     def test_cli_default_postgres_infers_drizz_worker_environment(self) -> None:
         """
@@ -357,6 +322,7 @@ class InteractionStorageResolutionTest(unittest.TestCase):
                 "DRIZZ_FATHOM_POSTGRES_POOL_MIN_SIZE": "2",
                 "DRIZZ_FATHOM_POSTGRES_POOL_MAX_SIZE": "8",
                 "DRIZZ_FATHOM_POSTGRES_STATEMENT_TIMEOUT": "3000",
+                "DRIZZ_FATHOM_POSTGRES_MIGRATION_MODE": "validate",
             },
             clear=True,
         ):
@@ -374,6 +340,7 @@ class InteractionStorageResolutionTest(unittest.TestCase):
         self.assertEqual(2, result.postgres.pool_min_size)
         self.assertEqual(8, result.postgres.pool_max_size)
         self.assertEqual(3000, result.postgres.statement_timeout)
+        self.assertEqual(PostgresMigrationMode.VALIDATE, result.postgres.migration_mode)
 
     def test_cli_default_postgres_uses_dsn_when_settings_provide_one(self) -> None:
         """

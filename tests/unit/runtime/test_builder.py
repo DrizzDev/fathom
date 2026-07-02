@@ -284,9 +284,7 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
             port=MagicMock(spec=DevicePort)
         ).with_perception(port=MagicMock(spec=PerceptionPort)).with_qualifier_config(
             configuration=custom
-        ).with_assembly(
-            assembly=self.__assembly(), llm_factory=factory
-        ).with_interaction(
+        ).with_assembly(assembly=self.__assembly(), llm_factory=factory).with_interaction(
             port=NoopInteraction()
         ).build()
 

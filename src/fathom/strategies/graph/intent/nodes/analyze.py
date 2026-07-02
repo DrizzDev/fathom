@@ -20,6 +20,7 @@ from fathom.constants.state import (
     CommonStateKey,
     CompletionReason,
     IntentStateKey,
+    PlanMetadataKey,
 )
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
@@ -293,13 +294,14 @@ class AnalyzeNode:
                         completion_reason=effective_completion_reason,
                     ),
                     IntentStateKey.PLANNED_STEP: None if completion_deferred else plan.step,
-                    CommonStateKey.ANALYSIS_DURATION: duration,
                     IntentStateKey.SHOULD_RETRY: (
                         True
                         if completion_deferred
                         else (False if effective_is_complete else plan.should_retry)
                     ),
+                    CommonStateKey.ANALYSIS_DURATION: duration,
                     CommonStateKey.IS_COMPLETE: effective_is_complete,
+                    CommonStateKey.ANALYSIS: self.__analysis_from_plan(plan=plan),
                     CommonStateKey.COMPLETION_REASON: effective_completion_reason,
                     CommonStateKey.SCREEN_OBSERVATION: state.get(CommonStateKey.SCREEN_OBSERVATION),
                 },
@@ -315,8 +317,8 @@ class AnalyzeNode:
                     extra={
                         "event": "analyze.log",
                         "route.destination": destination,
-                        "completion.reason": effective_completion_reason,
                         "component": "graph.intent.analyze",
+                        "completion.reason": effective_completion_reason,
                         "workflow.id": self.__provider.context.workflow_id,
                     },
                 )
@@ -442,6 +444,18 @@ class AnalyzeNode:
         )
         self.__provider.persistence.persist(result=terminate)
         return terminate
+
+    @staticmethod
+    def __analysis_from_plan(*, plan: Any) -> Any:
+        """
+        Extract the analyzer's AnalysisResult from planner metadata for downstream state.
+        """
+
+        metadata = getattr(plan, "metadata", None)
+        if not isinstance(metadata, dict):
+            return None
+
+        return metadata.get(PlanMetadataKey.ANALYSIS.value)
 
     def __verify_mode(
         self,

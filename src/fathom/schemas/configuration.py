@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from logging import getLogger
-from pathlib import Path  # noqa: TC003
 from typing import Any, ClassVar, Dict, Literal, Optional, Set, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -41,6 +40,7 @@ from fathom.constants.scheduler import (
 from fathom.constants.storage import (
     INTERACTION_POSTGRES_APPLICATION_NAME,
     INTERACTION_POSTGRES_DEFAULT_DATABASE,
+    INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE,
     INTERACTION_POSTGRES_DEFAULT_POOL_MAX_SIZE,
     INTERACTION_POSTGRES_DEFAULT_POOL_MIN_SIZE,
     INTERACTION_POSTGRES_DEFAULT_PORT,
@@ -48,14 +48,9 @@ from fathom.constants.storage import (
     INTERACTION_POSTGRES_DEFAULT_SSL,
     INTERACTION_POSTGRES_DEFAULT_STATEMENT_TIMEOUT,
     INTERACTION_SLOW_QUERY_THRESHOLD,
-    INTERACTION_SQLITE_BUSY_TIMEOUT,
-    INTERACTION_SQLITE_JOURNAL_MODE,
-    INTERACTION_SQLITE_MMAP_SIZE,
-    INTERACTION_SQLITE_SYNCHRONOUS,
     InteractionBackend,
+    PostgresMigrationMode,
     PostgresSslMode,
-    SQLiteJournalMode,
-    SQLiteSynchronous,
     StorageBackend,
 )
 from fathom.schemas.artifact import PipelineConfiguration
@@ -713,6 +708,7 @@ class ExecutionConfiguration(BaseModel):
     """
 
     max_retries: int = Field(default=3, description="Maximum retries for physical actions")
+
     stability_wait: float = Field(
         ge=0.0,
         le=1.5,
@@ -753,34 +749,6 @@ class TelemetryConfiguration(BaseModel):
     )
 
 
-class SQLiteInteractionConfiguration(BaseModel):
-    """
-    Configuration for the SQLite interaction adapter.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    path: Path = Field(description="SQLite database file path")
-    journal_mode: SQLiteJournalMode = Field(default=INTERACTION_SQLITE_JOURNAL_MODE)
-    synchronous: SQLiteSynchronous = Field(default=INTERACTION_SQLITE_SYNCHRONOUS)
-    busy_timeout: int = Field(default=INTERACTION_SQLITE_BUSY_TIMEOUT, ge=0)
-    mmap_size: int = Field(default=INTERACTION_SQLITE_MMAP_SIZE, ge=0)
-    allow_wal_on_shared_filesystem: bool = Field(default=False)
-    slow_query_threshold: int = Field(default=INTERACTION_SLOW_QUERY_THRESHOLD, ge=0)
-
-    @model_validator(mode="after")
-    def __validate_wal_acknowledgement(self) -> "SQLiteInteractionConfiguration":
-        """
-        Require explicit acknowledgement before using WAL on shared filesystems.
-        """
-
-        if self.journal_mode == SQLiteJournalMode.WAL and not self.allow_wal_on_shared_filesystem:
-            raise ValueError(
-                "WAL journal mode requires allow_wal_on_shared_filesystem=True."
-            )
-        return self
-
-
 class PostgresInteractionConfiguration(BaseModel):
     """
     Configuration for the Postgres interaction adapter.
@@ -791,19 +759,31 @@ class PostgresInteractionConfiguration(BaseModel):
     dsn: Optional[str] = Field(default=None, min_length=1)
     host: Optional[str] = Field(default=None, min_length=1)
     port: int = Field(default=INTERACTION_POSTGRES_DEFAULT_PORT, ge=1, le=65535)
+
     user: Optional[str] = Field(default=None, min_length=1)
     password: Optional[str] = Field(default=None, min_length=1)
+
     database: str = Field(default=INTERACTION_POSTGRES_DEFAULT_DATABASE, min_length=1)
     schema_name: str = Field(default=INTERACTION_POSTGRES_DEFAULT_SCHEMA, min_length=1)
+
     pool_min_size: int = Field(default=INTERACTION_POSTGRES_DEFAULT_POOL_MIN_SIZE, ge=1)
     pool_max_size: int = Field(default=INTERACTION_POSTGRES_DEFAULT_POOL_MAX_SIZE, ge=1)
     statement_timeout: int = Field(
-        default=INTERACTION_POSTGRES_DEFAULT_STATEMENT_TIMEOUT,
         ge=0,
+        default=INTERACTION_POSTGRES_DEFAULT_STATEMENT_TIMEOUT,
     )
+
     application_name: str = Field(default=INTERACTION_POSTGRES_APPLICATION_NAME, min_length=1)
     ssl: PostgresSslMode = Field(default=INTERACTION_POSTGRES_DEFAULT_SSL)
-    slow_query_threshold: int = Field(default=INTERACTION_SLOW_QUERY_THRESHOLD, ge=0)
+    migration_mode: PostgresMigrationMode = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE
+    )
+
+    slow_query_threshold: int = Field(
+        default=INTERACTION_SLOW_QUERY_THRESHOLD,
+        ge=0,
+        description="Slow-query log threshold, in milliseconds.",
+    )
 
     @model_validator(mode="after")
     def __validate_pool_sizes(self) -> "PostgresInteractionConfiguration":
@@ -813,6 +793,7 @@ class PostgresInteractionConfiguration(BaseModel):
 
         if self.pool_max_size < self.pool_min_size:
             raise ValueError("pool_max_size must be greater than or equal to pool_min_size")
+
         return self
 
     @model_validator(mode="after")
@@ -838,6 +819,7 @@ class PostgresInteractionConfiguration(BaseModel):
                 "PostgresInteractionConfiguration requires either `dsn` or all of "
                 f"`host`, `user`, `password`; missing: {', '.join(missing)}."
             )
+
         return self
 
 
@@ -857,9 +839,9 @@ class InteractionStorageConfiguration(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     backend: InteractionBackend = Field(description="Selected interaction backend")
-    sqlite: Optional[SQLiteInteractionConfiguration] = None
-    postgres: Optional[PostgresInteractionConfiguration] = None
+
     noop: Optional[NoopInteractionConfiguration] = None
+    postgres: Optional[PostgresInteractionConfiguration] = None
 
     @model_validator(mode="after")
     def __validate_backend(self) -> "InteractionStorageConfiguration":
@@ -867,12 +849,12 @@ class InteractionStorageConfiguration(BaseModel):
         Require the nested configuration that matches the selected backend.
         """
 
-        if self.backend == InteractionBackend.SQLITE and self.sqlite is None:
-            raise ValueError("backend=sqlite requires sqlite configuration")
         if self.backend == InteractionBackend.POSTGRES and self.postgres is None:
             raise ValueError("backend=postgres requires postgres configuration")
+
         if self.backend == InteractionBackend.NOOP and self.noop is None:
             raise ValueError("backend=noop requires noop configuration")
+
         return self
 
 
@@ -883,16 +865,18 @@ class InProcessJobSchedulerConfiguration(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    tenant: str = Field(min_length=1)
     owner: str = Field(min_length=1)
+    tenant: str = Field(min_length=1)
     kinds: Tuple[JobKind, ...] = Field(default_factory=tuple)
-    poll_interval: int = Field(default=JOB_SCHEDULER_DEFAULT_POLL_INTERVAL, ge=0)
-    batch_size: int = Field(default=JOB_SCHEDULER_DEFAULT_BATCH_SIZE, gt=0)
+
     lease: int = Field(default=JOB_SCHEDULER_DEFAULT_LEASE, gt=0)
-    retry_backoff: int = Field(default=JOB_SCHEDULER_DEFAULT_RETRY_BACKOFF, ge=0)
+    batch_size: int = Field(default=JOB_SCHEDULER_DEFAULT_BATCH_SIZE, gt=0)
+    poll_interval: int = Field(default=JOB_SCHEDULER_DEFAULT_POLL_INTERVAL, ge=0)
+
     max_attempts: int = Field(default=JOB_SCHEDULER_DEFAULT_MAX_ATTEMPTS, gt=0)
-    recovery_interval: int = Field(default=JOB_SCHEDULER_DEFAULT_RECOVERY_INTERVAL, ge=0)
+    retry_backoff: int = Field(default=JOB_SCHEDULER_DEFAULT_RETRY_BACKOFF, ge=0)
     failure_backoff: int = Field(default=JOB_SCHEDULER_DEFAULT_FAILURE_BACKOFF, ge=0)
+    recovery_interval: int = Field(default=JOB_SCHEDULER_DEFAULT_RECOVERY_INTERVAL, ge=0)
 
 
 class NoopJobSchedulerConfiguration(BaseModel):
@@ -910,9 +894,9 @@ class JobSchedulerConfiguration(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    kind: JobSchedulerKind = Field(description="Selected job scheduler kind")
-    inprocess: Optional[InProcessJobSchedulerConfiguration] = None
     noop: Optional[NoopJobSchedulerConfiguration] = None
+    inprocess: Optional[InProcessJobSchedulerConfiguration] = None
+    kind: JobSchedulerKind = Field(description="Selected job scheduler kind")
 
     @model_validator(mode="after")
     def __validate_kind(self) -> "JobSchedulerConfiguration":
@@ -922,8 +906,10 @@ class JobSchedulerConfiguration(BaseModel):
 
         if self.kind == JobSchedulerKind.IN_PROCESS and self.inprocess is None:
             raise ValueError("kind=inprocess requires inprocess configuration")
+
         if self.kind == JobSchedulerKind.NOOP and self.noop is None:
             raise ValueError("kind=noop requires noop configuration")
+
         return self
 
 
@@ -942,7 +928,8 @@ class FathomConfiguration(BaseModel):
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
 
     intent: IntentConfiguration = Field(default_factory=IntentConfiguration)
-    exploration: ExplorationConfiguration = Field(default_factory=ExplorationConfiguration)
     qualifier: QualifierConfiguration = Field(default_factory=QualifierConfiguration)
-    interaction: Optional[InteractionStorageConfiguration] = None
+    exploration: ExplorationConfiguration = Field(default_factory=ExplorationConfiguration)
+
     scheduler: Optional[JobSchedulerConfiguration] = None
+    interaction: Optional[InteractionStorageConfiguration] = None

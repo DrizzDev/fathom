@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime  # noqa: TC003
 from typing import Dict, Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from fathom.constants.collaboration import (
     ActorKind,
@@ -22,14 +22,18 @@ from fathom.constants.collaboration import (
     TaskKind,
     TaskState,
 )
+from fathom.constants.conversation import THREAD_TITLE_MAX_LENGTH
+from fathom.schemas.conversation.base import (
+    ConversationSchema,
+    ThreadMetadataScope,
+    WorkspaceMetadataScope,
+)
 
 
-class ActorInput(BaseModel):
+class ActorInput(ConversationSchema):
     """
     Actor identity supplied by a host or runtime.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(description="Stable actor identifier.")
     kind: ActorKind = Field(description="Actor category.")
@@ -39,17 +43,12 @@ class ActorInput(BaseModel):
     provider: Optional[str] = Field(default=None, description="Optional runtime provider name.")
 
 
-class AddActor(BaseModel):
+class AddActor(WorkspaceMetadataScope):
     """
     Request to register an actor for conversation participation.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable actor identifier.")
-    tenant: str = Field(description="Tenant that owns the actor.")
-    workspace: Optional[str] = Field(default=None, description="Optional workspace boundary.")
-
     kind: ActorKind = Field(description="Actor category.")
     name: str = Field(description="User-facing actor name.")
     external: Optional[str] = Field(default=None, description="Optional external reference.")
@@ -57,46 +56,32 @@ class AddActor(BaseModel):
     provider: Optional[str] = Field(default=None, description="Optional runtime provider name.")
 
     created: datetime = Field(description="Timestamp when the actor is registered.")
-    metadata: Dict[str, JsonValue] = Field(
-        default_factory=dict,
-        description="Optional non-critical actor metadata.",
-    )
 
 
-class JoinMember(BaseModel):
+class JoinMember(ThreadMetadataScope):
     """
     Request to join an actor to a conversation thread.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable membership identifier.")
-    thread: str = Field(description="Conversation thread identifier.")
-    tenant: str = Field(description="Tenant that owns the membership.")
-    workspace: Optional[str] = Field(default=None, description="Optional workspace boundary.")
-
     actor: str = Field(description="Actor joining the thread.")
     role: MembershipRole = Field(description="Actor role inside the thread.")
     scope: MembershipScope = Field(default=MembershipScope.THREAD, description="Membership scope.")
 
     joined: datetime = Field(description="Timestamp when the actor joins.")
-    metadata: Dict[str, JsonValue] = Field(
-        default_factory=dict, description="Optional non-critical membership metadata."
-    )
 
 
-class ThreadCreate(BaseModel):
+class ThreadCreate(WorkspaceMetadataScope):
     """
     Request to create a client-facing conversation thread.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable conversation thread identifier.")
-    tenant: str = Field(description="Tenant that owns the conversation thread.")
-    workspace: Optional[str] = Field(default=None, description="Optional workspace boundary.")
-
-    title: Optional[str] = Field(default=None, description="User-facing thread title.")
+    title: Optional[str] = Field(
+        default=None,
+        max_length=THREAD_TITLE_MAX_LENGTH,
+        description="User-facing thread title.",
+    )
     creator: Optional[ActorInput] = Field(default=None, description="Optional thread creator.")
 
     member: Optional[str] = Field(
@@ -108,10 +93,6 @@ class ThreadCreate(BaseModel):
         description="Creator role inside the thread.",
     )
     created: datetime = Field(description="Timestamp when the thread is created.")
-    metadata: Dict[str, JsonValue] = Field(
-        default_factory=dict,
-        description="Optional non-critical thread metadata.",
-    )
 
     @model_validator(mode="after")
     def require_creator_membership(self) -> ThreadCreate:
@@ -125,18 +106,16 @@ class ThreadCreate(BaseModel):
         return self
 
 
-class MessageAppend(BaseModel):
+class MessageAppend(ThreadMetadataScope):
     """
     Request to append a message to a conversation thread.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable message identifier.")
-    tenant: str = Field(description="Tenant that owns the message.")
-    workspace: Optional[str] = Field(default=None, description="Optional workspace boundary.")
-
-    thread: str = Field(description="Conversation thread identifier.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the message.",
+    )
     task: Optional[str] = Field(default=None, description="Optional task identifier.")
 
     author: str = Field(description="Actor that authored the message.")
@@ -158,23 +137,15 @@ class MessageAppend(BaseModel):
         default_factory=tuple, description="Policy labels attached to the message."
     )
     created: datetime = Field(description="Timestamp when the message is appended.")
-    metadata: Dict[str, JsonValue] = Field(
-        default_factory=dict, description="Optional non-critical message metadata."
-    )
 
 
-class TaskStart(BaseModel):
+class TaskStart(ThreadMetadataScope):
     """
     Request to start a task inside a conversation thread.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable task identifier.")
-    tenant: str = Field(description="Tenant that owns the task.")
-    workspace: Optional[str] = Field(default=None, description="Optional workspace boundary.")
-
-    thread: str = Field(description="Conversation thread identifier.")
+    execution: str = Field(description="Execution identifier that owns the task.")
     creator: Optional[str] = Field(default=None, description="Actor that created the task.")
     assignee: Optional[str] = Field(default=None, description="Actor assigned to the task.")
     parent: Optional[str] = Field(default=None, description="Optional parent task identifier.")
@@ -188,18 +159,22 @@ class TaskStart(BaseModel):
     objective: str = Field(description="Human-readable task objective.")
     reference: Optional[str] = Field(default=None, description="Optional target reference.")
 
-    created: datetime = Field(description="Timestamp when the task is started.")
-    metadata: Dict[str, JsonValue] = Field(
-        default_factory=dict, description="Optional non-critical task metadata."
+    plan: Dict[str, JsonValue] = Field(
+        default_factory=dict,
+        description="Structured plan data supplied by the runtime.",
+    )
+    progress: Dict[str, JsonValue] = Field(
+        default_factory=dict,
+        description="Structured progress data supplied by the runtime.",
     )
 
+    created: datetime = Field(description="Timestamp when the task is started.")
 
-class TaskFinish(BaseModel):
+
+class TaskFinish(ConversationSchema):
     """
     Request to finish a conversation task.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     tenant: str = Field(description="Tenant that owns the task.")
     task: str = Field(description="Task identifier to finish.")
@@ -213,18 +188,16 @@ class TaskFinish(BaseModel):
     elapsed: int = Field(ge=0, description="Elapsed task duration in milliseconds.")
 
 
-class ArtifactAttach(BaseModel):
+class ArtifactAttach(ThreadMetadataScope):
     """
     Request to attach an artifact reference to a conversation thread.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable artifact identifier.")
-    tenant: str = Field(description="Tenant that owns the artifact.")
-    workspace: Optional[str] = Field(default=None, description="Optional workspace boundary.")
-
-    thread: str = Field(description="Conversation thread identifier.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the artifact.",
+    )
     task: Optional[str] = Field(default=None, description="Optional task identifier.")
     producer: Optional[str] = Field(default=None, description="Actor that produced the artifact.")
 
@@ -240,23 +213,18 @@ class ArtifactAttach(BaseModel):
         default_factory=tuple, description="Policy labels attached to the artifact."
     )
     created: datetime = Field(description="Timestamp when the artifact is attached.")
-    metadata: Dict[str, JsonValue] = Field(
-        default_factory=dict, description="Optional non-critical artifact metadata."
-    )
 
 
-class ScriptSave(BaseModel):
+class ScriptSave(ThreadMetadataScope):
     """
     Request to save a reusable script and version audit row.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable script identifier.")
-    tenant: str = Field(description="Tenant that owns the script.")
-    workspace: Optional[str] = Field(default=None, description="Optional workspace boundary.")
-
-    thread: str = Field(description="Conversation thread identifier.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the script.",
+    )
     task: Optional[str] = Field(default=None, description="Task that produced the script.")
     artifact: Optional[str] = Field(default=None, description="Export artifact identifier.")
 
@@ -275,24 +243,18 @@ class ScriptSave(BaseModel):
     summary: Optional[str] = Field(default=None, description="Change summary for audit.")
 
     created: datetime = Field(description="Timestamp when the script is saved.")
-    metadata: Dict[str, JsonValue] = Field(
-        default_factory=dict,
-        description="Optional non-critical script metadata.",
-    )
 
 
-class ContextRecord(BaseModel):
+class ContextRecord(ThreadMetadataScope):
     """
     Request to record a reference-based context recipe.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     id: str = Field(description="Stable context identifier.")
-    tenant: str = Field(description="Tenant that owns the context.")
-    workspace: Optional[str] = Field(default=None, description="Optional workspace boundary.")
-
-    thread: str = Field(description="Conversation thread identifier.")
+    execution: Optional[str] = Field(
+        default=None,
+        description="Optional execution identifier that owns the context.",
+    )
     task: Optional[str] = Field(default=None, description="Optional task identifier.")
     consumer: Optional[str] = Field(default=None, description="Actor that consumes the context.")
 
@@ -309,6 +271,3 @@ class ContextRecord(BaseModel):
 
     created: datetime = Field(description="Timestamp when the context is recorded.")
     expires: Optional[datetime] = Field(default=None, description="Optional expiry timestamp.")
-    metadata: Dict[str, JsonValue] = Field(
-        default_factory=dict, description="Optional non-critical context metadata."
-    )

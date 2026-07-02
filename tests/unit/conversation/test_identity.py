@@ -17,22 +17,22 @@ class InteractionIdentityTest(unittest.TestCase):
         Bind a fresh identity helper for each test.
         """
 
-        self.__identity = InteractionIdentity(workflow="wf-1")
+        self.__identity = InteractionIdentity(execution="execution-1")
 
-    def test_workflow_property_returns_bound_workflow(self) -> None:
+    def test_execution_property_returns_bound_execution(self) -> None:
         """
-        Workflow id is exposed as a read-only property.
+        Execution id is exposed as a read-only property.
         """
 
-        self.assertEqual("wf-1", self.__identity.workflow)
+        self.assertEqual("execution-1", self.__identity.execution)
 
-    def test_empty_workflow_rejected_at_construction(self) -> None:
+    def test_empty_execution_rejected_at_construction(self) -> None:
         """
-        Identity helper refuses an empty workflow id.
+        Identity helper refuses an empty execution id.
         """
 
         with self.assertRaises(ValueError):
-            InteractionIdentity(workflow="")
+            InteractionIdentity(execution="")
 
     def __assert_opaque_uuid(self, value: str) -> None:
         """
@@ -144,14 +144,14 @@ class InteractionIdentityTest(unittest.TestCase):
         self.__assert_opaque_uuid(job)
         self.assertEqual(job, self.__identity.job(name="memory"))
 
-    def test_script_id_changes_with_path(self) -> None:
+    def test_script_id_changes_with_name(self) -> None:
         """
-        Script ids depend on the file path digest.
+        Script ids depend on the logical script name.
         """
 
-        first = self.__identity.script(path=Path("/tmp/a.txt"))
-        second = self.__identity.script(path=Path("/tmp/a.txt"))
-        third = self.__identity.script(path=Path("/tmp/b.txt"))
+        first = self.__identity.script(name="final")
+        second = self.__identity.script(name="final")
+        third = self.__identity.script(name="step-010")
 
         self.__assert_opaque_uuid(first)
 
