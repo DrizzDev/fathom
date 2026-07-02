@@ -358,6 +358,30 @@ class PostgresInteraction(InteractionPort):
         async with self.__runtime.session():
             return await self.__tasks.recent_task(query=query)
 
+    async def top_root_tasks(self, *, query: TaskQuery, limit: int) -> List[Task]:
+        """
+        Load the top-N root tasks in the thread via SQL LIMIT.
+        """
+
+        async with self.__runtime.session():
+            return await self.__tasks.top_roots(query=query, limit=limit)
+
+    async def task_descendants(self, *, query: TaskQuery, roots: List[str]) -> List[Task]:
+        """
+        Load every descendant of the supplied root tasks in one query.
+        """
+
+        async with self.__runtime.session():
+            return await self.__tasks.descendants(query=query, roots=roots)
+
+    async def task_subtree(self, *, query: TaskQuery, root: str) -> List[Task]:
+        """
+        Load one subtree rooted at the supplied task in one query.
+        """
+
+        async with self.__runtime.session():
+            return await self.__tasks.subtree(query=query, root=root)
+
     async def start_execution(self, *, request: StartExecution) -> Execution:
         """
         Persist one execution in a thread.

@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 
 from pydantic import JsonValue
 from tortoise.exceptions import IntegrityError
+from tortoise.expressions import Q
 
 from fathom.constants.collaboration import EventKind, TaskCode, TaskKind, TaskState
 from fathom.core.exceptions import InteractionError, TaskConflictError
@@ -352,6 +353,58 @@ class TaskRepository:
             return None
 
         return self.__task(row=row)
+
+    async def top_roots(self, *, query: TaskQuery, limit: int) -> List[Task]:
+        """
+        Load the top-N root tasks in the thread, ordered by created_at DESC, LIMIT at SQL.
+        """
+
+        rows = (
+            await TaskRecord.filter(
+                tenant_id=query.tenant,
+                parent_id__isnull=True,
+                conversation_id=query.thread,
+                **self.__deletion_filters(query=query),
+            )
+            .order_by("-created_at", "-id")
+            .limit(limit)
+        )
+
+        return [self.__task(row=row) for row in rows]
+
+    async def descendants(self, *, query: TaskQuery, roots: List[str]) -> List[Task]:
+        """
+        Load every task whose root points to one of the supplied root ids using a single indexed IN scan.
+        """
+
+        if not roots:
+            return []
+
+        rows = await TaskRecord.filter(
+            root_id__in=roots,
+            tenant_id=query.tenant,
+            conversation_id=query.thread,
+            **self.__deletion_filters(query=query),
+        ).order_by("created_at", "id")
+
+        return [self.__task(row=row) for row in rows]
+
+    async def subtree(self, *, query: TaskQuery, root: str) -> List[Task]:
+        """
+        Load one subtree rooted at the supplied task via a single OR-filtered SQL scan.
+        """
+
+        rows = (
+            await TaskRecord.filter(
+                tenant_id=query.tenant,
+                conversation_id=query.thread,
+                **self.__deletion_filters(query=query),
+            )
+            .filter(Q(id=root) | Q(root_id=root))
+            .order_by("created_at", "id")
+        )
+
+        return [self.__task(row=row) for row in rows]
 
     @staticmethod
     def __deletion_filters(*, query: TaskQuery) -> Dict[str, bool]:

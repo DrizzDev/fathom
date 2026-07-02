@@ -1034,7 +1034,6 @@ class ConversationService:
             "uri": outcome.uri,
             "signed": is_signed,
             "signing_status": outcome.status.value,
-            "signed_url_ttl": self.__signer.ttl_seconds if is_signed else None,
         }
         return entry.model_copy(update={"payload": updated_payload})
 
@@ -1065,17 +1064,40 @@ class ConversationService:
                 operator=query.operator,
             )
         )
-        all_tasks = await self.__ports.tasks.list(
-            query=InteractionSchemas.TaskQuery(tenant=query.tenant, thread=query.thread)
+        task_query = InteractionSchemas.TaskQuery(tenant=query.tenant, thread=query.thread)
+        loaded = await self.__load_tree_tasks(
+            query=task_query, subtree=query.task, limit=query.limit
         )
-        scoped = self.__scoped_tasks(tasks=tuple(all_tasks), root=query.task)
 
         return ConversationSchemas.TaskTreeView(
-            total=len(scoped),
+            total=len(loaded),
             thread=self.__thread_view(thread=thread),
-            roots=self.__task_roots(tasks=scoped, scoped_root=query.task),
+            roots=self.__task_roots(tasks=loaded, scoped_root=query.task),
             runtime=await self.__runtime(tenant=query.tenant, thread=query.thread),
         )
+
+    async def __load_tree_tasks(
+        self,
+        *,
+        query: InteractionSchemas.TaskQuery,
+        subtree: Optional[str],
+        limit: int,
+    ) -> Tuple[InteractionSchemas.Task, ...]:
+        """
+        Load the task rows the tree endpoint renders, pushing the root-count cap and subtree scope down into SQL.
+        """
+
+        if subtree is not None:
+            return tuple(await self.__ports.tasks.subtree(query=query, root=subtree))
+
+        roots = await self.__ports.tasks.top_roots(query=query, limit=limit)
+        if not roots:
+            return ()
+
+        root_ids = [task.identity.id for task in roots]
+        descendants = await self.__ports.tasks.descendants(query=query, roots=root_ids)
+
+        return tuple(roots) + tuple(descendants)
 
     async def state(self, *, operator: str, tenant: str, thread: str, task: str) -> Optional[str]:
         """
@@ -1326,8 +1348,6 @@ class ConversationService:
             request=SigningRequest(uri=artifact.uri, backend=artifact.backend),
         )
 
-        is_signed = outcome.status == SigningStatus.SIGNED
-
         return ConversationSchemas.ArtifactView(
             uri=outcome.uri,
             mime=artifact.mime,
@@ -1339,7 +1359,6 @@ class ConversationService:
             created=artifact.created,
             producer=artifact.producer,
             signing_status=outcome.status,
-            signed_url_ttl=self.__signer.ttl_seconds if is_signed else None,
         )
 
     def __actor_view(self, *, actor: InteractionSchemas.Actor) -> ConversationSchemas.ActorView:

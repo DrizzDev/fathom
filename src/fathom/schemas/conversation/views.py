@@ -253,13 +253,6 @@ class ArtifactView(ConversationAliasSchema):
         default=SigningStatus.NOT_REQUIRED,
         description="Typed signing outcome.",
     )
-    signed_url_ttl: Optional[int] = Field(
-        default=None,
-        description=(
-            "Signed-URL TTL in seconds when the URI is a presigned download "
-            "URL; null otherwise so clients cannot misinterpret a stored URI."
-        ),
-    )
 
 
 class ScriptView(ConversationAliasSchema):

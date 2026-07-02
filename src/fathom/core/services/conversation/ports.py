@@ -208,6 +208,27 @@ class TaskStore:
 
         return await self.__interaction.recent_task(query=query)
 
+    async def top_roots(self, *, query: TaskQuery, limit: int) -> List[Task]:
+        """
+        Return the top-N root tasks in the thread using SQL LIMIT.
+        """
+
+        return await self.__interaction.top_root_tasks(query=query, limit=limit)
+
+    async def descendants(self, *, query: TaskQuery, roots: List[str]) -> List[Task]:
+        """
+        Return every descendant of the supplied root tasks in one query.
+        """
+
+        return await self.__interaction.task_descendants(query=query, roots=roots)
+
+    async def subtree(self, *, query: TaskQuery, root: str) -> List[Task]:
+        """
+        Return one subtree rooted at the supplied task in one query.
+        """
+
+        return await self.__interaction.task_subtree(query=query, root=root)
+
 
 class ExecutionStore:
     """

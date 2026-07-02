@@ -334,6 +334,33 @@ class NoopInteraction(InteractionPort):
 
         return None
 
+    async def top_root_tasks(self, *, query: TaskQuery, limit: int) -> List[Task]:
+        """
+        Always return an empty list; nothing was persisted.
+        """
+
+        _ = query, limit
+
+        return []
+
+    async def task_descendants(self, *, query: TaskQuery, roots: List[str]) -> List[Task]:
+        """
+        Always return an empty list; nothing was persisted.
+        """
+
+        _ = query, roots
+
+        return []
+
+    async def task_subtree(self, *, query: TaskQuery, root: str) -> List[Task]:
+        """
+        Always return an empty list; nothing was persisted.
+        """
+
+        _ = query, root
+
+        return []
+
     async def get_messages(self, *, query: MessageQuery) -> List[Message]:
         """
         Always return an empty list; nothing was persisted.

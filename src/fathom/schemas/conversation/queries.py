@@ -15,6 +15,7 @@ from fathom.constants.conversation import (
     MESSAGE_LIST_MAX_LIMIT,
     SCRIPT_LIST_DEFAULT_LIMIT,
     SCRIPT_LIST_MAX_LIMIT,
+    TASK_TREE_ROOTS_MAX_LIMIT,
     THREAD_TITLE_PREFIX_MAX_LENGTH,
     TIMELINE_DEFAULT_LIMIT,
     TIMELINE_MAX_LIMIT,
@@ -61,6 +62,12 @@ class TaskTreeQuery(ThreadAccessScope):
     task: Optional[str] = Field(
         default=None,
         description="Optional root-task identifier; when set, restrict the tree to that subtree.",
+    )
+    limit: int = Field(
+        gt=0,
+        le=TASK_TREE_ROOTS_MAX_LIMIT,
+        default=TASK_TREE_ROOTS_MAX_LIMIT,
+        description="Server-side cap on the number of root nodes returned; children are unbounded.",
     )
 
 

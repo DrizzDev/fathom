@@ -228,6 +228,30 @@ class TaskPort(ABC):
 
         raise NotImplementedError
 
+    @abstractmethod
+    async def top_root_tasks(self, *, query: TaskQuery, limit: int) -> list[Task]:
+        """
+        Load the top-N root tasks in a thread, ordered by created_at DESC, using SQL LIMIT.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def task_descendants(self, *, query: TaskQuery, roots: list[str]) -> list[Task]:
+        """
+        Load every task whose root points to one of the supplied root ids.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def task_subtree(self, *, query: TaskQuery, root: str) -> list[Task]:
+        """
+        Load one subtree rooted at the supplied task.
+        """
+
+        raise NotImplementedError
+
 
 class ExecutionPort(ABC):
     """

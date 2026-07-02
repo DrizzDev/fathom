@@ -709,7 +709,7 @@ class TestConversationService(ConversationStoreTestCase):
         self.assertEqual("https://signed.example/artifact-1", entry.payload["uri"])
         self.assertTrue(entry.payload["signed"])
         self.assertEqual(SigningStatus.SIGNED.value, entry.payload["signing_status"])
-        self.assertEqual(900, entry.payload["signed_url_ttl"])
+        self.assertNotIn("signed_url_ttl", entry.payload)
 
     async def test_build_timeline_filters_by_task(self) -> None:
         """

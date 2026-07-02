@@ -28,6 +28,11 @@ ARTIFACT_LIST_DEFAULT_LIMIT: Final[int] = 50
 SCRIPT_LIST_MAX_LIMIT: Final[int] = 200
 SCRIPT_LIST_DEFAULT_LIMIT: Final[int] = 50
 
+# Server-side cap on the number of root nodes returned by the task-tree endpoint.
+# Children under a root are not counted separately; the guard prevents runaway
+# fan-out on conversations with pathologically many root tasks.
+TASK_TREE_ROOTS_MAX_LIMIT: Final[int] = 100
+
 # Dedicated caps for the /summary projection — applied only by the summary service path
 SUMMARY_SCRIPT_LIMIT: Final[int] = 1_000
 SUMMARY_MESSAGE_LIMIT: Final[int] = 10_000
