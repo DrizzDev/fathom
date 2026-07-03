@@ -4,11 +4,12 @@ import unittest
 from typing import Any, Dict, Optional, Sequence
 
 from fathom.adapters.dialect.drizz.factory import DrizzDialectFactory
+from fathom.authoring.evidence import AuthoringEvidenceBuilder
 from fathom.constants.authoring import AuthoringKind, AuthoringStatus
 from fathom.core.dialect.policy import Policy
 from fathom.core.services.authoring import AuthoringService
 from fathom.interfaces.llm import LLMPort, PromptPart
-from fathom.schemas.authoring import AuthoringEvidence, AuthoringTask, StepAuthoringEvidence
+from fathom.schemas.authoring import AuthoringTask
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.flow import Evidence, EvidenceStep, Flow, Selector, TapNode
 from fathom.schemas.llm import StructuredOutput
@@ -93,7 +94,7 @@ class AuthoringServiceTest(unittest.IsolatedAsyncioTestCase):
             intent="tap search",
             step_number=1,
             workflow_id="workflow-1",
-            evidence=AuthoringEvidence(step=StepAuthoringEvidence(evidence=evidence, step_index=1)),
+            evidence=AuthoringEvidenceBuilder().build_step(evidence=evidence, step_index=1),
         )
 
     async def test_authors_step_script_through_llm_and_dialect(self) -> None:

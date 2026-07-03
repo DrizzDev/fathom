@@ -7,13 +7,13 @@ from fathom.schemas.flow import RunObjective
 
 class ScriptRefresher(ABC):
     """
-    Port that refreshes the available script artifact after a run's recorded history changes.
+    Port that refreshes the available script artifact after an execution's recorded history changes.
     """
 
     @abstractmethod
-    def schedule(self, *, run: str, objective: RunObjective) -> None:
+    def schedule(self, *, execution_id: str, objective: RunObjective) -> None:
         """
-        Schedule a non-blocking, coalesced refresh of the script artifact for the run.
+        Schedule a non-blocking, coalesced refresh of the script artifact for the execution.
         """
 
         raise NotImplementedError

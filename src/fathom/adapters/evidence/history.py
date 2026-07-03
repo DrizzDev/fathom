@@ -27,10 +27,10 @@ logger = getLogger(__name__)
 
 class HistoryEvidenceSource(EvidenceSource):
     """
-    Reads a run's ordered workflow trace, distils and normalizes it, and assembles Evidence.
+    Reads an execution's ordered trace, distils and normalizes it, and assembles Evidence.
     """
 
-    __FILENAME = "history__workflow.json"
+    __FILENAME = "history__execution.json"
 
     def __init__(
         self,
@@ -49,9 +49,9 @@ class HistoryEvidenceSource(EvidenceSource):
         self.__normalizer = normalizer
         self.__path_manager = path_manager
 
-    async def read(self, *, run: str, objective: RunObjective) -> Evidence:
+    async def read(self, *, execution_id: str, objective: RunObjective) -> Evidence:
         """
-        Load the workflow trace, distil thrash, normalize launches, and assemble Evidence.
+        Load the execution trace, distil thrash, normalize launches, and assemble Evidence.
         """
 
         started = time.perf_counter()
@@ -60,20 +60,20 @@ class HistoryEvidenceSource(EvidenceSource):
             "script evidence read started",
             extra={
                 "event": "script.evidence.read.started",
-                "workflow.id": run,
+                "execution.id": execution_id,
                 "script.package": objective.package,
                 "script.intent_present": bool(objective.intent.strip()),
             },
         )
 
         try:
-            records = self.__records(run=run)
+            records = self.__records(execution_id=execution_id)
         except ScriptExportError as exception:
             logger.warning(
                 "script evidence read failed",
                 extra={
                     "event": "script.evidence.read.failed",
-                    "workflow.id": run,
+                    "execution.id": execution_id,
                     "script.package": objective.package,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
@@ -83,10 +83,10 @@ class HistoryEvidenceSource(EvidenceSource):
             raise
 
         distillation = self.__distiller.distill(records=records)
-        self.__log_distilled(run=run, raw=len(records), distillation=distillation)
+        self.__log_distilled(execution_id=execution_id, raw=len(records), distillation=distillation)
 
         trace = self.__normalizer.normalize(records=distillation.records)
-        self.__log_normalized(run=run, trace=trace)
+        self.__log_normalized(execution_id=execution_id, trace=trace)
 
         evidence = self.__assembler.assemble(
             trace=trace,
@@ -97,11 +97,11 @@ class HistoryEvidenceSource(EvidenceSource):
             partial=distillation.partial,
             discarded=distillation.discarded,
         )
-        self.__log_assembled(run=run, evidence=evidence, started=started)
+        self.__log_assembled(execution_id=execution_id, evidence=evidence, started=started)
 
         return evidence
 
-    def __log_distilled(self, *, run: str, raw: int, distillation: Distillation) -> None:
+    def __log_distilled(self, *, execution_id: str, raw: int, distillation: Distillation) -> None:
         """
         Record the distillation outcome: input, kept, and dropped record counts.
         """
@@ -110,8 +110,8 @@ class HistoryEvidenceSource(EvidenceSource):
             "script evidence distilled",
             extra={
                 "event": "script.evidence.distilled",
-                "workflow.id": run,
                 "script.input_count": raw,
+                "execution.id": execution_id,
                 "script.reason": distillation.reason,
                 "script.partial": distillation.partial,
                 "script.kept_count": len(distillation.records),
@@ -119,7 +119,7 @@ class HistoryEvidenceSource(EvidenceSource):
             },
         )
 
-    def __log_normalized(self, *, run: str, trace: NormalizedTrace) -> None:
+    def __log_normalized(self, *, execution_id: str, trace: NormalizedTrace) -> None:
         """
         Record the launch-normalization outcome: launch markers by provenance and kept records.
         """
@@ -133,7 +133,7 @@ class HistoryEvidenceSource(EvidenceSource):
             "script evidence normalized",
             extra={
                 "event": "script.evidence.normalized",
-                "workflow.id": run,
+                "execution.id": execution_id,
                 "script.launch_count": len(launches),
                 "script.launcher_transition_count": transitions,
                 "script.warm_start_count": len(launches) - transitions,
@@ -143,7 +143,7 @@ class HistoryEvidenceSource(EvidenceSource):
             },
         )
 
-    def __log_assembled(self, *, run: str, evidence: Evidence, started: float) -> None:
+    def __log_assembled(self, *, execution_id: str, evidence: Evidence, started: float) -> None:
         """
         Record the assembled evidence shape: steps, launches, validations, and captures.
         """
@@ -152,7 +152,7 @@ class HistoryEvidenceSource(EvidenceSource):
             "script evidence assembled",
             extra={
                 "event": "script.evidence.assembled",
-                "workflow.id": run,
+                "execution.id": execution_id,
                 "script.partial": evidence.partial,
                 "script.step_count": len(evidence.steps),
                 "duration.ms": self.__elapsed(started=started),
@@ -175,15 +175,15 @@ class HistoryEvidenceSource(EvidenceSource):
 
         return round((time.perf_counter() - started) * 1000, 3)
 
-    def __records(self, *, run: str) -> List[StepRecord]:
+    def __records(self, *, execution_id: str) -> List[StepRecord]:
         """
-        Read and validate the run's ordered workflow trace, failing if absent or malformed.
+        Read and validate the execution's ordered trace, failing if absent or malformed.
         """
 
-        path = self.__path(run=run)
+        path = self.__path(execution_id=execution_id)
 
         if not path.exists():
-            raise ScriptExportError(f"No recorded workflow trace for run '{run}'.")
+            raise ScriptExportError(f"No recorded execution trace for execution '{execution_id}'.")
 
         with path.open(mode="r") as handle:
             raw = json.load(handle)
@@ -192,13 +192,13 @@ class HistoryEvidenceSource(EvidenceSource):
             return list(StepHistory.model_validate(raw).history)
         except ValidationError as exception:
             raise ScriptExportError(
-                f"Malformed workflow trace for run '{run}': {exception}"
+                f"Malformed execution trace for execution '{execution_id}': {exception}"
             ) from exception
 
-    def __path(self, *, run: str) -> Path:
+    def __path(self, *, execution_id: str) -> Path:
         """
-        Resolve the workflow trace path for a run.
+        Resolve the execution trace path.
         """
 
-        directory = self.__path_manager.get_history_directory(session_id=run)
+        directory = self.__path_manager.get_history_directory(session_id=execution_id)
         return directory / self.__FILENAME

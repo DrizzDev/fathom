@@ -23,7 +23,7 @@ class AuthoringEvidenceBuilderTest(unittest.TestCase):
 
     def test_run_evidence_reuses_existing_evidence_and_groups_by_goal(self) -> None:
         """
-        Run evidence must carry the original Evidence object and derive episodes from recorded goals.
+        Run evidence must carry excluded source evidence and derive prompt-facing steps and episodes.
         """
 
         goal = StepGoal(index=2, description="find product", directive="scroll")
@@ -40,7 +40,10 @@ class AuthoringEvidenceBuilderTest(unittest.TestCase):
         result = self.builder.build_run(evidence=evidence)
         assert result.run is not None
 
-        self.assertIs(result.run.evidence, evidence)
+        self.assertIs(result.run.source, evidence)
+        self.assertEqual(result.run.run.intent, "find soap")
+        self.assertEqual(len(result.run.steps), 2)
+        self.assertEqual(result.run.steps[0].command.action, "scroll")
         self.assertEqual(len(result.run.episodes), 1)
         self.assertEqual(result.run.episodes[0].goal, goal)
         self.assertEqual(result.run.episodes[0].steps, (4, 5))
@@ -89,7 +92,7 @@ class AuthoringEvidenceBuilderTest(unittest.TestCase):
 
     def test_step_evidence_reuses_existing_evidence_and_filters_artifacts(self) -> None:
         """
-        Step evidence must carry the original Evidence object and only selected-step artifact refs.
+        Step evidence must carry excluded source evidence and only selected-step artifact refs.
         """
 
         evidence = Evidence(
@@ -115,8 +118,9 @@ class AuthoringEvidenceBuilderTest(unittest.TestCase):
         result = self.builder.build_step(evidence=evidence, step_index=2)
         assert result.step is not None
 
-        self.assertIs(result.step.evidence, evidence)
+        self.assertIs(result.step.source, evidence)
         self.assertEqual(result.step.step_index, 2)
+        self.assertEqual(result.step.step.index, 2)
         self.assertEqual(len(result.step.artifacts), 1)
         self.assertEqual(result.step.artifacts[0].uri, "history://run/step-2-after.png")
 
@@ -142,5 +146,5 @@ class AuthoringEvidenceBuilderTest(unittest.TestCase):
         self.assertEqual(result.repair.script, "Tap on Search")
         self.assertEqual(result.repair.flow, flow)
         self.assertIsNone(result.repair.review)
-        self.assertIsNone(result.repair.evidence)
+        self.assertIsNone(result.repair.source)
         self.assertEqual(result.repair.artifacts, ())

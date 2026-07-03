@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 import yaml
 
 from fathom.base.timing import time_it
-from fathom.constants.authoring import AuthoringArtifactKind, AuthoringKind, AuthoringStatus
 from fathom.constants.flow import IssueCode
 from fathom.constants.generation import (
     BASELINE_METADATA_FILENAME,
@@ -19,15 +18,8 @@ from fathom.constants.generation import (
     ScriptStatus,
 )
 from fathom.core.artifact.pipeline import ArtifactPipeline
-from fathom.core.exceptions import (
-    InvariantViolation,
-    LanguageComplianceError,
-    ScriptExportError,
-    VisionError,
-)
 from fathom.interfaces.storage import StoragePort
 from fathom.schemas.artifact import ArtifactRecord, ScriptPayload
-from fathom.schemas.authoring import AuthoringArtifact, AuthoringResponse, AuthoringTask
 from fathom.schemas.flow import Issue, RunObjective
 from fathom.schemas.generation import (
     BaselineArtifact,
@@ -39,7 +31,7 @@ from fathom.schemas.steps import StepGoal, StepResult
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from fathom.core.services.generation.service import ScriptGenerationService
+    from fathom.interfaces.authoring import AuthoringScheduler
     from fathom.interfaces.paths import HistoryPaths
     from fathom.interfaces.script import ScriptRefresher
 
@@ -53,21 +45,21 @@ class HistoryService:
     All outputs are saved to assets/history/{date}/{package}/{session}/ directory.
     """
 
-    __WORKFLOW = "workflow"
+    __EXECUTION = "execution"
 
     def __init__(
         self,
-        workflow_id: str,
+        execution_id: str,
         package_name: str,
         path_manager: HistoryPaths,
         *,
         storage: Optional[StoragePort] = None,
         pipeline: Optional[ArtifactPipeline] = None,
         refresher: Optional["ScriptRefresher"] = None,
-        generation: Optional["ScriptGenerationService"] = None,
+        authoring: Optional["AuthoringScheduler"] = None,
         artifact_mode: ScriptArtifactMode = ScriptArtifactMode.NORMAL,
     ) -> None:
-        self.__workflow_id = workflow_id
+        self.__execution_id = execution_id
         self.__package_name = package_name
 
         self.__storage = storage
@@ -75,7 +67,7 @@ class HistoryService:
 
         self.__pipeline = pipeline
         self.__refresher = refresher
-        self.__generation = generation
+        self.__authoring = authoring
         self.__artifact_mode = artifact_mode
 
         self.__background_tasks: Set[asyncio.Task[Any]] = set()
@@ -98,7 +90,7 @@ class HistoryService:
             message,
             extra={
                 "event": event,
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
                 "exception.type": type(exception).__name__,
                 "exception.message": str(exception),
                 **(context or {}),
@@ -116,9 +108,9 @@ class HistoryService:
             task.add_done_callback(self.__background_tasks.discard)
         except Exception as exception:
             self.__log_failure(
+                exception=exception,
                 event="script.history.background_task_failed",
                 message="fire-and-forget storage task could not be scheduled",
-                exception=exception,
             )
 
     def enqueue_save_step(
@@ -198,6 +190,16 @@ class HistoryService:
                     exception=exception,
                 )
 
+        if self.__authoring is not None:
+            try:
+                await self.__authoring.drain()
+            except Exception as exception:
+                self.__log_failure(
+                    exception=exception,
+                    event="authoring.step.drain_failed",
+                    message="step authoring drain failed during finalization",
+                )
+
         if self.__background_tasks:
             background_results = await asyncio.gather(
                 *tuple(self.__background_tasks),
@@ -263,13 +265,13 @@ class HistoryService:
             await self.__save_json(data=history, package_name=resolved_package_name)
             await self.__save_yaml(history=history["history"], package_name=resolved_package_name)
 
-        self.__append_workflow_trace(record=record)
+        self.__append_execution_trace(record=record)
 
         logger.info(
             "script step persisted to history",
             extra={
                 "event": "script.history.step_saved",
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
                 "script.success": record.get("success"),
                 "script.package": resolved_package_name,
                 "script.step": record.get("step_number"),
@@ -280,8 +282,38 @@ class HistoryService:
         )
 
         self.__schedule_refresh(intent=intent, history=history["history"])
+        self.__schedule_authoring(intent=intent, history=history["history"], record=record)
 
         return self.__read_existing_script(package_name=resolved_package_name)
+
+    def __schedule_authoring(
+        self,
+        *,
+        intent: str,
+        record: Dict[str, Any],
+        history: List[Dict[str, Any]],
+    ) -> None:
+        """
+        Schedule optional per-step authoring against the persisted execution trace.
+        """
+
+        if self.__authoring is None:
+            return
+
+        if not intent.strip() or not history:
+            return
+
+        package_name = self.__resolve_export_package_name(history=history)
+        if not package_name.strip():
+            return
+
+        step_index = int(record.get("step_number", 0))
+
+        self.__authoring.schedule_step(
+            step_index=step_index,
+            execution_id=self.__execution_id,
+            objective=RunObjective(intent=intent, goal=intent, package=package_name),
+        )
 
     def __schedule_refresh(self, *, intent: str, history: List[Dict[str, Any]]) -> None:
         """
@@ -297,7 +329,7 @@ class HistoryService:
             return
 
         if not history:
-            self.__log_schedule_skipped(reason="no_workflow_trace", package_name=None)
+            self.__log_schedule_skipped(reason="no_execution_trace", package_name=None)
             return
 
         package_name = self.__resolve_export_package_name(history=history)
@@ -306,7 +338,7 @@ class HistoryService:
             return
 
         self.__refresher.schedule(
-            run=self.__workflow_id,
+            execution_id=self.__execution_id,
             objective=RunObjective(intent=intent, goal=intent, package=package_name),
         )
         logger.info(
@@ -314,7 +346,7 @@ class HistoryService:
             extra={
                 "event": "script.baseline.refresh.scheduled",
                 "script.package": package_name,
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
             },
         )
 
@@ -327,19 +359,22 @@ class HistoryService:
             "baseline refresh schedule skipped",
             extra={
                 "event": "script.baseline.refresh.schedule_skipped",
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
                 "script.skip_reason": reason,
                 "script.package": package_name,
             },
         )
 
-    def __append_workflow_trace(self, *, record: Dict[str, Any]) -> None:
+    def __append_execution_trace(self, *, record: Dict[str, Any]) -> None:
         """
-        Append one record to the single ordered workflow-level trace (the script-gen source).
+        Append one record to the single ordered execution-level trace (the script-gen source).
         """
 
-        path = self.__workflow_trace_path()
-        data: Dict[str, Any] = {"workflow_id": self.__workflow_id, "history": []}
+        path = self.__execution_trace_path()
+        data: Dict[str, Any] = {
+            "execution_id": self.__execution_id,
+            "history": [],
+        }
 
         if path.exists():
             try:
@@ -348,8 +383,8 @@ class HistoryService:
             except Exception as exception:  # nosec
                 backup_path = path.with_suffix(f".corrupt.{int(time.time())}.json")
                 self.__log_failure(
-                    event="script.history.workflow_trace_corrupt",
-                    message="workflow trace corrupted; preserving a backup",
+                    event="script.history.execution_trace_corrupt",
+                    message="execution trace corrupted; preserving a backup",
                     exception=exception,
                     context={"script.backup": backup_path.name},
                 )
@@ -357,11 +392,14 @@ class HistoryService:
                     path.replace(backup_path)
                 except Exception as backup_exception:  # nosec
                     self.__log_failure(
-                        event="script.history.workflow_trace_backup_failed",
-                        message="failed to preserve the corrupt workflow trace",
+                        event="script.history.execution_trace_backup_failed",
+                        message="failed to preserve the corrupt execution trace",
                         exception=backup_exception,
                     )
-                data = {"workflow_id": self.__workflow_id, "history": []}
+                data = {
+                    "execution_id": self.__execution_id,
+                    "history": [],
+                }
 
         data["history"].append(record)
 
@@ -374,10 +412,10 @@ class HistoryService:
             temporary_path.replace(path)
         except Exception as exception:
             logger.warning(
-                "workflow trace append failed",
+                "execution trace append failed",
                 extra={
-                    "event": "script.history.workflow_trace_failed",
-                    "workflow.id": self.__workflow_id,
+                    "event": "script.history.execution_trace_failed",
+                    "execution.id": self.__execution_id,
                     "script.step": record.get("step_number"),
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
@@ -386,29 +424,29 @@ class HistoryService:
             raise
 
         logger.info(
-            "workflow trace appended",
+            "execution trace appended",
             extra={
-                "event": "script.history.workflow_trace_appended",
-                "workflow.id": self.__workflow_id,
+                "event": "script.history.execution_trace_appended",
+                "execution.id": self.__execution_id,
                 "script.step": record.get("step_number"),
                 "script.record_count": len(data["history"]),
             },
         )
 
-    def __workflow_trace_path(self) -> "Path":
+    def __execution_trace_path(self) -> "Path":
         """
-        Resolve the path of the single ordered workflow trace, distinct from per-package files.
-        """
-
-        directory = self.__path_manager.get_history_directory(session_id=self.__workflow_id)
-        return directory / "history__workflow.json"
-
-    def __load_workflow_history(self) -> List[Dict[str, Any]]:
-        """
-        Load the ordered workflow trace records, or an empty list when absent or unreadable.
+        Resolve the path of the single ordered execution trace, distinct from per-package files.
         """
 
-        path = self.__workflow_trace_path()
+        directory = self.__path_manager.get_history_directory(session_id=self.__execution_id)
+        return directory / "history__execution.json"
+
+    def __load_execution_history(self) -> List[Dict[str, Any]]:
+        """
+        Load the ordered execution trace records, or an empty list when absent or unreadable.
+        """
+
+        path = self.__execution_trace_path()
 
         if not path.exists():
             return []
@@ -418,8 +456,8 @@ class HistoryService:
                 data: Dict[str, Any] = json.load(fp=handle)
         except Exception as exception:  # nosec
             self.__log_failure(
-                event="script.history.workflow_trace_unreadable",
-                message="workflow trace unreadable at finalization; treating as empty",
+                event="script.history.execution_trace_unreadable",
+                message="execution trace unreadable at finalization; treating as empty",
                 exception=exception,
             )
             return []
@@ -434,7 +472,10 @@ class HistoryService:
         """
 
         path = self.__get_history_file_path(package_name=package_name, filename="history.json")
-        data: Dict[str, Any] = {"workflow_id": self.__workflow_id, "history": []}
+        data: Dict[str, Any] = {
+            "execution_id": self.__execution_id,
+            "history": [],
+        }
 
         if not path.exists() and package_name != self.__package_name:
             previous_path = self.__get_history_file_path(
@@ -488,7 +529,7 @@ class HistoryService:
                         "category": "history",
                         "filename": "history.json",
                         "package_name": package_name,
-                        "session_id": self.__workflow_id,
+                        "session_id": self.__execution_id,
                     },
                 )
             )
@@ -518,57 +559,10 @@ class HistoryService:
                         "category": "history",
                         "filename": "history.yaml",
                         "package_name": package_name,
-                        "session_id": self.__workflow_id,
+                        "session_id": self.__execution_id,
                     },
                 )
             )
-
-    @time_it(operation="history.author")
-    async def author(self, *, task: AuthoringTask) -> AuthoringResponse:
-        """
-        Author the workflow script for a run task through the quality script path.
-        """
-
-        if task.kind is not AuthoringKind.RUN:
-            raise InvariantViolation(
-                f"HistoryService can only author RUN tasks, got {task.kind.value}."
-            )
-
-        if task.evidence.run is None:
-            raise InvariantViolation(
-                "HistoryService requires run authoring evidence for RUN tasks."
-            )
-
-        await self.flush_pending_operations()
-
-        run_evidence = task.evidence.run.evidence
-
-        script = await self.__update_script(
-            intent=task.intent,
-            objective=RunObjective(
-                intent=task.intent,
-                goal=run_evidence.goal,
-                package=run_evidence.package,
-            ),
-            step_number=task.step_number,
-            package_name=self.__WORKFLOW,
-            history=self.__load_workflow_history(),
-        )
-        if not script:
-            return AuthoringResponse(
-                status=AuthoringStatus.FAILED,
-                reason="Run authoring did not produce a script.",
-            )
-
-        response = AuthoringResponse(
-            status=AuthoringStatus.GENERATED,
-            artifact=AuthoringArtifact(
-                dialect=task.dialect,
-                kind=AuthoringArtifactKind.TEXT,
-                content=script,
-            ),
-        )
-        return response
 
     @time_it(operation="history.read_baseline_outcome")
     async def read_baseline_outcome(self, *, step_number: int) -> BaselineArtifact:
@@ -576,13 +570,13 @@ class HistoryService:
         Read the latest persisted baseline; promote a generated one to the canonical script, else report failure.
         """
 
-        package_name = self.__resolve_export_package_name(history=self.__load_workflow_history())
+        package_name = self.__resolve_export_package_name(history=self.__load_execution_history())
         logger.info(
             "baseline read started",
             extra={
                 "event": "script.baseline.read.started",
                 "script.package": package_name,
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
             },
         )
 
@@ -598,7 +592,7 @@ class HistoryService:
             extra={
                 "event": "script.baseline.read.completed",
                 "script.package": package_name,
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
                 "script.status": artifact.metadata.status.value,
                 "script.issue_codes": [issue.code.value for issue in artifact.metadata.issues],
                 "script.line_count": len((artifact.text or "").splitlines()),
@@ -624,7 +618,7 @@ class HistoryService:
         try:
             await self.__persist_script(
                 step_number=step_number,
-                package_name=self.__WORKFLOW,
+                package_name=self.__EXECUTION,
                 source=ScriptSource.BASELINE,
                 result=GenerationResult(
                     text=artifact.text or "", attempts=1, review=artifact.metadata.review
@@ -636,7 +630,7 @@ class HistoryService:
                 extra={
                     "event": "script.baseline.promote_failed",
                     "script.package": package_name,
-                    "workflow.id": self.__workflow_id,
+                    "execution.id": self.__execution_id,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
                 },
@@ -648,7 +642,7 @@ class HistoryService:
             extra={
                 "event": "script.baseline.promoted",
                 "script.package": package_name,
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
                 "script.line_count": len((artifact.text or "").splitlines()),
             },
         )
@@ -677,7 +671,7 @@ class HistoryService:
             extra={
                 "event": "script.baseline.cleaned",
                 "script.package": package_name,
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
             },
         )
 
@@ -695,7 +689,7 @@ class HistoryService:
                 extra={
                     "event": "script.baseline.read.missing",
                     "script.package": package_name,
-                    "workflow.id": self.__workflow_id,
+                    "execution.id": self.__execution_id,
                 },
             )
             return None
@@ -708,7 +702,7 @@ class HistoryService:
                 "baseline metadata unreadable at finalization",
                 extra={
                     "event": "script.baseline.read.failed_metadata",
-                    "workflow.id": self.__workflow_id,
+                    "execution.id": self.__execution_id,
                     "script.package": package_name,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
@@ -730,7 +724,7 @@ class HistoryService:
                     "baseline script text unreadable at finalization",
                     extra={
                         "event": "script.baseline.read.failed_text",
-                        "workflow.id": self.__workflow_id,
+                        "execution.id": self.__execution_id,
                         "script.package": package_name,
                         "exception.type": type(exception).__name__,
                         "exception.message": str(exception),
@@ -746,7 +740,7 @@ class HistoryService:
                 extra={
                     "event": "script.baseline.read.missing_text",
                     "script.package": package_name,
-                    "workflow.id": self.__workflow_id,
+                    "execution.id": self.__execution_id,
                 },
             )
             return self.__baseline_unavailable(
@@ -767,26 +761,6 @@ class HistoryService:
                 source=ScriptSource.BASELINE,
                 issues=(Issue(code=IssueCode.BASELINE_UNAVAILABLE, message=message),),
             )
-        )
-
-    @time_it(operation="history.update_script")
-    async def __update_script(
-        self,
-        *,
-        intent: str,
-        step_number: int,
-        package_name: str,
-        history: List[Dict[str, Any]],
-        objective: Optional[RunObjective] = None,
-    ) -> str:
-        """
-        Generates and persists a final natural language script.
-        """
-
-        result = await self.__produce_script(history=history, intent=intent, objective=objective)
-
-        return await self.__persist_script(
-            result=result, package_name=package_name, step_number=step_number
         )
 
     async def __persist_script(
@@ -812,7 +786,7 @@ class HistoryService:
                 "event": "script.artifact.persist.started",
                 "script.step": step_number,
                 "script.package": package_name,
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
                 "script.line_count": len(result.text.splitlines()),
             },
         )
@@ -827,7 +801,7 @@ class HistoryService:
                 extra={
                     "event": "script.artifact.persist.failed",
                     "script.package": package_name,
-                    "workflow.id": self.__workflow_id,
+                    "execution.id": self.__execution_id,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
                 },
@@ -841,7 +815,7 @@ class HistoryService:
                 "script.path": path.name,
                 "script.step": step_number,
                 "script.package": package_name,
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
             },
         )
 
@@ -868,63 +842,6 @@ class HistoryService:
         with path.open(mode="w") as handle:
             handle.write(metadata.model_dump_json())
 
-    async def __produce_script(
-        self,
-        *,
-        intent: str,
-        history: List[Dict[str, Any]],
-        objective: Optional[RunObjective] = None,
-    ) -> Optional[GenerationResult]:
-        """
-        Produce the script via the evidence-grounded quality generation pipeline.
-        """
-
-        export_package_name = self.__resolve_export_package_name(history=history)
-
-        if self.__generation is not None and intent and export_package_name:
-            generated = await self.__generate_script(
-                intent=intent,
-                objective=objective,
-                package_name=export_package_name,
-            )
-
-            if generated is not None:
-                return generated
-
-        return None
-
-    async def __generate_script(
-        self,
-        *,
-        intent: str,
-        package_name: str,
-        objective: Optional[RunObjective],
-    ) -> Optional[GenerationResult]:
-        """
-        Run the evidence-grounded generation pipeline, returning None so the caller can fall back.
-        """
-
-        if self.__generation is None:
-            return None
-
-        run_objective = objective or RunObjective(intent=intent, goal=intent, package=package_name)
-
-        try:
-            return await self.__generation.generate(run=self.__workflow_id, objective=run_objective)
-        except (LanguageComplianceError, ScriptExportError, VisionError) as exception:
-            logger.warning(
-                "quality generation pipeline produced no script",
-                extra={
-                    "event": "script.quality.pipeline_failed",
-                    "script.source": "quality",
-                    "script.package": package_name,
-                    "workflow.id": self.__workflow_id,
-                    "exception.type": type(exception).__name__,
-                    "exception.message": str(exception),
-                },
-            )
-            return None
-
     async def __emit_script_artifact(
         self,
         *,
@@ -950,7 +867,7 @@ class HistoryService:
                 record=ArtifactRecord(
                     step_number=step_number,
                     package_name=package_name,
-                    session_id=self.__workflow_id,
+                    session_id=self.__execution_id,
                     created=int(time.time() * 1000),
                     payload=ScriptPayload(
                         content=content, partial=partial, review_reason=review_reason
@@ -964,7 +881,7 @@ class HistoryService:
                     "event": "script.artifact.pipeline.failed",
                     "script.step": step_number,
                     "script.package": package_name,
-                    "workflow.id": self.__workflow_id,
+                    "execution.id": self.__execution_id,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
                 },
@@ -977,7 +894,7 @@ class HistoryService:
                 "event": "script.artifact.pipeline.emitted",
                 "script.step": step_number,
                 "script.package": package_name,
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
             },
         )
 
@@ -1042,7 +959,7 @@ class HistoryService:
         single session that touches multiple packages does not collide its histories.
         """
 
-        directory = self.__path_manager.get_history_directory(session_id=self.__workflow_id)
+        directory = self.__path_manager.get_history_directory(session_id=self.__execution_id)
         stem, _, ext = filename.rpartition(".")
         scoped = f"{stem}__{package_name}.{ext}" if stem and ext else f"{filename}__{package_name}"
 

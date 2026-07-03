@@ -7,13 +7,13 @@ from fathom.schemas.flow import Evidence, RunObjective
 
 class EvidenceSource(ABC):
     """
-    Port that supplies a run's recorded evidence to script generation.
+    Port that supplies an execution's recorded evidence to script generation.
     """
 
     @abstractmethod
-    async def read(self, *, run: str, objective: RunObjective) -> Evidence:
+    async def read(self, *, execution_id: str, objective: RunObjective) -> Evidence:
         """
-        Return the full evidence aggregate for a run and its objective.
+        Return the full evidence aggregate for an execution and its objective.
         """
 
         raise NotImplementedError

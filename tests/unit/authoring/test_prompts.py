@@ -5,14 +5,13 @@ import unittest
 from fathom.authoring.agent.packet import AuthoringPacketBuilder
 from fathom.authoring.agent.prompts import AuthoringPromptFactory
 from fathom.authoring.agent.reference import AuthoringReferenceProvider
+from fathom.authoring.evidence import AuthoringEvidenceBuilder
 from fathom.constants.authoring import AuthoringExampleKind, AuthoringKind
 from fathom.constants.dialect import DialectName
 from fathom.schemas.authoring import (
     AuthoringEvidence,
     AuthoringTask,
     RepairAuthoringEvidence,
-    RunAuthoringEvidence,
-    StepAuthoringEvidence,
 )
 from fathom.schemas.flow import Evidence, EvidenceStep
 
@@ -49,7 +48,7 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
             intent="open app",
             step_number=2,
             workflow_id="workflow-1",
-            evidence=AuthoringEvidence(run=RunAuthoringEvidence(evidence=evidence)),
+            evidence=AuthoringEvidenceBuilder().build_run(evidence=evidence),
         )
         reference = AuthoringReferenceProvider().reference(dialect=DialectName.DRIZZ)
         packet = AuthoringPacketBuilder().build(task=task, dialect=reference)
@@ -132,16 +131,14 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
                 intent="open app",
                 step_number=2,
                 workflow_id="workflow-1",
-                evidence=AuthoringEvidence(run=RunAuthoringEvidence(evidence=evidence)),
+                evidence=AuthoringEvidenceBuilder().build_run(evidence=evidence),
             ),
             AuthoringTask(
                 kind=AuthoringKind.STEP,
                 intent="open app",
                 step_number=2,
                 workflow_id="workflow-1",
-                evidence=AuthoringEvidence(
-                    step=StepAuthoringEvidence(evidence=evidence, step_index=1)
-                ),
+                evidence=AuthoringEvidenceBuilder().build_step(evidence=evidence, step_index=1),
             ),
             AuthoringTask(
                 kind=AuthoringKind.REPAIR,

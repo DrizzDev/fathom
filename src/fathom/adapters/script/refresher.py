@@ -48,19 +48,19 @@ class BaselineRefresher(ScriptRefresher):
         self.__task: Optional[asyncio.Task[None]] = None
         self.__pending: Optional[Tuple[str, RunObjective]] = None
 
-    def schedule(self, *, run: str, objective: RunObjective) -> None:
+    def schedule(self, *, execution_id: str, objective: RunObjective) -> None:
         """
         Record the latest refresh request and start a single worker if none is running; never blocks.
         """
 
-        self.__pending = (run, objective)
+        self.__pending = (execution_id, objective)
 
         if self.__task is not None and not self.__task.done():
             logger.info(
                 "baseline refresh coalesced into in-flight worker",
                 extra={
                     "event": "script.baseline.refresh.coalesced",
-                    "workflow.id": run,
+                    "execution.id": execution_id,
                     "script.package": objective.package,
                 },
             )
@@ -73,7 +73,7 @@ class BaselineRefresher(ScriptRefresher):
                 "baseline refresh could not be scheduled; left pending for the next drain",
                 extra={
                     "event": "script.baseline.refresh.schedule_failed",
-                    "workflow.id": run,
+                    "execution.id": execution_id,
                     "script.package": objective.package,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
@@ -104,11 +104,11 @@ class BaselineRefresher(ScriptRefresher):
         """
 
         while self.__pending is not None:
-            run, objective = self.__pending
+            execution_id, objective = self.__pending
             self.__pending = None
-            await self.__refresh(run=run, objective=objective)
+            await self.__refresh(execution_id=execution_id, objective=objective)
 
-    async def __refresh(self, *, run: str, objective: RunObjective) -> None:
+    async def __refresh(self, *, execution_id: str, objective: RunObjective) -> None:
         """
         Build and persist the baseline; any unexpected failure is captured as a failed artifact, never raised.
         """
@@ -118,21 +118,21 @@ class BaselineRefresher(ScriptRefresher):
             "baseline refresh started",
             extra={
                 "event": "script.baseline.refresh.started",
-                "workflow.id": run,
+                "execution.id": execution_id,
                 "script.package": objective.package,
                 "script.source": ScriptSource.BASELINE.value,
             },
         )
 
         try:
-            evidence = await self.__source.read(run=run, objective=objective)
+            evidence = await self.__source.read(execution_id=execution_id, objective=objective)
             artifact = self.__baseline.build(evidence=evidence)
         except Exception as exception:  # noqa: BLE001 — background refresh must never raise into the caller
             logger.warning(
                 "baseline refresh failed before an artifact was built",
                 extra={
                     "event": "script.baseline.refresh.failed",
-                    "workflow.id": run,
+                    "execution.id": execution_id,
                     "script.source": ScriptSource.BASELINE.value,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
@@ -140,24 +140,27 @@ class BaselineRefresher(ScriptRefresher):
                 },
             )
             artifact = self.__failure(exception=exception)
-            self.__persist(run=run, package_name=objective.package, artifact=artifact)
+            self.__persist(
+                execution_id=execution_id, package_name=objective.package, artifact=artifact
+            )
             return
 
-        self.__log_built(run=run, artifact=artifact, started=started)
-        self.__persist(run=run, package_name=objective.package, artifact=artifact)
+        self.__log_built(execution_id=execution_id, artifact=artifact, started=started)
+        self.__persist(execution_id=execution_id, package_name=objective.package, artifact=artifact)
 
-    def __log_built(self, *, run: str, artifact: BaselineArtifact, started: float) -> None:
+    def __log_built(self, *, execution_id: str, artifact: BaselineArtifact, started: float) -> None:
         """
         Record the baseline build outcome with issue codes, skipped reasons, and line count.
         """
 
         metadata = artifact.metadata
         skipped: Dict[str, int] = {}
+
         for step in metadata.skipped:
             skipped[step.reason.value] = skipped.get(step.reason.value, 0) + 1
 
         context = {
-            "workflow.id": run,
+            "execution.id": execution_id,
             "script.skipped_reasons": skipped,
             "script.status": metadata.status.value,
             "script.source": ScriptSource.BASELINE.value,
@@ -196,13 +199,15 @@ class BaselineRefresher(ScriptRefresher):
             ),
         )
 
-    def __persist(self, *, run: str, package_name: str, artifact: BaselineArtifact) -> None:
+    def __persist(
+        self, *, execution_id: str, package_name: str, artifact: BaselineArtifact
+    ) -> None:
         """
         Atomically write the metadata sidecar and, when generated, the baseline script; never raises.
         """
 
         try:
-            directory = self.__path_manager.get_history_directory(session_id=run)
+            directory = self.__path_manager.get_history_directory(session_id=execution_id)
             script_path = self.__scoped(
                 directory=directory,
                 package_name=package_name,
@@ -216,6 +221,7 @@ class BaselineRefresher(ScriptRefresher):
 
             if artifact.text is not None:
                 self.__write(path=script_path, content=artifact.text)
+
             elif script_path.exists():
                 script_path.unlink()
 
@@ -228,7 +234,7 @@ class BaselineRefresher(ScriptRefresher):
                 "failed to persist baseline artifact",
                 extra={
                     "event": "script.baseline.refresh.persist_failed",
-                    "workflow.id": run,
+                    "execution.id": execution_id,
                     "script.package": package_name,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
@@ -240,7 +246,7 @@ class BaselineRefresher(ScriptRefresher):
             "baseline artifact persisted",
             extra={
                 "event": "script.baseline.refresh.persisted",
-                "workflow.id": run,
+                "execution.id": execution_id,
                 "script.package": package_name,
                 "script.metadata_file": metadata_path.name,
                 "script.status": artifact.metadata.status.value,

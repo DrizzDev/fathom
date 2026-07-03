@@ -624,22 +624,24 @@ class IntentStrategy:
         """
 
         evidence = await self.__graph_context.evidence.read(
-            run=self.__workflow_id,
+            execution_id=self.__execution_id,
             objective=RunObjective(
                 goal=self.__intent,
                 intent=self.__intent,
                 package=self.__graph_context.package_name,
             ),
         )
+        drafts = await self.__graph_context.authoring_drafts.list(execution_id=self.__execution_id)
         response = await self.__graph_context.authoring_runner.author(
             author=self.__graph_context.authoring,
             task=AuthoringTask(
                 intent=self.__intent,
                 kind=AuthoringKind.RUN,
-                workflow_id=self.__workflow_id,
+                execution_id=self.__execution_id,
                 step_number=self.__graph_context.agent_state.step_count,
                 evidence=self.__graph_context.authoring_evidence_builder.build_run(
-                    evidence=evidence
+                    drafts=drafts,
+                    evidence=evidence,
                 ),
             ),
         )
@@ -650,7 +652,7 @@ class IntentStrategy:
             "final authoring did not produce a script",
             extra={
                 "event": "authoring.run.unavailable",
-                "workflow.id": self.__workflow_id,
+                "execution.id": self.__execution_id,
                 "authoring.reason": response.reason,
                 "authoring.status": response.status.value,
             },

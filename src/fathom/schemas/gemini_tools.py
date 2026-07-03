@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fathom.constants import ActionType
 from fathom.schemas.capture import CaptureRequest
-from fathom.schemas.validators import enforce_validate_prefix
 
 CoordSystem = Literal["normalized", "pixel"]
 ConditionalType = Literal["blocker", "transient", "error", "optional"]
@@ -14,141 +13,6 @@ TargetType = Literal["stable", "positional", "dynamic"]
 WaitPattern = Literal["ad", "splash", "load", "search", "generic"]
 TargetElementType = Literal["button", "icon", "option", "link", "field", "text", "checkbox"]
 ValidationPattern = Literal["blocker", "transient", "error", "generic"]
-
-
-class EmitScriptConditionalBlockArgs(BaseModel):
-    """
-    Raw conditional block arguments for the emit_script tool.
-
-    Performs light type coercion. Semantic invariants (e.g., non-empty
-    conditions, required IDs) are enforced by EmitScriptArgs validators
-    and ScriptExportStructuredPayload.enforce_policy in export.py.
-    """
-
-    condition: Optional[str] = None
-    condition_type: Optional[ConditionalType] = Field(
-        default=None,
-        description=(
-            "Classification of this condition: blocker (popup/permission/consent), "
-            "transient (loading/splash), error (error message), or optional (nice-to-have check)."
-        ),
-    )
-    action_ids: List[str] = Field(
-        default_factory=list,
-        description="Executable action IDs under this condition.",
-    )
-
-    @field_validator("condition", mode="before")
-    @classmethod
-    def _normalize_condition(cls, value: Any) -> Optional[str]:
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
-
-    @field_validator("action_ids", mode="before")
-    @classmethod
-    def _coerce_action_ids(cls, value: Any) -> List[str]:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return [str(v) for v in value if str(v).strip()]
-        return [str(value)] if str(value).strip() else []
-
-
-class EmitScriptArgs(BaseModel):
-    """
-    Raw emit_script tool arguments as produced by Gemini.
-
-    Enforces structural invariants at parse time:
-    - final_validation must start with "Validate"
-    - action_validations values must start with "Validate"
-    - No duplicate action IDs within remaining_action_ids or conditional blocks
-    - No empty conditional blocks
-    """
-
-    conditional_blocks: List[EmitScriptConditionalBlockArgs] = Field(
-        default_factory=list,
-        description="Ordered IF blocks for condition-scoped actions using action IDs.",
-    )
-    remaining_action_ids: List[str] = Field(
-        default_factory=list,
-        description="Ordered executable action IDs outside IF blocks.",
-    )
-    action_validations: Dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "Optional map of action_id -> intermediate validation after that action; values start with 'Validate'. "
-            "Mid-flow checks only—not the terminal script line."
-        ),
-    )
-    final_validation: str = Field(
-        ...,
-        min_length=10,
-        description=(
-            "Single terminal UI-state line after the last catalog action; MUST start with 'Validate'. "
-            "State visible/displayed only—no tap/click/type/select/navigate/search phrasing."
-        ),
-    )
-
-    @field_validator("final_validation", mode="before")
-    @classmethod
-    def _enforce_final_validation_format(cls, value: Any) -> str:
-        if value is None:
-            raise ValueError(
-                "final_validation is required. Provide a terminal validation line "
-                "starting with 'Validate' (e.g., 'Validate cart page is displayed.')."
-            )
-        return enforce_validate_prefix(str(value), "final_validation")
-
-    @field_validator("remaining_action_ids", mode="before")
-    @classmethod
-    def _coerce_remaining_ids(cls, value: Any) -> List[str]:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return [str(v) for v in value if str(v).strip()]
-        return [str(value)] if str(value).strip() else []
-
-    @field_validator("action_validations", mode="before")
-    @classmethod
-    def _coerce_and_validate_action_validations(cls, value: Any) -> Dict[str, str]:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            return {}
-        cleaned: Dict[str, str] = {}
-        for key, line in value.items():
-            aid = str(key).strip()
-            text = str(line).strip()
-            if not aid or not text:
-                continue
-            enforce_validate_prefix(text, f"action_validations['{aid}']")
-            cleaned[aid] = text
-        return cleaned
-
-    @model_validator(mode="after")
-    def _reject_duplicates_and_empty_blocks(self) -> "EmitScriptArgs":
-        # Reject duplicate action IDs in remaining_action_ids.
-        seen: Set[str] = set()
-        for aid in self.remaining_action_ids:
-            if aid in seen:
-                raise ValueError(f"Duplicate action ID '{aid}' in remaining_action_ids.")
-            seen.add(aid)
-
-        # Reject empty conditional blocks and duplicate IDs within blocks.
-        for i, block in enumerate(self.conditional_blocks):
-            if not block.action_ids:
-                raise ValueError(f"conditional_blocks[{i}] has no action_ids; remove empty blocks.")
-            block_seen: Set[str] = set()
-            for aid in block.action_ids:
-                if aid in block_seen:
-                    raise ValueError(
-                        f"Duplicate action ID '{aid}' in conditional_blocks[{i}].action_ids."
-                    )
-                block_seen.add(aid)
-
-        return self
 
 
 class GeminiBBox(BaseModel):

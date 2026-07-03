@@ -34,7 +34,7 @@ class AuthoringRunner:
                 "authoring skipped by configuration",
                 extra={
                     "event": "authoring.skipped",
-                    "workflow.id": task.workflow_id,
+                    "execution.id": task.execution_id,
                     "authoring.task.kind": task.kind.value,
                     "authoring.reason": "authoring task disabled",
                 },
@@ -48,7 +48,7 @@ class AuthoringRunner:
             "authoring started",
             extra={
                 "event": "authoring.started",
-                "workflow.id": task.workflow_id,
+                "execution.id": task.execution_id,
                 "authoring.step": task.step_number,
                 "authoring.task.kind": task.kind.value,
             },
@@ -58,7 +58,7 @@ class AuthoringRunner:
             "authoring completed",
             extra={
                 "event": "authoring.completed",
-                "workflow.id": task.workflow_id,
+                "execution.id": task.execution_id,
                 "authoring.task.kind": task.kind.value,
                 "authoring.status": response.status.value,
                 "authoring.has_script": response.has_script,

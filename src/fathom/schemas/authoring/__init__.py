@@ -6,15 +6,23 @@ from fathom.schemas.authoring.configuration import (
     RunConfiguration,
     StepAuthoringConfiguration,
 )
+from fathom.schemas.authoring.draft import AuthoringDraft
 from fathom.schemas.authoring.evidence import (
+    AuthoringCapture,
+    AuthoringCommand,
     AuthoringEpisode,
     AuthoringEvidence,
+    AuthoringNarrative,
+    AuthoringRun,
+    AuthoringScreen,
+    AuthoringStep,
+    AuthoringTarget,
+    AuthoringValidation,
     RepairAuthoringEvidence,
     RunAuthoringEvidence,
     StepAuthoringEvidence,
 )
 from fathom.schemas.authoring.packet import AuthoringPacket
-from fathom.schemas.authoring.prompt import PromptEvidence
 from fathom.schemas.authoring.reference import (
     DRIZZ_COMMANDS,
     AuthoringDialectReference,
@@ -25,23 +33,31 @@ from fathom.schemas.authoring.reference import (
 from fathom.schemas.authoring.task import AuthoringResponse, AuthoringTask
 
 __all__ = [
-    "AuthoringArtifactReference",
-    "AuthoringArtifact",
     "CommandDoc",
+    "DialectGuide",
+    "AuthoringRun",
+    "AuthoringStep",
+    "AuthoringTask",
     "CommandExample",
     "DRIZZ_COMMANDS",
-    "DialectGuide",
-    "AuthoringConfiguration",
-    "AuthoringDialectReference",
-    "AuthoringEpisode",
-    "AuthoringEvidence",
+    "AuthoringDraft",
     "AuthoringPacket",
-    "PromptEvidence",
-    "AuthoringResponse",
-    "AuthoringTask",
-    "RepairAuthoringEvidence",
+    "AuthoringScreen",
+    "AuthoringTarget",
+    "AuthoringCapture",
+    "AuthoringCommand",
+    "AuthoringEpisode",
     "RunConfiguration",
+    "AuthoringArtifact",
+    "AuthoringEvidence",
+    "AuthoringResponse",
+    "AuthoringNarrative",
+    "AuthoringValidation",
     "RunAuthoringEvidence",
     "StepAuthoringEvidence",
+    "AuthoringConfiguration",
+    "RepairAuthoringEvidence",
+    "AuthoringDialectReference",
+    "AuthoringArtifactReference",
     "StepAuthoringConfiguration",
 ]

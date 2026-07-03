@@ -5,6 +5,7 @@ from typing import Optional
 
 from fathom.authoring.agent import AuthoringAgent
 from fathom.authoring.application.runner import AuthoringRunner
+from fathom.authoring.evidence import AuthoringEvidenceBuilder
 from fathom.constants.authoring import (
     AuthoringArtifactKind,
     AuthoringKind,
@@ -19,10 +20,8 @@ from fathom.schemas.authoring import (
     AuthoringResponse,
     AuthoringTask,
     RepairAuthoringEvidence,
-    RunAuthoringEvidence,
     RunConfiguration,
     StepAuthoringConfiguration,
-    StepAuthoringEvidence,
 )
 from fathom.schemas.flow import Evidence, EvidenceStep
 
@@ -78,7 +77,7 @@ class AuthoringRunnerTest(unittest.IsolatedAsyncioTestCase):
         Build run authoring evidence.
         """
 
-        return AuthoringEvidence(run=RunAuthoringEvidence(evidence=cls.__evidence()))
+        return AuthoringEvidenceBuilder().build_run(evidence=cls.__evidence())
 
     @staticmethod
     def __step_evidence() -> AuthoringEvidence:
@@ -92,7 +91,7 @@ class AuthoringRunnerTest(unittest.IsolatedAsyncioTestCase):
             package="com.example",
             steps=(EvidenceStep(action="tap", event="action", index=3),),
         )
-        return AuthoringEvidence(step=StepAuthoringEvidence(evidence=evidence, step_index=3))
+        return AuthoringEvidenceBuilder().build_step(evidence=evidence, step_index=3)
 
     @staticmethod
     def __repair_evidence() -> AuthoringEvidence:

@@ -18,7 +18,7 @@ class AuthoringTask(SealedModel):
     """
 
     kind: AuthoringKind = Field(description="Authoring mode for this task.")
-    workflow_id: str = Field(min_length=1, description="Workflow being authored.")
+    execution_id: str = Field(min_length=1, description="Execution being authored.")
 
     intent: str = Field(min_length=1, description="User intent for the run.")
     step_number: int = Field(ge=0, description="Current execution step count.")

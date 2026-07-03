@@ -12,8 +12,9 @@ from fathom.adapters.journal.noop import NoopRuntimeJournal
 from fathom.adapters.ocr.noop import NoopOcr
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
 from fathom.adapters.script.refresher import BaselineRefresher
+from fathom.authoring.adapters.store import FileAuthoringDraftStore
 from fathom.authoring.agent import AuthoringAgent
-from fathom.authoring.application.runner import AuthoringRunner
+from fathom.authoring.application import AuthoringRunner, StepAuthoringScheduler
 from fathom.authoring.evidence import AuthoringEvidenceBuilder
 from fathom.base.paths import SharedPathManager
 from fathom.constants.platform import DevicePlatform
@@ -34,7 +35,6 @@ from fathom.core.embedding.cache import EmbeddingCache
 from fathom.core.localization import EnsembleLocalizerService
 from fathom.core.perception.localization import TargetLocalizationService
 from fathom.core.perception.observation import ScreenObservationService
-from fathom.core.prompts.generation import FlowPromptBuilder
 from fathom.core.runtime import RuntimeEventEmitter
 from fathom.core.services.abort import AbortDetectorFactory
 from fathom.core.services.action import ActionExecutor
@@ -44,13 +44,10 @@ from fathom.core.services.authoring import AuthoringService
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.generation.assembler import EvidenceAssembler
 from fathom.core.services.generation.baseline import BaselineScriptService
-from fathom.core.services.generation.binder import LaunchBinder
 from fathom.core.services.generation.classifier import LauncherClassifier
 from fathom.core.services.generation.distiller import Distiller
-from fathom.core.services.generation.llm import LlmFlowGenerator
 from fathom.core.services.generation.normalizer import RunTraceNormalizer
 from fathom.core.services.generation.projector import DeterministicFlowGenerator
-from fathom.core.services.generation.service import ScriptGenerationService
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
 from fathom.core.services.hitl import HITLService
@@ -61,7 +58,7 @@ from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
 from fathom.interfaces.abort import AbortDetectorPort
-from fathom.interfaces.authoring import AuthoringPort
+from fathom.interfaces.authoring import AuthoringDraftStore, AuthoringPort
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.embedding import EmbeddingPort
 from fathom.interfaces.evidence import EvidenceSource
@@ -293,16 +290,6 @@ class GraphContext:
         self.__evidence = execution_evidence
         self.__authoring_evidence_builder = AuthoringEvidenceBuilder()
 
-        generation = ScriptGenerationService(
-            policy=Policy(),
-            dialect=dialect,
-            evidence=execution_evidence,
-            binder=LaunchBinder(),
-            generator=LlmFlowGenerator(
-                llm=llm, prompt=FlowPromptBuilder(), use_cache=configuration.llm.use_cache
-            ),
-        )
-
         refresher = BaselineRefresher(
             source=execution_evidence,
             path_manager=path_manager,
@@ -313,15 +300,6 @@ class GraphContext:
             ),
         )
 
-        self.__history = history or HistoryService(
-            storage=storage,
-            refresher=refresher,
-            generation=generation,
-            workflow_id=workflow_id,
-            package_name=package_name,
-            path_manager=path_manager,
-            pipeline=artifact_pipeline,
-        )
         self.__authoring_runner = AuthoringRunner(
             agent=AuthoringAgent(),
             configuration=configuration.authoring,
@@ -333,6 +311,25 @@ class GraphContext:
             use_cache=configuration.llm.use_cache,
             attempts=configuration.authoring.attempts,
         )
+        self.__authoring_drafts = FileAuthoringDraftStore(path_manager=path_manager)
+        authoring_scheduler = StepAuthoringScheduler(
+            author=self.__authoring,
+            source=execution_evidence,
+            runner=self.__authoring_runner,
+            drafts=self.__authoring_drafts,
+            builder=self.__authoring_evidence_builder,
+        )
+
+        self.__history = history or HistoryService(
+            storage=storage,
+            refresher=refresher,
+            execution_id=execution_id,
+            package_name=package_name,
+            path_manager=path_manager,
+            pipeline=artifact_pipeline,
+            authoring=authoring_scheduler,
+        )
+
         self.__trace = trace or TraceService(path_manager=path_manager)
         self.__resolution = resolution or ReferenceResolutionService(
             ledger=memory,
@@ -365,10 +362,7 @@ class GraphContext:
 
         self.__journal = journal if journal is not None else NoopRuntimeJournal()
 
-        self.__event_emitter = RuntimeEventEmitter(
-            journal=self.__journal,
-            workflow_id=workflow_id,
-        )
+        self.__event_emitter = RuntimeEventEmitter(journal=self.__journal, workflow_id=workflow_id)
 
     @staticmethod
     def __resolve_supports_back(*, device: DevicePort) -> bool:
@@ -846,6 +840,14 @@ class GraphContext:
         """
 
         return self.__authoring
+
+    @property
+    def authoring_drafts(self) -> AuthoringDraftStore:
+        """
+        Returns the authoring draft store used by final run authoring.
+        """
+
+        return self.__authoring_drafts
 
     @property
     def evidence(self) -> EvidenceSource:

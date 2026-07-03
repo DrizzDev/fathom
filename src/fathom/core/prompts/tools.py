@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, FrozenSet, List, Optional
+from typing import Any, Callable, Dict, FrozenSet, List
 
 from fathom.constants.tools import ToolName
 
@@ -47,20 +47,6 @@ class ToolRegistry:
             ToolName.RECALL_MEMORY: cls.__recall_memory,
             ToolName.VALIDATE_STATE: cls.__validate_state,
         }
-
-    @classmethod
-    def get_export_definitions(
-        cls, *, action_ids: Optional[List[str]] = None
-    ) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Returns tool definitions for script export composition.
-
-        Args:
-            action_ids: When provided, constrains action ID fields to only
-                        these values via enum in the tool schema.
-        """
-
-        return {"function_declarations": [cls.__emit_script(action_ids=action_ids)]}
 
     @staticmethod
     def __execute_ui() -> Dict[str, Any]:
@@ -610,85 +596,5 @@ class ToolRegistry:
                     },
                 },
                 "required": ["question", "goal_completed", "sub_goal_completed"],
-            },
-        }
-
-    @staticmethod
-    def __emit_script(
-        action_ids: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Definition for script export output tool.
-        """
-
-        # When action_ids are provided, constrain the schema so Gemini can
-        # only output valid catalog IDs (prevents missing/extra/duplicated IDs).
-        action_id_item: Dict[str, Any] = {"type": "STRING"}
-        if action_ids:
-            action_id_item["enum"] = list(action_ids)
-
-        return {
-            "name": "emit_script",
-            "description": (
-                "Return structured script sections derived only from allowed step action lines. "
-                "Do not paraphrase executable actions. Rendered scripts use IF <condition> on one line "
-                "and the opening { on the following line before indented block body lines."
-            ),
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "conditional_blocks": {
-                        "type": "ARRAY",
-                        "description": "Ordered IF blocks for condition-scoped actions using action IDs.",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "condition": {
-                                    "type": "STRING",
-                                    "description": "Condition text for IF block.",
-                                },
-                                "condition_type": {
-                                    "type": "STRING",
-                                    "enum": ["blocker", "transient", "error", "optional"],
-                                    "description": (
-                                        "Classification of this condition: blocker (popup/permission/consent "
-                                        "that blocks progress), transient (loading/splash/spinner that will pass), "
-                                        "error (error message that may appear), or optional (nice-to-have check)."
-                                    ),
-                                },
-                                "action_ids": {
-                                    "type": "ARRAY",
-                                    "description": "Executable action IDs under this IF block. Must be selected from provided action catalog.",
-                                    "items": action_id_item,
-                                },
-                            },
-                            "required": ["condition", "action_ids"],
-                        },
-                    },
-                    "remaining_action_ids": {
-                        "type": "ARRAY",
-                        "description": "Ordered executable action IDs outside IF blocks. Must be selected from provided action catalog.",
-                        "items": action_id_item,
-                    },
-                    "action_validations": {
-                        "type": "OBJECT",
-                        "description": (
-                            "Optional map of catalog action_id -> intermediate validation line after that action "
-                            "(e.g. list or results visible right after a search or scroll). Each value must start "
-                            "with 'Validate'. Use for mid-flow checks; do not put those in final_validation."
-                        ),
-                        "additionalProperties": {"type": "STRING"},
-                    },
-                    "final_validation": {
-                        "type": "STRING",
-                        "description": (
-                            "Single terminal UI-state line after the last catalog action. Must start with 'Validate'. "
-                            "State only: what screen/page/primary content is visible or displayed. One short clause—"
-                            "no tap/click/type/select/navigate/search instructions (those belong in catalog actions "
-                            "or action_validations). No chained 'and then' procedures."
-                        ),
-                    },
-                },
-                "required": ["remaining_action_ids", "final_validation"],
             },
         }

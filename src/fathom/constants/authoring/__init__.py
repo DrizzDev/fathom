@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+AUTHORING_DRAFTS_FILENAME = "authoring.drafts.json"
+
 
 class AuthoringKind(StrEnum):
     """

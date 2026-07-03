@@ -6,12 +6,21 @@ from fathom.constants.authoring import AuthoringArtifactKind, AuthoringArtifactR
 from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.authoring import (
     AuthoringArtifactReference,
+    AuthoringCapture,
+    AuthoringCommand,
     AuthoringEpisode,
     AuthoringEvidence,
+    AuthoringNarrative,
+    AuthoringRun,
+    AuthoringScreen,
+    AuthoringStep,
+    AuthoringTarget,
+    AuthoringValidation,
     RepairAuthoringEvidence,
     RunAuthoringEvidence,
     StepAuthoringEvidence,
 )
+from fathom.schemas.authoring.draft import AuthoringDraft
 from fathom.schemas.flow import Evidence, EvidenceStep, Flow, Report
 from fathom.schemas.steps import StepGoal
 
@@ -21,16 +30,23 @@ class AuthoringEvidenceBuilder:
     Builds authoring task evidence views from normalized execution evidence.
     """
 
-    def build_run(self, *, evidence: Evidence) -> AuthoringEvidence:
+    __VALIDATION = "validation"
+
+    def build_run(
+        self, *, evidence: Evidence, drafts: Tuple[AuthoringDraft, ...] = ()
+    ) -> AuthoringEvidence:
         """
         Build whole-run authoring evidence from existing normalized evidence.
         """
 
         return AuthoringEvidence(
             run=RunAuthoringEvidence(
-                evidence=evidence,
+                source=evidence,
+                run=self.__run(evidence=evidence),
+                steps=self.__steps(evidence=evidence),
                 episodes=self.__episodes(evidence=evidence),
                 artifacts=self.__artifacts(evidence=evidence),
+                drafts=drafts,
             )
         )
 
@@ -41,8 +57,10 @@ class AuthoringEvidenceBuilder:
 
         return AuthoringEvidence(
             step=StepAuthoringEvidence(
-                evidence=evidence,
+                source=evidence,
                 step_index=step_index,
+                run=self.__run(evidence=evidence),
+                step=self.__selected_step(evidence=evidence, step_index=step_index),
                 artifacts=self.__artifacts(evidence=evidence, step_index=step_index),
             )
         )
@@ -66,9 +84,112 @@ class AuthoringEvidenceBuilder:
                 flow=flow,
                 script=script,
                 review=review,
-                evidence=evidence,
+                source=evidence,
                 artifacts=references,
             )
+        )
+
+    @staticmethod
+    def __run(*, evidence: Evidence) -> AuthoringRun:
+        """
+        Build run-level authoring facts.
+        """
+
+        return AuthoringRun(
+            goal=evidence.goal,
+            reason=evidence.reason,
+            intent=evidence.intent,
+            package=evidence.package,
+            partial=evidence.partial,
+            discarded=evidence.discarded,
+        )
+
+    def __steps(self, *, evidence: Evidence) -> Tuple[AuthoringStep, ...]:
+        """
+        Build ordered authoring step views.
+        """
+
+        return tuple(self.__step(step=step) for step in evidence.steps)
+
+    def __selected_step(self, *, evidence: Evidence, step_index: int) -> AuthoringStep:
+        """
+        Return the authoring view for a selected evidence step.
+        """
+
+        for step in evidence.steps:
+            if step.index == step_index:
+                return self.__step(step=step)
+
+        raise ValueError(f"Evidence does not contain step {step_index}.")
+
+    def __step(self, *, step: EvidenceStep) -> AuthoringStep:
+        """
+        Build the authoring-owned view of one execution step.
+        """
+
+        return AuthoringStep(
+            goal=step.goal,
+            text=step.text,
+            index=step.index,
+            command=AuthoringCommand(
+                event=step.event,
+                action=step.action,
+                success=step.outcome.success,
+            ),
+            screen=AuthoringScreen(
+                changed=step.outcome.changed,
+                duration=step.outcome.duration,
+            ),
+            target=AuthoringTarget(
+                name=step.target.name,
+                export=step.target.export,
+                scroll=step.target.scroll,
+                element=step.target.element,
+                positional=step.target.positional,
+                generalized=step.target.generalized,
+            ),
+            narrative=AuthoringNarrative(
+                reasoning=step.rationale,
+                observation=step.observation,
+            ),
+            capture=self.__capture(step=step),
+            validation=self.__validation(step=step),
+            artifacts=self.__step_references(step=step),
+        )
+
+    @staticmethod
+    def __capture(*, step: EvidenceStep) -> Optional[AuthoringCapture]:
+        """
+        Build authoring capture facts when the step recorded a STORE capture.
+        """
+
+        if step.capture is None:
+            return None
+
+        return AuthoringCapture(
+            name=step.capture.name,
+            value=step.capture.value,
+            reason=step.capture.reason,
+            subject=step.capture.subject,
+            success=step.capture.success,
+        )
+
+    @staticmethod
+    def __validation(*, step: EvidenceStep) -> Optional[AuthoringValidation]:
+        """
+        Build authoring validation facts when the step recorded a validation subject.
+        """
+
+        if step.event != AuthoringEvidenceBuilder.__VALIDATION:
+            return None
+
+        subject = step.target.export or step.target.name or step.target.generalized
+        if subject is None:
+            return None
+
+        return AuthoringValidation(
+            subject=subject,
+            pattern=step.wait.pattern,
         )
 
     def __episodes(self, *, evidence: Evidence) -> Tuple[AuthoringEpisode, ...]:
@@ -113,17 +234,7 @@ class AuthoringEvidenceBuilder:
             if step_index is not None and step.index != step_index:
                 continue
 
-            if step.screenshot and not self.__has_after_artifact(step=step):
-                references.append(
-                    AuthoringArtifactReference(
-                        uri=step.screenshot,
-                        step_index=step.index,
-                        kind=AuthoringArtifactKind.IMAGE,
-                        role=AuthoringArtifactRole.AFTER,
-                    )
-                )
-
-            references.extend(self.__step_artifacts(step=step))
+            references.extend(self.__step_references(step=step))
 
         return tuple(references)
 
@@ -139,6 +250,26 @@ class AuthoringEvidenceBuilder:
             and step.artifacts.screen.after is not None
             and step.artifacts.screen.after.uri is not None
         )
+
+    def __step_references(self, *, step: EvidenceStep) -> Tuple[AuthoringArtifactReference, ...]:
+        """
+        Collect all artifact references attached to one step.
+        """
+
+        references: List[AuthoringArtifactReference] = []
+
+        if step.screenshot and not self.__has_after_artifact(step=step):
+            references.append(
+                AuthoringArtifactReference(
+                    uri=step.screenshot,
+                    step_index=step.index,
+                    kind=AuthoringArtifactKind.IMAGE,
+                    role=AuthoringArtifactRole.AFTER,
+                )
+            )
+
+        references.extend(self.__step_artifacts(step=step))
+        return tuple(references)
 
     def __step_artifacts(self, *, step: EvidenceStep) -> Tuple[AuthoringArtifactReference, ...]:
         """

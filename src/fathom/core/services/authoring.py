@@ -75,7 +75,7 @@ class AuthoringService(AuthoringPort):
             "authoring service started",
             extra={
                 "event": "authoring.service.started",
-                "workflow.id": task.workflow_id,
+                "execution.id": task.execution_id,
                 "authoring.kind": task.kind.value,
                 "authoring.dialect": task.dialect.value,
                 "authoring.model": self.__llm.model_name,
@@ -93,7 +93,7 @@ class AuthoringService(AuthoringPort):
                     "authoring service failed before review",
                     extra={
                         "event": "authoring.service.failed",
-                        "workflow.id": task.workflow_id,
+                        "execution.id": task.execution_id,
                         "authoring.kind": task.kind.value,
                         "authoring.attempt": attempt,
                         "exception.type": type(exception).__name__,
@@ -112,7 +112,7 @@ class AuthoringService(AuthoringPort):
                     "authoring service generated script",
                     extra={
                         "event": "authoring.service.generated",
-                        "workflow.id": task.workflow_id,
+                        "execution.id": task.execution_id,
                         "authoring.kind": task.kind.value,
                         "authoring.attempt": attempt,
                         "authoring.line_count": len(text.splitlines()),
@@ -134,7 +134,7 @@ class AuthoringService(AuthoringPort):
                 extra={
                     "event": "authoring.service.attempt.rejected",
                     "authoring.attempt": attempt,
-                    "workflow.id": task.workflow_id,
+                    "execution.id": task.execution_id,
                     "authoring.kind": task.kind.value,
                     "authoring.issue_codes": [issue.code.value for issue in issues],
                 },
@@ -216,7 +216,7 @@ class AuthoringService(AuthoringPort):
                 "authoring render failed",
                 extra={
                     "event": "authoring.render.failed",
-                    "workflow.id": task.workflow_id,
+                    "execution.id": task.execution_id,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
                 },
@@ -246,13 +246,13 @@ class AuthoringService(AuthoringPort):
         """
 
         if task.evidence.run is not None:
-            return task.evidence.run.evidence
+            return task.evidence.run.source
 
         if task.evidence.step is not None:
-            return task.evidence.step.evidence
+            return task.evidence.step.source
 
         if task.evidence.repair is not None:
-            return task.evidence.repair.evidence
+            return task.evidence.repair.source
 
         return None
 

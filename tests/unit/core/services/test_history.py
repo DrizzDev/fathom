@@ -4,10 +4,9 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple
 
 from fathom.constants import ActionType
-from fathom.constants.authoring import AuthoringKind, AuthoringStatus
 from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.constants.flow import IssueCode
 from fathom.constants.generation import (
@@ -17,15 +16,11 @@ from fathom.constants.generation import (
     ScriptSource,
     ScriptStatus,
 )
-from fathom.core.exceptions import VisionError
-from fathom.core.services.generation.service import ScriptGenerationService
 from fathom.core.services.history import HistoryService
 from fathom.interfaces.script import ScriptRefresher
 from fathom.schemas.actions import Action
-from fathom.schemas.authoring import AuthoringTask
-from fathom.schemas.authoring.evidence import AuthoringEvidence, RunAuthoringEvidence
-from fathom.schemas.flow import Evidence, Issue, RunObjective
-from fathom.schemas.generation import GenerationResult, ScriptFileMetadata
+from fathom.schemas.flow import Issue, RunObjective
+from fathom.schemas.generation import ScriptFileMetadata
 from fathom.schemas.steps import Step, StepGoal, StepResult
 
 
@@ -316,67 +311,10 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
 
     PACKAGE = "com.app.one"
 
-    @classmethod
-    def __run_task(cls, *, kind: AuthoringKind = AuthoringKind.RUN) -> AuthoringTask:
-        """
-        Build a task carrying run authoring evidence.
-        """
-
-        return AuthoringTask(
-            evidence=AuthoringEvidence(
-                run=RunAuthoringEvidence(
-                    evidence=Evidence(
-                        intent="do a thing",
-                        goal="do a thing",
-                        package=cls.PACKAGE,
-                    )
-                )
-            ),
-            intent="do a thing",
-            kind=kind,
-            workflow_id="wf-1",
-            step_number=1,
-        )
-
-    class __FailingGeneration:
-        """
-        Script generation stub that raises the same typed error used by Gemini provider failures.
-        """
-
-        async def generate(self, *, run: str, objective: "RunObjective") -> object:
-            """
-            Raise a provider-style script-generation failure.
-            """
-
-            _ = (run, objective)
-            raise VisionError("provider exhausted")
-
-    class __RecordingGeneration:
-        """
-        Script generation stub that records the objective passed by authoring.
-        """
-
-        def __init__(self) -> None:
-            """
-            Start without a recorded objective.
-            """
-
-            self.objective: Optional[RunObjective] = None
-
-        async def generate(self, *, run: str, objective: RunObjective) -> GenerationResult:
-            """
-            Record the generation objective and return a small script.
-            """
-
-            _ = run
-            self.objective = objective
-            return GenerationResult(text="OPEN_APP: com.app.one", attempts=1)
-
     def __service(
         self,
         *,
         directory: Path,
-        generation: Optional[ScriptGenerationService] = None,
         artifact_mode: ScriptArtifactMode = ScriptArtifactMode.NORMAL,
     ) -> HistoryService:
         """
@@ -387,7 +325,6 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
             workflow_id="wf-1",
             package_name=self.PACKAGE,
             path_manager=StubPathManager(directory=directory),
-            generation=generation,
             artifact_mode=artifact_mode,
         )
 
@@ -405,81 +342,6 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
         __scoped(BASELINE_METADATA_FILENAME).write_text(metadata.model_dump_json())
         if text is not None:
             __scoped(BASELINE_SCRIPT_FILENAME).write_text(text)
-
-    async def test_quality_script_never_uses_legacy_exporter(self) -> None:
-        """
-        With no generation wired, the guarantee quality path yields empty for baseline fallback.
-        """
-
-        with TemporaryDirectory() as temporary:
-            service = self.__service(directory=Path(temporary))
-
-            response = await service.author(task=self.__run_task())
-
-            self.assertFalse(response.has_script)
-            self.assertIs(response.status, AuthoringStatus.FAILED)
-
-    async def test_quality_provider_failure_yields_empty_for_baseline_fallback(self) -> None:
-        """
-        Provider failures in the quality path must return empty so completed finalization can use the baseline.
-        """
-
-        with TemporaryDirectory() as temporary:
-            service = self.__service(
-                directory=Path(temporary),
-                generation=cast("ScriptGenerationService", self.__FailingGeneration()),
-            )
-
-            response = await service.author(task=self.__run_task())
-
-            self.assertFalse(response.has_script)
-            self.assertIs(response.status, AuthoringStatus.FAILED)
-
-    async def test_author_uses_evidence_goal_and_package_for_generation(self) -> None:
-        """
-        Run authoring must pass the normalized evidence objective to generation.
-        """
-
-        with TemporaryDirectory() as temporary:
-            generation = self.__RecordingGeneration()
-            service = self.__service(
-                directory=Path(temporary),
-                generation=cast("ScriptGenerationService", generation),
-            )
-            task = AuthoringTask(
-                evidence=AuthoringEvidence(
-                    run=RunAuthoringEvidence(
-                        evidence=Evidence(
-                            intent="raw intent",
-                            goal="structured terminal goal",
-                            package="com.actual",
-                        )
-                    )
-                ),
-                intent="raw intent",
-                kind=AuthoringKind.RUN,
-                workflow_id="wf-1",
-                step_number=1,
-            )
-
-            response = await service.author(task=task)
-
-            self.assertTrue(response.has_script)
-            self.assertIsNotNone(generation.objective)
-            assert generation.objective is not None
-            self.assertEqual(generation.objective.goal, "structured terminal goal")
-            self.assertEqual(generation.objective.package, "com.actual")
-
-    async def test_author_rejects_non_run_tasks(self) -> None:
-        """
-        HistoryService implements the run authoring source and rejects other authoring task kinds.
-        """
-
-        with TemporaryDirectory() as temporary:
-            service = self.__service(directory=Path(temporary))
-
-            with self.assertRaises(ValueError):
-                await service.author(task=self.__run_task(kind=AuthoringKind.STEP))
 
     async def test_baseline_outcome_promotes_generated_to_canonical_script(self) -> None:
         """
