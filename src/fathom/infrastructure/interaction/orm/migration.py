@@ -138,7 +138,7 @@ class ConversationStoreMigrations:
         Return all schema migrations in application order.
         """
 
-        return (BaselineMigration.step(),)
+        return (BaselineMigration.step(), CompositeKeyMigration.step())
 
 
 class PostgresSchemaValidationError(RuntimeError):
@@ -1420,5 +1420,48 @@ class BaselineMigration:
         return "'" + value.replace("'", "''") + "'"
 
 
-SCHEMA_VERSION: Final[int] = BaselineMigration.VERSION
+class CompositeKeyMigration:
+    """
+    Promotes the actor and policy primary keys to tenant-scoped composite keys.
+    """
+
+    VERSION: Final[int] = 2
+    NAME: Final[str] = "composite_actor_policy_keys"
+
+    TENANT_SCOPED_TABLES: Final[Tuple[str, ...]] = ("actors", "policies")
+
+    @classmethod
+    def step(cls) -> PostgresMigrationStep:
+        """
+        Return the tenant-scoped primary-key promotion migration step.
+        """
+
+        return PostgresMigrationStep(
+            name=cls.NAME,
+            version=cls.VERSION,
+            statements=tuple(cls.__promote(table=table) for table in cls.TENANT_SCOPED_TABLES),
+        )
+
+    @staticmethod
+    def __promote(*, table: str) -> str:
+        """
+        Return an idempotent statement that swaps one id-only key for a composite key.
+        """
+
+        return f"""
+        DO $$ BEGIN
+            IF (
+                SELECT pg_get_constraintdef(constraint_record.oid)
+                FROM pg_constraint constraint_record
+                WHERE constraint_record.conrelid = '{table}'::regclass
+                  AND constraint_record.contype = 'p'
+            ) = 'PRIMARY KEY (id)' THEN
+                ALTER TABLE {table} DROP CONSTRAINT {table}_pkey;
+                ALTER TABLE {table} ADD PRIMARY KEY (tenant_id, id);
+            END IF;
+        END $$;
+        """
+
+
+SCHEMA_VERSION: Final[int] = CompositeKeyMigration.VERSION
 MIGRATION_STEPS: Final[Tuple[PostgresMigrationStep, ...]] = ConversationStoreMigrations.steps()

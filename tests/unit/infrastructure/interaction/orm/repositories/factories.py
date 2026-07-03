@@ -4,6 +4,7 @@ from tests.unit.infrastructure.interaction.orm.support import InteractionRuntime
 
 from fathom.infrastructure.interaction.orm.raw import InteractionSqlFiles, RawSql
 from fathom.infrastructure.interaction.orm.repositories import (
+    ActorRepository,
     ArtifactRepository,
     ContextRepository,
     ExecutionRepository,
@@ -36,11 +37,13 @@ class InteractionRepositoryFactory:
         Initialize shared repository collaborators for one test module.
         """
 
+        self.__state_machine = Lifecycle()
         self.__identifiers = UuidIdentifierSource()
         self.__transaction = InteractionRuntimeRegistry.require()
-        self.__state_machine = Lifecycle()
+
         self.__sql_files = InteractionSqlFiles.bundled()
         self.__raw = RawSql(root=self.__sql_files.root)
+
         self.__references = ReferenceGuard()
         self.__sequences = SequenceAllocator(
             raw=self.__raw,
@@ -48,10 +51,17 @@ class InteractionRepositoryFactory:
         )
         self.__recorder = LifecycleRecorder(
             raw=self.__raw,
-            sequence_allocator=self.__sequences,
             event_digest=EventDigest(),
+            sequence_allocator=self.__sequences,
             identifier_source=self.__identifiers,
         )
+
+    def actors(self) -> ActorRepository:
+        """
+        Build an actor repository.
+        """
+
+        return ActorRepository(transaction=self.__transaction)
 
     def artifacts(self) -> ArtifactRepository:
         """
@@ -88,11 +98,11 @@ class InteractionRepositoryFactory:
         """
 
         return JobRepository(
-            lifecycle=self.__recorder,
-            validator=self.__state_machine,
             raw=self.__raw,
+            lifecycle=self.__recorder,
             references=self.__references,
             transaction=self.__transaction,
+            validator=self.__state_machine,
         )
 
     def memberships(self) -> MembershipRepository:
@@ -108,11 +118,11 @@ class InteractionRepositoryFactory:
         """
 
         return MessageRepository(
-            lifecycle=self.__state_machine,
             recorder=self.__recorder,
-            references=self.__references,
             sequences=self.__sequences,
+            references=self.__references,
             transaction=self.__transaction,
+            lifecycle=self.__state_machine,
         )
 
     def policies(self) -> PolicyRepository:
@@ -131,9 +141,9 @@ class InteractionRepositoryFactory:
         """
 
         return RequestRepository(
+            transaction=self.__transaction,
             lifecycle=self.__state_machine,
             identifier_source=self.__identifiers,
-            transaction=self.__transaction,
         )
 
     def scripts(self) -> ScriptRepository:
@@ -143,8 +153,8 @@ class InteractionRepositoryFactory:
 
         return ScriptRepository(
             references=self.__references,
-            identifier_source=self.__identifiers,
             transaction=self.__transaction,
+            identifier_source=self.__identifiers,
         )
 
     def tasks(self) -> TaskRepository:
@@ -153,8 +163,8 @@ class InteractionRepositoryFactory:
         """
 
         return TaskRepository(
-            lifecycle=self.__state_machine,
             recorder=self.__recorder,
+            lifecycle=self.__state_machine,
             transaction=self.__transaction,
         )
 

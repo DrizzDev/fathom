@@ -148,9 +148,10 @@ class PostgresInteraction(InteractionPort):
             sequence_allocator=self.__sequences,
             identifier_source=self.__identifiers,
         )
-        self.__references = ReferenceGuard()
 
-        self.__actors = ActorRepository()
+        self.__references = ReferenceGuard()
+        self.__actors = ActorRepository(transaction=self.__runtime)
+
         self.__threads = ThreadRepository(
             lifecycle=self.__lifecycle,
             transaction=self.__runtime,
@@ -183,8 +184,8 @@ class PostgresInteraction(InteractionPort):
             references=self.__references,
         )
         self.__scripts = ScriptRepository(
-            references=self.__references,
             transaction=self.__runtime,
+            references=self.__references,
             identifier_source=self.__identifiers,
         )
 

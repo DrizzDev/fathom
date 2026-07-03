@@ -5,13 +5,15 @@ from typing import Optional
 from uuid import uuid4
 
 import pytest
+from tests.unit.infrastructure.interaction.orm.repositories.factories import (
+    InteractionRepositoryFactory,
+)
 from tests.unit.infrastructure.interaction.orm.support import InteractionPostgresSchema
 from tortoise.exceptions import IntegrityError
 
 from fathom.constants.collaboration import ActorKind
 from fathom.core.exceptions import InteractionError
 from fathom.infrastructure.interaction.orm.models import ActorRecord
-from fathom.infrastructure.interaction.orm.repositories import ActorRepository
 from fathom.schemas.interaction import CreateActor, Identity, Metadata, Runtime
 
 
@@ -31,7 +33,7 @@ class TestActorRepository:
                 metadata=Metadata(entries={"team": "growth"}),
             )
 
-            result = await ActorRepository().create_actor(request=request)
+            result = await InteractionRepositoryFactory().actors().create_actor(request=request)
 
             assert result.identity == request.identity
             assert result.kind == ActorKind.AGENT
@@ -49,7 +51,7 @@ class TestActorRepository:
     async def test_identical_replay_returns_existing_actor(self) -> None:
         async with InteractionPostgresSchema(prefix="conversation_actor_repository"):
             request = self.__request()
-            repository = ActorRepository()
+            repository = InteractionRepositoryFactory().actors()
 
             created = await repository.create_actor(request=request)
             replayed = await repository.create_actor(request=request)
@@ -59,7 +61,7 @@ class TestActorRepository:
     async def test_conflicting_replay_raises_interaction_error(self) -> None:
         async with InteractionPostgresSchema(prefix="conversation_actor_repository"):
             request = self.__request(name="alice")
-            repository = ActorRepository()
+            repository = InteractionRepositoryFactory().actors()
             await repository.create_actor(request=request)
             conflict = request.model_copy(update={"name": "bob"})
 

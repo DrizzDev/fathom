@@ -154,3 +154,55 @@ class FathomRunnerGeneratedScriptTest(unittest.IsolatedAsyncioTestCase):
             task_code(success=False, reason="Failed after max steps in app copy"),
             TaskCode.UNKNOWN_ERROR,
         )
+
+
+class FathomRunnerExecutionIdentityTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Runner owns the execution identity independently of the conversation layer.
+    """
+
+    def __runner(self) -> FathomRunner:
+        """
+        Build a runner instance without wiring conversation collaborators.
+        """
+
+        return object.__new__(FathomRunner)
+
+    def test_reserve_execution_derives_stable_identity_from_workflow(self) -> None:
+        """
+        A run with no pre-reserved id derives a deterministic execution identity.
+        """
+
+        runner = self.__runner()
+        reserve = runner._FathomRunner__reserve_execution  # type: ignore[attr-defined]
+
+        first = reserve(execution_id=None, workflow_id="workflow-1")
+        second = reserve(execution_id=None, workflow_id="workflow-1")
+
+        self.assertTrue(first)
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, reserve(execution_id=None, workflow_id="workflow-2"))
+
+    def test_reserve_execution_honors_caller_supplied_identity(self) -> None:
+        """
+        A pre-reserved execution id is preserved verbatim.
+        """
+
+        runner = self.__runner()
+        reserve = runner._FathomRunner__reserve_execution  # type: ignore[attr-defined]
+
+        self.assertEqual(
+            reserve(execution_id="execution-7", workflow_id="workflow-1"),
+            "execution-7",
+        )
+
+    def test_reserve_execution_never_consults_the_recorder(self) -> None:
+        """
+        Execution identity must not depend on any recorder state or return value.
+        """
+
+        runner = self.__runner()
+        reserve = runner._FathomRunner__reserve_execution  # type: ignore[attr-defined]
+
+        self.assertFalse(hasattr(runner, "_FathomRunner__recorder"))
+        self.assertTrue(reserve(execution_id=None, workflow_id="workflow-1"))
