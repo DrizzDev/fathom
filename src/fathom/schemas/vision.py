@@ -47,6 +47,7 @@ __ACTION_KIND_BY_TYPE: dict[ActionType, ActionKind] = {
     ActionType.COMPLETE: ActionKind.TERMINAL,
     ActionType.SAVE_MEMORY: ActionKind.OBSERVATION,
     ActionType.RETRIEVE_MEMORY: ActionKind.OBSERVATION,
+    ActionType.STORE: ActionKind.OBSERVATION,
     ActionType.INFER: ActionKind.OBSERVATION,
     ActionType.UNKNOWN: ActionKind.UNKNOWN,
 }

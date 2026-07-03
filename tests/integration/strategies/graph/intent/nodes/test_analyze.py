@@ -95,6 +95,7 @@ class _RealPlannerHarness:
                 agent_state=self.__agent_state,
                 context_manager=AgentFixtures.context_manager(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                memory=SimpleNamespace(set=AsyncMock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
                 signal=SimpleNamespace(supports_interruption=Mock(return_value=False)),
                 device=SimpleNamespace(get_dimensions=AsyncMock(return_value=(1080, 2340))),

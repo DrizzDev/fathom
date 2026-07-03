@@ -6,6 +6,7 @@ from typing import Any, Dict, Literal, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fathom.constants import CONTROL_ACTION_TYPES, ActionExecutionKind, ActionType
+from fathom.schemas.capture import CaptureRequest
 
 
 class CoordinateSource(StrEnum):
@@ -342,8 +343,9 @@ class Action(BaseModel):
 
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
     wait_duration: Optional[float] = Field(default=None, description="Duration to wait in seconds")
-    memory_updates: Optional[Dict[str, str]] = Field(
-        default=None, description="Key-value pairs to store in persistent memory"
+    capture: Optional[CaptureRequest] = Field(
+        default=None,
+        description="Intent-derived STORE request: the variable name, subject, and captured value.",
     )
 
     # Inline Validation

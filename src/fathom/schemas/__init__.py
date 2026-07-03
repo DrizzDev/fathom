@@ -6,6 +6,11 @@ from fathom.schemas.artifacts import (
     ScreenArtifactBundle,
     StepArtifacts,
 )
+from fathom.schemas.authoring import (
+    AuthoringConfiguration,
+    RunConfiguration,
+    StepAuthoringConfiguration,
+)
 from fathom.schemas.cli import ExploreCommandInput, LocalCommandInput, RunCommandInput
 from fathom.schemas.configuration import (
     AdaptivePriorityConfiguration,
@@ -66,7 +71,7 @@ from fathom.schemas.run import (
     TelemetryRequestConfiguration,
 )
 from fathom.schemas.screens import ScreenCapture, ScreenState
-from fathom.schemas.steps import Step, StepRecord, StepResult
+from fathom.schemas.steps import Step, StepGoal, StepRecord, StepResult
 from fathom.schemas.ui import LabeledElement, UIBounds
 
 __all__ = [
@@ -76,6 +81,7 @@ __all__ = [
     "ActionResult",
     "AdaptivePriorityConfiguration",
     "AnalysisResult",
+    "AuthoringConfiguration",
     "Bounds",
     "DeviceConfiguration",
     "DeviceRuntimeConfiguration",
@@ -111,6 +117,7 @@ __all__ = [
     "PriorityInferenceSignal",
     "PriorityInferenceTransition",
     "RunCommandInput",
+    "RunConfiguration",
     "RealignmentPolicy",
     "ResourceConfiguration",
     "RunMetadata",
@@ -124,8 +131,10 @@ __all__ = [
     "ScreenNode",
     "ScreenState",
     "Step",
+    "StepAuthoringConfiguration",
     "StepArtifacts",
     "StepContext",
+    "StepGoal",
     "StepRecord",
     "StepResult",
     "StrategyResult",

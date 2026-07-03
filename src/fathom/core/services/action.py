@@ -5,7 +5,7 @@ import io
 import json
 import time
 from logging import getLogger
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
 from PIL import Image
 
@@ -25,6 +25,8 @@ from fathom.constants.execution import MAX_ACTION_WAIT_MS
 from fathom.constants.observability import ExecutorEvent
 from fathom.constants.observation import KeyboardVisibility
 from fathom.core.artifact.pipeline import ArtifactPipeline
+from fathom.core.capability.catalog import CommandCatalog
+from fathom.core.capture.store import CaptureStore
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.core.swipe import SwipeRetryCoordinator, SwipeRetryPlanner
 from fathom.interfaces.device import DevicePort
@@ -41,6 +43,7 @@ from fathom.schemas.actions import (
 )
 from fathom.schemas.artifact import ArtifactRecord, TracePayload
 from fathom.schemas.artifacts import ScreenArtifact
+from fathom.schemas.capture import Capture, CaptureRequest
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.execution import PrimitiveExecution
 from fathom.schemas.observation import KeyboardObservation, ScreenObservation
@@ -70,17 +73,21 @@ class ActionExecutor:
         device: DevicePort,
         telemetry: TelemetryPort,
         path_manager: SharedPathManager,
+        *,
+        catalog: CommandCatalog,
+        capture_store: CaptureStore,
         storage: Optional[StoragePort] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
-        *,
         pipeline: Optional[ArtifactPipeline] = None,
         perception: Optional[PerceptionPort] = None,
         swipe_coordinator: Optional[SwipeRetryCoordinator] = None,
     ) -> None:
         self.__device = device
+        self.__catalog = catalog
         self.__telemetry = telemetry
-        self.__max_retries = max_retries
+        self.__capture_store = capture_store
 
+        self.__max_retries = max_retries
         self.__storage = storage
         self.__path_manager = path_manager
         self.__pipeline = pipeline
@@ -98,8 +105,8 @@ class ActionExecutor:
         session_id: str,
         package_name: str,
         pre_capture: ScreenCapture,
+        is_cancelled: Optional[CancelCheck] = None,
         observation: Optional[ScreenObservation] = None,
-        is_cancelled: CancelCheck | None = None,
     ) -> ExecutionResult:
         """
         Execute device action with retry logic and tracing.
@@ -111,10 +118,10 @@ class ActionExecutor:
                 result, _ = await self.__execute_primitive(
                     step=step,
                     session_id=session_id,
-                    package_name=package_name,
                     pre_capture=pre_capture,
                     observation=observation,
                     is_cancelled=is_cancelled,
+                    package_name=package_name,
                 )
 
                 if result.success:
@@ -151,19 +158,12 @@ class ActionExecutor:
             error=last_error or "Unknown error",
         )
 
-    @staticmethod
-    def __should_retry_action(*, step: Step) -> bool:
+    def __should_retry_action(self, *, step: Step) -> bool:
         """
         Return whether outer action retries should wrap this action.
         """
 
-        return step.action.action_type not in {
-            ActionType.SCROLL,
-            ActionType.SWIPE_UP,
-            ActionType.SWIPE_DOWN,
-            ActionType.SWIPE_LEFT,
-            ActionType.SWIPE_RIGHT,
-        }
+        return self.__catalog.has_outer_retry(action_type=step.action.action_type)
 
     async def __execute_primitive(
         self,
@@ -172,8 +172,8 @@ class ActionExecutor:
         session_id: str,
         package_name: str,
         pre_capture: ScreenCapture,
+        is_cancelled: Optional[CancelCheck],
         observation: Optional[ScreenObservation],
-        is_cancelled: CancelCheck | None,
     ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
         """
         Execute specific device primitive.
@@ -181,6 +181,13 @@ class ActionExecutor:
 
         action = step.action
         start_time = time.time()
+
+        if action.action_type is ActionType.STORE:
+            return self.__execute_store(
+                action=action,
+                step_number=step.step_number,
+                start_time=start_time,
+            )
 
         width = pre_capture.width
         height = pre_capture.height
@@ -206,16 +213,16 @@ class ActionExecutor:
 
         try:
             primitive = await self.__execute_interactive_action(
-                action=action,
-                converter=converter,
+                step=step,
                 width=width,
                 height=height,
+                action=action,
+                converter=converter,
+                session_id=session_id,
                 pre_capture=pre_capture,
                 observation=observation,
-                is_cancelled=is_cancelled,
-                step=step,
-                session_id=session_id,
                 package_name=package_name,
+                is_cancelled=is_cancelled,
             )
             if primitive.action is None:
                 return (
@@ -288,13 +295,7 @@ class ActionExecutor:
         Check whether action can be completed without device interaction.
         """
 
-        return action.action_type in {
-            ActionType.WAIT,
-            ActionType.COMPLETE,
-            ActionType.VALIDATE,
-            ActionType.SAVE_MEMORY,
-            ActionType.RETRIEVE_MEMORY,
-        }
+        return self.__catalog.is_non_interactive(action_type=action.action_type)
 
     async def __execute_non_interactive_action(
         self, *, action: Action, start_time: float
@@ -334,19 +335,75 @@ class ActionExecutor:
             None,
         )
 
+    def __execute_store(
+        self,
+        *,
+        action: Action,
+        step_number: int,
+        start_time: float,
+    ) -> Tuple[ExecutionResult, Optional[Tuple[int, ...]]]:
+        """
+        Capture an intent-derived value into the run-owned store; success only when a value is captured.
+        """
+
+        duration = int((time.time() - start_time) * 1000)
+        request = action.capture
+        if request is None:
+            return (
+                ExecutionResult(
+                    success=False,
+                    duration=duration,
+                    error="STORE action carried no capture request.",
+                ),
+                None,
+            )
+
+        capture = self.__capture(request=request, step_number=step_number)
+        self.__capture_store.write(capture=capture)
+
+        return (
+            ExecutionResult(
+                success=capture.success,
+                duration=duration,
+                error=capture.reason,
+                capture=capture,
+            ),
+            None,
+        )
+
+    def __capture(
+        self,
+        *,
+        request: CaptureRequest,
+        step_number: int,
+    ) -> Capture:
+        """
+        Build the Capture for a STORE request from the semantic value the planner supplied.
+        """
+
+        value = request.value.strip()
+        if not value:
+            return Capture.failed(
+                name=request.name,
+                reason=f"STORE could not capture '{request.subject}': value was empty.",
+                step=step_number,
+            )
+
+        return Capture.succeeded(name=request.name, value=value, step=step_number)
+
     async def __execute_interactive_action(
         self,
         *,
+        step: Step,
         width: int,
         height: int,
         action: Action,
-        converter: CoordinateConverter,
-        pre_capture: ScreenCapture,
-        observation: Optional[ScreenObservation],
-        is_cancelled: CancelCheck | None,
-        step: Step,
         session_id: str,
         package_name: str,
+        pre_capture: ScreenCapture,
+        converter: CoordinateConverter,
+        is_cancelled: Optional[CancelCheck],
+        observation: Optional[ScreenObservation],
     ) -> PrimitiveExecution:
         """
         Execute interactive action through registered handlers.
@@ -354,14 +411,14 @@ class ActionExecutor:
 
         if action.action_type.value.startswith(ActionType.SWIPE.lower()):
             return await self.__execute_swipe(
+                step=step,
                 action=action,
                 converter=converter,
-                pre_capture=pre_capture,
-                observation=observation,
-                is_cancelled=is_cancelled,
-                step=step,
                 session_id=session_id,
+                observation=observation,
+                pre_capture=pre_capture,
                 package_name=package_name,
+                is_cancelled=is_cancelled,
             )
 
         action_handlers: Dict[
@@ -372,43 +429,43 @@ class ActionExecutor:
             ],
         ] = {
             ActionType.TAP: lambda: self.__execute_tap(
-                action=action,
-                converter=converter,
+                step=step,
                 width=width,
                 height=height,
-                pre_capture=pre_capture,
-                step=step,
+                action=action,
+                converter=converter,
                 session_id=session_id,
+                pre_capture=pre_capture,
                 package_name=package_name,
             ),
             ActionType.TYPE: lambda: self.__execute_type(
-                action=action,
-                converter=converter,
+                step=step,
                 width=width,
                 height=height,
-                pre_capture=pre_capture,
-                step=step,
+                action=action,
+                converter=converter,
                 session_id=session_id,
+                pre_capture=pre_capture,
                 package_name=package_name,
             ),
             ActionType.SCROLL: lambda: self.__execute_scroll(
+                step=step,
                 action=action,
                 converter=converter,
+                session_id=session_id,
                 pre_capture=pre_capture,
                 observation=observation,
                 is_cancelled=is_cancelled,
-                step=step,
-                session_id=session_id,
                 package_name=package_name,
             ),
             ActionType.LONG_PRESS: lambda: self.__execute_long_press(
-                action=action,
-                converter=converter,
+                step=step,
                 width=width,
                 height=height,
-                pre_capture=pre_capture,
-                step=step,
+                action=action,
+                converter=converter,
                 session_id=session_id,
+                pre_capture=pre_capture,
                 package_name=package_name,
             ),
             ActionType.BACK: self.__execute_back,
@@ -888,7 +945,7 @@ class ActionExecutor:
         Stage one trace artifact per dispatched swipe attempt and return their emission envelopes.
         """
 
-        emissions: list[TraceEmission] = []
+        emissions: List[TraceEmission] = []
 
         for attempt in execution.attempts:
             event = ActionTraceEvent(

@@ -12,13 +12,20 @@ from tests.builders.intent import (
     TerminalIntentGraph,
 )
 
+from fathom.adapters.evidence.history import HistoryEvidenceSource
+from fathom.constants.authoring import AuthoringArtifactKind, AuthoringStatus
+from fathom.constants.dialect import DialectName
 from fathom.constants.events import FathomEvent
-from fathom.constants.finalization import FinalizationPhase
+from fathom.constants.generation import ScriptSource, ScriptStatus
 from fathom.constants.state import RunOutcome
 from fathom.core.services.decomposer import IntentDecomposer
 from fathom.core.services.history import HistoryService
+from fathom.interfaces.authoring import AuthoringPort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.schemas.authoring import AuthoringArtifact, AuthoringResponse, AuthoringTask
+from fathom.schemas.flow import Evidence, RunObjective
+from fathom.schemas.generation import BaselineArtifact, ScriptFileMetadata
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 
 if TYPE_CHECKING:
@@ -42,27 +49,44 @@ class TestIntentStrategyCancelledScriptDelivery:
         return [
             event
             for event in harness.telemetry.of_type(FathomEvent.PHASE_HEARTBEAT)
-            if event.get("phase") == FinalizationPhase.HISTORY_SCRIPT.value
+            if event.get("phase") == "fathom.finalization.history.script"
         ]
 
     @staticmethod
-    async def __script(
+    async def __baseline(
         *,
         history: HistoryService,
+        step_number: int,
+    ) -> BaselineArtifact:
+        """
+        Return the baseline script available at cancellation time.
+        """
+
+        _ = (history, step_number)
+        return BaselineArtifact(
+            text="tap continue",
+            metadata=ScriptFileMetadata(
+                source=ScriptSource.BASELINE,
+                status=ScriptStatus.GENERATED,
+            ),
+        )
+
+    @staticmethod
+    async def __quality(
+        *,
         intent: str,
         step_number: int,
     ) -> str:
         """
-        Return the partial script available at cancellation time.
+        Return the quality script generated after cancellation.
         """
 
-        _ = (history, intent, step_number)
-        return "tap continue"
+        _ = (intent, step_number)
+        return "quality tap continue"
 
     @staticmethod
-    async def __slow_script(
+    async def __slow_quality(
         *,
-        history: HistoryService,
         intent: str,
         step_number: int,
     ) -> str:
@@ -70,16 +94,16 @@ class TestIntentStrategyCancelledScriptDelivery:
         Finish slowly enough to prove heartbeat delivery before SCRIPT_GENERATED.
         """
 
-        _ = (history, intent, step_number)
+        _ = (intent, step_number)
         await asyncio.sleep(0.6)
-        return "tap continue"
+        return "quality tap continue"
 
     def __patch_boundaries(
         self,
         *,
         monkeypatch: pytest.MonkeyPatch,
         graph: TerminalIntentGraph,
-        script: Callable[..., Awaitable[str]],
+        baseline: Callable[..., Awaitable[BaselineArtifact]],
     ) -> None:
         """
         Patch external graph and script boundaries while keeping real application classes in use.
@@ -102,32 +126,92 @@ class TestIntentStrategyCancelledScriptDelivery:
         )
         monkeypatch.setattr(
             HistoryService,
-            "get_current_script",
-            self.__history_script_method(script=script),
+            "read_baseline_outcome",
+            self.__history_baseline_method(baseline=baseline),
+        )
+        monkeypatch.setattr(
+            HistoryEvidenceSource,
+            "read",
+            self.__history_evidence_method(),
         )
 
     @staticmethod
-    def __history_script_method(
+    def __history_baseline_method(
         *,
-        script: Callable[..., Awaitable[str]],
-    ) -> Callable[..., Awaitable[str]]:
+        baseline: Callable[..., Awaitable[BaselineArtifact]],
+    ) -> Callable[..., Awaitable[BaselineArtifact]]:
         """
-        Adapt a keyword-only script helper to the HistoryService instance-method contract.
+        Adapt a keyword-only baseline helper to the HistoryService instance-method contract.
         """
 
-        async def get_current_script(
+        async def read_baseline_outcome(
             history: HistoryService,
             *,
-            intent: str,
             step_number: int,
-        ) -> str:
+        ) -> BaselineArtifact:
             """
-            Call the script helper with explicit keyword arguments.
+            Call the baseline helper with explicit keyword arguments.
             """
 
-            return await script(history=history, intent=intent, step_number=step_number)
+            return await baseline(history=history, step_number=step_number)
 
-        return get_current_script
+        return read_baseline_outcome
+
+    class __QualityAuthoring(AuthoringPort):
+        """
+        Authoring source test double for final-script quality generation.
+        """
+
+        def __init__(self, *, quality: Callable[..., Awaitable[str]]) -> None:
+            """
+            Store the configured quality helper.
+            """
+
+            self.__quality = quality
+
+        async def author(self, *, task: AuthoringTask) -> AuthoringResponse:
+            """
+            Return the configured authoring response for a task.
+            """
+
+            script = await self.__quality(
+                intent=task.intent,
+                step_number=task.step_number,
+            )
+            return AuthoringResponse(
+                status=AuthoringStatus.GENERATED,
+                artifact=AuthoringArtifact(
+                    dialect=DialectName.DRIZZ,
+                    kind=AuthoringArtifactKind.TEXT,
+                    content=script,
+                ),
+            )
+
+    @staticmethod
+    def __history_evidence_method() -> Callable[..., Awaitable[Evidence]]:
+        """
+        Adapt the evidence source to deterministic test evidence.
+        """
+
+        async def read(
+            source: HistoryEvidenceSource,
+            *,
+            run: str,
+            objective: RunObjective,
+        ) -> Evidence:
+            """
+            Return minimal normalized evidence for authoring tests.
+            """
+
+            _ = source
+            return Evidence(
+                intent=objective.intent,
+                goal=objective.intent,
+                package=objective.package,
+                artifacts=(run,),
+            )
+
+        return read
 
     @staticmethod
     def __selected_graph(
@@ -152,13 +236,13 @@ class TestIntentStrategyCancelledScriptDelivery:
         memory_port_stub: MemoryPort,
     ) -> None:
         """
-        Cancelled strategy finalization emits heartbeat and partial script.
+        Cancelled strategy finalization emits heartbeat while generating the quality script.
         """
 
         self.__patch_boundaries(
             monkeypatch=monkeypatch,
             graph=TerminalIntentGraph.workflow_cancelled(),
-            script=self.__slow_script,
+            baseline=self.__baseline,
         )
         harness = IntentStrategyHarnessBuilder.build(
             tmp_path=tmp_path,
@@ -167,6 +251,7 @@ class TestIntentStrategyCancelledScriptDelivery:
             configuration=IntentCancellationConfigurationBuilder.build(
                 script_timeout=1.0, heartbeat_threshold=0.5
             ),
+            authoring=self.__QualityAuthoring(quality=self.__slow_quality),
         )
 
         result = await harness.strategy.execute()
@@ -179,7 +264,7 @@ class TestIntentStrategyCancelledScriptDelivery:
                 FathomEvent.PHASE_HEARTBEAT,
                 FathomEvent.SCRIPT_GENERATED,
             }
-            and event.get("phase") in {None, FinalizationPhase.HISTORY_SCRIPT.value}
+            and event.get("phase") in {None, "fathom.finalization.history.script"}
         ]
         event_types = [event["type"] for event in stream]
         heartbeat_event = self.__history_script_heartbeat_events(harness=harness)[0]
@@ -194,7 +279,8 @@ class TestIntentStrategyCancelledScriptDelivery:
         assert heartbeat_event["run_outcome"] == RunOutcome.CANCELLED.value
         assert heartbeat_event["workflow_id"] == "workflow-cancelled-script"
 
-        assert script_event["message"] == "tap continue"
+        assert script_event["message"] == "quality tap continue"
+        assert script_event["source"] == ScriptSource.QUALITY.value
         assert script_event["run_outcome"] == RunOutcome.CANCELLED.value
         assert script_event["workflow_id"] == "workflow-cancelled-script"
 
@@ -212,13 +298,14 @@ class TestIntentStrategyCancelledScriptDelivery:
         self.__patch_boundaries(
             monkeypatch=monkeypatch,
             graph=TerminalIntentGraph.host_cancelled(),
-            script=self.__script,
+            baseline=self.__baseline,
         )
         harness = IntentStrategyHarnessBuilder.build(
             tmp_path=tmp_path,
             llm=llm_port_stub,
             memory=memory_port_stub,
             configuration=IntentCancellationConfigurationBuilder.build(),
+            authoring=self.__QualityAuthoring(quality=self.__quality),
         )
 
         with pytest.raises(asyncio.CancelledError):
@@ -226,6 +313,7 @@ class TestIntentStrategyCancelledScriptDelivery:
 
         script_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)[0]
 
-        assert script_event["message"] == "tap continue"
+        assert script_event["message"] == "quality tap continue"
+        assert script_event["source"] == ScriptSource.QUALITY.value
         assert script_event["run_outcome"] == RunOutcome.CANCELLED.value
         assert script_event["workflow_id"] == "workflow-cancelled-script"

@@ -54,6 +54,7 @@ from fathom.constants.storage import (
     StorageBackend,
 )
 from fathom.schemas.artifact import PipelineConfiguration
+from fathom.schemas.authoring import AuthoringConfiguration
 from fathom.schemas.base.common import ThresholdConfiguration
 from fathom.schemas.checkpoint import (
     CheckpointConfiguration,
@@ -153,7 +154,7 @@ class LLMConfiguration(BaseModel):
     # Common hyper-parameters
     max_retries: int = Field(default=3, description="Maximum retry attempts")
     temperature: float = Field(default=1.0, description="Sampling temperature")
-    timeout: float = Field(default=60.0, description="Request timeout in seconds")
+    timeout: float = Field(default=30.0, description="Request timeout in seconds")
     retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
     rate_limit_backoff: float = Field(default=5.0, description="Base backoff for rate limit errors")
     use_cache: bool = Field(default=True, description="Whether to use context caching for the LLM")
@@ -925,10 +926,11 @@ class FathomConfiguration(BaseModel):
 
     storage: StorageConfiguration = Field(default_factory=StorageConfiguration)
     artifact: PipelineConfiguration = Field(default_factory=PipelineConfiguration)
+    authoring: AuthoringConfiguration = Field(default_factory=AuthoringConfiguration)
+    qualifier: QualifierConfiguration = Field(default_factory=QualifierConfiguration)
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
 
     intent: IntentConfiguration = Field(default_factory=IntentConfiguration)
-    qualifier: QualifierConfiguration = Field(default_factory=QualifierConfiguration)
     exploration: ExplorationConfiguration = Field(default_factory=ExplorationConfiguration)
 
     scheduler: Optional[JobSchedulerConfiguration] = None

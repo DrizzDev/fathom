@@ -25,6 +25,7 @@ from fathom.constants.state import (
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
+from fathom.strategies.graph.intent.tool_update import ToolUpdateRouter
 from fathom.strategies.graph.intent.verification import VerificationModePolicy
 from fathom.strategies.graph.state import IntentGraphState
 
@@ -43,6 +44,7 @@ class AnalyzeNode:
 
         self.__provider = provider
         self.__verification_modes = VerificationModePolicy()
+        self.__tool_update_router = ToolUpdateRouter(memory=provider.context.memory)
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -190,6 +192,14 @@ class AnalyzeNode:
 
             duration = time.time() - start_time
             self.__provider.context.metrics.record(operation="analysis", duration=duration)
+
+            await self.__tool_update_router.route(
+                updates=getattr(plan, "updates", ()),
+                data=getattr(plan, "data", ()),
+                artifacts=getattr(plan, "artifacts", ()),
+                diagnostics=getattr(plan, "diagnostics", ()),
+                workflow_id=self.__provider.context.workflow_id,
+            )
 
             if plan.metrics:
                 self.__provider.context.metrics.record_tokens(
@@ -470,9 +480,10 @@ class AnalyzeNode:
         if not is_complete or completion_reason in TERMINAL_COMPLETION_REASONS:
             return None
 
-        return self.__verification_modes.mode_for_producer(
+        mode = self.__verification_modes.mode_for_producer(
             agent_state=self.__provider.context.agent_state
-        ).value
+        )
+        return mode.value
 
     @staticmethod
     def __completion_reason(

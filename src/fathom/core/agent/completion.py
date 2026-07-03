@@ -28,25 +28,25 @@ class CompletionGate:
         Return the gate decision (outcome plus diagnostic retain reason) for this turn.
         """
 
-        screen_verified_dispatch = evidence.action.dispatched and evidence.screen.evolved
+        effective = evidence.action.dispatched and evidence.screen.evolved
 
         if sub_goal.kind is SubGoalKind.VALIDATION:
             return self.__adjudicate_validation(
                 evidence=evidence,
-                screen_verified_dispatch=screen_verified_dispatch,
+                effective=effective,
             )
 
         return self.__adjudicate_action(
             evidence=evidence,
             action_kind=action_kind,
-            screen_verified_dispatch=screen_verified_dispatch,
+            effective=effective,
         )
 
     def __adjudicate_validation(
         self,
         *,
         evidence: CompletionEvidence,
-        screen_verified_dispatch: bool,
+        effective: bool,
     ) -> GateDecision:
         """
         Validation sub-goal: short-circuit on asserted claim, else 2-of-3 threshold.
@@ -55,7 +55,7 @@ class CompletionGate:
         if evidence.claim.asserted:
             return GateDecision(outcome=GateOutcome.ADVANCE, retain_reason=None)
 
-        met = sum((evidence.claim.justified, screen_verified_dispatch))
+        met = sum((evidence.claim.justified, effective))
         if met >= CompletionThreshold.VALIDATION_WITHOUT_CLAIM:
             return GateDecision(outcome=GateOutcome.ADVANCE, retain_reason=None)
 
@@ -69,13 +69,13 @@ class CompletionGate:
         *,
         action_kind: ActionKind,
         evidence: CompletionEvidence,
-        screen_verified_dispatch: bool,
+        effective: bool,
     ) -> GateDecision:
         """
         Action sub-goal: strict path needs screen-verified dispatch; VALIDATION-kind action advances on claim alone.
         """
 
-        if evidence.claim.asserted and evidence.claim.justified and screen_verified_dispatch:
+        if evidence.claim.asserted and evidence.claim.justified and effective:
             return GateDecision(outcome=GateOutcome.ADVANCE, retain_reason=None)
 
         if (

@@ -7,8 +7,12 @@ from unittest.mock import MagicMock
 from fathom.constants import ActionType
 from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey, VerifyMode
+from fathom.core.capability.catalog import CommandCatalogProvider
+from fathom.core.capture.store import CaptureStore
 from fathom.core.exceptions import InvariantViolation
+from fathom.core.services.criterion import CriterionObserver
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.capture import Capture, CaptureRequest
 from fathom.schemas.completion import (
     ActionEvidence,
     ClaimEvidence,
@@ -36,7 +40,7 @@ from fathom.schemas.subgoal import SubGoal, SubGoalKind
 from fathom.strategies.graph.intent.nodes.completion import SubGoalEvaluator
 
 
-class _StubCriterionChecker:
+class _StubCriterionChecker(CriterionObserver):
     """
     Deterministic criterion checker returning a pre-staged decision per call.
     """
@@ -136,7 +140,7 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         )
         return CompletionEvidence(
             claim=ClaimEvidence(asserted=asserted, justified=justified),
-            action=ActionEvidence(dispatched=dispatched),
+            action=ActionEvidence(dispatched=dispatched, executed=dispatched),
             screen=ScreenEvidence(evolved=evolved),
             criterion=criterion,
         )
@@ -184,6 +188,142 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
             pre_hash="pre",
             post_hash="post" if screen_changed else "pre",
         )
+
+    @staticmethod
+    def __store_step_result(*, success: bool = True) -> StepResult:
+        """
+        Build a successful STORE step result carrying a literal capture request.
+        """
+
+        action = Action(
+            action_type=ActionType.STORE,
+            rationale="capture",
+            capture=CaptureRequest(name="abc", subject="xyz", value="xyz"),
+        )
+        step = Step(action=action, step_number=0, screen_hash="pre")
+        return StepResult(
+            step=step,
+            success=success,
+            executed=success,
+            duration=1,
+            pre_hash="pre",
+            post_hash="pre",
+            screen_changed=False,
+        )
+
+    async def test_store_subgoal_advances_on_successful_capture(self) -> None:
+        """
+        A STORE sub-goal routes to the capture policy and advances when a successful capture exists.
+        """
+
+        checker = _StubCriterionChecker(
+            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
+        )
+        context = self.__context(
+            sub_goal=self.__sub_goal(directive=ActionType.STORE),
+            evidence=self.__evidence(asserted=False),
+            signal=self.__signal(flagged_complete=True),
+        )
+        context.catalog = CommandCatalogProvider().build()
+        store = CaptureStore()
+        store.write(capture=Capture.succeeded(name="abc", value="xyz", step=0))
+        context.capture_store = store
+        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
+
+        result = await evaluator.evaluate(
+            plan=self.__plan_with_analysis(),
+            step_result=self.__store_step_result(),
+            accumulated=[],
+            observation=self.__observation(),
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+        self.assertEqual(checker.calls, 0)
+
+    async def test_store_subgoal_retains_when_capture_missing(self) -> None:
+        """
+        A STORE sub-goal retains (no capture in the store) without invoking the legacy criterion/gate path.
+        """
+
+        checker = _StubCriterionChecker(
+            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
+        )
+        context = self.__context(
+            sub_goal=self.__sub_goal(directive=ActionType.STORE),
+            evidence=self.__evidence(asserted=False),
+            signal=self.__signal(flagged_complete=False),
+        )
+        context.catalog = CommandCatalogProvider().build()
+        context.capture_store = CaptureStore()
+        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
+
+        result = await evaluator.evaluate(
+            plan=self.__plan_with_analysis(),
+            step_result=self.__store_step_result(),
+            accumulated=[],
+            observation=self.__observation(),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(checker.calls, 0)
+
+    async def test_store_action_during_non_store_subgoal_does_not_advance_via_capture(self) -> None:
+        """
+        A STORE action under a non-STORE sub-goal must fall to the legacy gate, never the capture policy.
+        """
+
+        checker = _StubCriterionChecker(
+            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
+        )
+        context = self.__context(
+            sub_goal=self.__sub_goal(directive=ActionType.TAP),
+            evidence=self.__evidence(asserted=False),
+            signal=self.__signal(flagged_complete=False),
+        )
+        context.catalog = CommandCatalogProvider().build()
+        store = CaptureStore()
+        store.write(capture=Capture.succeeded(name="abc", value="xyz", step=0))
+        context.capture_store = store
+        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
+
+        result = await evaluator.evaluate(
+            plan=self.__plan_with_analysis(),
+            step_result=self.__store_step_result(),
+            accumulated=[],
+            observation=self.__observation(),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(checker.calls, 1)
+
+    async def test_store_subgoal_with_non_store_action_does_not_use_capture(self) -> None:
+        """
+        A STORE sub-goal evaluated against a non-STORE action falls through to the legacy gate.
+        """
+
+        checker = _StubCriterionChecker(
+            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
+        )
+        context = self.__context(
+            sub_goal=self.__sub_goal(directive=ActionType.STORE),
+            evidence=self.__evidence(asserted=False),
+            signal=self.__signal(flagged_complete=False),
+        )
+        context.catalog = CommandCatalogProvider().build()
+        context.capture_store = CaptureStore()
+        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
+
+        result = await evaluator.evaluate(
+            plan=self.__plan_with_analysis(),
+            step_result=self.__step_result(action_type=ActionType.TAP),
+            accumulated=[],
+            observation=self.__observation(),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(checker.calls, 1)
 
     @staticmethod
     def __plan_with_analysis() -> PlanResult:

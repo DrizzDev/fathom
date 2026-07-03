@@ -4,13 +4,22 @@ import asyncio
 from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
+from fathom.constants import ActionType
+from fathom.constants.capability import CompletionMode
 from fathom.constants.completion import AdvanceReason, GateOutcome
 from fathom.constants.observability import CompletionEvent
 from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey, VerifyMode
+from fathom.core.agent.capture import StoreCaptureCompletionPolicy
 from fathom.core.agent.completion import CompletionGate
 from fathom.core.exceptions import InvariantViolation
 from fathom.core.services.criterion import CriterionObserver
-from fathom.schemas.completion import CompletionEvidence, GateDecision
+from fathom.schemas.completion import (
+    ActionEvidence,
+    ClaimEvidence,
+    CompletionEvidence,
+    GateDecision,
+    ScreenEvidence,
+)
 from fathom.schemas.criterion import CriterionDecision
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.observability import CompletionLogContext
@@ -56,14 +65,18 @@ class SubGoalEvaluator:
         context: GraphContext,
         criterion_observer: CriterionObserver,
         gate: Optional[CompletionGate] = None,
+        capture_policy: Optional[StoreCaptureCompletionPolicy] = None,
     ) -> None:
         """
-        Bind the evaluator to its graph context, criterion observer, and gate.
+        Bind the evaluator to its graph context, criterion observer, gate, and capture policy.
         """
 
         self.__context = context
         self.__criterion_observer = criterion_observer
         self.__gate = gate if gate is not None else CompletionGate()
+        self.__capture_policy = (
+            capture_policy if capture_policy is not None else StoreCaptureCompletionPolicy()
+        )
 
     async def evaluate(
         self,
@@ -92,57 +105,69 @@ class SubGoalEvaluator:
             return None
 
         active = cast("SubGoal", current)
-
-        criterion_decision = await self.__observe_criterion(
-            active=active,
-            observation=observation,
-            step_result=step_result,
-        )
-
-        last_effect = agent_state.get_last_action_effect()
-
-        directive = agent_state.operator_directive
-        directive_kind = (
-            directive.kind if directive is not None and agent_state.has_active_directive else None
-        )
-
-        semantic_similarity = await self.__semantic_similarity(
-            sub_goal=active,
-            analysis=analysis,
-        )
-
-        evidence = self.__context.reasoner.assess_completion(
-            sub_goal=active,
-            analysis=analysis,
-            effect=last_effect,
-            directive_kind=directive_kind,
-            semantic_similarity=semantic_similarity,
-            criterion_decision=criterion_decision,
-            delta_score=agent_state.last_delta_score,
-            screen_changed=step_result.screen_changed,
-            screen_description=step_result.observation or step_result.step.action.target or "",
-        )
-        self.__log_evidence_assessed(
-            active=active,
-            evidence=evidence,
-            effect=last_effect,
-            step_result=step_result,
-        )
-
         emitted_kind = action_kind_for(step_result.step.action.action_type)
-        decision = self.__gate.adjudicate(
-            evidence=evidence,
-            sub_goal=active,
-            action_kind=emitted_kind,
-        )
-        self.__log_gate_adjudicated(
-            active=active,
-            evidence=evidence,
-            decision=decision,
-            effect=last_effect,
-            step_result=step_result,
-            action_kind=emitted_kind,
-        )
+
+        if self.__is_capture_completion(
+            active=active, action_type=step_result.step.action.action_type
+        ):
+            decision = self.__capture_policy.evaluate(
+                step_result=step_result,
+                capture_store=self.__context.capture_store,
+            )
+            evidence = self.__capture_evidence(step_result=step_result, decision=decision)
+        else:
+            criterion_decision = await self.__observe_criterion(
+                active=active,
+                observation=observation,
+                step_result=step_result,
+            )
+
+            last_effect = agent_state.get_last_action_effect()
+
+            directive = agent_state.operator_directive
+            directive_kind = (
+                directive.kind
+                if directive is not None and agent_state.has_active_directive
+                else None
+            )
+
+            semantic_similarity = await self.__semantic_similarity(
+                sub_goal=active,
+                analysis=analysis,
+            )
+
+            evidence = self.__context.reasoner.assess_completion(
+                sub_goal=active,
+                analysis=analysis,
+                effect=last_effect,
+                directive_kind=directive_kind,
+                execution_success=step_result.executed,
+                semantic_similarity=semantic_similarity,
+                criterion_decision=criterion_decision,
+                delta_score=agent_state.last_delta_score,
+                screen_changed=step_result.screen_changed,
+                screen_description=step_result.observation or step_result.step.action.target or "",
+            )
+            self.__log_evidence_assessed(
+                active=active,
+                evidence=evidence,
+                effect=last_effect,
+                step_result=step_result,
+            )
+
+            decision = self.__gate.adjudicate(
+                evidence=evidence,
+                sub_goal=active,
+                action_kind=emitted_kind,
+            )
+            self.__log_gate_adjudicated(
+                active=active,
+                evidence=evidence,
+                decision=decision,
+                effect=last_effect,
+                step_result=step_result,
+                action_kind=emitted_kind,
+            )
 
         if decision.outcome is GateOutcome.ADVANCE:
             signal = self.__build_storage_signal(
@@ -155,7 +180,7 @@ class SubGoalEvaluator:
                 signal=signal,
                 evidence=evidence,
                 accumulated=accumulated,
-                kind=action_kind_for(step_result.step.action.action_type),
+                kind=emitted_kind,
             )
 
         self.__log_retained(
@@ -228,6 +253,44 @@ class SubGoalEvaluator:
         """
 
         return current is not None and has_sub_goals
+
+    def __is_capture_completion(self, *, active: SubGoal, action_type: ActionType) -> bool:
+        """
+        Whether both the active sub-goal's directive and the emitted command complete via captured value.
+        """
+
+        if active.directive is None:
+            return False
+
+        emitted = self.__context.catalog.profile(action_type=action_type).completion
+        directed = self.__context.catalog.profile(action_type=active.directive).completion
+        return (
+            emitted is CompletionMode.CAPTURE_VERIFIED
+            and directed is CompletionMode.CAPTURE_VERIFIED
+        )
+
+    @staticmethod
+    def __capture_evidence(
+        *, step_result: StepResult, decision: GateDecision
+    ) -> CompletionEvidence:
+        """
+        Build observability-only evidence for a capture turn; the decision itself comes from the policy.
+        """
+
+        request = step_result.step.action.capture
+        if decision.outcome is GateOutcome.ADVANCE and request is not None:
+            note = f"capture.verified: stored '{request.name}'"
+        elif decision.retain_reason is not None:
+            note = f"capture.retained: {decision.retain_reason.value}"
+        else:
+            note = "capture.retained"
+
+        return CompletionEvidence(
+            claim=ClaimEvidence(asserted=False, justified=False),
+            action=ActionEvidence(dispatched=False, executed=step_result.executed),
+            screen=ScreenEvidence(evolved=False),
+            notes=(note,),
+        )
 
     async def __semantic_similarity(
         self,

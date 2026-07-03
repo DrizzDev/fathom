@@ -110,11 +110,37 @@ class ToolRegistry:
                                     "validate",
                                     "home",
                                     "back",
+                                    "store",
                                 ],
                             },
                             "label_id": {
                                 "type": "STRING",
                                 "description": "The ID of the element from the manifest (e.g. '4'). REQUIRED when the target or scroll container exists in the manifest.",
+                            },
+                            "capture": {
+                                "type": "OBJECT",
+                                "description": (
+                                    "For action_type='store' ONLY. Store an actual value read from "
+                                    "the screen or task context as a named variable. subject names "
+                                    "what the user asked to capture; value is the concrete captured "
+                                    "text. Never use store for agent memory or to ask the user, and "
+                                    "never invent the captured value."
+                                ),
+                                "properties": {
+                                    "name": {
+                                        "type": "STRING",
+                                        "description": "Variable name to store the value under.",
+                                    },
+                                    "subject": {
+                                        "type": "STRING",
+                                        "description": "What the intent asked to capture.",
+                                    },
+                                    "value": {
+                                        "type": "STRING",
+                                        "description": "Concrete value read from the screen or task context.",
+                                    },
+                                },
+                                "required": ["name", "subject", "value"],
                             },
                             "bbox": {
                                 "type": "OBJECT",
@@ -215,7 +241,8 @@ class ToolRegistry:
                                 "description": (
                                     "Set true when the screenshot shows an overlay blocking the main UI "
                                     "(dimmed scrim, modal dialog, bottom sheet, permission prompt, or banner). "
-                                    "This action must dismiss it."
+                                    "This action must dismiss it. You must also set condition to the "
+                                    "specific visible overlay/dialog state."
                                 ),
                             },
                             "export_target": {
@@ -267,7 +294,12 @@ class ToolRegistry:
                             },
                             "validation_subject": {
                                 "type": "STRING",
-                                "description": "For validate actions: what specifically is being validated (e.g., 'login status', 'banner visibility', 'item alignment'). Be specific about the validation target.",
+                                "description": (
+                                    "REQUIRED for validate actions. The state or subject being asserted "
+                                    "(e.g., 'login screen', 'cart page', 'order confirmation'). Do not use "
+                                    "an incidental visible field as the subject when it is only evidence "
+                                    "for a broader state."
+                                ),
                             },
                             "target_is_generic": {
                                 "type": "BOOLEAN",

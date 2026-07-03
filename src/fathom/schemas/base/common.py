@@ -3,6 +3,14 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class SealedModel(BaseModel):
+    """
+    Base model that is immutable and closed to unknown fields.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
 class ThresholdConfiguration(BaseModel):
     """
     Generic threshold values for bounded adaptive policies.

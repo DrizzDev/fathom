@@ -11,8 +11,10 @@ from fathom.constants.tools import ToolName
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
+from fathom.schemas.gemini_tools import ExecuteAction
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.supervision import BlockReason
+from fathom.schemas.tools import ToolCommand, ToolResponse
 from tests.builders import ActionFixtures, AgentFixtures, ScreenFixtures, SubGoalFixtures
 
 
@@ -101,6 +103,58 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
             result.metadata.get(RetryMetadataField.BLOCK_REASON.value),
             BlockReason.REPEATED_CURRENT_SCREEN_ACTION.value,
         )
+
+    async def test_materializes_tool_command_after_catalog_validation(self) -> None:
+        """
+        execute_ui parser output becomes an executable Step only inside the planner boundary.
+        """
+
+        analysis = AnalysisResult(
+            action=None,
+            reasoning="Tap the search box.",
+            screen_description="Home",
+            tool_response=ToolResponse(
+                command=ToolCommand(
+                    action_type=ActionType.TAP,
+                    payload=ExecuteAction(
+                        action_type="tap",
+                        target_name="Search box",
+                        confidence=0.9,
+                    ),
+                )
+            ),
+        )
+        vision = Mock()
+        vision.analyze = AsyncMock(return_value=analysis)
+
+        def choose(primary: Action, alternatives: object, failed_actions: object) -> Action:
+            """
+            Return the planner-materialized primary action from the reasoner seam.
+            """
+
+            _ = alternatives, failed_actions
+            return primary
+
+        reasoner = Mock()
+        reasoner.select_best_action.side_effect = choose
+
+        state = AgentFixtures.state(intent="Tap search")
+        state.set_sub_goals([SubGoalFixtures.make(description="Tap search box")])
+
+        result = await StepPlanner(vision_tool=vision).plan_step(
+            state=state,
+            reasoner=reasoner,
+            capture=ScreenFixtures.capture(activity="app"),
+            context_manager=AgentFixtures.context_manager(),
+            screen_width=100,
+            screen_height=200,
+            prompt_if_stuck=False,
+        )
+
+        self.assertIsNotNone(result.step)
+        assert result.step is not None
+        self.assertEqual(result.step.action.action_type, ActionType.TAP)
+        self.assertEqual(result.step.action.target, "Search box")
 
     async def test_does_not_block_persistent_screen_memory(self) -> None:
         """

@@ -5,8 +5,9 @@ import re
 from logging import getLogger
 from typing import Any, Dict, Optional, Pattern
 
-from fathom.constants import GESTURE_ACTION_TYPES, SPATIAL_ACTION_TYPES, ActionType
+from fathom.constants import ActionType
 from fathom.constants.perception import LABEL_BBOX_AGREEMENT_FLOOR
+from fathom.core.capability.catalog import CommandCatalog
 from fathom.interfaces.memory import MemoryPort
 from fathom.schemas.actions import (
     Action,
@@ -27,12 +28,15 @@ class ReferenceResolutionService:
     Also resolves UI Element Label IDs to ground-truth pixel coordinates.
     """
 
-    def __init__(self, ledger: MemoryPort, *, workflow_id: Optional[str] = None) -> None:
+    def __init__(
+        self, ledger: MemoryPort, *, catalog: CommandCatalog, workflow_id: Optional[str] = None
+    ) -> None:
         """
         Initialize with memory ledger for lookups and optional workflow context.
         """
 
         self.__ledger = ledger
+        self.__catalog = catalog
         self.__workflow_id = workflow_id
 
         # Regex for variable substitution: $source.key
@@ -121,7 +125,7 @@ class ReferenceResolutionService:
         mechanical reason for the next planner turn.
         """
 
-        if action.action_type not in SPATIAL_ACTION_TYPES:
+        if not self.__catalog.is_spatial(action_type=action.action_type):
             # Non-spatial actions (WAIT, VALIDATE, COMPLETE, BACK, HOME,
             # HIDE_KEYBOARD, SAVE_MEMORY, RETRIEVE_MEMORY, INFER,
             # ASK_USER, UNKNOWN) carry no target bounds — snapping is a
@@ -149,7 +153,7 @@ class ReferenceResolutionService:
             return ResolveResult.resolved(action=cleaned)
 
         if not action.label_id:
-            if action.action_type in GESTURE_ACTION_TYPES:
+            if self.__catalog.is_gesture(action_type=action.action_type):
                 return ResolveResult.resolved(action=action)
 
             return ResolveResult.unresolved(
@@ -176,9 +180,9 @@ class ReferenceResolutionService:
                 reason=f"label_id '{action.label_id}' not present in current manifest",
             )
 
-        if action.action_type in GESTURE_ACTION_TYPES and not self.__gesture_axis_compatible(
-            action=action, element=info
-        ):
+        if self.__catalog.is_gesture(
+            action_type=action.action_type
+        ) and not self.__gesture_axis_compatible(action=action, element=info):
             logger.warning(
                 "Gesture label snap rejected because axis metadata is incompatible",
                 extra={
@@ -377,7 +381,7 @@ class ReferenceResolutionService:
         Emit one structured snap.evaluated event per spatial snap attempt.
         """
 
-        if requested.action_type not in SPATIAL_ACTION_TYPES:
+        if not self.__catalog.is_spatial(action_type=requested.action_type):
             return
 
         element = (elements or {}).get(requested.label_id) if requested.label_id else None

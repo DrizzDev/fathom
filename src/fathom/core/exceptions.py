@@ -274,6 +274,18 @@ class ScriptExportError(FathomError):
     """
 
 
+class LanguageComplianceError(FathomError):
+    """
+    A generated flow or rendered script violated a dialect compliance gate.
+    """
+
+
+class LanguageParseError(FathomError):
+    """
+    Rendered script text could not be parsed into a syntax tree.
+    """
+
+
 class HITLNotAvailableError(FathomError):
     """
     Raised when HITL is requested on a runtime with no human available.

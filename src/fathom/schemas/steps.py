@@ -6,6 +6,21 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.schemas.actions import Action
 from fathom.schemas.artifacts import StepArtifacts
+from fathom.schemas.capture import Capture, CaptureRequest
+
+
+class StepGoal(BaseModel):
+    """
+    Compact sub-goal context active when a step was recorded.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    index: int = Field(ge=0, description="Sub-goal index active for this step")
+    description: str = Field(min_length=1, description="Sub-goal text active for this step")
+    directive: Optional[str] = Field(
+        default=None, description="Expected action type for the active sub-goal"
+    )
 
 
 class Step(BaseModel):
@@ -38,7 +53,16 @@ class StepResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     step: Step = Field(description="The original step definition")
-    success: bool = Field(description="Whether the device execution reported success")
+    success: bool = Field(
+        description="Whether the step is considered successful after observation/effect policy (semantic, may be vetoed)"
+    )
+    executed: bool = Field(
+        default=False,
+        description="Whether the command primitive ran without error (raw ExecutionResult.success, before any screen/effect judgement)",
+    )
+    capture: Optional[Capture] = Field(
+        default=None, description="Value captured by a STORE command on this step, when one ran."
+    )
 
     pre_hash: str = Field(description="Screen hash before execution")
     post_hash: str = Field(description="Screen hash after execution")
@@ -65,7 +89,10 @@ class StepResult(BaseModel):
     )
 
     def to_record(
-        self, absolute_center: Optional[List[int]] = None, activity: Optional[str] = None
+        self,
+        absolute_center: Optional[List[int]] = None,
+        activity: Optional[str] = None,
+        goal: Optional[StepGoal] = None,
     ) -> "StepRecord":
         """
         Converts the result into a serializable record for persistence.
@@ -109,11 +136,16 @@ class StepResult(BaseModel):
             scroll_target=act.scroll_target,
             wait_subject=act.wait_subject,
             wait_pattern=act.wait_pattern,
+            validation_subject=act.validation_subject,
             is_app_launcher=act.is_app_launcher,
             target_is_generic=act.target_is_generic,
             target_element_type=act.target_element_type,
             confidence=act.confidence,
             label_id=act.label_id,
+            capture=self.capture,
+            capture_request=act.capture,
+            goal=goal,
+            artifacts=self.artifacts,
         )
 
 
@@ -164,6 +196,9 @@ class StepRecord(BaseModel):
     duration: int = Field(ge=0, description="Duration in milliseconds")
 
     activity: Optional[str] = Field(default=None, description="Android activity at time of action")
+    execution_activity: Optional[str] = Field(
+        default=None, description="Pre-action activity/package the step executed on"
+    )
 
     bounds: Optional[List[int]] = Field(
         default=None, description="Normalized [x1, y1, x2, y2] bounds"
@@ -181,6 +216,9 @@ class StepRecord(BaseModel):
     wait_pattern: Optional[str] = Field(
         default=None, description="Wait category: ad, splash, load, search, generic"
     )
+    validation_subject: Optional[str] = Field(
+        default=None, description="Structured state or subject asserted by a validation action"
+    )
     is_app_launcher: bool = Field(default=False, description="Whether this tap launches an app")
     target_is_generic: Optional[bool] = Field(
         default=None, description="Whether target is non-specific"
@@ -194,3 +232,28 @@ class StepRecord(BaseModel):
     label_id: Optional[str] = Field(
         default=None, description="Grounding label ID from XML manifest"
     )
+    capture: Optional[Capture] = Field(
+        default=None, description="Value captured by a STORE command on this step, when one ran."
+    )
+    capture_request: Optional[CaptureRequest] = Field(
+        default=None,
+        description="The STORE request (name, subject, value) the planner emitted; drives script generation.",
+    )
+    goal: Optional[StepGoal] = Field(
+        default=None,
+        description="Compact sub-goal context active when this step was recorded.",
+    )
+    artifacts: Optional[StepArtifacts] = Field(
+        default=None,
+        description="Optional namespaced artifacts captured during the step.",
+    )
+
+
+class StepHistory(BaseModel):
+    """
+    Validated payload of a run's persisted history file.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    history: List[StepRecord] = Field(description="Recorded step records, in order.")

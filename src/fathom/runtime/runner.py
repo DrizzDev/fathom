@@ -26,7 +26,6 @@ from fathom.constants.collaboration import (
     ArtifactBackend,
     TaskCode,
 )
-from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.screen import (
     MEMORY_SUMMARY_HASH_PREVIEW_LENGTH,
@@ -37,6 +36,8 @@ from fathom.constants.screen import (
 )
 from fathom.constants.state import CompletionReason
 from fathom.conversation.identity import InteractionIdentity
+from fathom.core.capability.catalog import CommandCatalogProvider
+from fathom.core.capture.store import CaptureStore
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import IdentityError, InteractionError
@@ -187,6 +188,8 @@ class FathomRunner:
         )
 
         # Wire core components
+        self.__catalog = CommandCatalogProvider().build()
+        self.__capture_store = CaptureStore()
         self.__engine = ExecutionEngine(
             llm=llm,
             device=device,
@@ -196,6 +199,8 @@ class FathomRunner:
             telemetry=telemetry,
             perception=perception,
             path_manager=path_manager,
+            catalog=self.__catalog,
+            capture_store=self.__capture_store,
         )
         self.__context_manager: Optional[ContextManager] = None
 
@@ -422,6 +427,7 @@ class FathomRunner:
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
+            catalog=self.__catalog,
             workflow_id=workflow_id,
             execution_id=execution_id,
             recorder=self.__recorder,
@@ -457,7 +463,7 @@ class FathomRunner:
             # Bound memory summary so a stuck store read cannot block result delivery.
             raw_memory_summary = await AbandonablePhase(
                 workflow_id=workflow_id,
-                phase=FinalizationPhase.MEMORY_SUMMARY,
+                phase="fathom.runner.memory.summary",
                 timeout=self.__config.intent.finalization.runtime.memory_summary,
             ).execute(awaitable=self.__get_memory_summary())
 

@@ -12,16 +12,24 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from fathom.adapters.checkpoint import SqliteCheckpointStore
+from fathom.adapters.evidence.history import HistoryEvidenceSource
+from fathom.constants.authoring import AuthoringArtifactKind, AuthoringStatus
+from fathom.constants.dialect import DialectName
 from fathom.constants.events import FathomEvent
-from fathom.constants.finalization import FinalizationPhase
+from fathom.constants.flow import IssueCode
+from fathom.constants.generation import ScriptSource, ScriptStatus
 from fathom.constants.state import RunOutcome
 from fathom.core.services.decomposer import IntentDecomposer
 from fathom.core.services.history import HistoryService
+from fathom.interfaces.authoring import AuthoringPort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.runtime.checkpoint_serde import CheckpointSerdeFactory
+from fathom.schemas.authoring import AuthoringArtifact, AuthoringResponse, AuthoringTask
 from fathom.schemas.checkpoint import SqliteCheckpointPolicy
 from fathom.schemas.configuration import FathomConfiguration
+from fathom.schemas.flow import Evidence, Issue, RunObjective
+from fathom.schemas.generation import BaselineArtifact, ScriptFileMetadata
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 from fathom.strategies.intent import (
     CHECKPOINT_ALLOWED_JSON_MODULES,
@@ -200,6 +208,186 @@ class IntentStrategyTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(call.kwargs["is_empty"])
 
 
+class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Cover the completed-run delivery contract: quality, then baseline, then typed failure; never empty success.
+    """
+
+    @staticmethod
+    def __strategy(*, baseline: BaselineArtifact, step_count: int = 4) -> Any:
+        """
+        Build a bare IntentStrategy whose history returns the given baseline outcome.
+        """
+
+        strategy = object.__new__(IntentStrategy)
+
+        agent_state = MagicMock()
+        agent_state.step_count = step_count
+
+        telemetry = MagicMock()
+        telemetry.info = AsyncMock()
+
+        history = MagicMock()
+        history.read_baseline_outcome = AsyncMock(return_value=baseline)
+
+        graph_context = MagicMock()
+        graph_context.telemetry = telemetry
+        graph_context.history = history
+        graph_context.agent_state = agent_state
+
+        strategy.__setattr__("_IntentStrategy__workflow_id", "wf-test")
+        strategy.__setattr__("_IntentStrategy__graph_context", graph_context)
+
+        return strategy, telemetry, history
+
+    @staticmethod
+    async def __deliver(*, strategy: Any, quality: Optional[str]) -> None:
+        """
+        Invoke the private completed-run delivery entry point.
+        """
+
+        deliver = cast(
+            "Callable[..., Any]",
+            strategy.__getattribute__("_IntentStrategy__deliver_final_script"),
+        )
+        await deliver(quality=quality, run_outcome=RunOutcome.COMPLETED)
+
+    @staticmethod
+    def __generated_baseline() -> BaselineArtifact:
+        return BaselineArtifact(
+            text="OPEN_APP: com.app\nTap on Search",
+            metadata=ScriptFileMetadata(
+                source=ScriptSource.BASELINE, status=ScriptStatus.GENERATED
+            ),
+        )
+
+    @staticmethod
+    def __failed_baseline() -> BaselineArtifact:
+        return BaselineArtifact(
+            metadata=ScriptFileMetadata(
+                source=ScriptSource.BASELINE,
+                status=ScriptStatus.FAILED,
+                issues=(Issue(code=IssueCode.BASELINE_UNAVAILABLE, message="no baseline"),),
+            )
+        )
+
+    async def test_quality_script_emits_generated_and_skips_baseline(self) -> None:
+        """
+        A non-empty quality script emits SCRIPT_GENERATED tagged quality, without reading the baseline.
+        """
+
+        strategy, telemetry, history = self.__strategy(baseline=self.__failed_baseline())
+
+        await self.__deliver(strategy=strategy, quality="open app\ntap search")
+
+        history.read_baseline_outcome.assert_not_awaited()
+        call = telemetry.info.call_args
+        self.assertEqual(call.kwargs["type"], FathomEvent.SCRIPT_GENERATED)
+        self.assertEqual(call.kwargs["source"], ScriptSource.QUALITY.value)
+        self.assertFalse(call.kwargs["is_empty"])
+
+    async def test_empty_quality_falls_back_to_generated_baseline(self) -> None:
+        """
+        An empty quality result emits the baseline as SCRIPT_GENERATED tagged baseline.
+        """
+
+        strategy, telemetry, history = self.__strategy(baseline=self.__generated_baseline())
+
+        await self.__deliver(strategy=strategy, quality="")
+
+        history.read_baseline_outcome.assert_awaited_once()
+        call = telemetry.info.call_args
+        self.assertEqual(call.args[0], "OPEN_APP: com.app\nTap on Search")
+        self.assertEqual(call.kwargs["type"], FathomEvent.SCRIPT_GENERATED)
+        self.assertEqual(call.kwargs["source"], ScriptSource.BASELINE.value)
+        self.assertFalse(call.kwargs["is_empty"])
+
+    async def test_no_quality_no_baseline_emits_failed_with_diagnostics(self) -> None:
+        """
+        With neither quality nor a generated baseline, a SCRIPT_GENERATION_FAILED event carries diagnostics.
+        """
+
+        strategy, telemetry, _ = self.__strategy(baseline=self.__failed_baseline())
+
+        await self.__deliver(strategy=strategy, quality=None)
+
+        call = telemetry.info.call_args
+        self.assertEqual(call.kwargs["type"], FathomEvent.SCRIPT_GENERATION_FAILED)
+        self.assertEqual(call.kwargs["issues"][0]["code"], IssueCode.BASELINE_UNAVAILABLE.value)
+
+    async def test_failed_path_never_emits_empty_script_generated(self) -> None:
+        """
+        The failure path must not emit a successful empty SCRIPT_GENERATED event.
+        """
+
+        strategy, telemetry, _ = self.__strategy(baseline=self.__failed_baseline())
+
+        await self.__deliver(strategy=strategy, quality="   ")
+
+        emitted = {call.kwargs["type"] for call in telemetry.info.call_args_list}
+        self.assertNotIn(FathomEvent.SCRIPT_GENERATED, emitted)
+        self.assertIn(FathomEvent.SCRIPT_GENERATION_FAILED, emitted)
+
+    @staticmethod
+    def __events(records: List[Any]) -> List[Any]:
+        """
+        Extract the structured event identifiers from captured log records.
+        """
+
+        return [getattr(record, "event", None) for record in records]
+
+    async def test_quality_selection_logs_decision_and_terminal_event(self) -> None:
+        """
+        Selecting quality logs the decision and the terminal SCRIPT_GENERATED emit.
+        """
+
+        strategy, _, history = self.__strategy(baseline=self.__failed_baseline())
+
+        with self.assertLogs(IntentStrategy.__module__, level="INFO") as captured:
+            await self.__deliver(strategy=strategy, quality="open app\ntap search")
+
+        events = self.__events(captured.records)
+        self.assertIn("script.finalization.quality_selected", events)
+        self.assertIn("script.telemetry.generated_emitted", events)
+        history.read_baseline_outcome.assert_not_awaited()
+
+    async def test_baseline_fallback_logs_unavailable_then_selected(self) -> None:
+        """
+        Empty quality logs quality-unavailable then baseline-selected with the terminal emit.
+        """
+
+        strategy, _, _ = self.__strategy(baseline=self.__generated_baseline())
+
+        with self.assertLogs(IntentStrategy.__module__, level="INFO") as captured:
+            await self.__deliver(strategy=strategy, quality=None)
+
+        events = self.__events(captured.records)
+        self.assertIn("script.finalization.quality_unavailable", events)
+        self.assertIn("script.finalization.baseline_selected", events)
+        self.assertIn("script.telemetry.generated_emitted", events)
+
+    async def test_failure_path_logs_decision_and_failed_terminal_event(self) -> None:
+        """
+        No quality and no generated baseline logs the failure decision and the failed terminal emit.
+        """
+
+        strategy, _, _ = self.__strategy(baseline=self.__failed_baseline())
+
+        with self.assertLogs(IntentStrategy.__module__, level="INFO") as captured:
+            await self.__deliver(strategy=strategy, quality=None)
+
+        events = self.__events(captured.records)
+        self.assertIn("script.finalization.failed", events)
+        self.assertIn("script.telemetry.failed_emitted", events)
+
+        failed = next(
+            record
+            for record in captured.records
+            if getattr(record, "event", None) == "script.finalization.failed"
+        )
+        self.assertIn(IssueCode.BASELINE_UNAVAILABLE.value, failed.__dict__["script.issue_codes"])
+
+
 @pytest.mark.asyncio
 class TestIntentStrategyCancelledScriptDelivery:
     """
@@ -274,90 +462,136 @@ class TestIntentStrategyCancelledScriptDelivery:
         return [
             event
             for event in harness.telemetry.of_type(FathomEvent.PHASE_HEARTBEAT)
-            if event.get("phase") == FinalizationPhase.HISTORY_SCRIPT.value
+            if event.get("phase") == "fathom.finalization.history.script"
         ]
 
     @staticmethod
-    async def __script(
+    async def __baseline(
         *,
         history: HistoryService,
-        intent: str,
         step_number: int,
-    ) -> str:
+    ) -> BaselineArtifact:
         """
-        Return a partial script through the patched history service method.
+        Return a generated baseline through the patched history service method.
         """
 
-        _ = (history, intent, step_number)
-        return "tap continue"
+        _ = (history, step_number)
+        return BaselineArtifact(
+            text="tap continue",
+            metadata=ScriptFileMetadata(
+                source=ScriptSource.BASELINE,
+                status=ScriptStatus.GENERATED,
+            ),
+        )
 
     @staticmethod
-    async def __empty_script(
+    async def __quality(
         *,
-        history: HistoryService,
         intent: str,
         step_number: int,
     ) -> str:
         """
-        Return an empty partial script through the patched history service method.
+        Return a generated quality script through the authoring source.
         """
 
-        _ = (history, intent, step_number)
+        _ = (intent, step_number)
+        return "quality tap continue"
+
+    @staticmethod
+    async def __empty_quality(
+        *,
+        intent: str,
+        step_number: int,
+    ) -> str:
+        """
+        Return no quality script so the finalizer must fall back to the baseline.
+        """
+
+        _ = (intent, step_number)
         return ""
 
     @staticmethod
-    async def __broken_script(
+    async def __slow_quality(
         *,
-        history: HistoryService,
         intent: str,
         step_number: int,
     ) -> str:
         """
-        Raise a script export failure through the patched history service method.
+        Delay quality generation long enough for finalization heartbeat coverage.
         """
 
-        _ = (history, intent, step_number)
-        raise RuntimeError("exporter broke")
-
-    @staticmethod
-    async def __slow_script(
-        *,
-        history: HistoryService,
-        intent: str,
-        step_number: int,
-    ) -> str:
-        """
-        Delay script generation long enough for finalization heartbeat coverage.
-        """
-
-        _ = (history, intent, step_number)
+        _ = (intent, step_number)
         await asyncio.sleep(0.6)
-        return "tap done"
+        return "quality tap done"
 
     @staticmethod
-    async def __blocked_script(
+    async def __broken_quality(
         *,
-        history: HistoryService,
         intent: str,
         step_number: int,
     ) -> str:
         """
-        Block until the caller cancellation path forces the script timeout.
+        Raise a quality generation failure through the patched history service method.
         """
 
-        _ = (history, intent, step_number)
+        _ = (intent, step_number)
+        raise RuntimeError("quality generation broke")
+
+    @staticmethod
+    async def __blocked_quality(
+        *,
+        intent: str,
+        step_number: int,
+    ) -> str:
+        """
+        Block until the caller cancellation path forces host task cancellation.
+        """
+
+        _ = (intent, step_number)
         if TestIntentStrategyCancelledScriptDelivery.__blocked_script_started is not None:
             TestIntentStrategyCancelledScriptDelivery.__blocked_script_started.set()
 
         wait_forever: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         return await wait_forever
 
+    @staticmethod
+    async def __failed_baseline(
+        *,
+        history: HistoryService,
+        step_number: int,
+    ) -> BaselineArtifact:
+        """
+        Return a failed baseline through the patched history service method.
+        """
+
+        _ = (history, step_number)
+        return BaselineArtifact(
+            metadata=ScriptFileMetadata(
+                status=ScriptStatus.FAILED,
+                source=ScriptSource.BASELINE,
+                issues=(Issue(code=IssueCode.BASELINE_UNAVAILABLE, message="no baseline"),),
+            )
+        )
+
+    @staticmethod
+    async def __broken_baseline(
+        *,
+        history: HistoryService,
+        step_number: int,
+    ) -> BaselineArtifact:
+        """
+        Raise a baseline read failure through the patched history service method.
+        """
+
+        _ = (history, step_number)
+        raise RuntimeError("baseline read broke")
+
     def __patch_boundaries(
         self,
         *,
         graph: TerminalIntentGraph,
         monkeypatch: pytest.MonkeyPatch,
-        script: Callable[..., Awaitable[str]],
+        baseline: Callable[..., Awaitable[BaselineArtifact]],
     ) -> None:
         """
         Patch external graph and script boundaries while keeping real application classes in use.
@@ -380,32 +614,92 @@ class TestIntentStrategyCancelledScriptDelivery:
         )
         monkeypatch.setattr(
             HistoryService,
-            "get_current_script",
-            self.__history_script_method(script=script),
+            "read_baseline_outcome",
+            self.__history_baseline_method(baseline=baseline),
+        )
+        monkeypatch.setattr(
+            HistoryEvidenceSource,
+            "read",
+            self.__history_evidence_method(),
         )
 
     @staticmethod
-    def __history_script_method(
+    def __history_baseline_method(
         *,
-        script: Callable[..., Awaitable[str]],
-    ) -> Callable[..., Awaitable[str]]:
+        baseline: Callable[..., Awaitable[BaselineArtifact]],
+    ) -> Callable[..., Awaitable[BaselineArtifact]]:
         """
-        Adapt a keyword-only script helper to the HistoryService instance-method contract.
+        Adapt a keyword-only baseline helper to the HistoryService instance-method contract.
         """
 
-        async def get_current_script(
+        async def read_baseline_outcome(
             history: HistoryService,
             *,
-            intent: str,
             step_number: int,
-        ) -> str:
+        ) -> BaselineArtifact:
             """
-            Call the script helper with explicit keyword arguments.
+            Call the baseline helper with explicit keyword arguments.
             """
 
-            return await script(history=history, intent=intent, step_number=step_number)
+            return await baseline(history=history, step_number=step_number)
 
-        return get_current_script
+        return read_baseline_outcome
+
+    class __QualityAuthoring(AuthoringPort):
+        """
+        Authoring source test double for final-script quality generation.
+        """
+
+        def __init__(self, *, quality: Callable[..., Awaitable[str]]) -> None:
+            """
+            Store the configured quality helper.
+            """
+
+            self.__quality = quality
+
+        async def author(self, *, task: AuthoringTask) -> AuthoringResponse:
+            """
+            Return the configured authoring response for a task.
+            """
+
+            script = await self.__quality(
+                intent=task.intent,
+                step_number=task.step_number,
+            )
+            return AuthoringResponse(
+                status=AuthoringStatus.GENERATED,
+                artifact=AuthoringArtifact(
+                    dialect=DialectName.DRIZZ,
+                    kind=AuthoringArtifactKind.TEXT,
+                    content=script,
+                ),
+            )
+
+    @staticmethod
+    def __history_evidence_method() -> Callable[..., Awaitable[Evidence]]:
+        """
+        Adapt the evidence source to deterministic test evidence.
+        """
+
+        async def read(
+            source: HistoryEvidenceSource,
+            *,
+            run: str,
+            objective: RunObjective,
+        ) -> Evidence:
+            """
+            Return minimal normalized evidence for authoring tests.
+            """
+
+            _ = source
+            return Evidence(
+                intent=objective.intent,
+                goal=objective.intent,
+                package=objective.package,
+                artifacts=(run,),
+            )
+
+        return read
 
     @staticmethod
     def __selected_graph(
@@ -431,7 +725,8 @@ class TestIntentStrategyCancelledScriptDelivery:
         memory_port_stub: MemoryPort,
         monkeypatch: pytest.MonkeyPatch,
         configuration: Optional[FathomConfiguration] = None,
-        script: Optional[Callable[..., Awaitable[str]]] = None,
+        quality: Optional[Callable[..., Awaitable[str]]] = None,
+        baseline: Optional[Callable[..., Awaitable[BaselineArtifact]]] = None,
     ) -> IntentStrategyHarness:
         """
         Execute IntentStrategy with controlled external boundaries.
@@ -440,7 +735,7 @@ class TestIntentStrategyCancelledScriptDelivery:
         self.__patch_boundaries(
             graph=graph,
             monkeypatch=monkeypatch,
-            script=script or self.__script,
+            baseline=baseline or self.__baseline,
         )
 
         harness = IntentStrategyHarnessBuilder.build(
@@ -448,6 +743,7 @@ class TestIntentStrategyCancelledScriptDelivery:
             llm=llm_port_stub,
             memory=memory_port_stub,
             configuration=configuration or IntentCancellationConfigurationBuilder.build(),
+            authoring=self.__QualityAuthoring(quality=quality or self.__quality),
         )
 
         await harness.strategy.execute()
@@ -475,7 +771,8 @@ class TestIntentStrategyCancelledScriptDelivery:
         script_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)[0]
 
         assert script_event["is_empty"] is False
-        assert script_event["message"] == "tap continue"
+        assert script_event["message"] == "quality tap continue"
+        assert script_event["source"] == ScriptSource.QUALITY.value
         assert script_event["run_outcome"] == RunOutcome.CANCELLED.value
         assert script_event["workflow_id"] == "workflow-cancelled-script"
 
@@ -492,14 +789,15 @@ class TestIntentStrategyCancelledScriptDelivery:
 
         self.__patch_boundaries(
             monkeypatch=monkeypatch,
+            baseline=self.__baseline,
             graph=TerminalIntentGraph.host_cancelled(),
-            script=self.__script,
         )
         harness = IntentStrategyHarnessBuilder.build(
             tmp_path=tmp_path,
             llm=llm_port_stub,
             memory=memory_port_stub,
             configuration=IntentCancellationConfigurationBuilder.build(),
+            authoring=self.__QualityAuthoring(quality=self.__quality),
         )
 
         with pytest.raises(asyncio.CancelledError):
@@ -508,10 +806,11 @@ class TestIntentStrategyCancelledScriptDelivery:
         script_events = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)
 
         assert len(script_events) == 1
-        assert script_events[0]["message"] == "tap continue"
+        assert script_events[0]["message"] == "quality tap continue"
+        assert script_events[0]["source"] == ScriptSource.QUALITY.value
         assert script_events[0]["run_outcome"] == RunOutcome.CANCELLED.value
 
-    async def test_host_cancelled_run_script_exception_emits_empty_script(
+    async def test_host_cancelled_run_baseline_exception_emits_failed_event_after_empty_quality(
         self,
         tmp_path: Path,
         llm_port_stub: LLMPort,
@@ -519,19 +818,20 @@ class TestIntentStrategyCancelledScriptDelivery:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """
-        Host-level cancellation still emits an empty script event when script export fails.
+        Host-level cancellation emits a typed failed event when quality is empty and baseline fails.
         """
 
         self.__patch_boundaries(
             monkeypatch=monkeypatch,
+            baseline=self.__broken_baseline,
             graph=TerminalIntentGraph.host_cancelled(),
-            script=self.__broken_script,
         )
         harness = IntentStrategyHarnessBuilder.build(
             tmp_path=tmp_path,
             llm=llm_port_stub,
             memory=memory_port_stub,
             configuration=IntentCancellationConfigurationBuilder.build(),
+            authoring=self.__QualityAuthoring(quality=self.__empty_quality),
         )
 
         with (
@@ -540,17 +840,17 @@ class TestIntentStrategyCancelledScriptDelivery:
         ):
             await harness.strategy.execute()
 
-        script_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)[0]
+        failed_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATION_FAILED)[0]
 
-        assert script_event["message"] == ""
-        assert script_event["is_empty"] is True
-        assert script_event["run_outcome"] == RunOutcome.CANCELLED.value
+        assert failed_event["source"] == ScriptSource.BASELINE.value
+        assert failed_event["run_outcome"] == RunOutcome.CANCELLED.value
+        assert failed_event["issues"][0]["code"] == IssueCode.BASELINE_UNAVAILABLE.value
         assert any(
-            "cancelled-run script finalization failed" in record.message
+            "cancelled-run script fallback failed" in record.message
             for record in captured_logs.records
         )
 
-    async def test_cancelled_run_script_timeout_emits_empty_script(
+    async def test_cancelled_run_quality_timeout_falls_back_to_baseline(
         self,
         tmp_path: Path,
         llm_port_stub: LLMPort,
@@ -558,14 +858,15 @@ class TestIntentStrategyCancelledScriptDelivery:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """
-        A cancelled-run script timeout emits an empty SCRIPT_GENERATED event tagged cancelled.
+        A cancelled-run quality timeout falls back to the deterministic baseline.
         """
 
         harness = await self.__run_strategy(
             tmp_path=tmp_path,
             monkeypatch=monkeypatch,
-            script=self.__slow_script,
             llm_port_stub=llm_port_stub,
+            baseline=self.__baseline,
+            quality=self.__slow_quality,
             memory_port_stub=memory_port_stub,
             graph=TerminalIntentGraph.workflow_cancelled(),
             configuration=IntentCancellationConfigurationBuilder.build(script_timeout=0.1),
@@ -573,11 +874,11 @@ class TestIntentStrategyCancelledScriptDelivery:
 
         script_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)[0]
 
-        assert script_event["message"] == ""
-        assert script_event["is_empty"] is True
+        assert script_event["message"] == "tap continue"
+        assert script_event["source"] == ScriptSource.BASELINE.value
         assert script_event["run_outcome"] == RunOutcome.CANCELLED.value
 
-    async def test_cancelled_run_script_exception_emits_empty_script(
+    async def test_cancelled_run_baseline_exception_emits_failed_event_after_empty_quality(
         self,
         tmp_path: Path,
         llm_port_stub: LLMPort,
@@ -585,7 +886,7 @@ class TestIntentStrategyCancelledScriptDelivery:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """
-        A cancelled-run script exception logs the failure and still emits an empty script event.
+        A cancelled-run baseline exception logs the failure and emits a typed failed event.
         """
 
         with self.__capture_intent_logs() as captured_logs:
@@ -593,22 +894,23 @@ class TestIntentStrategyCancelledScriptDelivery:
                 tmp_path=tmp_path,
                 monkeypatch=monkeypatch,
                 llm_port_stub=llm_port_stub,
-                script=self.__broken_script,
+                quality=self.__empty_quality,
+                baseline=self.__broken_baseline,
                 memory_port_stub=memory_port_stub,
                 graph=TerminalIntentGraph.workflow_cancelled(),
             )
 
-        script_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)[0]
+        failed_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATION_FAILED)[0]
 
-        assert script_event["message"] == ""
-        assert script_event["is_empty"] is True
-        assert script_event["run_outcome"] == RunOutcome.CANCELLED.value
+        assert failed_event["source"] == ScriptSource.BASELINE.value
+        assert failed_event["run_outcome"] == RunOutcome.CANCELLED.value
+        assert failed_event["issues"][0]["code"] == IssueCode.BASELINE_UNAVAILABLE.value
         assert any(
-            "cancelled-run script finalization failed" in record.message
+            "cancelled-run script fallback failed" in record.message
             for record in captured_logs.records
         )
 
-    async def test_slow_cancelled_run_script_emits_heartbeat_before_script(
+    async def test_slow_cancelled_run_quality_emits_heartbeat_before_script(
         self,
         tmp_path: Path,
         llm_port_stub: LLMPort,
@@ -616,14 +918,14 @@ class TestIntentStrategyCancelledScriptDelivery:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """
-        Slow cancelled-run script generation emits a bounded heartbeat before the script event.
+        Slow cancelled-run quality generation emits a bounded heartbeat before the script event.
         """
 
         harness = await self.__run_strategy(
             tmp_path=tmp_path,
             monkeypatch=monkeypatch,
-            script=self.__slow_script,
             llm_port_stub=llm_port_stub,
+            quality=self.__slow_quality,
             memory_port_stub=memory_port_stub,
             graph=TerminalIntentGraph.workflow_cancelled(),
             configuration=IntentCancellationConfigurationBuilder.build(
@@ -640,7 +942,7 @@ class TestIntentStrategyCancelledScriptDelivery:
                 FathomEvent.PHASE_HEARTBEAT,
                 FathomEvent.SCRIPT_GENERATED,
             }
-            and event.get("phase") in {None, FinalizationPhase.HISTORY_SCRIPT.value}
+            and event.get("phase") in {None, "fathom.finalization.history.script"}
         ]
 
         assert event_types.index(FathomEvent.PHASE_HEARTBEAT) < event_types.index(
@@ -665,8 +967,8 @@ class TestIntentStrategyCancelledScriptDelivery:
 
         self.__patch_boundaries(
             monkeypatch=monkeypatch,
+            baseline=self.__baseline,
             graph=TerminalIntentGraph.workflow_cancelled(),
-            script=self.__slow_script,
         )
         harness = IntentStrategyHarnessBuilder.build(
             tmp_path=tmp_path,
@@ -675,6 +977,7 @@ class TestIntentStrategyCancelledScriptDelivery:
             configuration=IntentCancellationConfigurationBuilder.build(
                 script_timeout=1.0, heartbeat_threshold=0.5
             ),
+            authoring=self.__QualityAuthoring(quality=self.__slow_quality),
         )
         original_info = harness.telemetry.info
 
@@ -692,10 +995,12 @@ class TestIntentStrategyCancelledScriptDelivery:
 
         with self.__capture_intent_logs() as captured_logs:
             result = await harness.strategy.execute()
+
         script_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)[0]
 
         assert result.is_cancelled is True
-        assert script_event["message"] == "tap done"
+        assert script_event["message"] == "quality tap done"
+        assert script_event["source"] == ScriptSource.QUALITY.value
         assert script_event["run_outcome"] == RunOutcome.CANCELLED.value
         assert any(
             "cancelled-run script heartbeat emit failed" in record.message
@@ -717,17 +1022,18 @@ class TestIntentStrategyCancelledScriptDelivery:
             tmp_path=tmp_path,
             monkeypatch=monkeypatch,
             llm_port_stub=llm_port_stub,
-            script=self.__broken_script,
+            baseline=self.__broken_baseline,
+            quality=self.__broken_quality,
             memory_port_stub=memory_port_stub,
             graph=TerminalIntentGraph.completed(),
         )
 
         script_events = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)
 
-        assert harness.strategy.step_results == []
         assert script_events == []
+        assert harness.strategy.step_results == []
 
-    async def test_cancelled_run_task_cancellation_during_script_generation_emits_empty_script(
+    async def test_completed_run_with_final_authoring_disabled_uses_baseline(
         self,
         tmp_path: Path,
         llm_port_stub: LLMPort,
@@ -735,13 +1041,66 @@ class TestIntentStrategyCancelledScriptDelivery:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """
-        Host task cancellation during script generation must propagate after empty script delivery.
+        Disabling final authoring skips the quality path and emits the baseline fallback.
+        """
+
+        async def fail_if_quality_runs(
+            *,
+            intent: str,
+            step_number: int,
+        ) -> str:
+            """
+            Fail the test if disabled final authoring still calls the quality path.
+            """
+
+            _ = (intent, step_number)
+            raise AssertionError(
+                "quality authoring should not run when final authoring is disabled"
+            )
+
+        configuration = IntentCancellationConfigurationBuilder.build()
+        configuration = configuration.model_copy(
+            update={
+                "authoring": configuration.authoring.model_copy(
+                    update={
+                        "run": configuration.authoring.run.model_copy(update={"enabled": False})
+                    }
+                )
+            }
+        )
+
+        harness = await self.__run_strategy(
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+            baseline=self.__baseline,
+            llm_port_stub=llm_port_stub,
+            configuration=configuration,
+            quality=fail_if_quality_runs,
+            memory_port_stub=memory_port_stub,
+            graph=TerminalIntentGraph.completed(),
+        )
+
+        script_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)[0]
+
+        assert script_event["message"] == "tap continue"
+        assert script_event["source"] == ScriptSource.BASELINE.value
+        assert script_event["run_outcome"] == RunOutcome.COMPLETED.value
+
+    async def test_cancelled_run_blocked_quality_timeout_emits_baseline_not_empty_script(
+        self,
+        tmp_path: Path,
+        llm_port_stub: LLMPort,
+        memory_port_stub: MemoryPort,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Blocked quality generation times out and emits the baseline fallback, never empty success.
         """
 
         self.__patch_boundaries(
             monkeypatch=monkeypatch,
+            baseline=self.__baseline,
             graph=TerminalIntentGraph.workflow_cancelled(),
-            script=self.__blocked_script,
         )
         harness = IntentStrategyHarnessBuilder.build(
             tmp_path=tmp_path,
@@ -750,6 +1109,7 @@ class TestIntentStrategyCancelledScriptDelivery:
             configuration=IntentCancellationConfigurationBuilder.build(
                 script_timeout=1.0, heartbeat_threshold=0.5
             ),
+            authoring=self.__QualityAuthoring(quality=self.__blocked_quality),
         )
 
         TestIntentStrategyCancelledScriptDelivery.__blocked_script_started = asyncio.Event()
@@ -758,16 +1118,14 @@ class TestIntentStrategyCancelledScriptDelivery:
             TestIntentStrategyCancelledScriptDelivery.__blocked_script_started.wait(),
             timeout=1.0,
         )
-        task.cancel()
-
         try:
-            with pytest.raises(asyncio.CancelledError):
-                await task
+            await task
         finally:
             TestIntentStrategyCancelledScriptDelivery.__blocked_script_started = None
 
         script_event = harness.telemetry.of_type(FathomEvent.SCRIPT_GENERATED)[0]
 
-        assert script_event["message"] == ""
-        assert script_event["is_empty"] is True
+        assert script_event["is_empty"] is False
+        assert script_event["message"] == "tap continue"
+        assert script_event["source"] == ScriptSource.BASELINE.value
         assert script_event["run_outcome"] == RunOutcome.CANCELLED.value

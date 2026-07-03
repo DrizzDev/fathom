@@ -365,8 +365,8 @@ class GeminiLLM(LLMPort):
                 else:
                     parts.append(types.Part(inline_data=item))
 
-        max_retries = self.__configuration.max_retries
         active_cache_name = cache_name
+        max_retries = self.__configuration.max_retries
 
         for attempt in range(max_retries + 1):
             tier = self.__priority.select()

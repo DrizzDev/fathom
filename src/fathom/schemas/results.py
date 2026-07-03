@@ -8,10 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from fathom.constants import StrategyStatus
 from fathom.schemas.actions import Action
 from fathom.schemas.artifacts import ScreenArtifact
+from fathom.schemas.capture import Capture
 from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.swipe import SwipeExecution
+from fathom.schemas.tools import StateUpdate, ToolArtifact, ToolData, ToolDiagnostic, ToolResponse
 
 
 class AnalysisOutcome(StrEnum):
@@ -22,10 +24,12 @@ class AnalysisOutcome(StrEnum):
 
     - ``ACT``: the agent committed to a concrete action; ``action`` is load-bearing and EXECUTE consumes it.
     - ``ASK_USER``: the agent wants the human to clarify the next move (existing HITL path; planner emits an ``ASK_USER`` action).
+    - ``TOOL_RESPONSE``: the model emitted non-command tool response parts without an executable action.
     """
 
     ACT = "act"
     ASK_USER = "ask_user"
+    TOOL_RESPONSE = "tool_response"
 
 
 class AnalysisResult(BaseModel):
@@ -33,7 +37,8 @@ class AnalysisResult(BaseModel):
     Result of vision analysis.
     """
 
-    action: Action = Field(
+    action: Optional[Action] = Field(
+        default=None,
         description="Primary recommended action.",
     )
     alternatives: List[Action] = Field(
@@ -74,6 +79,10 @@ class AnalysisResult(BaseModel):
     )
     delta: Optional[DeltaSignal] = Field(
         default=None, description="Optional model-provided semantic delta hints"
+    )
+    tool_response: Optional[ToolResponse] = Field(
+        default=None,
+        description="Parsed model-tool response. Consumed by the planner boundary only.",
     )
 
     outcome: AnalysisOutcome = Field(
@@ -267,6 +276,9 @@ class ExecutionResult(BaseModel):
     post_hash: str = Field(default="", description="Visual hash after execution")
 
     error: Optional[str] = Field(default=None, description="Error message if failed")
+    capture: Optional[Capture] = Field(
+        default=None, description="Value captured by a STORE command, when one ran."
+    )
     screen_changed: bool = Field(default=False, description="Whether the screen changed")
     is_cancelled: bool = Field(default=False, description="Whether the execution was cancelled")
     swipe_execution: Optional[SwipeExecution] = Field(
@@ -304,6 +316,30 @@ class PlanResult(BaseModel):
     validation_reasoning: Optional[str] = Field(
         default=None, description="Reason if action is invalid"
     )
+    updates: Tuple[StateUpdate, ...] = Field(
+        default_factory=tuple,
+        description="Runtime updates to apply outside the executable step path.",
+    )
+    data: Tuple[ToolData, ...] = Field(
+        default_factory=tuple,
+        description="Tool data returned for application-layer routing.",
+    )
+    artifacts: Tuple[ToolArtifact, ...] = Field(
+        default_factory=tuple,
+        description="Tool artifacts returned for application-layer routing.",
+    )
+    diagnostics: Tuple[ToolDiagnostic, ...] = Field(
+        default_factory=tuple,
+        description="Tool diagnostics returned for application-layer routing.",
+    )
+
+    @property
+    def has_non_command_response(self) -> bool:
+        """
+        Return whether the plan carries non-command tool-response parts.
+        """
+
+        return bool(self.updates or self.data or self.artifacts or self.diagnostics)
 
 
 class GenerateResult(BaseModel):

@@ -42,7 +42,7 @@ class CompletionGateActionTest(unittest.TestCase):
 
         return CompletionEvidence(
             screen=ScreenEvidence(evolved=evolved),
-            action=ActionEvidence(dispatched=dispatched),
+            action=ActionEvidence(dispatched=dispatched, executed=dispatched),
             claim=ClaimEvidence(asserted=asserted, justified=justified),
         )
 
@@ -141,7 +141,7 @@ class CompletionGateValidationTest(unittest.TestCase):
 
         evidence = CompletionEvidence(
             screen=ScreenEvidence(evolved=False),
-            action=ActionEvidence(dispatched=False),
+            action=ActionEvidence(dispatched=False, executed=False),
             claim=ClaimEvidence(asserted=True, justified=False),
         )
 
@@ -160,7 +160,7 @@ class CompletionGateValidationTest(unittest.TestCase):
 
         evidence = CompletionEvidence(
             screen=ScreenEvidence(evolved=True),
-            action=ActionEvidence(dispatched=True),
+            action=ActionEvidence(dispatched=True, executed=True),
             claim=ClaimEvidence(asserted=False, justified=True),
         )
 
@@ -179,7 +179,7 @@ class CompletionGateValidationTest(unittest.TestCase):
 
         evidence = CompletionEvidence(
             screen=ScreenEvidence(evolved=False),
-            action=ActionEvidence(dispatched=False),
+            action=ActionEvidence(dispatched=False, executed=False),
             claim=ClaimEvidence(asserted=False, justified=True),
         )
 
@@ -204,7 +204,7 @@ class CompletionGateCriterionAdditiveTest(unittest.TestCase):
 
         evidence = CompletionEvidence(
             screen=ScreenEvidence(evolved=False),
-            action=ActionEvidence(dispatched=False),
+            action=ActionEvidence(dispatched=False, executed=False),
             criterion=CriterionEvidence(observed=True),
             claim=ClaimEvidence(asserted=False, justified=False),
         )
@@ -228,7 +228,7 @@ class CompletionGateCriterionAdditiveTest(unittest.TestCase):
 
         evidence = CompletionEvidence(
             screen=ScreenEvidence(evolved=True),
-            action=ActionEvidence(dispatched=True),
+            action=ActionEvidence(dispatched=True, executed=True),
             criterion=CriterionEvidence(observed=False),
             claim=ClaimEvidence(asserted=True, justified=True),
         )
@@ -275,7 +275,7 @@ class CompletionGateValidateEscapeTest(unittest.TestCase):
 
         return CompletionEvidence(
             screen=ScreenEvidence(evolved=evolved),
-            action=ActionEvidence(dispatched=dispatched),
+            action=ActionEvidence(dispatched=dispatched, executed=dispatched),
             claim=ClaimEvidence(asserted=asserted, justified=justified),
         )
 
@@ -396,7 +396,7 @@ class CompletionGateValidationMirrorRegressionTest(unittest.TestCase):
 
         evidence = CompletionEvidence(
             claim=ClaimEvidence(asserted=False, justified=True),
-            action=ActionEvidence(dispatched=True),
+            action=ActionEvidence(dispatched=True, executed=True),
             screen=ScreenEvidence(evolved=True),
         )
 
@@ -415,7 +415,7 @@ class CompletionGateValidationMirrorRegressionTest(unittest.TestCase):
 
         evidence = CompletionEvidence(
             claim=ClaimEvidence(asserted=False, justified=False),
-            action=ActionEvidence(dispatched=True),
+            action=ActionEvidence(dispatched=True, executed=True),
             screen=ScreenEvidence(evolved=True),
         )
 
@@ -426,3 +426,51 @@ class CompletionGateValidationMirrorRegressionTest(unittest.TestCase):
         )
 
         self.assertEqual(decision.outcome, GateOutcome.RETAIN)
+
+
+class CompletionGateExecutedIndependenceTest(unittest.TestCase):
+    """
+    The gate ignores action.executed; flipping it never changes the decision (executed is telemetry only).
+    """
+
+    @staticmethod
+    def __sub_goal() -> SubGoal:
+        """
+        Build an ACTION sub-goal fixture.
+        """
+
+        return SubGoal(index=0, description="Tap on Submit", kind=SubGoalKind.ACTION)
+
+    @staticmethod
+    def __evidence(*, executed: bool) -> CompletionEvidence:
+        """
+        Build an otherwise-ADVANCE evidence bundle with the requested executed bit.
+        """
+
+        return CompletionEvidence(
+            screen=ScreenEvidence(evolved=True),
+            action=ActionEvidence(dispatched=True, executed=executed),
+            claim=ClaimEvidence(asserted=True, justified=True),
+        )
+
+    def test_gate_outcome_is_identical_regardless_of_executed(self) -> None:
+        """
+        Holding dispatched/claim/screen fixed, both executed values yield the same gate decision.
+        """
+
+        gate = CompletionGate()
+
+        executed_true = gate.adjudicate(
+            sub_goal=self.__sub_goal(),
+            action_kind=ActionKind.NAVIGATION,
+            evidence=self.__evidence(executed=True),
+        )
+        executed_false = gate.adjudicate(
+            sub_goal=self.__sub_goal(),
+            action_kind=ActionKind.NAVIGATION,
+            evidence=self.__evidence(executed=False),
+        )
+
+        self.assertEqual(executed_true.outcome, executed_false.outcome)
+        self.assertEqual(executed_true.retain_reason, executed_false.retain_reason)
+        self.assertEqual(executed_true.outcome, GateOutcome.ADVANCE)

@@ -28,6 +28,7 @@ Open `/fathom/.codex/.skills/.engineering/.standards/SKILL.md` and confirm the d
 **Naming (SKILL.md §3 + Fathom-specific)**
 - Folders, files, modules use single-word `snake_case`.
 - Classes `PascalCase`. Functions/methods `snake_case`. Private methods `__snake_case` — never `_snake_case` for private. Constants `UPPER_SNAKE_CASE`.
+- Enum member values are `UPPER_SNAKE_CASE` for internal/semantic enums (value mirrors the name); only enums whose values form an external/rendered protocol vocabulary (rendered-output tokens, external API/tool contracts, persisted wire formats) keep literal-cased values. A lowercase value on an internal/semantic enum is a Blocker.
 - No unit suffixes/prefixes on variables (`duration_ms`, `cache_size_bytes`, `latency_seconds` are wrong — use `duration`/`size`/`latency` with the unit documented in a one-line docstring or schema description).
 - Prefer nested Pydantic fields (`ocr.enabled`, not `ocr_enabled`).
 - Names must be domain-driven and self-explanatory. No abbreviations.

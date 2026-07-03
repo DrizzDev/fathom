@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Literal, Optional, Set
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fathom.constants import ActionType
+from fathom.schemas.capture import CaptureRequest
 from fathom.schemas.validators import enforce_validate_prefix
 
 CoordSystem = Literal["normalized", "pixel"]
@@ -318,6 +319,10 @@ class ExecuteAction(BaseModel):
         default=None,
         description="Structured validation rationale for validate-like actions.",
     )
+    capture: Optional[CaptureRequest] = Field(
+        default=None,
+        description="For action_type='store' only: the semantic capture request (name, subject, value).",
+    )
 
     condition: Optional[str] = Field(
         default=None,
@@ -471,6 +476,21 @@ class ExecuteAction(BaseModel):
                 "Describe what we're waiting for (e.g., 'app to load', 'search results to appear')."
             )
 
+        # capture is required for (and only valid for) store actions.
+        if at == ActionType.STORE.value:
+            if self.capture is None:
+                raise ValueError(
+                    "capture is required for action_type='store'. Provide name, subject, and value."
+                )
+        elif self.capture is not None:
+            raise ValueError(f"capture is only valid for action_type='store', not '{at}'.")
+
+        if at == ActionType.VALIDATE.value and not (self.validation_subject or "").strip():
+            raise ValueError(
+                "validation_subject is required for action_type='validate'. "
+                "Provide the state or subject being asserted."
+            )
+
         return self
 
     @model_validator(mode="after")
@@ -482,9 +502,7 @@ class ExecuteAction(BaseModel):
         conditional_type = self.conditional_type
         is_conditional = self.is_conditional or bool(self.overlay_detected)
 
-        # overlay_detected is a system signal — provide sensible defaults.
-        if self.overlay_detected and not condition:
-            condition = "Overlay is visible"
+        # overlay_detected is a system signal; the guard text still belongs to the planner.
         if self.overlay_detected and not conditional_type:
             conditional_type = "blocker"
 

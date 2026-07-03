@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 
-from fathom.constants import GESTURE_ACTION_TYPES, ActionExecutionKind, ActionType
+from fathom.constants import ActionExecutionKind, ActionType
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
@@ -154,6 +154,8 @@ class ObserveNode:
             pre_hash=pre_hash,
             post_hash=post_hash,
             success=step_success,
+            executed=execution_result.success,
+            capture=execution_result.capture,
             artifacts=step_artifacts,
             duration=context.duration,
             error=execution_result.error,
@@ -233,8 +235,8 @@ class ObserveNode:
             threshold=ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD,
         )
 
-    @staticmethod
     def __step_success(
+        self,
         *,
         action_type: ActionType,
         action_effect: ActionEffect,
@@ -249,7 +251,7 @@ class ObserveNode:
             return False
 
         if (
-            action_type in GESTURE_ACTION_TYPES
+            self.__provider.context.catalog.is_gesture(action_type=action_type)
             and action_effect.status is ActionEffectStatus.NO_PROGRESS
         ):
             logger.info(

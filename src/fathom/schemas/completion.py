@@ -63,6 +63,13 @@ class ActionEvidence(BaseModel):
             "the device adapter (not a no-op or planning-only directive)."
         ),
     )
+    executed: bool = Field(
+        description=(
+            "True when the command primitive ran without an executor/device/control error, "
+            "sourced from the runtime ExecutionResult.success (distinct from screen change and "
+            "sub-goal completion). Not yet consumed by the gate."
+        ),
+    )
 
 
 class ScreenEvidence(BaseModel):

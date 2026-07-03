@@ -5,7 +5,6 @@ import time
 import unittest
 
 from fathom.base.phase import AbandonablePhase, BoundedPhase
-from fathom.constants.finalization import FinalizationPhase
 from fathom.core.exceptions import FinalizationTimeoutError
 
 
@@ -22,8 +21,8 @@ class BoundedPhaseTest(unittest.IsolatedAsyncioTestCase):
         async def __work() -> str:
             return "ok"
 
-        phase = BoundedPhase(
-            phase=FinalizationPhase.HISTORY_FLUSH,
+        phase: BoundedPhase[str] = BoundedPhase(
+            phase="fathom.finalization.history.flush",
             timeout=1.0,
             workflow_id="workflow-test",
         )
@@ -40,8 +39,8 @@ class BoundedPhaseTest(unittest.IsolatedAsyncioTestCase):
         async def __work() -> None:
             await asyncio.sleep(1.0)
 
-        phase = BoundedPhase(
-            phase=FinalizationPhase.HISTORY_FLUSH,
+        phase: BoundedPhase[None] = BoundedPhase(
+            phase="fathom.finalization.history.flush",
             timeout=0.05,
             workflow_id="workflow-test",
         )
@@ -49,7 +48,7 @@ class BoundedPhaseTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(FinalizationTimeoutError) as captured:
             await phase.execute(awaitable=__work())
 
-        self.assertEqual(captured.exception.phase, FinalizationPhase.HISTORY_FLUSH.value)
+        self.assertEqual(captured.exception.phase, "fathom.finalization.history.flush")
         self.assertEqual(captured.exception.workflow_id, "workflow-test")
 
     async def test_propagates_inner_exception_without_wrapping(self) -> None:
@@ -60,8 +59,8 @@ class BoundedPhaseTest(unittest.IsolatedAsyncioTestCase):
         async def __work() -> None:
             raise ValueError("inner failure")
 
-        phase = BoundedPhase(
-            phase=FinalizationPhase.HISTORY_FLUSH,
+        phase: BoundedPhase[None] = BoundedPhase(
+            phase="fathom.finalization.history.flush",
             timeout=1.0,
         )
 
@@ -83,7 +82,7 @@ class AbandonablePhaseTest(unittest.IsolatedAsyncioTestCase):
             return 42
 
         phase = AbandonablePhase(
-            phase=FinalizationPhase.RUNNER_CLEANUP,
+            phase="fathom.runner.cleanup",
             timeout=1.0,
         )
 
@@ -103,7 +102,7 @@ class AbandonablePhaseTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.Event().wait()  # swallow cancel, hang forever
 
         phase = AbandonablePhase(
-            phase=FinalizationPhase.RUNNER_CLEANUP,
+            phase="fathom.runner.cleanup",
             timeout=0.1,
             workflow_id="workflow-test",
         )
@@ -127,7 +126,7 @@ class AbandonablePhaseTest(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("inner failure")
 
         phase = AbandonablePhase(
-            phase=FinalizationPhase.RUNNER_CLEANUP,
+            phase="fathom.runner.cleanup",
             timeout=1.0,
         )
 

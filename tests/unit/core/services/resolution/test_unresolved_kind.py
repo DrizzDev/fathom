@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, Mock
 
 from fathom.constants import ActionType
+from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.resolution import ResolveStatus, UnresolvedKind
@@ -24,7 +25,7 @@ class ResolutionUnresolvedKindTest(unittest.IsolatedAsyncioTestCase):
 
         ledger = Mock()
         ledger.get = AsyncMock(return_value=None)
-        return ReferenceResolutionService(ledger=ledger)
+        return ReferenceResolutionService(ledger=ledger, catalog=CommandCatalogProvider().build())
 
     @staticmethod
     def __tap_action(

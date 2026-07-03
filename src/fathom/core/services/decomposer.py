@@ -12,12 +12,12 @@ from fathom.constants import ActionType
 from fathom.constants.reasoning import MINIMUM_DECOMPOSITION_CONFIDENCE
 from fathom.core.exceptions import ConfigurationError
 from fathom.core.prompts.factory import PromptFactory
+from fathom.core.services.directive import DirectivePolicy
 from fathom.interfaces.llm import LLMPort, PromptPart
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.decomposition import DecomposedTask, DecompositionSchema
 from fathom.schemas.subgoal import (
     SubGoal,
-    SubGoalKind,
     SubGoalStatus,
 )
 
@@ -58,20 +58,21 @@ class IntentDecomposer:
     Accepts an optional :class:`DecompositionAugmentation` to inject caller-specific context without coupling to the caller's domain.
     """
 
-    def __init__(self, llm: LLMPort) -> None:
+    def __init__(self, llm: LLMPort, *, directive_policy: DirectivePolicy) -> None:
         self.__llm = llm
+        self.__directive_policy = directive_policy
         self.__configuration = LLMConfiguration()
         self.__prompt_builder = PromptFactory.get_decomposition_builder(model_name=llm.model_name)
 
     @classmethod
     def with_configuration(
-        cls, *, llm: LLMPort, configuration: LLMConfiguration
+        cls, *, llm: LLMPort, directive_policy: DirectivePolicy, configuration: LLMConfiguration
     ) -> "IntentDecomposer":
         """
         Build decomposer with an explicit LLM configuration (caching, etc.).
         """
 
-        decomposer = cls(llm=llm)
+        decomposer = cls(llm=llm, directive_policy=directive_policy)
         decomposer.__configuration = configuration
 
         return decomposer
@@ -215,8 +216,8 @@ class IntentDecomposer:
 
         return [sub_goal.model_copy(update={"index": idx}) for idx, sub_goal in enumerate(kept)]
 
-    @staticmethod
     def __build_sub_goal(
+        self,
         *,
         index: int,
         entry: object,
@@ -239,9 +240,7 @@ class IntentDecomposer:
                 criterion=entry.criterion,
                 directive=entry.directive,
                 description=entry.description,
-                kind=IntentDecomposer.__classify_kind(
-                    directive=entry.directive, description=entry.description
-                ),
+                kind=self.__directive_policy.kind(directive=entry.directive),
             )
 
         description = str(entry)
@@ -250,35 +249,8 @@ class IntentDecomposer:
             index=index,
             confidence=confidence,
             description=description,
-            kind=IntentDecomposer.__classify_kind(directive=None, description=description),
+            kind=self.__directive_policy.kind(directive=None),
         )
-
-    @staticmethod
-    def __classify_kind(
-        *,
-        description: str,
-        directive: Optional[ActionType],
-    ) -> SubGoalKind:
-        """
-        Classify a sub-goal by its structured directive: VALIDATE directive maps
-        to VALIDATION, every other directive (and the legacy directive=None
-        case) maps to ACTION. The directive is the single authoritative source —
-        no description-string heuristics, which historically misclassified
-        action sub-goals whose button names contained validation keywords
-        (e.g. "Tap on Confirm location button").
-
-        Legacy decompositions with directive=None default to ACTION, the
-        stricter threshold; this is intentional safety: a legacy validation
-        sub-goal still advances under the 3-of-3 ACTION policy on real
-        evidence, never on a guessed classification.
-        """
-
-        _ = description
-
-        if directive is ActionType.VALIDATE:
-            return SubGoalKind.VALIDATION
-
-        return SubGoalKind.ACTION
 
     @staticmethod
     def __structured_dump(*, sub_goals: List[SubGoal]) -> List[Dict[str, Any]]:

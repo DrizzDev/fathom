@@ -5,6 +5,7 @@ import unittest
 from typing import Optional
 
 from fathom.constants import ActionType
+from fathom.core.agent.opener import OpenerSignalPolicy
 from fathom.core.agent.reasoner import Reasoner
 from fathom.schemas.actions import Action
 from fathom.schemas.criterion import (
@@ -28,7 +29,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         Build a Reasoner with a representative intent string.
         """
 
-        return Reasoner(intent=intent)
+        return Reasoner(intent=intent, opener_policy=OpenerSignalPolicy())
 
     @staticmethod
     def __sub_goal(
@@ -90,6 +91,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(is_sub_goal_complete=True),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -103,6 +105,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(is_goal_complete=True),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -116,6 +119,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(action_type=ActionType.COMPLETE),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -129,6 +133,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -142,6 +147,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(
                 is_sub_goal_complete=True,
                 subgoal_completion_reason="New screen shows confirmation toast.",
@@ -158,6 +164,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(action_type=ActionType.TAP),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -178,12 +185,43 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         ):
             with self.subTest(action_type=action_type):
                 evidence = self.__reasoner().assess_completion(
+                    execution_success=True,
                     analysis=self.__analysis(action_type=action_type),
                     sub_goal=self.__sub_goal(),
                     screen_changed=True,
                 )
 
                 self.assertTrue(evidence.action.dispatched)
+
+    def test_failed_command_is_dispatched_but_not_executed(self) -> None:
+        """
+        A TAP the device reported as failed stays dispatched (a real type) but executed=False.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            analysis=self.__analysis(action_type=ActionType.TAP),
+            sub_goal=self.__sub_goal(),
+            screen_changed=True,
+            execution_success=False,
+        )
+
+        self.assertTrue(evidence.action.dispatched)
+        self.assertFalse(evidence.action.executed)
+
+    def test_successful_back_is_executed_but_not_dispatched(self) -> None:
+        """
+        A BACK that ran successfully is executed=True even though BACK is not a dispatched type today.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            analysis=self.__analysis(action_type=ActionType.BACK),
+            sub_goal=self.__sub_goal(),
+            screen_changed=True,
+            execution_success=True,
+        )
+
+        self.assertFalse(evidence.action.dispatched)
+        self.assertTrue(evidence.action.executed)
 
     def test_opening_sub_goal_completes_for_next_phase_actions(self) -> None:
         """
@@ -219,6 +257,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=False,
@@ -233,6 +272,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=False,
@@ -247,6 +287,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -263,6 +304,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -279,6 +321,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -304,6 +347,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -318,6 +362,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -333,6 +378,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -347,6 +393,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -365,6 +412,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(
                 is_sub_goal_complete=True,
                 subgoal_completion_reason="Home screen reached with Dwarka location.",
@@ -398,7 +446,10 @@ class ReasonerLateralCreditObservedTest(unittest.TestCase):
         Build a reasoner with a representative intent string.
         """
 
-        return Reasoner(intent="open meesho and find Jars & containers")
+        return Reasoner(
+            intent="open meesho and find Jars & containers",
+            opener_policy=OpenerSignalPolicy(),
+        )
 
     @staticmethod
     def __sub_goal(*, description: str) -> SubGoal:
@@ -453,6 +504,7 @@ class ReasonerLateralCreditObservedTest(unittest.TestCase):
 
         with self.assertLogs("fathom.core.agent.reasoner", level=logging.INFO) as captured:
             self.__reasoner().assess_completion(
+                execution_success=True,
                 analysis=analysis,
                 sub_goal=sub_goal,
                 screen_changed=True,
@@ -481,6 +533,7 @@ class ReasonerLateralCreditObservedTest(unittest.TestCase):
 
         with self.assertLogs("fathom.core.agent.reasoner", level=logging.INFO) as captured:
             self.__reasoner().assess_completion(
+                execution_success=True,
                 analysis=analysis,
                 sub_goal=sub_goal,
                 screen_changed=True,
@@ -509,6 +562,7 @@ class ReasonerLateralCreditObservedTest(unittest.TestCase):
 
         with self.assertLogs("fathom.core.agent.reasoner", level=logging.INFO) as captured:
             self.__reasoner().assess_completion(
+                execution_success=True,
                 analysis=analysis,
                 sub_goal=sub_goal,
                 screen_changed=True,

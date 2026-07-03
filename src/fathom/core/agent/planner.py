@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from logging import getLogger
-from typing import Any, Dict, List, Literal, Optional, cast
+from typing import Any, Dict, FrozenSet, List, Literal, Optional, Tuple, cast
 
 from fathom.constants import ActionType
 from fathom.constants.retries import (
@@ -12,12 +12,16 @@ from fathom.constants.retries import (
 )
 from fathom.constants.state import CompletionReason, PlanMetadataKey
 from fathom.constants.tools import TurnMode
+from fathom.core.agent.action import ActionBuilder
+from fathom.core.agent.command import CommandGate
 from fathom.core.agent.escalation_gate import EscalationGate
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.agent.stuck_source import StuckSourceResolver
 from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
+from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.context.manager import ContextManager
+from fathom.core.exceptions import InvariantViolation
 from fathom.core.prompts.escalation import EscalationPromptBuilder
 from fathom.core.prompts.rejection import RepeatedFailureRejectionPromptBuilder
 from fathom.core.runtime.identity import TargetIdentity
@@ -30,7 +34,15 @@ from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
 from fathom.schemas.supervision import BlockReason
-from fathom.schemas.tools import AllowedTools, ToolPolicyContext
+from fathom.schemas.tools import (
+    AllowedTools,
+    StateUpdate,
+    ToolArtifact,
+    ToolCommand,
+    ToolData,
+    ToolDiagnostic,
+    ToolPolicyContext,
+)
 
 # Generic recovery hint injected when the escalation gate defers HITL. The
 # model is told what the graph observed and what behaviors are still safe;
@@ -62,6 +74,8 @@ class StepPlanner:
         escalation_policy: Optional[EscalationPolicy] = None,
         escalation_gate: Optional[EscalationGate] = None,
         stuck_source_resolver: Optional[StuckSourceResolver] = None,
+        command_gate: Optional[CommandGate] = None,
+        action_builder: Optional[ActionBuilder] = None,
     ) -> None:
         self.__vision = vision_tool
         self.__tool_scope = tool_scope or ToolScope(policies=DEFAULT_TOOL_POLICIES)
@@ -69,6 +83,8 @@ class StepPlanner:
             policy=escalation_policy or EscalationPolicy()
         )
         self.__stuck_source_resolver = stuck_source_resolver or StuckSourceResolver()
+        self.__command_gate = command_gate or CommandGate(catalog=CommandCatalogProvider().build())
+        self.__action_builder = action_builder or ActionBuilder()
 
     @property
     def vision_tool(self) -> VisionService:
@@ -260,7 +276,35 @@ class StepPlanner:
             visual_hash=self.__compute_simple_hash(capture=capture),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
+        analysis = self.__materialize_command(analysis=analysis)
         self.__audit_kind_emission(analysis=analysis, current_sub_goal=current_sub_goal)
+
+        if analysis.action is None:
+            tool_response = analysis.tool_response
+            if tool_response is not None and tool_response.has_non_command_parts:
+                return PlanResult(
+                    step=None,
+                    is_complete=False,
+                    should_retry=True,
+                    metrics=analysis.metrics,
+                    memories=analysis.memories,
+                    reason=analysis.reasoning or "Tool response routed",
+                    metadata=analysis.metadata or {},
+                    updates=tool_response.updates,
+                    data=tool_response.data,
+                    artifacts=tool_response.artifacts,
+                    diagnostics=tool_response.diagnostics,
+                )
+
+            return PlanResult(
+                step=None,
+                is_complete=False,
+                should_retry=True,
+                metrics=analysis.metrics,
+                memories=analysis.memories,
+                reason="No executable command was produced by the tool response",
+                metadata=analysis.metadata or {},
+            )
 
         # Use-bounded signals: rejection history and verifier feedback
         # are one-turn channels. Human guidance ages through a short TTL
@@ -598,6 +642,14 @@ class StepPlanner:
                 # Pass analysis to RECORD node for post-execution sub-goal completion check.
                 PlanMetadataKey.ANALYSIS.value: analysis,
             },
+            updates=(analysis.tool_response.updates if analysis.tool_response is not None else ()),
+            data=analysis.tool_response.data if analysis.tool_response is not None else (),
+            artifacts=(
+                analysis.tool_response.artifacts if analysis.tool_response is not None else ()
+            ),
+            diagnostics=(
+                analysis.tool_response.diagnostics if analysis.tool_response is not None else ()
+            ),
         )
 
     def __select_action(
@@ -614,11 +666,38 @@ class StepPlanner:
         failures_raw = context.get("relevant_failures", [])
         failures = failures_raw if isinstance(failures_raw, list) else []
 
+        if analysis.action is None:
+            raise InvariantViolation("Planner action selection requires an executable action.")
+
         return reasoner.select_best_action(
             primary=analysis.action,
             alternatives=analysis.alternatives,
             failed_actions={str(failure) for failure in failures},
         )
+
+    def __materialize_command(self, *, analysis: AnalysisResult) -> AnalysisResult:
+        """
+        Build the executable action for a parsed execute_ui command after catalog validation.
+        """
+
+        command = self.__command(analysis=analysis)
+        if command is None:
+            return analysis
+
+        accepted = self.__command_gate.validate(command=command)
+        action = self.__action_builder.build(command=accepted)
+        return analysis.model_copy(update={"action": action})
+
+    @staticmethod
+    def __command(*, analysis: AnalysisResult) -> Optional[ToolCommand]:
+        """
+        Return the parsed command request when the model emitted one.
+        """
+
+        if analysis.tool_response is None:
+            return None
+
+        return analysis.tool_response.command
 
     def __log_escalation_detected(
         self,
@@ -812,6 +891,10 @@ class StepPlanner:
         metadata: Optional[Dict[str, Any]] = None,
         metrics: Optional[Dict[str, float]] = None,
         step_metadata: Optional[Dict[str, Any]] = None,
+        updates: Tuple[StateUpdate, ...] = (),
+        data: Tuple[ToolData, ...] = (),
+        artifacts: Tuple[ToolArtifact, ...] = (),
+        diagnostics: Tuple[ToolDiagnostic, ...] = (),
     ) -> PlanResult:
         """
         Return a PlanResult with the given action and metadata.
@@ -832,6 +915,10 @@ class StepPlanner:
             memories=memories,
             metrics=metrics or {},
             metadata=metadata or {},
+            updates=updates,
+            data=data,
+            artifacts=artifacts,
+            diagnostics=diagnostics,
             is_valid_action=action.is_valid,
             validation_reasoning=action.validation_reason,
             reason=action.rationale or ("Step planned" if not is_recovery else "Recovery step"),
@@ -847,7 +934,7 @@ class StepPlanner:
         Build the tool-scope context for this turn and emit its observability event.
         """
 
-        modes: frozenset[TurnMode] = frozenset()
+        modes: FrozenSet[TurnMode] = frozenset()
         if not state.has_sub_goals() or (
             current_sub_goal is not None and current_sub_goal.kind == SubGoalKind.VALIDATION
         ):
@@ -890,7 +977,7 @@ class StepPlanner:
     @staticmethod
     def __log_tool_scope_resolved(
         *,
-        modes: frozenset[TurnMode],
+        modes: FrozenSet[TurnMode],
         allowed: AllowedTools,
         current_sub_goal: Optional[SubGoal],
     ) -> None:
